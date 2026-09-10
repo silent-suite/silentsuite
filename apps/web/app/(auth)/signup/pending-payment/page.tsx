@@ -7,9 +7,14 @@ import { normalizeSignupReturnTo } from '@/app/lib/signup-return'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import {
 
+  BillingResponseError,
   getAnonymousPaymentSessionRecovery,
   reconcileAnonymousPaymentSessionRecovery,
 } from '@/app/lib/billing-v2'
+import StripePaymentForm from '@/app/components/stripe-payment-form'
+import { AnnualTermsSummary, annualCardSubmitLabel } from '../components/annual-confirmation-summary'
+import { PaymentSwitchDecision, paymentSwitchLabel } from '../components/payment-switch-decision'
+import type { AnonymousPaymentSessionRecovery, AnnualProvider } from '@/app/lib/billing-v2'
 import { SignupRecoveryWarning } from '../components/signup-recovery-warning'
 import { StepCreateVault } from '../components/step-create-vault'
 import { StepCreatePaidAccount, type PaidAccountFormData } from '../components/step-create-paid-account'
@@ -30,23 +35,14 @@ type PersistedPaymentSessionRecoveryContext = Omit<PaymentSessionRecoveryContext
 type SignupPaymentContinuation = import('@/app/stores/use-auth-store').RedirectSignupState['pendingSignup']
 
 const PENDING_CRYPTO_RECOVERY_CONTEXT_KEY = 'silentsuite-pending-crypto-recovery-context'
-/**
- * Settlement can take a while, so the waiting screen re-checks the anonymous
- * recovery sibling on the historical bounded schedule: 10s apart for the first
- * 30 attempts, then 30s, giving up after 180 so a paid customer is never left
- * on an animated spinner that resolves only if they press a button.
- */
-const SETTLEMENT_POLL_MAX_ATTEMPTS = 180
-const SETTLEMENT_POLL_FAST_ATTEMPTS = 30
-const SETTLEMENT_POLL_FAST_DELAY_MS = 10_000
-const SETTLEMENT_POLL_SLOW_DELAY_MS = 30_000
-
-/** Whether a completed recovery read leaves anything worth re-checking. */
+// Billing: current 10 / 15 minutes; reconcile 5 / 15 minutes. Four-minute
+// polling leaves headroom for explicit checks. Both paths share the counters.
+const RECOVERY_WINDOW_MS = 15 * 60_000
+const SETTLEMENT_POLL_DELAY_MS = 4 * 60_000
+const SETTLEMENT_POLL_MAX_ATTEMPTS = 20
+const RECOVERY_LIMITS = { current: 10, reconcile: 5 } as const
 type SettlementPollDisposition = 'poll' | 'stop'
 
-function settlementPollDelayMs(completedAttempts: number): number {
-  return completedAttempts < SETTLEMENT_POLL_FAST_ATTEMPTS ? SETTLEMENT_POLL_FAST_DELAY_MS : SETTLEMENT_POLL_SLOW_DELAY_MS
-}
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -111,6 +107,10 @@ export default function PendingPaymentPage() {
   const pendingSignup = useAuthStore((s) => s.pendingSignup)
   const [returnTo, setReturnTo] = useState<string | null>(null)
   const [showReturnFallback, setShowReturnFallback] = useState(false)
+  const [ownedPayable, setOwnedPayable] = useState<{ identity: string; value: AnonymousPaymentSessionRecovery['continuation'] }>()
+  const [ownedProvider, setOwnedProvider] = useState<AnnualProvider | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [released, setReleased] = useState(false)
   const [state, setState] = useState<PaymentState>('pending')
   const [restoredEmail, setRestoredEmail] = useState('')
   const [restartError, setRestartError] = useState<string | null>(null)
@@ -126,8 +126,55 @@ export default function PendingPaymentPage() {
   const redirectRestorationAttempted = useRef(false)
   const activePendingSignup = (pendingSignup ?? restoredContinuation) as SignupPaymentContinuation | null
 
+  const recoveryIdentity = JSON.stringify(readPaymentSessionRecoveryContext(activePendingSignup))
+  const identityRef = useRef(recoveryIdentity)
+  identityRef.current = recoveryIdentity
+  const payable = ownedPayable?.identity === recoveryIdentity ? ownedPayable.value : undefined
+  const setPayable = useCallback((value: AnonymousPaymentSessionRecovery['continuation']) => {
+    setOwnedPayable(value ? { identity: recoveryIdentity, value } : undefined)
+  }, [recoveryIdentity])
+  const attemptsByRoute = useRef<{ current: number[]; reconcile: number[] }>({ current: [], reconcile: [] })
+  const retryAt = useRef(0)
+  const flowInFlight = useRef(false)
+  const [retryUntil, setRetryUntil] = useState(0)
+  const previousPending = useRef(pendingSignup)
+  useEffect(() => {
+    if (previousPending.current && !pendingSignup) {
+      setRestoredContinuation(null)
+      setOwnedPayable(undefined)
+      setOwnedProvider(null)
+      setSwitching(false)
+    }
+    previousPending.current = pendingSignup
+  }, [pendingSignup])
+  useEffect(() => {
+    setOwnedPayable(undefined)
+    setOwnedProvider(null)
+    setSwitching(false)
+    setState('pending')
+  }, [recoveryIdentity])
+  useEffect(() => {
+    if (!retryUntil) return
+    const timer = window.setTimeout(() => setRetryUntil(0), Math.max(0, retryUntil - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [retryUntil])
+
   const loadCurrentFlow = useCallback(async (isCancelled: () => boolean = () => false): Promise<SettlementPollDisposition> => {
-    if (!isCancelled()) {
+    if (flowInFlight.current) return 'poll'
+    flowInFlight.current = true
+    const storeOwner = useAuthStore.getState().pendingSignup
+    const stillCurrent = () => !isCancelled() && identityRef.current === recoveryIdentity
+      && (!storeOwner || (useAuthStore.getState().pendingSignup !== null
+        && JSON.stringify(readPaymentSessionRecoveryContext(useAuthStore.getState().pendingSignup)) === recoveryIdentity))
+    const reserveRead = (route: 'current' | 'reconcile') => {
+      const now = Date.now()
+      const recent = attemptsByRoute.current[route].filter(at => at > now - RECOVERY_WINDOW_MS)
+      attemptsByRoute.current[route] = recent
+      const availableAt = Math.max(retryAt.current, recent.length >= RECOVERY_LIMITS[route] ? recent[0] + RECOVERY_WINDOW_MS : 0)
+      if (availableAt > now) throw new BillingResponseError('Payment status retry is delayed', 429, null, availableAt - now)
+      recent.push(now)
+    }
+    if (stillCurrent()) {
       setFlowCheckState('loading')
       setRestartError(null)
     }
@@ -136,7 +183,7 @@ export default function PendingPaymentPage() {
       if (activePendingSignup?.billingContractVersion !== 2
         && isEmail(activePendingSignup?.email)
         && isRecoveryToken(activePendingSignup.paymentSessionToken)) {
-        if (!isCancelled()) {
+        if (stillCurrent()) {
           setRestoredEmail(activePendingSignup.email)
           setFlowCheckState('ready')
           setState('account')
@@ -147,11 +194,12 @@ export default function PendingPaymentPage() {
       if (!recovery) {
         // Nothing local can be polled, and re-running this would only flicker
         // the recovery controls back into their "checking" state every tick.
-        if (!isCancelled()) {
+        if (stillCurrent()) {
           setFlowCheckState('ready')
         }
         return 'stop'
       }
+      reserveRead('current')
       let result = await getAnonymousPaymentSessionRecovery({
         fetcher: fetch,
         billingApiUrl: BILLING_API_URL,
@@ -160,7 +208,12 @@ export default function PendingPaymentPage() {
         requestKey: recovery.requestKey,
         email: recovery.email,
       })
-      if (result.state === 'open') {
+      if (!stillCurrent()) return 'stop'
+      // Even if reconciliation subsequently fails, a current authoritative
+      // response without payable evidence must remove the old controls.
+      setPayable(result.continuation)
+      if (result.state === 'open' && !result.continuation) {
+        reserveRead('reconcile')
         result = await reconcileAnonymousPaymentSessionRecovery({
           fetcher: fetch,
           billingApiUrl: BILLING_API_URL,
@@ -170,7 +223,16 @@ export default function PendingPaymentPage() {
           email: recovery.email,
         })
       }
-      if (isCancelled()) return 'stop'
+      if (!stillCurrent()) return 'stop'
+      if (result.flow && activePendingSignup?.paymentMethod && result.flow.provider !== activePendingSignup.paymentMethod) throw new Error('Mismatched payment provider')
+      setOwnedProvider(result.flow?.provider ?? null)
+      setPayable(result.continuation)
+      if (result.state === 'released' && result.release) {
+        useAuthStore.getState().clearPendingSignupPaymentRecovery({ email: recovery.email, requestKey: recovery.requestKey, recoverySecret: recovery.paymentSessionToken })
+        if (!useAuthStore.getState().pendingSignup?.paymentSessionToken) setReleased(true)
+        setFlowCheckState('ready')
+        return 'stop'
+      }
       if (result.state === 'closed') {
         // Generic closed is also returned for unknown proof: never release authority.
         setFlowCheckState('ready')
@@ -185,16 +247,23 @@ export default function PendingPaymentPage() {
       }
       setFlowCheckState('ready')
       return 'poll'
-    } catch {
-      if (!isCancelled()) {
+    } catch (error) {
+      if (stillCurrent()) {
+        const transient = error instanceof TypeError || (error instanceof BillingResponseError
+          && (error.billingStatus === 429 || error.billingStatus >= 500))
+        if (!transient) setPayable(undefined)
+        if (error instanceof BillingResponseError && error.retryAfterMs !== null) {
+          retryAt.current = Math.max(retryAt.current, Date.now() + error.retryAfterMs)
+          setRetryUntil(retryAt.current)
+        }
         setFlowCheckState('failed')
         setRestartError('Could not verify whether a payment is already in progress. Retry before starting another invoice.')
       }
       // A transient recovery failure is not a settlement answer, so the
       // schedule keeps its remaining attempts rather than stranding the user.
       return 'poll'
-    }
-  }, [activePendingSignup])
+    } finally { flowInFlight.current = false }
+  }, [activePendingSignup, recoveryIdentity, setPayable])
 
   useEffect(() => {
     if (redirectRestorationAttempted.current) return
@@ -213,8 +282,8 @@ export default function PendingPaymentPage() {
 
   useEffect(() => {
     setReturnTo(normalizeSignupReturnTo(sessionStorage.getItem('silentsuite-pending-crypto-return-to')))
-    if (!recoveryInitialized) return
-    if (state === 'vault' || state === 'account' || state === 'settled') return
+    if (!recoveryInitialized || released || switching) return
+    if (state !== 'pending') return
 
     let cancelled = false
     let timer: number | undefined
@@ -233,7 +302,7 @@ export default function PendingPaymentPage() {
         sessionStorage.removeItem('silentsuite-signup-in-progress')
         return
       }
-      timer = window.setTimeout(() => { void runAttempt() }, settlementPollDelayMs(attempts))
+      timer = window.setTimeout(() => { void runAttempt() }, Math.max(SETTLEMENT_POLL_DELAY_MS, retryAt.current - Date.now()))
     }
 
     void runAttempt()
@@ -241,7 +310,7 @@ export default function PendingPaymentPage() {
       cancelled = true
       if (timer !== undefined) window.clearTimeout(timer)
     }
-  }, [loadCurrentFlow, recoveryInitialized, state])
+  }, [loadCurrentFlow, recoveryInitialized, state, released, switching])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -292,12 +361,12 @@ export default function PendingPaymentPage() {
     : state === 'unknown' ? 'Payment release not confirmed'
     : !hasRecovery ? 'Payment recovery details unavailable'
     : state === 'timeout' ? 'Payment status is still unconfirmed'
-    : 'Checking checkout status'
+    : payable ? 'Continue your existing payment' : 'Checking checkout status'
   const description = state === 'settled'
     ? 'Your annual prepaid access is active. Continue to vault setup.'
     : !hasRecovery
       ? 'This browser has no payment recovery capability. Return to the original signup tab to retry, or contact support if payment may have started. Do not start a second payment.'
-      : 'An invoice or payment has not been confirmed. Check the existing checkout status. Back keeps this same payment recovery; it does not cancel or start another payment.'
+      : payable ? 'These controls continue the same payment. Your original payment terms still apply.' : 'An invoice or payment has not been confirmed. Check the existing checkout status. Back keeps this same payment recovery; it does not cancel or start another payment.'
 
   function handleRecoveryBack(event: MouseEvent<HTMLAnchorElement>) {
     if (hasRecovery && !hasPersistedRecovery(activePendingSignup)) {
@@ -308,14 +377,25 @@ export default function PendingPaymentPage() {
 
   function renderBitcoinRecoveryAction() {
     return <div className="space-y-3">
-      {hasRecovery && <button type="button" onClick={() => { void loadCurrentFlow() }} disabled={flowCheckState === 'loading'} className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-[rgb(var(--border))] px-4 py-2 text-sm">
+      {hasRecovery && <button type="button" onClick={() => { void loadCurrentFlow() }} disabled={flowCheckState === 'loading' || retryUntil > Date.now()} className="inline-flex min-h-9 w-full items-center justify-center rounded-md border border-[rgb(var(--border))] px-4 py-2 text-sm">
         {flowCheckState === 'loading' ? 'Checking current payment...' : flowCheckState === 'failed' ? 'Retry payment status' : 'Check payment status again'}
       </button>}
-      <p className="text-sm">Reloading keeps this same payment. Cancellation and switching payment methods are not available here; contact support for help.</p>
+      {switching && ownedProvider ? <PaymentSwitchDecision provider={ownedProvider} onKeep={() => setSwitching(false)} onReleased={() => { setSwitching(false); setPayable(undefined); setReleased(true) }} /> : <>
+        {payable && <div className="space-y-4">
+          <AnnualTermsSummary disclosure={payable.disclosure} />
+          {payable.provider === 'stripe' && payable.clientSecret
+            ? <StripePaymentForm key={payable.providerObjectId} clientSecret={payable.clientSecret} mode={payable.disclosure.kind === 'card_trial' ? 'setup' : 'payment'} submitLabel={annualCardSubmitLabel(payable.disclosure)} selectedInterval="annual" onSuccess={() => { setPayable(undefined); void loadCurrentFlow() }} />
+            : payable.checkoutUrl && <a href={payable.checkoutUrl} onClick={() => saveSignupStateForRedirect('annual')} className="block rounded-md border p-3 text-center">Continue this Bitcoin payment</a>}
+        </div>}
+        {ownedProvider && <button type="button" className="block underline" onClick={() => setSwitching(true)}>{paymentSwitchLabel(ownedProvider)}</button>}
+      </>}
+      <p className="text-sm">Keep this payment until cancellation is confirmed. If its status remains uncertain, contact support.</p>
       <a href="/signup?recovery=payment" onClick={handleRecoveryBack} className="block underline">Reload this payment recovery</a>
       <a href="mailto:support@silentsuite.io" className="block underline">Contact support</a>
     </div>
   }
+
+  if (released) return <div className="space-y-4"><h1 className="text-xl font-semibold">Payment cancelled</h1><p>You can return to signup and choose another payment method. Verify your email again if this browser no longer has your signup details.</p><a href="/signup" className="underline">Choose another payment method</a></div>
 
   if (state === 'vault') {
     return (

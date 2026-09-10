@@ -424,7 +424,7 @@ interface PaidSignupRecoveryIdentity {
 }
 
 /**
- * A closed anonymous recovery response is proof for exactly one capability.
+ * An explicit released receipt is proof for exactly one capability.
  * Carry all of its bindings into the store so a stale tab can never erase a
  * same-email replacement that has since been created.
  */
@@ -1221,7 +1221,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   clearPendingSignupPaymentRecovery: (release) => {
     const pending = get().pendingSignup
-    if (!pending) return
+    if (!pending || pending.provisionedUser) return
     // A terminal response must be bound to the currently visible recovery
     // capability before either storage or UI state is released. This compare
     // guards stale/reloaded tabs and async recovery races from deleting a
@@ -1235,6 +1235,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       rememberDevice: release.rememberDevice ?? pending.rememberDevice,
     }
     if (!releaseExactPaidSignupRecoveryIdentity(exactRelease)) return
+    signupRedirectCheckpoint.clear()
+    for (const key of ['silentsuite-pending-crypto-invoice', 'silentsuite-pending-crypto-token', 'silentsuite-pending-crypto-recovery-context', 'silentsuite-pending-crypto-return-to']) {
+      try { sessionStorage.removeItem(key) } catch { /* Exact release remains authoritative in memory. */ }
+    }
     set({
       pendingSignup: {
         ...pending,

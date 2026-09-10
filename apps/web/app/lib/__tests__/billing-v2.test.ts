@@ -205,7 +205,7 @@ describe('billing v2 public authority client', () => {
     ])
     for (const [, init] of fetcher.mock.calls) {
       expect(init).toMatchObject({ method: 'POST', credentials: 'omit' })
-      expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email: 'customer@example.test', requestKey, recoverySecret: token })
+      expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, email: 'customer@example.test', requestKey, recoverySecret: token, switchingProfile: 'v1' })
     }
   })
 

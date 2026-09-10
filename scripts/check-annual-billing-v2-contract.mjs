@@ -69,6 +69,17 @@ function checkPendingPaymentRecovery(source) {
     return matches[0]
   }
   const declarations = nodes.filter(ts.isVariableDeclaration)
+  // Source contract with the Billing route budgets; rendered fake-timer tests
+  // exercise these same limits under automatic and explicit recovery reads.
+  for (const [name, value] of [
+    ['RECOVERY_WINDOW_MS', '15 * 60_000'],
+    ['RECOVERY_LIMITS', '{ current: 10, reconcile: 5 } as const'],
+    ['SETTLEMENT_POLL_DELAY_MS', '4 * 60_000'],
+    ['SETTLEMENT_POLL_MAX_ATTEMPTS', '20'],
+  ]) {
+    const declaration = one(declarations.filter(node => node.name.getText(tree) === name), name + ' must be explicit')
+    requireContract(declaration.initializer && exact(declaration.initializer, value), name + ' must respect the bounded recovery budget')
+  }
   const flow = one(declarations.filter((node) => node.name.getText(tree) === 'loadCurrentFlow'), 'one recovery callback is required')
   requireContract(ts.isCallExpression(flow.initializer) && exact(flow.initializer.expression, 'useCallback'), 'recovery callback must remain explicit')
   const callback = flow.initializer.arguments[0]
@@ -78,7 +89,7 @@ function checkPendingPaymentRecovery(source) {
   walkFlow(callback.body)
   for (const [condition, body] of [
     ["result.state === 'closed'", "{ setFlowCheckState('ready'); setState('unknown'); return 'stop'; }"],
-    ['!recovery', "{ if (!isCancelled()) { setFlowCheckState('ready'); } return 'stop'; }"],
+    ['!recovery', "{ if (stillCurrent()) { setFlowCheckState('ready'); } return 'stop'; }"],
   ]) {
     const branch = one(flowNodes.filter((node) => ts.isIfStatement(node) && exact(node.expression, condition)), `${condition} must fail closed`)
     requireContract(!branch.elseStatement && same(branch.thenStatement, statement(body)), `${condition} cannot release, restart, or confer payment authority`)
@@ -93,16 +104,16 @@ function checkPendingPaymentRecovery(source) {
       requestKey: recovery.requestKey, email: recovery.email
     })`.slice(1, -1)), `${name} must carry the same attempt's email, request key, and proof`)
   }
-  // This page has no fresh-payment or release authority at all. Only the two
-  // proof-bound recovery readers may be imported from the billing client, and
-  // store selection cannot regain removed creation/release capabilities.
+  // Only proof-bound recovery readers may be imported. Exact released receipts
+  // may clear their own capability; generic closed and fresh creation stay sealed.
   const storeCapabilities = new Set(['completeSignup', 'createEtebaseAccount', 'finalizePaidSignup', 'saveSignupStateForRedirect', 'restoreSignupStateFromRedirect', 'pendingSignup', 'recoverCompletedSignupSession'])
   for (const node of nodes) {
     if (ts.isImportDeclaration(node) && node.moduleSpecifier.text === '@/app/lib/billing-v2') {
+      if (node.importClause?.isTypeOnly) continue
       const bindings = node.importClause?.namedBindings
       requireContract(!node.importClause?.name && bindings && ts.isNamedImports(bindings)
-        && bindings.elements.length === 2
-        && bindings.elements.every((item) => !item.propertyName && recoveryReaders.includes(item.name.text)), 'billing imports are recovery-only; legacy restart must fail closed')
+        && bindings.elements.length === 3
+        && bindings.elements.every((item) => !item.propertyName && [...recoveryReaders, 'BillingResponseError'].includes(item.name.text)), 'billing imports are recovery-only; legacy restart must fail closed')
     }
     if (ts.isCallExpression(node) && exact(node.expression, 'useAuthStore')) {
       const selector = node.arguments[0]
@@ -113,7 +124,13 @@ function checkPendingPaymentRecovery(source) {
     }
     if (ts.isPropertyAccessExpression(node) && ts.isCallExpression(node.expression)
       && exact(node.expression.expression, 'useAuthStore.getState')) {
-      requireContract(node.name.text === 'pendingSignup', 'imperative store access is read-only')
+      if (node.name.text !== 'pendingSignup') {
+        requireContract(node.name.text === 'clearPendingSignupPaymentRecovery', 'imperative store access cannot create payment')
+        let ancestor = node.parent
+        while (ancestor && !(ts.isIfStatement(ancestor) && exact(ancestor.expression, "result.state === 'released' && result.release"))) ancestor = ancestor.parent
+        requireContract(Boolean(ancestor), 'only an exact released receipt can clear recovery')
+        requireContract(exact(node.parent, 'useAuthStore.getState().clearPendingSignupPaymentRecovery({ email: recovery.email, requestKey: recovery.requestKey, recoverySecret: recovery.paymentSessionToken })'), 'release must retain exact proof identity')
+      }
     }
     if (ts.isCallExpression(node) && exact(node.expression, 'fetch')) {
       requireContract(false, 'direct transport cannot bypass proof-bound recovery')

@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
 import { secureClear } from '@/app/lib/secure-storage'
@@ -540,6 +542,34 @@ describe('useAuthStore', () => {
 
       expect(nextAttempt.requestKey).not.toBe(oldAttempt.requestKey)
       expect(nextAttempt.recoverySecret).not.toBe(oldAttempt.recoverySecret)
+    })
+
+    it.each(['stripe', 'btcpay'] as const)('switches %s only after an exact release using the real store and client', async provider => {
+      useAuthStore.getState().prepareSignupDraft('switch@example.com')
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        const body = JSON.parse(String(init?.body))
+        return new Response(JSON.stringify(provider === 'stripe' ? stripePayment(body.recoverySecret) : bitcoinPayment(body.recoverySecret)))
+      })
+      await startAnnualPayment(provider)
+      const pending = useAuthStore.getState().pendingSignup!
+      const originalToken = pending.paymentSessionToken
+      const onReleased = vi.fn()
+      const { PaymentSwitchDecision } = await import('../../(auth)/signup/components/payment-switch-decision')
+      render(createElement(PaymentSwitchDecision, { provider, onReleased, onKeep: vi.fn() }))
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, state: 'closed', flow: null })))
+      const action = screen.getByRole('button', { name: provider === 'stripe' ? 'Cancel card payment and choose Bitcoin' : 'Cancel Bitcoin payment and choose card' })
+      if (provider === 'btcpay') { expect(action).toBeDisabled(); fireEvent.click(screen.getByLabelText('I have not sent any Bitcoin.')) }
+      fireEvent.click(action)
+      await screen.findByRole('alert')
+      expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBe(originalToken)
+      expect(onReleased).not.toHaveBeenCalled()
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, state: 'released', flow: { provider, status: 'reconciliation_required' }, release: { requestKey: pending.paymentSessionRequestKey, provider, providerObjectId: 'exact' } })))
+      fireEvent.click(action)
+      await waitFor(() => expect(onReleased).toHaveBeenCalledTimes(1))
+      expect(useAuthStore.getState().pendingSignup?.paymentSessionToken).toBeUndefined()
+      expect(sessionStorage.getItem('silentsuite-signup-redirect-state') ?? '').not.toContain(originalToken!)
+      expect(useAuthStore.getState().pendingSignup?.email).toBe(pending.email)
+      cleanup()
     })
 
     it('atomically releases only a verified terminal Bitcoin identity before a fresh invoice claim', async () => {

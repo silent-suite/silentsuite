@@ -33,11 +33,11 @@ export function AnnualTermsSummary({ disclosure }: { disclosure: AnnualDisclosur
     return (
       <div className="space-y-1 text-sm text-[rgb(var(--muted))]">
         <p>
-          No charge today. {money(disclosure.firstChargeAmountMinor)}/year is charged
-          {disclosure.firstChargeAt ? ` on ${timestamp(disclosure.firstChargeAt)}` : ' after your 30-day trial'}. Cancel before then and nothing is charged.
+          €0 today; {money(disclosure.firstChargeAmountMinor)}
+          {disclosure.firstChargeAt ? ` on ${timestamp(disclosure.firstChargeAt)}` : ' after your 30-day trial'}. Cancel before then to avoid a charge.
         </p>
         <p>
-          {disclosure.autoRenew ? `Renews automatically each year at ${money(disclosure.renewalAmountMinor ?? disclosure.annualAmountMinor)}. ` : 'No automatic renewal. '}
+          {disclosure.autoRenew ? `Auto-renews at ${money(disclosure.renewalAmountMinor ?? disclosure.annualAmountMinor)}/year. ` : 'No automatic renewal. '}
           Cancel anytime.{disclosure.refundWindowDays ? ` ${disclosure.refundWindowDays}-day refund window.` : ''}
         </p>
       </div>
@@ -46,9 +46,9 @@ export function AnnualTermsSummary({ disclosure }: { disclosure: AnnualDisclosur
   if (disclosure.kind === 'charge_now') {
     return (
       <div className="space-y-1 text-sm text-[rgb(var(--muted))]">
-        <p>{money(disclosure.firstChargeAmountMinor)} is charged now by card for {access}. This is an annual purchase, not a free trial.</p>
+        <p>{money(disclosure.firstChargeAmountMinor)} now by card for {access}.</p>
         <p>
-          {disclosure.autoRenew ? `Renews automatically each year at ${money(disclosure.renewalAmountMinor ?? disclosure.annualAmountMinor)} unless you cancel. ` : 'No automatic renewal. '}
+          {disclosure.autoRenew ? `Auto-renews at ${money(disclosure.renewalAmountMinor ?? disclosure.annualAmountMinor)}/year. Cancel anytime. ` : 'No automatic renewal. '}
           {disclosure.refundWindowDays ? `${disclosure.refundWindowDays}-day refund window.` : ''}
         </p>
       </div>
@@ -56,8 +56,8 @@ export function AnnualTermsSummary({ disclosure }: { disclosure: AnnualDisclosur
   }
   return (
     <div className="space-y-1 text-sm text-[rgb(var(--muted))]">
-      <p>{money(disclosure.firstChargeAmountMinor)} paid now in Bitcoin for {access}. This is a prepaid annual purchase, not a free trial. No automatic renewal.</p>
-      {disclosure.refundWindowDays === 30 && <p>Full refund within 30 days of your payment, no questions asked.</p>}
+      <p>{money(disclosure.firstChargeAmountMinor)} now for {access}. No automatic renewal.</p>
+      {disclosure.refundWindowDays === 30 && <p>30-day full refund, no questions asked.</p>}
     </div>
   )
 }
