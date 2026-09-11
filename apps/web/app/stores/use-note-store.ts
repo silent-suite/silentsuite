@@ -80,10 +80,12 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       // The list only ever shows notes that already have an Etebase item UID,
       // so there is no window in which an entry exists but cannot be saved.
       const accountEpoch = getAccountEpoch()
-      const etebase = useEtebaseStore.getState()
       let itemUid: string | null = null
       try {
         const { noteToItemMeta } = await import('@silentsuite/core')
+        // Check before the lower store sees anything: a late call would run as the next account.
+        if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
+        const etebase = useEtebaseStore.getState()
         itemUid = etebase.account
           ? await etebase.createItem('notes', draft.content, undefined, notebookId, noteToItemMeta(draft))
           : null
@@ -112,11 +114,13 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       const updated: Note = { ...existing, ...patch, updated_at: new Date() }
       set((state) => ({ notes: state.notes.map((n) => (n.id === id ? updated : n)) }))
 
-      const etebase = useEtebaseStore.getState()
-      if (!etebase.account) return false
+      if (!useEtebaseStore.getState().account) return false
 
       try {
         const { noteToItemMeta } = await import('@silentsuite/core')
+        // Check before the lower store sees anything: a late call would run as the next account.
+        if (!isCurrentAccountEpoch(accountEpoch)) return false
+        const etebase = useEtebaseStore.getState()
         const outcome = await etebase.updateItem('notes', id, updated.content, {
           meta: noteToItemMeta(updated),
           // Offline edits keep their body and title in the encrypted local
@@ -173,11 +177,14 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       if (!target || !canWriteNotebook(target)) return null
 
       const accountEpoch = getAccountEpoch()
-      const etebase = useEtebaseStore.getState()
-      if (!etebase.account || !etebase.itemCache.has(id)) return null
+      const { account, itemCache } = useEtebaseStore.getState()
+      if (!account || !itemCache.has(id)) return null
 
       try {
         const { noteToItemMeta } = await import('@silentsuite/core')
+        // Check before the lower store sees anything: a late call would run as the next account.
+        if (!isCurrentAccountEpoch(accountEpoch)) return null
+        const etebase = useEtebaseStore.getState()
         // A move is not an edit: the title and last-edit time travel with the note.
         const movedId = await etebase.moveItem('notes', id, existing.content, notebookId, existing.notebookId, noteToItemMeta(existing))
         if (!movedId || !isCurrentAccountEpoch(accountEpoch)) return null

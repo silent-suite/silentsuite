@@ -428,6 +428,59 @@ describe('useNoteStore', () => {
       errorSpy.mockRestore()
     })
 
+    // The boundary is crossed while the action still awaits the core import;
+    // the next account then signs in with the same lower store, so only the
+    // action's own guard can keep the old account's input away from it.
+    it('create never hands the old account\'s draft to the lower store once the account changed during the import', async () => {
+      const createItem = vi.fn(async () => 'b-created')
+      etebase({ createItem })
+
+      const result = useNoteStore.getState().createNote({ title: 'A', content: 'Account A body' })
+      boundaries.replacement.cross()
+      etebase({ createItem })
+
+      await expect(result).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      expect(createItem).not.toHaveBeenCalled()
+      expect(useNoteStore.getState().notes).toEqual([OTHER_ACCOUNT_NOTE])
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
+
+    it('update never hands the old account\'s edit to the lower store once the account changed during the import', async () => {
+      const updateItem = vi.fn(async () => 'queued' as const)
+      etebase({ updateItem, itemCache: new Map() })
+      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body' })] })
+
+      const result = useNoteStore.getState().updateNote('note-1', { content: 'Account A edit' })
+      boundaries.replacement.cross()
+      etebase({ updateItem, itemCache: new Map() })
+
+      await expect(result).resolves.toBe(false)
+      expect(updateItem).not.toHaveBeenCalled()
+      expect(useNoteStore.getState().notes).toEqual([OTHER_ACCOUNT_NOTE])
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
+
+    it('move never hands the old account\'s note to the lower store once the account changed during the import', async () => {
+      const moveItem = vi.fn(async () => 'note-moved')
+      etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
+      useNotebookStore.setState({
+        lists: [
+          { id: 'notes-1', name: 'Notes', color: '#fff', visible: true, accessLevel: 1 },
+          { id: 'notes-2', name: 'Work', color: '#00f', visible: true, accessLevel: 2 },
+        ],
+      })
+      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body' })] })
+
+      const result = useNoteStore.getState().moveNote('note-1', 'notes-2')
+      boundaries.replacement.cross()
+      etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
+
+      await expect(result).resolves.toBeNull()
+      expect(moveItem).not.toHaveBeenCalled()
+      expect(useNoteStore.getState().notes).toEqual([OTHER_ACCOUNT_NOTE])
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    })
+
     it('still restores a note and reports the failure when the same account\'s delete throws', async () => {
       const original = note('note-1')
       const pending = deferred<'remote' | false>()
