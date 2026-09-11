@@ -18,7 +18,7 @@ hero:
 features:
   - icon: 📖
     title: User Guide
-    details: Learn how to use SilentSuite — manage your calendar, contacts, and tasks with end-to-end encryption.
+    details: Learn how to use SilentSuite — manage your calendar, contacts, tasks, and notes with end-to-end encryption.
     link: /user-guide/getting-started
   - icon: 🖥️
     title: Self-Hosting

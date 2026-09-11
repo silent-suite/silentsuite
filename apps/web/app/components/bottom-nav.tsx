@@ -3,16 +3,19 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useTranslations } from 'next-intl'
-import { CalendarDays, CheckSquare, Users, Settings } from 'lucide-react'
+import { CalendarDays, CheckSquare, StickyNote, Users, Settings } from 'lucide-react'
+import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
 
 const items = [
   { href: '/calendar', labelKey: 'calendar', icon: CalendarDays },
   { href: '/tasks', labelKey: 'tasks', icon: CheckSquare },
+  { href: '/notes', labelKey: 'notes', icon: StickyNote },
   { href: '/contacts', labelKey: 'contacts', icon: Users },
   { href: '/settings', labelKey: 'settings', icon: Settings },
 ]
 
 export function BottomNav() {
+  const notesEnabled = useNotesEnabled()
   const t = useTranslations('Navigation')
   const pathname = usePathname()
 
@@ -21,7 +24,7 @@ export function BottomNav() {
       aria-label={t('mobileNavigation')}
       className="fixed inset-x-0 bottom-0 z-50 flex border-t border-[rgb(var(--border))] bg-[rgb(var(--background))]/95 backdrop-blur-sm bottom-nav-safe md:hidden"
     >
-      {items.map(({ href, labelKey, icon: Icon }) => {
+      {items.filter(({ href }) => href !== '/notes' || notesEnabled).map(({ href, labelKey, icon: Icon }) => {
         const isActive = pathname.startsWith(href)
         const label = t(labelKey)
         return (

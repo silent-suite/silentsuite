@@ -1,6 +1,11 @@
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sidebar } from '../sidebar'
+import { useExperimentalStore } from '@/app/stores/use-experimental-store'
+
+vi.mock('@/app/stores/use-etebase-store', () => ({
+  useEtebaseStore: (selector: (state: { accountFingerprint: string }) => unknown) => selector({ accountFingerprint: 'sidebar-account' }),
+}))
 
 const state = vi.hoisted(() => ({ preferenceStatus: 'loading', miniCalendar: vi.fn() }))
 
@@ -21,10 +26,24 @@ vi.mock('@/app/(app)/calendar/components/MiniCalendar', () => ({
 vi.mock('@/app/components/CalendarListPanel', () => ({ CalendarListPanel: () => <div>calendar lists</div> }))
 vi.mock('@/app/components/TaskListPanel', () => ({ TaskListPanel: () => null }))
 vi.mock('@/app/components/ContactListPanel', () => ({ ContactListPanel: () => null }))
+vi.mock('@/app/components/NotebookListPanel', () => ({ NotebookListPanel: () => null }))
 vi.mock('@/app/components/OnboardingChecklist', () => ({ OnboardingChecklist: () => null }))
 
 describe('Sidebar preference readiness', () => {
-  beforeEach(() => { state.preferenceStatus = 'loading'; state.miniCalendar.mockClear() })
+  beforeEach(() => {
+    state.preferenceStatus = 'loading'
+    state.miniCalendar.mockClear()
+    useExperimentalStore.setState({ hydrated: true, notesAccounts: [] })
+  })
+
+  it('only exposes Notes after opting in', () => {
+    const view = render(<Sidebar />)
+    expect(screen.queryByRole('link', { name: 'notes' })).not.toBeInTheDocument()
+    view.unmount()
+    useExperimentalStore.setState({ notesAccounts: ['sidebar-account'] })
+    render(<Sidebar />)
+    expect(screen.getByRole('link', { name: 'notes' })).toHaveAttribute('href', '/notes')
+  })
 
   it('keeps navigation and calendar lists visible without mounting MiniCalendar while pending', () => {
     render(<Sidebar />)

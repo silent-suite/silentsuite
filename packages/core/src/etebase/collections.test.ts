@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { listCollections, updateCollectionMeta } from './collections.js';
+import { createItem, listCollections, updateCollectionMeta, updateItem } from './collections.js';
 
 describe('listCollections', () => {
   it('filters deleted collection tombstones', async () => {
@@ -47,5 +47,63 @@ describe('updateCollectionMeta', () => {
     });
     expect(collectionManager.upload).toHaveBeenCalledWith(collection);
     expect(result).toBe(collection);
+  });
+});
+
+describe('createItem', () => {
+  it('passes name and numeric mtime through to the item manager', async () => {
+    const created = {
+      uid: 'item-1',
+      getMeta: vi.fn().mockReturnValue({ name: 'Shopping list', mtime: 1_700_000_000_000 }),
+      setMeta: vi.fn(),
+    };
+    const itemManager = {
+      create: vi.fn().mockResolvedValue(created),
+      batch: vi.fn().mockResolvedValue(undefined),
+    };
+    const account = {
+      getCollectionManager: vi.fn().mockReturnValue({
+        getItemManager: vi.fn().mockReturnValue(itemManager),
+      }),
+    };
+
+    await createItem(account as any, { uid: 'col-1' } as any, '- apples', {
+      name: 'Shopping list',
+      mtime: 1_700_000_000_000,
+    });
+
+    expect(itemManager.create).toHaveBeenCalledWith(
+      { name: 'Shopping list', mtime: 1_700_000_000_000 },
+      '- apples',
+    );
+    expect(itemManager.batch).toHaveBeenCalledWith([created]);
+  });
+});
+
+describe('updateItem', () => {
+  it('merges item metadata instead of replacing it', async () => {
+    const item = {
+      uid: 'item-1',
+      getMeta: vi.fn().mockReturnValue({ name: 'Old title', mtime: 1 }),
+      setMeta: vi.fn().mockResolvedValue(undefined),
+      setContent: vi.fn().mockResolvedValue(undefined),
+    };
+    const itemManager = {
+      batch: vi.fn().mockResolvedValue(undefined),
+    };
+    const account = {
+      getCollectionManager: vi.fn().mockReturnValue({
+        getItemManager: vi.fn().mockReturnValue(itemManager),
+      }),
+    };
+
+    await updateItem(account as any, { uid: 'col-1' } as any, item as any, 'new body', {
+      name: 'New title',
+      mtime: 2,
+    });
+
+    expect(item.setMeta).toHaveBeenCalledWith({ name: 'New title', mtime: 2 });
+    expect(item.setContent).toHaveBeenCalledWith('new body');
+    expect(itemManager.batch).toHaveBeenCalledWith([item]);
   });
 });

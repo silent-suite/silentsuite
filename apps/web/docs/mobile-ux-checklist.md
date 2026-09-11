@@ -71,6 +71,18 @@ that every item in the per-area checklists below is reachable with touch.
 - [ ] Search / filter on mobile — **not implemented** (no task search yet).
       Tracked as a child issue.
 
+### Notes
+
+- [x] Reachable on mobile — Notes is a top-level item in the bottom nav
+  (between Tasks and Contacts, matching the desktop sidebar order).
+- [x] Primary create reachable on mobile — "New note" header button (visible on
+  all widths).
+- [x] Collection switching reachable on mobile — folder button opens the
+  notebooks sheet (`type="notes"`).
+- [x] Search reachable on mobile — search field above the note list.
+- [x] List ↔ editor navigation on mobile — list hides when a note is open and a
+  back control returns to the list.
+
 ### Contacts
 
 - [x] Primary create reachable on mobile — "New Contact" header button (visible
@@ -115,6 +127,10 @@ Responsive reachability smoke tests live alongside each page:
 - `app/(app)/tasks/__tests__/page.test.tsx`
 - `app/(app)/contacts/__tests__/page.test.tsx`
 - `app/(app)/calendar/__tests__/page.test.tsx`
+- `app/(app)/notes/__tests__/page.test.tsx`
+
+Bottom-nav tab access and active state (including the Notes tab) are covered by
+`app/components/__tests__/bottom-nav.test.tsx`.
 
 They assert that the primary create action, the collection switcher, and (where
 applicable) search render on mobile. jsdom does not evaluate CSS media queries,

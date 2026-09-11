@@ -14,7 +14,7 @@ export const REGISTERED_DOCS_PATHS = new Set([
   '/self-hosting/manual-setup', '/self-hosting/quick-start', '/self-hosting/requirements',
   '/self-hosting/troubleshooting', '/self-hosting/uninstalling', '/self-hosting/updating',
   '/user-guide', '/user-guide/calendar', '/user-guide/contacts', '/user-guide/encryption-explained',
-  '/user-guide/faq', '/user-guide/getting-started', '/user-guide/tasks', '/user-guide/apps',
+  '/user-guide/faq', '/user-guide/getting-started', '/user-guide/notes', '/user-guide/tasks', '/user-guide/apps',
   '/user-guide/apps/android', '/user-guide/apps/dav-bridge', '/user-guide/apps/evolution',
   '/user-guide/apps/gnome', '/user-guide/apps/ios', '/user-guide/apps/kde',
   '/user-guide/apps/linux-bridge', '/user-guide/apps/macos', '/user-guide/apps/tasks-org',

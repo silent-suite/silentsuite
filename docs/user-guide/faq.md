@@ -4,13 +4,13 @@
 
 ### What is SilentSuite?
 
-A privacy-focused, end-to-end encrypted sync service for calendar, contacts, and tasks. Your data is encrypted on your device before it reaches the server. The server never sees plaintext — not even item counts or collection names.
+A privacy-focused, end-to-end encrypted sync service for calendar, contacts, tasks, and notes. Your data is encrypted on your device before it reaches the server. The server never sees plaintext — not even item counts or collection names.
 
 ### What's available right now?
 
 The current beta covers:
 
-- **Web app** at [app.silentsuite.io](https://app.silentsuite.io) — calendar, contacts, tasks, import/export, settings, admin
+- **Web app** at [app.silentsuite.io](https://app.silentsuite.io) — calendar, contacts, tasks, Markdown notes, import/export, settings, admin
 - **Android** — Google Play, Obtainium, Zapstore, and signed APKs from GitHub Releases. Official F-Droid inclusion is pending.
 - **Desktop bridge** — CalDAV/CardDAV bridge for Thunderbird, Apple Calendar, Evolution, etc., on Linux / macOS / Windows
 - **Self-hosting** — two-container Docker stack (PostgreSQL + SilentSuite server)
@@ -25,7 +25,6 @@ On the roadmap, not yet shipped:
 - OAuth-based one-click import from Google / iCloud
 - Push notifications
 - Multiple collections per account ([#88](https://github.com/silent-suite/silentsuite/issues/88))
-- First-class encrypted notes ([#45](https://github.com/silent-suite/silentsuite/issues/45))
 
 ### Is SilentSuite free?
 

@@ -20,3 +20,14 @@ export interface SyncEngineOptions {
   maxReconnectDelayMs?: number;
   enableOfflineQueue?: boolean;
 }
+
+/**
+ * Etebase item metadata. The Etebase type specs use `name`, `mtime`, and an
+ * optional `type`; unknown keys written by other clients are preserved.
+ */
+export interface ItemMeta {
+  name?: string;
+  mtime?: number;
+  type?: string;
+  [key: string]: unknown;
+}

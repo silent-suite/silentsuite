@@ -828,6 +828,8 @@ async function resetInMemoryAccountState(reason: 'login' | 'logout' | 'invalid-h
       { useCalendarListStore },
       { useTaskListStore },
       { useContactListStore },
+      { useNoteStore },
+      { useNotebookStore },
       { useLabelSuggestionsStore },
       { useLabelColorStore },
       { usePreferencesStore },
@@ -840,6 +842,8 @@ async function resetInMemoryAccountState(reason: 'login' | 'logout' | 'invalid-h
       import('@/app/stores/use-calendar-list-store'),
       import('@/app/stores/use-task-list-store'),
       import('@/app/stores/use-contact-list-store'),
+      import('@/app/stores/use-note-store'),
+      import('@/app/stores/use-notebook-store'),
       import('@/app/stores/use-label-suggestions-store'),
       import('@/app/stores/use-label-color-store'),
       import('@/app/stores/use-preferences-store'),
@@ -857,6 +861,7 @@ async function resetInMemoryAccountState(reason: 'login' | 'logout' | 'invalid-h
     })
     useTaskStore.setState({ tasks: [], isLoading: false, syncStatus: 'synced' })
     useContactStore.setState({ contacts: [], isLoading: false, syncStatus: 'synced', searchQuery: '' })
+    useNoteStore.setState({ notes: [], isLoading: false, syncStatus: 'synced' })
     useCalendarListStore.setState({
       calendars: [{ id: 'default', name: 'Personal', color: '#10b981', visible: true }],
       defaultCalendarId: 'default',
@@ -867,6 +872,10 @@ async function resetInMemoryAccountState(reason: 'login' | 'logout' | 'invalid-h
     })
     useContactListStore.setState({
       lists: [{ id: 'default', name: 'My Contacts', color: '#8b5cf6', visible: true }],
+      activeListId: 'all',
+    })
+    useNotebookStore.setState({
+      lists: [{ id: 'default', name: 'Personal Notes', color: '#f59e0b', visible: true }],
       activeListId: 'all',
     })
     useLabelSuggestionsStore.getState().reset()
@@ -934,6 +943,7 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') 
   localStorage.removeItem('silentsuite-calendar-lists')
   localStorage.removeItem('silentsuite-task-lists')
   localStorage.removeItem('silentsuite-contact-lists')
+  localStorage.removeItem('silentsuite-notebooks')
   localStorage.removeItem('silentsuite-label-colors')
   localStorage.removeItem('etebase_session')
   clearHostedValidationMarkers()

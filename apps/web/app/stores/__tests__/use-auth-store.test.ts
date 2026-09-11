@@ -16,9 +16,11 @@ const {
   calendarSetState,
   taskSetState,
   contactSetState,
+  noteSetState,
   calendarListSetState,
   taskListSetState,
   contactListSetState,
+  notebookSetState,
   labelSuggestionsReset,
   labelColorSetState,
   preferencesReset,
@@ -29,9 +31,11 @@ const {
   calendarSetState: vi.fn(),
   taskSetState: vi.fn(),
   contactSetState: vi.fn(),
+  noteSetState: vi.fn(),
   calendarListSetState: vi.fn(),
   taskListSetState: vi.fn(),
   contactListSetState: vi.fn(),
+  notebookSetState: vi.fn(),
   labelSuggestionsReset: vi.fn(),
   labelColorSetState: vi.fn(),
   preferencesReset: vi.fn(),
@@ -85,9 +89,11 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
 vi.mock('@/app/stores/use-calendar-store', () => ({ useCalendarStore: { setState: calendarSetState } }))
 vi.mock('@/app/stores/use-task-store', () => ({ useTaskStore: { setState: taskSetState } }))
 vi.mock('@/app/stores/use-contact-store', () => ({ useContactStore: { setState: contactSetState } }))
+vi.mock('@/app/stores/use-note-store', () => ({ useNoteStore: { setState: noteSetState } }))
 vi.mock('@/app/stores/use-calendar-list-store', () => ({ useCalendarListStore: { setState: calendarListSetState } }))
 vi.mock('@/app/stores/use-task-list-store', () => ({ useTaskListStore: { setState: taskListSetState } }))
 vi.mock('@/app/stores/use-contact-list-store', () => ({ useContactListStore: { setState: contactListSetState } }))
+vi.mock('@/app/stores/use-notebook-store', () => ({ useNotebookStore: { setState: notebookSetState } }))
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({
   useLabelSuggestionsStore: { getState: () => ({ reset: labelSuggestionsReset }) },
 }))
@@ -148,9 +154,11 @@ describe('useAuthStore', () => {
     calendarSetState.mockClear()
     taskSetState.mockClear()
     contactSetState.mockClear()
+    noteSetState.mockClear()
     calendarListSetState.mockClear()
     taskListSetState.mockClear()
     contactListSetState.mockClear()
+    notebookSetState.mockClear()
     labelSuggestionsReset.mockClear()
     labelColorSetState.mockClear()
     preferencesReset.mockClear()
@@ -1275,9 +1283,11 @@ describe('useAuthStore', () => {
     expect(calendarSetState).toHaveBeenCalledWith(expect.objectContaining({ events: [] }))
     expect(taskSetState).toHaveBeenCalledWith(expect.objectContaining({ tasks: [] }))
     expect(contactSetState).toHaveBeenCalledWith(expect.objectContaining({ contacts: [] }))
+    expect(noteSetState).toHaveBeenCalledWith(expect.objectContaining({ notes: [] }))
     expect(calendarListSetState).toHaveBeenCalledWith(expect.objectContaining({ defaultCalendarId: 'default' }))
     expect(taskListSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
     expect(contactListSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
+    expect(notebookSetState).toHaveBeenCalledWith(expect.objectContaining({ activeListId: 'all' }))
     expect(labelSuggestionsReset).toHaveBeenCalledTimes(1)
     expect(labelColorSetState).toHaveBeenCalledWith({ colors: {} })
     expect(preferencesReset).toHaveBeenCalled()
@@ -1306,6 +1316,42 @@ describe('useAuthStore', () => {
     await useAuthStore.getState().logout()
 
     expect(offlineQueueClearAll).toHaveBeenCalledTimes(1)
+  })
+
+  it('logout removes every persisted list store, including notebooks', async () => {
+    const persistedKeys = [
+      'silentsuite-calendar-lists',
+      'silentsuite-task-lists',
+      'silentsuite-contact-lists',
+      'silentsuite-notebooks',
+      'silentsuite-label-colors',
+    ]
+    for (const key of persistedKeys) localStorage.setItem(key, '{"state":{"lists":[{"id":"private"}]}}')
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    for (const key of persistedKeys) expect(localStorage.getItem(key)).toBeNull()
+  })
+
+  it('removes persisted notebooks even when the in-memory reset fails', async () => {
+    localStorage.setItem('silentsuite-notebooks', '{"state":{"lists":[{"id":"private"}]}}')
+    notebookSetState.mockImplementationOnce(() => {
+      throw new Error('notebook reset failed')
+    })
+    useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro' },
+      isAuthenticated: true,
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true } as Response)
+
+    await useAuthStore.getState().logout()
+
+    expect(localStorage.getItem('silentsuite-notebooks')).toBeNull()
   })
 
   it('login clears the offline queue after Etebase credentials succeed but before storing a new session', async () => {

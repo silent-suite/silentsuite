@@ -13,6 +13,7 @@ const allTabs = [
   { label: 'Desktop', href: '/settings/desktop' },
   { label: 'Import', href: '/settings/import' },
   { label: 'Export', href: '/settings/export' },
+  { label: 'Experimental', href: '/settings/experimental' },
 ]
 
 const tabs = isSelfHosted

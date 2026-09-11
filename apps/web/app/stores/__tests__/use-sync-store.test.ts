@@ -8,7 +8,7 @@ const etebaseMock = vi.hoisted(() => ({
     account: {} as unknown,
     accountFingerprint: 'test-account',
     syncEngine: null as { syncNow: ReturnType<typeof vi.fn> } | null,
-    domainLoadState: { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' },
+    domainLoadState: { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', notes: 'loaded', preferences: 'unknown' },
     reconcileCollections: vi.fn().mockResolvedValue(undefined),
     refreshCollection: vi.fn().mockResolvedValue([]),
     replayQueuedMutation: vi.fn(),
@@ -38,6 +38,7 @@ vi.mock('@silentsuite/core', () => ({
   deserializeTask: vi.fn(),
   deserializeContact: vi.fn(),
   deserializeCalendarEvent: vi.fn(),
+  noteFromEtebaseItem: vi.fn((uid: string, content: string) => ({ id: uid, uid, title: 'note', content })),
 }))
 
 vi.mock('@/app/stores/use-task-store', () => ({
@@ -46,6 +47,10 @@ vi.mock('@/app/stores/use-task-store', () => ({
 
 vi.mock('@/app/stores/use-contact-store', () => ({
   useContactStore: { getState: () => ({ syncFromRemote: vi.fn() }) },
+}))
+
+vi.mock('@/app/stores/use-note-store', () => ({
+  useNoteStore: { getState: () => ({ syncFromRemote: vi.fn() }) },
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
@@ -83,7 +88,7 @@ function resetStore() {
   etebaseMock.state.account = {}
   etebaseMock.state.accountFingerprint = 'test-account'
   etebaseMock.state.syncEngine = null
-  etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', preferences: 'unknown' }
+  etebaseMock.state.domainLoadState = { tasks: 'loaded', contacts: 'loaded', calendar: 'loaded', notes: 'loaded', preferences: 'unknown' }
   etebaseMock.state.reconcileCollections.mockReset().mockResolvedValue(undefined)
   etebaseMock.state.refreshCollection.mockReset().mockResolvedValue([])
   etebaseMock.state.replayQueuedMutation.mockReset()
@@ -215,10 +220,11 @@ describe('useSyncStore', () => {
     await flushPromises()
     expect(etebaseMock.state.reconcileCollections).toHaveBeenCalledTimes(1)
     expect(syncNow).toHaveBeenCalledTimes(1)
-    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(3)
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledTimes(4)
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('tasks')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('contacts')
     expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('calendar')
+    expect(etebaseMock.state.refreshCollection).toHaveBeenCalledWith('notes')
 
     const reconcileOrder = etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!
     const firstRefreshOrder = etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!
@@ -267,7 +273,7 @@ describe('useSyncStore', () => {
       return [{ entry, success: true, itemUid: result.itemUid }]
     })
 
-    await useSyncStore.getState().replayOfflineQueue()
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(1)
 
     expect(etebaseMock.state.replayQueuedMutation).toHaveBeenCalledWith(expect.objectContaining({ type: 'move', itemUid: 'item-old' }), expect.objectContaining({ accountFingerprint: 'test-account' }), undefined)
     expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ id: 'item-new', calendarId: 'cal-b' }])

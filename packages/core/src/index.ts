@@ -17,6 +17,7 @@ export {
   COLLECTION_TYPE_CALENDAR,
   COLLECTION_TYPE_TASKS,
   COLLECTION_TYPE_CONTACTS,
+  COLLECTION_TYPE_NOTES,
   COLLECTION_TYPE_PREFERENCES,
   COLLECTION_TYPE_LABEL_INDEX,
 } from './etebase/constants.js';
@@ -29,6 +30,7 @@ export type {
   SyncChangeEvent,
   CollectionAccessLevel,
   SyncEngineOptions,
+  ItemMeta,
 } from './etebase/types.js';
 
 // Collection manager
@@ -101,6 +103,16 @@ export {
   getContactInitials,
 } from './models/contact.js';
 export type { Contact } from './models/contact.js';
+
+// Note model (Etebase Markdown notes / etebase.md.note)
+export {
+  isMarkdownNoteItem,
+  noteToItemMeta,
+  noteFromEtebaseItem,
+  serializeNote,
+  deserializeNote,
+} from './models/note.js';
+export type { Note } from './models/note.js';
 
 // Model types
 export type { DateRange, Priority, SortOrder } from './models/types.js';

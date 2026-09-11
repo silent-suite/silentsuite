@@ -202,8 +202,19 @@ def test_node_security_floor_matches_manifest_docs_and_sharp_lock_requirement():
 
     assert manifest["engines"]["node"] == ">=22.12.0"
     assert all("| **Node.js** | 22.12+ |" in path.read_text(encoding="utf-8") for path in docs)
-    sharp = re.search(r"sharp@0\.35\.3:.*?engines: \{node: '([^']+)'\}", lock, re.DOTALL)
-    assert sharp and sharp.group(1) == ">=20.9.0"
+    # Read sharp's engine floor from its single `packages:` entry, whatever the
+    # patch version, without letting a match run into a neighbouring entry.
+    sections = re.split(r"^(?=\S)", lock, flags=re.MULTILINE)
+    packages = [section for section in sections if section.startswith("packages:\n")]
+    assert len(packages) == 1, f"expected one packages section, found {len(packages)}"
+    headers = list(re.finditer(r"^  sharp@(\d+\.\d+\.\d+):\n", packages[0], re.MULTILINE))
+    versions = [header.group(1) for header in headers]
+    assert len(headers) == 1, f"expected one sharp packages entry, found {versions}"
+    rest = packages[0][headers[0].end():]
+    next_entry = re.search(r"^  \S", rest, re.MULTILINE)
+    body = rest[:next_entry.start()] if next_entry else rest
+    engines = re.findall(r"^    engines: \{node: '([^']+)'\}$", body, re.MULTILINE)
+    assert engines == [">=20.9.0"], f"sharp@{versions[0]} engines: {engines}"
 
 
 def test_compile_and_contacts_evidence_failures_do_not_block_real_children():

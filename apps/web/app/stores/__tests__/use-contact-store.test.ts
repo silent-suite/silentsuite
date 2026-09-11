@@ -317,7 +317,7 @@ describe('useContactStore', () => {
       useEtebaseStore.setState({
         account: {},
         accountFingerprint: TEST_FINGERPRINT,
-        collections: { calendar: [], tasks: [], contacts: [], preferences: [], labelIndex: [] },
+        collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [], labelIndex: [] },
         itemCache: new Map([['remote-contact', {}]]),
       } as any)
       await useContactStore.getState().setContactFavorite('remote-contact', true)
