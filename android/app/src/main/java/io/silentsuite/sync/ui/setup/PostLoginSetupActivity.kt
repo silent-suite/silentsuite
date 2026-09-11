@@ -157,6 +157,7 @@ class PostLoginSetupActivity : BaseActivity() {
             resumeSetupWork()
         }
         model.bootstrapRunning.observe(this) {
+            // Emits only for an explicit startup retry (start/finish), never on plain launch.
             // A successful retry may have reconciled a row/registry that was unreadable
             // during onCreate. Refresh its retained work owner before resuming effects.
             if (App.postLoginBootstrapSucceeded) initializeOwnedWork()

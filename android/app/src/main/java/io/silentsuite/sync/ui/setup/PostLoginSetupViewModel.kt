@@ -55,7 +55,11 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
     }
 
     val collections = MutableLiveData<CollectionsResult>()
-    val bootstrapRunning = MutableLiveData(false)
+    /**
+     * Deliberately unset until an explicit startup retry begins: a seeded value would dispatch at
+     * STARTED and add a second drain to every ordinary launch before the onResume drain.
+     */
+    val bootstrapRunning = MutableLiveData<Boolean>()
     val recoveryRemoval = MutableLiveData<RecoveryRemovalCoordinator.State>()
     private var initializedAccount: Account? = null
     private var started = false
