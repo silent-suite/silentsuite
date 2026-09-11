@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import type { Note, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { AccountBoundaryChangedError, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore } from '@/app/stores/use-notebook-store'
@@ -20,17 +21,29 @@ interface NoteState {
   syncStatus: SyncStatus
 }
 
+/**
+ * Every action captures the account epoch before its first await. Once logout
+ * or an account switch moves the epoch on, a late result belongs to the old
+ * account: it is never written into the store and never reported to the user.
+ */
 interface NoteActions {
-  /** Creates the note in Etebase first and only then adds it locally; throws if that fails. */
+  /**
+   * Creates the note in Etebase first and only then adds it locally; throws if
+   * that fails, or quietly with AccountBoundaryChangedError if the account changed.
+   */
   createNote: (note?: NewNote) => Promise<Note>
   /** Resolves true once the change is saved remotely or queued for offline replay. */
   updateNote: (id: string, patch: Partial<Pick<Note, 'title' | 'content'>>) => Promise<boolean>
-  /** Resolves false (and restores the note) when the server delete fails. */
+  /**
+   * Resolves false (and restores the note) when the server delete fails, and
+   * false without restoring anything when the account changed meanwhile.
+   */
   deleteNote: (id: string) => Promise<boolean>
   /**
    * Moves a note to another notebook. An Etebase item belongs to one
    * collection, so the note is recreated there and removed from its old
-   * notebook. Resolves with the note's new id, or null when nothing moved.
+   * notebook. Resolves with the note's new id, or null when nothing moved
+   * or the account changed meanwhile.
    */
   moveNote: (id: string, notebookId: string) => Promise<string | null>
   canWriteNote: (note: Note) => boolean
@@ -66,6 +79,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
 
       // The list only ever shows notes that already have an Etebase item UID,
       // so there is no window in which an entry exists but cannot be saved.
+      const accountEpoch = getAccountEpoch()
       const etebase = useEtebaseStore.getState()
       let itemUid: string | null = null
       try {
@@ -74,9 +88,13 @@ export const useNoteStore = create<NoteState & NoteActions>()(
           ? await etebase.createItem('notes', draft.content, undefined, notebookId, noteToItemMeta(draft))
           : null
       } catch (err) {
+        if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) {
+          throw new AccountBoundaryChangedError()
+        }
         console.error('[note-store] Failed to sync new note to Etebase', getSafeErrorDetails(err))
         showErrorToast('Failed to save note. Please try again.')
       }
+      if (!isCurrentAccountEpoch(accountEpoch)) throw new AccountBoundaryChangedError()
       // The etebase store already reported why the item was not created.
       if (!itemUid) throw new Error('Note could not be saved.')
 
@@ -90,6 +108,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       const existing = get().notes.find((n) => n.id === id)
       if (!existing || !get().canWriteNote(existing)) return false
 
+      const accountEpoch = getAccountEpoch()
       const updated: Note = { ...existing, ...patch, updated_at: new Date() }
       set((state) => ({ notes: state.notes.map((n) => (n.id === id ? updated : n)) }))
 
@@ -108,8 +127,9 @@ export const useNoteStore = create<NoteState & NoteActions>()(
           // edit by UID under its notebook instead of dropping it.
           collectionUid: existing.notebookId,
         })
-        return outcome !== false
+        return isCurrentAccountEpoch(accountEpoch) && outcome !== false
       } catch (err) {
+        if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
         console.error('[note-store] Failed to sync note update to Etebase', getSafeErrorDetails(err))
         showErrorToast('Failed to save note. Please try again.')
         return false
@@ -121,6 +141,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       const note = get().notes.find((n) => n.id === id)
       if (!note || !get().canWriteNote(note)) return false
 
+      const accountEpoch = getAccountEpoch()
       set((state) => ({ notes: state.notes.filter((n) => n.id !== id) }))
 
       const etebase = useEtebaseStore.getState()
@@ -129,13 +150,16 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       try {
         // The notebook lets the store queue the delete by UID when no item is in memory.
         const outcome = await etebase.deleteItem('notes', id, { collectionUid: note.notebookId })
+        if (!isCurrentAccountEpoch(accountEpoch)) return false
         if (outcome !== false) return true
       } catch (err) {
+        if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
         console.error('[note-store] Failed to sync note deletion to Etebase', getSafeErrorDetails(err))
         showErrorToast('Failed to delete note. Please try again.')
       }
 
-      // The server still has the note; put it back.
+      // The server still has the note; put it back, but never into another account's list.
+      if (!isCurrentAccountEpoch(accountEpoch)) return false
       set((state) => (state.notes.some((n) => n.id === id) ? state : { notes: [...state.notes, note] }))
       return false
     },
@@ -148,6 +172,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       const target = useNotebookStore.getState().lists.find((list) => list.id === notebookId)
       if (!target || !canWriteNotebook(target)) return null
 
+      const accountEpoch = getAccountEpoch()
       const etebase = useEtebaseStore.getState()
       if (!etebase.account || !etebase.itemCache.has(id)) return null
 
@@ -155,12 +180,13 @@ export const useNoteStore = create<NoteState & NoteActions>()(
         const { noteToItemMeta } = await import('@silentsuite/core')
         // A move is not an edit: the title and last-edit time travel with the note.
         const movedId = await etebase.moveItem('notes', id, existing.content, notebookId, existing.notebookId, noteToItemMeta(existing))
-        if (!movedId) return null
+        if (!movedId || !isCurrentAccountEpoch(accountEpoch)) return null
         set((state) => ({
           notes: state.notes.map((n) => (n.id === id ? { ...existing, id: movedId, uid: movedId, notebookId } : n)),
         }))
         return movedId
       } catch (err) {
+        if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
         console.error('[note-store] Failed to move note', getSafeErrorDetails(err))
         showErrorToast('Failed to move note. Please try again.')
         return null

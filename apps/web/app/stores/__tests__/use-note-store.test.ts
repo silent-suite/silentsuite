@@ -4,9 +4,58 @@ import { useNoteStore } from '../use-note-store'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useNotebookStore } from '../use-notebook-store'
 import { useAuthStore } from '../use-auth-store'
+import { AccountBoundaryChangedError, bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn() }))
 vi.mock('@/app/stores/use-toast-store', () => toastMock)
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+/**
+ * Account boundaries as the auth store crosses them: logout bumps the epoch
+ * and clears account state; replacement then loads the next account's notes.
+ */
+const OTHER_ACCOUNT_NOTE: Note = {
+  id: 'b-note',
+  uid: 'b-note',
+  title: 'B',
+  content: 'Account B body',
+  notebookId: 'b-notes',
+  created_at: new Date(0),
+  updated_at: new Date(0),
+}
+const boundaries = {
+  logout: { cross: () => {
+    bumpAccountEpoch()
+    useNoteStore.setState({ notes: [] })
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+  }, notesAfter: [] as Note[] },
+  replacement: { cross: () => {
+    bumpAccountEpoch()
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useNoteStore.setState({ notes: [OTHER_ACCOUNT_NOTE] })
+  }, notesAfter: [OTHER_ACCOUNT_NOTE] },
+}
+type Boundary = keyof typeof boundaries
+type Completion = 'success' | 'false' | 'throw' | 'boundary'
+const staleCases = (Object.keys(boundaries) as Boundary[]).flatMap((boundary) => (
+  (['success', 'false', 'throw', 'boundary'] as Completion[]).map((completion) => [boundary, completion] as const)
+))
+
+function settle<T>(pending: ReturnType<typeof deferred<T>>, completion: Completion, success: T, failure: T) {
+  if (completion === 'success') pending.resolve(success)
+  else if (completion === 'false') pending.resolve(failure)
+  else if (completion === 'throw') pending.reject(new Error('boom'))
+  else pending.reject(new AccountBoundaryChangedError())
+}
 
 function note(id: string, overrides: Partial<Note> = {}): Note {
   return {
@@ -296,6 +345,104 @@ describe('useNoteStore', () => {
       await expect(useNoteStore.getState().moveNote('missing', 'notes-2')).resolves.toBeNull()
       await expect(useNoteStore.getState().moveNote('note-1', 'notes-1')).resolves.toBe('note-1')
       expect(moveItem).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('account boundary while an action is in flight', () => {
+    it.each(staleCases)('delete never republishes the note after %s (%s)', async (boundary, completion) => {
+      const pending = deferred<'remote' | false>()
+      etebase({ deleteItem: vi.fn(() => pending.promise), itemCache: new Map([['note-1', {}]]) })
+      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body' })] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const result = useNoteStore.getState().deleteNote('note-1')
+      boundaries[boundary].cross()
+      settle(pending, completion, 'remote', false)
+
+      await expect(result).resolves.toBe(false)
+      expect(useNoteStore.getState().notes).toEqual(boundaries[boundary].notesAfter)
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+      errorSpy.mockRestore()
+    })
+
+    it.each(staleCases)('create rejects quietly without publishing after %s (%s)', async (boundary, completion) => {
+      const pending = deferred<string | null>()
+      const createItem = vi.fn(() => pending.promise)
+      etebase({ createItem })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const result = useNoteStore.getState().createNote({ title: 'A', content: 'Account A body' })
+      await vi.waitFor(() => expect(createItem).toHaveBeenCalled())
+      boundaries[boundary].cross()
+      settle(pending, completion, 'a-note', null)
+
+      await expect(result).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+      expect(useNoteStore.getState().notes).toEqual(boundaries[boundary].notesAfter)
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+      errorSpy.mockRestore()
+    })
+
+    it.each(staleCases)('move leaves the current store alone after %s (%s)', async (boundary, completion) => {
+      const pending = deferred<string | null>()
+      const moveItem = vi.fn(() => pending.promise)
+      etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
+      useNotebookStore.setState({
+        lists: [
+          { id: 'notes-1', name: 'Notes', color: '#fff', visible: true, accessLevel: 1 },
+          { id: 'notes-2', name: 'Work', color: '#00f', visible: true, accessLevel: 2 },
+        ],
+      })
+      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body' })] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const result = useNoteStore.getState().moveNote('note-1', 'notes-2')
+      await vi.waitFor(() => expect(moveItem).toHaveBeenCalled())
+      boundaries[boundary].cross()
+      settle(pending, completion, 'note-moved', null)
+
+      await expect(result).resolves.toBeNull()
+      expect(useNoteStore.getState().notes).toEqual(boundaries[boundary].notesAfter)
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+      errorSpy.mockRestore()
+    })
+
+    it.each(staleCases)('update reports nothing saved and stays quiet after %s (%s)', async (boundary, completion) => {
+      const pending = deferred<'remote' | false>()
+      const updateItem = vi.fn(() => pending.promise)
+      etebase({ updateItem, itemCache: new Map([['note-1', {}]]) })
+      useNoteStore.setState({ notes: [note('note-1')] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const result = useNoteStore.getState().updateNote('note-1', { content: 'Account A edit' })
+      await vi.waitFor(() => expect(updateItem).toHaveBeenCalled())
+      boundaries[boundary].cross()
+      settle(pending, completion, 'remote', false)
+
+      await expect(result).resolves.toBe(false)
+      expect(useNoteStore.getState().notes).toEqual(boundaries[boundary].notesAfter)
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+      expect(errorSpy).not.toHaveBeenCalled()
+      errorSpy.mockRestore()
+    })
+
+    it('still restores a note and reports the failure when the same account\'s delete throws', async () => {
+      const original = note('note-1')
+      const pending = deferred<'remote' | false>()
+      etebase({ deleteItem: vi.fn(() => pending.promise), itemCache: new Map([['note-1', {}]]) })
+      useNoteStore.setState({ notes: [original] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      const result = useNoteStore.getState().deleteNote('note-1')
+      expect(useNoteStore.getState().notes).toEqual([])
+      pending.reject(new Error('boom'))
+
+      await expect(result).resolves.toBe(false)
+      expect(useNoteStore.getState().notes).toEqual([original])
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to delete note. Please try again.')
+      errorSpy.mockRestore()
     })
   })
 
