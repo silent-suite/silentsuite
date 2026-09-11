@@ -58,6 +58,7 @@ object PostLoginSetupOrchestrator {
     data class Input(
         val state: PostLoginSetupState,
         val ownership: Ownership,
+        val bootstrapSucceeded: Boolean,
         val syncConfiguration: SyncConfigurationOutcome = SyncConfigurationOutcome.NOT_STARTED,
         val inventory: InventoryOutcome = InventoryOutcome.NOT_STARTED,
         val userDecision: UserDecision = UserDecision.NONE,
@@ -66,6 +67,7 @@ object PostLoginSetupOrchestrator {
     )
 
     sealed class Decision {
+        object ShowBootstrapFailure : Decision()
         object RequireRecovery : Decision()
         object ConfigureAndroidSync : Decision()
         object ShowSyncConfigurationFailure : Decision()
@@ -93,6 +95,9 @@ object PostLoginSetupOrchestrator {
     }
 
     fun decide(input: Input): Decision {
+        // A saved COMPLETE row does not prove that this process finished startup.
+        // Withhold even cleanup effects until ownership reconciliation has succeeded.
+        if (!input.bootstrapSucceeded) return Decision.ShowBootstrapFailure
         when (input.ownership) {
             Ownership.MISSING_GENERATION,
             Ownership.GENERATION_MISMATCH -> return Decision.ResolveInAndroidSettings

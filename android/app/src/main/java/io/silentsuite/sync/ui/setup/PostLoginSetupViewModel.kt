@@ -12,6 +12,7 @@ import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.FetchOptions
 import com.etebase.client.ItemMetadata
 import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
@@ -54,6 +55,7 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
     }
 
     val collections = MutableLiveData<CollectionsResult>()
+    val bootstrapRunning = MutableLiveData(false)
     val recoveryRemoval = MutableLiveData<RecoveryRemovalCoordinator.State>()
     private var initializedAccount: Account? = null
     private var started = false
@@ -92,6 +94,34 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
         if (initializedAccount == account) return
         check(initializedAccount == null) { "PostLoginSetupViewModel cannot be reused for another account" }
         initializedAccount = account
+    }
+
+    /** Explicit, single-flight startup retry retained across Activity recreation. */
+    fun retryBootstrap(account: Account, creationId: String) {
+        if (bootstrapRunning.value == true) return
+        val context = getApplication<Application>().applicationContext
+        val manager = AccountManager.get(context)
+        if (ExactAccountRouting.validate(account, creationId, App.accountType, manager) == null) return
+        bootstrapRunning.value = true
+        viewModelScope.launch {
+            try {
+                val succeeded = withContext(Dispatchers.IO) {
+                    if (ExactAccountRouting.validate(account, creationId, App.accountType, manager) == null) {
+                        false
+                    } else {
+                        PostLoginSetupMigration.bootstrap(context)
+                    }
+                }
+                App.postLoginBootstrapSucceeded = succeeded
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Startup diagnostics must not expose account or session exception details.
+                App.postLoginBootstrapSucceeded = false
+            } finally {
+                bootstrapRunning.value = false
+            }
+        }
     }
 
     /** Retained application-context owner; no Activity is retained by platform callbacks. */

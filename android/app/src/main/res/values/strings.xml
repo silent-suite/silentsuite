@@ -633,6 +633,8 @@
     <string name="post_login_account_created_body">Your account is safe on this device. SilentSuite is configuring Android sync.</string>
     <string name="post_login_sync_configuration_failed_title">Android sync setup could not finish</string>
     <string name="post_login_sync_configuration_failed_body">Your account is safe. Try configuring Android sync again.</string>
+    <string name="post_login_bootstrap_failed_title">SilentSuite could not finish starting</string>
+    <string name="post_login_bootstrap_failed_body">Try the startup checks again. You do not need to remove your account or clear app data.</string>
     <string name="post_login_collections_title">Preparing your encrypted collections…</string>
     <string name="post_login_collections_body">Checking your calendars, contacts, and tasks.</string>
     <string name="post_login_collections_failed_title">Collections could not be prepared</string>

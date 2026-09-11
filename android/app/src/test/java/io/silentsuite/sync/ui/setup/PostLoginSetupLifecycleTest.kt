@@ -62,6 +62,7 @@ class PostLoginSetupLifecycleTest {
         PostLoginSetupOrchestrator.Input(
             state = state,
             ownership = PostLoginSetupOrchestrator.Ownership.EXACT,
+            bootstrapSucceeded = true,
             syncConfiguration = sync,
             inventory = inventory,
             userDecision = userDecision,

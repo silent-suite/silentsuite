@@ -95,24 +95,7 @@ class PostLoginSetupActivity : BaseActivity() {
             return
         }
 
-        val creationId = accountCreationId
-        if (creationId != null) {
-            val record = registry().get(account.type, account.name)
-            val ownsRecovery = AccountCreationRegistry.owns(record, creationId)
-            val rowExists = account in accountManager.getAccountsByType(App.accountType)
-            val durableState = state()
-            when {
-                !rowExists && ownsRecovery ->
-                    model.initializeRecovery(account, creationId)
-                rowExists &&
-                    (durableState == PostLoginSetupState.CREATING ||
-                        durableState == PostLoginSetupState.RECOVERY_REQUIRED) &&
-                    ownsRecovery ->
-                    model.initializeRecovery(account, creationId)
-                exactAccount() != null && (record == null || ownsRecovery) ->
-                    model.initialize(account)
-            }
-        }
+        initializeOwnedWork()
 
         setContentView(R.layout.activity_post_login_setup)
         applySetupActionBarInsets(findViewById(R.id.setup_action_bar))
@@ -148,6 +131,13 @@ class PostLoginSetupActivity : BaseActivity() {
             submit(PostLoginSetupOrchestrator.UserDecision.REMOVE_INCOMPLETE)
         }
         findViewById<Button>(R.id.setup_retry_inventory).setOnClickListener {
+            if (!App.postLoginBootstrapSucceeded) {
+                val creationId = accountCreationId ?: return@setOnClickListener
+                if (exactAccount() == null) return@setOnClickListener
+                model.clearUserDecision()
+                model.retryBootstrap(account, creationId)
+                return@setOnClickListener
+            }
             if (
                 SetupContinuationPolicy.permits(
                     state(),
@@ -166,6 +156,13 @@ class PostLoginSetupActivity : BaseActivity() {
             render()
             resumeSetupWork()
         }
+        model.bootstrapRunning.observe(this) {
+            // A successful retry may have reconciled a row/registry that was unreadable
+            // during onCreate. Refresh its retained work owner before resuming effects.
+            if (App.postLoginBootstrapSucceeded) initializeOwnedWork()
+            render()
+            resumeSetupWork()
+        }
         model.recoveryRemoval.observe(this) { removal ->
             render()
             if (
@@ -177,6 +174,25 @@ class PostLoginSetupActivity : BaseActivity() {
             }
         }
         render()
+    }
+
+    private fun initializeOwnedWork() {
+        val creationId = accountCreationId ?: return
+        val record = registry().get(account.type, account.name)
+        val ownsRecovery = AccountCreationRegistry.owns(record, creationId)
+        val rowExists = account in accountManager.getAccountsByType(App.accountType)
+        val durableState = state()
+        when {
+            !rowExists && ownsRecovery ->
+                model.initializeRecovery(account, creationId)
+            rowExists &&
+                (durableState == PostLoginSetupState.CREATING ||
+                    durableState == PostLoginSetupState.RECOVERY_REQUIRED) &&
+                ownsRecovery ->
+                model.initializeRecovery(account, creationId)
+            exactAccount() != null && (record == null || ownsRecovery) ->
+                model.initialize(account)
+        }
     }
 
     override fun onResume() {
@@ -210,10 +226,11 @@ class PostLoginSetupActivity : BaseActivity() {
         return PostLoginSetupOrchestrator.Input(
             state = state(),
             ownership = ownership,
+            bootstrapSucceeded = App.postLoginBootstrapSucceeded,
             syncConfiguration = model.syncConfigurationOutcome(),
             inventory = model.inventoryOutcome,
             userDecision = model.pendingUserDecision(),
-            permissions = if (ownership == PostLoginSetupOrchestrator.Ownership.EXACT) {
+            permissions = if (App.postLoginBootstrapSucceeded && ownership == PostLoginSetupOrchestrator.Ownership.EXACT) {
                 permissionEvidence()
             } else {
                 emptyMap()
@@ -288,6 +305,7 @@ class PostLoginSetupActivity : BaseActivity() {
                 model.inventoryAndCreate(applicationContext, account, accountCreationId)
                 false
             }
+            PostLoginSetupOrchestrator.Decision.ShowBootstrapFailure,
             PostLoginSetupOrchestrator.Decision.WaitForInventory,
             PostLoginSetupOrchestrator.Decision.ShowInventoryRecovery,
             PostLoginSetupOrchestrator.Decision.AwaitIntegrationDecision,
@@ -591,6 +609,15 @@ class PostLoginSetupActivity : BaseActivity() {
     }
 
     private fun render() {
+        if (!App.postLoginBootstrapSucceeded) {
+            renderBootstrapFailure()
+            return
+        }
+        findViewById<View>(R.id.setup_stepper).visibility = View.VISIBLE
+        findViewById<Button>(R.id.setup_retry_inventory).apply {
+            setText(R.string.post_login_setup_retry_inventory)
+            isEnabled = true
+        }
         val current = state()
         val permissions =
             if (::accountManager.isInitialized && ownership() ==
@@ -695,6 +722,29 @@ class PostLoginSetupActivity : BaseActivity() {
         )
         findViewById<View>(R.id.setup_action_bar).visibility =
             visible(actionButtons.any { it.visibility == View.VISIBLE })
+    }
+
+    /** Startup failure is not incomplete-account recovery: never offer account removal. */
+    private fun renderBootstrapFailure() {
+        findViewById<TextView>(R.id.setup_title).setText(R.string.post_login_bootstrap_failed_title)
+        findViewById<TextView>(R.id.setup_body).setText(R.string.post_login_bootstrap_failed_body)
+        listOf(
+            R.id.setup_stepper,
+            R.id.setup_integration_details,
+            R.id.setup_status,
+            R.id.setup_done,
+            R.id.setup_continue_limited,
+            R.id.setup_skip_integrations,
+            R.id.setup_remove_incomplete,
+        ).forEach { findViewById<View>(it).visibility = View.GONE }
+        val exact = exactAccount() != null
+        findViewById<Button>(R.id.setup_retry_inventory).apply {
+            setText(R.string.retry)
+            visibility = visible(exact)
+            isEnabled = model.bootstrapRunning.value != true
+        }
+        findViewById<View>(R.id.setup_resolve_ambiguity).visibility = visible(!exact)
+        findViewById<View>(R.id.setup_action_bar).visibility = View.VISIBLE
     }
 
     private fun applySetupActionBarInsets(actionBar: View) =
