@@ -88,21 +88,23 @@ class AndroidTrackerScannerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "dependency-report.txt"
             target.write_text("com.google.firebase:firebase-analytics:22.0.0", encoding="utf-8")
+            today = dt.date.today()
             base = json.loads(MANIFEST.read_text(encoding="utf-8"))
             base["exceptions"] = [{
                 "signature_id": "firebase-analytics-dependency",
                 "path_regex": "dependency-report\\.txt$",
                 "rationale": "Fixture-only review record",
                 "owner": "security",
-                "reviewed_on": "2026-07-12",
-                "expires_on": (dt.date.today() + dt.timedelta(days=30)).isoformat()
+                "reviewed_on": (today - dt.timedelta(days=30)).isoformat(),
+                "expires_on": (today + dt.timedelta(days=30)).isoformat()
             }]
             manifest = Path(tmp) / "manifest.json"
             manifest.write_text(json.dumps(base), encoding="utf-8")
             result = self.run_scan(target, manifest=manifest)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("1 reviewed exception", result.stdout)
-            base["exceptions"][0]["expires_on"] = "2000-01-01"
+            base["exceptions"][0]["reviewed_on"] = (today - dt.timedelta(days=60)).isoformat()
+            base["exceptions"][0]["expires_on"] = (today - dt.timedelta(days=1)).isoformat()
             manifest.write_text(json.dumps(base), encoding="utf-8")
             result = self.run_scan(target, manifest=manifest)
             self.assertEqual(result.returncode, 3)
