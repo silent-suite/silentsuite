@@ -21,6 +21,14 @@ export const DEFAULT_NOTEBOOK_COLORS = [
   '#f97316', // orange
 ]
 
+/**
+ * Shown before the account's note collections are known, and again when the
+ * server reports none. It has no access level, so nothing can be written to it.
+ */
+export const PLACEHOLDER_NOTEBOOKS: Notebook[] = [
+  { id: 'default', name: 'Personal Notes', color: '#f59e0b', visible: true },
+]
+
 /** Notes can only be written to notebooks the account has admin or read/write access to. */
 export function canWriteNotebook(notebook: Pick<Notebook, 'accessLevel'> | null | undefined): boolean {
   return notebook?.accessLevel === 1 || notebook?.accessLevel === 2
@@ -69,9 +77,7 @@ interface NotebookState {
 export const useNotebookStore = create<NotebookState>()(
   persist(
     (set, get) => ({
-      lists: [
-        { id: 'default', name: 'Personal Notes', color: '#f59e0b', visible: true },
-      ],
+      lists: PLACEHOLDER_NOTEBOOKS,
       activeListId: 'all',
 
       setActiveList: (id) => set({ activeListId: id }),
@@ -85,7 +91,12 @@ export const useNotebookStore = create<NotebookState>()(
       },
 
       replaceListsFromRemote: (lists) => {
-        if (lists.length === 0) return
+        // Callers pass the account's full collection inventory, so an empty
+        // one means every notebook is gone: none of the old ones may linger.
+        if (lists.length === 0) {
+          set({ lists: PLACEHOLDER_NOTEBOOKS, activeListId: 'all' })
+          return
+        }
         const current = get()
         const remoteIds = new Set(lists.map((list) => list.id))
         const currentById = new Map(current.lists.map((list) => [list.id, list]))

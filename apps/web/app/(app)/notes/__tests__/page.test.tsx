@@ -225,6 +225,20 @@ describe('NotesPage', () => {
       .toHaveAttribute('datetime', new Date(2025, 11, 31, 8, 0).toISOString())
   })
 
+  it('still lists notes when one carries an unusable date', () => {
+    loaded([
+      note('broken', { title: 'Broken date', updated_at: new Date(Number.NaN) }),
+      note('fine', { title: 'Fine', updated_at: new Date('2026-01-02T00:00:00Z') }),
+    ])
+    renderWithIntl(<NotesPage />)
+
+    expect(screen.getByRole('button', { name: /Broken date/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Fine/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Broken date/ }).querySelector('time'))
+      .not.toHaveAttribute('datetime')
+    expect(screen.getByRole('button', { name: /Broken date/ })).not.toHaveTextContent('Invalid Date')
+  })
+
   it('lists visible notes newest first, hides notes from hidden notebooks, and previews Markdown', async () => {
     loaded(
       [

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { canWriteNotebook, newNoteNotebook, useNotebookStore } from '../use-notebook-store'
+import { canWriteNotebook, newNoteNotebook, PLACEHOLDER_NOTEBOOKS, useNotebookStore } from '../use-notebook-store'
 
 const notebooks = [
   { id: 'notes-a', name: 'A', color: '#111', visible: true, accessLevel: 1 },
@@ -32,6 +32,17 @@ describe('useNotebookStore', () => {
       { id: 'notes-c', name: 'C', color: '#444', visible: true, accessLevel: 0 },
     ])
     expect(useNotebookStore.getState().activeListId).toBe('notes-b')
+  })
+
+  it('drops stale notebooks and the stale default when the account has no note collections', () => {
+    useNotebookStore.setState({ activeListId: 'notes-a' })
+
+    useNotebookStore.getState().replaceListsFromRemote([])
+
+    expect(useNotebookStore.getState().lists).toEqual(PLACEHOLDER_NOTEBOOKS)
+    expect(useNotebookStore.getState().activeListId).toBe('all')
+    // The placeholder is not a real collection, so nothing can be written to it.
+    expect(canWriteNotebook(useNotebookStore.getState().lists[0])).toBe(false)
   })
 
   it('toggles visibility and picks the default notebook', () => {

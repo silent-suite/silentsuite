@@ -27,7 +27,7 @@ Production smoke is mutation-free only when the account is already initialized. 
 
 - Use an approved internal/test account, or a customer/user-approved account where the user supplied the redacted diagnostics.
 - For production, get explicit owner approval first.
-- For production, confirm the account is already initialized with calendar, tasks, contacts, and notes collections before running the smoke. If it is a new/empty account or required collections are missing, abort production smoke. Accounts created before notes shipped get their default notebook on their first web sign-in after that deploy, so sign in once outside the smoke before treating such an account as initialized.
+- For production, confirm the account is already initialized with calendar, tasks, and contacts collections before running the smoke. If it is a new/empty account or required collections are missing, abort production smoke. Notes collections are optional: Notes is an experimental, default-off opt-in, and the first notebook is created only when the account turns Notes on in Settings → Experimental. Sign-in and restore never create one, so an account without notebooks is still initialized; do not opt the smoke account in during the smoke.
 - Use a browser profile approved for the smoke account.
 - Keep raw diagnostics in a temporary local file outside the repo and delete it after generating the report.
 
@@ -83,7 +83,7 @@ Production smoke has the same steps as preview, but with stricter gates:
 
 1. Get explicit owner approval for the production smoke.
 2. Use only an approved, already-initialized internal/test account or a user-approved account.
-3. Abort if the account is first-login, empty, partially initialized, or missing expected calendar/tasks/contacts/notes collections.
+3. Abort if the account is first-login, empty, partially initialized, or missing expected calendar/tasks/contacts collections. Missing notes collections are expected when the account has not opted in to Notes.
 4. Do not create, update, import, delete, or rename any data during the smoke.
 5. Open production with explicit debug opt-in:
 
@@ -118,7 +118,7 @@ The raw diagnostics in `sessionStorage` should be JSON under the key `silentsuit
   - `listItems:calendar`
   - `listItems:tasks`
   - `listItems:contacts`
-  - `listItems:notes`
+  - `listItems:notes` (still recorded as `ok` with zero collections when the account has not opted in to Notes)
   - `syncEngineTrackCollections`
   - `syncEngineStart`
 

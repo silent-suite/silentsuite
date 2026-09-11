@@ -82,12 +82,18 @@ const LAYOUT = {
   },
 } as const
 
+/** A note from a misbehaving client must not take the whole list down with it. */
+function isValidDate(date: Date): boolean {
+  return !Number.isNaN(date.getTime())
+}
+
 /**
  * Last-edit label for the list: the time for notes edited today, otherwise the
  * date in the user's preferred format (short month and day when following the
  * system format, with the year once it differs).
  */
 function formatNoteDate(date: Date, dateFormat: DateFormat, timeFormat: TimeFormat, locale: string, now = new Date()): string {
+  if (!isValidDate(date)) return ''
   if (date.toDateString() === now.toDateString()) {
     return date.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: timeFormat !== '24h' })
   }
@@ -153,7 +159,7 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
             <span className="min-w-0 truncate text-sm font-medium text-[rgb(var(--foreground))]">
               {note.title.trim() || t('untitled')}
             </span>
-            <time dateTime={note.updated_at.toISOString()} className="shrink-0 text-[11px] text-[rgb(var(--muted))]">
+            <time dateTime={isValidDate(note.updated_at) ? note.updated_at.toISOString() : undefined} className="shrink-0 text-[11px] text-[rgb(var(--muted))]">
               {dateLabel}
             </time>
           </div>
@@ -441,7 +447,7 @@ function NotesPageBody() {
     const hidden = new Set(notebooks.filter((notebook) => !notebook.visible).map((notebook) => notebook.id))
     return notes
       .filter((note) => !note.notebookId || !hidden.has(note.notebookId))
-      .sort((a, b) => b.updated_at.getTime() - a.updated_at.getTime())
+      .sort((a, b) => (b.updated_at.getTime() || 0) - (a.updated_at.getTime() || 0))
   }, [notes, notebooks])
 
   const visibleNotebooks = useMemo(() => notebooks.filter((notebook) => notebook.visible), [notebooks])

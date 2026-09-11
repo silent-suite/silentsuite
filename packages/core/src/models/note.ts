@@ -25,10 +25,23 @@ export function isMarkdownNoteItem(meta: { type?: string | null } | null | undef
   return meta.type == null || meta.type === '';
 }
 
+/** Largest millisecond offset from the epoch that a Date can represent. */
+const MAX_DATE_MS = 8_640_000_000_000_000;
+
+/**
+ * Note mtimes come from synced (possibly shared) item metadata and the local
+ * cache, so anything that would make an Invalid Date falls back to now.
+ */
+function validMtime(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= MAX_DATE_MS
+    ? value
+    : Date.now();
+}
+
 export function noteToItemMeta(note: Pick<Note, 'title' | 'updated_at'>): ItemMeta {
   return {
     name: note.title,
-    mtime: note.updated_at.getTime(),
+    mtime: validMtime(note.updated_at.getTime()),
   };
 }
 
@@ -38,9 +51,7 @@ export function noteFromEtebaseItem(
   meta: ItemMeta | null | undefined,
   notebookId?: string,
 ): Note {
-  const mtime = typeof meta?.mtime === 'number' && Number.isFinite(meta.mtime)
-    ? meta.mtime
-    : Date.now();
+  const mtime = validMtime(meta?.mtime);
   const title = typeof meta?.name === 'string' && meta.name.trim()
     ? meta.name
     : 'Untitled';
@@ -64,10 +75,10 @@ interface NoteCacheEnvelope {
 function isNoteCacheEnvelope(value: unknown): value is NoteCacheEnvelope {
   if (!value || typeof value !== 'object') return false;
   const record = value as Record<string, unknown>;
+  // mtime is range-checked when read, so a bad date never costs the body.
   return typeof record.title === 'string'
     && typeof record.content === 'string'
-    && typeof record.mtime === 'number'
-    && Number.isFinite(record.mtime);
+    && typeof record.mtime === 'number';
 }
 
 /**
@@ -78,7 +89,7 @@ export function serializeNote(note: Note): string {
   const envelope: NoteCacheEnvelope = {
     title: note.title,
     content: note.content,
-    mtime: note.updated_at.getTime(),
+    mtime: validMtime(note.updated_at.getTime()),
   };
   return JSON.stringify(envelope);
 }
@@ -88,14 +99,15 @@ export function deserializeNote(raw: string, uid: string, notebookId?: string): 
   try {
     const parsed: unknown = JSON.parse(raw);
     if (isNoteCacheEnvelope(parsed)) {
+      const mtime = validMtime(parsed.mtime);
       return {
         id: uid,
         uid,
         title: parsed.title.trim() ? parsed.title : 'Untitled',
         content: parsed.content,
         notebookId,
-        created_at: new Date(parsed.mtime),
-        updated_at: new Date(parsed.mtime),
+        created_at: new Date(mtime),
+        updated_at: new Date(mtime),
       };
     }
   } catch {
