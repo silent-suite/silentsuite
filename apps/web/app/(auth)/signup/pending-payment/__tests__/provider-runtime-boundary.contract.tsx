@@ -140,7 +140,7 @@ for (const provider of ['stripe', 'btcpay'] as const) describe(provider + ' runt
     const view = render(<PendingPaymentPage />)
     try {
       await settle()
-      const control = provider === 'stripe' ? screen.getByLabelText('Card details') : screen.getByRole('link', { name: 'Continue this Bitcoin payment' })
+      const control = provider === 'stripe' ? screen.getByLabelText('Card details') : screen.getByRole('link', { name: 'Continue this cryptocurrency payment' })
       const elements = provider === 'stripe' ? screen.getByTestId('stripe-elements') : null
       if (provider === 'stripe') fireEvent.change(control, { target: { value: 'entered card data' } })
       fixture.observe(async () => { throw new Error('private provider detail DO_NOT_LEAK') })

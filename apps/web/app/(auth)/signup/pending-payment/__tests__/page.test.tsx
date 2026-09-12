@@ -111,7 +111,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'confirmed', flow: { provider: 'stripe', status: 'provider_confirmed' } }))))
     render(<PendingPaymentPage />)
     await screen.findByTestId('step-create-paid-account')
-    expect(screen.queryByText('Bitcoin payment settled')).not.toBeInTheDocument()
+    expect(screen.queryByText('cryptocurrency payment settled')).not.toBeInTheDocument()
   })
   it('stale local invoice must not establish available invoice', async () => {
     sessionStorage.setItem('silentsuite-pending-crypto-invoice', 'stale-unbound-invoice')
@@ -186,8 +186,8 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))))
     render(<PendingPaymentPage />)
     fireEvent.click(await screen.findByRole('button', { name: 'Back' }))
-    const dialog = screen.getByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
-    expect(dialog).toHaveTextContent('Only continue if you haven’t sent payment. This checkout will be cancelled. Do not send Bitcoin or Lightning to its old payment details.')
+    const dialog = screen.getByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+    expect(dialog).toHaveTextContent('Only continue if you haven’t sent cryptocurrency for this payment. This checkout will be cancelled. Do not send Bitcoin, Lightning or Monero to its old payment details.')
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cancel and go back' })).toBeEnabled()
     expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false)
@@ -201,7 +201,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     render(<PendingPaymentPage />)
     const back = await screen.findByRole('button', { name: 'Back' })
     fireEvent.click(back)
-    const dialog = screen.getByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
+    const dialog = screen.getByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Stay' })).toHaveFocus())
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     // The page behind the dialog is inert: its Back control is no longer accessible.
@@ -246,7 +246,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     const disclosure = { kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null, monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null, cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: true, refundWindowDays: 30, bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null }
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' }, continuation: { requestKey: pending.paymentSessionRequestKey, provider: 'btcpay', providerObjectId: 'invoice_exact', checkoutUrl: 'https://btcpay.silentsuite.io/i/exact', disclosure } }))))
     render(<PendingPaymentPage />)
-    expect(await screen.findByRole('link', { name: 'Continue this Bitcoin payment' })).toHaveAttribute('href', 'https://btcpay.silentsuite.io/i/exact')
+    expect(await screen.findByRole('link', { name: 'Continue this cryptocurrency payment' })).toHaveAttribute('href', 'https://btcpay.silentsuite.io/i/exact')
     expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(['https://billing.test/auth/signup/payment-session/v2/current'])
   })
 
@@ -468,7 +468,7 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<PendingPaymentPage />)
     await settle()
-    const control = provider === 'stripe' ? screen.getByLabelText('Card details') : screen.getByRole('link', { name: 'Continue this Bitcoin payment' })
+    const control = provider === 'stripe' ? screen.getByLabelText('Card details') : screen.getByRole('link', { name: 'Continue this cryptocurrency payment' })
     if (provider === 'stripe') fireEvent.change(control, { target: { value: 'entered card data' } })
     fetchMock.mockImplementation(async () => new Response('{}', { status: 429, headers: { 'Retry-After': '600' } }))
     await advance(4 * 60_000)
@@ -514,7 +514,7 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     vi.stubGlobal('fetch', vi.fn(async () => payableRecovery('btcpay')))
     const view = render(<PendingPaymentPage />)
     await settle()
-    const control = screen.getByRole('link', { name: 'Continue this Bitcoin payment' })
+    const control = screen.getByRole('link', { name: 'Continue this cryptocurrency payment' })
     if (outcome === 'identity' || outcome === 'logout') {
       authState.pendingSignup = outcome === 'logout' ? null : anonymousRecoverySignup({ paymentSessionRequestKey: '6fd4d86d-34de-4b82-9a66-9598ddf6e02f' })
       vi.mocked(fetch).mockImplementation(async () => new Response('{}', { status: 503 }))

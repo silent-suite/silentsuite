@@ -5,6 +5,8 @@ import { ArrowLeft, ExternalLink } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { BILLING_API_URL } from '@/app/lib/config'
 
+const methodOrder = (id: string) => ((({ 'BTC-CHAIN': 0, BTC: 0, 'BTC-LN': 1, 'XMR-CHAIN': 2 }) as Record<string, number>)[id] ?? 3)
+
 type CryptoPaymentMethod = {
   id: string
   label: string
@@ -43,7 +45,7 @@ type BitcoinPaymentPanelProps = {
 
 export default function BitcoinPaymentPanel({
   session,
-  title = 'Pay with Bitcoin',
+  title = 'Bitcoin, Lightning and Monero',
   description = 'Scan the QR code or copy the payment details. Access unlocks after BTCPay settlement confirms.',
   settledMessage = 'Payment settled. Your access is active.',
   onBack,
@@ -69,19 +71,20 @@ export default function BitcoinPaymentPanel({
           credentials: 'include',
           headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
         })
-        if (!res.ok) throw new Error('Could not load Bitcoin payment details.')
+        if (!res.ok) throw new Error('Could not load cryptocurrency payment details.')
         const data = await res.json()
         if (cancelled) return
         const methods = Array.isArray(data.paymentMethods) ? data.paymentMethods as CryptoPaymentMethod[] : []
         if (!methods.some((method) => method.qrValue || method.paymentLink || method.address)) {
-          throw new Error('Could not load Bitcoin payment details.')
+          throw new Error('Could not load cryptocurrency payment details.')
         }
+        methods.sort((a, b) => methodOrder(a.id) - methodOrder(b.id))
         setPaymentMethods(methods)
         setSelectedMethodId(methods[0]?.id ?? null)
         setStatus('pending')
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Could not load Bitcoin payment details.')
+          setError(err instanceof Error ? err.message : 'Could not load cryptocurrency payment details.')
           setStatus('error')
         }
       }
@@ -101,7 +104,7 @@ export default function BitcoinPaymentPanel({
           credentials: 'include',
           headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Invoice-Lookup-Token': session.lookupToken },
         })
-        if (!res.ok) throw new Error('Could not check Bitcoin payment status.')
+        if (!res.ok) throw new Error('Could not check cryptocurrency payment status.')
         const data = await res.json()
         if (cancelled) return
         if (data.status === 'settled') {
@@ -171,11 +174,11 @@ export default function BitcoinPaymentPanel({
         </div>
       ) : status === 'expired' ? (
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-200">
-          This Bitcoin invoice is no longer payable. Go back and start a new Bitcoin invoice.
+          This cryptocurrency invoice is no longer payable. Go back and start a new cryptocurrency invoice.
         </div>
       ) : status === 'error' ? (
         <div className="space-y-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
-          <p>{error ?? 'Could not load Bitcoin payment details.'}</p>
+          <p>{error ?? 'Could not load cryptocurrency payment details.'}</p>
           <a href={session.checkoutUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md border border-red-500/30 bg-transparent px-4 py-2 text-sm font-medium text-red-700 shadow-sm transition-colors hover:bg-red-500/10 dark:text-red-200">
             {externalCheckoutLabel}<ExternalLink className="h-3.5 w-3.5" />
           </a>
@@ -187,7 +190,8 @@ export default function BitcoinPaymentPanel({
               <button
                 key={method.id}
                 type="button"
-                onClick={() => setSelectedMethodId(method.id)}
+                aria-pressed={selectedMethod.id === method.id}
+                onClick={() => { setCopied(false); setSelectedMethodId(method.id) }}
                 className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
                   selectedMethod.id === method.id
                     ? 'border-amber-500 bg-amber-500/10 text-amber-700 dark:text-amber-200'
@@ -206,7 +210,7 @@ export default function BitcoinPaymentPanel({
           <div className="space-y-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 text-left">
             {selectedMethod.amountDue && (
               <p className="text-sm text-[rgb(var(--foreground))]">
-                Amount due: <span className="font-medium">{selectedMethod.amountDue} {selectedMethod.cryptoCode ?? 'BTC'}</span>
+                Amount due: <span className="font-medium">{selectedMethod.amountDue} {selectedMethod.cryptoCode ?? (selectedMethod.id === 'XMR-CHAIN' ? 'XMR' : ['BTC', 'BTC-CHAIN', 'BTC-LN'].includes(selectedMethod.id) ? 'BTC' : '')}</span>
               </p>
             )}
             <p className="break-all text-xs text-[rgb(var(--muted))]">{selectedMethod.address ?? qrValue}</p>
@@ -222,7 +226,7 @@ export default function BitcoinPaymentPanel({
       ) : (
         <div className="flex flex-col items-center justify-center py-8">
           <div className="h-8 w-8 animate-spin rounded-full border-2 border-[rgb(var(--primary))] border-t-transparent" />
-          <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading Bitcoin payment details...</p>
+          <p className="mt-3 text-sm text-[rgb(var(--muted))]">Loading cryptocurrency payment details...</p>
         </div>
       )}
 

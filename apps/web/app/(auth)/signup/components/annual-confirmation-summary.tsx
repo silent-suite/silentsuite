@@ -7,7 +7,7 @@ const timestamp = (value: string) => `${value.slice(0, 10)} ${value.slice(11, 16
 export function annualRetryAction(disclosure: AnnualDisclosure): string {
   return disclosure.kind === 'card_trial' ? 'Retry card setup'
     : disclosure.kind === 'charge_now' ? 'Retry card payment'
-      : disclosure.kind === 'prepaid' ? 'Retry Bitcoin payment' : 'Continue to your workspace'
+      : disclosure.kind === 'prepaid' ? 'Retry cryptocurrency payment' : 'Continue to your workspace'
 }
 
 export function annualCardSubmitLabel(disclosure: AnnualDisclosure): string {

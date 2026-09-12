@@ -376,7 +376,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
         <AnnualTermsSummary disclosure={payable.disclosure} />
         {payable.provider === 'stripe' && payable.clientSecret
           ? <StripePaymentForm key={payable.providerObjectId} clientSecret={payable.clientSecret} mode={payable.disclosure.kind === 'card_trial' ? 'setup' : 'payment'} submitLabel={annualCardSubmitLabel(payable.disclosure)} selectedInterval="annual" onSuccess={() => { setPayable(undefined); void loadCurrentFlow() }} />
-          : payable.checkoutUrl && <a href={payable.checkoutUrl} onClick={() => saveSignupStateForRedirect('annual')} className="block rounded-md border p-3 text-center">Continue this Bitcoin payment</a>}
+          : payable.checkoutUrl && <a href={payable.checkoutUrl} onClick={() => saveSignupStateForRedirect('annual')} className="block rounded-md border p-3 text-center">Continue this cryptocurrency payment</a>}
       </div>}
       {hasRecovery && flowCheckState === 'loading' && <p role="status" className="text-xs text-[rgb(var(--muted))]">Checking current payment...</p>}
       {hasRecovery && flowCheckState === 'failed' && <button type="button" onClick={() => { void loadCurrentFlow() }} disabled={retryUntil > Date.now()} className="text-sm underline disabled:opacity-50">Retry</button>}
