@@ -363,10 +363,31 @@ def test_remote_deletion_survives_collection_refresh_and_reports_404(
     prefix = "http://radicale.org/ns/sync/"
     assert token_1[len(prefix):] in tokens
     assert token_2[len(prefix):] in tokens
-    assert tokens[token_2[len(prefix):]].revision == cache_col.dav_revision
-    assert models.DavRevision.select().where(
-        models.DavRevision.collection == cache_col
-    ).count() == cache_col.dav_revision
+    token_1_row = tokens[token_1[len(prefix):]]
+    token_2_row = tokens[token_2[len(prefix):]]
+    assert token_1_row.revision == revision_before
+    assert token_2_row.revision == cache_col.dav_revision
+    # `_prune_sync_history` drops ledger rows at or before the oldest
+    # retained token. Seed revisions are not needed to serve deltas from
+    # token_1; the retained interval is (oldest_token, current].
+    retained = list(
+        models.DavRevision.select()
+        .where(models.DavRevision.collection == cache_col)
+        .order_by(models.DavRevision.revision)
+    )
+    assert [row.revision for row in retained] == list(
+        range(token_1_row.revision + 1, cache_col.dav_revision + 1)
+    )
+    assert [(row.href, row.deleted, row.etag) for row in retained] == [
+        ("contact-a.vcf", True, "etag-a-1"),
+        ("contact-b.vcf", False, "etag-b-2"),
+        ("contact-c.vcf", False, "etag-c-1"),
+    ]
+    proven = token_1_row.state_hash
+    for change in retained:
+        assert change.previous_state_hash == proven
+        proven = change.state_hash
+    assert proven == token_2_row.state_hash
 
     # Restart / sibling instance: retained tokens stay valid and idempotent.
     restarted = _service(database, models.User.get_by_id(user.id), remote)
