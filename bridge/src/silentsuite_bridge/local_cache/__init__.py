@@ -1134,7 +1134,7 @@ class Etebase:
                         (models.DavUnresolvedItem.collection == cache_col)
                         & (models.DavUnresolvedItem.local_item == cache_item)
                     ).execute()
-                return True
+                return "preserved"
 
             cache_item.remote_uid = item.uid
             cache_item.eb_item = item_mgr.cache_save(item)
@@ -1313,6 +1313,7 @@ class Etebase:
                         & (models.ItemEntity.remote_uid == item.uid)
                         & (models.ItemEntity.id != unresolved.local_item_id)
                     )
+                    previous_state_hash = dav_collection_state_hash(cache_col)
                     if (
                         local_item is not None
                         and conflict is not None
@@ -1329,6 +1330,7 @@ class Etebase:
                             ]
                         )
                         current_unresolved.delete_instance()
+                        reanchor_dav_state(cache_col, previous_state_hash)
                         continue
                     if (
                         local_item is not None
@@ -1348,6 +1350,22 @@ class Etebase:
                             ]
                         )
                         current_unresolved.delete_instance()
+                        href_mapper = models.HrefMapper.get_or_none(
+                            models.HrefMapper.content == local_item
+                        )
+                        if href_mapper is not None:
+                            # Envelope replacement can change the DAV ETag.
+                            record_dav_change(
+                                cache_col,
+                                href_mapper.href,
+                                previous_state_hash=previous_state_hash,
+                                etag=getattr(replacement, "etag", None),
+                                deleted=local_item.deleted,
+                            )
+                        else:
+                            models.DavSyncToken.delete().where(
+                                models.DavSyncToken.collection == cache_col
+                            ).execute()
                         continue
                     if local_item is None or conflict is not None:
                         current_unresolved.reason = "legacy_duplicate"
@@ -1363,9 +1381,9 @@ class Etebase:
                         if local_item.remote_uid is None:
                             local_item.remote_uid = item.uid
                             local_item.save(only=[models.ItemEntity.remote_uid])
+                            reanchor_dav_state(cache_col, previous_state_hash)
                         current_unresolved.delete_instance()
                         continue
-                    previous_state_hash = dav_collection_state_hash(cache_col)
                     local_item.remote_uid = item.uid
                     local_item.eb_item = remote_envelope
                     local_item.deleted = item.deleted
@@ -1440,17 +1458,23 @@ class Etebase:
                     len(items_data),
                 )
 
-                applied = deletions = unresolved = 0
+                applied = tombstones_applied = preserved_local_intent = (
+                    page_quarantined
+                ) = 0
                 with self._mutation_session_guard():
                     with db.database_proxy.atomic("IMMEDIATE"):
                         for item in items_data:
-                            if self._apply_pulled_item(
+                            outcome = self._apply_pulled_item(
                                 cache_col, col, item_mgr, item
-                            ):
+                            )
+                            if outcome == "preserved":
+                                preserved_local_intent += 1
+                            elif outcome:
                                 applied += 1
-                                deletions += 1 if item.deleted else 0
+                                if item.deleted:
+                                    tombstones_applied += 1
                             else:
-                                unresolved += 1
+                                page_quarantined += 1
 
                         done = item_list.done
                         stoken = item_list.stoken
@@ -1463,11 +1487,13 @@ class Etebase:
                 if items_data:
                     # Aggregate counts only: no hrefs, identifiers or content.
                     logger.info(
-                        "PULL collection: applied %d changes (%d deletions), "
-                        "%d unresolved",
+                        "PULL collection: applied %d remote records "
+                        "(%d tombstones), %d preserved local intent, "
+                        "%d page-quarantined",
                         applied,
-                        deletions,
-                        unresolved,
+                        tombstones_applied,
+                        preserved_local_intent,
+                        page_quarantined,
                     )
 
     def _collection_dirty_get(self, collection):

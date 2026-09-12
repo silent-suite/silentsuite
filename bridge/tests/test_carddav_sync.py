@@ -10,7 +10,7 @@ import vobject
 
 from silentsuite_bridge import config
 from silentsuite_bridge import local_cache as local_cache_module
-from silentsuite_bridge.local_cache import record_dav_change
+from silentsuite_bridge.local_cache import db, record_dav_change, reanchor_dav_state
 from silentsuite_bridge.local_cache.models import (
     CollectionEntity,
     DavRevision,
@@ -214,6 +214,61 @@ def test_mapper_replacement_invalidates_token_and_full_inventory_drops_old_href(
     assert replacement_token != old_token
     assert list(replacement_hrefs) == ["shared-contact.vcf"]
     assert "contact-1.vcf" not in replacement_hrefs
+
+
+def test_reanchor_second_proof_update_rolls_back_cache_mutation(
+    mem_db, user, monkeypatch
+):
+    collection = _carddav_collection(mem_db, user)
+    cache_col = collection.collection.cache_col
+    record_dav_change(
+        cache_col,
+        "contact-1.vcf",
+        previous_state_hash=local_cache_module.dav_collection_state_hash(cache_col),
+        etag="etag-1",
+    )
+    token, _ = collection.sync(None)
+    cache_col = CollectionEntity.get_by_id(cache_col.id)
+    cache_item = ItemEntity.get(uid="contact-1")
+    previous_hash = local_cache_module.dav_collection_state_hash(cache_col)
+    revision_row = DavRevision.get(
+        (DavRevision.collection == cache_col)
+        & (DavRevision.revision == cache_col.dav_revision)
+    )
+    token_row = DavSyncToken.get(token=token.rsplit("/", 1)[-1])
+    assert revision_row.state_hash == previous_hash
+    assert token_row.state_hash == previous_hash
+
+    original_update = DavSyncToken.update
+
+    def fail_token_proof(*args, **kwargs):
+        query = original_update(*args, **kwargs)
+
+        def fail_execute(*_args, **_kwargs):
+            raise RuntimeError("injected token proof failure")
+
+        query.execute = fail_execute
+        return query
+
+    monkeypatch.setattr(DavSyncToken, "update", fail_token_proof)
+
+    with pytest.raises(RuntimeError, match="injected token proof failure"):
+        with db.database_proxy.atomic("IMMEDIATE"):
+            cache_item.dirty = True
+            cache_item.save(only=[ItemEntity.dirty])
+            reanchor_dav_state(cache_col, previous_hash)
+
+    persisted = ItemEntity.get_by_id(cache_item.id)
+    assert persisted.dirty is False
+    assert persisted.eb_item == b"encrypted-item"
+    assert DavRevision.get_by_id(revision_row.id).state_hash == previous_hash
+    assert DavSyncToken.get_by_id(token_row.id).state_hash == previous_hash
+    assert (
+        local_cache_module.dav_collection_state_hash(
+            CollectionEntity.get_by_id(cache_col.id)
+        )
+        == previous_hash
+    )
 
 
 def test_later_ledger_change_cannot_hide_prior_unledgered_mutation(mem_db, user):
