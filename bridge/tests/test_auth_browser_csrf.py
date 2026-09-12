@@ -340,14 +340,19 @@ def test_browser_login_completion_does_not_print_account_or_server_values(capsys
     ):
         assert browser_login(running_bridge=True) == "alice@example.com"
 
-    output = capsys.readouterr().out
-    from silentsuite_bridge import config
+        # Compute the expected URL while the SSL_ENABLED patch is still active:
+        # listener_base_url() reads config.SSL_ENABLED at call time, so building
+        # it after the patch exits would yield http:// while the output is https://.
+        from silentsuite_bridge import config
 
-    requested = config.requested_dashboard_listener()
-    assert requested is not None
-    assert requested["kind"] == "loopback"
-    expected_url = config.listener_base_url(requested["host"], requested["port"]) + "/"
-    assert expected_url.startswith(("http://127.0.0.1:", "https://127.0.0.1:", "http://[::1]:", "https://[::1]:"))
+        requested = config.requested_dashboard_listener()
+        assert requested is not None
+        assert requested["kind"] == "loopback"
+        expected_url = config.listener_base_url(requested["host"], requested["port"]) + "/"
+
+    output = capsys.readouterr().out
+
+    assert expected_url.startswith(("https://127.0.0.1:", "https://[::1]:"))
     assert "private-server.example.invalid" not in expected_url
     # Not-yet-bound path: requested loopback URL, not the bound-listener line.
     assert (
