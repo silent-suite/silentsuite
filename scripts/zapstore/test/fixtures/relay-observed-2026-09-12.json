@@ -1,0 +1,1310 @@
+[
+  {
+    "kind": 3063,
+    "id": "50abb429c1488ab32350243fbc2fa4231ac0d3533485df622aaf12fd867bdc0f",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1788285941,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "939b3951134c62a6078bf51090b8b2baedbf0a904aa790909b70601688834296"
+      ],
+      [
+        "version",
+        "0.5.4-beta"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/939b3951134c62a6078bf51090b8b2baedbf0a904aa790909b70601688834296"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "26916361"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "36"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.5.4-beta.apk"
+      ],
+      [
+        "version_code",
+        "18"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "d2cc7fff6888ad6343e8dde45744fb0edd16d63d8d1e54a282665c8b24a2d268138baa1cd3157caf493b05885f09fd5ec8dfa1bae4e2cd5425897dd3d12f8a51"
+  },
+  {
+    "kind": 32267,
+    "id": "6a74f5369fd7ad3523a94ccb610fd5b841e5e640df3929519bb6e128b53208a3",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1788285941,
+    "tags": [
+      [
+        "d",
+        "io.silentsuite.android"
+      ],
+      [
+        "name",
+        "SilentSuite"
+      ],
+      [
+        "summary",
+        "End-to-end encrypted sync for calendar, contacts, and tasks"
+      ],
+      [
+        "icon",
+        "https://cdn.zapstore.dev/8789159e7de6210211641d0c42da09af44d60aeb6717c027b7010ee194b68290"
+      ],
+      [
+        "image",
+        "https://cdn.zapstore.dev/20ac235aff8d46ea6a7b041b22c2451940767bf01110fe842c7fe9be3ae85008"
+      ],
+      [
+        "image",
+        "https://cdn.zapstore.dev/d173b54204f6d0bbb104fec2bee92d954194653c53369d8d8eb99a302c7029a9"
+      ],
+      [
+        "image",
+        "https://cdn.zapstore.dev/915d7e2658d12c98f9357357946ff195cc4bf51e44a06f967249dba9bcecd338"
+      ],
+      [
+        "image",
+        "https://cdn.zapstore.dev/3679bd24cad93c5a28012086f09f93a7e98044f58fd14a4a17e22b938527acad"
+      ],
+      [
+        "image",
+        "https://cdn.zapstore.dev/9ca9c441e499ec6b785b691c30fa47e2d07514231da6620ba487b6d62bebb946"
+      ],
+      [
+        "image",
+        "https://cdn.zapstore.dev/ef60926ac68296a985849c52b599e84c921a69d9c0348123dd44657132f475d9"
+      ],
+      [
+        "t",
+        "productivity"
+      ],
+      [
+        "t",
+        "privacy"
+      ],
+      [
+        "t",
+        "calendar"
+      ],
+      [
+        "t",
+        "contacts"
+      ],
+      [
+        "t",
+        "tasks"
+      ],
+      [
+        "t",
+        "sync"
+      ],
+      [
+        "url",
+        "https://silentsuite.io"
+      ],
+      [
+        "repository",
+        "https://github.com/silent-suite/silentsuite"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "license",
+        "GPL-3.0-only"
+      ],
+      [
+        "h",
+        "acfeaea6e51420e8068fac446ca9d17d7a9ef6a5d20d93894e50fee3d4902a84"
+      ]
+    ],
+    "content": "Your calendar, contacts, and tasks should stay in sync wherever you work: Android, macOS, Windows, Linux, and the web. SilentSuite keeps that data available across your devices while applying end-to-end encryption before anything leaves your device.\n\nEncryption and decryption happen on your device, and your keys stay there. The server stores only ciphertext, so it cannot read what you keep on it. This is what zero-knowledge means in practice: the privacy guarantee is a technical constraint, not a policy statement.\n\nSilentSuite is built to fit into each system you use. On Android it works as a native sync adapter for compatible calendar, contacts, and task apps. On macOS, Windows, and Linux it integrates through a lightweight desktop bridge, so your encrypted data can appear in the tools already built into your workflow. The web app gives you browser access when you are away from your own devices. iPhone support is coming soon.\n\nThe app is fully open source. Anyone can read the code, review the encryption, and confirm the privacy claims for themselves. There are no proprietary components to take on trust.\n\nYou choose where your data lives. Use the hosted service, or run your own server on hardware you control. Your data stays portable: export it at any time in standard formats, with no lock-in.\n\nThis is a beta release. Calendar, contacts, and task sync are the focus of this version and form its stable core. Feedback and bug reports are welcome through the link in the app.\n\nRequires a SilentSuite account. Self-hosting documentation is available at docs.silentsuite.io.\n",
+    "sig": "8847070be709cce1074ed7b62a04b65593fcba5a7ff4d2679627f5174ed036f8fd87c09c36b907f0d777f47d5b1b1d9ef7b9cd10506881930af710dacee0fd1a"
+  },
+  {
+    "kind": 30063,
+    "id": "c0b3083b66ab3b49c7ed6a126d2b6d4876a9285056a0e6a05929b1de6aec34e0",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1788285941,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "version",
+        "0.5.4-beta"
+      ],
+      [
+        "d",
+        "io.silentsuite.android@0.5.4-beta"
+      ],
+      [
+        "c",
+        "main"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "e",
+        "50abb429c1488ab32350243fbc2fa4231ac0d3533485df622aaf12fd867bdc0f",
+        "wss://relay.zapstore.dev"
+      ]
+    ],
+    "content": "Keeps SilentSuite release downloads and version information aligned across platforms.\n",
+    "sig": "868d8e391943d89e7e9045df5ccfa4d2b58282b10cb3be694aa39b93fd438228a0bc5dcdc39bfece60def75ec0315d881a79d77e9ceaae53a973744101571c3a"
+  },
+  {
+    "kind": 30063,
+    "id": "cf7cf99a650e565611339b00d3df47015ad0b486825224ccf561ea1244c55a0f",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1787668143,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "version",
+        "0.5.3-beta"
+      ],
+      [
+        "d",
+        "io.silentsuite.android@0.5.3-beta"
+      ],
+      [
+        "c",
+        "beta"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "e",
+        "e569ce28e3f8647fa98e665185a96b267cf933370dc3481f4d40b2f5c9fb01db",
+        "wss://relay.zapstore.dev"
+      ]
+    ],
+    "content": "Fixes Android sign-in and setup screens hidden behind system bars or the keyboard.\n",
+    "sig": "949f3c04bbdaeca5227f1a1a56cbae5c70838ebc57b8f7f3c679c6b7a171c4420b5f0f775961b5217510da56ca243924914472c0f6a09049029ea09807f72d45"
+  },
+  {
+    "kind": 3063,
+    "id": "e569ce28e3f8647fa98e665185a96b267cf933370dc3481f4d40b2f5c9fb01db",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1787668143,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "d5dc048807f2b161f2702c0ec6a1c2e045cfbf95aa0367e02a71d2e3af7a5959"
+      ],
+      [
+        "version",
+        "0.5.3-beta"
+      ],
+      [
+        "url",
+        "https://github.com/silent-suite/silentsuite/releases/download/v0.5.3-beta/silentsuite-android-v0.5.3-beta.apk"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/d5dc048807f2b161f2702c0ec6a1c2e045cfbf95aa0367e02a71d2e3af7a5959"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "26920362"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "36"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.5.3-beta.apk"
+      ],
+      [
+        "version_code",
+        "17"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "3f5c36d2b08083b7ea7324fdf5441cbb428bde4a925885f7e15f5a12bfd084229e813cd5abd57166924b6d828e77ac5ee2b5d63874d0920189fb10ca5b129846"
+  },
+  {
+    "kind": 30063,
+    "id": "08f3e49a176d24476df5a4f3edc68bf4cf5a3479d13c33986efb225dfe85af90",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1787585094,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "version",
+        "0.5.2-beta"
+      ],
+      [
+        "d",
+        "io.silentsuite.android@0.5.2-beta"
+      ],
+      [
+        "c",
+        "main"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "e",
+        "f5a29121a2b5b35a9dc884a5ebf41dc9326638c5c899cf51a2e417f406367ba5",
+        "wss://relay.zapstore.dev"
+      ]
+    ],
+    "content": "Improved Android compatibility on 16 KB-page devices, simplified annual subscriptions, clarified remote Bridge setup, and updated troubleshooting guidance.\n",
+    "sig": "c444bc7bb626f922b040a122b6f5f68c74696a5ade97e9ca1755907ef7f6fa5be073737e62becc56a4954796aa22ffe1b7fb39e36721725085a4e216a5a3e372"
+  },
+  {
+    "kind": 3063,
+    "id": "f5a29121a2b5b35a9dc884a5ebf41dc9326638c5c899cf51a2e417f406367ba5",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1787585094,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "f7541cf72c71aaef937bbbe7f04bb935893d8e64cf7b1bf57e20a2d15283769b"
+      ],
+      [
+        "version",
+        "0.5.2-beta"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/f7541cf72c71aaef937bbbe7f04bb935893d8e64cf7b1bf57e20a2d15283769b"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "26920538"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "36"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.5.2-beta.apk"
+      ],
+      [
+        "version_code",
+        "16"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "a4febe27a5f3d7fe9de71bf758ed26904f61845b642c543cc18e21c74c2f619e444ba68671c7a65b16f934236e43febdbe3acf3dcdaa2e54d53c308937637575"
+  },
+  {
+    "kind": 3063,
+    "id": "23ccc69f5815a25a179f05de4fc263808e574684fca2b83bfc985ed6aca4b955",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1786024621,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "7c81c879a446575ee0d996b9ed6d4fc855b1110c2372617aef7930b1cc6431cb"
+      ],
+      [
+        "version",
+        "0.5.0-beta"
+      ],
+      [
+        "url",
+        "https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-android-v0.5.0-beta.apk"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/7c81c879a446575ee0d996b9ed6d4fc855b1110c2372617aef7930b1cc6431cb"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "24452846"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "36"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.5.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "14"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "4b7004e6927d120485085c1b8f704adfa08272d541328f5c662252634f8aeaded4d619b48f1c197e73a624150849ee5725e4d70162c058eb727938385d672601"
+  },
+  {
+    "kind": 30063,
+    "id": "81aaccfb04fe94804157bee2e080a1c152d298d38b75657f59a3f4b2749251e7",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1786024621,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "version",
+        "0.5.0-beta"
+      ],
+      [
+        "d",
+        "io.silentsuite.android@0.5.0-beta"
+      ],
+      [
+        "c",
+        "beta"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "e",
+        "23ccc69f5815a25a179f05de4fc263808e574684fca2b83bfc985ed6aca4b955",
+        "wss://relay.zapstore.dev"
+      ]
+    ],
+    "content": "![SilentSuite v0.5.0-beta](https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/v0.5.0-beta-hero.png)\n\nSilentSuite v0.5.0-beta is a major update for our zero-knowledge encrypted calendar, contacts, and tasks suite. Your data stays end-to-end encrypted: the server never sees plaintext, and your keys never leave your device. This release hardens the Bridge, tightens billing, redesigns the Android app, and adds updated documentation.\n\n## A more reliable DAV Bridge\n\n- Converged encrypted CardDAV and CalDAV href identity so shared collections stay consistent across sync, restart, and recovery.\n- Closed sync lifecycle races so interrupted syncs, wedged recovery, and concurrent DAV mutations preserve local writes without duplicates or lost work.\n- Made tombstone deletions, sync generations, and cache state terminal and consistent across DAV upgrades.\n- Sealed logout credential generation and made logout win over late native success.\n- Enforced collection-scoped DAV href ownership and rejected special hrefs and partial startup success.\n- Unix installer downloads now fail closed when checksum verification is unavailable or mismatched.\n\n## Better macOS Contacts support\n\n- Added support for the macOS CardDAV account principal alias requested by Apple Internet Accounts.\n- Preserved canonical DAV hrefs, authorization, and storage behavior.\n- Pinned the internal Radicale contract to 3.2.3.\n\n## Billing link proofs\n\n- Replaced reusable session handoff to hosted Billing with short-lived, single-use link proofs.\n- Billed link-proof metadata is now cleaned up within minutes instead of being retained indefinitely.\n\n## A refreshed Android app\n\n- Established a Material 3 design foundation and aligned light and dark colors with the web palette, preserving accessible contrast.\n- Added a dedicated first-run account-choice screen with resumable, crash-safe post-login setup.\n- Added an account drawer with switching and sign-out, an account-aware settings hub, and a redesigned sync overview.\n- Targeted Android 16 / API 36 while keeping the API 21 floor.\n\n## More reliable sync and signup\n\n- Made Android sync lifecycle status exact and hardened account state against stale generation lookups and sign-out races.\n- Hardened paid signup recovery to preserve the correct account across recovery and token validation.\n- Confined signup analytics to the canonical hosted production origin; preview and self-hosted builds are disabled.\n\n## Updated documentation\n\n- Added a Linux Bridge install and uninstall guide.\n- Clarified that native iOS sync is roadmap-only and scoped Bridge support to verified desktop clients.\n- Added an Apps and Integrations homepage card and official app logos and links.\n- Refined the Android distribution layout and kept the Settings QR square.\n\n## Install and update\n\n### Hosted web app\n\nOpen [app.silentsuite.io](https://app.silentsuite.io).\n\n### Android\n\n```bash\ncurl -LO https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-android-v0.5.0-beta.apk\n```\n\n### Windows Bridge\n\n```powershell\nInvoke-WebRequest `\n  -Uri \"https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-bridge-windows-x86_64.exe\" `\n  -OutFile \"silentsuite-bridge.exe\"\n```\n\n### macOS Bridge\n\nApple Silicon:\n\n```bash\ncurl -LO https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-bridge-macos-arm64\nchmod +x silentsuite-bridge-macos-arm64\n```\n\nIntel:\n\n```bash\ncurl -LO https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-bridge-macos-x86_64\nchmod +x silentsuite-bridge-macos-x86_64\n```\n\n### Linux Bridge\n\nx86-64:\n\n```bash\ncurl -LO https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-bridge-linux-x86_64\nchmod +x silentsuite-bridge-linux-x86_64\n```\n\nARM64:\n\n```bash\ncurl -LO https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-bridge-linux-arm64\nchmod +x silentsuite-bridge-linux-arm64\n```\n\n### Self-host\n\n```bash\ncurl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-host/install.sh | bash\n```\n",
+    "sig": "a3b5f35ccf8ec264055193a077eeb360d5ed1821cbe9de0316c2c3ae4301ec7850b5d6572e7d612c08f2beb88d2c6b36e773273eb5986f0042a520e312a3752c"
+  },
+  {
+    "kind": 3063,
+    "id": "aab0ae1982de9856233fdd38d6637df934cddbea4e35fc1eacf56a34817d636d",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1786024620,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "7c81c879a446575ee0d996b9ed6d4fc855b1110c2372617aef7930b1cc6431cb"
+      ],
+      [
+        "version",
+        "0.5.0-beta"
+      ],
+      [
+        "url",
+        "https://github.com/silent-suite/silentsuite/releases/download/v0.5.0-beta/silentsuite-android-v0.5.0-beta.apk"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/7c81c879a446575ee0d996b9ed6d4fc855b1110c2372617aef7930b1cc6431cb"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "24452846"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "36"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.5.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "14"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "533c8b3983a95e017dc99d7975890407db5a612b3d4b444cef88cb4d29c6cc5ce7c8da053abbd0a8e80f2fea3140cae6eadc4047132b0f5c2931015d04f23e73"
+  },
+  {
+    "kind": 3063,
+    "id": "05e2a26e14670b3236a70ec99fb452c6baae2f05508e02dc92f7128526e9ace7",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1783761410,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "e193fd330ca49564d6ff50e1edbb4e36bbcbc7ba569f5c934868056be9168795"
+      ],
+      [
+        "version",
+        "0.4.0-beta"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/e193fd330ca49564d6ff50e1edbb4e36bbcbc7ba569f5c934868056be9168795"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "22896792"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "35"
+      ],
+      [
+        "filename",
+        "app.apk"
+      ],
+      [
+        "version_code",
+        "11"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "945d473c000ef14a433ecb62ff2e82aa20f14ee9795b70b3016e10782f66fd5c825947643cf081be46e42ebdc15614ede453fcf8d7af46804f9ff5f8254b6d3b"
+  },
+  {
+    "kind": 30063,
+    "id": "55e5f2c067fea8d86d1146db3eabad54c81bd712a40329d68ad785127c2f6dae",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1783761410,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "version",
+        "0.4.0-beta"
+      ],
+      [
+        "d",
+        "io.silentsuite.android@0.4.0-beta"
+      ],
+      [
+        "c",
+        "main"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "e",
+        "05e2a26e14670b3236a70ec99fb452c6baae2f05508e02dc92f7128526e9ace7",
+        "wss://relay.zapstore.dev"
+      ]
+    ],
+    "content": "Updates SilentSuite Android for the 0.4.0-beta release while retaining Google Play 16 KB native library compatibility. This release primarily improves the wider SilentSuite web, sync, payment, and Bridge experience.\n",
+    "sig": "5ed9f53a382b9e32276fa5dac99f4117f43e3c938e71a38e3ecbb152bca3798120a2c4cc7bda11be82cb91bec3844f4971736196c9400965c12bf4054a0def2d"
+  },
+  {
+    "kind": 3063,
+    "id": "c0ace5a6a944ea8082030a8efeb6ac25fb07689a7b0578285fc07ef41d5110b6",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1783691124,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "e193fd330ca49564d6ff50e1edbb4e36bbcbc7ba569f5c934868056be9168795"
+      ],
+      [
+        "version",
+        "0.4.0-beta"
+      ],
+      [
+        "url",
+        "https://github.com/silent-suite/silentsuite/releases/download/v0.4.0-beta/silentsuite-android-v0.4.0-beta.apk"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/e193fd330ca49564d6ff50e1edbb4e36bbcbc7ba569f5c934868056be9168795"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "22896792"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "35"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.4.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "11"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "618f9c19af107d7180a0eb06ae7fe79cbb32d316a9517c1c640ca7dde25d700eb420334e91fae48eb5fa884a0f4f585c38a7274c966018b0faa04fe3cc5cfffc"
+  },
+  {
+    "kind": 3063,
+    "id": "20ee7732ef46953894caae5f60a45715573cdb0e2f58d67d56e0b985ffcc3ef3",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1782049982,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "46ccfc7626fba484d3f655722221979a6f08c97252b4fd9d0a778b4dcfe765a0"
+      ],
+      [
+        "version",
+        "0.3.0-beta"
+      ],
+      [
+        "url",
+        "https://github.com/silent-suite/silentsuite/releases/download/v0.3.0-beta/silentsuite-android-v0.3.0-beta.apk"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/46ccfc7626fba484d3f655722221979a6f08c97252b4fd9d0a778b4dcfe765a0"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "20758165"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "35"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.3.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "8"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "8af2ef3360ce03e450e642d55017e88db704255b69e05fabe93a1f45ad67433d653e890d6101e332b7ff3ab74dbd62d97307eb710e20518c24717c94221eb832"
+  },
+  {
+    "kind": 30063,
+    "id": "e32bbcf1c55d6efa2c9b9cdaa2cb8507cf230897b1c50afe629deab1d5a4521f",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1782049982,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "version",
+        "0.3.0-beta"
+      ],
+      [
+        "d",
+        "io.silentsuite.android@0.3.0-beta"
+      ],
+      [
+        "c",
+        "main"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "e",
+        "20ee7732ef46953894caae5f60a45715573cdb0e2f58d67d56e0b985ffcc3ef3",
+        "wss://relay.zapstore.dev"
+      ]
+    ],
+    "content": "SilentSuite v0.3.0-beta\n\n- Added encrypted sharing invitation/member management support.\n- Added labels/categories for events, tasks, and contacts.\n- Added pull-to-refresh manual sync on Android collection and account screens.\n- Improved Android .vcf contact import reliability with privacy-safe failure counts.\n- Polished Android status bar, toolbar icons, dark-theme icon tints, and login screen.\n- Added calendar search, date/week preferences, per-collection export, and mobile web collection management.\n- Hardened offline queue privacy, Android signing workflows, bridge, server, and self-hosting.\n",
+    "sig": "0f5cac4b5171ba292f780eab0d2aef88714ca434a313a60fd6c456eda9ea281c888f6026a3c2c58fca53b711245bce22aeb91d0888e2d13b698a92340500a046"
+  },
+  {
+    "kind": 3063,
+    "id": "27d07fa264a1cddf1e8dcb204d545c2c1ff516640284808f1b88be1cb9991a26",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1782049981,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "46ccfc7626fba484d3f655722221979a6f08c97252b4fd9d0a778b4dcfe765a0"
+      ],
+      [
+        "version",
+        "0.3.0-beta"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/46ccfc7626fba484d3f655722221979a6f08c97252b4fd9d0a778b4dcfe765a0"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "20758165"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "35"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.3.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "8"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "6a1c8bcda19f8b5c1e065b3943d1f4857f91801ac4059da58a5185d10639d0fb91ef5ba932534a6af52e0e0175a84e22fd2293da69a0cad36e5c7be148ebba90"
+  },
+  {
+    "kind": 30063,
+    "id": "b8fcaf3f873c8010cc0665701000d04adc226edbf3bb99c7ead56f7b59c9d5a4",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1780500178,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "version",
+        "0.2.0-beta"
+      ],
+      [
+        "d",
+        "io.silentsuite.android@0.2.0-beta"
+      ],
+      [
+        "c",
+        "main"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "e",
+        "5d00f377c19b9cc8e8053423c31b59bdf5c91992123bd5f9801d6a2a2d1f36ed",
+        "wss://relay.zapstore.dev"
+      ],
+      [
+        "a",
+        "32267:17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2:io.silentsuite.android",
+        "wss://relay.zapstore.dev"
+      ]
+    ],
+    "content": "v0.2.0-beta: multiple calendars, address books, and task lists; Android export backups; clearer sync states; refreshed branding; and Bitcoin/Lightning annual signup via BTCPay.\n",
+    "sig": "a1585a2364cc14928450e49725b1098dadccf4cff8bb662f46f0e5aeb0416ca87c3ba2fea53270e47341c7aebac97c6c3a2c51dbfcadf7a23b3dc414f75992ce"
+  },
+  {
+    "kind": 3063,
+    "id": "5d00f377c19b9cc8e8053423c31b59bdf5c91992123bd5f9801d6a2a2d1f36ed",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1780499976,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "7aa980638d26c59bb8c34797fb815ad9e76a38ef3f5775e679aef7911cbeb120"
+      ],
+      [
+        "version",
+        "0.2.0-beta"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/7aa980638d26c59bb8c34797fb815ad9e76a38ef3f5775e679aef7911cbeb120"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "20733125"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "35"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.2.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "6"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "ccc234ed608b83c5563127b9d8746d9028b1b56c727039f3bcb685c3f4fa862921d9159c00b8a233d613bdf0242bed88521a4c5152619dd15ad0cf1d4d4eb6b2"
+  },
+  {
+    "kind": 3063,
+    "id": "a70397af15d8d1ed509ce696c47c7300c14a484a3e4ef93eeb3d226e9b292721",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1779693413,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "7aa980638d26c59bb8c34797fb815ad9e76a38ef3f5775e679aef7911cbeb120"
+      ],
+      [
+        "version",
+        "0.2.0-beta"
+      ],
+      [
+        "url",
+        "https://github.com/silent-suite/silentsuite/releases/download/v0.2.0-beta/silentsuite-android-v0.2.0-beta.apk"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/7aa980638d26c59bb8c34797fb815ad9e76a38ef3f5775e679aef7911cbeb120"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "20733125"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "35"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.2.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "6"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "0eaf6b2781cf183c7650234b71efc2cfd0e348b53e0dd7d1f44f75eb4ca386926b42c8d979f8ac86364fa9b682f7b7c731afe9a8b611fcafadc2b91f8a5c6894"
+  },
+  {
+    "kind": 3063,
+    "id": "221d11cfe418b0783958741854e6f3eeaed7d36b10124bed1d879ba26a8d5133",
+    "pubkey": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+    "created_at": 1779693412,
+    "tags": [
+      [
+        "i",
+        "io.silentsuite.android"
+      ],
+      [
+        "x",
+        "7aa980638d26c59bb8c34797fb815ad9e76a38ef3f5775e679aef7911cbeb120"
+      ],
+      [
+        "version",
+        "0.2.0-beta"
+      ],
+      [
+        "url",
+        "https://github.com/silent-suite/silentsuite/releases/download/v0.2.0-beta/silentsuite-android-v0.2.0-beta.apk"
+      ],
+      [
+        "url",
+        "https://cdn.zapstore.dev/7aa980638d26c59bb8c34797fb815ad9e76a38ef3f5775e679aef7911cbeb120"
+      ],
+      [
+        "m",
+        "application/vnd.android.package-archive"
+      ],
+      [
+        "size",
+        "20733125"
+      ],
+      [
+        "f",
+        "android-x86"
+      ],
+      [
+        "f",
+        "android-x86_64"
+      ],
+      [
+        "f",
+        "android-arm64-v8a"
+      ],
+      [
+        "f",
+        "android-armeabi-v7a"
+      ],
+      [
+        "min_platform_version",
+        "21"
+      ],
+      [
+        "target_platform_version",
+        "35"
+      ],
+      [
+        "filename",
+        "silentsuite-android-v0.2.0-beta.apk"
+      ],
+      [
+        "version_code",
+        "6"
+      ],
+      [
+        "apk_certificate_hash",
+        "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79"
+      ]
+    ],
+    "content": "",
+    "sig": "ce614a2a08d5bd2d36af92d285f9bd7d664f1daa70b1733f2a6c1b375accd41e31e4047de263b7ce1c6ae6a54e2cd3c9f8e3ffdfb68430f3d4f91d2a787bba24"
+  }
+]

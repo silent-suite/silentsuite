@@ -1,0 +1,16 @@
+{
+  "name": "silentsuite-zapstore-automation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Isolated helper package for the dormant Zapstore publication lane. Kept out of the pnpm workspace so the monorepo lockfile is untouched.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "test": "node --test test/lane.test.mjs test/workflow-boundary.test.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "2.0.1"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "$comment": "Trusted Zapstore store listing template. Media and changelog paths are repository-relative and resolved at the protected revision (media) and the release's own source commit (changelog). No URLs to mutable branches are allowed here. Store copy must stay byte-identical to zapstore.yaml; tests enforce that.",
+  "package": "io.silentsuite.android",
+  "repository": "https://github.com/silent-suite/silentsuite",
+  "pubkey": "npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35",
+  "pubkeyHex": "17390eb7e206999bdfa0b803c0bf7799bcf01713496f0a9d7e2a3409d5c142b2",
+  "channel": "main",
+  "expectedCertificateSha256": "8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79",
+  "name": "SilentSuite",
+  "summary": "End-to-end encrypted sync for calendar, contacts, and tasks",
+  "description": "Your calendar, contacts, and tasks should stay in sync wherever you work: Android, macOS, Windows, Linux, and the web. SilentSuite keeps that data available across your devices while applying end-to-end encryption before anything leaves your device.\n\nEncryption and decryption happen on your device, and your keys stay there. The server stores only ciphertext, so it cannot read what you keep on it. This is what zero-knowledge means in practice: the privacy guarantee is a technical constraint, not a policy statement.\n\nSilentSuite is built to fit into each system you use. On Android it works as a native sync adapter for compatible calendar, contacts, and task apps. On macOS, Windows, and Linux it integrates through a lightweight desktop bridge, so your encrypted data can appear in the tools already built into your workflow. The web app gives you browser access when you are away from your own devices. iPhone support is coming soon.\n\nThe app is fully open source. Anyone can read the code, review the encryption, and confirm the privacy claims for themselves. There are no proprietary components to take on trust.\n\nYou choose where your data lives. Use the hosted service, or run your own server on hardware you control. Your data stays portable: export it at any time in standard formats, with no lock-in.\n\nThis is a beta release. Calendar, contacts, and task sync are the focus of this version and form its stable core. Feedback and bug reports are welcome through the link in the app.\n\nRequires a SilentSuite account. Self-hosting documentation is available at docs.silentsuite.io.\n",
+  "tags": ["productivity", "privacy", "calendar", "contacts", "tasks", "sync"],
+  "license": "GPL-3.0-only",
+  "website": "https://silentsuite.io",
+  "icon": "android/fastlane/metadata/android/en-US/images/icon.png",
+  "images": [
+    "android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-encrypted-sync.png",
+    "android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-cross-platform-sync.png",
+    "android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-calendar-contacts-tasks.png",
+    "android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-collections-sharing.png",
+    "android/fastlane/metadata/android/en-US/images/phoneScreenshots/5-import-export.png",
+    "android/fastlane/metadata/android/en-US/images/phoneScreenshots/6-encryption-fingerprint.png"
+  ],
+  "changelogDirectory": "android/fastlane/metadata/android/en-US/changelogs"
+}
