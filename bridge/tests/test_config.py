@@ -457,3 +457,203 @@ class TestSslSettingsPersistence:
             config.DATA_DIR = original_data
             config.SSL_ENABLED = original_ssl
             restore_config(monkeypatch)
+
+
+# ---------------------------------------------------------------------------
+# Listener parsing and conflict tests for #720
+# ---------------------------------------------------------------------------
+
+
+class TestParseServerHosts:
+    def test_parse_loopback_and_remote(self, monkeypatch):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="127.0.0.1:37358,192.0.2.10:37358",
+        )
+        try:
+            records = cfg.parse_server_hosts(cfg.SERVER_HOSTS)
+            assert records == [
+                {"host": "127.0.0.1", "port": 37358, "kind": "loopback"},
+                {"host": "192.0.2.10", "port": 37358, "kind": "remote"},
+            ]
+            assert cfg.requested_loopback_listeners() == [records[0]]
+            assert cfg.is_dashboard_enabled() is True
+        finally:
+            restore_config(monkeypatch)
+
+    def test_wildcard_only_disables_dashboard(self, monkeypatch):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="0.0.0.0:37358",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            assert cfg.is_dashboard_enabled() is False
+            assert cfg.requested_loopback_listeners() == []
+            records = cfg.parse_server_hosts(cfg.SERVER_HOSTS)
+            assert records[0]["kind"] == "wildcard"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_wildcard_ipv4_literal_same_port_conflict(self, monkeypatch):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="0.0.0.0:37358,127.0.0.1:37358",
+        )
+        try:
+            conflicts = cfg.listener_conflicts()
+            assert len(conflicts) >= 1
+        finally:
+            restore_config(monkeypatch)
+
+    def test_wildcard_ipv6_literal_different_family_ok(self, monkeypatch):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="[::]:37358,127.0.0.1:37358",
+        )
+        try:
+            conflicts = cfg.listener_conflicts()
+            assert conflicts == []
+        finally:
+            restore_config(monkeypatch)
+
+    def test_loopback_listener_hint_avoids_used_ports(self, monkeypatch):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="0.0.0.0:37358",
+        )
+        try:
+            hint = cfg.loopback_listener_hint()
+            assert hint is not None
+            assert "127.0.0.1:" in hint
+            # Must not suggest the already-used port
+            assert ":37358,127" not in hint or hint.startswith("0.0.0.0:37358,127")
+            suggested_port = int(hint.rsplit(":", 1)[1])
+            assert suggested_port != 37358
+        finally:
+            restore_config(monkeypatch)
+
+    def test_wildcard_ipv6_literal_same_family_conflict(self, monkeypatch):
+        """An expanded IPv6 wildcard (::) and an IPv6 loopback literal on the
+        same port are a same-family wildcard-over-literal conflict."""
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="[::]:37358,[::1]:37358",
+        )
+        try:
+            conflicts = cfg.listener_conflicts()
+            assert len(conflicts) >= 1, (
+                f"Expected IPv6 wildcard/literal same-family conflict, got {conflicts}"
+            )
+        finally:
+            restore_config(monkeypatch)
+
+    def test_wildcard_ipv6_expanded_form_same_family_conflict(self, monkeypatch):
+        """The expanded unspecified IPv6 form (e.g. 0:0:0:0:0:0:0:0) is
+        recognized as a wildcard and conflicts with an IPv6 literal on the
+        same port."""
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="[0:0:0:0:0:0:0:0]:37358,[::1]:37358",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            conflicts = cfg.listener_conflicts()
+            assert len(conflicts) >= 1, (
+                f"Expected expanded-form IPv6 wildcard conflict, got {conflicts}"
+            )
+        finally:
+            restore_config(monkeypatch)
+
+    def test_malformed_port_retains_invalid_classification(self, monkeypatch):
+        """A malformed port keeps the invalid classification and is never
+        fabricated into a valid default-port listener."""
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="127.0.0.1:notaport",
+        )
+        try:
+            records = cfg.parse_server_hosts(cfg.SERVER_HOSTS)
+            assert len(records) == 1
+            assert records[0]["kind"] == "invalid"
+            assert records[0]["port"] == 0
+        finally:
+            restore_config(monkeypatch)
+
+    def test_wildcard_over_literal_same_family_fails_closed_without_echoing_values(self, monkeypatch):
+        """0.0.0.0:P beside 127.0.0.1:P is refused at validation, naming the
+        variable but never echoing the address or port."""
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="0.0.0.0:37358,127.0.0.1:37358",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            with pytest.raises(cfg.NetworkConfigError, match="SILENTSUITE_SERVER_HOSTS") as excinfo:
+                cfg.validate_network_config()
+            message = str(excinfo.value)
+            assert "0.0.0.0" not in message
+            assert "127.0.0.1" not in message
+            assert "37358" not in message
+        finally:
+            restore_config(monkeypatch)
+
+    def test_ipv6_wildcard_beside_ipv4_loopback_same_port_starts(self, monkeypatch):
+        """[::]:P with 127.0.0.1:P is not a conflict (IPV6_V6ONLY keeps the
+        families apart) and keeps the dashboard on the loopback entry."""
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="[::]:37358,127.0.0.1:37358",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            cfg.validate_network_config()
+            assert cfg.is_dashboard_enabled() is True
+            assert cfg.requested_dashboard_listener() == {
+                "host": "127.0.0.1", "port": 37358, "kind": "loopback",
+            }
+        finally:
+            restore_config(monkeypatch)
+
+    def test_wildcard_only_hint_is_exact_next_port(self, monkeypatch):
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="0.0.0.0:37358",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            assert cfg.loopback_listener_hint() == "0.0.0.0:37358,127.0.0.1:37359"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_ipv6_wildcard_does_not_reserve_ipv4_hint_port(self, monkeypatch):
+        """An IPv6-only wildcard on LISTEN_PORT leaves that port free for the
+        suggested IPv4 loopback listener."""
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="[::]:37358",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            assert cfg.loopback_listener_hint() == "[::]:37358,127.0.0.1:37358"
+        finally:
+            restore_config(monkeypatch)
+
+    def test_unknown_family_hint_reserves_port(self, monkeypatch):
+        """A hostname entry (unknown family) reserves its port so the
+        loopback hint never suggests a 127.0.0.1 listener on a port a
+        hostname entry already uses."""
+        cfg = reload_config_with_env(
+            monkeypatch,
+            SILENTSUITE_SERVER_HOSTS="myhost.example:37358",
+            SILENTSUITE_ALLOW_REMOTE="1",
+        )
+        try:
+            hint = cfg.loopback_listener_hint()
+            assert hint is not None
+            suggested_port = int(hint.rsplit(":", 1)[1])
+            assert suggested_port != 37358, (
+                "hint must not suggest the hostname entry's port"
+            )
+        finally:
+            restore_config(monkeypatch)

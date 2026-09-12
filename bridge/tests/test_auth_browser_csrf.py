@@ -285,6 +285,40 @@ def test_success_page_uses_https_bridge_urls_when_ssl_enabled():
     assert "http://127.0.0.1:37358/" not in body
 
 
+def test_success_page_running_bridge_builds_bookmark_for_bound_url(fresh_registry):
+    """Regression: when the bridge is running with a bound loopback listener,
+    the success page must build the dashboard bookmark for the bound URL (not
+    leave dashboard_bookmark unbound). This covers the normal running-bridge
+    path, not only the standalone pre-start case."""
+    from silentsuite_bridge import config
+
+    with patch.object(config, "LISTEN_ADDRESS", "127.0.0.1"), \
+         patch.object(config, "LISTEN_PORT", 37358), \
+         patch.object(config, "SSL_ENABLED", False):
+        fresh_registry.reset()
+        fresh_registry.record_bound(("127.0.0.1", 37358), None, ssl=False)
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), AuthCallbackHandler)
+        server.csrf_token = "expected-token"
+        server.authenticated_email = "alice@example.com"
+        thread = threading.Thread(target=server.handle_request)
+        thread.start()
+        try:
+            status, body = _get_auth_path(server, "/success")
+        finally:
+            server.server_close()
+            thread.join(timeout=5)
+
+    assert status == 200
+    # The bound dashboard URL appears in the page.
+    assert "http://127.0.0.1:37358/" in body
+    # The bookmark box is rendered (not the "not bound" fallback).
+    assert "bookmark-box" in body
+    assert "Dashboard is not configured or not bound" not in body
+    # The bound DAV URL is shown.
+    assert "http://127.0.0.1:37358/alice@example.com/" in body
+
+
 def test_browser_login_completion_does_not_print_account_or_server_values(capsys):
     server = MagicMock()
     event = MagicMock()

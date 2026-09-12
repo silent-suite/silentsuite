@@ -49,12 +49,48 @@ COLOR_GRAY = "#666666"
 
 
 def _dashboard_url():
-    """Return the configured local dashboard URL."""
-    return f"{config.local_base_url()}/"
+    """Return the dashboard URL from the registry, or None when not bound.
+
+    Falls back to the requested URL only before serving has been attempted
+    (tray built before the server starts). Once serving was attempted/stopped,
+    a missing bound URL means no loopback listener is bound — return None so
+    the tray shows a disabled item.
+    """
+    from .radicale.server import get_registry
+
+    registry = get_registry()
+    registry_url = registry.dashboard_url(config.SSL_ENABLED)
+    if registry_url is not None:
+        return registry_url
+    # Only fall back to requested URL before serving has ever been attempted.
+    if registry.is_started or registry.is_stopped:
+        return None
+    requested = config.requested_dashboard_listener()
+    if requested:
+        return config.listener_base_url(requested["host"], requested["port"]) + "/"
+    return None
 
 
 def _account_dav_url(email):
-    """Return the configured local DAV URL for one account."""
+    """Return the DAV URL for one account from a bound listener.
+
+    Uses the registry's bound listeners when available, preferring loopback
+    (so the copied URL matches the safe dashboard endpoint) and falling back
+    to a bound remote literal when no loopback is bound. Falls back to the
+    configured LISTEN_ADDRESS/LISTEN_PORT only before serving has been
+    attempted. Once serving was attempted/stopped with no usable listener
+    bound, returns None so callers can handle the absence explicitly rather
+    than advertising an unbound requested address.
+    """
+    from .radicale.server import get_registry
+
+    registry = get_registry()
+    base = registry.dav_base_url(config.SSL_ENABLED)
+    if base is not None:
+        return f"{base}/{email}/"
+    # Only fall back to requested URL before serving has ever been attempted.
+    if registry.is_started or registry.is_stopped:
+        return None
     return f"{config.local_base_url()}/{email}/"
 
 
@@ -105,9 +141,44 @@ class BridgeTray:
         self._error = None
         self._icon = None
         self._running = False
+        # The tray starts before the server binds (run_server starts it
+        # first), so the menu must follow the listener registry: every bind,
+        # bind failure, or stop asks pystray to re-render the menu. The hook
+        # runs synchronously on the thread that changed the registry; no
+        # thread is owned by the tray for this.
+        from .radicale.server import get_registry
+
+        get_registry().add_listener(self._on_registry_change)
+
+    def _on_registry_change(self):
+        """Re-render the menu after a listener registry change.
+
+        ``Icon.update_menu()`` is pystray's documented call for a menu whose
+        callable ``text``/``enabled`` values changed. Before ``run()`` has
+        created the icon there is nothing to refresh; the menu built in
+        ``run()`` reads the registry at that point.
+        """
+        icon = self._icon
+        if icon is None:
+            return
+        try:
+            icon.update_menu()
+        except Exception as e:
+            logger.debug("Tray menu refresh failed (%s)", bounded_exception_class(e))
 
     def _build_menu(self):
-        """Build the tray menu."""
+        """Build the tray menu.
+
+        Dashboard and DAV URLs are resolved at click time, not at menu-build
+        time, so a menu built before the server binds (or while a previous
+        registry state was active) never opens or copies a stale URL. The
+        callbacks defer to ``_dashboard_url()`` / ``_account_dav_url()`` which
+        read the live registry on every invocation. The dashboard item's
+        ``text`` and ``enabled`` values are callables that pystray evaluates
+        whenever it renders the menu, and ``_on_registry_change`` asks for a
+        re-render on every registry change, so the label and availability
+        follow the bound state instead of a pre-start snapshot.
+        """
         accounts = _get_accounts()
 
         status_text = {
@@ -120,17 +191,23 @@ class BridgeTray:
         if accounts:
             account_items = []
             for email in accounts:
-                dav_url = _account_dav_url(email)
+                # Resolve the DAV URL at click time so a stale pre-start menu
+                # never copies a URL that is no longer valid.
+                def _copy_dav(_icon=None, _item=None, _email=email):
+                    url = _account_dav_url(_email)
+                    if url is not None:
+                        self._copy_to_clipboard(url)
+
                 account_items.append(pystray.MenuItem(
                     email,
                     pystray.Menu(
                         pystray.MenuItem(
                             "Copy CalDAV URL",
-                            lambda _icon=None, _item=None, url=dav_url: self._copy_to_clipboard(url),
+                            _copy_dav,
                         ),
                         pystray.MenuItem(
                             "Copy CardDAV URL",
-                            lambda _icon=None, _item=None, url=dav_url: self._copy_to_clipboard(url),
+                            _copy_dav,
                         ),
                     ),
                 ))
@@ -138,6 +215,29 @@ class BridgeTray:
             account_items = [
                 pystray.MenuItem("No accounts configured", None, enabled=False),
             ]
+
+        # Dashboard label and availability are evaluated by pystray each time
+        # the menu is rendered (callable text/enabled), and the click handler
+        # re-resolves the URL and no-ops if it is None, so an old menu cannot
+        # open a stale dashboard URL after the listener state changed.
+        def _dashboard_text(_item=None):
+            if _dashboard_url() is not None:
+                return "Open Dashboard"
+            return "Dashboard not bound on a loopback listener"
+
+        def _dashboard_enabled(_item=None):
+            return _dashboard_url() is not None
+
+        def _open_dashboard(_icon=None, _item=None):
+            url = _dashboard_url()
+            if url is not None:
+                webbrowser.open(url)
+
+        dashboard_item = pystray.MenuItem(
+            _dashboard_text,
+            _open_dashboard,
+            enabled=_dashboard_enabled,
+        )
 
         return pystray.Menu(
             pystray.MenuItem(
@@ -153,10 +253,7 @@ class BridgeTray:
             pystray.Menu.SEPARATOR,
             *account_items,
             pystray.Menu.SEPARATOR,
-            pystray.MenuItem(
-                "Open Dashboard",
-                lambda _icon=None, _item=None: webbrowser.open(_dashboard_url()),
-            ),
+            dashboard_item,
             pystray.MenuItem(
                 "Add / Re-authenticate Account",
                 lambda _icon=None, _item=None: self._reauthenticate(),

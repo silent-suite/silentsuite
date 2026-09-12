@@ -129,7 +129,50 @@ def effective_dav_scheme() -> str:
     return "https" if config.SSL_ENABLED else "http"
 
 
+def _print_requested_listeners() -> None:
+    """Print requested listener table before any listener is bound."""
+    records = config.parse_server_hosts(config.SERVER_HOSTS)
+    if not records:
+        return
+    print("Requested listeners:")
+    for r in records:
+        host = r["host"]
+        port = r["port"]
+        kind = r["kind"]
+        if kind == "loopback":
+            role = "DAV and dashboard"
+        elif kind == "wildcard":
+            role = "bind address, DAV only, dashboard denied"
+        else:
+            role = "remote DAV only"
+        label = f"{host}:{port}" if port else host
+        print(f"  {label} ({kind} — {role})")
+
+
 def _dashboard_url():
+    """Return the loopback listener dashboard URL.
+
+    Resolution order:
+    1. Registry bound loopback URL (authoritative when the bridge is running).
+    2. Requested loopback URL, but ONLY when the registry has never been
+       started (genuine pre-start authentication/standalone mode). Once serving
+       has been attempted, a missing bound URL means the loopback listener
+       failed to bind or was stopped — never fall back to an unbound requested
+       address.
+    3. None when serving was attempted/stopped and no loopback bound.
+    """
+    from .radicale.server import get_registry
+
+    registry = get_registry()
+    registry_url = registry.dashboard_url(config.SSL_ENABLED)
+    if registry_url is not None:
+        return registry_url
+    # Only fall back to requested URL before serving has ever been attempted.
+    if registry.is_started or registry.is_stopped:
+        return None
+    requested = config.requested_dashboard_listener()
+    if requested:
+        return config.listener_base_url(requested["host"], requested["port"]) + "/"
     return f"{config.local_base_url()}/"
 
 
@@ -154,18 +197,36 @@ def check_credentials(open_browser=True):
     creds = Credentials()
     users = creds.list_users()
 
+    # Print requested listeners before any early exit
+    _print_requested_listeners()
+
     if not users:
         if config.is_dashboard_enabled():
             dashboard_url = _dashboard_url()
             logger.info("No users configured; starting bridge dashboard setup")
             print("\nNo account configured yet. Open the bridge dashboard to sign in:")
-            print(f"  {dashboard_url}\n")
+            print(f"  {dashboard_url}")
+            print("  (URL confirmed when the listener binds)\n")
             if open_browser:
                 _open_dashboard_later(dashboard_url)
             return True
 
+        # No loopback listener configured: print hint before early exit
+        hint = config.loopback_listener_hint()
+        if hint:
+            print(
+                "\nNo account configured and no loopback listener is configured for"
+                " the dashboard.\nSet SILENTSUITE_SERVER_HOSTS to include a loopback"
+                " address, e.g.:"
+            )
+            print(f"  SILENTSUITE_SERVER_HOSTS={hint}\n")
+        else:
+            print(
+                "\nNo account configured and no loopback listener is configured for"
+                " the dashboard.\n"
+            )
+
         logger.error("No users configured and bridge dashboard is disabled")
-        print("\nNo account configured and the bridge dashboard is disabled for this bind.")
         print("Run `silentsuite-bridge --login` or `silentsuite-bridge --manual-login` first.\n")
         return False
 
@@ -584,11 +645,17 @@ def run_server():
                 "Remote bridge bind enabled by SILENTSUITE_ALLOW_REMOTE=1. "
                 "DAV traffic is plaintext HTTP unless protected by your own proxy/VPN."
             )
-        logger.warning(
-            "Remote listener exposes DAV endpoints only; the bridge dashboard is "
-            "disabled for this bind. Use a loopback bind on the Bridge host to "
-            "access the dashboard."
-        )
+        if config.is_dashboard_enabled():
+            logger.warning(
+                "Dashboard is served on the loopback listener only;"
+                " remote listeners expose DAV endpoints only."
+            )
+        else:
+            logger.warning(
+                "Remote listener exposes DAV endpoints only; the bridge dashboard is "
+                "disabled for this bind. Use a loopback bind on the Bridge host to "
+                "access the dashboard."
+            )
     logger.info("Etebase server configured")
     logger.info("Bridge data directory configured")
     logger.info("CalDAV/CardDAV scheme: %s", config.dav_scheme())
@@ -613,31 +680,129 @@ def run_server():
         sys.exit(1)
 
 
-def _serve_radicale_with_bridge_application(configuration) -> None:
-    """Run Radicale once with the Bridge's narrowly compatible application.
+def _serve_radicale_with_bridge_application(configuration, shutdown_socket=None) -> None:
+    """Run Radicale once with the Bridge's adapted server stack.
 
-    Radicale 3.2.3 constructs its module-global ``Application`` internally.
-    Keep the temporary replacement single-process, non-reentrant, and
-    ownership-aware so another caller cannot have its replacement overwritten.
+    Radicale 3.2.3 reads Application, RequestHandler, ParallelHTTPServer, and
+    ParallelHTTPSServer as module globals at call time (see serve() lines
+    266-310).  This wrapper replaces all four with bridge-owned subclasses,
+    resets the ListenerRegistry, and passes ``shutdown_socket`` through to
+    serve().  On return / exception / KeyboardInterrupt all four globals are
+    restored and the registry is marked stopped.
+
+    tray.quit() terminates the process with ``os._exit(0)`` and is outside
+    these guarantees.
     """
     from radicale import server as radicale_server
     from radicale.app import Application as RadicaleApplication
 
     from .radicale.application import Application as BridgeApplication
+    from .radicale.server import (
+        BridgeRequestHandlerMixin,
+        _build_bridge_http_server_class,
+        _build_bridge_https_server_class,
+        get_pinned_originals,
+        get_registry,
+        print_resolution_failed,
+    )
+
+    registry = get_registry()
+    # Only a registry this invocation actually started is marked stopped on
+    # exit; a rejected entry state must not turn a never-started registry
+    # into a stopped one.
+    registry_started = False
 
     if not _RADICALE_SERVER_APPLICATION_LOCK.acquire(blocking=False):
         raise RuntimeError("Radicale server application injection is already active")
     try:
-        if radicale_server.Application is not RadicaleApplication:
-            raise RuntimeError("Unexpected Radicale server Application entry state")
-        expected_application = radicale_server.Application
+        # --- validate upstream identity against pinned originals (module-import-time) ---
+        originals = get_pinned_originals()
+        for name, pinned in originals.items():
+            current = getattr(radicale_server, name, None)
+            if current is not pinned:
+                raise RuntimeError(
+                    f"Unexpected Radicale server {name} entry state: pinned original replaced"
+                )
+
+        # --- reset the registry AFTER lock + identity validation ---
+        registry.reset()
+        registry_started = True
+
+        # --- build and inject bridge-owned classes ---
+        BridgeHTTP = _build_bridge_http_server_class(
+            originals["ParallelHTTPServer"], registry,
+        )
+        BridgeHTTPS = _build_bridge_https_server_class(
+            originals["ParallelHTTPSServer"], registry,
+        )
+
+        # BridgeRequestHandlerMixin FIRST so its get_environ() runs (MRO depth-first).
+        class _BridgeRequestHandler(BridgeRequestHandlerMixin, originals["RequestHandler"]):
+            pass
+
         radicale_server.Application = BridgeApplication
+        radicale_server.RequestHandler = _BridgeRequestHandler
+        radicale_server.ParallelHTTPServer = BridgeHTTP
+        radicale_server.ParallelHTTPSServer = BridgeHTTPS
+
+        # Record what we installed so we only restore our own replacements.
+        _installed = {
+            "Application": BridgeApplication,
+            "RequestHandler": _BridgeRequestHandler,
+            "ParallelHTTPServer": BridgeHTTP,
+            "ParallelHTTPSServer": BridgeHTTPS,
+        }
+
+        # Narrow resolution-failure observer: swap radicale_server.socket to a
+        # module-local proxy that delegates every attribute to the real stdlib
+        # socket module but overrides getaddrinfo for this one module reference
+        # only. radicale_server.socket IS the stdlib socket module (same
+        # object), so assigning radicale_server.socket.getaddrinfo would
+        # globally replace socket.getaddrinfo for every thread/importer. The
+        # proxy avoids that: only the radicale.server module global is swapped,
+        # and the real socket module is never mutated, so sync/auth/HTTP
+        # threads and every other importer of ``socket`` keep the real
+        # getaddrinfo. Radicale's serve() reads ``socket`` as its own module
+        # global, so the proxy is the only reference that observes resolution
+        # failures. Restored in the same finally block as the four globals.
+        import types as _types
+
+        _captured_socket = radicale_server.socket
+        _original_getaddrinfo = _captured_socket.getaddrinfo
+
+        def _observing_getaddrinfo(host, port, *args, **kwargs):
+            try:
+                return _original_getaddrinfo(host, port, *args, **kwargs)
+            except OSError:
+                registry.record_failed()
+                print_resolution_failed(f"{host}:{port}")
+                raise
+
+        class _ObservingSocketProxy(_types.ModuleType):
+            def __getattr__(self, name):
+                return getattr(_captured_socket, name)
+
+        _socket_proxy = _ObservingSocketProxy(_captured_socket.__name__)
+        _socket_proxy.getaddrinfo = _observing_getaddrinfo
+        radicale_server.socket = _socket_proxy
+
         try:
-            radicale_server.serve(configuration)
+            radicale_server.serve(configuration, shutdown_socket=shutdown_socket)
         finally:
-            if radicale_server.Application is BridgeApplication:
-                radicale_server.Application = expected_application
+            # --- restore the module-local socket proxy (ownership-aware) ---
+            if radicale_server.socket is _socket_proxy:
+                radicale_server.socket = _captured_socket
+            # --- restore every slot we own, but ONLY if it still holds our replacement ---
+            for name, original in originals.items():
+                current = getattr(radicale_server, name)
+                if current is _installed.get(name):
+                    setattr(radicale_server, name, original)
     finally:
+        # Mark the registry stopped BEFORE releasing the lifecycle lock so a
+        # second invocation that acquires the lock cannot reset and start a
+        # fresh registry that this invocation then marks stopped.
+        if registry_started:
+            registry.mark_stopped()
         _RADICALE_SERVER_APPLICATION_LOCK.release()
 
 
@@ -713,7 +878,8 @@ def main():
         print("  SILENTSUITE_LISTEN_ADDRESS   Listen address (default: 127.0.0.1)")
         print("  SILENTSUITE_LISTEN_PORT      Listen port (default: 37358)")
         print("  SILENTSUITE_SERVER_HOSTS     Radicale host specs (default: listen address:port)")
-        print("  SILENTSUITE_ALLOW_REMOTE     Allow non-loopback bind and disable dashboard")
+        print("  SILENTSUITE_ALLOW_REMOTE     Allow non-loopback bind; the dashboard is served")
+        print("                              only on explicitly configured loopback listeners")
         print("  (Environment overrides the persisted settings.json network profile.)")
         print("  SILENTSUITE_DATA_DIR         Data directory path (not supported with --install-autostart)")
         print("  SILENTSUITE_LOG_LEVEL        Log level (default: INFO)")

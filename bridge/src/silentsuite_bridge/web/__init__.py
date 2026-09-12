@@ -228,32 +228,245 @@ def _create_sync_request():
 # Localhost Host allowlist for defense-in-depth against DNS-rebinding and
 # cross-origin attacks on the dashboard (SEC-R7.4). The dashboard is
 # loopback-only by default, so only localhost variants are accepted.
+#
+# As of #720 the Host check is replaced by a strict evidence gate that
+# validates the bound listener, accepted local address, and peer.  The
+# Host authority is still validated against the listener port to defeat
+# port-smuggling.
 
 
-def _has_valid_host(environ):
-    """Check that the Host header matches a localhost variant.
+def _trusted_loopback_evidence(environ) -> bool:
+    """Return true only when bridge-owned evidence proves a loopback peer.
 
-    Handles IPv4 (127.0.0.1:port), IPv6 ([::1]:port, [::1]), and bare
-    hostnames (localhost) correctly by stripping the port first.
+    Requires: evidence present and the internal ``_ListenerEvidence`` type,
+    ``listener`` and ``accepted_local`` are 2-tuples of (str, int) where the
+    ints are non-bool ports in range, ``peer`` is a str, the listener address
+    is a loopback literal, the accepted_local address is loopback and its
+    port equals the listener port (the request was accepted on the same
+    listener that bound it), the peer is a numeric loopback address, and
+    ``REMOTE_ADDR`` equals peer. ``ssl`` must be a bool. Malformed or
+    untrusted values deny rather than raise — including an uninitialized
+    evidence object created via ``object.__new__`` that bypasses
+    ``__init__`` (all slots are unset).
     """
-    raw = environ.get("HTTP_HOST", "")
-    # Strip port: split on the last colon only (IPv6 has colons in the address).
-    # For bracketed IPv6 like [::1]:37358, extract between [ and ].
+    from ipaddress import ip_address
+
+    from ..radicale.server import _ListenerEvidence
+
+    evidence = environ.get("silentsuite_bridge.evidence")
+    if evidence is None:
+        return False
+
+    # Reject any lookalike object: only the private frozen type is trusted.
+    if not isinstance(evidence, _ListenerEvidence):
+        return False
+
+    # Reject an uninitialized evidence created via object.__new__ that
+    # bypasses __init__: accessing a slot that was never set raises
+    # AttributeError, which we treat as untrusted rather than fatal.
+    try:
+        listener = evidence.listener
+        accepted_local = evidence.accepted_local
+        peer = evidence.peer
+        evidence_ssl = evidence.ssl
+    except AttributeError:
+        return False
+
+    # Defensive shape check before dereferencing.
+    if not (isinstance(listener, tuple) and len(listener) == 2):
+        return False
+    if not (isinstance(accepted_local, tuple) and len(accepted_local) == 2):
+        return False
+    if not isinstance(peer, str):
+        return False
+    if not isinstance(evidence_ssl, bool):
+        return False
+
+    listener_host, listener_port = listener
+    accepted_host, accepted_port = accepted_local
+
+    # Hosts must be strings.
+    if not isinstance(listener_host, str) or not isinstance(accepted_host, str):
+        return False
+
+    # Ports must be ints, not bools (bool is a subclass of int), and in range.
+    if isinstance(listener_port, bool) or not isinstance(listener_port, int):
+        return False
+    if isinstance(accepted_port, bool) or not isinstance(accepted_port, int):
+        return False
+    if not (1 <= listener_port <= 65535) or not (1 <= accepted_port <= 65535):
+        return False
+
+    # Accepted-local port must equal the listener port: the request was
+    # accepted on the same listener that bound it.
+    if accepted_port != listener_port:
+        return False
+
+    remote_addr = environ.get("REMOTE_ADDR", "")
+
+    # Listener must be a loopback literal (never wildcard, never remote)
+    try:
+        if not ip_address(listener_host).is_loopback:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+    # Accepted local must be loopback
+    try:
+        if not ip_address(accepted_host).is_loopback:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+    # Peer must be numeric loopback
+    try:
+        if not ip_address(peer).is_loopback:
+            return False
+    except (ValueError, TypeError):
+        return False
+
+    # REMOTE_ADDR must equal peer
+    if remote_addr != peer:
+        return False
+
+    return True
+
+
+def _parse_host_authority(raw: str) -> tuple[str | None, int | None]:
+    """Parse a Host header strictly; returns (host, port) or (None, None).
+
+    Accepts only: ``localhost`` (exact, lowercase), numeric IPv4 loopback
+    (127/8), or numeric IPv6 loopback (::1).  Rejects all other IP literals,
+    hostnames, IPv4-mapped IPv6, bracketed non-IPv6, zone ids, commas,
+    whitespace anywhere (never stripped: a padded authority is rejected, not
+    normalised), and malformed ports.  Brackets are required for IPv6,
+    forbidden for IPv4.
+    """
+    from ipaddress import ip_address, IPv6Address
+    if not raw or not isinstance(raw, str):
+        return None, None
+    if "," in raw or "%" in raw or any(ch.isspace() for ch in raw):
+        return None, None
+
+    host: str | None = None
+    port: int | None = None
+
     if raw.startswith("["):
-        # IPv6 with port: [::1]:37358 or IPv6 without port: [::1]
-        bracket_end = raw.find("]")
-        if bracket_end > 0:
-            host = raw[1:bracket_end]
+        end = raw.find("]")
+        if end <= 1:
+            return None, None
+        host = raw[1:end]
+        rest = raw[end + 1:]
+        if rest == "":
+            port = None
+        elif rest.startswith(":"):
+            port = _parse_host_port(rest[1:])
+            if port is None:
+                return None, None
         else:
-            host = ""
+            return None, None
+        # Must be an IPv6 literal — no localhost or IPv4 in brackets
+        try:
+            addr = ip_address(host)
+        except ValueError:
+            return None, None
+        if not isinstance(addr, IPv6Address):
+            return None, None
+        if addr.ipv4_mapped is not None:
+            return None, None
+        if not addr.is_loopback:
+            return None, None
+        host_lower = str(addr)  # canonical form
     else:
-        # IPv4 or hostname, possibly with :port
-        host = raw.rsplit(":", 1)[0] if ":" in raw else raw
-    return host in {"localhost", "127.0.0.1", "::1"}
+        colon_count = raw.count(":")
+        if colon_count > 1:
+            return None, None  # bare IPv6
+        if colon_count == 1:
+            host, port_str = raw.rsplit(":", 1)
+            port = _parse_host_port(port_str)
+            if port is None:
+                return None, None
+        else:
+            host = raw
+            port = None
+        if host is None or not host:
+            return None, None
+        host_lower = host
+        if host == "localhost":
+            pass
+        else:
+            try:
+                addr = ip_address(host)
+            except ValueError:
+                return None, None
+            if not addr.is_loopback:
+                return None, None
+            if isinstance(addr, IPv6Address):
+                if addr.ipv4_mapped is not None:
+                    return None, None
+            host_lower = str(addr)  # canonical form
+
+    return host_lower, port
 
 
-def _host_error():
-    return _json_response(403, {"error": "Dashboard access denied: non-local Host header"})
+def _parse_host_port(port_str: str) -> int | None:
+    """Parse a port string: 1-5 ASCII digits, 1..65535."""
+    if not port_str or len(port_str) > 5 or not port_str.isascii() or not port_str.isdigit():
+        return None
+    p = int(port_str)
+    if not 1 <= p <= 65535:
+        return None
+    return p
+
+
+def _dashboard_not_found() -> tuple:
+    """Return a plain 404 matching Radicale's disabled-web-module response."""
+    return (404, {}, b"Not found")
+
+
+# Throttled warning: emit at most once per process lifetime per denial reason.
+_warned_evidence_missing = False
+_warned_authority = False
+
+
+def _check_dashboard_access(environ) -> tuple | None:
+    """Return None if access is granted, or a denial WSGI response tuple."""
+    global _warned_evidence_missing, _warned_authority
+
+    # 1. Evidence gate — evidence must exist, be the internal frozen type, and
+    #    prove a loopback peer. _trusted_loopback_evidence performs the
+    #    type/shape validation so malformed/lookalike objects deny (404) rather
+    #    than raise.
+    evidence = environ.get("silentsuite_bridge.evidence")
+    if evidence is None or not _trusted_loopback_evidence(environ):
+        if not _warned_evidence_missing:
+            logger.warning("Dashboard request denied: missing or untrusted loopback evidence")
+            _warned_evidence_missing = True
+        return _dashboard_not_found()
+
+    # 2. Host authority check
+    raw = environ.get("HTTP_HOST", "")
+    host, port = _parse_host_authority(raw)
+    listener_port = evidence.listener[1]
+
+    if host is None:
+        if not _warned_authority:
+            logger.warning("Dashboard request denied: invalid Host authority")
+            _warned_authority = True
+        return _dashboard_not_found()
+
+    # Port must match listener port, or when absent default 80/443
+    expected_port = port
+    if expected_port is None:
+        expected_port = 443 if evidence.ssl else 80
+
+    if expected_port != listener_port:
+        if not _warned_authority:
+            logger.warning("Dashboard request denied: Host port mismatch")
+            _warned_authority = True
+        return _dashboard_not_found()
+
+    return None
 
 
 def _csrf_error():
@@ -804,6 +1017,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
 
             <div class="url-section">
+                <h3>Network</h3>
+                {{NETWORK_CARD}}
+            </div>
+
+            <div class="url-section">
                 <div class="section-title-row">
                     <h3>Configured Accounts</h3>
                     <button id="addAccountBtn" class="account-action-btn primary">Add / Re-authenticate Account</button>
@@ -1149,6 +1367,116 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+def _render_network_card() -> str:
+    """Render the Network card as escaped HTML.
+
+    Shows requested AND bound listeners separately even on partial failures,
+    with a scheme-qualified client URL for each non-wildcard bound literal
+    (respecting per-entry SSL). Wildcard binds are bind-only with no dialable
+    URL. The source rule names the three bridge-owned facts (bound listener,
+    accepted local address, peer) the dashboard gate checks.
+    """
+    from ..radicale.server import get_registry
+
+    registry = get_registry()
+    bound = registry.bound_listeners()
+    requested = config.parse_server_hosts(config.SERVER_HOSTS)
+    parts = []
+
+    # Requested listeners — always shown, even when some bound.
+    if requested:
+        parts.append('<div style="margin-bottom:6px;color:#ccc;">Requested listeners:</div>')
+        for r in requested:
+            host = html.escape(str(r["host"]))
+            port = r["port"]
+            kind = r["kind"]
+            if kind == "loopback":
+                role = "DAV and dashboard"
+            elif kind == "wildcard":
+                role = "bind address, DAV only"
+            elif kind == "invalid":
+                role = "not parseable, will not bind"
+            else:
+                role = "remote DAV only"
+            display_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+            label = f"{display_host}:{port}" if port else host
+            parts.append(
+                f'<div class="url-box">'
+                f'<div><label>{label} ({kind} — {role}; requested, not yet confirmed bound)</label></div>'
+                f'</div>'
+            )
+
+    # Bound listeners — shown separately, with a dialable scheme URL for
+    # each non-wildcard literal.
+    if bound:
+        parts.append('<div style="margin:6px 0;color:#ccc;">Bound listeners:</div>')
+        for b in bound:
+            host = html.escape(str(b["host"]))
+            port = b["port"]
+            ssl_on = bool(b.get("ssl", False))
+            scheme = "https" if ssl_on else "http"
+            ssl_flag = " (TLS)" if ssl_on else ""
+            display_host = b["host"]
+            if ":" in display_host and not display_host.startswith("["):
+                display_host = f"[{display_host}]"
+            if config.is_loopback_literal(b["host"]):
+                role = "DAV and dashboard"
+                url = f"{scheme}://{display_host}:{port}/"
+                parts.append(
+                    f'<div class="url-box">'
+                    f'<div><label>{host}:{port}{ssl_flag} — {role}</label></div>'
+                    f'<div><code>{html.escape(url)}</code></div>'
+                    f'</div>'
+                )
+            elif config.is_wildcard_host(b["host"]):
+                role = (
+                    "bind address, DAV only (not a client URL; DAV clients use "
+                    f"{scheme}://&lt;this host's concrete address&gt;:{port}/)"
+                )
+                parts.append(
+                    f'<div class="url-box">'
+                    f'<div><label>{host}:{port}{ssl_flag} — {role}</label></div>'
+                    f'</div>'
+                )
+            else:
+                role = "remote DAV only"
+                url = f"{scheme}://{display_host}:{port}/"
+                parts.append(
+                    f'<div class="url-box">'
+                    f'<div><label>{host}:{port}{ssl_flag} — {role}</label></div>'
+                    f'<div><code>{html.escape(url)}</code></div>'
+                    f'</div>'
+                )
+    elif requested:
+        parts.append(
+            '<div style="margin:6px 0;color:#888;">No listeners bound yet.</div>'
+        )
+    else:
+        parts.append('<div style="color:#888;">No listeners configured</div>')
+
+    failed = registry.failed_count()
+    if failed:
+        parts.append(
+            f'<div style="margin-top:6px;color:#ff8a8a;">'
+            f'{failed} listener(s) failed to bind'
+            f'</div>'
+        )
+
+    parts.append(
+        '<div style="margin-top:8px;font-size:12px;color:#666;">'
+        'Source rule: the dashboard answers only when bridge-owned evidence proves '
+        'the request arrived on a bound loopback listener (never a wildcard or '
+        'remote bind), was accepted on a loopback local address on that '
+        'listener\'s port, and came from a loopback peer matching REMOTE_ADDR. '
+        'The Host header must then be a strict loopback authority whose port '
+        'matches the listener, and mutating requests must also carry the CSRF '
+        'token. Anything else gets a plain 404. Append /&lt;account email&gt;/ to a '
+        'bound endpoint above for that account\'s CalDAV/CardDAV URL.'
+        '</div>'
+    )
+    return "\n".join(parts)
+
+
 def _render_dashboard():
     """Render the dashboard HTML with current status."""
     from .. import __version__
@@ -1159,7 +1487,22 @@ def _render_dashboard():
     creds = Credentials()
     users = creds.list_users()
 
-    base_url = config.local_base_url(config.LISTEN_ADDRESS)
+    # Use the registry's bound listeners for DAV URLs when available,
+    # preferring loopback and falling back to a bound remote literal when no
+    # loopback bound. Only before serving has been attempted do we fall back to
+    # the configured LISTEN_ADDRESS/LISTEN_PORT. Once serving was
+    # attempted/stopped with no usable listener bound, DAV URLs are not
+    # advertised (the dashboard gate would deny them anyway).
+    from ..radicale.server import get_registry
+
+    registry = get_registry()
+    base_url = registry.dav_base_url(config.SSL_ENABLED)
+    if base_url is None:
+        if registry.is_started or registry.is_stopped:
+            # No usable bound listener after serving was attempted.
+            base_url = None
+        else:
+            base_url = config.local_base_url(config.LISTEN_ADDRESS)
 
     with _bridge_status_lock:
         state = _bridge_status["state"]
@@ -1218,9 +1561,33 @@ def _render_dashboard():
         login_copy = "Sign in with your SilentSuite account. Existing accounts stay configured; signing in again refreshes credentials for that account."
         account_html = ""
         for index, user in enumerate(users):
-            dav_url = f"{base_url}/{user}/"
-            server_url = creds.get_server_url(user)
+            # url_id is assigned for EVERY account before any branch so the
+            # successful-bind branch (which uses it in the copy button) cannot
+            # raise UnboundLocalError when base_url is not None.
             url_id = f"davUrl{index}"
+            if base_url is not None:
+                dav_url = f"{base_url}/{user}/"
+                dav_url_html = (
+                    '<div class="url-box">'
+                    '<div>'
+                    '<label>CalDAV/CardDAV URL</label>'
+                    f'<code id="{url_id}">{esc(dav_url)}</code>'
+                    '</div>'
+                    f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
+                    '</div>'
+                    '<div style="font-size:12px;color:#f59e0b;margin-top:6px;">For calendar/contact apps only. Copy it into your app &mdash; do not open it in a web browser, which can expose your password in the address bar.</div>'
+                )
+            else:
+                dav_url = ""
+                dav_url_html = (
+                    '<div class="url-box">'
+                    '<div>'
+                    '<label>CalDAV/CardDAV URL</label>'
+                    '<code>DAV URL unavailable: no usable listener is bound. Check the network card above.</code>'
+                    '</div>'
+                    '</div>'
+                )
+            server_url = creds.get_server_url(user)
             fingerprint = _account_fingerprint(creds, user)
             fingerprint_id = f"accountFingerprint{index}"
             if fingerprint:
@@ -1262,14 +1629,7 @@ def _render_dashboard():
                 f'<h4>{esc(user)}</h4>'
                 f'<div class="account-meta">Server: <code>{esc(server_url)}</code></div>'
                 f'{fingerprint_html}'
-                '<div class="url-box">'
-                '<div>'
-                '<label>CalDAV/CardDAV URL</label>'
-                f'<code id="{url_id}">{esc(dav_url)}</code>'
-                '</div>'
-                f'<button class="copy-btn" onclick="copy(event, \'{url_id}\')">Copy</button>'
-                '</div>'
-                '<div style="font-size:12px;color:#f59e0b;margin-top:6px;">For calendar/contact apps only. Copy it into your app &mdash; do not open it in a web browser, which can expose your password in the address bar.</div>'
+                f'{dav_url_html}'
                 f'{ssl_note}'
                 '<div class="account-actions">'
                 f'<button class="account-action-btn" data-account="{account_attr}" '
@@ -1315,8 +1675,71 @@ def _render_dashboard():
         interval_display = f"{interval} sec"
     page = page.replace("{{SYNC_INTERVAL}}", str(interval))
     page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(interval_display))
+    page = page.replace("{{NETWORK_CARD}}", _render_network_card())
 
     return page
+
+
+def _network_card() -> dict:
+    """Return network listener info for the dashboard status API.
+
+    Includes requested AND bound listeners separately, with a
+    scheme-qualified ``url`` for each non-wildcard bound literal (respecting
+    per-entry SSL). Wildcard binds have ``url: null`` (not a dialable
+    endpoint). The rule names the three bridge-owned facts the gate checks.
+    """
+    from ..radicale.server import get_registry
+
+    registry = get_registry()
+    requested = config.parse_server_hosts(config.SERVER_HOSTS)
+    bound = registry.bound_listeners()
+    dashboard_url = registry.dashboard_url(config.SSL_ENABLED)
+
+    requested_summary = [
+        {"host": r["host"], "port": r["port"], "kind": r["kind"]}
+        for r in requested
+    ]
+
+    def _bound_entry(b: dict) -> dict:
+        host = b["host"]
+        ssl_on = bool(b.get("ssl", False))
+        scheme = "https" if ssl_on else "http"
+        if config.is_loopback_literal(host):
+            role = "DAV and dashboard"
+        elif config.is_wildcard_host(host):
+            role = "DAV only (bind address, not a client URL)"
+        else:
+            role = "DAV only (remote)"
+        display_host = host
+        if ":" in display_host and not display_host.startswith("["):
+            display_host = f"[{display_host}]"
+        url = None if config.is_wildcard_host(host) else f"{scheme}://{display_host}:{b['port']}/"
+        return {
+            "host": host,
+            "port": b["port"],
+            "ssl": ssl_on,
+            "role": role,
+            "url": url,
+        }
+
+    bound_summary = [_bound_entry(b) for b in bound]
+
+    return {
+        "requested": requested_summary,
+        "bound": bound_summary,
+        "failed_count": registry.failed_count(),
+        "dashboard_url": dashboard_url,
+        "rule": (
+            "Dashboard is served only when bridge-owned evidence proves the "
+            "request arrived on a bound loopback listener (never wildcard or "
+            "remote), was accepted on a loopback local address on that "
+            "listener's port, and came from a loopback peer matching "
+            "REMOTE_ADDR; the Host header must be a strict loopback authority "
+            "whose port matches the listener, and mutating requests must carry "
+            "the CSRF token. Anything else is a plain 404."
+        ),
+        "account_path_pattern": "/<email>/",
+    }
 
 
 class Web(BaseWeb):
@@ -1327,9 +1750,10 @@ class Web(BaseWeb):
 
     def get(self, environ, base_prefix, path, user):
         """Serve the dashboard for Radicale's web endpoint."""
-        # SEC-R7.4: Reject non-local Host headers before any processing.
-        if not _has_valid_host(environ):
-            return _host_error()
+        # #720 loopback evidence gate — evidence, then Host, then CSRF
+        denial = _check_dashboard_access(environ)
+        if denial is not None:
+            return denial
 
         if path in ("", "/", "/.web", "/.web/"):
             html = _render_dashboard()
@@ -1349,6 +1773,7 @@ class Web(BaseWeb):
                 )
             data = {
                 "status": status,
+                "network": _network_card(),
                 "log": list(_sync_log)[:20],
             }
             return (
@@ -1461,10 +1886,10 @@ class Web(BaseWeb):
 
     def post(self, environ, base_prefix, path, user):
         """Handle POST requests for API endpoints."""
-        # SEC-R7.4: Reject non-local Host headers before any processing.
-        # Defense-in-depth against DNS-rebinding when ALLOW_REMOTE is enabled.
-        if not _has_valid_host(environ):
-            return _host_error()
+        # #720 loopback evidence gate — evidence, then Host, then CSRF
+        denial = _check_dashboard_access(environ)
+        if denial is not None:
+            return denial
 
         # Trigger immediate sync
         if path == "/.web/api/sync":
