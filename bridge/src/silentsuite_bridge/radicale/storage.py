@@ -698,6 +698,8 @@ class Collection(BaseCollection):
             DavSyncToken.delete().where(
                 DavSyncToken.collection == self.collection.cache_col
             ).execute()
+            # Bounded category only: never the token, href or collection.
+            logger.warning("DAV sync history invalidated (state_mismatch)")
             if old_token:
                 return _INVALID_SYNC_HISTORY
             current_token_row = None
@@ -727,6 +729,7 @@ class Collection(BaseCollection):
             & (DavSyncToken.token == old_token_value)
         )
         if token_row is None or token_row.revision > revision:
+            logger.info("DAV sync token unknown; client must full-resync")
             raise ValueError("unknown sync token")
         if old_token == token:
             return token, []
@@ -741,6 +744,7 @@ class Collection(BaseCollection):
         )
         expected_revisions = revision - token_row.revision
         if len(changed_revisions) != expected_revisions:
+            logger.warning("DAV sync history invalidated (coverage_gap)")
             raise ValueError("unknown sync token")
         proven_state_hash = token_row.state_hash
         for change in changed_revisions:
@@ -751,14 +755,21 @@ class Collection(BaseCollection):
                 DavSyncToken.delete().where(
                     DavSyncToken.collection == self.collection.cache_col
                 ).execute()
+                logger.warning("DAV sync history invalidated (chain_break)")
                 return _INVALID_SYNC_HISTORY
             proven_state_hash = change.state_hash
         if proven_state_hash != state_hash:
             DavSyncToken.delete().where(
                 DavSyncToken.collection == self.collection.cache_col
             ).execute()
+            logger.warning("DAV sync history invalidated (chain_tail_mismatch)")
             return _INVALID_SYNC_HISTORY
         changed_hrefs = sorted({change.href for change in changed_revisions})
+        logger.info(
+            "DAV sync delta served: %d changed hrefs across %d revisions",
+            len(changed_hrefs),
+            len(changed_revisions),
+        )
         return token, changed_hrefs
 
     def _sanitize_href_mappings(self):
