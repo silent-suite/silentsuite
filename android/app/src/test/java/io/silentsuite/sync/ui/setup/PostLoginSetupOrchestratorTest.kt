@@ -16,6 +16,31 @@ class PostLoginSetupOrchestratorTest {
     private val none = PostLoginSetupOrchestrator.UserDecision.NONE
 
     @Test
+    fun `failed startup never redirects or mutates any saved setup state`() {
+        PostLoginSetupState.values().forEach { state ->
+            PostLoginSetupOrchestrator.Ownership.values().forEach { ownership ->
+                PostLoginSetupOrchestrator.UserDecision.values().forEach { userDecision ->
+                    assertEquals(
+                        PostLoginSetupOrchestrator.Decision.ShowBootstrapFailure,
+                        decide(
+                            state = state,
+                            ownership = ownership,
+                            bootstrapSucceeded = false,
+                            userDecision = userDecision,
+                            initialSyncRequestId = "pending-request",
+                        ),
+                    )
+                }
+            }
+        }
+        // The same durable COMPLETE row opens normally once startup really succeeds.
+        assertEquals(
+            PostLoginSetupOrchestrator.Decision.OpenDashboard,
+            decide(state = PostLoginSetupState.COMPLETE, bootstrapSucceeded = true),
+        )
+    }
+
+    @Test
     fun `every durable state has one cold-start decision`() {
         val expected = mapOf(
             PostLoginSetupState.CREATING to
@@ -361,6 +386,7 @@ class PostLoginSetupOrchestratorTest {
     private fun decide(
         state: PostLoginSetupState,
         ownership: PostLoginSetupOrchestrator.Ownership = exact,
+        bootstrapSucceeded: Boolean = true,
         syncConfiguration: PostLoginSetupOrchestrator.SyncConfigurationOutcome =
             PostLoginSetupOrchestrator.SyncConfigurationOutcome.NOT_STARTED,
         inventory: PostLoginSetupOrchestrator.InventoryOutcome = notStarted,
@@ -375,6 +401,7 @@ class PostLoginSetupOrchestratorTest {
             PostLoginSetupOrchestrator.Input(
                 state = state,
                 ownership = ownership,
+                bootstrapSucceeded = bootstrapSucceeded,
                 syncConfiguration = syncConfiguration,
                 inventory = inventory,
                 userDecision = userDecision,

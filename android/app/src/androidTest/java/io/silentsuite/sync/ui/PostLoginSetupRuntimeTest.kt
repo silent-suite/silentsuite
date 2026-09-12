@@ -250,6 +250,16 @@ class PostLoginSetupRuntimeTest {
         val previousPermissionRequestOverride = AccountActivity.permissionRequestOverride
         var dashboardPermissionRequests = 0
         var scenario: ActivityScenario<AccountActivity>?=null
+        val registryPreferences = context.getSharedPreferences(
+            "account_creation_registry", android.content.Context.MODE_PRIVATE,
+        )
+        val previousRegistry = registryPreferences.getString("rows", null)
+        fun restoreRegistry() {
+            val editor = registryPreferences.edit()
+            if (previousRegistry == null) editor.remove("rows") else editor.putString("rows", previousRegistry)
+            check(editor.commit())
+        }
+        var dashboardMonitor: android.app.Instrumentation.ActivityMonitor? = null
         try {
             check(
                 notificationPreferences.edit()
@@ -295,7 +305,84 @@ class PostLoginSetupRuntimeTest {
             assertEquals(target.name, exactDashboard.title.toString())
             assertEquals(1, dashboardPermissionRequests)
             org.junit.Assert.assertTrue(exactDashboard.findViewById<android.view.View>(R.id.drawer_layout).isShown)
+
+            // A real production bootstrap failure must not cycle back to the dashboard.
+            // Block unexpected dashboard launches so the broken version fails boundedly.
+            instrumentation.runOnMainSync { exactDashboard.finish() }
+            check(registryPreferences.edit().putString("rows", "invalid-registry").commit())
+            App.postLoginBootstrapSucceeded = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.bootstrap(context)
+            org.junit.Assert.assertFalse(App.postLoginBootstrapSucceeded)
+            dashboardMonitor = instrumentation.addMonitor(AccountActivity::class.java.name, null, true)
+            ActivityScenario.launch<PostLoginSetupActivity>(
+                PostLoginSetupActivity.newIntent(context, target, "target-generation"),
+            ).use { recovery ->
+                repeat(2) {
+                    recovery.onActivity { activity ->
+                        assertEquals(
+                            activity.getString(R.string.post_login_bootstrap_failed_title),
+                            activity.findViewById<android.widget.TextView>(R.id.setup_title).text.toString(),
+                        )
+                        org.junit.Assert.assertTrue(activity.findViewById<android.widget.Button>(R.id.setup_retry_inventory).isShown)
+                        org.junit.Assert.assertFalse(activity.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).isShown)
+                        org.junit.Assert.assertFalse(activity.findViewById<android.widget.Button>(R.id.setup_done).isShown)
+                        org.junit.Assert.assertFalse(activity.findViewById<View>(R.id.setup_stepper).isShown)
+                    }
+                    recovery.recreate()
+                }
+                assertEquals(0, requireNotNull(dashboardMonitor).hits)
+                recovery.onActivity { activity ->
+                    activity.findViewById<android.widget.Button>(R.id.setup_retry_inventory).performClick()
+                }
+                val failureDeadline = android.os.SystemClock.uptimeMillis() + 5_000
+                var retryFinished = false
+                while (!retryFinished && android.os.SystemClock.uptimeMillis() < failureDeadline) {
+                    recovery.onActivity { activity ->
+                        retryFinished = activity.findViewById<android.widget.Button>(R.id.setup_retry_inventory).isEnabled
+                    }
+                    if (!retryFinished) android.os.SystemClock.sleep(25)
+                }
+                org.junit.Assert.assertTrue("Failed startup retry did not settle", retryFinished)
+                org.junit.Assert.assertFalse(App.postLoginBootstrapSucceeded)
+                assertEquals(0, requireNotNull(dashboardMonitor).hits)
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, target, true))
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, sibling, true))
+                assertEquals("target-generation", manager.getUserData(target, AccountSettings.KEY_CREATION_ID))
+                assertEquals("sibling-generation", manager.getUserData(sibling, AccountSettings.KEY_CREATION_ID))
+                assertEquals(target, ActiveAccountManager.getActiveAccount(context))
+
+                // Remove only the injected fixture fault. Retry must execute the real
+                // bootstrap and return to the exact dashboard without resetting setup.
+                restoreRegistry()
+                instrumentation.removeMonitor(requireNotNull(dashboardMonitor))
+                dashboardMonitor = null
+                recovery.onActivity { activity ->
+                    activity.findViewById<android.widget.Button>(R.id.setup_retry_inventory).performClick()
+                }
+                val recoveryDeadline = android.os.SystemClock.uptimeMillis() + 5_000
+                var recoveredDashboard: AccountActivity? = null
+                while (recoveredDashboard == null && android.os.SystemClock.uptimeMillis() < recoveryDeadline) {
+                    instrumentation.runOnMainSync {
+                        recoveredDashboard = ActivityLifecycleMonitorRegistry.getInstance()
+                            .getActivitiesInStage(Stage.RESUMED)
+                            .filterIsInstance<AccountActivity>()
+                            .singleOrNull()
+                            ?.takeIf { it.title.toString() == target.name }
+                    }
+                    if (recoveredDashboard == null) android.os.SystemClock.sleep(25)
+                }
+                org.junit.Assert.assertTrue(App.postLoginBootstrapSucceeded)
+                instrumentation.runOnMainSync {
+                    val recovered = requireNotNull(recoveredDashboard) { "Startup retry did not restore the exact dashboard" }
+                    org.junit.Assert.assertTrue(recovered.findViewById<View>(R.id.drawer_layout).isShown)
+                    recovered.finish()
+                }
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, target, true))
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, sibling, true))
+                assertEquals(target, ActiveAccountManager.getActiveAccount(context))
+            }
         } finally {
+            dashboardMonitor?.let(instrumentation::removeMonitor)
+            restoreRegistry()
             runCatching { scenario?.close() }
             AccountActivity.permissionRequestOverride = previousPermissionRequestOverride
             AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
