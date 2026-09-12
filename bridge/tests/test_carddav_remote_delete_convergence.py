@@ -501,3 +501,216 @@ def test_unproven_mutation_after_refresh_still_fails_closed(
     assert status == "207 Multi-Status"
     assert replacement != token_1
     assert set(responses) == {"contact-a.vcf", "contact-b.vcf"}
+
+
+def test_unproven_mutation_before_refresh_still_fails_closed(
+    tmp_path,
+    monkeypatch,
+):
+    app, database, user, remote, direct_storage = _bridge(tmp_path, monkeypatch)
+    service = _service(database, user, remote)
+    _seed(remote, service)
+    status, _responses, token_1 = _report(app)
+    assert status == "207 Multi-Status"
+
+    cache_col = _cache_col(user)
+    row = models.ItemEntity.get(
+        (models.ItemEntity.collection == cache_col)
+        & (models.ItemEntity.remote_uid == "remote-b")
+    )
+    stale_b = _remote_item(
+        "remote-b",
+        _vcard("contact-b", "Contact B Stale Writer"),
+        meta={"name": "contact-b", "dav_href": "contact-b.vcf"},
+        etag="etag-b-stale",
+    )
+    row.eb_item = remote.store.save(stale_b)
+    row.save(only=[models.ItemEntity.eb_item])
+
+    remote.queue_collection_page(_remote_collection("col-2"), stoken="list-2")
+    service.sync()
+
+    direct_collection = Collection(direct_storage, f"/{USERNAME}/{COLLECTION_UID}")
+    with pytest.raises(ValueError, match="unknown sync token"):
+        direct_collection.sync(token_1)
+    assert models.DavSyncToken.select().count() == 0
+    status, responses, replacement = _report(app)
+    assert status == "207 Multi-Status"
+    assert replacement != token_1
+    assert set(responses) == {"contact-a.vcf", "contact-b.vcf"}
+
+
+def _inject_deleted_duplicate(user, remote):
+    cache_col = _cache_col(user)
+    deleted_item = _remote_item(
+        "remote-b",
+        "",
+        meta={"name": "contact-duplicate"},
+        deleted=True,
+        etag="etag-dup-deleted",
+    )
+    pending = models.ItemEntity.create(
+        collection=cache_col,
+        uid="contact-duplicate",
+        eb_item=remote.store.save(deleted_item),
+        deleted=True,
+        dirty=True,
+        new=True,
+    )
+    models.DavUnresolvedItem.create(
+        collection=cache_col,
+        remote_uid="legacy-cache:pending",
+        eb_item=remote.store.save(deleted_item),
+        deleted=True,
+        reason="legacy_duplicate",
+        local_item=pending,
+    )
+    return pending
+
+
+def _inject_attached_dirty_new(user, remote):
+    cache_col = _cache_col(user)
+    pending_remote = _remote_item(
+        "remote-pending",
+        _vcard("contact-pending", "Pending"),
+        meta={"name": "contact-pending", "dav_href": "contact-pending.vcf"},
+        etag="etag-pending-1",
+    )
+    pending = models.ItemEntity.create(
+        collection=cache_col,
+        uid="contact-pending",
+        eb_item=remote.store.save(pending_remote),
+        dirty=True,
+        new=True,
+    )
+    models.HrefMapper.create(content=pending, href="contact-pending.vcf")
+    models.DavUnresolvedItem.create(
+        collection=cache_col,
+        remote_uid="legacy-cache:pending",
+        eb_item=remote.store.save(pending_remote),
+        reason="legacy_corrupt",
+        local_item=pending,
+    )
+    return pending
+
+
+def _recover_idle_then_unrelated_deletion_reports_404(
+    app,
+    user,
+    remote,
+    service,
+    token_1,
+    live_hrefs,
+):
+    cache_col = _cache_col(user)
+    revision_before = cache_col.dav_revision
+    service.pull_collection(COLLECTION_UID)
+    cache_col = _cache_col(user)
+    assert cache_col.dav_revision == revision_before
+    assert models.DavUnresolvedItem.select().count() == 0
+
+    status, responses, token_idle = _report(app, token_1)
+    assert status == "207 Multi-Status"
+    assert responses == {}
+    assert token_idle == token_1
+
+    status, responses, token_same_revision = _report(app)
+    assert status == "207 Multi-Status"
+    assert set(responses) == live_hrefs
+    assert token_same_revision == token_1
+
+    tombstone_a = _remote_item(
+        "remote-a",
+        "",
+        meta={"name": "contact-a", "dav_href": "contact-a.vcf"},
+        deleted=True,
+        etag="etag-a-1",
+    )
+    remote.queue_item_page(tombstone_a, stoken="items-tombstone")
+    service.pull_collection(COLLECTION_UID)
+
+    status, responses, token_2 = _report(app, token_1)
+    assert status == "207 Multi-Status"
+    assert responses["contact-a.vcf"] == ("HTTP/1.1 404 Not Found", None)
+    assert token_2 and token_2 != token_1
+
+    status, responses, token_from_prior = _report(app, token_same_revision)
+    assert status == "207 Multi-Status"
+    assert responses["contact-a.vcf"] == ("HTTP/1.1 404 Not Found", None)
+    assert token_from_prior == token_2
+
+    prefix = "http://radicale.org/ns/sync/"
+    cache_col = _cache_col(user)
+    tokens = {
+        row.token: row
+        for row in models.DavSyncToken.select().where(
+            models.DavSyncToken.collection == cache_col
+        )
+    }
+    assert token_1[len(prefix):] in tokens
+    assert token_2[len(prefix):] in tokens
+    assert tokens[token_1[len(prefix):]].revision == revision_before
+    assert tokens[token_2[len(prefix):]].revision == cache_col.dav_revision
+    assert cache_col.dav_revision == revision_before + 1
+
+
+def test_deleted_duplicate_recovery_keeps_token_through_idle_page_and_later_404(
+    tmp_path,
+    monkeypatch,
+):
+    app, database, user, remote, _direct = _bridge(tmp_path, monkeypatch)
+    service = _service(database, user, remote)
+    _seed(remote, service)
+    pending = _inject_deleted_duplicate(user, remote)
+
+    status, responses, token_1 = _report(app)
+    assert status == "207 Multi-Status"
+    assert set(responses) == {"contact-a.vcf", "contact-b.vcf"}
+    assert token_1
+    assert models.DavUnresolvedItem.select().count() == 1
+
+    _recover_idle_then_unrelated_deletion_reports_404(
+        app,
+        user,
+        remote,
+        service,
+        token_1,
+        {"contact-a.vcf", "contact-b.vcf"},
+    )
+    resolved = models.ItemEntity.get_by_id(pending.id)
+    assert resolved.deleted is True
+    assert resolved.dirty is False
+    assert resolved.new is False
+
+
+def test_attached_dirty_new_recovery_keeps_token_through_idle_page_and_later_404(
+    tmp_path,
+    monkeypatch,
+):
+    app, database, user, remote, _direct = _bridge(tmp_path, monkeypatch)
+    service = _service(database, user, remote)
+    _seed(remote, service)
+    pending = _inject_attached_dirty_new(user, remote)
+
+    status, responses, token_1 = _report(app)
+    assert status == "207 Multi-Status"
+    assert set(responses) == {
+        "contact-a.vcf",
+        "contact-b.vcf",
+        "contact-pending.vcf",
+    }
+    assert token_1
+    assert models.DavUnresolvedItem.select().count() == 1
+
+    _recover_idle_then_unrelated_deletion_reports_404(
+        app,
+        user,
+        remote,
+        service,
+        token_1,
+        {"contact-a.vcf", "contact-b.vcf", "contact-pending.vcf"},
+    )
+    recovered = models.ItemEntity.get_by_id(pending.id)
+    assert recovered.remote_uid == "remote-pending"
+    assert recovered.dirty is True
+    assert recovered.new is True
