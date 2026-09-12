@@ -15,6 +15,7 @@ import pytest
 import vobject
 from playhouse.sqlite_ext import SqliteExtDatabase
 
+from silentsuite_bridge import __main__ as bridge_main
 from silentsuite_bridge import config
 from silentsuite_bridge import local_cache as local_cache_module
 from silentsuite_bridge.local_cache import Etebase, db, models
@@ -258,6 +259,25 @@ def _report(app, token=None):
     return status, responses, root.findtext(f"{DAV}sync-token")
 
 
+def _production_logging_boundary(monkeypatch):
+    """Apply the Bridge's real dependency log boundary under DEBUG capture.
+
+    ``caplog.set_level(DEBUG)`` raises the root logger, so peewee would emit
+    SQL parameters (hrefs, tokens) that production never logs: the Bridge's
+    ``configure_logging`` pins dependency loggers above CRITICAL regardless of
+    the product level. Exercise that function rather than re-listing the
+    loggers here, and restore every touched level at teardown.
+    """
+    for name in ("peewee", "etebase", "requests", "urllib3", "httpx", "httpcore"):
+        dependency_logger = logging.getLogger(name)
+        monkeypatch.setattr(dependency_logger, "level", dependency_logger.level)
+    monkeypatch.setattr(config, "LOG_FILE", None)
+    # Same precedent as test_main_startup: keep pytest's capture handler as the
+    # only root handler instead of letting basicConfig add a stderr handler.
+    monkeypatch.setattr(logging, "basicConfig", MagicMock())
+    bridge_main.configure_logging()
+
+
 def _cache_col(user):
     return models.CollectionEntity.get(
         (models.CollectionEntity.local_user == user)
@@ -277,6 +297,7 @@ def test_remote_deletion_survives_collection_refresh_and_reports_404(
     tombstone_meta,
 ):
     caplog.set_level(logging.DEBUG)
+    _production_logging_boundary(monkeypatch)
     app, database, user, remote, _direct = _bridge(tmp_path, monkeypatch)
     service = _service(database, user, remote)
     contact_a, contact_b = _seed(remote, service)
@@ -378,6 +399,7 @@ def test_local_create_token_survives_upload_acknowledgement(
     caplog,
 ):
     caplog.set_level(logging.DEBUG)
+    _production_logging_boundary(monkeypatch)
     app, database, user, remote, direct_storage = _bridge(tmp_path, monkeypatch)
     service = _service(database, user, remote)
     _seed(remote, service)
@@ -437,7 +459,15 @@ def test_unproven_mutation_after_refresh_still_fails_closed(
         (models.ItemEntity.collection == cache_col)
         & (models.ItemEntity.remote_uid == "remote-b")
     )
-    row.eb_item = b"downgrade-era-mutation"
+    # Faithful old-writer mutation: a valid, loadable envelope for the same
+    # remote item with different content, written without advancing the ledger.
+    stale_b = _remote_item(
+        "remote-b",
+        _vcard("contact-b", "Contact B Stale Writer"),
+        meta={"name": "contact-b", "dav_href": "contact-b.vcf"},
+        etag="etag-b-stale",
+    )
+    row.eb_item = remote.store.save(stale_b)
     row.save(only=[models.ItemEntity.eb_item])
 
     direct_collection = Collection(direct_storage, f"/{USERNAME}/{COLLECTION_UID}")
