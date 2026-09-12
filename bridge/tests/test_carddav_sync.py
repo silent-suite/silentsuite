@@ -221,13 +221,18 @@ def test_reanchor_second_proof_update_rolls_back_cache_mutation(
 ):
     collection = _carddav_collection(mem_db, user)
     cache_col = collection.collection.cache_col
+    # `_prune_sync_history` drops ledger rows at or before the oldest
+    # retained token. A token at the current revision would prune the
+    # current DavRevision; keep an older token, then a later ledgered
+    # change, then the current token so the current proof still exists.
+    older_token, _ = collection.sync(None)
     record_dav_change(
         cache_col,
         "contact-1.vcf",
         previous_state_hash=local_cache_module.dav_collection_state_hash(cache_col),
         etag="etag-1",
     )
-    token, _ = collection.sync(None)
+    token, _ = collection.sync(older_token)
     cache_col = CollectionEntity.get_by_id(cache_col.id)
     cache_item = ItemEntity.get(uid="contact-1")
     previous_hash = local_cache_module.dav_collection_state_hash(cache_col)
