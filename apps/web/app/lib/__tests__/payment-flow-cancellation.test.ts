@@ -180,7 +180,7 @@ describe('cancelPaymentFlow failure mapping', () => {
 
   it('exposes the exact neutral bitcoin cancellation warning', () => {
     expect(BITCOIN_CANCELLATION_WARNING).toBe(
-      'Only cancel if you have not sent Bitcoin. After cancelling, do not pay the previous QR code or address. '
+      'Only cancel if you have not sent cryptocurrency for this payment. After cancelling, do not pay the previous QR code or address. '
       + 'A payment sent afterward cannot be credited automatically; contact support for manual review.',
     )
   })

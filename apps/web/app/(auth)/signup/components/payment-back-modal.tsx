@@ -9,8 +9,8 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 
 export const PAYMENT_BACK_COPY = {
   btcpay: {
-    title: 'Cancel this Bitcoin payment?',
-    body: 'Only continue if you haven’t sent payment. This checkout will be cancelled. Do not send Bitcoin or Lightning to its old payment details.',
+    title: 'Cancel this cryptocurrency payment?',
+    body: 'Only continue if you haven’t sent cryptocurrency for this payment. This checkout will be cancelled. Do not send Bitcoin, Lightning or Monero to its old payment details.',
   },
   stripe: {
     title: 'Leave card checkout?',

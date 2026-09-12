@@ -150,7 +150,7 @@ async function openInlineBitcoinPanel() {
     }),
   })
   renderPanel()
-  fireEvent.click(await screen.findByRole('button', { name: /pay .* with bitcoin for/i }))
+  fireEvent.click(await screen.findByRole('button', { name: /pay .* with bitcoin, lightning and monero for/i }))
   fireEvent.click(await screen.findByRole('button', { name: /confirm annual terms and continue/i }))
   await screen.findByRole('heading', { name: /pay .* annual with bitcoin/i })
 }
@@ -169,7 +169,7 @@ describe('explicit provider-switch consequence labels', () => {
     mockBilling({ currentFlow: async () => response({ flow: flow() }) })
     renderPanel()
 
-    expect(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' })).toBeEnabled()
+    expect(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: /cancel and choose another method/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     expect(screen.queryByText(BITCOIN_CANCELLATION_WARNING)).not.toBeInTheDocument()
@@ -179,7 +179,7 @@ describe('explicit provider-switch consequence labels', () => {
     mockBilling({ currentFlow: async () => response({ flow: bitcoinFlow }) })
     renderPanel()
 
-    expect(await screen.findByRole('button', { name: 'Cancel Bitcoin payment and choose card' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /continue in btcpay/i })).toHaveAttribute('href', 'https://btcpay.test/i/abc123')
   })
 
@@ -195,14 +195,14 @@ describe('explicit provider-switch consequence labels', () => {
     mockBilling({ currentFlow: async () => response({ flow: bitcoinFlow }), offer: async () => response({}, false) })
     renderPanel()
 
-    expect(await screen.findByRole('button', { name: 'Cancel Bitcoin payment' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Cancel cryptocurrency payment' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /choose card/i })).not.toBeInTheDocument()
   })
 
   it('replaces every generic Back control on the inline card panel with the switch consequence', async () => {
     await openInlineStripePanel()
 
-    const switches = screen.getAllByRole('button', { name: 'Cancel card payment and choose Bitcoin' })
+    const switches = screen.getAllByRole('button', { name: 'Cancel card payment and choose cryptocurrency' })
     expect(switches).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /back to (payment )?options/i })).not.toBeInTheDocument()
   })
@@ -210,7 +210,7 @@ describe('explicit provider-switch consequence labels', () => {
   it('replaces the generic Back control on the inline Bitcoin panel with the switch consequence', async () => {
     await openInlineBitcoinPanel()
 
-    expect(screen.getAllByRole('button', { name: 'Cancel Bitcoin payment and choose card' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /back to payment options/i })).not.toBeInTheDocument()
   })
 
@@ -231,34 +231,34 @@ describe('Bitcoin cancellation acknowledgement', () => {
     mockBilling({ currentFlow: async () => response({ flow: bitcoinFlow }) })
     renderPanel()
 
-    const action = await screen.findByRole('button', { name: 'Cancel Bitcoin payment and choose card' })
-    const acknowledgement = screen.getByRole('checkbox', { name: /have not sent bitcoin/i })
-    expect(acknowledgement).not.toBeChecked()
+    const action = await screen.findByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })
+    const acknowledgement = screen.getByRole('button', { name: /have not sent cryptocurrency/i })
+    expect(acknowledgement).toHaveAttribute('aria-pressed', 'false')
     expect(action).toBeDisabled()
     expect(screen.getByText(BITCOIN_CANCELLATION_WARNING)).toBeInTheDocument()
 
     fireEvent.click(acknowledgement)
 
-    expect(acknowledgement).toBeChecked()
+    expect(acknowledgement).toHaveAttribute('aria-pressed', 'true')
     expect(action).toBeEnabled()
   })
 
   it('gates the inline Bitcoin panel switch behind the same acknowledgement', async () => {
     await openInlineBitcoinPanel()
 
-    const actions = screen.getAllByRole('button', { name: 'Cancel Bitcoin payment and choose card' })
+    const actions = screen.getAllByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })
     actions.forEach((action) => expect(action).toBeDisabled())
     expect(screen.getByText(BITCOIN_CANCELLATION_WARNING)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('checkbox', { name: /have not sent bitcoin/i }))
+    fireEvent.click(screen.getByRole('button', { name: /have not sent cryptocurrency/i }))
 
-    screen.getAllByRole('button', { name: 'Cancel Bitcoin payment and choose card' }).forEach((action) => expect(action).toBeEnabled())
+    screen.getAllByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }).forEach((action) => expect(action).toBeEnabled())
   })
 
   it('renders exactly one acknowledgement control adjacent to the Bitcoin action', async () => {
     await openInlineBitcoinPanel()
 
-    expect(screen.getAllByRole('checkbox', { name: /have not sent bitcoin/i })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: /have not sent cryptocurrency/i })).toHaveLength(1)
     expect(screen.getAllByText(BITCOIN_CANCELLATION_WARNING)).toHaveLength(1)
   })
 
@@ -273,13 +273,13 @@ describe('Bitcoin cancellation acknowledgement', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: /have not sent bitcoin/i }))
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' }))
+    fireEvent.click(await screen.findByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     // A refused cancellation leaves the Bitcoin authority in place and must
     // force a fresh, deliberate acknowledgement before the next attempt.
-    await waitFor(() => expect(screen.getByRole('checkbox', { name: /have not sent bitcoin/i })).not.toBeChecked())
-    expect(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' })).toBeDisabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: /have not sent cryptocurrency/i })).toHaveAttribute('aria-pressed', 'false'))
+    expect(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeDisabled()
   })
 
   it('sends the literal acknowledgement only after the user checks it', async () => {
@@ -293,12 +293,12 @@ describe('Bitcoin cancellation acknowledgement', () => {
     })
     renderPanel()
 
-    const action = await screen.findByRole('button', { name: 'Cancel Bitcoin payment and choose card' })
+    const action = await screen.findByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })
     fireEvent.click(action)
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/payment-flows/cancel'))).toBe(false)
 
-    fireEvent.click(screen.getByRole('checkbox', { name: /have not sent bitcoin/i }))
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' }))
+    fireEvent.click(screen.getByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     await waitFor(() => {
       const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/payment-flows/cancel'))
@@ -317,7 +317,7 @@ describe('Bitcoin cancellation acknowledgement', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' }))
 
     await waitFor(() => {
       const call = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/payment-flows/cancel'))
@@ -341,8 +341,8 @@ describe('Bitcoin cancellation acknowledgement', () => {
     const cancelAction = screen.getByRole('button', { name: /cancel any payment in progress and close/i })
     fireEvent.click(cancelAction)
 
-    const acknowledgement = await screen.findByRole('checkbox', { name: /have not sent bitcoin/i })
-    expect(acknowledgement).not.toBeChecked()
+    const acknowledgement = await screen.findByRole('button', { name: /have not sent cryptocurrency/i })
+    expect(acknowledgement).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByText(BITCOIN_CANCELLATION_WARNING)).toBeInTheDocument()
     expect(screen.queryByText(/inv_secret_1/)).not.toBeInTheDocument()
     expect(within(document.body).queryByText(/still open/)).not.toBeInTheDocument()
@@ -350,7 +350,7 @@ describe('Bitcoin cancellation acknowledgement', () => {
 })
 
 const CREATE_CARD = /continue to card payment/i
-const CREATE_BITCOIN = /pay .* with bitcoin for/i
+const CREATE_BITCOIN = /pay .* with bitcoin, lightning and monero for/i
 
 function creationActions() {
   return [
@@ -378,7 +378,7 @@ describe('provider switching never creates a second authority', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' }))
 
     await waitFor(() => expect(currentFlowReads).toBe(2))
     expect(creationActions()).toHaveLength(0)
@@ -402,8 +402,8 @@ describe('provider switching never creates a second authority', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: /have not sent bitcoin/i }))
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' }))
+    fireEvent.click(await screen.findByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     await waitFor(() => expect(currentFlowReads).toBe(2))
     const cancelCall = vi.mocked(fetch).mock.calls.find(([input]) => String(input).endsWith('/payment-flows/cancel'))
@@ -414,7 +414,7 @@ describe('provider switching never creates a second authority', () => {
 
     expect(await screen.findByRole('button', { name: CREATE_CARD })).toBeInTheDocument()
     // The acknowledgement never survives the authority it was given for.
-    expect(screen.queryByRole('checkbox', { name: /have not sent bitcoin/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /have not sent cryptocurrency/i })).not.toBeInTheDocument()
   })
 
   it('offers no provider creation path while a successful cancellation cannot be re-verified', async () => {
@@ -428,7 +428,7 @@ describe('provider switching never creates a second authority', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' }))
 
     expect(await screen.findByRole('button', { name: /retry payment status/i })).toBeInTheDocument()
     expect(creationActions()).toHaveLength(0)
@@ -445,12 +445,12 @@ describe('provider switching never creates a second authority', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('checkbox', { name: /have not sent bitcoin/i }))
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' }))
+    fireEvent.click(await screen.findByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     expect(await screen.findByText(PAYMENT_FLOW_CANCELLATION_MESSAGES[failure])).toBeInTheDocument()
     expect(screen.getByText(/payment already in progress/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Cancel Bitcoin payment and choose card' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeInTheDocument()
     expect(creationActions()).toHaveLength(0)
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/offers/v2/activate'))).toBe(false)
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/payment-flows/v2'))).toBe(false)
@@ -466,7 +466,7 @@ describe('provider switching never creates a second authority', () => {
     mockBilling({ currentFlow: async () => response({ flow: flow() }), cancel: async () => cancel() })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' }))
 
     expect(await screen.findByText(PAYMENT_FLOW_CANCELLATION_MESSAGES.unavailable)).toBeInTheDocument()
     expect(screen.getByText(/payment already in progress/i)).toBeInTheDocument()
@@ -505,7 +505,7 @@ describe('provider switching never creates a second authority', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' }))
 
     expect(await screen.findByText(/pay now \+ 14 bonus days/i)).toBeInTheDocument()
     expect(screen.getByText(/€36\.00\/year/)).toBeInTheDocument()
@@ -544,7 +544,7 @@ describe('post-cancellation provider creation stays closed until the lookup prov
     )
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' }))
     await waitFor(() => expect(offerReads).toBe(2))
 
     // The mandatory re-proof is in flight before the offer refresh can return,
@@ -584,7 +584,7 @@ describe('post-cancellation provider creation stays closed until the lookup prov
     )
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose Bitcoin' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment and choose cryptocurrency' }))
     await waitFor(() => expect(offerReads).toBe(2))
 
     await act(async () => { offerRefresh.resolve(response(earlyOffer)) })
@@ -672,8 +672,8 @@ describe('a 2xx current-flow lookup releases creation only when the body proves 
   })
 
   it.each([
-    ['card', 'stripe_pay_now', 'Cancel card payment and choose Bitcoin'],
-    ['Bitcoin', 'btcpay_annual', 'Cancel Bitcoin payment and choose card'],
+    ['card', 'stripe_pay_now', 'Cancel card payment and choose cryptocurrency'],
+    ['Bitcoin', 'btcpay_annual', 'Cancel cryptocurrency payment and choose card'],
   ] as const)('keeps a valid %s authority carrying only the fields the panel needs', async (_label, flowKind, action) => {
     mockBilling({
       currentFlow: async () => response({ flow: { flowKind, createdAt: '2026-08-10T12:00:00Z', cancellable: true } }),

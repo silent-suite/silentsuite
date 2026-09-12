@@ -25,7 +25,7 @@ describe('server-disclosed concise terms', () => {
     expect(screen.getByText(/plus 14 bonus days/)).toBeInTheDocument()
     expect(screen.getByText(/30-day full refund, no questions asked/)).toBeInTheDocument()
     expect(screen.queryByText(/Cancel before|Not applicable|UTC/)).not.toBeInTheDocument()
-    expect(annualRetryAction({ ...base, kind: 'prepaid' })).toBe('Retry Bitcoin payment')
+    expect(annualRetryAction({ ...base, kind: 'prepaid' })).toBe('Retry cryptocurrency payment')
   })
   it('shows card-trial amount, exact charge date and no charge today', () => {
     const cardTrial: AnnualDisclosure = { ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', cancelBy: '2099-09-10T12:00:00Z' }
