@@ -3,14 +3,24 @@
 
 import { classifyRelease } from './eligibility.mjs'
 import { bindReleaseAssets } from './github.mjs'
+import { verifySourceIdentity } from './identity.mjs'
 
-export async function buildBinding({ client, releaseId, expectedTag = null, expectedSourceSha = null }) {
+export async function buildBinding({
+  client,
+  releaseId,
+  expectedTag = null,
+  expectedSourceSha = null,
+  verifyIdentity = verifySourceIdentity,
+  gitAncestry = null,
+  identityStage = 'zapstore-binding',
+}) {
   const release = await client.getReleaseById(releaseId)
   const verdict = classifyRelease(release)
   if (!verdict.eligible) throw new Error(`release ${releaseId} is not eligible: ${verdict.reason}`)
-  if (expectedTag !== null && release.tag_name !== expectedTag) throw new Error(`release ${releaseId} is tagged ${release.tag_name}, dispatch said ${expectedTag}`)
+  if (expectedTag !== null && release.tag_name !== expectedTag) throw new Error(`release ${releaseId} is tagged ${release.tag_name}, trigger said ${expectedTag}`)
   const tagCommit = await client.getTagCommit(release.tag_name)
-  if (expectedSourceSha !== null && tagCommit !== expectedSourceSha) throw new Error(`tag ${release.tag_name} resolves to ${tagCommit}, dispatch said ${expectedSourceSha}`)
+  if (expectedSourceSha !== null && tagCommit !== expectedSourceSha) throw new Error(`tag ${release.tag_name} resolves to ${tagCommit}, trigger said ${expectedSourceSha}`)
+  await verifyIdentity({ tag: release.tag_name, commit: tagCommit, stage: identityStage, gitAncestry })
   const assets = bindReleaseAssets(release, release.tag_name)
   return {
     releaseId: release.id,
@@ -26,9 +36,18 @@ export async function buildBinding({ client, releaseId, expectedTag = null, expe
 }
 
 // Same reads, compared field by field. Any drift (moved tag, replaced asset,
-// un-published release) stops the run before a signature is requested.
-export async function revalidateBinding({ client, binding }) {
-  const fresh = await buildBinding({ client, releaseId: binding.releaseId, expectedTag: binding.tag, expectedSourceSha: binding.sourceSha })
+// un-published release, drifted rulesets) stops the run before a signature is
+// requested.
+export async function revalidateBinding({ client, binding, verifyIdentity = verifySourceIdentity, gitAncestry = null }) {
+  const fresh = await buildBinding({
+    client,
+    releaseId: binding.releaseId,
+    expectedTag: binding.tag,
+    expectedSourceSha: binding.sourceSha,
+    verifyIdentity,
+    gitAncestry,
+    identityStage: 'zapstore-signing',
+  })
   const drift = []
   for (const key of ['releaseId', 'tag', 'version', 'channel', 'sourceSha']) if (fresh[key] !== binding[key]) drift.push(key)
   for (const key of ['id', 'name', 'size', 'sha256']) if (fresh.assets.apk[key] !== binding.assets.apk[key]) drift.push(`assets.apk.${key}`)

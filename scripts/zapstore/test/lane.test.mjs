@@ -11,18 +11,20 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 import { classifyRelease, selectScheduleCandidates } from '../lib/eligibility.mjs'
-import { activationState, requireOwnerSender, requireProtectedRef, validateDispatchPayload } from '../lib/dispatch.mjs'
+import { activationState, admitTrigger, requireOwnerSender, requireProtectedRef, requireProtectedWorkflow, validateReleaseEvent } from '../lib/dispatch.mjs'
 import { bindReleaseAssets, createGitHubClient, EnumerationIncomplete, hashFromChecksumText } from '../lib/github.mjs'
 import { buildBinding, revalidateBinding, verifyApkHashes } from '../lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from '../lib/apksigner.mjs'
 import { generateConfig, loadTemplate, parseZapstoreYaml, resolveChangelog, stageMedia } from '../lib/metadata.mjs'
 import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, verifyEvent } from '../lib/nostr.mjs'
-import { assessRelayState, expectedSet } from '../lib/reconcile.mjs'
+import { assessRelayState, expectedSet, isSafePartialRecovery, publicationAction } from '../lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, zspArgs, zspEnv, ZSP } from '../lib/zsp.mjs'
 import { materializeClientKey } from '../lib/bunker-key.mjs'
 import { redact } from '../lib/redact.mjs'
-import { buildIssue, createIssueWithReadback } from '../lib/notify.mjs'
+import { buildIssue, createIssueWithReadback, publicationClaim } from '../lib/notify.mjs'
 import { verifyReferencedBlobs } from '../lib/cdn.mjs'
+import { parseSourceBuildMetadata, SOURCE_BUILD_GRADLE } from '../lib/source-metadata.mjs'
+import { verifySourceIdentity } from '../lib/identity.mjs'
 
 const here = resolve(new URL('.', import.meta.url).pathname)
 const root = resolve(here, '..', '..', '..')
@@ -33,6 +35,8 @@ const schnorr = await loadSchnorr()
 const SHA = '3111352dbccfaaeee3b83ad325906e591343cfa3'
 const APK_SHA = '3007b51474f8d646c652576b924aef540e46a200b1db2b283d3b772cd309fdd4'
 const CERT = '8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79'
+const WORKFLOW_REF = 'silent-suite/silentsuite/.github/workflows/zapstore-publish.yml@refs/heads/main'
+const passIdentity = async () => true
 
 const release = (over = {}) => ({ id: 383603104, tag_name: 'v0.5.6-beta', draft: false, prerelease: false, published_at: '2026-09-06T10:00:00Z', assets: [
   { id: 547273876, name: 'silentsuite-android-v0.5.6-beta.apk', size: 26916361, digest: `sha256:${APK_SHA}` },
@@ -60,17 +64,23 @@ test('schedule candidates are bounded to the window and every omission carries a
   assert.ok(omitted.every((o) => o.reason))
 })
 
-test('dispatch admission: owner id, exact payload grammar, protected ref, activation states', () => {
+test('admission: schedule and owner release events; dispatch and selected-ref triggers refused', () => {
   assert.ok(requireOwnerSender('265568982'))
   assert.throws(() => requireOwnerSender('1'), /not the release owner/)
   assert.throws(() => requireOwnerSender(''), /no numeric sender/)
   assert.throws(() => requireProtectedRef('refs/heads/feature'), /not refs\/heads\/main/)
   assert.throws(() => requireProtectedRef('refs/tags/v0.5.6-beta'))
-  assert.deepEqual(validateDispatchPayload({ release_id: '383603104', release_tag: 'v0.5.6-beta', source_sha: SHA }), { releaseId: 383603104, tag: 'v0.5.6-beta', sourceSha: SHA })
-  assert.throws(() => validateDispatchPayload({ release_id: '1', release_tag: 'v0.5.6-beta', source_sha: SHA, extra: 1 }), /payload keys/)
-  assert.throws(() => validateDispatchPayload({ release_id: 'latest', release_tag: 'v0.5.6-beta', source_sha: SHA }), /release_id/)
-  assert.throws(() => validateDispatchPayload({ release_id: '1', release_tag: 'v0.5.6-rc1', source_sha: SHA }), /release_tag/)
-  assert.throws(() => validateDispatchPayload({ release_id: '1', release_tag: 'v0.5.6-beta', source_sha: 'main' }), /source_sha/)
+  assert.ok(requireProtectedWorkflow(WORKFLOW_REF, { repository: 'silent-suite/silentsuite' }))
+  assert.throws(() => requireProtectedWorkflow('silent-suite/silentsuite/.github/workflows/zapstore-publish.yml@refs/heads/feat', { repository: 'silent-suite/silentsuite' }), /loaded from/)
+  assert.equal(admitTrigger('schedule'), 'schedule')
+  assert.equal(admitTrigger('release'), 'release')
+  assert.throws(() => admitTrigger('repository_dispatch'), /unsupported event/)
+  assert.throws(() => admitTrigger('workflow_dispatch'), /unsupported event/)
+  assert.deepEqual(validateReleaseEvent({ id: '383603104', tag: 'v0.5.6-beta', draft: 'false' }), { releaseId: 383603104, tag: 'v0.5.6-beta', sourceSha: null })
+  assert.throws(() => validateReleaseEvent({ id: 383603104, tag: 'v0.5.6-beta' }), /release_id is not a positive integer string/)
+  assert.throws(() => validateReleaseEvent({ id: 'latest', tag: 'v0.5.6-beta' }), /release_id/)
+  assert.throws(() => validateReleaseEvent({ id: '383603104', tag: 'v0.5.6-rc1' }), /release_tag/)
+  assert.throws(() => validateReleaseEvent({ id: '383603104', tag: 'v0.5.6-beta', draft: 'true' }), /draft/)
   assert.equal(activationState(undefined).active, false)
   assert.match(activationState(undefined).label, /DISABLED/)
   assert.equal(activationState('true').active, false)
@@ -96,16 +106,35 @@ test('binding uses exact release id and dereferenced tag commit; never latest', 
     '/git/ref/tags/v0.5.6-beta': { ref: 'refs/tags/v0.5.6-beta', object: { type: 'tag', sha: 'a'.repeat(40) } },
     [`/git/tags/${'a'.repeat(40)}`]: { object: { type: 'commit', sha: SHA } },
   })
-  const binding = await buildBinding({ client, releaseId: 383603104, expectedTag: 'v0.5.6-beta', expectedSourceSha: SHA })
+  const binding = await buildBinding({ client, releaseId: 383603104, expectedTag: 'v0.5.6-beta', expectedSourceSha: SHA, verifyIdentity: passIdentity })
   assert.equal(binding.sourceSha, SHA)
   assert.equal(binding.assets.apk.id, 547273876)
   assert.equal(binding.assets.apk.sha256, APK_SHA)
   assert.ok(calls.every((url) => !url.includes('/releases/latest')))
-  await assert.rejects(buildBinding({ client, releaseId: 383603104, expectedSourceSha: 'b'.repeat(40) }), /dispatch said/)
-  await assert.rejects(buildBinding({ client, releaseId: 383603104, expectedTag: 'v0.5.7' }), /tagged v0.5.6-beta/)
-  // Revalidation catches a replaced asset just before signing.
+  await assert.rejects(buildBinding({ client, releaseId: 383603104, expectedSourceSha: 'b'.repeat(40), verifyIdentity: passIdentity }), /trigger said/)
+  await assert.rejects(buildBinding({ client, releaseId: 383603104, expectedTag: 'v0.5.7', verifyIdentity: passIdentity }), /tagged v0.5.6-beta/)
   const drifted = fakeGitHub({ '/releases/383603104': release({ assets: [...release().assets.map((a) => (a.name.endsWith('.apk') ? { ...a, id: 999 } : a))] }), '/git/ref/tags/v0.5.6-beta': { ref: 'refs/tags/v0.5.6-beta', object: { type: 'commit', sha: SHA } } })
-  await assert.rejects(revalidateBinding({ client: drifted.client, binding }), /drifted before signing: assets.apk.id/)
+  await assert.rejects(revalidateBinding({ client: drifted.client, binding, verifyIdentity: passIdentity }), /drifted before signing: assets.apk.id/)
+})
+
+test('source identity helper is invoked with tag and commit; refusal fails closed without live GitHub', async () => {
+  const calls = []
+  const { client } = fakeGitHub({
+    '/releases/383603104': release(),
+    '/git/ref/tags/v0.5.6-beta': { ref: 'refs/tags/v0.5.6-beta', object: { type: 'commit', sha: SHA } },
+  })
+  const verifyIdentity = async (args) => { calls.push(args); throw new Error('release identity helper refused (zapstore-binding): off-main') }
+  await assert.rejects(buildBinding({ client, releaseId: 383603104, verifyIdentity }), /off-main/)
+  assert.deepEqual(calls, [{ tag: 'v0.5.6-beta', commit: SHA, stage: 'zapstore-binding', gitAncestry: null }])
+  const spawn = () => ({ status: 1, stderr: 'Refusing release (probe): not on the protected branch' })
+  assert.throws(() => verifySourceIdentity({ tag: 'v0.5.6-beta', commit: SHA, spawn }), /identity helper refused/)
+})
+
+test('source build.gradle literals bind version name and code; interpolations are refused', () => {
+  const meta = parseSourceBuildMetadata(readFileSync(join(root, SOURCE_BUILD_GRADLE), 'utf8'))
+  assert.equal(meta.versionCode, 20)
+  assert.equal(meta.versionName, '0.5.6-beta')
+  assert.throws(() => parseSourceBuildMetadata('android {\n    defaultConfig {\n        versionCode rootProject.ext.code\n        versionName "0.5.6-beta"\n    }\n}\n'), /literal/)
 })
 
 test('asset binding refuses missing assets, ambiguous names and missing digests', () => {
@@ -191,6 +220,8 @@ test('zsp invocation is exact: pinned binary facts, flags, unsigned vs live, bun
   assert.deepEqual(zspArgs({ configPath: '/w/c.yaml', commit: SHA, mode: 'unsigned' }), ['publish', '--json', '--quiet', '--skip-preview', '--skip-metadata', '--no-compress', '--skip-certificate-linking', '--commit', SHA, '--channel', 'main', '--offline', '/w/c.yaml'])
   const live = zspArgs({ configPath: '/w/c.yaml', commit: SHA, mode: 'live' })
   assert.ok(live.includes('--overwrite-release') && !live.includes('--offline') && !live.includes('--indexer-mode') && !live.includes('--pre-release'))
+  assert.match(readFileSync(join(here, '..', 'lib', 'zsp.mjs'), 'utf8'), /CheckExistingRelease/)
+  assert.match(readFileSync(join(here, '..', 'lib', 'zsp.mjs'), 'utf8'), /MinReleaseTimestamp/)
   assert.throws(() => zspArgs({ configPath: '/w/c.yaml', commit: SHA, mode: 'live', channel: 'beta' }), /channel must stay main/)
   assert.throws(() => zspArgs({ configPath: '/w/c.yaml', commit: 'main', mode: 'live' }), /40-hex/)
   const npub = 'npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35'
@@ -204,8 +235,10 @@ test('zsp invocation is exact: pinned binary facts, flags, unsigned vs live, bun
 test('APK identity from the official parser output is bound to package, version, hash, size, certificate, filename and commit', () => {
   const facts = apkFactsFromEvent(unsigned.apk)
   assert.equal(facts.versionCode, 20)
-  const expected = { packageId: 'io.silentsuite.android', version: '0.5.6-beta', sha256: APK_SHA, size: 26916361, certificateSha256: CERT, filename: 'ss-zapstore-source.apk', commit: SHA }
+  const expected = { packageId: 'io.silentsuite.android', version: '0.5.6-beta', versionCode: 20, sha256: APK_SHA, size: 26916361, certificateSha256: CERT, filename: 'ss-zapstore-source.apk', commit: SHA }
   assert.ok(requireApkIdentity(facts, expected))
+  assert.throws(() => requireApkIdentity(facts, { ...expected, versionCode: 19 }), /version_code 20 != 19/)
+  assert.throws(() => requireApkIdentity(facts, { packageId: expected.packageId, version: expected.version, sha256: expected.sha256, size: expected.size, certificateSha256: expected.certificateSha256, filename: expected.filename, commit: expected.commit }), /expected versionCode is missing/)
   assert.throws(() => requireApkIdentity(facts, { ...expected, filename: 'silentsuite-android-v0.5.6-beta.apk' }), /filename ss-zapstore-source.apk/)
   assert.throws(() => requireApkIdentity(facts, { ...expected, certificateSha256: 'd'.repeat(64) }), /direct-release certificate/)
   assert.throws(() => requireApkIdentity(facts, { ...expected, sha256: 'd'.repeat(64) }), /hash mismatch/)
@@ -226,7 +259,6 @@ test('real relay events verify; tampered ids, signatures or content are refused'
   assert.throws(() => verifyEvent({ ...observed[0], sig: undefined }, schnorr), /sig missing/)
 })
 
-// Fake relay socket: scripted frames, optional truncation.
 function fakeSocketFactory(script) {
   return class FakeSocket {
     constructor() {
@@ -258,8 +290,6 @@ test('relay subscription completes only on EOSE; timeout, close and truncation a
   await assert.rejects(queryRelay({ filters, WebSocketImpl: fakeSocketFactory((sub) => [['CLOSED', sub, 'auth-required']]) }), /closed the subscription/)
 })
 
-// Signed copies of the unsigned expected set, produced with a throwaway key so
-// the reconciliation can be exercised against structurally real events.
 async function signedCopies(mutate = (e) => e) {
   const { secp256k1 } = await import('@noble/curves/secp256k1.js')
   const priv = Uint8Array.from(Buffer.from('1'.repeat(64), 'hex'))
@@ -274,7 +304,7 @@ async function signedCopies(mutate = (e) => e) {
   return { expected, apk, release: rel, app, pub, sign }
 }
 
-test('reconciliation: absent, complete-match, partial, conflict, downgrade and invalid signatures', async () => {
+test('reconciliation: absent, complete-match, partial, conflict, superseded and invalid signatures', async () => {
   const { expected, apk, release: rel, app, sign } = await signedCopies()
   assert.equal(assessRelayState({ expected, observed: [], schnorr }).outcome, 'absent')
   assert.equal(assessRelayState({ expected, observed: [app], schnorr }).outcome, 'absent', 'existing app metadata alone does not block a new version')
@@ -288,14 +318,44 @@ test('reconciliation: absent, complete-match, partial, conflict, downgrade and i
   assert.equal(stale.outcome, 'conflict')
   assert.match(stale.detail, /app.description/)
   const newer = sign({ ...unsigned.apk, tags: unsigned.apk.tags.map((t) => (t[0] === 'version_code' ? ['version_code', '21'] : t[0] === 'version' ? ['version', '0.5.7-beta'] : t[0] === 'x' ? ['x', 'f'.repeat(64)] : [...t])) })
-  assert.equal(assessRelayState({ expected, observed: [newer], schnorr }).outcome, 'downgrade-refused')
-  assert.equal(assessRelayState({ expected, observed: [newer, app, rel, apk], schnorr }).outcome, 'downgrade-refused', 'a stale retry never wins over newer metadata')
+  assert.equal(assessRelayState({ expected, observed: [newer], schnorr }).outcome, 'superseded')
+  assert.equal(assessRelayState({ expected, observed: [newer, app, rel, apk], schnorr }).outcome, 'complete-match', 'an already-complete historical set is not a downgrade incident')
   const foreign = { ...apk, pubkey: observed[0].pubkey }
   assert.throws(() => assessRelayState({ expected, observed: [foreign], schnorr }), InvalidRelayEvent, 'a foreign pubkey with our signature is corrupt, not ignorable')
   assert.throws(() => assessRelayState({ expected, observed: [{ ...apk, sig: 'a'.repeat(128) }], schnorr }), /invalid signature/)
-  // Real relay snapshot: 0.5.6-beta is not on the relay, and 0.5.4-beta (code 18) is older, so it is absent, not a downgrade.
-  const realExpected = unsigned
-  assert.equal(assessRelayState({ expected: realExpected, observed, schnorr }).outcome, 'absent')
+  assert.equal(assessRelayState({ expected: unsigned, observed, schnorr }).outcome, 'absent')
+})
+
+test('exact relay match refuses extra APK url tags and extra release e-links; APK is selected by the e-link', async () => {
+  const { expected, apk, release: rel, app, sign } = await signedCopies()
+  const extraUrl = sign({ ...unsigned.apk, tags: [...unsigned.apk.tags.map((t) => [...t]), ['url', 'https://cdn.zapstore.dev/' + 'e'.repeat(64)]] })
+  const extraUrlRelease = sign({ ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', extraUrl.id, t[2]] : [...t])) })
+  const extraUrlState = assessRelayState({ expected, observed: [app, extraUrlRelease, extraUrl], schnorr })
+  assert.equal(extraUrlState.outcome, 'conflict')
+  assert.match(extraUrlState.detail, /url\.cardinality|apk\.url/)
+  const extraE = sign({ ...unsigned.release, tags: [...rel.tags, ['e', 'f'.repeat(64)]] })
+  const extraEState = assessRelayState({ expected, observed: [app, extraE, apk], schnorr })
+  assert.equal(extraEState.outcome, 'conflict')
+  assert.match(extraEState.detail, /e-link/)
+})
+
+test('publication action: schedule skips superseded history; complete-match is never re-signed; partial recovers only when present events match', async () => {
+  const { expected, apk, release: rel, app } = await signedCopies()
+  const complete = assessRelayState({ expected, observed: [app, rel, apk], schnorr })
+  assert.deepEqual(publicationAction({ assessment: complete, triggerMode: 'schedule' }).action, 'skip')
+  assert.equal(publicationAction({ assessment: complete, triggerMode: 'schedule' }).verifyCdn, true)
+  const superseded = assessRelayState({ expected, observed: [], schnorr })
+  void superseded
+  const newerOnly = { outcome: 'superseded', newestVersionCode: 21, candidateVersionCode: 20 }
+  assert.equal(publicationAction({ assessment: newerOnly, triggerMode: 'schedule', candidateVersionCode: 20 }).action, 'skip')
+  assert.equal(publicationAction({ assessment: newerOnly, triggerMode: 'release', candidateVersionCode: 20 }).action, 'fail')
+  const partial = assessRelayState({ expected, observed: [apk], schnorr })
+  assert.equal(partial.outcome, 'partial')
+  assert.equal(isSafePartialRecovery({ ...partial, candidateVersionCode: 20 }), true)
+  assert.equal(publicationAction({ assessment: partial, triggerMode: 'schedule', candidateVersionCode: 20 }).action, 'publish')
+  assert.equal(publicationAction({ assessment: partial, triggerMode: 'schedule', candidateVersionCode: 20 }).reason, 'safe-partial-recovery')
+  assert.equal(isSafePartialRecovery({ ...partial, candidateVersionCode: 20, newestVersionCode: 21 }), false)
+  assert.equal(publicationAction({ assessment: { outcome: 'incomplete', detail: 'no EOSE' }, triggerMode: 'schedule' }).action, 'fail')
 })
 
 test('CDN read-back fetches every referenced blob and compares hashes', async () => {
@@ -337,50 +397,89 @@ test('redaction removes bunker URLs, connection requests, nsec and secrets from 
   assert.equal(redact('event 3007b514 ok'), 'event 3007b514 ok')
 })
 
-test('failure issue is structured, quotes untrusted text safely, and is read back', async () => {
-  const issue = buildIssue({ releaseId: '383603104', tag: 'v0.5.6-beta', runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/1/attempts/2', phase: 'publish', outcome: 'partial', detail: 'x ``` @owner bunker://' + 'a'.repeat(64) + '?secret=s' })
+test('failure issue is structured, quotes untrusted text safely, dedupes, and is read back', async () => {
+  assert.equal(publicationClaim({ publishAttempted: true, signExit: 1, readbackOutcome: 'incomplete' }), 'unknown')
+  const issue = buildIssue({ releaseId: '383603104', tag: 'v0.5.6-beta', sourceSha: SHA, runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/1/attempts/2', phase: 'publish', outcome: 'partial', detail: 'x ``` @owner bunker://' + 'a'.repeat(64) + '?secret=s', publication: 'unknown' })
   assert.equal(issue.title, 'Zapstore publication failed: v0.5.6-beta (release 383603104)')
   assert.doesNotMatch(issue.body, /secret=s\b/)
   assert.doesNotMatch(issue.body, /\n```\n@owner/)
-  assert.match(issue.body, /client_payload\[release_id\]=383603104/)
+  assert.match(issue.body, /GitHub release id 383603104/)
+  assert.match(issue.body, /source commit 3111352dbccfaaeee3b83ad325906e591343cfa3/)
+  assert.match(issue.body, /Do not assume nothing was published/)
+  assert.match(issue.body, /-f tag_name='v0\.5\.6-beta'/)
+  assert.doesNotMatch(issue.body, /client_payload/)
+  assert.doesNotMatch(issue.body, /silentsuite_zapstore_publish/)
   const hostile = buildIssue({ releaseId: 'x', tag: 'v1.0.0; rm -rf', runUrl: 'https://evil', phase: '<script>', outcome: 'ok', detail: '' })
   assert.match(hostile.body, /\[tag failed validation\]/)
   assert.match(hostile.body, /\[run url failed validation\]/)
   assert.doesNotMatch(hostile.body, /<script>/)
   const stored = {}
   const fetchImpl = async (url, init) => {
-    if (init?.method === 'POST') { stored.issue = JSON.parse(init.body); return { status: 201, json: async () => ({ number: 7 }) } }
+    if (!init?.method || init.method === 'GET') {
+      if (url.includes('/issues?')) return { status: 200, json: async () => [] }
+      return { status: 200, json: async () => ({ ...stored.issue, html_url: 'https://github.com/silent-suite/silentsuite/issues/7' }) }
+    }
+    if (init.method === 'POST') { stored.issue = JSON.parse(init.body); return { status: 201, json: async () => ({ number: 7 }) } }
     return { status: 200, json: async () => ({ ...stored.issue, html_url: 'https://github.com/silent-suite/silentsuite/issues/7' }) }
   }
   const created = await createIssueWithReadback({ fetchImpl, token: 't', issue })
   assert.equal(created.number, 7)
-  const drift = async (url, init) => (init?.method === 'POST' ? { status: 201, json: async () => ({ number: 8 }) } : { status: 200, json: async () => ({ title: 'other', body: 'other' }) })
+  assert.equal(created.deduped, false)
+  const open = [{ title: issue.title, number: 9, html_url: 'https://github.com/silent-suite/silentsuite/issues/9' }]
+  const dedupeFetch = async (url, init) => {
+    if (!init?.method || init.method === 'GET') return { status: 200, json: async () => open }
+    throw new Error('must not POST when an open issue exists')
+  }
+  const reused = await createIssueWithReadback({ fetchImpl: dedupeFetch, token: 't', issue })
+  assert.equal(reused.number, 9)
+  assert.equal(reused.deduped, true)
+  const drift = async (url, init) => {
+    if (!init?.method || init.method === 'GET') {
+      if (url.includes('/issues?')) return { status: 200, json: async () => [] }
+      return { status: 200, json: async () => ({ title: 'other', body: 'other' }) }
+    }
+    return { status: 201, json: async () => ({ number: 8 }) }
+  }
   await assert.rejects(createIssueWithReadback({ fetchImpl: drift, token: 't', issue }), /different content/)
 })
 
-test('cli admit: disabled state is reported loudly and dispatch gates hold end to end', () => {
+test('cli admit: disabled state is reported loudly; owner release retry works; dispatch is refused', () => {
   const run = (env) => {
     const dir = mkdtempSync(join(tmpdir(), 'zapstore-cli-'))
     const out = join(dir, 'out'); const sum = join(dir, 'summary')
     writeFileSync(out, ''); writeFileSync(sum, '')
-    const result = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'admit'], { env: { PATH: process.env.PATH, HOME: dir, GITHUB_OUTPUT: out, GITHUB_STEP_SUMMARY: sum, GITHUB_REF: 'refs/heads/main', ...env }, encoding: 'utf8' })
+    const result = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'admit'], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: dir,
+        GITHUB_OUTPUT: out,
+        GITHUB_STEP_SUMMARY: sum,
+        GITHUB_REF: 'refs/heads/main',
+        GITHUB_REPOSITORY: 'silent-suite/silentsuite',
+        GITHUB_WORKFLOW_REF: WORKFLOW_REF,
+        ...env,
+      },
+      encoding: 'utf8',
+    })
     return { ...result, outputs: readFileSync(out, 'utf8'), summary: readFileSync(sum, 'utf8') }
   }
   const disabled = run({ GITHUB_EVENT_NAME: 'schedule' })
-  assert.equal(disabled.status, 0)
+  assert.equal(disabled.status, 0, disabled.stderr)
   assert.match(disabled.outputs, /active=false/)
   assert.match(disabled.summary, /DISABLED/)
   const wrongRef = run({ GITHUB_EVENT_NAME: 'schedule', GITHUB_REF: 'refs/heads/feat' })
   assert.notEqual(wrongRef.status, 0)
-  const nonOwner = run({ GITHUB_EVENT_NAME: 'repository_dispatch', SENDER_ID: '42', DISPATCH_PAYLOAD: JSON.stringify({ release_id: '1', release_tag: 'v1.0.0', source_sha: SHA }), ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
+  const dispatch = run({ GITHUB_EVENT_NAME: 'repository_dispatch', SENDER_ID: '265568982', ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
+  assert.notEqual(dispatch.status, 0)
+  assert.match(dispatch.stderr, /unsupported event/)
+  const nonOwner = run({ GITHUB_EVENT_NAME: 'release', SENDER_ID: '42', RELEASE_ID: '383603104', RELEASE_TAG: 'v0.5.6-beta', RELEASE_DRAFT: 'false', ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
   assert.notEqual(nonOwner.status, 0)
   assert.match(nonOwner.stderr, /not the release owner/)
-  const owner = run({ GITHUB_EVENT_NAME: 'repository_dispatch', SENDER_ID: '265568982', DISPATCH_PAYLOAD: JSON.stringify({ release_id: '383603104', release_tag: 'v0.5.6-beta', source_sha: SHA }), ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
+  const owner = run({ GITHUB_EVENT_NAME: 'release', SENDER_ID: '265568982', RELEASE_ID: '383603104', RELEASE_TAG: 'v0.5.6-beta', RELEASE_DRAFT: 'false', ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
   assert.equal(owner.status, 0, owner.stderr)
   assert.match(owner.outputs, /active=true/)
   assert.match(owner.outputs, /release_id=383603104/)
-  const badPayload = run({ GITHUB_EVENT_NAME: 'repository_dispatch', SENDER_ID: '265568982', DISPATCH_PAYLOAD: JSON.stringify({ release_id: '383603104', release_tag: 'v0.5.6-beta', source_sha: SHA, ref: 'refs/heads/evil' }) })
-  assert.notEqual(badPayload.status, 0)
+  assert.match(owner.outputs, /mode=release/)
   const noCreds = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'publish', '--binding', '/nonexistent.json', '--config', 'x', '--zsp', 'x', '--work-dir', tmpdir()], { env: { PATH: process.env.PATH }, encoding: 'utf8' })
   assert.notEqual(noCreds.status, 0)
 })

@@ -15,8 +15,11 @@ export const ZSP = {
 //   --commit <sha>             reproducible-build pointer
 //   --channel main             existing relay channel
 // Unsigned mode adds --offline (events to stdout, nothing uploaded). Live mode
-// adds --overwrite-release, which only bypasses zsp's *local* cache; relay state
-// is decided by our reconciliation, never by that flag.
+// adds --overwrite-release. Upstream zsp 0.4.17 does not treat that flag as a
+// local-cache bypass: CheckExistingRelease reads the existing kind-30063
+// created_at from the relay and supplies it as MinReleaseTimestamp so the
+// replacement clears NIP-33. This lane still decides *whether* a live run is
+// allowed; the flag only makes a permitted replacement relay-visible.
 export function zspArgs({ configPath, commit, channel = 'main', mode }) {
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error('zsp --commit requires a 40-hex commit')
   if (channel !== 'main') throw new Error('channel must stay main unless a new channel policy is approved')
@@ -74,11 +77,12 @@ export function apkFactsFromEvent(apkEvent) {
   }
 }
 
-export function requireApkIdentity(facts, { packageId, version, sha256, size, certificateSha256, filename, commit }) {
+export function requireApkIdentity(facts, { packageId, version, versionCode, sha256, size, certificateSha256, filename, commit }) {
   const problems = []
+  if (!Number.isInteger(versionCode) || versionCode <= 0) problems.push('expected versionCode is missing')
   if (facts.packageId !== packageId) problems.push(`package ${facts.packageId} != ${packageId}`)
   if (facts.version !== version) problems.push(`version ${facts.version} != ${version}`)
-  if (!Number.isInteger(facts.versionCode) || facts.versionCode <= 0) problems.push('version_code missing')
+  if (!Number.isInteger(facts.versionCode) || facts.versionCode !== versionCode) problems.push(`version_code ${facts.versionCode} != ${versionCode}`)
   if (facts.sha256 !== sha256) problems.push('APK hash mismatch')
   if (facts.size !== size) problems.push('APK size mismatch')
   if (facts.certificateSha256 !== certificateSha256) problems.push('certificate is not the direct-release certificate')
