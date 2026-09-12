@@ -132,6 +132,30 @@ Browse the open [good first issues](https://github.com/silent-suite/silentsuite/
 
 Do not include passwords, recovery material, private calendar/contact data, or other secrets in reports. Send security disclosures to <info@silentsuite.io> rather than opening a public issue.
 
+### Contributors
+
+Thanks to everyone helping build SilentSuite, from code and translations to testing and documentation.
+
+<a href="https://github.com/silent-suite/silentsuite/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=silent-suite/silentsuite" alt="GitHub contributors to SilentSuite" />
+</a>
+
+[Meet the code contributors](https://github.com/silent-suite/silentsuite/graphs/contributors) · [Find a way to contribute](./docs/contributing/)
+
+### Stargazers
+
+If SilentSuite is useful to you, a star helps others discover the project.
+
+<a href="https://www.star-history.com/#silent-suite/silentsuite&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&amp;type=Date&amp;theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&amp;type=Date" />
+    <img src="https://api.star-history.com/svg?repos=silent-suite/silentsuite&amp;type=Date" alt="SilentSuite GitHub stars over time" width="100%" />
+  </picture>
+</a>
+
+[See everyone who starred SilentSuite](https://github.com/silent-suite/silentsuite/stargazers)
+
 ## Documentation
 
 - [User guide](./docs/user-guide/)
