@@ -341,7 +341,20 @@ def test_browser_login_completion_does_not_print_account_or_server_values(capsys
         assert browser_login(running_bridge=True) == "alice@example.com"
 
     output = capsys.readouterr().out
-    assert "Dashboard will be available on the configured local listener." in output
+    from silentsuite_bridge import config
+
+    requested = config.requested_dashboard_listener()
+    assert requested is not None
+    assert requested["kind"] == "loopback"
+    expected_url = config.listener_base_url(requested["host"], requested["port"]) + "/"
+    assert expected_url.startswith(("http://127.0.0.1:", "https://127.0.0.1:", "http://[::1]:", "https://[::1]:"))
+    assert "private-server.example.invalid" not in expected_url
+    # Not-yet-bound path: requested loopback URL, not the bound-listener line.
+    assert (
+        f"Dashboard will be available on the configured loopback listener: {expected_url}"
+        in output
+    )
+    assert "Dashboard available on the loopback listener:" not in output
     assert "CalDAV/CardDAV account configured." in output
     assert "alice@example.com" not in output
     assert "https://private-server.example.invalid" not in output
