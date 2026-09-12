@@ -25,6 +25,7 @@ def _database(path):
             models.ItemEntity,
             models.HrefMapper,
             models.DavChange,
+            models.DavRevision,
             models.DavSyncToken,
             models.DavUnresolvedItem,
             models.SchemaMigration,
