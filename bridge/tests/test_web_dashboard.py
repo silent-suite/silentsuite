@@ -36,19 +36,49 @@ NODE = shutil.which("node")
 _LOCAL_HOST = "localhost:37358"
 
 
+def _stamped_environ(listener_host="127.0.0.1", listener_port=37358,
+                     accepted_host="127.0.0.1", peer="127.0.0.1",
+                     ssl=False, **extra):
+    """Build a WSGI environ dict with trusted loopback evidence.
+
+    accepted_local uses the same port as the bound listener (the request is
+    accepted on the listener that bound it); the evidence gate requires the
+    accepted-local port to equal the listener port.
+    """
+    from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+    evidence = _ListenerEvidence(
+        listener=(listener_host, listener_port),
+        accepted_local=(accepted_host, listener_port),
+        peer=peer,
+        ssl=ssl,
+    )
+    host_authority = f"[{listener_host}]" if ":" in listener_host else listener_host
+    environ = {
+        "HTTP_HOST": f"{host_authority}:{listener_port}",
+        "REMOTE_ADDR": peer,
+        "silentsuite_bridge.evidence": evidence,
+    }
+    environ.update(extra)
+    return environ
+
+
 def _get_environ(host=_LOCAL_HOST):
-    environ = {}
-    if host is not None:
+    environ = _stamped_environ()
+    if host is None:
+        environ.pop("HTTP_HOST", None)
+    elif host != "127.0.0.1:37358":
         environ["HTTP_HOST"] = host
     return environ
 
 
 def _post_environ(body=b"", csrf_token=None, host=_LOCAL_HOST):
-    environ = {
-        "CONTENT_LENGTH": str(len(body)),
-        "wsgi.input": io.BytesIO(body),
-    }
-    if host is not None:
+    environ = _stamped_environ()
+    environ["CONTENT_LENGTH"] = str(len(body))
+    environ["wsgi.input"] = io.BytesIO(body)
+    if host is None:
+        environ.pop("HTTP_HOST", None)
+    elif host != "127.0.0.1:37358":
         environ["HTTP_HOST"] = host
     if csrf_token is not None:
         environ["HTTP_X_SILENTSUITE_CSRF"] = csrf_token
@@ -77,9 +107,8 @@ def _wsgi_response(app, method, path):
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
         "SCRIPT_NAME": "",
-        # SEC-R7.4: the dashboard rejects non-local Host headers, so requests
-        # routed through the full WSGI stack must carry a localhost Host header.
-        "HTTP_HOST": "127.0.0.1:37358",
+        # #720: dashboard requires loopback evidence in WSGI environ
+        **{k: v for k, v in _stamped_environ(listener_host="127.0.0.1", listener_port=37358).items()},
         "SERVER_NAME": "127.0.0.1",
         "SERVER_PORT": "37358",
         "SERVER_PROTOCOL": "HTTP/1.1",
@@ -384,7 +413,8 @@ def test_web_compat_route_serves_dashboard(path, tmp_path, monkeypatch):
 @pytest.mark.parametrize("path", ["/", "/.web", "/.web/api/status"])
 def test_dashboard_get_rejects_non_local_host(path, tmp_path, monkeypatch):
     # SEC-R7.4: a non-local Host header (DNS-rebinding / cross-origin) is
-    # rejected before any dashboard processing.
+    # rejected before any dashboard processing. Denial returns a plain 404
+    # matching Radicale's disabled-web-module response, not a JSON 403.
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     web = Web.__new__(Web)
 
@@ -392,14 +422,14 @@ def test_dashboard_get_rejects_non_local_host(path, tmp_path, monkeypatch):
         _get_environ(host="evil.example.com"), "", path, None
     )
 
-    assert status == 403
-    assert headers["Content-Type"] == "application/json"
-    assert "non-local Host" in json.loads(body)["error"]
+    assert status == 404
+    assert headers == {}
+    assert body == b"Not found"
 
 
 def test_dashboard_post_rejects_non_local_host():
     # SEC-R7.4: non-local Host headers are rejected on mutating endpoints
-    # before CSRF validation or body parsing.
+    # before CSRF validation or body parsing. Denial is a plain 404.
     web = Web.__new__(Web)
 
     status, headers, body = web.post(
@@ -409,9 +439,9 @@ def test_dashboard_post_rejects_non_local_host():
         None,
     )
 
-    assert status == 403
-    assert headers["Content-Type"] == "application/json"
-    assert "non-local Host" in json.loads(body)["error"]
+    assert status == 404
+    assert headers == {}
+    assert body == b"Not found"
 
 
 def test_radicale_root_redirect_terminates_at_dashboard(tmp_path, monkeypatch):
@@ -1619,3 +1649,529 @@ def test_dashboard_update_interval_serializes_overlapping_saves_and_cancels_stal
     assert repeated["snapshots"]["final"]["requests"] == ['{"syncInterval":300}']
     assert repeated["snapshots"]["final"]["status"] == "Saved"
     assert repeated["snapshots"]["final"]["disabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Evidence-gate tests for #720
+# ---------------------------------------------------------------------------
+
+
+class TestEvidenceGate:
+    """Unit tests for the evidence gate in _check_dashboard_access."""
+
+    def test_missing_evidence_denies_on_loopback_config(self, monkeypatch):
+        """No evidence object → 404 even with valid Host."""
+        monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:37358")
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = {"HTTP_HOST": "127.0.0.1:37358", "REMOTE_ADDR": "127.0.0.1"}
+        result = _check_dashboard_access(environ)
+        assert result is not None
+        assert result[0] == 404
+
+    def test_trusted_loopback_evidence_passes(self, monkeypatch):
+        """Valid evidence + loopback Host + matching port → None (access granted)."""
+        monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:37358")
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        result = _check_dashboard_access(environ)
+        assert result is None
+
+    def test_wildcard_listener_evidence_denies(self, monkeypatch):
+        """Listener address is 0.0.0.0 → denied even with loopback peer."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(listener_host="0.0.0.0")
+        result = _check_dashboard_access(environ)
+        assert result is not None
+        assert result[0] == 404
+
+    def test_remote_listener_evidence_denies(self, monkeypatch):
+        """Listener address is remote → denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(listener_host="192.0.2.10")
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_non_loopback_peer_denies(self, monkeypatch):
+        """Peer is not loopback → denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(peer="192.168.1.1")
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_peer_remot_addr_mismatch_denies(self, monkeypatch):
+        """Peer != REMOTE_ADDR → denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        environ["REMOTE_ADDR"] = "127.0.0.2"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_ipv4_mapped_loopback_denied(self, monkeypatch):
+        """IPv4-mapped IPv6 loopback rejected by Host authority."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        environ["HTTP_HOST"] = "[::ffff:127.0.0.1]:37358"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_non_loopback_host_denied(self, monkeypatch):
+        """Non-loopback Host literal denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        environ["HTTP_HOST"] = "192.168.1.1:37358"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_port_mismatch_denied(self, monkeypatch):
+        """Host port != listener port → denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(listener_port=37358)
+        environ["HTTP_HOST"] = "127.0.0.1:37359"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_comma_in_host_denied(self, monkeypatch):
+        """Comma-smuggled host denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        environ["HTTP_HOST"] = "localhost,evil:37358"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_zone_id_denied(self, monkeypatch):
+        """Zone id in host denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        environ["HTTP_HOST"] = "[::1%eth0]:37358"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_bracketed_ipv4_denied(self, monkeypatch):
+        """Bracketed IPv4 denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        environ["HTTP_HOST"] = "[127.0.0.1]:37358"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_127_0_0_0_accepted(self, monkeypatch):
+        """127.0.0.0 is a valid 127/8 loopback literal and is accepted."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(listener_host="127.0.0.0")
+        environ["HTTP_HOST"] = "127.0.0.0:37358"
+        result = _check_dashboard_access(environ)
+        assert result is None
+
+    def test_localhost_without_port_denied_on_non_80(self, monkeypatch):
+        """localhost without port is denied when listener port is not 80."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(listener_port=37358)
+        environ["HTTP_HOST"] = "localhost"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_ipv6_loopback_bracketed_accepted(self, monkeypatch):
+        """[::1]:P is a valid IPv6 loopback Host and is accepted."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(listener_host="::1", listener_port=37358)
+        environ["HTTP_HOST"] = "[::1]:37358"
+        result = _check_dashboard_access(environ)
+        assert result is None
+
+    def test_ipv6_bracketed_junk_after_host_denied(self, monkeypatch):
+        """[::1]junk:P is denied (junk after closing bracket)."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(listener_host="::1", listener_port=37358)
+        environ["HTTP_HOST"] = "[::1]junk:37358"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    def test_127_1_short_form_denied(self, monkeypatch):
+        """127.1 is not a valid IP literal and is denied."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ()
+        environ["HTTP_HOST"] = "127.1:37358"
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+    @pytest.mark.parametrize(
+        "host",
+        [
+            " 127.0.0.1:37358",
+            "127.0.0.1:37358 ",
+            "127.0.0.1 :37358",
+            "127.0.0.1: 37358",
+            "localhost\t:37358",
+            "[::1] :37358",
+            "\t[::1]:37358",
+        ],
+    )
+    def test_whitespace_in_host_authority_denied_not_stripped(self, host):
+        """Whitespace anywhere in the Host authority is rejected outright;
+        the parser must never strip it into a valid authority."""
+        from silentsuite_bridge.web import _check_dashboard_access, _parse_host_authority
+
+        assert _parse_host_authority(host) == (None, None)
+        environ = _stamped_environ(listener_host="::1" if "::1" in host else "127.0.0.1")
+        environ["HTTP_HOST"] = host
+        result = _check_dashboard_access(environ)
+        assert result is not None
+        assert result[0] == 404
+
+    def test_localhost_must_be_exact_lowercase(self):
+        """Only the exact ``localhost`` token is accepted; case variants are
+        not normalised into it."""
+        from silentsuite_bridge.web import _parse_host_authority
+
+        assert _parse_host_authority("localhost:37358") == ("localhost", 37358)
+        assert _parse_host_authority("LOCALHOST:37358") == (None, None)
+        assert _parse_host_authority("Localhost:37358") == (None, None)
+
+    def test_lookalike_evidence_object_denied(self, monkeypatch):
+        """A duck-typed lookalike object is rejected by the type check."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        lookalike = type("Fake", (), {})()
+        lookalike.listener = ("127.0.0.1", 37358)
+        lookalike.accepted_local = ("127.0.0.1", 0)
+        lookalike.peer = "127.0.0.1"
+        lookalike.ssl = False
+        environ = {
+            "HTTP_HOST": "127.0.0.1:37358",
+            "REMOTE_ADDR": "127.0.0.1",
+            "silentsuite_bridge.evidence": lookalike,
+        }
+        result = _check_dashboard_access(environ)
+        assert result is not None
+        assert result[0] == 404
+
+    def test_malformed_evidence_tuple_denied(self, monkeypatch):
+        """A real _ListenerEvidence with a malformed listener tuple is denied."""
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        bad = _ListenerEvidence(
+            listener=("127.0.0.1",),  # 1-tuple, not 2
+            accepted_local=("127.0.0.1", 0),
+            peer="127.0.0.1",
+            ssl=False,
+        )
+        environ = {
+            "HTTP_HOST": "127.0.0.1:37358",
+            "REMOTE_ADDR": "127.0.0.1",
+            "silentsuite_bridge.evidence": bad,
+        }
+        result = _check_dashboard_access(environ)
+        assert result is not None
+        assert result[0] == 404
+
+    def test_evidence_is_immutable(self, monkeypatch):
+        """_ListenerEvidence fields cannot be reassigned after construction."""
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+        ev = _ListenerEvidence(
+            listener=("127.0.0.1", 37358),
+            accepted_local=("127.0.0.1", 0),
+            peer="127.0.0.1",
+            ssl=False,
+        )
+        with pytest.raises(AttributeError):
+            ev.peer = "10.0.0.1"
+        with pytest.raises(AttributeError):
+            del ev.peer
+
+    def test_valid_csrf_from_denied_source_never_reaches_handler(self, monkeypatch):
+        """Even with valid CSRF token, denied evidence prevents handler access."""
+        monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:37358")
+        from silentsuite_bridge.web import Web as WebClass
+
+        from radicale.config import DEFAULT_CONFIG_SCHEMA, Configuration
+
+        cfg = Configuration(DEFAULT_CONFIG_SCHEMA)
+        web = WebClass(cfg)
+
+        # Build environ with valid CSRF but NO evidence
+        environ = {
+            "HTTP_HOST": "127.0.0.1:37358",
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_X_SILENTSUITE_CSRF": _dashboard_csrf_token,
+            "CONTENT_LENGTH": "2",
+            "wsgi.input": io.BytesIO(b"{}"),
+        }
+        status, headers, body = web.post(environ, "", "/.web/api/sync", None)
+        assert status == 404, f"Expected 404 denial, got {status}"
+
+    def test_forwarded_header_ignored(self, monkeypatch):
+        """X-Forwarded-For is ignored; REMOTE_ADDR must match evidence peer."""
+        from silentsuite_bridge.web import _check_dashboard_access
+
+        environ = _stamped_environ(peer="127.0.0.1")
+        environ["HTTP_X_FORWARDED_FOR"] = "127.0.0.1"
+        environ["REMOTE_ADDR"] = "10.0.0.1"  # mismatched to evidence
+        result = _check_dashboard_access(environ)
+        assert result is not None
+
+
+class TestEvidenceShapeContract:
+    """Validate the evidence gate's full shape contract: str addresses,
+    integer non-bool ports in range, bool ssl, accepted-local port equals
+    listener port, and rejection of malformed/uninitialized evidence without
+    crashes."""
+
+    def test_valid_loopback_evidence_accepted(self):
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+
+        environ = _stamped_environ(listener_port=37358)
+        assert _trusted_loopback_evidence(environ) is True
+
+    def test_accepted_port_must_equal_listener_port(self):
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+        # Accepted on a different port than the listener bound.
+        evidence = _ListenerEvidence(
+            listener=("127.0.0.1", 37358),
+            accepted_local=("127.0.0.1", 9999),
+            peer="127.0.0.1",
+            ssl=False,
+        )
+        environ = {"REMOTE_ADDR": "127.0.0.1", "silentsuite_bridge.evidence": evidence}
+        assert _trusted_loopback_evidence(environ) is False
+
+    def test_bool_port_rejected(self):
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+        # bool is a subclass of int but must be rejected as a port.
+        evidence = _ListenerEvidence(
+            listener=("127.0.0.1", True),
+            accepted_local=("127.0.0.1", True),
+            peer="127.0.0.1",
+            ssl=False,
+        )
+        environ = {"REMOTE_ADDR": "127.0.0.1", "silentsuite_bridge.evidence": evidence}
+        assert _trusted_loopback_evidence(environ) is False
+
+    def test_out_of_range_port_rejected(self):
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+        evidence = _ListenerEvidence(
+            listener=("127.0.0.1", 0),
+            accepted_local=("127.0.0.1", 0),
+            peer="127.0.0.1",
+            ssl=False,
+        )
+        environ = {"REMOTE_ADDR": "127.0.0.1", "silentsuite_bridge.evidence": evidence}
+        assert _trusted_loopback_evidence(environ) is False
+
+    def test_non_bool_ssl_rejected(self):
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+        evidence = _ListenerEvidence(
+            listener=("127.0.0.1", 37358),
+            accepted_local=("127.0.0.1", 37358),
+            peer="127.0.0.1",
+            ssl="yes",  # not a bool
+        )
+        environ = {"REMOTE_ADDR": "127.0.0.1", "silentsuite_bridge.evidence": evidence}
+        assert _trusted_loopback_evidence(environ) is False
+
+    def test_non_str_host_rejected(self):
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+        evidence = _ListenerEvidence(
+            listener=(127001, 37358),  # int host, not str
+            accepted_local=("127.0.0.1", 37358),
+            peer="127.0.0.1",
+            ssl=False,
+        )
+        environ = {"REMOTE_ADDR": "127.0.0.1", "silentsuite_bridge.evidence": evidence}
+        assert _trusted_loopback_evidence(environ) is False
+
+    def test_uninitialized_evidence_via_object_new_rejected(self):
+        """An evidence object created via object.__new__ that bypasses
+        __init__ has unset slots; the gate must reject it without crashing."""
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+        from silentsuite_bridge.radicale.server import _ListenerEvidence
+
+        evidence = object.__new__(_ListenerEvidence)
+        environ = {"REMOTE_ADDR": "127.0.0.1", "silentsuite_bridge.evidence": evidence}
+        assert _trusted_loopback_evidence(environ) is False
+
+    def test_lookalike_object_rejected(self):
+        from silentsuite_bridge.web import _trusted_loopback_evidence
+
+        class FakeEvidence:
+            listener = ("127.0.0.1", 37358)
+            accepted_local = ("127.0.0.1", 37358)
+            peer = "127.0.0.1"
+            ssl = False
+
+        environ = {
+            "REMOTE_ADDR": "127.0.0.1",
+            "silentsuite_bridge.evidence": FakeEvidence(),
+        }
+        assert _trusted_loopback_evidence(environ) is False
+
+
+class TestNetworkCard:
+    """Requested vs bound rendering, per-listener client endpoints, and the
+    status API ``network`` object."""
+
+    def _partial_failure(self, monkeypatch, fresh_registry):
+        # Requested: loopback + remote + wildcard. Bound: loopback + wildcard.
+        # The remote entry failed to bind.
+        monkeypatch.setattr(
+            config, "SERVER_HOSTS", "127.0.0.1:45123,192.0.2.10:45123,0.0.0.0:45124",
+        )
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        fresh_registry.reset()
+        fresh_registry.record_bound(("127.0.0.1", 45123), None, ssl=False)
+        fresh_registry.record_failed()
+        fresh_registry.record_bound(("0.0.0.0", 45124), None, ssl=False)
+
+    def test_card_shows_requested_and_bound_separately_on_partial_failure(
+        self, monkeypatch, fresh_registry,
+    ):
+        self._partial_failure(monkeypatch, fresh_registry)
+
+        card = web_module._render_network_card()
+
+        assert "Requested listeners:" in card
+        assert "Bound listeners:" in card
+        # The failed remote entry stays visible as requested, never as bound.
+        assert "192.0.2.10:45123 (remote" in card
+        assert "http://192.0.2.10" not in card
+        # Bound loopback literal gets a dialable scheme URL.
+        assert "http://127.0.0.1:45123/" in card
+        # Wildcard bind is bind-only: no dialable URL for 0.0.0.0.
+        assert "http://0.0.0.0" not in card
+        assert "not a client URL" in card
+        assert "1 listener(s) failed to bind" in card
+        # Source rule names all three facts plus the Host and CSRF gates.
+        for phrase in ("bound loopback listener", "accepted", "peer", "Host", "CSRF"):
+            assert phrase in card
+
+    def test_status_api_network_has_scheme_urls_and_null_for_wildcard(
+        self, monkeypatch, fresh_registry,
+    ):
+        self._partial_failure(monkeypatch, fresh_registry)
+
+        data = web_module._network_card()
+
+        assert data["requested"] == [
+            {"host": "127.0.0.1", "port": 45123, "kind": "loopback"},
+            {"host": "192.0.2.10", "port": 45123, "kind": "remote"},
+            {"host": "0.0.0.0", "port": 45124, "kind": "wildcard"},
+        ]
+        bound = {(b["host"], b["port"]): b for b in data["bound"]}
+        assert set(bound) == {("127.0.0.1", 45123), ("0.0.0.0", 45124)}
+        assert bound[("127.0.0.1", 45123)]["url"] == "http://127.0.0.1:45123/"
+        assert bound[("127.0.0.1", 45123)]["role"] == "DAV and dashboard"
+        assert bound[("0.0.0.0", 45124)]["url"] is None
+        assert data["failed_count"] == 1
+        assert data["dashboard_url"] == "http://127.0.0.1:45123/"
+        assert data["account_path_pattern"] == "/<email>/"
+        assert "CSRF" in data["rule"]
+
+    def test_bound_remote_tls_listener_has_https_url_and_no_dashboard(
+        self, monkeypatch, fresh_registry,
+    ):
+        """Loopback failed, remote bound with TLS: the remote endpoint is a
+        usable https URL for DAV clients, the dashboard URL is None."""
+        monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:45123,192.0.2.10:45200")
+        monkeypatch.setattr(config, "SSL_ENABLED", True)
+        fresh_registry.reset()
+        fresh_registry.record_failed()
+        fresh_registry.record_bound(("192.0.2.10", 45200), None, ssl=True)
+
+        data = web_module._network_card()
+
+        assert data["dashboard_url"] is None
+        assert data["bound"] == [
+            {
+                "host": "192.0.2.10",
+                "port": 45200,
+                "ssl": True,
+                "role": "DAV only (remote)",
+                "url": "https://192.0.2.10:45200/",
+            }
+        ]
+        card = web_module._render_network_card()
+        assert "https://192.0.2.10:45200/" in card
+        assert "(TLS)" in card
+
+    def test_ipv6_loopback_endpoint_is_bracketed(self, monkeypatch, fresh_registry):
+        monkeypatch.setattr(config, "SERVER_HOSTS", "[::1]:45123")
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        fresh_registry.reset()
+        fresh_registry.record_bound(("::1", 45123, 0, 0), None, ssl=False)
+
+        data = web_module._network_card()
+        assert data["bound"][0]["url"] == "http://[::1]:45123/"
+        assert data["dashboard_url"] == "http://[::1]:45123/"
+        card = web_module._render_network_card()
+        assert "[::1]:45123" in card
+        assert "http://[::1]:45123/" in card
+
+    def test_status_endpoint_includes_network(self, monkeypatch, fresh_registry):
+        self._partial_failure(monkeypatch, fresh_registry)
+        web = Web.__new__(Web)
+
+        status, headers, body = web.get(_get_environ(), "", "/.web/api/status", None)
+
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["network"]["failed_count"] == 1
+        assert payload["network"]["dashboard_url"] == "http://127.0.0.1:45123/"
+        assert [b["url"] for b in payload["network"]["bound"]] == [
+            "http://127.0.0.1:45123/", None,
+        ]
+
+    def test_account_dav_url_uses_bound_listener_and_is_unavailable_after_stop(
+        self, tmp_path, monkeypatch, fresh_registry,
+    ):
+        """Account cards pair the path pattern with the bound listener, and
+        stop advertising an address once serving ended with nothing bound."""
+        monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+        monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
+        monkeypatch.setattr(config, "LISTEN_PORT", 37358)
+        monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:45123")
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        monkeypatch.setattr(web_module, "_account_fingerprint", lambda _c, _u: None)
+        creds = Credentials()
+        creds.set_etebase("alice@example.com", "alice-session", "https://server.test")
+        creds.save()
+
+        fresh_registry.reset()
+        fresh_registry.record_bound(("127.0.0.1", 45123), None, ssl=False)
+        page = _render_dashboard()
+        assert "http://127.0.0.1:45123/alice@example.com/" in page
+        assert "http://127.0.0.1:37358/alice@example.com/" not in page
+        assert 'id="davUrl0"' in page
+
+        fresh_registry.mark_stopped()
+        page = _render_dashboard()
+        assert "DAV URL unavailable" in page
+        assert "/alice@example.com/" not in page
+        assert 'id="davUrl0"' not in page

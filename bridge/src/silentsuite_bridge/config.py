@@ -435,9 +435,216 @@ def is_remote_bind_configured() -> bool:
     return bool(remote_bind_reasons())
 
 
+def is_wildcard_host(host: str) -> bool:
+    """Return true for hosts that bind on all interfaces (0.0.0.0, ::, *, empty).
+
+    Numeric unspecified addresses (``0.0.0.0``, ``::``) are also recognized
+    through ``ip_address()`` so expanded forms are classified correctly.
+    """
+    stripped = host.strip()
+    if stripped in {"", "0.0.0.0", "::", "*"}:
+        return True
+    try:
+        return ip_address(stripped).is_unspecified
+    except ValueError:
+        return False
+
+
+def is_loopback_literal(host: str) -> bool:
+    """Return true only for a numeric loopback IP, not localhost."""
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def parse_server_hosts(server_hosts: str) -> list[dict]:
+    """Parse SERVER_HOSTS into records (host, port, kind).
+
+    ``kind`` is one of ``loopback``, ``wildcard``, ``remote``, ``invalid``.
+    Uses ``_split_host_spec`` first, falls back to ``_extract_host`` for
+    lenient env input, and classifies unparseable entries as ``invalid``.
+    An entry whose strict parse fails keeps its invalid classification and
+    is never fabricated into a valid default-port listener.
+    """
+    records: list[dict] = []
+    for spec in server_hosts.split(","):
+        spec = spec.strip()
+        if not spec:
+            continue
+        try:
+            host, port = _split_host_spec(spec, "SILENTSUITE_SERVER_HOSTS")
+        except (NetworkProfileError, ValueError):
+            # Strict parse failed: classify as invalid. Do NOT fabricate a
+            # valid default-port listener from a malformed entry.
+            records.append({"host": spec, "port": 0, "kind": "invalid"})
+            continue
+        records.append({"host": host, "port": port, "kind": _host_kind(host)})
+    return records
+
+
+def _host_kind(host: str) -> str:
+    """Classify a host string as loopback, wildcard, or remote."""
+    if is_loopback_literal(host) or host.lower() == "localhost":
+        return "loopback"
+    if is_wildcard_host(host):
+        return "wildcard"
+    return "remote"
+
+
+def requested_loopback_listeners() -> list[dict]:
+    """Return only loopback records from the current SERVER_HOSTS."""
+    return [r for r in parse_server_hosts(SERVER_HOSTS) if r["kind"] == "loopback"]
+
+
+def requested_remote_listeners() -> list[dict]:
+    """Return only remote (non-loopback, non-wildcard) records from SERVER_HOSTS."""
+    return [r for r in parse_server_hosts(SERVER_HOSTS) if r["kind"] == "remote"]
+
+
+def requested_dashboard_listener() -> dict | None:
+    """Return the first loopback record from SERVER_HOSTS, or None."""
+    for r in parse_server_hosts(SERVER_HOSTS):
+        if r["kind"] == "loopback":
+            return r
+    return None
+
+
+def listener_base_url(host: str, port: int) -> str:
+    """Build ``scheme://host:port`` for a given listener, honoring SSL_ENABLED."""
+    scheme = "https" if SSL_ENABLED else "http"
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{scheme}://{host}:{port}"
+
+
 def is_dashboard_enabled() -> bool:
-    """The dashboard is unauthenticated today, so disable it on remote binds."""
-    return not is_remote_bind_configured()
+    """True when at least one loopback record exists; wildcard-only stays false."""
+    return len(requested_loopback_listeners()) > 0
+
+
+def loopback_listener_hint() -> str | None:
+    """Return a safe hint string: current specs + suggested 127.0.0.1:<port>.
+
+    Port is LISTEN_PORT if free, else LISTEN_PORT+1 upward, skipping ports
+    already used by any existing spec whose family is IPv4, IPv4 wildcard, or
+    unknown (hostname). Unknown-family hostname entries are treated
+    conservatively: their ports are reserved so the hint never suggests a
+    loopback listener on a port a hostname entry already uses.
+    """
+    existing_hosts = SERVER_HOSTS
+    used_ports: set[int] = set()
+    for r in parse_server_hosts(existing_hosts):
+        port = r.get("port", 0)
+        if not port or port <= 0:
+            continue
+        host = r["host"]
+        family = _address_family_of(host, r["kind"])
+        # Reserve IPv4 literal ports, IPv4 wildcard ports, and unknown-family
+        # (hostname) ports. IPv6-only ports are NOT reserved because the
+        # suggested 127.0.0.1 listener is IPv4 and Radicale sets IPV6_V6ONLY.
+        if family == "ipv4":
+            used_ports.add(port)
+        elif family is None and r["kind"] not in ("invalid",):
+            # Unknown family (hostname): reserve conservatively.
+            used_ports.add(port)
+
+    candidate = LISTEN_PORT
+    while candidate <= 65535:
+        if candidate not in used_ports:
+            break
+        candidate += 1
+    if candidate > 65535:
+        return None
+    return f"{existing_hosts},127.0.0.1:{candidate}"
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
+def _address_family_of(host: str, kind: str) -> str | None:
+    """Return 'ipv4', 'ipv6', or None for a listener host."""
+    if kind == "wildcard":
+        # Recognize expanded unspecified addresses through ip_address().
+        stripped = host.strip()
+        if stripped in ("", "*", "0.0.0.0"):
+            return "ipv4"
+        if stripped == "::":
+            return "ipv6"
+        try:
+            addr = ip_address(stripped)
+            return "ipv4" if addr.version == 4 else "ipv6"
+        except ValueError:
+            return None
+    try:
+        return "ipv4" if ip_address(host).version == 4 else "ipv6"
+    except ValueError:
+        return None
+
+
+def _normalised_listener_key(host: str, port: int) -> str:
+    """Return a stable key for deduplication: canonical IP + port."""
+    try:
+        canonical = str(ip_address(host.strip()))
+    except ValueError:
+        canonical = host.strip().lower()
+    return f"{canonical}:{port}"
+
+
+def listener_conflicts() -> list[str]:
+    """Return conflict descriptions for duplicate or wildcard-over-literal entries.
+
+    Detects: same-family same-port wildcard-versus-literal conflicts, and
+    exact duplicates.  Invalid entries are excluded.  Keys are structured
+    ``(family, canonical_host, port)`` tuples — never colon-joined strings —
+    because IPv6 literals contain colons and a textual key would misparse.
+    """
+    records = parse_server_hosts(SERVER_HOSTS)
+    conflicts: list[str] = []
+    # (family, canonical_host, port) -> record
+    seen: dict[tuple, dict] = {}
+
+    for r in records:
+        if r["kind"] == "invalid" or not r["port"] or r["port"] <= 0:
+            continue
+        host = r["host"]
+        port = r["port"]
+        family = _address_family_of(host, r["kind"])
+        if family is None:
+            continue
+        canonical_host = str(ip_address(host)) if _is_ip(host) else host.lower()
+        key = (family, canonical_host, port)
+
+        if key in seen:
+            existing = seen[key]
+            conflicts.append(
+                f"duplicate listener {existing['host']}:{existing['port']}"
+                f" and {host}:{port}"
+            )
+            continue
+        seen[key] = r
+
+    # Wildcard vs literal same-family same-port: structured tuple comparison,
+    # no textual splitting of colon-bearing IPv6 addresses.
+    wildcard_keys = [key for key, entry in seen.items() if entry["kind"] == "wildcard"]
+    for key_a in wildcard_keys:
+        family_a, _host_a, port_a = key_a
+        entry_a = seen[key_a]
+        for key_b, entry_b in seen.items():
+            if key_b == key_a:
+                continue
+            family_b, _host_b, port_b = key_b
+            if family_a == family_b and port_a == port_b:
+                conflicts.append(
+                    f"wildcard {entry_a['host']}:{entry_a['port']} conflicts with literal"
+                    f" {entry_b['host']}:{entry_b['port']}"
+                )
+    return conflicts
 
 
 def _remote_bind_error(reasons: list[str]) -> NetworkConfigError:
@@ -453,9 +660,18 @@ def validate_network_config() -> None:
 
     An invalid persisted profile (or malformed environment port) is rejected
     first so a corrupted settings.json can never widen the bind.
+    Listener conflicts are also rejected.
     """
     if NETWORK_PROFILE_ERROR:
-        raise NetworkProfileError(f"SilentSuite Bridge network configuration is invalid: {NETWORK_PROFILE_ERROR}")
+        raise NetworkProfileError(
+            f"SilentSuite Bridge network configuration is invalid: {NETWORK_PROFILE_ERROR}"
+        )
+    conflicts = listener_conflicts()
+    if conflicts:
+        raise NetworkConfigError(
+            "SilentSuite Bridge network configuration conflict in SILENTSUITE_SERVER_HOSTS; "
+            "check for duplicate or wildcard-over-literal entries"
+        )
     reasons = remote_bind_reasons()
     if reasons and not ALLOW_REMOTE:
         raise _remote_bind_error(reasons)

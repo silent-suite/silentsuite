@@ -198,6 +198,7 @@ a = Analysis(
         "silentsuite_bridge.radicale.rights",
         "silentsuite_bridge.radicale.creds",
         "silentsuite_bridge.radicale.etesync_cache",
+        "silentsuite_bridge.radicale.server",
         "silentsuite_bridge.web",
         "silentsuite_bridge.web.__init__",
 

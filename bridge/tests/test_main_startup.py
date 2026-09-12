@@ -243,9 +243,62 @@ def test_check_credentials_blocks_no_accounts_when_dashboard_disabled(tmp_path, 
     assert bridge_main.check_credentials(open_browser=False) is False
 
     output = capsys.readouterr().out
-    assert "dashboard is disabled" in output
+    assert "no loopback listener is configured for" in output
     assert "--login" in output
     assert "--manual-login" in output
+
+
+def test_check_credentials_prints_requested_report_and_hint_before_early_exit(
+    tmp_path, monkeypatch, capsys, caplog,
+):
+    """Wildcard-only profile with no account: the requested-listener report
+    and the exact loopback hint print before the early exit, run_server is
+    never reached, and none of it reaches the logger."""
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(config, "SERVER_HOSTS", "0.0.0.0:37358")
+    monkeypatch.setattr(config, "LISTEN_PORT", 37358)
+    monkeypatch.setattr(config, "ALLOW_REMOTE", True)
+    monkeypatch.setattr(
+        bridge_main,
+        "run_server",
+        MagicMock(side_effect=AssertionError("run_server must not run without an account")),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=bridge_main.logger.name):
+        assert bridge_main.check_credentials(open_browser=False) is False
+
+    output = capsys.readouterr().out
+    assert "Requested listeners:" in output
+    assert "0.0.0.0:37358 (wildcard" in output
+    assert "SILENTSUITE_SERVER_HOSTS=0.0.0.0:37358,127.0.0.1:37359" in output
+    assert output.index("Requested listeners:") < output.index("SILENTSUITE_SERVER_HOSTS=")
+    assert output.index("SILENTSUITE_SERVER_HOSTS=") < output.index("--login")
+    assert "0.0.0.0" not in caplog.text
+    assert "37358" not in caplog.text
+    bridge_main.run_server.assert_not_called()
+
+
+def test_check_credentials_mixed_hosts_reports_requested_dashboard_url_as_unconfirmed(
+    tmp_path, monkeypatch, capsys,
+):
+    """Mixed loopback + remote profile with no account: the requested loopback
+    URL is printed with the requested-not-bound caveat, and the remote entry
+    is listed as requested remote DAV only."""
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:45123,192.0.2.10:45123")
+    monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
+    monkeypatch.setattr(config, "LISTEN_PORT", 37358)
+    monkeypatch.setattr(config, "ALLOW_REMOTE", True)
+    monkeypatch.setattr(config, "SSL_ENABLED", False)
+
+    assert bridge_main.check_credentials(open_browser=False) is True
+
+    output = capsys.readouterr().out
+    assert "127.0.0.1:45123 (loopback" in output
+    assert "192.0.2.10:45123 (remote" in output
+    assert "http://127.0.0.1:45123/" in output
+    assert "http://127.0.0.1:37358/" not in output
+    assert "confirmed when the listener binds" in output
 
 
 def test_headless_zero_account_startup_resumes_cleanup_before_exit(monkeypatch):
@@ -282,16 +335,27 @@ def test_check_credentials_prints_https_dashboard_url_when_ssl_enabled(tmp_path,
 
 
 def test_dashboard_url_uses_http_when_ssl_disabled(monkeypatch):
+    from silentsuite_bridge.radicale.server import get_registry
+
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
     monkeypatch.setattr(config, "LISTEN_PORT", 37358)
     monkeypatch.setattr(config, "SSL_ENABLED", False)
+    # Ensure the registry is in the never-started state so the pre-start
+    # fallback path is exercised (a prior wired test may have left it
+    # stopped). monkeypatch undoes this after the test.
+    registry = get_registry()
+    monkeypatch.setattr(registry, "_state", registry._NEVER)
     assert bridge_main._dashboard_url() == "http://127.0.0.1:37358/"
 
 
 def test_dashboard_url_uses_https_when_ssl_enabled(monkeypatch):
+    from silentsuite_bridge.radicale.server import get_registry
+
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
     monkeypatch.setattr(config, "LISTEN_PORT", 37358)
     monkeypatch.setattr(config, "SSL_ENABLED", True)
+    registry = get_registry()
+    monkeypatch.setattr(registry, "_state", registry._NEVER)
     assert bridge_main._dashboard_url() == "https://127.0.0.1:37358/"
 
 
@@ -365,7 +429,7 @@ def test_main_missing_ssl_file_exits_cleanly_without_traceback(monkeypatch, tmp_
 def _run_server_until_keyboard_interrupt(monkeypatch):
     from radicale import server as radicale_server
 
-    def stop_server(_configuration):
+    def stop_server(_configuration, shutdown_socket=None):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(bridge_main, "_initial_status_check", lambda: None)
@@ -380,7 +444,7 @@ def test_server_application_injection_restores_upstream_application(monkeypatch,
     from radicale import server as radicale_server
     from radicale.app import Application as RadicaleApplication
 
-    def serve(_configuration):
+    def serve(_configuration, shutdown_socket=None):
         assert radicale_server.Application is BridgeApplication
         if outcome is not None:
             raise outcome
@@ -397,7 +461,7 @@ def test_server_application_injection_restores_upstream_application(monkeypatch,
 def test_server_application_injection_rejects_nested_entry(monkeypatch):
     from radicale import server as radicale_server
 
-    def serve(_configuration):
+    def serve(_configuration, shutdown_socket=None):
         with pytest.raises(RuntimeError, match="already active"):
             bridge_main._serve_radicale_with_bridge_application(object())
 
@@ -414,7 +478,7 @@ def test_server_application_injection_rejects_real_two_thread_contention(monkeyp
     serve_barrier = threading.Barrier(2)
     holder_errors = []
 
-    def serve(_configuration):
+    def serve(_configuration, shutdown_socket=None):
         assert radicale_server.Application is BridgeApplication
         entered_serve.set()
         serve_barrier.wait()
@@ -466,7 +530,7 @@ def test_server_application_injection_does_not_overwrite_third_party_replacement
     replacement = object()
     monkeypatch.setattr(radicale_server, "Application", radicale_server.Application)
 
-    def serve(_configuration):
+    def serve(_configuration, shutdown_socket=None):
         radicale_server.Application = replacement
 
     monkeypatch.setattr(radicale_server, "serve", serve)

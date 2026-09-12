@@ -880,3 +880,25 @@ def test_cli_install_autostart_denies_remote_bind_before_any_write(settings_file
     err = capsys.readouterr().err
     assert "SILENTSUITE_ALLOW_REMOTE=1" in err
     assert "0.0.0.0" not in err
+
+
+# ---------------------------------------------------------------------------
+# Mixed-hosts regression for #720
+# ---------------------------------------------------------------------------
+
+
+def test_persisted_mixed_hosts_with_permission_loads_web_module(settings_file, monkeypatch):
+    """127.0.0.1:37358,203.0.113.7:37358 with allowRemote=true loads web module."""
+    write_settings(
+        settings_file,
+        {
+            "network": {
+                "serverHosts": "127.0.0.1:37358,203.0.113.7:37358",
+                "allowRemote": True,
+            }
+        },
+    )
+    config.load_settings()
+    config.validate_network_config()
+    assert config.is_dashboard_enabled() is True
+    assert bridge_main.build_radicale_configuration().get("web", "type") == "silentsuite_bridge.web"

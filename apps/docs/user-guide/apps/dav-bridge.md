@@ -111,32 +111,92 @@ silentsuite-bridge --setup-macos-apple-accounts
 Then trust the generated localhost certificate in **Keychain Access** with **Trust > Secure Sockets Layer (SSL)** set to **Always Trust**, restart the bridge, and use the `https://` DAV URLs shown in the dashboard.
 
 ::: warning HTTPS is all-or-nothing for one bridge profile
-Enabling bridge SSL changes the single local DAV listener from HTTP to HTTPS. Existing Thunderbird, Evolution, or KDE clients configured with `http://localhost:37358/` must be updated to the dashboard's `https://` URL and may need to trust the same localhost certificate. Running simultaneous HTTP and HTTPS listeners is not part of this bridge mode.
+Enabling bridge SSL switches every configured listener (loopback and remote) from HTTP to HTTPS. Existing Thunderbird, Evolution, or KDE clients configured with `http://localhost:37358/` must be updated to the dashboard's `https://` URL and may need to trust the same localhost certificate. Running simultaneous HTTP and HTTPS listeners is not part of this bridge mode. For a remote listener, the remote IP or hostname must also be in the certificate's SANs (see the Remote DAV Access section).
 :::
 
 For detailed Apple setup fields and troubleshooting, see [macOS Calendar & Contacts](./macos.md).
 
 ## Remote DAV Access (Tailscale / Private Networks)
 
-An explicit non-loopback bind exposes the Bridge's CalDAV and CardDAV endpoints
-to the configured private network. It does **not** expose the SilentSuite
-dashboard: the unauthenticated dashboard is disabled for the entire remote
-bind. To use the dashboard again, run the Bridge with a loopback bind on the
-Bridge host and open it from that host.
+The Bridge listens on the addresses you configure in `SILENTSUITE_SERVER_HOSTS`
+(as a comma-separated `host:port` list). Each entry is a *requested* listener;
+only the entries that actually bind become *bound* listeners you can dial.
+The dashboard Network card and the `/.web/api/status` JSON show both lists so
+you can tell requested-but-unbound entries from real endpoints.
+
+### Loopback is special
+
+The unauthenticated Bridge dashboard is served **only** on a listener whose
+bound address is a numeric loopback literal (`127.0.0.1` or `::1`). The
+dashboard gate checks three bridge-owned facts stamped into every request:
+the bound listener address, the accepted local socket address, and the peer
+address. All three must be loopback. A `0.0.0.0` / `::` wildcard bind is
+never treated as loopback even for a connection from `127.0.0.1`, because the
+bound address is the wildcard, not a loopback literal. The dashboard is
+therefore denied on wildcard and remote listeners regardless of where the
+request originates — there is no "local connection" exception for the
+dashboard. To use the dashboard, run the Bridge with a loopback entry and
+open it from the Bridge host.
+
+DAV endpoints have no such restriction: any bound listener (loopback,
+wildcard, or remote) serves CalDAV/CardDAV to clients that can reach it.
+A wildcard bind (`0.0.0.0` / `::`) serves DAV on every interface, but it
+is not a dialable client URL itself — clients reach it via the host's
+actual IP address. This is how a remote private-network bind is meant to
+be used.
+
+### Mixed loopback + remote (recommended for Tailscale)
+
+To keep the dashboard usable on the Bridge host while exposing DAV to a
+private network, configure both a loopback and a remote entry in
+`SILENTSUITE_SERVER_HOSTS`:
+
+```bash
+SILENTSUITE_SERVER_HOSTS=127.0.0.1:37358,100.64.10.20:37358 \
+SILENTSUITE_ALLOW_REMOTE=1 silentsuite-bridge
+```
+
+The loopback entry serves the dashboard and DAV on the Bridge host; the
+remote entry serves DAV only to the private network. The dashboard URL and
+the per-account DAV URLs the tray shows always prefer the bound loopback
+listener, so copying a DAV URL gives you the safe local endpoint by
+default. A remote-only bind (no loopback entry) makes the tray show the
+bound remote literal with its configured port for DAV — never a wildcard,
+never an unbound `LISTEN_ADDRESS:LISTEN_PORT`. The dashboard itself is not
+served on a remote-only bind, so its Network card is only visible when a
+loopback listener is also configured and you open the dashboard from the
+Bridge host.
+
+### Remote DAV clients
 
 `127.0.0.1` and `localhost` always refer to the device making the request. A
-DAV client on another Tailscale or private-network device must therefore use
-the Bridge host's private IP address, MagicDNS name, or another approved private
-hostname instead. Do not expose the Bridge listener to the public internet.
+DAV client on another Tailscale or private-network device must use the
+Bridge host's private IP address, MagicDNS name, or another approved private
+hostname — not `localhost`. Do not expose the Bridge listener to the public
+internet.
 
-When HTTPS is enabled, the exact IP address or hostname used by the DAV client
-must be present in the certificate's Subject Alternative Names (SANs). Do not
-bypass certificate verification. Certificate support for explicit Tailscale
-IPs and MagicDNS names is tracked in [#518](https://github.com/silent-suite/silentsuite/issues/518).
+When HTTPS is enabled, the exact IP address or hostname used by the DAV
+client must be present in the certificate's Subject Alternative Names
+(SANs). Do not bypass certificate verification. The auto-generated localhost
+certificate from `--setup-macos-apple-accounts` covers `localhost`,
+`127.0.0.1`, and `::1` only; an explicit Tailscale IP or MagicDNS name is
+not in that SAN set and must be added to a custom certificate. Certificate
+support for explicit Tailscale IPs and MagicDNS names is tracked in
+[#518](https://github.com/silent-suite/silentsuite/issues/518).
 
-Opening a remote listener in a browser can show `Radicale works!` or a similar
-generic Radicale status response. That confirms that the DAV listener is
-reachable; it is not the SilentSuite dashboard.
+Opening a remote or wildcard listener in a browser can show `Radicale
+works!` or a similar generic Radicale status response. That confirms the
+DAV listener is reachable; it is not the SilentSuite dashboard.
+
+### Platform note on the 127/8 loopback range
+
+`127.0.0.1` is the normal loopback address and is what the Bridge uses by
+default. The whole `127.0.0.0/8` range is loopback on Linux, but the Bridge
+treats only numeric loopback literals as dashboard-eligible and the
+generated localhost certificate covers `127.0.0.1` (not every `127.x.x.x`
+address). Use `127.0.0.1` unless you have a specific reason to use another
+loopback address, and add that address to your certificate SANs when TLS is
+on.
 
 ## Multi-Account Use
 
@@ -229,8 +289,10 @@ SILENTSUITE_LISTEN_ADDRESS=::1 SILENTSUITE_LISTEN_PORT=45123 silentsuite-bridge 
 
 - With nothing exported, no `"network"` object is written and the bridge keeps `127.0.0.1:37358`.
 - A non-loopback address without `SILENTSUITE_ALLOW_REMOTE=1` is refused before anything is
-  written. The permission is persisted together with the bind, and the dashboard stays
-  disabled on remote binds.
+  written. The permission is persisted together with the bind. The dashboard is served
+  only on bound loopback listeners; a remote-only profile has no dashboard, while a mixed
+  `SILENTSUITE_SERVER_HOSTS` profile (loopback + remote) keeps the dashboard on the
+  loopback entry and serves DAV on both.
 - Nothing else from the environment (server URL, data directory, log file, SSL paths,
   credentials) is ever persisted by this command.
 - Running `--install-autostart` again merges newly exported variables over the retained
@@ -321,7 +383,7 @@ Uninstalling the local Bridge only removes the desktop sync helper from this com
 | `SILENTSUITE_LISTEN_ADDRESS` | `127.0.0.1` | IP address to listen on (persisted by `--install-autostart` when exported) |
 | `SILENTSUITE_LISTEN_PORT` | `37358` | Port to listen on (persisted by `--install-autostart` when exported) |
 | `SILENTSUITE_SERVER_HOSTS` | listen address and port | Radicale `host:port` list (persisted by `--install-autostart` when exported) |
-| `SILENTSUITE_ALLOW_REMOTE` | unset | Required for a non-loopback bind; disables the dashboard (persisted by `--install-autostart` when exported) |
+| `SILENTSUITE_ALLOW_REMOTE` | unset | Required for any non-loopback bind (in `SILENTSUITE_LISTEN_ADDRESS` or `SILENTSUITE_SERVER_HOSTS`); the dashboard is served only on bound loopback listeners, so a remote-only profile has no dashboard (persisted by `--install-autostart` when exported) |
 | `SILENTSUITE_DATA_DIR` | Platform-specific | Data storage location (not supported with `--install-autostart`) |
 | `SILENTSUITE_SYNC_INTERVAL` | `900` (15 min) | Sync interval in seconds |
 | `SILENTSUITE_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
@@ -418,7 +480,7 @@ when you prefer a fresh download).
 
 ### Bridge won't start
 
-On the default localhost bind, the bridge can start before an account is configured so you can log in through `http://localhost:37358/`. If you intentionally configured a remote/non-loopback bind, the dashboard is disabled for safety and you must add an account first with:
+On the default localhost bind, the bridge can start before an account is configured so you can log in through `http://localhost:37358/`. If you configured a remote-only bind (no loopback entry in `SILENTSUITE_SERVER_HOSTS`), the dashboard is not served on any listener; add an account first with:
 
 ```bash
 silentsuite-bridge --login

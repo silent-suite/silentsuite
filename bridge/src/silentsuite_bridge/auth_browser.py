@@ -636,17 +636,62 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             if not email:
                 self.send_error(404)
                 return
-            bridge_url = f"{config.local_base_url()}/{email}/"
+            # Use the registry's bound listeners for the DAV URL, preferring
+            # loopback and falling back to a bound remote literal. Only before
+            # serving has been attempted do we fall back to the configured
+            # listener; after serving with no usable bound listener we show
+            # an explicit unavailable note instead of a fabricated address.
+            from .radicale.server import get_registry
+
+            registry = get_registry()
+            base = registry.dav_base_url(config.SSL_ENABLED)
+            if base is not None:
+                bridge_url = f"{base}/{email}/"
+            elif registry.is_started or registry.is_stopped:
+                bridge_url = "DAV URL unavailable: no usable listener is bound."
+            else:
+                base = config.local_base_url()
+                bridge_url = f"{base}/{email}/"
             if config.is_dashboard_enabled():
-                dashboard_url = f"{config.local_base_url()}/"
-                dashboard_bookmark = (
-                    '<div class="bookmark-box">&#11088; Bookmark '
-                    f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
-                    "to find these details later</div>"
-                )
+                from .radicale.server import get_registry
+
+                registry = get_registry()
+                registry_url = registry.dashboard_url(config.SSL_ENABLED)
+                if registry_url is not None:
+                    dashboard_url = registry_url
+                    dashboard_bookmark = (
+                        '<div class="bookmark-box">&#11088; Bookmark '
+                        f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
+                        "to find these details later</div>"
+                    )
+                elif registry.is_started or registry.is_stopped:
+                    # Serving was attempted but no loopback bound — do not
+                    # advertise an unbound requested URL.
+                    dashboard_url = ""
+                    dashboard_bookmark = (
+                        '<div class="bookmark-box">'
+                        "Dashboard is not configured or not bound on a loopback listener."
+                        "</div>"
+                    )
+                else:
+                    requested = config.requested_dashboard_listener()
+                    dashboard_url = (
+                        config.listener_base_url(requested["host"], requested["port"]) + "/"
+                        if requested
+                        else f"{config.local_base_url()}/"
+                    )
+                    dashboard_bookmark = (
+                        '<div class="bookmark-box">&#11088; Bookmark '
+                        f'<a href="{html_mod.escape(dashboard_url)}">{html_mod.escape(dashboard_url)}</a> '
+                        "to find these details later</div>"
+                    )
             else:
                 dashboard_url = ""
-                dashboard_bookmark = '<div class="bookmark-box">Dashboard is disabled for remote bridge binds.</div>'
+                dashboard_bookmark = (
+                    '<div class="bookmark-box">'
+                    "Dashboard is not configured or not bound on a loopback listener."
+                    "</div>"
+                )
 
             page = SUCCESS_PAGE_HTML
             page = page.replace("USER_EMAIL", html_mod.escape(email))
@@ -812,9 +857,31 @@ def browser_login(running_bridge=False):
         print()
         print("  Etebase server configured.")
         if config.is_dashboard_enabled():
-            print("  Dashboard will be available on the configured local listener.")
+            from .radicale.server import get_registry
+
+            registry = get_registry()
+            registry_url = registry.dashboard_url(config.SSL_ENABLED)
+            if registry_url is not None:
+                print(f"  Dashboard available on the loopback listener: {registry_url}")
+            elif registry.is_started or registry.is_stopped:
+                print(
+                    "  Dashboard is not bound on a loopback listener; "
+                    "check SILENTSUITE_SERVER_HOSTS for a loopback entry."
+                )
+            else:
+                requested = config.requested_dashboard_listener()
+                if requested:
+                    url = config.listener_base_url(requested["host"], requested["port"]) + "/"
+                    print(f"  Dashboard will be available on the configured loopback listener: {url}")
+                else:
+                    print("  Dashboard will be available on the configured local listener.")
         else:
-            print("  Dashboard is disabled for remote bridge binds.")
+            # No loopback entry in SILENTSUITE_SERVER_HOSTS: the dashboard is
+            # never served on wildcard or remote listeners.
+            print(
+                "  Dashboard is not configured on a loopback listener; "
+                "add a loopback entry to SILENTSUITE_SERVER_HOSTS to use it."
+            )
         print("  CalDAV/CardDAV account configured.")
         print(f"\n  Full setup guides: https://docs.silentsuite.io/user-guide/apps/dav-bridge\n")
 
