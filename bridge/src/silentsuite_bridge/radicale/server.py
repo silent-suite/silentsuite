@@ -10,6 +10,8 @@ import logging
 import ssl
 import threading
 
+from ..operator_output import address_detail_enabled
+
 logger = logging.getLogger(__name__)
 
 
@@ -263,9 +265,7 @@ def _build_bridge_http_server_class(upstream_class, registry: ListenerRegistry):
                 super().__init__(configuration, family, address, handler_class)
             except (OSError, RuntimeError):
                 registry.record_failed()
-                print_listener_not_bound(
-                    f"{address[0]}:{address[1]}", "HTTP",
-                )
+                print_listener_not_bound(address, "HTTP")
                 raise
             # After full construction: server_address is populated.
             registry.record_bound(self.server_address, self.address_family, ssl=False)
@@ -290,9 +290,7 @@ def _build_bridge_https_server_class(upstream_class, registry: ListenerRegistry)
                 super().__init__(configuration, family, address, handler_class)
             except (OSError, RuntimeError):
                 registry.record_failed()
-                print_listener_not_bound(
-                    f"{address[0]}:{address[1]}", "HTTPS",
-                )
+                print_listener_not_bound(address, "HTTPS")
                 raise
             registry.record_bound(self.server_address, self.address_family, ssl=True)
             _print_bound(self.server_address, ssl=True)
@@ -300,40 +298,79 @@ def _build_bridge_https_server_class(upstream_class, registry: ListenerRegistry)
     return _BridgeHTTPSServer
 
 
+def _listener_kind(host) -> str:
+    """Classify a numeric bind host as loopback, wildcard or remote."""
+    if not isinstance(host, str):
+        return "remote"
+    if _is_loopback_literal(host):
+        return "loopback"
+    if _is_wildcard(host):
+        return "wildcard"
+    return "remote"
+
+
+_LISTENER_ROLES = {
+    "loopback": "DAV and dashboard, loopback only",
+    "wildcard": "bind address, DAV only, dashboard denied; not a client URL",
+    "remote": "remote DAV only, dashboard denied",
+}
+
+
 def _print_bound(server_address: tuple, ssl: bool) -> None:
     """Print one stdout Listening: line with role and dashboard status.
 
-    server_address may be a 4-tuple on IPv6; we use [:2].
+    server_address may be a 4-tuple on IPv6; we use [:2]. The bound address
+    itself is printed only on an interactive operator channel or with the
+    explicit detail opt-in (see ``operator_output``): launchd redirects stdout
+    into a persistent log file and systemd keeps it in the journal, and those
+    sinks must not retain private addresses, hostnames or ports.
     """
     host = server_address[0]
     port = server_address[1]
     scheme = "https" if ssl else "http"
+    kind = _listener_kind(host)
+    role = _LISTENER_ROLES[kind]
+
+    if not address_detail_enabled():
+        print(f"Listening: {kind} listener bound ({scheme}; {role})")
+        return
+
     host_display = f"[{host}]" if (":" in host and not host.startswith("[")) else host
-
-    if _is_loopback_literal(host):
-        print(
-            f"Listening: {scheme}://{host_display}:{port}"
-            " (DAV and dashboard, loopback only)"
-        )
-    elif _is_wildcard(host):
-        print(
-            f"Listening: {host_display}:{port}"
-            " (bind address, DAV only, dashboard denied; not a client URL)"
-        )
+    if kind == "loopback":
+        print(f"Listening: {scheme}://{host_display}:{port} ({role})")
     else:
-        print(
-            f"Listening: {host_display}:{port}"
-            " (remote DAV only, dashboard denied)"
-        )
+        print(f"Listening: {host_display}:{port} ({role})")
 
 
-def print_listener_not_bound(spec: str, kind: str) -> None:
-    """Print one stdout Listener not bound: line."""
-    print(f"Listener not bound: {spec} ({kind})")
+def print_listener_not_bound(address: tuple, protocol: str) -> None:
+    """Print one stdout Listener not bound: line for a failed constructor.
+
+    ``address`` is the requested (host, port[, ...]) tuple handed to the server
+    constructor; ``protocol`` is ``"HTTP"`` or ``"HTTPS"``. The requested
+    address is printed only on an interactive channel or with the detail
+    opt-in; otherwise the line carries only the listener kind and protocol.
+    """
+    host = address[0]
+    port = address[1]
+    kind = _listener_kind(host)
+    if not address_detail_enabled():
+        print(f"Listener not bound: {kind} listener ({protocol}; address withheld)")
+        return
+    host_display = (
+        f"[{host}]" if (isinstance(host, str) and ":" in host and not host.startswith("[")) else host
+    )
+    print(f"Listener not bound: {host_display}:{port} ({protocol})")
 
 
 def print_resolution_failed(spec: str) -> None:
-    """Print one stdout resolution-failure line."""
+    """Print one stdout resolution-failure line.
+
+    The requested ``host:port`` spec is printed only on an interactive channel
+    or with the detail opt-in.
+    """
+    if not address_detail_enabled():
+        print("Listener address resolution failed: configured hostname (address withheld)")
+        return
     print(f"Listener address resolution failed: {spec}")
 
 

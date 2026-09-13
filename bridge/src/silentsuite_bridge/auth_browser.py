@@ -857,12 +857,22 @@ def browser_login(running_bridge=False):
         print()
         print("  Etebase server configured.")
         if config.is_dashboard_enabled():
+            from .operator_output import ADDRESS_WITHHELD_NOTE, address_detail_enabled
             from .radicale.server import get_registry
 
+            # Bound and requested dashboard URLs are listener address material:
+            # print them only on an interactive channel or with the explicit
+            # detail opt-in, matching the startup and bind reports.
+            detail = address_detail_enabled()
+            withheld = False
             registry = get_registry()
             registry_url = registry.dashboard_url(config.SSL_ENABLED)
             if registry_url is not None:
-                print(f"  Dashboard available on the loopback listener: {registry_url}")
+                if detail:
+                    print(f"  Dashboard available on the loopback listener: {registry_url}")
+                else:
+                    print("  Dashboard available on the bound loopback listener.")
+                    withheld = True
             elif registry.is_started or registry.is_stopped:
                 print(
                     "  Dashboard is not bound on a loopback listener; "
@@ -870,11 +880,14 @@ def browser_login(running_bridge=False):
                 )
             else:
                 requested = config.requested_dashboard_listener()
-                if requested:
+                if requested and detail:
                     url = config.listener_base_url(requested["host"], requested["port"]) + "/"
                     print(f"  Dashboard will be available on the configured loopback listener: {url}")
                 else:
-                    print("  Dashboard will be available on the configured local listener.")
+                    print("  Dashboard will be available on the configured loopback listener.")
+                    withheld = bool(requested)
+            if withheld:
+                print(f"  {ADDRESS_WITHHELD_NOTE}")
         else:
             # No loopback entry in SILENTSUITE_SERVER_HOSTS: the dashboard is
             # never served on wildcard or remote listeners.

@@ -73,6 +73,7 @@ Semantics:
 - The persisted profile is validated strictly at every startup (types, port range, host syntax, unknown keys). An invalid profile, or a `settings.json` that is not valid JSON, stops the bridge before it binds; the error names the offending key or file, never its content, and unrelated settings are left untouched. `--remove-autostart` still works in that state.
 - `SILENTSUITE_DATA_DIR` (and, on Linux, `XDG_DATA_HOME`) is not supported together with `--install-autostart` (the restarted process would read the default directory); the command refuses and changes nothing.
 - `--install-autostart` exits non-zero when the service manager did not confirm the start; the installers report that honestly instead of claiming success.
+- Startup prints the requested listeners and one `Listening:` / `Listener not bound:` line per address only when stdout is an interactive terminal. The launchd log file (`StandardOutPath`), the systemd journal and redirected output receive bounded lines without addresses, hostnames or ports; export `SILENTSUITE_LISTENER_DETAIL=1` to print them there, or use the tray menu / dashboard Network card. Python log records are redacted separately.
 
 ## Self-Update
 

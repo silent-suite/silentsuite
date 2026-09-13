@@ -124,6 +124,14 @@ only the entries that actually bind become *bound* listeners you can dial.
 The dashboard Network card and the `/.web/api/status` JSON show both lists so
 you can tell requested-but-unbound entries from real endpoints.
 
+When you start the Bridge from a terminal it also prints the requested list and
+one `Listening:` or `Listener not bound:` line per address. Under the launchd
+agent, the systemd user service, or any redirected output, stdout is a
+persistent log rather than an operator terminal, so those lines carry only the
+listener kind and outcome and no address, hostname or port. Set
+`SILENTSUITE_LISTENER_DETAIL=1` to print the addresses there anyway, or read them
+from the tray menu or the Network card.
+
 ### Loopback is special
 
 The unauthenticated Bridge dashboard is served **only** on a listener whose
@@ -387,6 +395,7 @@ Uninstalling the local Bridge only removes the desktop sync helper from this com
 | `SILENTSUITE_DATA_DIR` | Platform-specific | Data storage location (not supported with `--install-autostart`) |
 | `SILENTSUITE_SYNC_INTERVAL` | `900` (15 min) | Sync interval in seconds |
 | `SILENTSUITE_LOG_LEVEL` | `INFO` | Log level (DEBUG, INFO, WARNING, ERROR) |
+| `SILENTSUITE_LISTENER_DETAIL` | unset | Print requested, bound and failed listener addresses even when stdout is not a terminal. By default those addresses appear only on an interactive terminal; the launchd log file, the systemd journal and redirected output receive bounded lines without addresses |
 
 For self-hosted servers:
 
