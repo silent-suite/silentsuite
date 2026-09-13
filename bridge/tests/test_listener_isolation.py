@@ -201,6 +201,10 @@ class TestConstructorFailureOutput:
             ListenerRegistry, _build_bridge_http_server_class,
         )
 
+        # capsys stdout is not a terminal: the requested address is printed
+        # only with the explicit detail opt-in (bounded form is covered in
+        # test_operator_output_policy.py).
+        monkeypatch.setenv("SILENTSUITE_LISTENER_DETAIL", "1")
         registry = ListenerRegistry()
         registry.reset()
 
@@ -224,6 +228,7 @@ class TestConstructorFailureOutput:
             ListenerRegistry, _build_bridge_https_server_class,
         )
 
+        monkeypatch.setenv("SILENTSUITE_LISTENER_DETAIL", "1")
         registry = ListenerRegistry()
         registry.reset()
 
@@ -528,6 +533,9 @@ class TestPartialBind:
         stdout has one Listening: and one Listener not bound: line, and the
         logger contains the redacted bind-failure message with no address or
         port from the failed entry."""
+        # capsys stdout is not a terminal and no detail opt-in is set: this
+        # is the persistent-sink shape (launchd bridge.log, systemd journal).
+        monkeypatch.delenv("SILENTSUITE_LISTENER_DETAIL", raising=False)
         P5 = _free_port()
         P6 = _free_port()
         blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -564,6 +572,15 @@ class TestPartialBind:
         assert "Listener not bound:" in captured.out, (
             f"Expected a Listener not bound: line, got: {captured.out}"
         )
+        # Non-interactive stdout is a persistent sink under the supported
+        # autostart entries: neither the bound nor the failed loopback
+        # address may reach it. Only the bounded role/outcome lines do.
+        for private in ("127.0.0.1", str(P5), str(P6)):
+            assert private not in captured.out, (
+                f"Address material {private!r} reached non-interactive stdout: {captured.out}"
+            )
+        assert "Listening: loopback listener bound (http; DAV and dashboard, loopback only)" in captured.out
+        assert "Listener not bound: loopback listener (HTTP; address withheld)" in captured.out
 
         # Privacy contract: upstream's "cannot create server socket on
         # '<host:port>': <error>" WARNING is rewritten by the production
@@ -587,6 +604,83 @@ class TestPartialBind:
             assert private not in radicale_text, (
                 f"Address material {private!r} leaked into the radicale log: {radicale_text}"
             )
+
+
+class TestFirstRunBrowserLaunch:
+    """LOW review finding: the first-run browser launch must open the *bound*
+    loopback dashboard URL resolved at callback time, never a requested URL
+    captured before binding. With the requested loopback port occupied and a
+    second loopback entry bound, the old fixed timer opened the occupied
+    port (an unrelated local service); with nothing bound it opened a dead
+    page."""
+
+    @staticmethod
+    def _recording_opener():
+        opened: list[str] = []
+        event = threading.Event()
+
+        def opener(url):
+            opened.append(url)
+            event.set()
+
+        return opened, event, opener
+
+    def test_partial_bind_opens_the_bound_loopback_url_not_the_requested_one(self, monkeypatch):
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        P5 = _free_port()
+        P6 = _free_port()
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", P5))
+        blocker.listen(1)
+        opened, event, opener = self._recording_opener()
+        try:
+            # Registered before serving, exactly like check_credentials().
+            monkeypatch.setattr(config, "SERVER_HOSTS", f"127.0.0.1:{P5},127.0.0.1:{P6}")
+            auto_opener = bridge_main._open_dashboard_when_bound(opener=opener)
+            assert opened == [], "nothing may open before a loopback listener is bound"
+
+            with _serve_with_hosts(
+                f"127.0.0.1:{P5},127.0.0.1:{P6}", monkeypatch=monkeypatch,
+            ) as (registry, thread):
+                deadline = time.monotonic() + 10.0
+                while time.monotonic() < deadline:
+                    if registry.failed_count() >= 1 and len(registry.bound_listeners()) >= 1:
+                        break
+                    time.sleep(0.05)
+                assert event.wait(timeout=5), "bound loopback listener did not trigger the browser launch"
+        finally:
+            blocker.close()
+
+        assert opened == [f"http://127.0.0.1:{P6}/"], opened
+        assert f":{P5}/" not in opened[0]
+        assert auto_opener._done is True
+
+    def test_no_loopback_bound_never_opens_a_requested_url(self, monkeypatch):
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        P5 = _free_port()
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        blocker.bind(("127.0.0.1", P5))
+        blocker.listen(1)
+        opened, event, opener = self._recording_opener()
+        try:
+            monkeypatch.setattr(config, "SERVER_HOSTS", f"127.0.0.1:{P5}")
+            auto_opener = bridge_main._open_dashboard_when_bound(opener=opener)
+            with pytest.raises(RuntimeError, match="No servers started"):
+                with _serve_with_hosts(f"127.0.0.1:{P5}", monkeypatch=monkeypatch):
+                    pass  # serve exits before yielding control
+        finally:
+            blocker.close()
+
+        registry = get_registry()
+        assert registry.is_stopped
+        assert registry.failed_count() >= 1
+        assert not event.wait(timeout=0.5)
+        assert opened == []
+        # The opener gave up on stop; a later requested-URL fallback is gone too.
+        assert auto_opener._done is True
+        assert bridge_main._dashboard_url() is None
 
 
 class TestResolutionFailure:
@@ -619,6 +713,7 @@ class TestResolutionFailure:
         # nonexistent.invalid but real lookups (127.0.0.1) still succeed.
         monkeypatch.setattr(stdlib_socket, "getaddrinfo", _scoped_gai)
 
+        monkeypatch.delenv("SILENTSUITE_LISTENER_DETAIL", raising=False)
         P_healthy = _free_port()
         captured_during = {}
 
@@ -659,6 +754,12 @@ class TestResolutionFailure:
         assert "Listener address resolution failed:" in captured.out, (
             f"Expected resolution-failure stdout line, got: {captured.out}"
         )
+        # Non-interactive stdout: the unresolved hostname, its port, and the
+        # healthy loopback address are all withheld from the persistent sink.
+        for private in ("nonexistent.invalid", "12345", "127.0.0.1", str(P_healthy)):
+            assert private not in captured.out, (
+                f"Address material {private!r} reached non-interactive stdout: {captured.out}"
+            )
         # Privacy contract for the DNS path: upstream's "cannot retrieve IPv4
         # or IPv6 address of '<host:port>': <error>" WARNING must reach the
         # handler only as the exact redacted template, and the hostname and

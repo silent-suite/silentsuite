@@ -228,6 +228,9 @@ def test_check_credentials_allows_no_accounts_when_dashboard_enabled(tmp_path, m
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
     monkeypatch.setattr(config, "LISTEN_PORT", 37358)
     monkeypatch.setattr(config, "is_dashboard_enabled", lambda: True)
+    # capsys stdout is not a terminal; the URL is printed only with the
+    # explicit detail opt-in (bounded form: test_operator_output_policy.py).
+    monkeypatch.setenv("SILENTSUITE_LISTENER_DETAIL", "1")
 
     assert bridge_main.check_credentials(open_browser=False) is True
 
@@ -258,6 +261,7 @@ def test_check_credentials_prints_requested_report_and_hint_before_early_exit(
     monkeypatch.setattr(config, "SERVER_HOSTS", "0.0.0.0:37358")
     monkeypatch.setattr(config, "LISTEN_PORT", 37358)
     monkeypatch.setattr(config, "ALLOW_REMOTE", True)
+    monkeypatch.setenv("SILENTSUITE_LISTENER_DETAIL", "1")
     monkeypatch.setattr(
         bridge_main,
         "run_server",
@@ -286,6 +290,7 @@ def test_check_credentials_mixed_hosts_reports_requested_dashboard_url_as_unconf
     is listed as requested remote DAV only."""
     monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
     monkeypatch.setattr(config, "SERVER_HOSTS", "127.0.0.1:45123,192.0.2.10:45123")
+    monkeypatch.setenv("SILENTSUITE_LISTENER_DETAIL", "1")
     monkeypatch.setattr(config, "LISTEN_ADDRESS", "127.0.0.1")
     monkeypatch.setattr(config, "LISTEN_PORT", 37358)
     monkeypatch.setattr(config, "ALLOW_REMOTE", True)
@@ -326,6 +331,7 @@ def test_check_credentials_prints_https_dashboard_url_when_ssl_enabled(tmp_path,
     monkeypatch.setattr(config, "LISTEN_PORT", 37358)
     monkeypatch.setattr(config, "SSL_ENABLED", True)
     monkeypatch.setattr(config, "is_dashboard_enabled", lambda: True)
+    monkeypatch.setenv("SILENTSUITE_LISTENER_DETAIL", "1")
 
     assert bridge_main.check_credentials(open_browser=False) is True
 

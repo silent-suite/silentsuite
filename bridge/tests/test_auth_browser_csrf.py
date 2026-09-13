@@ -3,6 +3,7 @@
 import http.server
 import json
 import logging
+import os
 import socket
 import threading
 import urllib.error
@@ -330,6 +331,10 @@ def test_browser_login_completion_does_not_print_account_or_server_values(capsys
 
     event.wait.side_effect = complete_auth
     with (
+        # capsys stdout is not a terminal: the requested dashboard URL is
+        # printed only with the explicit detail opt-in (bounded form is
+        # covered in test_operator_output_policy.py).
+        patch.dict(os.environ, {"SILENTSUITE_LISTENER_DETAIL": "1"}),
         patch("silentsuite_bridge.auth_browser.config.ensure_data_dir"),
         patch("silentsuite_bridge.auth_browser.config.SSL_ENABLED", True),
         patch("silentsuite_bridge.auth_browser.BoundedAuthHTTPServer", return_value=server),
