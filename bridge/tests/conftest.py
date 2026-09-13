@@ -21,6 +21,51 @@ from silentsuite_bridge.local_cache import db, models
 
 
 # ---------------------------------------------------------------------------
+# Listener registry isolation
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def fresh_registry(monkeypatch):
+    """Isolate the global ListenerRegistry per test.
+
+    The registry in ``silentsuite_bridge.radicale.server`` is a module-level
+    singleton; a test that drives the real serve wrapper (and calls
+    ``mark_stopped``) would leak the STOPPED state into later tests by
+    filename ordering, breaking render/auth assertions that expect the
+    NEVER state. This fixture swaps the singleton for a fresh
+    ``ListenerRegistry`` and patches ``get_registry`` in every module that
+    imports it (web, tray, auth_browser, __main__) so the function-local
+    ``from ... import get_registry`` rebinds resolve to the fresh instance.
+    """
+    from silentsuite_bridge.radicale import server as server_module
+    from silentsuite_bridge.radicale.server import ListenerRegistry
+
+    fresh = ListenerRegistry()
+    monkeypatch.setattr(server_module, "_module_registry", fresh, raising=False)
+    # Patch get_registry at its definition site so every ``from ... import
+    # get_registry`` rebind sees the fresh-returning function.
+    monkeypatch.setattr(
+        server_module, "get_registry", lambda: fresh, raising=False
+    )
+    # Modules that already bound ``get_registry`` at import time need the
+    # attribute on their own module too, since ``from m import f`` captures
+    # the reference once.
+    for mod_name in (
+        "silentsuite_bridge.web",
+        "silentsuite_bridge.tray",
+        "silentsuite_bridge.auth_browser",
+        "silentsuite_bridge.__main__",
+    ):
+        try:
+            mod = sys.modules.get(mod_name)
+        except Exception:
+            mod = None
+        if mod is not None and hasattr(mod, "get_registry"):
+            monkeypatch.setattr(mod, "get_registry", lambda: fresh, raising=False)
+    yield fresh
+
+
+# ---------------------------------------------------------------------------
 # In-memory SQLite database
 # ---------------------------------------------------------------------------
 
