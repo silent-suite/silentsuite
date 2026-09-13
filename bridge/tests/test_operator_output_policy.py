@@ -526,6 +526,100 @@ class TestDashboardAutoOpener:
         assert opened == ["http://127.0.0.1:45124/"]
 
 
+class TestDashboardAutoOpenerDetachment:
+    """Re-review LOW: the registry removes callbacks by identity, and a bound
+    method evaluated twice is two objects. The opener must register and remove
+    one stable reference so a completed opener is actually detached, unrelated
+    subscribers survive, and repeated starts do not accumulate."""
+
+    @staticmethod
+    def _subscribers(registry):
+        with registry._lock:
+            return list(registry._listeners)
+
+    @staticmethod
+    def _unrelated_subscriber():
+        calls = []
+
+        def subscriber():
+            calls.append(True)
+
+        return calls, subscriber
+
+    def test_successful_bind_detaches_and_keeps_unrelated_subscriber(self, monkeypatch):
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        registry = get_registry()
+        calls, unrelated = self._unrelated_subscriber()
+        registry.add_listener(unrelated)
+        opened = threading.Event()
+
+        auto = bridge_main._open_dashboard_when_bound(opener=lambda _url: opened.set())
+        assert auto._callback in self._subscribers(registry)
+
+        registry.reset()
+        registry.record_bound(("127.0.0.1", 45124), socket.AF_INET, ssl=False)
+        assert opened.wait(timeout=5)
+
+        subscribers = self._subscribers(registry)
+        assert auto._callback not in subscribers, "completed opener is still subscribed"
+        assert unrelated in subscribers, "unrelated subscriber was dropped"
+        assert not any(getattr(cb, "__self__", None) is auto for cb in subscribers)
+
+        # A later notification no longer reaches the opener at all.
+        notified_before = len(calls)
+        registry.record_bound(("127.0.0.1", 45123), socket.AF_INET, ssl=False)
+        assert len(calls) == notified_before + 1
+        assert auto._registered is False
+
+    def test_stopped_without_bind_detaches_and_keeps_unrelated_subscriber(self, monkeypatch):
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        registry = get_registry()
+        calls, unrelated = self._unrelated_subscriber()
+        registry.add_listener(unrelated)
+
+        auto = bridge_main._open_dashboard_when_bound(opener=lambda _url: None)
+        registry.reset()
+        registry.record_failed()
+        registry.mark_stopped()
+
+        subscribers = self._subscribers(registry)
+        assert auto._done is True
+        assert auto._callback not in subscribers
+        assert unrelated in subscribers
+        assert calls, "unrelated subscriber must still have been notified"
+
+    def test_repeated_start_does_not_accumulate_subscriptions(self, monkeypatch):
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        registry = get_registry()
+        opened: list[str] = []
+        auto = bridge_main._DashboardAutoOpener(registry, opener=opened.append)
+
+        auto.start()
+        auto.start()
+        auto.start()
+        subscribers = self._subscribers(registry)
+        assert subscribers.count(auto._callback) == 1
+        assert len(subscribers) == 1
+
+        registry.reset()
+        registry.record_bound(("127.0.0.1", 45124), socket.AF_INET, ssl=False)
+        assert self._subscribers(registry) == []
+        # Starting again after completion neither re-subscribes nor re-opens.
+        auto.start()
+        assert self._subscribers(registry) == []
+
+    def test_many_openers_leave_no_residue_after_completion(self, monkeypatch):
+        monkeypatch.setattr(config, "SSL_ENABLED", False)
+        registry = get_registry()
+        openers = [bridge_main._open_dashboard_when_bound(opener=lambda _url: None) for _ in range(5)]
+        assert len(self._subscribers(registry)) == 5
+
+        registry.reset()
+        registry.mark_stopped()
+        assert self._subscribers(registry) == []
+        assert all(o._done for o in openers)
+
+
 # ---------------------------------------------------------------------------
 # Rendered autostart sinks: a real child process with redirected stdout
 # ---------------------------------------------------------------------------

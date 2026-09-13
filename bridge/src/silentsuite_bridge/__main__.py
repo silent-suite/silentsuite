@@ -223,12 +223,31 @@ class _DashboardAutoOpener:
         self._opener = webbrowser.open if opener is None else opener
         self._lock = threading.Lock()
         self._done = False
+        self._registered = False
+        # ListenerRegistry removes callbacks by identity. Evaluating
+        # ``self._on_registry_change`` creates a new bound-method object each
+        # time, so one stable reference is created here and used for both
+        # registration and removal; otherwise remove_listener() would never
+        # match and the completed opener would stay subscribed for the
+        # registry's lifetime.
+        self._callback = self._on_registry_change
 
     def start(self) -> None:
-        self._registry.add_listener(self._on_registry_change)
+        with self._lock:
+            if self._registered or self._done:
+                return
+            self._registered = True
+        self._registry.add_listener(self._callback)
         # A listener may already be bound (registry change raced our
         # registration); resolve once immediately with the same rules.
         self._on_registry_change()
+
+    def _detach(self) -> None:
+        """Mark complete and drop the subscription; caller holds ``_lock``."""
+        self._done = True
+        if self._registered:
+            self._registered = False
+            self._registry.remove_listener(self._callback)
 
     def _on_registry_change(self) -> None:
         with self._lock:
@@ -237,15 +256,13 @@ class _DashboardAutoOpener:
             url = self._registry.dashboard_url(config.SSL_ENABLED)
             if url is None:
                 if self._registry.is_stopped:
-                    self._done = True
-                    self._registry.remove_listener(self._on_registry_change)
+                    self._detach()
                     logger.info(
                         "Dashboard was not opened automatically: "
                         "no loopback listener bound before serving stopped"
                     )
                 return
-            self._done = True
-            self._registry.remove_listener(self._on_registry_change)
+            self._detach()
         self._launch(url)
 
     def _launch(self, url: str) -> None:
