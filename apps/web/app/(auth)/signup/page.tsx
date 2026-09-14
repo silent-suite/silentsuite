@@ -672,14 +672,14 @@ function CryptoPaymentPanel({
         <h2 className="text-lg sm:text-xl font-semibold text-[rgb(var(--foreground))]">Pay {formatAnnualOfferAmount(annualOffer)} with Bitcoin, Lightning and Monero</h2>
         <p className="text-sm text-[rgb(var(--muted))]">
           {session
-            ? <>Scan the QR code or copy the payment details for your {annualOfferPlanLabel(annualOffer)}. Access unlocks after settlement confirms.</>
+            ? <>Scan the QR code or copy the payment details for your {annualOfferPlanLabel(annualOffer)}.{disclosure.refundWindowDays === 30 ? ' 30-day full refund, no questions asked.' : ''}</>
             : 'Your cryptocurrency invoice could not be created yet. Retry the same payment below; a second invoice is never started here.'}
         </p>
       </div>
 
       {pollStopped && <button type="button" onClick={() => { setPollStopped(false); setStatusAttempt(value => value + 1) }} className="text-sm underline">Check payment status</button>}
-      {/* Terms stay beside the payable controls instead of on a separate review screen. */}
-      <AnnualTermsSummary disclosure={disclosure} />
+      {/* With a live invoice the heading and intro already state amount and refund; repeat the terms only on the retry state. */}
+      {!session && <AnnualTermsSummary disclosure={disclosure} />}
       {provisionError && <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">{provisionError}</div>}
       {!session ? (
         <Button type="button" className="w-full" disabled={provisioning} onClick={onConfirm}>

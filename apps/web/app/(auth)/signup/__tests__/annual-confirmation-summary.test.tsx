@@ -27,19 +27,38 @@ describe('server-disclosed concise terms', () => {
     expect(screen.queryByText(/Cancel before|Not applicable|UTC/)).not.toBeInTheDocument()
     expect(annualRetryAction({ ...base, kind: 'prepaid' })).toBe('Retry cryptocurrency payment')
   })
-  it('shows card-trial amount, exact charge date and no charge today', () => {
+  it('shows the card-trial sentence with the server first-charge date as DD.MM.YYYY and no time', () => {
     const cardTrial: AnnualDisclosure = { ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', cancelBy: '2099-09-10T12:00:00Z' }
     render(<AnnualTermsSummary disclosure={cardTrial} />)
-    expect(screen.getByText(/€0 today/)).toHaveTextContent('€36.00 on 2099-09-10 12:00 UTC')
-    expect(screen.getByText(/Auto-renews at €36.00\/year/)).toHaveTextContent('Cancel anytime')
+    expect(screen.getByText(/Add your card information/)).toHaveTextContent('Add your card information. After that the 30 days free trial starts and you only get billed on 10.09.2099, if not cancelled before.')
+    expect(screen.queryByText(/€0 today|Cancel before then|UTC|12:00/)).not.toBeInTheDocument()
+    // The card-trial terms are the single sentence above; the old auto-renew / cancel-anytime / refund-window line is gone.
+    expect(screen.queryByText(/Auto-renews|Cancel anytime|refund window|No automatic renewal/)).not.toBeInTheDocument()
     expect(annualCardSubmitLabel(cardTrial)).toBe('Start free trial — no charge today')
     expect(annualRetryAction(cardTrial)).toBe('Retry card setup')
   })
-  it('keeps a different renewal price visible in compact card terms', () => {
+  it('zero-pads day and month and keeps the UTC calendar day at a day boundary', () => {
+    const { unmount } = render(<AnnualTermsSummary disclosure={{ ...base, kind: 'card_trial', firstChargeAt: '2099-03-05T00:00:00Z' }} />)
+    expect(screen.getByText(/Add your card information/)).toHaveTextContent('billed on 05.03.2099, if not cancelled before.')
+    unmount()
+    render(<AnnualTermsSummary disclosure={{ ...base, kind: 'card_trial', firstChargeAt: '2099-12-31T23:59:59Z' }} />)
+    expect(screen.getByText(/Add your card information/)).toHaveTextContent('billed on 31.12.2099, if not cancelled before.')
+    expect(screen.queryByText(/01\.01\.2100/)).not.toBeInTheDocument()
+  })
+  it('never invents a charge date when the server disclosure has none', () => {
+    render(<AnnualTermsSummary disclosure={{ ...base, kind: 'card_trial', firstChargeAt: null }} />)
+    expect(screen.getByText(/Add your card information/)).toHaveTextContent('After that the 30 days free trial starts and you only get billed once the trial ends, if not cancelled before.')
+    expect(screen.queryByText(/billed on \d|\d{2}\.\d{2}\.\d{4}/)).not.toBeInTheDocument()
+  })
+  it('does not repeat renewal or refund terms beside the card-trial sentence', () => {
     render(<AnnualTermsSummary disclosure={{ ...base, kind: 'card_trial', firstChargeAt: '2099-09-10T12:00:00Z', renewalAmountMinor: 4800 }} />)
-    expect(screen.getByText(/€0 today/)).toHaveTextContent('€36.00 on 2099-09-10 12:00 UTC')
-    expect(screen.getByText(/Auto-renews at €48.00\/year/)).toBeInTheDocument()
-    expect(screen.getByText(/Cancel before then to avoid a charge/)).toBeInTheDocument()
+    expect(screen.getByText(/Add your card information/)).toHaveTextContent('billed on 10.09.2099')
+    expect(screen.queryByText(/Auto-renews|€48.00|Cancel anytime|refund window/)).not.toBeInTheDocument()
+  })
+  it('does not promise a trial or a future billing date on immediate card payment', () => {
+    render(<AnnualTermsSummary disclosure={base} />)
+    expect(screen.queryByText(/Add your card information|free trial|billed on|if not cancelled/)).not.toBeInTheDocument()
+    expect(screen.getByText(/€36.00 now by card/)).toBeInTheDocument()
   })
   it('keeps the no-card line limited to free terms and states that continuing creates the account', () => {
     const noCard: AnnualDisclosure = { ...base, kind: 'no_auto_charge', firstChargeAmountMinor: 0, renewalAmountMinor: null, autoRenew: false, refundWindowDays: null, entitlementEndsAt: '2099-09-10T12:00:00Z' }
