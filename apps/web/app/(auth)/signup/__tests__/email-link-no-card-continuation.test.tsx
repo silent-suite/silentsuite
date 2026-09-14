@@ -471,9 +471,10 @@ describe('email-link seven-day no-card continuation', () => {
     await screen.findByText('Copy payment details')
     expect(screen.queryByText(/Review your cryptocurrency payment|Continue to cryptocurrency payment|Refund window|Access through/)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /pay €36\.00 with bitcoin/i })).toBeVisible()
-    expect(screen.getByText(/€36.00 now for one year/)).toBeVisible()
-    expect(screen.getByText(/€36.00 now for one year/)).toHaveTextContent('No automatic renewal')
-    expect(screen.getByText(/30-day full refund, no questions asked/)).toBeVisible()
+    expect(screen.getByText(/Scan the QR code/)).toHaveTextContent('Scan the QR code or copy the payment details for your Early Adopter Plan. 30-day full refund, no questions asked.')
+    // The heading states the amount once; the old amount/no-renewal/refund paragraphs and the settlement sentence are not repeated here.
+    expect(screen.queryByText(/€36.00 now for one year|No automatic renewal|settlement confirms|refund window/)).not.toBeInTheDocument()
+    expect(screen.getAllByText(/30-day full refund, no questions asked/)).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Bitcoin Lightning' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Bitcoin on-chain' })).toBeEnabled()
     const monero = screen.getByRole('button', { name: 'Monero' })
@@ -635,8 +636,10 @@ describe('email-link seven-day no-card continuation', () => {
       expect(screen.queryByText(/€0 today|No charge today|after.*trial|30-day trial|Start.*free trial/i)).not.toBeInTheDocument()
       expect(screen.getByText(/€36\.00 now by card/)).toHaveTextContent('one year of access')
     } else {
-      expect(screen.getByText(/€0 today/)).toHaveTextContent('€36.00 on 2099-09-10 12:00 UTC')
-      expect(screen.getByText(/Auto-renews at €36\.00\/year/)).toHaveTextContent('30-day refund window')
+      expect(screen.getByText(/Add your card information/)).toHaveTextContent('After that the 30 days free trial starts and you only get billed on 10.09.2099, if not cancelled before.')
+      expect(screen.queryByText(/€0 today|UTC/)).not.toBeInTheDocument()
+      // Only the card-trial sentence remains; the old auto-renew / cancel-anytime / refund-window line is not shown.
+      expect(screen.queryByText(/Auto-renews|Cancel anytime|refund window/)).not.toBeInTheDocument()
     }
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(signedCheckoutIntent, 'stripe', 'http://localhost:3000/signup', offer.offer.billingInterval)
   })
@@ -1302,11 +1305,10 @@ describe('email-link seven-day no-card continuation', () => {
     ))
     expect(await screen.findByText('Add your payment method')).toBeInTheDocument()
     expect(screen.queryByText('Review your free trial')).not.toBeInTheDocument()
-    expect(screen.getByText(/€0 today/)).toHaveTextContent('€48.00 on 2026-09-10 12:00 UTC')
-    expect(screen.getByText(/Auto-renews/)).toHaveTextContent('€48.00')
-    // The commitment disclosure beside the card form is the only price statement here.
+    expect(screen.getByText(/Add your card information/)).toHaveTextContent('billed on 10.09.2026, if not cancelled before.')
+    // The card-trial sentence is the only disclosure beside the card form; no auto-renew price, plan bar or refund line is repeated.
+    expect(screen.queryByText(/Auto-renews|Cancel anytime|refund window|€48\.00\/year/)).not.toBeInTheDocument()
     expect(screen.queryByText('Standard Plan')).not.toBeInTheDocument()
-    expect(screen.getAllByText(/€48\.00\/year/)).toHaveLength(1)
   })
 
   it('replaces an expired no-card offer with renewed Standard terms and requires consent again', async () => {

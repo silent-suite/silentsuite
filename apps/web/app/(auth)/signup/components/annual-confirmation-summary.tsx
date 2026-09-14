@@ -1,7 +1,14 @@
 import type { AnnualDisclosure } from '@/app/lib/billing-v2'
 
 const money = (minor: number) => `€${(minor / 100).toFixed(2)}`
-const timestamp = (value: string) => `${value.slice(0, 10)} ${value.slice(11, 16)} UTC`
+/** Server-disclosed instant as a UTC calendar day, DD.MM.YYYY; null when absent or unparsable so no date is invented. */
+const chargeDay = (value: string | null): string | null => {
+  if (!value) return null
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(date.getUTCDate())}.${pad(date.getUTCMonth() + 1)}.${date.getUTCFullYear()}`
+}
 
 /** Label for retrying a payment start that did not complete for the same claim. */
 export function annualRetryAction(disclosure: AnnualDisclosure): string {
@@ -31,16 +38,10 @@ export function AnnualTermsSummary({ disclosure }: { disclosure: AnnualDisclosur
   }
   if (disclosure.kind === 'card_trial') {
     return (
-      <div className="space-y-1 text-sm text-[rgb(var(--muted))]">
-        <p>
-          €0 today; {money(disclosure.firstChargeAmountMinor)}
-          {disclosure.firstChargeAt ? ` on ${timestamp(disclosure.firstChargeAt)}` : ' after your 30-day trial'}. Cancel before then to avoid a charge.
-        </p>
-        <p>
-          {disclosure.autoRenew ? `Auto-renews at ${money(disclosure.renewalAmountMinor ?? disclosure.annualAmountMinor)}/year. ` : 'No automatic renewal. '}
-          Cancel anytime.{disclosure.refundWindowDays ? ` ${disclosure.refundWindowDays}-day refund window.` : ''}
-        </p>
-      </div>
+      <p className="text-sm text-[rgb(var(--muted))]">
+        Add your card information. After that the 30 days free trial starts and you only get billed
+        {chargeDay(disclosure.firstChargeAt) ? ` on ${chargeDay(disclosure.firstChargeAt)}` : ' once the trial ends'}, if not cancelled before.
+      </p>
     )
   }
   if (disclosure.kind === 'charge_now') {
