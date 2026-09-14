@@ -485,7 +485,7 @@ it.each(['lost response', 'inline Bitcoin', 'storage failure'] as const)('retain
   await waitFor(() => expect(next).toBeEnabled())
   fireEvent.click(next)
   fireEvent.click(await screen.findByRole('button', { name: /^continue$/i }))
-  const bitcoin = await screen.findByRole('button', { name: /with bitcoin for/i })
+  const bitcoin = await screen.findByRole('button', { name: /with bitcoin, lightning and monero for/i })
   expect(sessionStorage.getItem(key)).toBeNull()
   const originalWrite = Storage.prototype.setItem
   const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, name, value) {

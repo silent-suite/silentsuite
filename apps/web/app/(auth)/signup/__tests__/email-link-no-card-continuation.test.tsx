@@ -303,7 +303,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it.each(['timeout', 'expired', 'invalid'] as const)('checks the existing Bitcoin invoice after %s and continues on late settlement', async reason => {
+  it.each(['timeout', 'expired', 'invalid'] as const)('checks the existing cryptocurrency invoice after %s and continues on late settlement', async reason => {
     await reachPlanScreen()
     authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/retained', cryptoInvoiceId: 'retained', cryptoInvoiceLookupToken: 'lookup' })
     const prior = vi.mocked(fetch).getMockImplementation()!
@@ -351,8 +351,8 @@ describe('email-link seven-day no-card continuation', () => {
     // Dynamic Stripe loading can replace its Suspense subtree. Wait for the
     // actual form before acquiring its live Back control, not a detached node.
     if (state === 'card') await screen.findByTestId('card-submit')
-    if (state === 'expired') await screen.findByText(/This Bitcoin invoice expired/)
-    if (state === 'error') await screen.findByText('Could not load Bitcoin payment details.')
+    if (state === 'expired') await screen.findByText(/This cryptocurrency invoice expired/)
+    if (state === 'error') await screen.findByText('Could not load cryptocurrency payment details.')
     // Exactly one Back, one quiet support link, and no recovery section on the payable panel.
     const backs = await screen.findAllByRole('button', { name: /^back$/i })
     expect(backs).toHaveLength(1)
@@ -360,12 +360,12 @@ describe('email-link seven-day no-card continuation', () => {
     expect(screen.queryByText(/Recover pending payment|Resume pending payment|Recover existing payment|Check this payment|Keep this payment|Cancel .* payment and choose/i)).not.toBeInTheDocument()
     await waitFor(() => expect(backs[0]).toBeEnabled())
     fireEvent.click(backs[0])
-    const dialog = await screen.findByRole('dialog', { name: state === 'card' ? 'Leave card checkout?' : 'Cancel this Bitcoin payment?' })
+    const dialog = await screen.findByRole('dialog', { name: state === 'card' ? 'Leave card checkout?' : 'Cancel this cryptocurrency payment?' })
     expect(dialog).toBeVisible()
     expect(screen.getByRole('button', { name: 'Stay' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Cancel and go back' })).toBeEnabled()
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Go back and start a new Bitcoin invoice/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Go back and start a new cryptocurrency invoice/)).not.toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('heading', { name: /choose your plan/i })).not.toBeInTheDocument()
     // Dismissing resumes the same payable panel.
@@ -402,7 +402,7 @@ describe('email-link seven-day no-card continuation', () => {
     expect(cancelBodies).toEqual([{ contractVersion: 2, email: 'expiry@example.test', requestKey: requestId, recoverySecret: 'r'.repeat(43), switchingProfile: 'v1', ...(provider === 'btcpay' ? { confirmNoBitcoinSent: true } : {}) }])
     // Both methods are offered again; nothing was started for the other provider.
     expect(screen.getByRole('button', { name: /^pay by card for/i })).toBeEnabled()
-    expect(screen.getByRole('button', { name: /^pay .* with bitcoin for/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i })).toBeEnabled()
     expect(screen.queryByTestId('card-submit')).not.toBeInTheDocument()
     expect(screen.queryByText('Copy payment details')).not.toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
@@ -423,7 +423,7 @@ describe('email-link seven-day no-card continuation', () => {
     await choosePaymentMethod('btcpay')
     await screen.findByText('Copy payment details')
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
-    await screen.findByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
+    await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
     fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('Cancellation is not confirmed yet')
     expect(cancels).toBe(1)
@@ -432,13 +432,13 @@ describe('email-link seven-day no-card continuation', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('Cancellation is not confirmed yet')
     fireEvent.click(screen.getByRole('button', { name: 'Back without cancelling' }))
     expect(await screen.findByRole('heading', { name: 'Choose how to pay' })).toBeVisible()
-    // Card cannot become payable while the Bitcoin payment is still owned.
+    // Card cannot become payable while the cryptocurrency payment is still owned.
     fireEvent.click(screen.getByRole('button', { name: /^pay by card for/i }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Bitcoin payment is still pending')
+    expect(await screen.findByRole('alert')).toHaveTextContent('cryptocurrency payment is still pending')
     expect(screen.queryByTestId('card-submit')).not.toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
     // Bitcoin resumes the same invoice without any new payment start.
-    fireEvent.click(screen.getByRole('button', { name: /^pay .* with bitcoin for/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i }))
     expect(await screen.findByText('Copy payment details')).toBeVisible()
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(1)
@@ -448,7 +448,7 @@ describe('email-link seven-day no-card continuation', () => {
     await reachPlanScreen()
     fireEvent.click(screen.getByRole('button', { name: /30-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
-    const bitcoin = await screen.findByRole('button', { name: /^pay .* with bitcoin for/i })
+    const bitcoin = await screen.findByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i })
     expect(bitcoin).toHaveTextContent('Bitcoin, Lightning and Monero')
     expect(bitcoin).toHaveTextContent('Payment has to be made with account creation, but we offer a 30-day, no-questions-asked money-back guarantee.')
     expect(bitcoin).toHaveTextContent('€36.00 for one year, paid now. No automatic renewal.')
@@ -463,20 +463,26 @@ describe('email-link seven-day no-card continuation', () => {
     authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/terms', cryptoInvoiceId: 'terms', cryptoInvoiceLookupToken: 'lookup' })
     const prior = vi.mocked(fetch).getMockImplementation()!
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).endsWith('/payment-methods')) return new Response(JSON.stringify({ paymentMethods: [{ id: 'BTC-LN', label: 'Bitcoin Lightning', address: 'lnbc-test' }, { id: 'BTC-CHAIN', label: 'Bitcoin on-chain', address: 'test-address' }] }))
+      if (String(input).endsWith('/payment-methods')) return new Response(JSON.stringify({ paymentMethods: [{ id: 'XMR-CHAIN', label: 'Monero', address: 'monero-fixture', amountDue: '0.250000000001', cryptoCode: 'XMR', qrValue: 'monero:monero-fixture?tx_amount=0.250000000001' }, { id: 'BTC-LN', label: 'Bitcoin Lightning', address: 'lnbc-test' }, { id: 'BTC-CHAIN', label: 'Bitcoin on-chain', address: 'test-address' }] }))
       if (String(input).endsWith('/invoice/terms')) return new Response(JSON.stringify({ status: 'new' }))
       return prior(input, init)
     }))
     fireEvent.click(bitcoin)
     await screen.findByText('Copy payment details')
-    expect(screen.queryByText(/Review your Bitcoin payment|Continue to Bitcoin payment|Refund window|Access through/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Review your cryptocurrency payment|Continue to cryptocurrency payment|Refund window|Access through/)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: /pay €36\.00 with bitcoin/i })).toBeVisible()
     expect(screen.getByText(/€36.00 now for one year/)).toBeVisible()
     expect(screen.getByText(/€36.00 now for one year/)).toHaveTextContent('No automatic renewal')
     expect(screen.getByText(/30-day full refund, no questions asked/)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Bitcoin Lightning' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Bitcoin on-chain' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Monero (soon)' })).toBeDisabled()
+    const monero = screen.getByRole('button', { name: 'Monero' })
+    expect(monero).toBeEnabled()
+    fireEvent.click(monero)
+    expect(monero).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('0.250000000001 XMR')).toBeVisible()
+    expect(screen.getByText('monero-fixture')).toBeVisible()
+    expect(screen.queryByText('Monero (soon)')).not.toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledWith(signedCheckoutIntent, 'btcpay', 'http://localhost:3000/signup/pending-payment', 'annual')
   })
@@ -496,8 +502,8 @@ describe('email-link seven-day no-card continuation', () => {
     window.dispatchEvent(new Event('pagehide'))
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/cancel'))).toHaveLength(0)
     await traverseHistory('back')
-    const dialog = await screen.findByRole('dialog', { name: 'Cancel this Bitcoin payment?' })
-    expect(dialog).toHaveTextContent('Only continue if you haven’t sent payment. This checkout will be cancelled. Do not send Bitcoin or Lightning to its old payment details.')
+    const dialog = await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+    expect(dialog).toHaveTextContent('Only continue if you haven’t sent cryptocurrency for this payment. This checkout will be cancelled. Do not send Bitcoin, Lightning or Monero to its old payment details.')
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
     // This store never owns the capability, so cancellation cannot be confirmed and nothing is released.
     fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
@@ -520,7 +526,7 @@ describe('email-link seven-day no-card continuation', () => {
     await traverseHistory('back')
     expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument()
     await traverseHistory('forward')
-    const retry = await screen.findByRole('button', { name: /^retry bitcoin payment$/i })
+    const retry = await screen.findByRole('button', { name: /^retry cryptocurrency payment$/i })
     fireEvent.click(retry)
     await waitFor(() => expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(2))
     expect(authState.startAnnualSignupPayment.mock.calls[0]).toEqual(authState.startAnnualSignupPayment.mock.calls[1])
@@ -597,7 +603,7 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(await screen.findByRole('button', { name: /30-day free trial/i }))
     fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
     if (provider === 'stripe') fireEvent.click(await screen.findByRole('button', { name: /^pay by card for/i }))
-    else fireEvent.click(await screen.findByRole('button', { name: /^pay .* with bitcoin for/i }))
+    else fireEvent.click(await screen.findByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i }))
   }
 
   async function openConfirmation(checkoutToken = signedCheckoutIntent, selectedDisclosure?: AnnualDisclosure) {
@@ -647,7 +653,7 @@ describe('email-link seven-day no-card continuation', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent(/free.*storage.*retry/i)
     } finally { storage.mockRestore() }
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: provider === 'stripe' ? /^retry card setup$/i : /^retry bitcoin payment$/i })).toBeEnabled()
+    expect(screen.getByRole('button', { name: provider === 'stripe' ? /^retry card setup$/i : /^retry cryptocurrency payment$/i })).toBeEnabled()
     const prior = vi.mocked(fetch).getMockImplementation()!
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).endsWith('/cancel')) return new Response(JSON.stringify({ contractVersion: 2, requestId,
@@ -1375,7 +1381,7 @@ describe('email-link seven-day no-card continuation', () => {
 
   it.each([
     ['card', /pay by card for early adopter plan, €36\.00\/year/i],
-    ['bitcoin', /pay €36\.00 with bitcoin for early adopter plan/i],
+    ['bitcoin', /pay €36\.00 with bitcoin, lightning and monero for early adopter plan/i],
   ] as const)('returns expired signup %s selection to renewed consent without starting payment', async (_kind, paymentAction) => {
     const standardOffer = {
       ...offer,
