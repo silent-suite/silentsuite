@@ -181,7 +181,7 @@ describe('billing v2 public authority client', () => {
       wantsProductUpdates: true,
       rememberDevice: false,
       returnUrl: 'https://app.example.test/signup/pending-payment',
-    })).rejects.toThrow('Bitcoin recovery')
+    })).rejects.toThrow('cryptocurrency recovery')
   })
 
   it('uses the closed payment-session-owned anonymous recovery contract with capability-only credentials and every bound lineage field', async () => {
