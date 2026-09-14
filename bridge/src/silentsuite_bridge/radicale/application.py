@@ -87,6 +87,10 @@ class _DavDiagnosticRedactionFilter(logging.Filter):
                 record.msg = template
             elif template.startswith("Listening on "):
                 record.msg = "Radicale listener started"
+            elif template.startswith("cannot create server socket on "):
+                record.msg = "Radicale listener bind failed"
+            elif template.startswith("cannot retrieve IPv4 or IPv6 address of "):
+                record.msg = "Radicale listener address resolution failed"
             elif record.exc_info or "during request" in template:
                 record.msg = _safe_exception_diagnostic(record.exc_info)
             elif record.levelno >= logging.ERROR:
