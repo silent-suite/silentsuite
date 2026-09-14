@@ -1,0 +1,1 @@
+Fixes a startup recovery loop after sign-in so setup can finish, or be retried, without removing your account or clearing app data.
