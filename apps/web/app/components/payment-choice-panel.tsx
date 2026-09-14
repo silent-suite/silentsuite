@@ -179,15 +179,16 @@ function BitcoinCancellationAcknowledgement({
   return (
     <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-left">
       <p className="text-xs text-amber-700 dark:text-amber-200">{BITCOIN_CANCELLATION_WARNING}</p>
-      <button
-        type="button"
-        aria-pressed={checked}
-        disabled={disabled}
-        onClick={() => onChange(!checked)}
-        className="rounded-md border border-amber-500/30 px-3 py-2 text-xs text-[rgb(var(--foreground))] aria-pressed:bg-amber-500/10 disabled:opacity-50"
-      >
-        I have not sent cryptocurrency for this payment.
-      </button>
+      <label className="flex items-start gap-2 text-xs text-[rgb(var(--foreground))]">
+        <input
+          type="checkbox"
+          checked={checked}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.checked)}
+          className="mt-0.5 h-4 w-4 shrink-0"
+        />
+        <span>I have not sent cryptocurrency for this payment.</span>
+      </label>
     </div>
   )
 }

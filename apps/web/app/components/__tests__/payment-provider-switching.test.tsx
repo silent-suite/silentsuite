@@ -232,14 +232,14 @@ describe('Bitcoin cancellation acknowledgement', () => {
     renderPanel()
 
     const action = await screen.findByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })
-    const acknowledgement = screen.getByRole('button', { name: /have not sent cryptocurrency/i })
-    expect(acknowledgement).toHaveAttribute('aria-pressed', 'false')
+    const acknowledgement = screen.getByRole('checkbox', { name: /have not sent cryptocurrency/i })
+    expect(acknowledgement).not.toBeChecked()
     expect(action).toBeDisabled()
     expect(screen.getByText(BITCOIN_CANCELLATION_WARNING)).toBeInTheDocument()
 
     fireEvent.click(acknowledgement)
 
-    expect(acknowledgement).toHaveAttribute('aria-pressed', 'true')
+    expect(acknowledgement).toBeChecked()
     expect(action).toBeEnabled()
   })
 
@@ -250,7 +250,7 @@ describe('Bitcoin cancellation acknowledgement', () => {
     actions.forEach((action) => expect(action).toBeDisabled())
     expect(screen.getByText(BITCOIN_CANCELLATION_WARNING)).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /have not sent cryptocurrency/i }))
 
     screen.getAllByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }).forEach((action) => expect(action).toBeEnabled())
   })
@@ -258,7 +258,7 @@ describe('Bitcoin cancellation acknowledgement', () => {
   it('renders exactly one acknowledgement control adjacent to the Bitcoin action', async () => {
     await openInlineBitcoinPanel()
 
-    expect(screen.getAllByRole('button', { name: /have not sent cryptocurrency/i })).toHaveLength(1)
+    expect(screen.getAllByRole('checkbox', { name: /have not sent cryptocurrency/i })).toHaveLength(1)
     expect(screen.getAllByText(BITCOIN_CANCELLATION_WARNING)).toHaveLength(1)
   })
 
@@ -273,12 +273,12 @@ describe('Bitcoin cancellation acknowledgement', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: /have not sent cryptocurrency/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     // A refused cancellation leaves the Bitcoin authority in place and must
     // force a fresh, deliberate acknowledgement before the next attempt.
-    await waitFor(() => expect(screen.getByRole('button', { name: /have not sent cryptocurrency/i })).toHaveAttribute('aria-pressed', 'false'))
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /have not sent cryptocurrency/i })).not.toBeChecked())
     expect(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeDisabled()
   })
 
@@ -297,7 +297,7 @@ describe('Bitcoin cancellation acknowledgement', () => {
     fireEvent.click(action)
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/payment-flows/cancel'))).toBe(false)
 
-    fireEvent.click(screen.getByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /have not sent cryptocurrency/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     await waitFor(() => {
@@ -341,8 +341,8 @@ describe('Bitcoin cancellation acknowledgement', () => {
     const cancelAction = screen.getByRole('button', { name: /cancel any payment in progress and close/i })
     fireEvent.click(cancelAction)
 
-    const acknowledgement = await screen.findByRole('button', { name: /have not sent cryptocurrency/i })
-    expect(acknowledgement).toHaveAttribute('aria-pressed', 'false')
+    const acknowledgement = await screen.findByRole('checkbox', { name: /have not sent cryptocurrency/i })
+    expect(acknowledgement).not.toBeChecked()
     expect(screen.getByText(BITCOIN_CANCELLATION_WARNING)).toBeInTheDocument()
     expect(screen.queryByText(/inv_secret_1/)).not.toBeInTheDocument()
     expect(within(document.body).queryByText(/still open/)).not.toBeInTheDocument()
@@ -402,7 +402,7 @@ describe('provider switching never creates a second authority', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: /have not sent cryptocurrency/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     await waitFor(() => expect(currentFlowReads).toBe(2))
@@ -414,7 +414,7 @@ describe('provider switching never creates a second authority', () => {
 
     expect(await screen.findByRole('button', { name: CREATE_CARD })).toBeInTheDocument()
     // The acknowledgement never survives the authority it was given for.
-    expect(screen.queryByRole('button', { name: /have not sent cryptocurrency/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /have not sent cryptocurrency/i })).not.toBeInTheDocument()
   })
 
   it('offers no provider creation path while a successful cancellation cannot be re-verified', async () => {
@@ -445,7 +445,7 @@ describe('provider switching never creates a second authority', () => {
     })
     renderPanel()
 
-    fireEvent.click(await screen.findByRole('button', { name: /have not sent cryptocurrency/i }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: /have not sent cryptocurrency/i }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' }))
 
     expect(await screen.findByText(PAYMENT_FLOW_CANCELLATION_MESSAGES[failure])).toBeInTheDocument()
