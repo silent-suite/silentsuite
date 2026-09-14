@@ -608,6 +608,48 @@ def record_dav_change(
         return revision
 
 
+def reanchor_dav_state(cache_col, previous_state_hash):
+    """Carry current-revision DAV proofs across a non-DAV-visible cache write.
+
+    Ordinary writers such as the collection-envelope refresh and the upload
+    acknowledgement rewrite hashed envelope bytes or dirty/new flags without
+    changing anything a DAV client can observe. Without this step every such
+    write looks identical to an unledgered downgrade-era mutation, the token
+    chain breaks, and the next REPORT from a client holding an older token is
+    answered with ``valid-sync-token`` instead of the pending deltas (including
+    the literal 404 for a remotely deleted href).
+
+    Only proofs whose stored hash equals ``previous_state_hash`` are moved to
+    the post-write hash. Anything else stays unproven, so the integrity guard
+    in ``Collection.sync`` keeps failing closed. Must run inside the writer's
+    own transaction. Returns True when at least one proof was re-anchored.
+    """
+    current_col = models.CollectionEntity.get_by_id(cache_col.id)
+    state_hash = dav_collection_state_hash(current_col)
+    if state_hash == previous_state_hash:
+        return False
+    revision = current_col.dav_revision
+    moved = (
+        models.DavRevision.update(state_hash=state_hash)
+        .where(
+            (models.DavRevision.collection == current_col)
+            & (models.DavRevision.revision == revision)
+            & (models.DavRevision.state_hash == previous_state_hash)
+        )
+        .execute()
+    )
+    moved += (
+        models.DavSyncToken.update(state_hash=state_hash)
+        .where(
+            (models.DavSyncToken.collection == current_col)
+            & (models.DavSyncToken.revision == revision)
+            & (models.DavSyncToken.state_hash == previous_state_hash)
+        )
+        .execute()
+    )
+    return moved > 0
+
+
 class StorageException(Exception):
     pass
 
@@ -896,6 +938,13 @@ class Etebase:
                             local_user=self.user,
                             uid=col.uid,
                         )
+                        previous_state_hash = None
+                    else:
+                        # Envelope refresh: hashed bytes change, DAV view does
+                        # not. Keep retained client tokens provable.
+                        previous_state_hash = dav_collection_state_hash(
+                            collection
+                        )
                     collection.eb_col = col_mgr.cache_save(col)
                     collection.stoken = col.stoken
                     collection.deleted = col.deleted
@@ -908,6 +957,8 @@ class Etebase:
                             models.CollectionEntity.deleted,
                         ]
                     )
+                    if previous_state_hash is not None:
+                        reanchor_dav_state(collection, previous_state_hash)
                     if collection.deleted:
                         models.DavUnresolvedItem.delete().where(
                             models.DavUnresolvedItem.collection == collection
@@ -982,6 +1033,7 @@ class Etebase:
                 with self._mutation_session_guard():
                     with db.database_proxy.atomic("IMMEDIATE"):
                         self._assert_session_current()
+                        previous_state_hash = dav_collection_state_hash(collection)
                         (
                             models.CollectionEntity.update(dirty=False, new=False)
                             .where(
@@ -993,6 +1045,7 @@ class Etebase:
                             )
                             .execute()
                         )
+                        reanchor_dav_state(collection, previous_state_hash)
 
     def sync_collection(self, uid):
         """Sync a single collection (push then pull)."""
@@ -1075,12 +1128,13 @@ class Etebase:
                 if cache_item.remote_uid is None:
                     cache_item.remote_uid = item.uid
                     cache_item.save(only=[models.ItemEntity.remote_uid])
+                    reanchor_dav_state(cache_col, previous_state_hash)
                 if resolve_unresolved:
                     models.DavUnresolvedItem.delete().where(
                         (models.DavUnresolvedItem.collection == cache_col)
                         & (models.DavUnresolvedItem.local_item == cache_item)
                     ).execute()
-                return True
+                return "preserved"
 
             cache_item.remote_uid = item.uid
             cache_item.eb_item = item_mgr.cache_save(item)
@@ -1259,6 +1313,7 @@ class Etebase:
                         & (models.ItemEntity.remote_uid == item.uid)
                         & (models.ItemEntity.id != unresolved.local_item_id)
                     )
+                    previous_state_hash = dav_collection_state_hash(cache_col)
                     if (
                         local_item is not None
                         and conflict is not None
@@ -1275,6 +1330,7 @@ class Etebase:
                             ]
                         )
                         current_unresolved.delete_instance()
+                        reanchor_dav_state(cache_col, previous_state_hash)
                         continue
                     if (
                         local_item is not None
@@ -1294,6 +1350,22 @@ class Etebase:
                             ]
                         )
                         current_unresolved.delete_instance()
+                        href_mapper = models.HrefMapper.get_or_none(
+                            models.HrefMapper.content == local_item
+                        )
+                        if href_mapper is not None:
+                            # Envelope replacement can change the DAV ETag.
+                            record_dav_change(
+                                cache_col,
+                                href_mapper.href,
+                                previous_state_hash=previous_state_hash,
+                                etag=getattr(replacement, "etag", None),
+                                deleted=local_item.deleted,
+                            )
+                        else:
+                            models.DavSyncToken.delete().where(
+                                models.DavSyncToken.collection == cache_col
+                            ).execute()
                         continue
                     if local_item is None or conflict is not None:
                         current_unresolved.reason = "legacy_duplicate"
@@ -1309,9 +1381,9 @@ class Etebase:
                         if local_item.remote_uid is None:
                             local_item.remote_uid = item.uid
                             local_item.save(only=[models.ItemEntity.remote_uid])
+                            reanchor_dav_state(cache_col, previous_state_hash)
                         current_unresolved.delete_instance()
                         continue
-                    previous_state_hash = dav_collection_state_hash(cache_col)
                     local_item.remote_uid = item.uid
                     local_item.eb_item = remote_envelope
                     local_item.deleted = item.deleted
@@ -1386,10 +1458,23 @@ class Etebase:
                     len(items_data),
                 )
 
+                applied = tombstones_applied = preserved_local_intent = (
+                    page_quarantined
+                ) = 0
                 with self._mutation_session_guard():
                     with db.database_proxy.atomic("IMMEDIATE"):
                         for item in items_data:
-                            self._apply_pulled_item(cache_col, col, item_mgr, item)
+                            outcome = self._apply_pulled_item(
+                                cache_col, col, item_mgr, item
+                            )
+                            if outcome == "preserved":
+                                preserved_local_intent += 1
+                            elif outcome:
+                                applied += 1
+                                if item.deleted:
+                                    tombstones_applied += 1
+                            else:
+                                page_quarantined += 1
 
                         done = item_list.done
                         stoken = item_list.stoken
@@ -1399,6 +1484,17 @@ class Etebase:
                             .where(models.CollectionEntity.id == cache_col.id)
                             .execute()
                         )
+                if items_data:
+                    # Aggregate counts only: no hrefs, identifiers or content.
+                    logger.info(
+                        "PULL collection: applied %d remote records "
+                        "(%d tombstones), %d preserved local intent, "
+                        "%d page-quarantined",
+                        applied,
+                        tombstones_applied,
+                        preserved_local_intent,
+                        page_quarantined,
+                    )
 
     def _collection_dirty_get(self, collection):
         quarantined_local_items = models.DavUnresolvedItem.select(
@@ -1442,6 +1538,9 @@ class Etebase:
                 with self._mutation_session_guard():
                     with db.database_proxy.atomic("IMMEDIATE"):
                         self._assert_session_current()
+                        # Acknowledgement rewrites envelopes and clears flags
+                        # without a DAV-visible change; keep tokens provable.
+                        previous_state_hash = dav_collection_state_hash(cache_col)
                         for original, item in zip(original_rows, chunk_items):
                             item_id, original_envelope, original_dirty, original_new = original
                             uploaded_envelope = item_mgr.cache_save(item)
@@ -1459,6 +1558,7 @@ class Etebase:
                                 )
                                 .execute()
                             )
+                        reanchor_dav_state(cache_col, previous_state_hash)
 
     # --- CRUD operations ---
 
@@ -1525,6 +1625,7 @@ class Collection:
             current_cache = models.CollectionEntity.get_by_id(self.cache_col.id)
             if current_cache.deleted:
                 raise RuntimeError("collection is unavailable")
+            previous_state_hash = dav_collection_state_hash(current_cache)
             current_col = self.col_mgr.cache_load(current_cache.eb_col)
             meta = dict(current_col.meta)
             meta.update(update_info)
@@ -1537,6 +1638,9 @@ class Collection:
                     models.CollectionEntity.dirty,
                 ]
             )
+            # Collection metadata is not part of the item sync-collection
+            # delta; keep retained item tokens provable.
+            reanchor_dav_state(current_cache, previous_state_hash)
             self.cache_col = current_cache
             self.col = current_col
 

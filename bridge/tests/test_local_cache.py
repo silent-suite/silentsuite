@@ -955,6 +955,8 @@ class TestSyncLogic:
 
         logs = caplog.text
         assert "fetched 1 items" in logs
+        assert "preserved local intent" in logs
+        assert "page-quarantined" in logs
         assert "private-collection-uid" not in logs
         assert "private-etebase-item-uid" not in logs
         assert "private-local-item-uid" not in logs
@@ -1694,7 +1696,11 @@ def test_dirty_new_legacy_duplicate_is_forked_before_push(mem_db, user):
         content=b"edited-content",
         deleted=False,
     )
-    forked_remote = MagicMock(uid="fresh-remote-item", deleted=False)
+    forked_remote = MagicMock(
+        uid="fresh-remote-item",
+        deleted=False,
+        etag="etag-forked",
+    )
     item_mgr = MagicMock()
     item_mgr.cache_load.side_effect = lambda envelope: {
         b"owner-envelope": owner_remote,
@@ -1733,6 +1739,10 @@ def test_dirty_new_legacy_duplicate_is_forked_before_push(mem_db, user):
     assert recovered.new is True
     assert models.DavUnresolvedItem.select().count() == 0
     assert list(etebase._collection_dirty_get(cache_col)) == [recovered]
+    change = models.DavRevision.get(collection=cache_col)
+    assert change.href == "contact-2.vcf"
+    assert change.deleted is False
+    assert change.etag == "etag-forked"
     item_mgr.create.assert_called_once_with(
         {"name": "contact-2"},
         b"edited-content",
@@ -2917,7 +2927,7 @@ def test_remote_pull_cannot_overwrite_newer_dirty_local_item(mem_db, user):
         MagicMock(collection_type="etebase.vcard"),
         item_mgr,
         remote_item,
-    ) is True
+    ) == "preserved"
 
     persisted = ItemEntity.get_by_id(cache_item.id)
     assert persisted.eb_item == b"newer-local-write"

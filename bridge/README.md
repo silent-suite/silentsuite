@@ -2,7 +2,7 @@
 
 Local E2EE CalDAV/CardDAV sync daemon for SilentSuite.
 
-Connects to `server.silentsuite.io` by default, or your configured self-hosted server, via the Etebase protocol. It decrypts/encrypts data locally and exposes CalDAV/CardDAV endpoints on `localhost:37358` for supported desktop clients, including Thunderbird, Calendar and Contacts on macOS, GNOME Calendar and Evolution, KDE Kontact, and Outlook on Windows.
+Connects to `server.silentsuite.io` by default, or your configured self-hosted server, via the Etebase protocol. It decrypts/encrypts data locally and exposes CalDAV/CardDAV endpoints on `localhost:37358` by default for supported desktop clients, including Thunderbird, Calendar and Contacts on macOS, GNOME Calendar and Evolution, KDE Kontact, and Outlook on Windows. The unauthenticated dashboard is served only on a bound loopback listener; see the [DAV bridge guide](https://docs.silentsuite.io/user-guide/apps/dav-bridge) for mixed loopback + remote `SILENTSUITE_SERVER_HOSTS` recipes and the requested-vs-bound distinction.
 
 ## Account Commands
 
@@ -36,7 +36,7 @@ silentsuite-bridge --setup-macos-apple-accounts
 
 On macOS, this persists bridge SSL settings, opens the certificate for Keychain, and prints the Advanced account setup fields. Trust the certificate in Keychain with **Secure Sockets Layer (SSL)** set to **Always Trust**, restart the bridge, then use the dashboard's `https://localhost:37358/your@example.com/` DAV URL.
 
-Enabling bridge SSL changes the whole single listener to HTTPS. Existing HTTP clients using the same bridge profile must switch to `https://` and trust the localhost certificate. The bridge does not expose simultaneous HTTP and HTTPS listeners in this mode.
+Enabling bridge SSL switches every configured listener (loopback and remote) to HTTPS. Existing HTTP clients using the same bridge profile must switch to `https://` and trust the localhost certificate (and, for a remote listener, the remote IP/hostname must be in the certificate's SANs). The bridge does not expose simultaneous HTTP and HTTPS listeners in this mode.
 
 Advanced/headless configuration keys:
 
@@ -64,7 +64,7 @@ SILENTSUITE_LISTEN_PORT=45123 silentsuite-bridge --install-autostart
 
 Semantics:
 
-- A non-loopback bind without `SILENTSUITE_ALLOW_REMOTE=1` is refused before anything is written. Permission is persisted alongside the bind so the clean-environment restart is validated too. The dashboard stays disabled on remote binds.
+- A non-loopback bind without `SILENTSUITE_ALLOW_REMOTE=1` is refused before anything is written. Permission is persisted alongside the bind so the clean-environment restart is validated too. The dashboard is served only on bound loopback listeners: a remote-only profile has no dashboard, while a mixed `SILENTSUITE_SERVER_HOSTS` profile (loopback + remote) keeps the dashboard on the loopback entry and serves DAV on both. The Bridge never starts an automatic local listener that you did not configure.
 - Reinstalling merges newly exported variables over the retained profile; values you do not export again are kept. `--remove-autostart` removes the entry but keeps the profile. To reset, delete the `"network"` object from `settings.json`.
 - `--remove-autostart` runs before the profile is validated, so it still works when `settings.json` holds an invalid `"network"` object. On Linux/macOS it exits non-zero and keeps the entry for a retry when systemd/launchd does not confirm the stop/unload. On Windows it only deletes the sign-in Run entry; a bridge that is already running is not stopped.
 - Every write to `settings.json` (network profile, sync interval, SSL settings) is atomic (temp file + replace, then a directory sync on Linux/macOS). A failure before the replace leaves the existing `settings.json` unchanged; if only the directory sync fails, the command says the new content is visible but not confirmed durable. A `settings.json` that is not a JSON object is refused rather than overwritten.
@@ -73,6 +73,7 @@ Semantics:
 - The persisted profile is validated strictly at every startup (types, port range, host syntax, unknown keys). An invalid profile, or a `settings.json` that is not valid JSON, stops the bridge before it binds; the error names the offending key or file, never its content, and unrelated settings are left untouched. `--remove-autostart` still works in that state.
 - `SILENTSUITE_DATA_DIR` (and, on Linux, `XDG_DATA_HOME`) is not supported together with `--install-autostart` (the restarted process would read the default directory); the command refuses and changes nothing.
 - `--install-autostart` exits non-zero when the service manager did not confirm the start; the installers report that honestly instead of claiming success.
+- Startup prints the requested listeners and one `Listening:` / `Listener not bound:` line per address only when stdout is an interactive terminal. The launchd log file (`StandardOutPath`), the systemd journal and redirected output receive bounded lines without addresses, hostnames or ports; export `SILENTSUITE_LISTENER_DETAIL=1` to print them there, or use the tray menu / dashboard Network card. Python log records are redacted separately.
 
 ## Self-Update
 
