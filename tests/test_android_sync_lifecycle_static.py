@@ -634,6 +634,18 @@ def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
     assert "SystemClock.sleep(50)" in helper
 
 
+def test_dashboard_install_task_app_routes_to_android_apps_docs():
+    # Source-routing contract only; runtime intent behaviour is not exercised here.
+    activity = ACTIVITY.read_text(encoding="utf-8")
+
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)" in activity
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> installPackage(" not in activity
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> R.string.dashboard_install_task_app" in activity
+    assert "installPackage(tasksOrgPackage)" in activity
+    assert "installPackage(openTasksPackage)" in activity
+    assert "fun installPackage(packagename: String)" in activity
+
+
 def test_api21_lifecycle_observer_avoids_blocking_activity_polling():
     runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
     lifecycle = runtime.split(
