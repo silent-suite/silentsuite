@@ -1,6 +1,7 @@
 package io.silentsuite.sync.ui.setup
 
 import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.ui.setup.PostLoginStartupOutcome.Reason
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -106,5 +107,100 @@ class PostLoginSetupMigrationTest {
             org.junit.Assert.assertTrue(!it.creationId.isNullOrBlank())
         }
         assertEquals(true, PostLoginSetupMigration.bootstrap(store) { _, _ -> true })
+    }
+
+    @Test fun `classification failures name their durable boundary and match the boolean view`() {
+        val legacy = PostLoginSetupMigration.Row("type\u0000a", PostLoginSetupMigration.LegacyRow("2", "a", null, "session", false), null, null)
+        val creation = MemoryStore(listOf(legacy)).apply { failCreationId = true }
+        assertEquals(Reason.CLASSIFY_CREATION_ID_WRITE_FAILED, PostLoginSetupMigration.classifyRowsOutcome(creation) { _, _ -> true })
+        assertEquals(false, PostLoginSetupMigration.classifyRows(creation) { _, _ -> true })
+        val state = MemoryStore(listOf(legacy)).apply { failState = true; failRecovery = true }
+        assertEquals(Reason.CLASSIFY_STATE_RECOVERY_FAILED, PostLoginSetupMigration.classifyRowsOutcome(state) { _, _ -> true })
+        val pending = PostLoginSetupMigration.Row("type\u0000p", PostLoginSetupMigration.LegacyRow("2", "p", null, "session", true), null, null)
+        val pendingStore = MemoryStore(listOf(pending)).apply { failRecovery = true }
+        assertEquals(Reason.CLASSIFY_PENDING_ROW_RECOVERY_FAILED, PostLoginSetupMigration.classifyRowsOutcome(pendingStore) { _, _ -> true })
+        assertEquals(Reason.NONE, PostLoginSetupMigration.classifyRowsOutcome(MemoryStore(listOf(legacy))) { _, _ -> true })
+    }
+
+    private class ReconcileFake(
+        var registry: MutableList<AccountCreationRegistry.Record>?,
+        val rows: Map<String, Pair<String?, PostLoginSetupState?>>,
+    ) : PostLoginSetupMigration.ReconcileOps<String> {
+        var failClear = false
+        var failQuarantine = false
+        var failActivate = false
+        var failStateWrite = false
+        val calls = mutableListOf<String>()
+        override fun records() = registry?.toList()
+        override fun locate(record: AccountCreationRegistry.Record): String? = record.accountName.takeIf { it in rows }
+        override fun creationId(row: String): String? = rows.getValue(row).first
+        override fun state(row: String): PostLoginSetupState? = rows.getValue(row).second
+        override fun clearOwned(record: AccountCreationRegistry.Record): Boolean {
+            calls.add("clear:${record.accountName}")
+            if (failClear) return false
+            registry?.remove(record)
+            return true
+        }
+        override fun quarantine(record: AccountCreationRegistry.Record): Boolean {
+            calls.add("quarantine:${record.accountName}")
+            return !failQuarantine
+        }
+        override fun activate(record: AccountCreationRegistry.Record): Boolean {
+            calls.add("activate:${record.accountName}")
+            return !failActivate
+        }
+        override fun writeRecoveryState(row: String): Boolean {
+            calls.add("state:$row")
+            return !failStateWrite
+        }
+    }
+
+    private fun record(name: String, id: String) =
+        AccountCreationRegistry.Record(name, id, AccountCreationRegistry.Phase.CREATING, 1L, "type")
+
+    @Test fun `reconcile failures are typed and unreadable ownership performs no mutation`() {
+        val unreadable = ReconcileFake(null, emptyMap())
+        assertEquals(Reason.RECONCILE_REGISTRY_UNREADABLE, PostLoginSetupMigration.reconcileRecords(unreadable))
+        assertEquals(emptyList<String>(), unreadable.calls)
+
+        val missing = ReconcileFake(mutableListOf(record("gone", "g1")), emptyMap()).apply { failClear = true }
+        assertEquals(Reason.RECONCILE_CLEAR_MISSING_ROW_FAILED, PostLoginSetupMigration.reconcileRecords(missing))
+
+        val exact = ReconcileFake(mutableListOf(record("a", "id")), mapOf("a" to ("id" to PostLoginSetupState.COMPLETE)))
+        exact.failActivate = true
+        assertEquals(Reason.RECONCILE_ACTIVATE_FAILED, PostLoginSetupMigration.reconcileRecords(exact))
+        assertEquals(listOf("activate:a"), exact.calls)
+        exact.failActivate = false
+        exact.failClear = true
+        exact.calls.clear()
+        assertEquals(Reason.RECONCILE_CLEAR_OWNED_FAILED, PostLoginSetupMigration.reconcileRecords(exact))
+        assertEquals(listOf("activate:a", "clear:a"), exact.calls)
+
+        val partial = ReconcileFake(mutableListOf(record("p", "pid")), mapOf("p" to ("pid" to PostLoginSetupState.CREATING)))
+        partial.failStateWrite = true
+        assertEquals(Reason.NONE, PostLoginSetupMigration.reconcileRecords(partial))
+        partial.failQuarantine = true
+        assertEquals(Reason.RECONCILE_RECOVERY_RECORD_FAILED, PostLoginSetupMigration.reconcileRecords(partial))
+    }
+
+    @Test fun `stale same-name ownership is quarantined only and siblings keep exact ownership`() {
+        val fake = ReconcileFake(
+            mutableListOf(record("same", "stale-id"), record("sibling", "sibling-id")),
+            mapOf("same" to ("new-id" to PostLoginSetupState.COMPLETE), "sibling" to ("sibling-id" to PostLoginSetupState.COMPLETE)),
+        )
+        assertEquals(Reason.NONE, PostLoginSetupMigration.reconcileRecords(fake))
+        assertEquals(listOf("quarantine:same", "activate:sibling", "clear:sibling"), fake.calls)
+        fake.calls.clear()
+        fake.failQuarantine = true
+        assertEquals(Reason.RECONCILE_QUARANTINE_MISMATCH_FAILED, PostLoginSetupMigration.reconcileRecords(fake))
+        assertEquals(listOf("quarantine:same"), fake.calls)
+    }
+
+    @Test fun `repeated reconcile after success is idempotent`() {
+        val fake = ReconcileFake(mutableListOf(record("a", "id")), mapOf("a" to ("id" to PostLoginSetupState.COMPLETE)))
+        assertEquals(Reason.NONE, PostLoginSetupMigration.reconcileRecords(fake))
+        fake.calls.clear()
+        assertEquals(Reason.NONE, PostLoginSetupMigration.reconcileRecords(fake))
+        assertEquals(emptyList<String>(), fake.calls)
     }
 }
