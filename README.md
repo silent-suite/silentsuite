@@ -40,7 +40,7 @@ SilentSuite encrypts calendar events, contacts, tasks, and notes on your device 
 
 | Surface | What works today |
 |---|---|
-| **Web** | Calendar, contact, task, and Markdown note management in the hosted web app |
+| **Web** | Calendar, contact, and task management, plus experimental Markdown notes, in the hosted web app |
 | **Android** | Sync through Android's calendar, contacts, and task providers |
 | **Desktop** | Local CalDAV/CardDAV Bridge for compatible calendar and address-book apps |
 | **Self-hosting** | Open-source server deployment on infrastructure you control |
@@ -85,7 +85,7 @@ See the [latest public beta release](https://github.com/silent-suite/silentsuite
 |---|---|
 | **Available now** | Hosted web app, self-hosting, Google Play, Obtainium, Zapstore, signed Android APK, desktop Bridge binaries, import/export, and GitHub Releases |
 | **In progress** | Official F-Droid inclusion, broader Android testing, and more DAV compatibility reports |
-| **Not in this beta** | Native iOS app, push notifications, shared or multiple collections, first-class encrypted notes, and OAuth-based Google/iCloud import |
+| **Not in this beta** | Native iOS app, push notifications, shared or multiple collections, encrypted notes outside the web app (Android and Bridge), and OAuth-based Google/iCloud import |
 
 The source is public for inspection, but SilentSuite has not yet completed an independent third-party security audit. See the [security page](https://silentsuite.io/security) for the threat model, limitations, and disclosure route.
 
