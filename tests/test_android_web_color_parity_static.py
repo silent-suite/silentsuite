@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 183, f"expected 183 Android resource XML files, found {len(files)}"
+    assert len(files) == 184, f"expected 184 Android resource XML files, found {len(files)}"
     return files
 
 
