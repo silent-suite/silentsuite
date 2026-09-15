@@ -24,7 +24,7 @@ def test_production_bootstrap_separates_row_classification_from_marker_publicati
     assert "override fun marker() = 0" not in production
     assert "override fun writeMarker" not in production
     assert "marker()" not in production
-    assert "classifyRows = { classifyRowsOutcome(rows) }" in production
+    assert "classifyRows = { classifyRowsOutcome(rows, onRowClassified, onSessionParse) }" in production
     assert 'prefs.edit().putInt("version", MIGRATION_VERSION).commit()' in production
     # The simplified JVM Store overload keeps its short-circuit; production always reconciles.
     assert "if (store.marker() == MIGRATION_VERSION) return true" in source
@@ -89,6 +89,12 @@ def test_startup_diagnostics_are_allowlisted_local_and_never_reuse_debug_info():
     # In-memory only: no persisted snapshot, blob, timestamp or export path.
     for forbidden in ("getSharedPreferences", "commit()", "File(", "filesDir", "cacheDir"):
         assert forbidden not in checks, forbidden
+    # Bootstrap-only timing: a coarse bucket and capped counters, never a raw duration or clock.
+    assert "const val SCHEMA_VERSION = 2" in report
+    for line in ("bootstrap_elapsed_bucket: ", "rows_classified: ", "session_parses: "):
+        assert line in report, line
+    assert "SystemClock.elapsedRealtime()" in checks
+    assert "latestElapsedBucket = BootstrapElapsedBucket.NOT_RECORDED" in checks
 
     assert "DebugInfoActivity" not in activity
     assert "StartupDiagnosticReport.capture(applicationContext" in activity

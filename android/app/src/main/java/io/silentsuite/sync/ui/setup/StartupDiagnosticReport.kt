@@ -7,10 +7,10 @@ import io.silentsuite.sync.BuildConfig
 /**
  * Privacy-reviewed startup report. Unlike the general debug report it never constructs
  * AccountSettings, reads accounts, logs or device/build identifiers: every value is a version
- * number, an allowlisted enum name, a capped counter or a yes/no flag.
+ * number, an allowlisted enum or bucket name, a capped counter or a yes/no flag.
  */
 object StartupDiagnosticReport {
-    const val SCHEMA_VERSION = 1
+    const val SCHEMA_VERSION = 2
     private const val MAX_VERSION_NAME_LENGTH = 32
 
     data class Input(
@@ -57,6 +57,9 @@ object StartupDiagnosticReport {
             "last_check: ${input.snapshot.source?.name ?: "NOT_RECORDED"}",
             "retry_attempts_this_process: ${input.snapshot.retryAttempts.coerceIn(0, 99)}",
             "retry_in_flight: ${yesNo(input.snapshot.retryInFlight || input.uiRetryInFlight)}",
+            "bootstrap_elapsed_bucket: ${input.snapshot.bootstrapElapsedBucket.reportValue}",
+            "rows_classified: ${input.snapshot.rowsClassified.coerceIn(0, 99)}",
+            "session_parses: ${input.snapshot.sessionParses.coerceIn(0, 99)}",
             "migration_marker_present: ${input.migrationMarkerPresent?.let(::yesNo) ?: "unknown"}",
         ).joinToString("\n", postfix = "\n")
     }

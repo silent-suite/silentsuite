@@ -92,10 +92,22 @@ object PostLoginSetupMigration {
 
     /** Returns false unless every row is durably classified (or durably recovery-recorded). */
     internal fun classifyRows(store: RowStore, sessionParses: (String, String?) -> Boolean = ::locallyParseSession): Boolean =
-        classifyRowsOutcome(store, sessionParses) == Reason.NONE
+        classifyRowsOutcome(store, sessionParses = sessionParses) == Reason.NONE
 
-    /** Same classification as [classifyRows]; names the first boundary that could not be made durable. */
-    internal fun classifyRowsOutcome(store: RowStore, sessionParses: (String, String?) -> Boolean = ::locallyParseSession): Reason {
+    /**
+     * Same classification as [classifyRows]; names the first boundary that could not be made durable.
+     * [onRowClassified] and [onSessionParse] only count work for the startup diagnostic report.
+     */
+    internal fun classifyRowsOutcome(
+        store: RowStore,
+        onRowClassified: () -> Unit = {},
+        onSessionParse: () -> Unit = {},
+        sessionParses: (String, String?) -> Boolean = ::locallyParseSession,
+    ): Reason {
+        val countedSessionParses: (String, String?) -> Boolean = { session, uri ->
+            onSessionParse()
+            sessionParses(session, uri)
+        }
         for (row in store.rows()) {
             var working = row
             // addAccountExplicitly may have returned true just before a process death. Without
@@ -113,14 +125,15 @@ object PostLoginSetupMigration {
             // removed/re-added same-name row could otherwise inherit it.
             if (!row.legacy.pendingCreation && !row.creationId.isNullOrBlank() &&
                 PostLoginSetupState.values().any { it.name == row.state }) continue
-            var state = classify(row.legacy, sessionParses)
+            onRowClassified()
+            var state = classify(row.legacy, countedSessionParses)
             // Supported historic versions are explicitly upgraded and read back before restore.
             if (state == PostLoginSetupState.COMPLETE && row.legacy.version != AccountSettings.CURRENT_VERSION.toString() &&
                 !store.write(row, AccountSettings.KEY_SETTINGS_VERSION, AccountSettings.CURRENT_VERSION.toString())) {
                 state = PostLoginSetupState.RECOVERY_REQUIRED
             }
             // Account.restore is local-only and is intentionally checked after raw migration writes.
-            if (state == PostLoginSetupState.COMPLETE && !sessionParses(requireNotNull(row.legacy.session), row.legacy.uri))
+            if (state == PostLoginSetupState.COMPLETE && !countedSessionParses(requireNotNull(row.legacy.session), row.legacy.uri))
                 state = PostLoginSetupState.RECOVERY_REQUIRED
             if (working.creationId.isNullOrBlank()) {
                 val generated = UUID.randomUUID().toString()
@@ -146,16 +159,22 @@ object PostLoginSetupMigration {
     /**
      * Production bootstrap. Always reconciles and re-commits the marker (no marker short-circuit),
      * and never throws: an unexpected exception becomes a typed outcome without its message.
+     * The optional callbacks only count classification work; they never change the outcome.
      */
-    fun bootstrapOutcome(context: Context): PostLoginStartupOutcome = synchronized(BOOTSTRAP_LOCK) {
+    fun bootstrapOutcome(
+        context: Context,
+        onRowClassified: () -> Unit = {},
+        onSessionParse: () -> Unit = {},
+    ): PostLoginStartupOutcome = synchronized(BOOTSTRAP_LOCK) {
         try {
-            runBootstrap(context)
+            runBootstrap(context, onRowClassified, onSessionParse)
         } catch (error: Exception) {
             PostLoginStartupOutcome.exception(Phase.REGISTRY_READ, error)
         }
     }
 
-    private fun runBootstrap(context: Context): PostLoginStartupOutcome {
+    private fun runBootstrap(context: Context, onRowClassified: () -> Unit,
+                             onSessionParse: () -> Unit): PostLoginStartupOutcome {
         val manager = AccountManager.get(context)
         val registry = AccountCreationRegistry.open(context)
         // Unknown ownership data is a fail-closed bootstrap error; do not reinterpret its rows
@@ -187,7 +206,7 @@ object PostLoginSetupMigration {
             }
         }
         return PostLoginBootstrapCoordinator.evaluate(
-            classifyRows = { classifyRowsOutcome(rows) },
+            classifyRows = { classifyRowsOutcome(rows, onRowClassified, onSessionParse) },
             reconcilePending = { reconcilePendingCreationRows(context, manager, registry) },
             commitMarker = { commitMarker(prefs) }
         )

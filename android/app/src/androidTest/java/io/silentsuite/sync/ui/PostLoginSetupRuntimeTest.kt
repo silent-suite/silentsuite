@@ -17,6 +17,7 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
 import io.silentsuite.sync.syncadapter.syncRequestId
@@ -29,6 +30,8 @@ import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import io.silentsuite.sync.ui.setup.PostLoginStartupChecks
 import io.silentsuite.sync.ui.setup.PostLoginStartupOutcome
+import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
+import io.silentsuite.sync.ui.setup.StartupDiagnosticReport
 import io.silentsuite.sync.ui.setup.StartupDiagnosticReportDialog
 import io.silentsuite.sync.utils.AndroidCompat
 import at.bitfire.ical4android.TaskProvider
@@ -913,10 +916,15 @@ class PostLoginSetupRuntimeTest {
                 val settledReport = reportText(scenario)
                 assertReportAllowlisted(settledReport, forbidden)
                 listOf(
+                    "schema_version: 2",
                     "startup_outcome: FAILED", "startup_phase: REGISTRY_READ", "startup_reason: REGISTRY_UNREADABLE",
                     "exception_category: NONE", "last_check: RETRY", "retry_attempts_this_process: 1",
                     "retry_in_flight: no",
+                    // The unreadable registry fails before any row is classified or session parsed.
+                    "rows_classified: 0", "session_parses: 0",
                 ).forEach { assertTrue("Missing report line $it", settledReport.contains("$it\n")) }
+                assertRecordedBucket(settledReport)
+                assertRecordedBucket(inFlightReport)
 
                 StartupDiagnosticReportDialog.shareStarterForTest = { sharedIntents += it }
                 scenario.onActivity { activity ->
@@ -986,6 +994,145 @@ class PostLoginSetupRuntimeTest {
         }
     }
 
+    /**
+     * Synthetic existing-install upgrade shape only (no real identity, server or session). This is
+     * not timing evidence: an unparsable session fails fast, so no duration is asserted.
+     */
+    @Test fun existingInstallFixtureBootstrapsAndPreservesOwnershipGates() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val manager = AccountManager.get(context)
+        val nonce = System.nanoTime()
+        val username = "existing-install-$nonce@example.invalid"
+        val uri = "https://existing-install.example.invalid/"
+        val session = "synthetic-unparsable-session-$nonce"
+        val account = Account(username, App.accountType)
+        val child = Account("existing-install-child-$nonce@example.invalid", App.addressBookAccountType)
+        val legacyRow = Bundle().apply {
+            putString(AccountSettings.KEY_SETTINGS_VERSION, "1")
+            putString(AccountSettings.KEY_USERNAME, username)
+            putString(AccountSettings.KEY_URI, uri)
+            putString(AccountSettings.KEY_ETEBASE_SESSION, session)
+        }
+        // Legacy child row: main-account name/type and URL, but no child creation ID or main identity.
+        val legacyChild = Bundle().apply {
+            putString(LocalAddressBook.USER_DATA_MAIN_ACCOUNT_NAME, account.name)
+            putString(LocalAddressBook.USER_DATA_MAIN_ACCOUNT_TYPE, account.type)
+            putString(LocalAddressBook.USER_DATA_URL, "https://existing-install.example.invalid/address-book")
+        }
+        val migrationPreferences = context.getSharedPreferences("post_login_setup_migration", android.content.Context.MODE_PRIVATE)
+        val previousMarker = migrationPreferences.takeIf { it.contains("version") }?.getInt("version", 0)
+        val statusPreferences = context.getSharedPreferences("sync_status_v1", android.content.Context.MODE_PRIVATE)
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        val seededStatusKeys = mutableListOf<String>()
+        var setupMonitor: android.app.Instrumentation.ActivityMonitor? = null
+        try {
+            check(manager.addAccountExplicitly(account, null, legacyRow))
+            check(manager.addAccountExplicitly(child, null, legacyChild))
+            // Keep the platform from syncing the synthetic rows while bootstrap and assertions observe them.
+            (listOf(App.addressBooksAuthority, android.provider.CalendarContract.AUTHORITY) +
+                TaskProvider.TASK_PROVIDERS.map { it.authority }).forEach { authority ->
+                ContentResolver.removePeriodicSync(account, authority, Bundle())
+                ContentResolver.setSyncAutomatically(account, authority, false)
+                ContentResolver.setIsSyncable(account, authority, 0)
+            }
+            ContentResolver.removePeriodicSync(child, android.provider.ContactsContract.AUTHORITY, Bundle())
+            ContentResolver.setSyncAutomatically(child, android.provider.ContactsContract.AUTHORITY, false)
+            ContentResolver.setIsSyncable(child, android.provider.ContactsContract.AUTHORITY, 0)
+            // Pre-bootstrap generation: the store hashes the absent creation ID, as legacy builds did.
+            val legacyIdentity = SyncStatusStore(context).identity(account)
+            val recordKey = "status.${legacyIdentity.storageKey}.CONTACTS"
+            val faultKey = "fault.$recordKey"
+            val v1Record = "1|10||||;"
+            val v1Fault = "1|11|STORAGE"
+            seededStatusKeys += listOf(recordKey, faultKey)
+            check(statusPreferences.edit().putString(recordKey, v1Record).putString(faultKey, v1Fault).commit())
+            check(migrationPreferences.edit().remove("version").commit())
+            val childBefore = childUserData(manager, child)
+            assertEquals(null, manager.getUserData(child, LocalAddressBook.USER_DATA_CREATION_ID))
+            assertEquals(null, manager.getUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY))
+            PostLoginStartupChecks.resetForTest()
+
+            val succeeded = PostLoginStartupChecks.runAtLaunch(context)
+            // The Boolean is only a summary; the typed snapshot is the evidence.
+            val snapshot = PostLoginStartupChecks.snapshot()
+            assertEquals(PostLoginStartupOutcome.SUCCEEDED, snapshot.outcome)
+            assertEquals(PostLoginStartupOutcome.Source.LAUNCH, snapshot.source)
+            assertEquals(snapshot.outcome?.succeeded, succeeded)
+            assertEquals(succeeded, App.postLoginBootstrapSucceeded)
+            org.junit.Assert.assertNotEquals(PostLoginStartupChecks.BootstrapElapsedBucket.NOT_RECORDED, snapshot.bootstrapElapsedBucket)
+            assertTrue(snapshot.rowsClassified in 1..99)
+            assertTrue(snapshot.sessionParses in 1..99)
+
+            val creationId = manager.getUserData(account, AccountSettings.KEY_CREATION_ID)
+            assertTrue("Legacy row did not receive a creation ID", !creationId.isNullOrBlank())
+            assertEquals(PostLoginSetupState.RECOVERY_REQUIRED.name,
+                manager.getUserData(account, AccountSettings.KEY_POST_LOGIN_SETUP_STATE))
+            assertEquals(PostLoginSetupState.RECOVERY_REQUIRED, AccountSettings.setupState(manager, account, true))
+            assertTrue(PostLoginSetupMigration.isBootstrapped(context))
+            // Recovery classification never rewrites legacy credentials or the child row.
+            assertEquals("1", manager.getUserData(account, AccountSettings.KEY_SETTINGS_VERSION))
+            assertEquals(session, manager.getUserData(account, AccountSettings.KEY_ETEBASE_SESSION))
+            assertEquals(childBefore, childUserData(manager, child))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertTrue(child in manager.getAccountsByType(App.addressBookAccountType))
+
+            // v1-only Contacts evidence for the pre-bootstrap generation stays fail-closed and untouched.
+            val legacyStatus = SyncStatusStore(context).status(legacyIdentity, SyncStatusStore.Service.CONTACTS)
+            assertTrue(legacyStatus.structuralStorageFailure)
+            assertEquals(SyncStatusStore.FailureCategory.STORAGE, legacyStatus.lastFailureCategory)
+            assertEquals(v1Record, statusPreferences.getString(recordKey, null))
+            assertEquals(v1Fault, statusPreferences.getString(faultKey, null))
+
+            // The launcher never opens the dashboard for a recovery row.
+            setupMonitor = instrumentation.addMonitor(PostLoginSetupActivity::class.java.name, null, true)
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account, creationId)).use { scenario ->
+                instrumentation.waitForIdleSync()
+                assertEquals(1, requireNotNull(setupMonitor).hits)
+                assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.state)
+            }
+            assertEquals(PostLoginSetupState.RECOVERY_REQUIRED, AccountSettings.setupState(manager, account, true))
+            assertEquals(creationId, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertTrue(child in manager.getAccountsByType(App.addressBookAccountType))
+
+            val report = StartupDiagnosticReport.capture(context, uiRetryInFlight = false)
+            assertReportAllowlisted(report, listOf(username, uri, session, "example.invalid", requireNotNull(creationId),
+                legacyIdentity.storageKey))
+            assertTrue(report.contains("schema_version: 2\n"))
+            assertTrue(report.contains("startup_outcome: SUCCEEDED\n"))
+            assertRecordedBucket(report)
+        } finally {
+            setupMonitor?.let(instrumentation::removeMonitor)
+            if (seededStatusKeys.isNotEmpty()) {
+                val editor = statusPreferences.edit()
+                seededStatusKeys.forEach { editor.remove(it) }
+                check(editor.commit())
+            }
+            val markerEditor = migrationPreferences.edit()
+            if (previousMarker == null) markerEditor.remove("version") else markerEditor.putInt("version", previousMarker)
+            check(markerEditor.commit())
+            App.postLoginBootstrapSucceeded = previousBootstrap
+            PostLoginStartupChecks.resetForTest()
+            AndroidCompat.removeAccount(manager, child)
+            AndroidCompat.removeAccount(manager, account)
+        }
+    }
+
+    private fun childUserData(manager: AccountManager, child: Account): List<String?> = listOf(
+        LocalAddressBook.USER_DATA_MAIN_ACCOUNT_NAME, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_TYPE,
+        LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY, LocalAddressBook.USER_DATA_URL,
+        LocalAddressBook.USER_DATA_CREATION_ID, LocalAddressBook.USER_DATA_READ_ONLY,
+    ).map { manager.getUserData(child, it) }
+
+    private fun assertRecordedBucket(report: String) {
+        val bucket = report.lines().single { it.startsWith("bootstrap_elapsed_bucket: ") }.substringAfter(": ")
+        val recorded = PostLoginStartupChecks.BootstrapElapsedBucket.values()
+            .filter { it != PostLoginStartupChecks.BootstrapElapsedBucket.NOT_RECORDED }
+            .map { it.reportValue }
+        assertTrue("Bootstrap elapsed bucket was not recorded", bucket in recorded)
+    }
+
     private fun reportFragment(activity: PostLoginSetupActivity): androidx.fragment.app.DialogFragment =
         requireNotNull(
             activity.supportFragmentManager.findFragmentByTag(StartupDiagnosticReportDialog.TAG)
@@ -1011,7 +1158,8 @@ class PostLoginSetupRuntimeTest {
             listOf(
                 "schema_version", "app_version", "app_version_code", "android_sdk", "startup_outcome",
                 "startup_phase", "startup_reason", "exception_category", "last_check",
-                "retry_attempts_this_process", "retry_in_flight", "migration_marker_present",
+                "retry_attempts_this_process", "retry_in_flight", "bootstrap_elapsed_bucket",
+                "rows_classified", "session_parses", "migration_marker_present",
             ),
             lines.drop(1).map { it.substringBefore(": ") },
         )
