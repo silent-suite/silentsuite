@@ -379,7 +379,12 @@ def test_frozen_baseline_reader_and_matrix_regressions_are_present():
     assert "incomplete = incomplete || contacts" in frozen
     assert "persistFaults" in (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/SyncStatusStore.kt").read_text(encoding="utf-8")
     for name in ("failed request is repaired", "background success and failure", "contacts skipped children",
-                  "frozen v1 reader", "confirmed child removal snapshots", "excludes every prohibited"):
+                  "frozen v1 reader", "confirmed child removal snapshots", "excludes every prohibited",
+                  "lost terminal stays fail closed through a lifecycle only generation until a real terminal commit",
+                  "contacts lost terminal after prior success never shows that success while skipped generations follow",
+                  "in process only lost terminal stays fail closed until a real terminal commit",
+                  "absent v2 with persisted v1 sentinel still fails closed",
+                  "failed clear stays fail closed across a later lifecycle write"):
         assert name in tests
 
 
