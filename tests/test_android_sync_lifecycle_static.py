@@ -501,7 +501,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(canonical) == 86
+    assert len(canonical) == 87
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
@@ -513,8 +513,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
         for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes")
     }
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 84, 86)
-    assert tuple(len(api36[key]) for key in api36) == (27, 17, 42)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 85, 87)
+    assert tuple(len(api36[key]) for key in api36) == (27, 18, 42)
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())
@@ -575,8 +575,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':85,'35:all':86,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':42}" in assertion
-    assert '"21:remaining": 84' in script
+    assert "expected_sizes={'21:mixed':1,'21:remaining':86,'35:all':87,'36:account-dashboard':27,'36:first-run-setup':18,'36:status-routes':42}" in assertion
+    assert '"21:remaining": 85' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper
