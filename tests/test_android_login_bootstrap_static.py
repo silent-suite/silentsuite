@@ -11,7 +11,14 @@ MIGRATION = SETUP / "PostLoginSetupMigration.kt"
 
 def test_production_bootstrap_separates_row_classification_from_marker_publication():
     source = MIGRATION.read_text(encoding="utf-8")
-    production = source.split("fun bootstrapOutcome(context: Context): PostLoginStartupOutcome", 1)[1].split(
+    production = source.split(
+        "fun bootstrapOutcome(\n"
+        "        context: Context,\n"
+        "        onRowClassified: () -> Unit = {},\n"
+        "        onSessionParse: () -> Unit = {},\n"
+        "    ): PostLoginStartupOutcome = synchronized(BOOTSTRAP_LOCK)",
+        1,
+    )[1].split(
         "/**\n     * Startup repair", 1
     )[0]
 
