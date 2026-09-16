@@ -38,6 +38,7 @@ class PostLoginSetupActivity : BaseActivity() {
     private lateinit var accountManager: AccountManager
     private var accountCreationId: String? = null
     private var missingCreationId = false
+    private var seenRetryVersion = 0
 
     /**
      * ActivityResultRegistry retains the platform-result association across recreation. Denial
@@ -95,7 +96,9 @@ class PostLoginSetupActivity : BaseActivity() {
             return
         }
 
-        initializeOwnedWork()
+        // Owned work is re-read after a successful retry; a blocked startup skips these account reads.
+        if (App.postLoginBootstrapSucceeded) initializeOwnedWork()
+        seenRetryVersion = PostLoginStartupChecks.retryStateVersion()
 
         setContentView(R.layout.activity_post_login_setup)
         applySetupActionBarInsets(findViewById(R.id.setup_action_bar))
@@ -133,7 +136,6 @@ class PostLoginSetupActivity : BaseActivity() {
         findViewById<Button>(R.id.setup_retry_inventory).setOnClickListener {
             if (!App.postLoginBootstrapSucceeded) {
                 val creationId = accountCreationId ?: return@setOnClickListener
-                if (exactAccount() == null) return@setOnClickListener
                 model.clearUserDecision()
                 model.retryBootstrap(account, creationId)
                 return@setOnClickListener
@@ -152,6 +154,13 @@ class PostLoginSetupActivity : BaseActivity() {
         findViewById<Button>(R.id.setup_resolve_ambiguity).setOnClickListener {
             openAndroidSettings()
         }
+        findViewById<Button>(R.id.setup_view_diagnostic_report).setOnClickListener {
+            // Available while a retry is in flight; the preview freezes this exact snapshot.
+            StartupDiagnosticReportDialog.show(
+                this,
+                StartupDiagnosticReport.capture(applicationContext, model.bootstrapRunning.value == true),
+            )
+        }
         model.collections.observe(this) {
             render()
             resumeSetupWork()
@@ -160,6 +169,18 @@ class PostLoginSetupActivity : BaseActivity() {
             // Emits only for an explicit startup retry (start/finish), never on plain launch.
             // A successful retry may have reconciled a row/registry that was unreadable
             // during onCreate. Refresh its retained work owner before resuming effects.
+            if (App.postLoginBootstrapSucceeded) initializeOwnedWork()
+            render()
+            resumeSetupWork()
+        }
+        PostLoginStartupChecks.retryStateChanges.observe(this) { version ->
+            // Covers runs started by a previous screen; this model's own run settles above.
+            if (version <= seenRetryVersion) return@observe
+            seenRetryVersion = version
+            if (model.bootstrapRunning.value == true) {
+                render()
+                return@observe
+            }
             if (App.postLoginBootstrapSucceeded) initializeOwnedWork()
             render()
             resumeSetupWork()
@@ -210,6 +231,11 @@ class PostLoginSetupActivity : BaseActivity() {
     /** The ViewModel is the single retained serializer; this Activity only supplies one drain. */
     private fun resumeSetupWork() {
         if (safeWorkPausedForTest || missingCreationId || !::account.isInitialized) return
+        // decide() returns ShowBootstrapFailure first; skip the account reads that build its input.
+        if (!App.postLoginBootstrapSucceeded) {
+            render()
+            return
+        }
         model.resumeSafeWork {
             var keepDraining = true
             var decisions = 0
@@ -346,6 +372,8 @@ class PostLoginSetupActivity : BaseActivity() {
                 }
             }
             PostLoginSetupOrchestrator.Decision.OpenDashboard -> {
+                // Two retry observers may both drain after one success; open the dashboard once.
+                if (isFinishing) return false
                 val exact = exactAccount() ?: return true
                 val creationId = accountCreationId ?: return false
                 startActivity(AccountActivity.newIntent(this, exact, creationId))
@@ -615,6 +643,7 @@ class PostLoginSetupActivity : BaseActivity() {
             return
         }
         findViewById<View>(R.id.setup_stepper).visibility = View.VISIBLE
+        findViewById<View>(R.id.setup_view_diagnostic_report).visibility = View.GONE
         findViewById<Button>(R.id.setup_retry_inventory).apply {
             setText(R.string.post_login_setup_retry_inventory)
             isEnabled = true
@@ -732,19 +761,49 @@ class PostLoginSetupActivity : BaseActivity() {
         listOf(
             R.id.setup_stepper,
             R.id.setup_integration_details,
-            R.id.setup_status,
             R.id.setup_done,
             R.id.setup_continue_limited,
             R.id.setup_skip_integrations,
             R.id.setup_remove_incomplete,
         ).forEach { findViewById<View>(it).visibility = View.GONE }
-        val exact = exactAccount() != null
+        val exact = try {
+            exactAccount() != null
+        } catch (_: RuntimeException) {
+            false
+        }
+        val running = model.bootstrapRunning.value == true || PostLoginStartupChecks.snapshot().retryInFlight
         findViewById<Button>(R.id.setup_retry_inventory).apply {
             setText(R.string.retry)
             visibility = visible(exact)
-            isEnabled = model.bootstrapRunning.value != true
+            // Enabled on first render; disabled only while a startup retry is in flight in this process.
+            isEnabled = !running
         }
         findViewById<View>(R.id.setup_resolve_ambiguity).visibility = visible(!exact)
+        findViewById<Button>(R.id.setup_view_diagnostic_report).apply {
+            visibility = View.VISIBLE
+            isEnabled = true
+        }
+        val feedback = when {
+            running -> R.string.post_login_bootstrap_retry_running
+            model.startupRetryFeedback == PostLoginSetupViewModel.StartupRetryFeedback.FAILED ->
+                R.string.post_login_bootstrap_retry_failed
+            model.startupRetryFeedback == PostLoginSetupViewModel.StartupRetryFeedback.NOT_RUN ->
+                R.string.post_login_bootstrap_retry_not_run
+            else -> null
+        }
+        findViewById<TextView>(R.id.setup_status).apply {
+            if (feedback == null) {
+                text = ""
+                visibility = View.GONE
+            } else {
+                setText(feedback)
+                setTextColor(ContextCompat.getColor(
+                    this@PostLoginSetupActivity,
+                    if (running) R.color.semantic_warning else R.color.semantic_error,
+                ))
+                visibility = View.VISIBLE
+            }
+        }
         findViewById<View>(R.id.setup_action_bar).visibility = View.VISIBLE
     }
 
