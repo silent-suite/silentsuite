@@ -61,7 +61,8 @@ class App : Application() {
         reinitLogger()
 
         // Raw, synchronous bootstrap makes pre-existing rows safe before login can create one.
-        postLoginBootstrapSucceeded = io.silentsuite.sync.ui.setup.PostLoginSetupMigration.bootstrap(this)
+        // The process owner records its typed outcome for the blocked-startup report.
+        postLoginBootstrapSucceeded = io.silentsuite.sync.ui.setup.PostLoginStartupChecks.runAtLaunch(this)
 
         loadLanguage()
         loadTheme()

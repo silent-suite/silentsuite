@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 183, f"expected 183 Android resource XML files, found {len(files)}"
+    assert len(files) == 184, f"expected 184 Android resource XML files, found {len(files)}"
     return files
 
 
@@ -922,7 +922,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("86", "84", "42"):
+    for count in ("88", "86", "42"):
         assert count in runner
 
 
@@ -1045,6 +1045,6 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert "for _ in {1..10}; do" in focused_script
     assert focused_script.rstrip().endswith(runner)
     assert all(step.get("name") != "Configure required system navigation mode" for step in focused_job["steps"])
-    assert "expected_sizes={'21:mixed':1,'21:remaining':85,'35:all':86,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':42}" in workflow
+    assert "expected_sizes={'21:mixed':1,'21:remaining':87,'35:all':88,'36:account-dashboard':27,'36:first-run-setup':19,'36:status-routes':42}" in workflow
     runner_source = source("android/scripts/run-focused-runtime-tests.sh")
-    assert '"21:remaining": 84' in runner_source
+    assert '"21:remaining": 86' in runner_source
