@@ -379,7 +379,12 @@ def test_frozen_baseline_reader_and_matrix_regressions_are_present():
     assert "incomplete = incomplete || contacts" in frozen
     assert "persistFaults" in (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/SyncStatusStore.kt").read_text(encoding="utf-8")
     for name in ("failed request is repaired", "background success and failure", "contacts skipped children",
-                  "frozen v1 reader", "confirmed child removal snapshots", "excludes every prohibited"):
+                  "frozen v1 reader", "confirmed child removal snapshots", "excludes every prohibited",
+                  "lost terminal stays fail closed through a lifecycle only generation until a real terminal commit",
+                  "contacts lost terminal after prior success never shows that success while skipped generations follow",
+                  "in process only lost terminal stays fail closed until a real terminal commit",
+                  "absent v2 with persisted v1 sentinel still fails closed",
+                  "failed clear stays fail closed across a later lifecycle write"):
         assert name in tests
 
 
@@ -632,6 +637,18 @@ def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
     assert "System.nanoTime()" in helper
     assert "repeat(200)" not in helper
     assert "SystemClock.sleep(50)" in helper
+
+
+def test_dashboard_install_task_app_routes_to_android_apps_docs():
+    # Source-routing contract only; runtime intent behaviour is not exercised here.
+    activity = ACTIVITY.read_text(encoding="utf-8")
+
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)" in activity
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> installPackage(" not in activity
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> R.string.dashboard_install_task_app" in activity
+    assert "installPackage(tasksOrgPackage)" in activity
+    assert "installPackage(openTasksPackage)" in activity
+    assert "fun installPackage(packagename: String)" in activity
 
 
 def test_api21_lifecycle_observer_avoids_blocking_activity_polling():

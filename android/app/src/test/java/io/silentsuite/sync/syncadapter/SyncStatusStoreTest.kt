@@ -463,6 +463,126 @@ class SyncStatusStoreTest {
         assertTrue(store.clear(identity))
     }
 
+    @Test fun `lost terminal stays fail closed through a lifecycle only generation until a real terminal commit`() {
+        assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 5))
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "lost-attempt", 10, null))
+        storage.failNext = true
+        assertFalse(store.recordFailure(first, SyncStatusStore.Service.CALENDAR, "lost-attempt",
+            SyncStatusStore.FailureCategory.NETWORK, 20))
+        assertTrue(storage.values.containsKey("fault.status.first-generation.CALENDAR"))
+        assertTrue(storage.values.containsKey("fault.status_v2.first-generation.CALENDAR"))
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "lifecycle-attempt", 30, null))
+        assertTrue(store.finishWithoutOutcome(first, SyncStatusStore.Service.CALENDAR, "lifecycle-attempt"))
+        // Lifecycle commits clear only the v2 admission sentinel; the v1 sentinel is the lost-terminal evidence.
+        assertTrue(storage.values.containsKey("fault.status.first-generation.CALENDAR"))
+        assertFalse(storage.values.containsKey("fault.status_v2.first-generation.CALENDAR"))
+        listOf(store, freshStore()).forEach { reader ->
+            val status = reader.status(first, SyncStatusStore.Service.CALENDAR)
+            assertTrue(status.structuralStorageFailure)
+            assertEquals(SyncStatusStore.FailureCategory.STORAGE, status.lastFailureCategory)
+            assertEquals(5L, status.lastSuccessAt)
+            assertEquals(SyncStatusStore.TerminalResult.SUCCESS, status.lastTerminalResult)
+        }
+        assertEquals("STORAGE", FrozenBaselineV1StatusReader(storage::get)
+            .status("status.first-generation.CALENDAR", false).failureCategory)
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "repair-attempt", 40, null))
+        assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, "repair-attempt", 50))
+        assertFalse(storage.values.containsKey("fault.status.first-generation.CALENDAR"))
+        assertFalse(storage.values.containsKey("fault.status_v2.first-generation.CALENDAR"))
+        val repaired = freshStore().status(first, SyncStatusStore.Service.CALENDAR)
+        assertFalse(repaired.structuralStorageFailure)
+        assertEquals(50L, repaired.lastSuccessAt)
+    }
+
+    @Test fun `contacts lost terminal after prior success never shows that success while skipped generations follow`() {
+        val child = child("lost-contacts-terminal")
+        val prior = begin(setOf(child), "prior-success")
+        assertEquals(SyncStatusStore.ChildWrite.RECORDED,
+            store.recordContactsChild(first, prior.attemptId, child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 11))
+        val lost = begin(setOf(child), "lost-failure")
+        storage.failNext = true
+        assertEquals(SyncStatusStore.ChildWrite.STORAGE_FAILURE,
+            store.recordContactsChild(first, lost.attemptId, child, SyncStatusStore.ChildResult.FAILURE,
+                SyncStatusStore.FailureCategory.AUTHENTICATION, 20))
+        assertTrue(storage.values.containsKey("fault.status.first-generation.CONTACTS"))
+        assertTrue(storage.values.containsKey("fault.status_v2.first-generation.CONTACTS"))
+
+        val skipped = begin(setOf(child), "skipped-generation")
+        assertEquals(SyncStatusStore.ChildWrite.RECORDED,
+            store.recordContactsChild(first, skipped.attemptId, child, SyncStatusStore.ChildResult.SKIPPED, timestamp = 30))
+        assertTrue(storage.values.containsKey("fault.status.first-generation.CONTACTS"))
+        assertFalse(storage.values.containsKey("fault.status_v2.first-generation.CONTACTS"))
+        listOf(store, freshStore()).forEach { reader ->
+            val status = reader.status(first, SyncStatusStore.Service.CONTACTS)
+            assertTrue(status.structuralStorageFailure)
+            assertEquals(SyncStatusStore.FailureCategory.STORAGE, status.lastFailureCategory)
+            assertEquals(11L, status.lastSuccessAt)
+            assertTrue(status.latestGenerationIncomplete)
+        }
+
+        val repair = begin(setOf(child), "repair-generation")
+        assertEquals(SyncStatusStore.ChildWrite.RECORDED,
+            store.recordContactsChild(first, repair.attemptId, child, SyncStatusStore.ChildResult.SUCCESS, timestamp = 40))
+        assertFalse(storage.values.containsKey("fault.status.first-generation.CONTACTS"))
+        assertFalse(storage.values.containsKey("fault.status_v2.first-generation.CONTACTS"))
+        val repaired = freshStore().status(first, SyncStatusStore.Service.CONTACTS)
+        assertFalse(repaired.structuralStorageFailure)
+        assertEquals(40L, repaired.lastSuccessAt)
+    }
+
+    @Test fun `in process only lost terminal stays fail closed until a real terminal commit`() {
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "in-process-lost", 10, null))
+        storage.failAll = true
+        assertFalse(store.recordFailure(first, SyncStatusStore.Service.CALENDAR, "in-process-lost",
+            SyncStatusStore.FailureCategory.NETWORK, 20))
+        storage.failAll = false
+        assertFalse(storage.values.keys.any { it.startsWith("fault.") })
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "in-process-lifecycle", 30, null))
+        assertTrue(store.finishWithoutOutcome(first, SyncStatusStore.Service.CALENDAR, "in-process-lifecycle"))
+        // Only the in-process v1 failed write remains; the lifecycle commit repaired the v2 key alone.
+        val status = store.status(first, SyncStatusStore.Service.CALENDAR)
+        assertTrue(status.structuralStorageFailure)
+        assertEquals(SyncStatusStore.FailureCategory.STORAGE, status.lastFailureCategory)
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "in-process-repair", 40, null))
+        assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, "in-process-repair", 50))
+        assertFalse(store.status(first, SyncStatusStore.Service.CALENDAR).structuralStorageFailure)
+    }
+
+    @Test fun `absent v2 with persisted v1 sentinel still fails closed`() {
+        storage.values["status.first-generation.CALENDAR"] = "1|100||"
+        storage.values["fault.status.first-generation.CALENDAR"] = "1|10|STORAGE"
+        listOf(store, freshStore()).forEach { reader ->
+            val status = reader.status(first, SyncStatusStore.Service.CALENDAR)
+            assertTrue(status.structuralStorageFailure)
+            assertEquals(SyncStatusStore.FailureCategory.STORAGE, status.lastFailureCategory)
+            assertEquals(100L, status.lastSuccessAt)
+        }
+    }
+
+    @Test fun `failed clear stays fail closed across a later lifecycle write`() {
+        storage.failNext = true
+        assertFalse(store.recordRequested(first, setOf(SyncStatusStore.Service.CALENDAR), "request", 1))
+        assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 2))
+        val identity = store.identity(first)
+        storage.failNext = true
+        assertFalse(store.clear(identity))
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "after-clear-lifecycle", 3, null))
+        assertTrue(store.finishWithoutOutcome(first, SyncStatusStore.Service.CALENDAR, "after-clear-lifecycle"))
+        assertTrue(storage.values.containsKey("fault.status.first-generation.CALENDAR"))
+        assertFalse(storage.values.containsKey("fault.status_v2.first-generation.CALENDAR"))
+        assertTrue(freshStore().status(first, SyncStatusStore.Service.CALENDAR).structuralStorageFailure)
+
+        assertTrue(store.beginAttempt(first, SyncStatusStore.Service.CALENDAR, "after-clear-terminal", 4, null))
+        assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, "after-clear-terminal", 5))
+        assertFalse(freshStore().status(first, SyncStatusStore.Service.CALENDAR).structuralStorageFailure)
+        assertTrue(store.clear(identity))
+    }
+
     @Test fun `failed direct outcome and malformed fault sentinel remain fail closed until repair`() {
         assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 50))
         storage.failNext = true
