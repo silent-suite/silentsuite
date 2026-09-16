@@ -1,0 +1,1 @@
+Improves startup retry handling and adds a diagnostic report you can preview, copy, or share if SilentSuite cannot finish starting. Reports are never sent automatically. "Learn about task apps" now opens the SilentSuite documentation.
