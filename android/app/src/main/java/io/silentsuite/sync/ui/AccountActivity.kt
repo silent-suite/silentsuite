@@ -1016,7 +1016,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                     val intent = Intent(this, PermissionsActivity::class.java)
                     permissionRemediationLauncherOverride?.invoke(intent) ?: startActivity(intent)
                 }
-                AccountDashboardAction.INSTALL_TASK_APP -> installPackage(tasksOrgPackage)
+                AccountDashboardAction.INSTALL_TASK_APP -> WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)
                 AccountDashboardAction.REVIEW_SETUP -> setupTarget?.let { target ->
                     findViewById<ScrollView>(R.id.parent).smoothScrollTo(0, findViewById<View>(target).top)
                 }
