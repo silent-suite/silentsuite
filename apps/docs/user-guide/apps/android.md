@@ -4,7 +4,7 @@ SilentSuite has its own Android app for end-to-end encrypted sync of your calend
 
 ## What You Get
 
-Once set up, your SilentSuite data syncs directly into Android's system calendar, contacts, and task providers. This means any calendar app (Etar, Simple Calendar, etc.) and any contacts app will show your encrypted SilentSuite data.
+Once set up, your SilentSuite data syncs directly into Android's system calendar, contacts, and task providers. Calendar apps that use Android's system calendar, such as Etar, Fossify Calendar, and KashCal, can display and edit your SilentSuite events.
 
 ## Install
 
@@ -111,8 +111,9 @@ The app will sync your collections. Your calendars, contacts, and tasks now appe
 
 The SilentSuite app is a sync adapter -- it syncs data in the background but doesn't have a built-in calendar UI. Use any Android calendar app:
 
-- **Etar** (open source, F-Droid) -- lightweight, recommended.
-- **Simple Calendar** (open source, F-Droid) -- minimal and private.
+- <img src="/app-logos/etar.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> **Etar** (open source, F-Droid) -- lightweight, recommended.
+- <img src="/app-logos/fossify-calendar.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> [Fossify Calendar](https://github.com/FossifyOrg/Calendar) (open source, F-Droid) -- minimal and private.
+- <img src="/app-logos/kashcal.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> [KashCal](https://github.com/KashCal/KashCal) (open source) -- view, create, edit, and delete SilentSuite events through Android's system calendar. The SilentSuite app handles two-way sync; no CalDAV account setup in KashCal is needed.
 - **Google Calendar** -- works, but sends event metadata to Google for notifications. Not recommended if privacy is a priority.
 
 ## Choosing a Task App
