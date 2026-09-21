@@ -165,9 +165,24 @@ def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
     ]
     assert 'script: bash android/scripts/run-registry-process-boundary.sh "${{ matrix.api-level }}"' in job
     # A lane that did not run says exactly why; a broken probe is never reported as a missing image.
-    for outcome in ("NOT_RUN_IMAGE_NOT_LISTED", "NOT_RUN_AVAILABILITY_PROBE_FAILED", "NOT_RUN_FIXTURE_DID_NOT_START"):
+    for outcome in ("NOT_RUN_IMAGE_NOT_LISTED", "NOT_RUN_AVAILABILITY_PROBE_FAILED", "INVENTORY_UNAVAILABLE"):
         assert outcome in job, outcome
+    assert "NOT_RUN_FIXTURE_DID_NOT_START" not in job
     assert "continue-on-error" not in job
+    # The image is matched as a whole first-column identifier: x86 must never match x86_64.
+    assert 'mode == "exact" && id == wanted { found = 1 }' in job
+    assert 'if first_column_has "$IMAGE" exact; then' in job
+    assert 'grep -Fq "$IMAGE"' not in job
+    # An absent required image is recorded as absent before the job fails.
+    required = job.split('image-required }}" = "true" ]; then', 1)[1].split("\n          else\n", 1)[0]
+    assert required.index('echo "available=false" >> "$GITHUB_OUTPUT"') < required.index("exit 1")
+    # Every lane without a pass, including an optional API level, says so in the run summary.
+    record = job.split("- name: Record why the registry process boundary did not run", 1)[1].split("- name: ", 1)[0]
+    assert "if: always()" in record and '>> "$GITHUB_STEP_SUMMARY"' in record
+    assert "No pass was produced for this API level." in record
+    debug_rules = (ROOT / "android/app/proguard-debug-test-rules.pro").read_text(encoding="utf-8")
+    # Linkage is proven by the minified lane itself, not by exempting the subject from R8.
+    assert "io.silentsuite" not in debug_rules
     assert 'printf \'%s\\n\' "${command_status}" > "${output}/${step}.exit"' in script
     assert "|| true\n  tr -d" not in script
     for forbidden in ("secrets.", "KSTOREPWD", "signingStoreLocation", "assembleRelease", "bundleRelease"):

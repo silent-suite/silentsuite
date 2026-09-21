@@ -839,12 +839,23 @@ jobs:
           # A failed or empty listing fails this step with no output: that is a probe failure, which
           # is reported separately and never as a missing image.
           "$SDKMANAGER" --list > "$RUNNER_TEMP/sdk-packages.txt" 2> "$RUNNER_TEMP/sdk-packages.err"
-          grep -Fq "system-images;android-" "$RUNNER_TEMP/sdk-packages.txt"
+          # Only the whole first column is a package identifier, so x86 never matches x86_64.
+          first_column_has() {
+            awk -F'|' -v wanted="$1" -v mode="$2" '
+              { id = $1; gsub(/^[ \t]+|[ \t\r]+$/, "", id) }
+              mode == "exact" && id == wanted { found = 1 }
+              mode == "prefix" && index(id, wanted) == 1 { found = 1 }
+              END { exit found ? 0 : 1 }
+            ' "$RUNNER_TEMP/sdk-packages.txt"
+          }
+          first_column_has "system-images;android-" prefix
           IMAGE="system-images;android-${{ matrix.api-level }};google_apis;${{ matrix.arch }}"
-          if grep -Fq "$IMAGE" "$RUNNER_TEMP/sdk-packages.txt"; then
+          if first_column_has "$IMAGE" exact; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           elif [ "${{ matrix.image-required }}" = "true" ]; then
-            echo "required emulator image is not listed: $IMAGE" >&2
+            # Recorded as absent before failing, so the artifact says NOT_LISTED, not PROBE_FAILED.
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::error::required emulator image is not listed: $IMAGE"
             exit 1
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -929,12 +940,19 @@ jobs:
           fi
           case "${{ steps.image.outputs.available }}" in
             false) OUTCOME=NOT_RUN_IMAGE_NOT_LISTED ;;
-            true) OUTCOME=NOT_RUN_FIXTURE_DID_NOT_START ;;
+            # The image was listed, so the fixture may have started; only its inventory is absent.
+            true) OUTCOME=INVENTORY_UNAVAILABLE ;;
             *) OUTCOME=NOT_RUN_AVAILABILITY_PROBE_FAILED ;;
           esac
           mkdir -p "$(dirname "$INVENTORY")"
           printf '{"api":%s,"catalog":"sdkmanager --list","image":"system-images;android-%s;google_apis;%s","outcome":"%s","schema":1}\n' \
             "${{ matrix.api-level }}" "${{ matrix.api-level }}" "${{ matrix.arch }}" "$OUTCOME" > "$INVENTORY"
+          {
+            echo "### Registry process boundary, API ${{ matrix.api-level }} (${{ matrix.arch }}): $OUTCOME"
+            echo
+            echo "No pass was produced for this API level. Image queried in the runner's \`sdkmanager --list\`:"
+            echo "\`system-images;android-${{ matrix.api-level }};google_apis;${{ matrix.arch }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload registry process boundary inventory
         if: always()
