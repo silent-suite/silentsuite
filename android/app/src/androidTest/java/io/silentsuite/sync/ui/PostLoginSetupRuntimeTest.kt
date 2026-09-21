@@ -838,9 +838,11 @@ class PostLoginSetupRuntimeTest {
             org.junit.Assert.assertFalse(PostLoginStartupChecks.runAtLaunch(context))
             org.junit.Assert.assertFalse(App.postLoginBootstrapSucceeded)
             assertEquals(
-                PostLoginStartupOutcome(PostLoginStartupOutcome.Phase.REGISTRY_READ, PostLoginStartupOutcome.Reason.REGISTRY_UNREADABLE),
+                PostLoginStartupOutcome(PostLoginStartupOutcome.Phase.REGISTRY_READ, PostLoginStartupOutcome.Reason.REGISTRY_UNREADABLE,
+                    registryDecode = io.silentsuite.sync.ui.setup.AccountCreationRegistry.DecodeStatus.INVALID_HEADER),
                 PostLoginStartupChecks.snapshot().outcome,
             )
+            assertEquals(PostLoginStartupChecks.snapshot().outcome, PostLoginStartupChecks.snapshot().launchOutcome)
             dashboardMonitor = instrumentation.addMonitor(AccountActivity::class.java.name, null, true)
             ActivityScenario.launch<PostLoginSetupActivity>(
                 PostLoginSetupActivity.newIntent(context, target, targetId),
@@ -916,10 +918,14 @@ class PostLoginSetupRuntimeTest {
                 val settledReport = reportText(scenario)
                 assertReportAllowlisted(settledReport, forbidden)
                 listOf(
-                    "schema_version: 2",
+                    "schema_version: 3",
                     "startup_outcome: FAILED", "startup_phase: REGISTRY_READ", "startup_reason: REGISTRY_UNREADABLE",
                     "exception_category: NONE", "last_check: RETRY", "retry_attempts_this_process: 1",
                     "retry_in_flight: no",
+                    // The Retry and the earlier launch check each keep their own captured decode step.
+                    "registry_decode: INVALID_HEADER", "launch_outcome: FAILED", "launch_phase: REGISTRY_READ",
+                    "launch_reason: REGISTRY_UNREADABLE", "launch_exception_category: NONE",
+                    "launch_registry_decode: INVALID_HEADER",
                     // The unreadable registry fails before any row is classified or session parsed.
                     "rows_classified: 0", "session_parses: 0",
                 ).forEach { assertTrue("Missing report line $it", settledReport.contains("$it\n")) }
@@ -1099,7 +1105,7 @@ class PostLoginSetupRuntimeTest {
             val report = StartupDiagnosticReport.capture(context, uiRetryInFlight = false)
             assertReportAllowlisted(report, listOf(username, uri, session, "example.invalid", requireNotNull(creationId),
                 legacyIdentity.storageKey))
-            assertTrue(report.contains("schema_version: 2\n"))
+            assertTrue(report.contains("schema_version: 3\n"))
             assertTrue(report.contains("startup_outcome: SUCCEEDED\n"))
             assertRecordedBucket(report)
         } finally {
@@ -1160,6 +1166,8 @@ class PostLoginSetupRuntimeTest {
                 "startup_phase", "startup_reason", "exception_category", "last_check",
                 "retry_attempts_this_process", "retry_in_flight", "bootstrap_elapsed_bucket",
                 "rows_classified", "session_parses", "migration_marker_present",
+                "registry_decode", "launch_outcome", "launch_phase", "launch_reason",
+                "launch_exception_category", "launch_registry_decode",
             ),
             lines.drop(1).map { it.substringBefore(": ") },
         )

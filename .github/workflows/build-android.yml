@@ -792,3 +792,173 @@ jobs:
           path: android/build/color-parity-evidence/
           if-no-files-found: warn
           retention-days: 14
+
+  # Ownership-registry persistence across a real process boundary on the minified debug build:
+  # separate instrumentation invocations with the app process terminated in between, then an
+  # in-place reinstall over the existing data. Debug-signed only; no release lane is involved.
+  registry-process-boundary:
+    name: Registry process boundary (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    needs: conscrypt-r28
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            api-level: 21
+            image-required: true
+          - arch: x86_64
+            api-level: 35
+            image-required: true
+          - arch: x86_64
+            api-level: 36
+            image-required: true
+          # No lane here has booted API 37 yet: an image the runner's catalog does not list is recorded as NOT_RUN, never as a pass.
+          - arch: x86_64
+            api-level: 37
+            image-required: false
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Probe emulator system image availability
+        id: image
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          # A failed or empty listing fails this step with no output: that is a probe failure, which
+          # is reported separately and never as a missing image.
+          "$SDKMANAGER" --list > "$RUNNER_TEMP/sdk-packages.txt" 2> "$RUNNER_TEMP/sdk-packages.err"
+          # Only the whole first column is a package identifier, so x86 never matches x86_64.
+          first_column_has() {
+            awk -F'|' -v wanted="$1" -v mode="$2" '
+              { id = $1; gsub(/^[ \t]+|[ \t\r]+$/, "", id) }
+              mode == "exact" && id == wanted { found = 1 }
+              mode == "prefix" && index(id, wanted) == 1 { found = 1 }
+              END { exit found ? 0 : 1 }
+            ' "$RUNNER_TEMP/sdk-packages.txt"
+          }
+          first_column_has "system-images;android-" prefix
+          IMAGE="system-images;android-${{ matrix.api-level }};google_apis;${{ matrix.arch }}"
+          if first_column_has "$IMAGE" exact; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ matrix.image-required }}" = "true" ]; then
+            # Recorded as absent before failing, so the artifact says NOT_LISTED, not PROBE_FAILED.
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::error::required emulator image is not listed: $IMAGE"
+            exit 1
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Registry process boundary NOT RUN on API ${{ matrix.api-level }}: $IMAGE is not listed by this runner's sdkmanager catalog"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.image.outputs.available == 'true'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust Android targets
+        if: steps.image.outputs.available == 'true'
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        if: steps.image.outputs.available == 'true'
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable and build native client
+        if: steps.image.outputs.available == 'true'
+        run: |
+          chmod +x gradlew
+          scripts/build-etebase-client-16kb.sh
+
+      - name: Download rebuilt Conscrypt AAR
+        if: steps.image.outputs.available == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+
+      - name: Enable KVM for the emulator
+        if: steps.image.outputs.available == 'true'
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run registry process boundary steps
+        if: steps.image.outputs.available == 'true'
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash android/scripts/run-registry-process-boundary.sh "${{ matrix.api-level }}"
+
+      - name: Assert exact registry process boundary inventory
+        if: steps.image.outputs.available == 'true'
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          inventory=json.loads(pathlib.Path('app/build/outputs/androidTest-results/registry-process-boundary/inventory.json').read_text(encoding='utf-8'))
+          steps=[(item['step'],item['outcome']) for item in inventory['steps']]
+          expected=[(step,'PASS') for step in ('empty-write','empty-read','populated-write','populated-read','reinstall-write','reinstall-read')]
+          if inventory['api'] != ${{ matrix.api-level }} or inventory['outcome'] != 'PASS' or steps != expected:
+            raise SystemExit(f'registry process boundary inventory is not an exact pass: {inventory}')
+          if inventory['reinstall']['outcome'] != 'PASS' or inventory['extraFiles']:
+            raise SystemExit(f'registry process boundary reinstall evidence is incomplete: {inventory}')
+          PY
+
+      - name: Record why the registry process boundary did not run
+        if: always()
+        run: |
+          INVENTORY=app/build/outputs/androidTest-results/registry-process-boundary/inventory.json
+          if [ -f "$INVENTORY" ]; then
+            exit 0
+          fi
+          case "${{ steps.image.outputs.available }}" in
+            false) OUTCOME=NOT_RUN_IMAGE_NOT_LISTED ;;
+            # The image was listed, so the fixture may have started; only its inventory is absent.
+            true) OUTCOME=INVENTORY_UNAVAILABLE ;;
+            *) OUTCOME=NOT_RUN_AVAILABILITY_PROBE_FAILED ;;
+          esac
+          mkdir -p "$(dirname "$INVENTORY")"
+          printf '{"api":%s,"catalog":"sdkmanager --list","image":"system-images;android-%s;google_apis;%s","outcome":"%s","schema":1}\n' \
+            "${{ matrix.api-level }}" "${{ matrix.api-level }}" "${{ matrix.arch }}" "$OUTCOME" > "$INVENTORY"
+          {
+            echo "### Registry process boundary, API ${{ matrix.api-level }} (${{ matrix.arch }}): $OUTCOME"
+            echo
+            echo "No pass was produced for this API level. Image queried in the runner's \`sdkmanager --list\`:"
+            echo "\`system-images;android-${{ matrix.api-level }};google_apis;${{ matrix.arch }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload registry process boundary inventory
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: registry-process-boundary-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          path: android/app/build/outputs/androidTest-results/registry-process-boundary/
+          if-no-files-found: warn
+          retention-days: 14
