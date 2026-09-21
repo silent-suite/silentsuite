@@ -51,7 +51,14 @@ def test_every_fail_closed_boundary_maps_to_a_typed_reason():
     assert reconcile.count("return Reason.RECONCILE_") == 6
     # Ownership remains fail closed: nothing erases or bypasses an unreadable registry.
     assert "Reason.REGISTRY_UNREADABLE" in source
-    assert "registry.records() == null" in source
+    # One gate read yields both the fail-closed decision and its decode step; never a second read.
+    assert source.count("registry.readResult()") == 1
+    assert "registry.records() == null" not in source
+    assert (
+        "if (initial.records == null)\n"
+        "            return PostLoginStartupOutcome(Phase.REGISTRY_READ, Reason.REGISTRY_UNREADABLE, "
+        "registryDecode = initial.status)"
+    ) in source
     for forbidden in ("commit(null)", 'remove("rows")', "quarantineBlob", "clearActiveAccount"):
         assert forbidden not in source
 
@@ -97,9 +104,18 @@ def test_startup_diagnostics_are_allowlisted_local_and_never_reuse_debug_info():
     for forbidden in ("getSharedPreferences", "commit()", "File(", "filesDir", "cacheDir"):
         assert forbidden not in checks, forbidden
     # Bootstrap-only timing: a coarse bucket and capped counters, never a raw duration or clock.
-    assert "const val SCHEMA_VERSION = 2" in report
-    for line in ("bootstrap_elapsed_bucket: ", "rows_classified: ", "session_parses: "):
+    assert "const val SCHEMA_VERSION = 3" in report
+    for line in (
+        "bootstrap_elapsed_bucket: ", "rows_classified: ", "session_parses: ", "registry_decode: ",
+        "launch_outcome: ", "launch_phase: ", "launch_reason: ", "launch_exception_category: ",
+        "launch_registry_decode: ",
+    ):
         assert line in report, line
+    # Schema 3 only appends: the last schema 2 line still precedes every new line.
+    assert report.index('"migration_marker_present: ') < report.index('"registry_decode: ')
+    # The launch outcome is kept apart from the latest one and is forgotten only with it.
+    assert "if (source == PostLoginStartupOutcome.Source.LAUNCH) launchOutcome = run.outcome" in checks
+    assert "launchOutcome = null" in checks
     assert "SystemClock.elapsedRealtime()" in checks
     assert "latestElapsedBucket = BootstrapElapsedBucket.NOT_RECORDED" in checks
 
@@ -111,3 +127,134 @@ def test_startup_diagnostics_are_allowlisted_local_and_never_reuse_debug_info():
     assert "PostLoginSetupMigration.bootstrap(this)" not in app
     assert "PostLoginStartupChecks.retry(context)" in view_model
     assert "PostLoginSetupMigration.bootstrap(context)" not in view_model
+
+
+def test_registry_decode_status_is_content_free_and_still_fails_closed():
+    registry = (SETUP / "AccountCreationRegistry.kt").read_text(encoding="utf-8")
+    decoder = registry.split("private fun decodeResult", 1)[1].split("private fun encode", 1)[0]
+
+    enum_block = registry.split("enum class DecodeStatus {", 1)[1].split("}", 1)[0]
+    assert re.findall(r"\b([A-Z][A-Z_]+)\b", enum_block) == [
+        "OK", "NOT_STORED", "INVALID_HEADER", "INVALID_FIELD_COUNT", "INVALID_ENCODING", "INVALID_PHASE",
+        "INVALID_TIMESTAMP", "UNEXPECTED_RUNTIME_EXCEPTION", "UNEXPECTED_ERROR", "UNEXPECTED_OTHER",
+    ]
+    # Anything thrown still yields no rows; only the step or a coarse kind leaves the decoder.
+    assert "catch (error: Throwable)" in decoder
+    assert "null to failureStatus(error, step)" in decoder
+    assert 'require(parts.firstOrNull() == "v$VERSION")' in decoder
+    assert "require(values.size == 5)" in decoder
+    for forbidden in (".message", "stackTrace", "localizedMessage", "Logger", "hashCode", "MessageDigest"):
+        assert forbidden not in registry, forbidden
+    assert "fun records(): List<Record>? = readResult().records" in registry
+
+
+def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
+    workflow = (ROOT / ".github/workflows/build-android.yml").read_text(encoding="utf-8")
+    script = (ROOT / "android/scripts/run-registry-process-boundary.sh").read_text(encoding="utf-8")
+    runner = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/SilentSuiteTestRunner.kt").read_text(encoding="utf-8")
+    runtime = (
+        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/RegistryProcessBoundaryRuntimeTest.kt"
+    ).read_text(encoding="utf-8")
+    ledger = (ROOT / "android/scripts/focused-runtime-ledger-v1.json").read_text(encoding="utf-8")
+    checker = _load_boundary_checker()
+
+    job = workflow.split("\n  registry-process-boundary:\n", 1)[1]
+    assert "timeout-minutes: 60" in job and "contents: read" in job and "needs: conscrypt-r28" in job
+    assert re.findall(r"api-level: (\d+)\n\s+image-required: (true|false)", job) == [
+        ("21", "true"), ("35", "true"), ("36", "true"), ("37", "false"),
+    ]
+    assert 'script: bash android/scripts/run-registry-process-boundary.sh "${{ matrix.api-level }}"' in job
+    # A lane that did not run says exactly why; a broken probe is never reported as a missing image.
+    for outcome in ("NOT_RUN_IMAGE_NOT_LISTED", "NOT_RUN_AVAILABILITY_PROBE_FAILED", "NOT_RUN_FIXTURE_DID_NOT_START"):
+        assert outcome in job, outcome
+    assert "continue-on-error" not in job
+    assert 'printf \'%s\\n\' "${command_status}" > "${output}/${step}.exit"' in script
+    assert "|| true\n  tr -d" not in script
+    for forbidden in ("secrets.", "KSTOREPWD", "signingStoreLocation", "assembleRelease", "bundleRelease"):
+        assert forbidden not in job and forbidden not in script, forbidden
+
+    # Separate instrumentation invocations, the process terminated before each, and no data reset.
+    steps = re.findall(r"^run_step (\S+) (\S+)$", script, flags=re.MULTILINE)
+    assert tuple(steps) == checker.EXPECTED_STEPS
+    assert script.count("terminate_app_process\n") >= 2 and 'am force-stop "${package}"' in script
+    assert script.index("run_step reinstall-write") < script.index('adb install -r "${apk}"') < script.index(
+        "run_step reinstall-read")
+    for forbidden in ("pm clear", "uninstall", "connectedDebugAndroidTest", "rm -rf /data", "run-as"):
+        assert forbidden not in script, forbidden
+    for bound in ("1500s", "300s"):
+        assert f"timeout --signal=TERM --kill-after=10s {bound}" in script
+
+    methods = set(re.findall(r"@Test fun (\w+)\(", runtime))
+    assert methods == {method for _, method in checker.EXPECTED_STEPS}
+    assert checker.TEST_CLASS.rsplit(".", 1)[1] == "RegistryProcessBoundaryRuntimeTest"
+    assert "AccountCreationRegistry.open(context)" in runtime
+    for forbidden in (".edit()", "putString", "remove(", "resetForTest", "ActivityScenario"):
+        assert forbidden not in runtime, forbidden
+    assert "if (registryBoundaryProbe) RegistryProcessBoundaryProbe.captureBeforeLaunch(app)" in runner
+    # The pair is meaningless inside one process, so it stays out of the single-process ledger.
+    assert "RegistryProcessBoundaryRuntimeTest" not in ledger
+
+
+def _load_boundary_checker():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_registry_process_boundary", ROOT / "android/scripts/check-registry-process-boundary.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_registry_process_boundary_checker_fails_closed(tmp_path):
+    checker = _load_boundary_checker()
+
+    def transcript(method, codes=("1", "0"), tail="OK (1 test)"):
+        blocks = "".join(
+            f"INSTRUMENTATION_STATUS: class={checker.TEST_CLASS}\r\nINSTRUMENTATION_STATUS: test={method}\r\n"
+            f"INSTRUMENTATION_STATUS_CODE: {code}\r\n" for code in codes)
+        return blocks + f"INSTRUMENTATION_RESULT: stream=\r\n\r\n{tail}\r\n\r\nINSTRUMENTATION_CODE: -1\r\n"
+
+    def seed(directory):
+        directory.mkdir()
+        for step, method in checker.EXPECTED_STEPS:
+            (directory / f"{step}.txt").write_text(transcript(method), encoding="utf-8")
+            (directory / f"{step}.exit").write_text("0\n", encoding="utf-8")
+        (directory / "reinstall-install.exit").write_text("0\n", encoding="utf-8")
+        (directory / "reinstall-before.txt").write_text("firstInstallTime=a\nlastUpdateTime=a\n", encoding="utf-8")
+        (directory / "reinstall-install.txt").write_text("Performing Streamed Install\nSuccess\n", encoding="utf-8")
+        (directory / "reinstall-after.txt").write_text("firstInstallTime=a\nlastUpdateTime=b\n", encoding="utf-8")
+        return directory
+
+    passing = seed(tmp_path / "pass")
+    assert checker.main(["checker", str(passing), "36"]) == 0
+    assert '"outcome":"PASS"' in (passing / "inventory.json").read_text(encoding="utf-8")
+    # The inventory it wrote is not an extra file on a second evaluation.
+    assert checker.evaluate(passing, "36")["outcome"] == "PASS"
+
+    def failing(name, mutate):
+        directory = seed(tmp_path / name)
+        mutate(directory)
+        assert checker.main(["checker", str(directory), "36"]) == 1, name
+        assert '"outcome":"FAIL"' in (directory / "inventory.json").read_text(encoding="utf-8")
+
+    reader = checker.EXPECTED_STEPS[1][1]
+    failing("missing", lambda d: (d / "populated-read.txt").unlink())
+    # A complete-looking transcript never rescues a timed-out, failed or unrecorded command.
+    failing("timeout", lambda d: (d / "populated-read.exit").write_text("124\n", encoding="utf-8"))
+    failing("adb-failure", lambda d: (d / "empty-write.exit").write_text("1\n", encoding="utf-8"))
+    failing("missing-exit", lambda d: (d / "reinstall-read.exit").unlink())
+    failing("reinstall-timeout", lambda d: (d / "reinstall-install.exit").write_text("137\n", encoding="utf-8"))
+    failing("extra", lambda d: (d / "surprise.txt").write_text("x", encoding="utf-8"))
+    failing("failed", lambda d: (d / "empty-read.txt").write_text(
+        transcript(reader, codes=("1", "-2"), tail="FAILURES!!!"), encoding="utf-8"))
+    failing("wrong-method", lambda d: (d / "empty-read.txt").write_text(
+        transcript(checker.EXPECTED_STEPS[0][1]), encoding="utf-8"))
+    failing("duplicate", lambda d: (d / "empty-read.txt").write_text(
+        transcript(reader, codes=("1", "0", "1", "0")), encoding="utf-8"))
+    failing("crash", lambda d: (d / "empty-read.txt").write_text(
+        "INSTRUMENTATION_RESULT: shortMsg=Process crashed.\nINSTRUMENTATION_CODE: 0\n", encoding="utf-8"))
+    failing("empty-run", lambda d: (d / "empty-read.txt").write_text(
+        "INSTRUMENTATION_RESULT: stream=\n\nOK (0 tests)\n\nINSTRUMENTATION_CODE: -1\n", encoding="utf-8"))
+    failing("fresh-install", lambda d: (d / "reinstall-after.txt").write_text(
+        "firstInstallTime=b\nlastUpdateTime=b\n", encoding="utf-8"))
+    failing("install-failed", lambda d: (d / "reinstall-install.txt").write_text("Failure [X]\n", encoding="utf-8"))

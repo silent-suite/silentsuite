@@ -178,8 +178,10 @@ object PostLoginSetupMigration {
         val manager = AccountManager.get(context)
         val registry = AccountCreationRegistry.open(context)
         // Unknown ownership data is a fail-closed bootstrap error; do not reinterpret its rows
-        // as legacy and mutate them.
-        if (registry.records() == null) return PostLoginStartupOutcome.failed(Phase.REGISTRY_READ, Reason.REGISTRY_UNREADABLE)
+        // as legacy and mutate them. The same single read also names the rejecting decode step.
+        val initial = registry.readResult()
+        if (initial.records == null)
+            return PostLoginStartupOutcome(Phase.REGISTRY_READ, Reason.REGISTRY_UNREADABLE, registryDecode = initial.status)
         val prefs = context.getSharedPreferences("post_login_setup_migration", Context.MODE_PRIVATE)
         val rows = object : RowStore {
             private val accounts get() = manager.getAccountsByType(App.accountType)

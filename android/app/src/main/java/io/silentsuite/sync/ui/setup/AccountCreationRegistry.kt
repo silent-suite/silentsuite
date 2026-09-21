@@ -12,8 +12,22 @@ class AccountCreationRegistry(private val store: Store) {
                       val accountType: String = "")
     interface Store { fun read(): String?; fun commit(value: String?): Boolean }
 
+    /**
+     * Content-free classification of one decode: never registry values, identifiers, lengths,
+     * row positions or exception text. A failure only names the validation step that rejected.
+     */
+    enum class DecodeStatus {
+        OK, NOT_STORED, INVALID_HEADER, INVALID_FIELD_COUNT, INVALID_ENCODING, INVALID_PHASE, INVALID_TIMESTAMP,
+        UNEXPECTED_RUNTIME_EXCEPTION, UNEXPECTED_ERROR, UNEXPECTED_OTHER
+    }
+    /** One read: [records] is null for exactly the stored values that make records() null. */
+    class ReadResult(val records: List<Record>?, val status: DecodeStatus)
+
     fun get(accountType: String, accountName: String): Record? = synchronized(LOCK) { decode(store.read())?.get(key(accountType, accountName)) }
-    fun records(): List<Record>? = synchronized(LOCK) { decode(store.read())?.values?.toList() }
+    fun records(): List<Record>? = readResult().records
+    fun readResult(): ReadResult = synchronized(LOCK) {
+        val (rows, status) = decodeResult(store.read()); ReadResult(rows?.values?.toList(), status)
+    }
     fun prepare(record: Record): Boolean = synchronized(LOCK) { update(record.accountType, record.accountName) { current ->
         // A duplicate submit must leave the first owner's durable record intact.
         current ?: record
@@ -40,16 +54,30 @@ class AccountCreationRegistry(private val store: Store) {
         return store.commit(encoded) && store.read() == encoded
     }
 
-    private fun decode(raw: String?): MutableMap<String, Record>? {
-        if (raw == null) return mutableMapOf()
-        return runCatching {
+    private fun decode(raw: String?): MutableMap<String, Record>? = decodeResult(raw).first
+
+    private fun decodeResult(raw: String?): Pair<MutableMap<String, Record>?, DecodeStatus> {
+        if (raw == null) return mutableMapOf<String, Record>() to DecodeStatus.NOT_STORED
+        // Names the validation step in progress; what is accepted or rejected is unchanged.
+        var step = DecodeStatus.INVALID_HEADER
+        return try {
             val parts = raw.split("\n"); require(parts.firstOrNull() == "v$VERSION")
-            mutableMapOf<String, Record>().also { output -> parts.drop(1).filter { it.isNotEmpty() }.forEach { line ->
+            val output = mutableMapOf<String, Record>()
+            parts.drop(1).filter { it.isNotEmpty() }.forEach { line ->
+                step = DecodeStatus.INVALID_FIELD_COUNT
                 val values = line.split('|'); require(values.size == 5)
-                val type = unescape(values[0]); val name = unescape(values[1]); output[key(type, name)] =
-                    Record(name, unescape(values[2]), Phase.valueOf(values[3]), values[4].toLong(), type)
-            }}
-        }.getOrNull()
+                step = DecodeStatus.INVALID_ENCODING
+                val type = unescape(values[0]); val name = unescape(values[1]); val creationId = unescape(values[2])
+                step = DecodeStatus.INVALID_PHASE
+                val phase = Phase.valueOf(values[3])
+                step = DecodeStatus.INVALID_TIMESTAMP
+                output[key(type, name)] = Record(name, creationId, phase, values[4].toLong(), type)
+            }
+            output to DecodeStatus.OK
+        } catch (error: Throwable) {
+            // Still fails closed on anything thrown; only the coarse kind survives, never the message.
+            null to failureStatus(error, step)
+        }
     }
     private fun encode(rows: Map<String, Record>): String = buildString {
         append("v").append(VERSION).append('\n'); rows.values.sortedBy { key(it.accountType, it.accountName) }.forEach { r ->
@@ -71,6 +99,13 @@ class AccountCreationRegistry(private val store: Store) {
         private const val VERSION = 1; private const val PREFS = "account_creation_registry"; private const val KEY = "rows"
         fun canPrepare(accountName: String, existingNames: Set<String>) = accountName !in existingNames
         fun owns(record: Record?, creationId: String?) = record != null && creationId != null && record.creationId == creationId
+        /** Every validation rejection is an IllegalArgumentException; anything else keeps only a coarse kind. */
+        internal fun failureStatus(error: Throwable, step: DecodeStatus): DecodeStatus = when (error) {
+            is IllegalArgumentException -> step
+            is RuntimeException -> DecodeStatus.UNEXPECTED_RUNTIME_EXCEPTION
+            is Error -> DecodeStatus.UNEXPECTED_ERROR
+            else -> DecodeStatus.UNEXPECTED_OTHER
+        }
         fun open(context: Context) = AccountCreationRegistry(object : Store {
             private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             override fun read() = prefs.getString(KEY, null)
