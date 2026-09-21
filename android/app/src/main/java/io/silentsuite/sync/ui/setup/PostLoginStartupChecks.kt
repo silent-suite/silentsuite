@@ -23,6 +23,8 @@ object PostLoginStartupChecks {
         val bootstrapElapsedBucket: BootstrapElapsedBucket = BootstrapElapsedBucket.NOT_RECORDED,
         val rowsClassified: Int = 0,
         val sessionParses: Int = 0,
+        /** Outcome of the launch check in this process; a later Retry never replaces it. */
+        val launchOutcome: PostLoginStartupOutcome? = null,
     )
 
     /** Coarse, capped duration of `bootstrapOutcome`; the report prints [reportValue] only. */
@@ -64,6 +66,7 @@ object PostLoginStartupChecks {
     private val stateLock = Any()
     private var latest: PostLoginStartupOutcome? = null
     private var latestSource: PostLoginStartupOutcome.Source? = null
+    private var launchOutcome: PostLoginStartupOutcome? = null
     private var latestElapsedBucket = BootstrapElapsedBucket.NOT_RECORDED
     private var latestRowsClassified = 0
     private var latestSessionParses = 0
@@ -122,7 +125,7 @@ object PostLoginStartupChecks {
 
     fun snapshot(): Snapshot = synchronized(stateLock) {
         Snapshot(latest, latestSource, retryAttempts, retryInFlight,
-            latestElapsedBucket, latestRowsClassified, latestSessionParses)
+            latestElapsedBucket, latestRowsClassified, latestSessionParses, launchOutcome)
     }
 
     /** androidTest-only: forget recorded outcomes between fixtures. */
@@ -130,6 +133,7 @@ object PostLoginStartupChecks {
         synchronized(stateLock) {
             latest = null
             latestSource = null
+            launchOutcome = null
             latestElapsedBucket = BootstrapElapsedBucket.NOT_RECORDED
             latestRowsClassified = 0
             latestSessionParses = 0
@@ -155,6 +159,7 @@ object PostLoginStartupChecks {
         synchronized(stateLock) {
             latest = run.outcome
             latestSource = source
+            if (source == PostLoginStartupOutcome.Source.LAUNCH) launchOutcome = run.outcome
             latestElapsedBucket = run.elapsedBucket
             latestRowsClassified = run.rowsClassified
             latestSessionParses = run.sessionParses

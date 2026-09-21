@@ -24,23 +24,69 @@ class StartupDiagnosticReportTest {
         bucket: Bucket = Bucket.UNDER_1S,
         rows: Int = 1,
         parses: Int = 1,
+        launch: PostLoginStartupOutcome? = null,
     ) = StartupDiagnosticReport.Input(
         versionName, 57, 34,
-        PostLoginStartupChecks.Snapshot(outcome, source, attempts, snapshotInFlight, bucket, rows, parses),
+        PostLoginStartupChecks.Snapshot(outcome, source, attempts, snapshotInFlight, bucket, rows, parses, launch),
         uiInFlight, marker,
     )
 
     private fun assertAllowlisted(report: String) {
         val lines = report.removeSuffix("\n").split("\n")
         assertEquals("SilentSuite startup diagnostic report", lines.first())
-        assertEquals(16, lines.size)
+        assertEquals(22, lines.size)
         lines.drop(1).forEach { assertTrue(it, lineShape.matches(it)) }
     }
 
+    @Test fun `schema 3 keeps every schema 2 line in place and appends the decode and launch lines`() {
+        val lines = StartupDiagnosticReport.build(input(null)).removeSuffix("\n").split("\n")
+        assertEquals(
+            listOf(
+                "schema_version", "app_version", "app_version_code", "android_sdk", "startup_outcome",
+                "startup_phase", "startup_reason", "exception_category", "last_check",
+                "retry_attempts_this_process", "retry_in_flight", "bootstrap_elapsed_bucket",
+                "rows_classified", "session_parses", "migration_marker_present",
+            ),
+            lines.subList(1, 16).map { it.substringBefore(": ") },
+        )
+        assertEquals(
+            listOf("registry_decode", "launch_outcome", "launch_phase", "launch_reason",
+                "launch_exception_category", "launch_registry_decode"),
+            lines.drop(16).map { it.substringBefore(": ") },
+        )
+        lines.drop(16).forEach { assertEquals("NOT_RECORDED", it.substringAfter(": ")) }
+    }
+
+    @Test fun `a retry never replaces the recorded launch outcome`() {
+        val launch = PostLoginStartupOutcome(Phase.REGISTRY_READ, Reason.REGISTRY_UNREADABLE,
+            registryDecode = AccountCreationRegistry.DecodeStatus.INVALID_PHASE)
+        val retried = StartupDiagnosticReport.build(input(
+            PostLoginStartupOutcome(Phase.MARKER_COMMIT, Reason.EXCEPTION, ExceptionCategory.SECURITY),
+            Source.RETRY, attempts = 1, launch = launch,
+        ))
+        assertAllowlisted(retried)
+        listOf(
+            "startup_phase: MARKER_COMMIT", "startup_reason: EXCEPTION", "exception_category: SECURITY",
+            "last_check: RETRY", "registry_decode: NOT_RECORDED",
+            "launch_outcome: FAILED", "launch_phase: REGISTRY_READ", "launch_reason: REGISTRY_UNREADABLE",
+            "launch_exception_category: NONE", "launch_registry_decode: INVALID_PHASE",
+        ).forEach { assertTrue(it, retried.contains("$it\n")) }
+        for (decode in AccountCreationRegistry.DecodeStatus.values()) {
+            val outcome = PostLoginStartupOutcome(Phase.REGISTRY_READ, Reason.REGISTRY_UNREADABLE, registryDecode = decode)
+            val report = StartupDiagnosticReport.build(input(outcome, Source.RETRY, launch = PostLoginStartupOutcome.SUCCEEDED))
+            assertAllowlisted(report)
+            assertTrue(report.contains("registry_decode: ${decode.name}\n"))
+            assertTrue(report.contains("launch_outcome: SUCCEEDED\n"))
+            assertTrue(report.contains("launch_registry_decode: NOT_RECORDED\n"))
+        }
+    }
+
     @Test fun `failed registry read renders the exact allowlisted schema`() {
+        val unreadable = PostLoginStartupOutcome(Phase.REGISTRY_READ, Reason.REGISTRY_UNREADABLE,
+            registryDecode = AccountCreationRegistry.DecodeStatus.INVALID_FIELD_COUNT)
         assertEquals(
             "SilentSuite startup diagnostic report\n" +
-                "schema_version: 2\n" +
+                "schema_version: 3\n" +
                 "app_version: 0.5.7-beta\n" +
                 "app_version_code: 57\n" +
                 "android_sdk: 34\n" +
@@ -54,10 +100,15 @@ class StartupDiagnosticReportTest {
                 "bootstrap_elapsed_bucket: 1S_TO_5S\n" +
                 "rows_classified: 0\n" +
                 "session_parses: 0\n" +
-                "migration_marker_present: yes\n",
+                "migration_marker_present: yes\n" +
+                "registry_decode: INVALID_FIELD_COUNT\n" +
+                "launch_outcome: FAILED\n" +
+                "launch_phase: REGISTRY_READ\n" +
+                "launch_reason: REGISTRY_UNREADABLE\n" +
+                "launch_exception_category: NONE\n" +
+                "launch_registry_decode: INVALID_FIELD_COUNT\n",
             StartupDiagnosticReport.build(input(
-                PostLoginStartupOutcome.failed(Phase.REGISTRY_READ, Reason.REGISTRY_UNREADABLE),
-                bucket = Bucket.FROM_1S_TO_5S, rows = 0, parses = 0,
+                unreadable, bucket = Bucket.FROM_1S_TO_5S, rows = 0, parses = 0, launch = unreadable,
             )),
         )
     }

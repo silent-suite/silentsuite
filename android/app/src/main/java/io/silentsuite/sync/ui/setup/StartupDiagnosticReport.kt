@@ -10,7 +10,8 @@ import io.silentsuite.sync.BuildConfig
  * number, an allowlisted enum or bucket name, a capped counter or a yes/no flag.
  */
 object StartupDiagnosticReport {
-    const val SCHEMA_VERSION = 2
+    /** 3 keeps every schema 2 line, order and meaning, and appends the decode and launch lines. */
+    const val SCHEMA_VERSION = 3
     private const val MAX_VERSION_NAME_LENGTH = 32
 
     data class Input(
@@ -40,17 +41,14 @@ object StartupDiagnosticReport {
 
     fun build(input: Input): String {
         val outcome = input.snapshot.outcome
+        val launch = input.snapshot.launchOutcome
         return listOf(
             "SilentSuite startup diagnostic report",
             "schema_version: $SCHEMA_VERSION",
             "app_version: ${safeVersionName(input.versionName)}",
             "app_version_code: ${input.versionCode.coerceAtLeast(0)}",
             "android_sdk: ${input.androidSdk.coerceAtLeast(0)}",
-            "startup_outcome: " + when {
-                outcome == null -> "NOT_RECORDED"
-                outcome.succeeded -> "SUCCEEDED"
-                else -> "FAILED"
-            },
+            "startup_outcome: ${outcomeValue(outcome)}",
             "startup_phase: ${outcome?.phase?.name ?: "NOT_RECORDED"}",
             "startup_reason: ${outcome?.reason?.name ?: "NOT_RECORDED"}",
             "exception_category: ${outcome?.exceptionCategory?.name ?: "NOT_RECORDED"}",
@@ -61,7 +59,21 @@ object StartupDiagnosticReport {
             "rows_classified: ${input.snapshot.rowsClassified.coerceIn(0, 99)}",
             "session_parses: ${input.snapshot.sessionParses.coerceIn(0, 99)}",
             "migration_marker_present: ${input.migrationMarkerPresent?.let(::yesNo) ?: "unknown"}",
+            // Captured by the failed gate read itself; the report never reads the registry.
+            "registry_decode: ${outcome?.registryDecode?.name ?: "NOT_RECORDED"}",
+            // The launch check stays visible after a Retry replaces the latest outcome above.
+            "launch_outcome: ${outcomeValue(launch)}",
+            "launch_phase: ${launch?.phase?.name ?: "NOT_RECORDED"}",
+            "launch_reason: ${launch?.reason?.name ?: "NOT_RECORDED"}",
+            "launch_exception_category: ${launch?.exceptionCategory?.name ?: "NOT_RECORDED"}",
+            "launch_registry_decode: ${launch?.registryDecode?.name ?: "NOT_RECORDED"}",
         ).joinToString("\n", postfix = "\n")
+    }
+
+    private fun outcomeValue(outcome: PostLoginStartupOutcome?) = when {
+        outcome == null -> "NOT_RECORDED"
+        outcome.succeeded -> "SUCCEEDED"
+        else -> "FAILED"
     }
 
     internal fun safeVersionName(raw: String): String =

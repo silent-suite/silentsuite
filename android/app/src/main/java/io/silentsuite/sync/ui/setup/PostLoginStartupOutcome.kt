@@ -8,6 +8,8 @@ data class PostLoginStartupOutcome(
     val phase: Phase,
     val reason: Reason,
     val exceptionCategory: ExceptionCategory = ExceptionCategory.NONE,
+    /** Decode step that rejected the registry at the initial gate; null when the gate did not fail. */
+    val registryDecode: AccountCreationRegistry.DecodeStatus? = null,
 ) {
     enum class Phase { REGISTRY_READ, CLASSIFY_ROWS, RECONCILE_PENDING, MARKER_COMMIT, DONE }
 

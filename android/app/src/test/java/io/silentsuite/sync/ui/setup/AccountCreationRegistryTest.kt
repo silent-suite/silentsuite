@@ -1,11 +1,150 @@
 package io.silentsuite.sync.ui.setup
 
+import io.silentsuite.sync.ui.setup.AccountCreationRegistry.DecodeStatus
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AccountCreationRegistryTest {
+    private fun read(raw: String?) = AccountCreationRegistry(object : AccountCreationRegistry.Store {
+        override fun read() = raw
+        override fun commit(value: String?) = false
+    })
+
+    @Test fun `decode status names the rejecting step and never changes what is accepted`() {
+        val hex = "616c696365"
+        val valid = "$hex|$hex|$hex|PREPARED|1"
+        listOf(
+            null to DecodeStatus.NOT_STORED,
+            "v1\n" to DecodeStatus.OK, "v1" to DecodeStatus.OK, "v1\n$valid\n" to DecodeStatus.OK, "v1\n\n$valid" to DecodeStatus.OK,
+            "v1\n||$hex|RECOVERY_REQUIRED|-9223372036854775808\n" to DecodeStatus.OK,
+            "" to DecodeStatus.INVALID_HEADER, "not-json" to DecodeStatus.INVALID_HEADER, "v2\n$valid\n" to DecodeStatus.INVALID_HEADER,
+            "v1\r\n" to DecodeStatus.INVALID_HEADER, " v1\n" to DecodeStatus.INVALID_HEADER, "V1\n" to DecodeStatus.INVALID_HEADER,
+            "v1\n$hex|$hex|$hex|PREPARED\n" to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1\n$valid|00\n" to DecodeStatus.INVALID_FIELD_COUNT, "v1\n \n" to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1\n6|$hex|$hex|PREPARED|1\n" to DecodeStatus.INVALID_ENCODING,
+            "v1\n$hex|zz|$hex|PREPARED|1\n" to DecodeStatus.INVALID_ENCODING,
+            "v1\n$hex|$hex|alice|PREPARED|1\n" to DecodeStatus.INVALID_ENCODING,
+            "v1\n$hex|$hex|$hex|prepared|1\n" to DecodeStatus.INVALID_PHASE,
+            "v1\n$hex|$hex|$hex|UNKNOWN|1\n" to DecodeStatus.INVALID_PHASE,
+            "v1\n$hex|$hex|$hex||1\n" to DecodeStatus.INVALID_PHASE,
+            "v1\n$hex|$hex|$hex|PREPARED|\n" to DecodeStatus.INVALID_TIMESTAMP,
+            "v1\n$hex|$hex|$hex|PREPARED|1.5\n" to DecodeStatus.INVALID_TIMESTAMP,
+            "v1\n$hex|$hex|$hex|PREPARED|9223372036854775808\n" to DecodeStatus.INVALID_TIMESTAMP,
+            // A readable first row never rescues a later rejected row.
+            "v1\n$valid\n$hex|$hex|$hex|CREATING|soon\n" to DecodeStatus.INVALID_TIMESTAMP,
+        ).forEachIndexed { index, (raw, expected) ->
+            val registry = read(raw)
+            val result = registry.readResult()
+            assertEquals("case $index", expected, result.status)
+            val readable = expected == DecodeStatus.OK || expected == DecodeStatus.NOT_STORED
+            assertEquals("case $index", readable, result.records != null)
+            assertEquals("case $index", result.records, registry.records())
+        }
+        assertEquals(emptyList<AccountCreationRegistry.Record>(), read(null).readResult().records)
+        assertEquals(
+            listOf(AccountCreationRegistry.Record("alice", "alice", AccountCreationRegistry.Phase.PREPARED, 1, "alice")),
+            read("v1\n$valid\n").readResult().records,
+        )
+    }
+
+    @Test fun `stored output never ends in a newline while earlier accepted forms stay readable`() {
+        val storage = object : AccountCreationRegistry.Store {
+            var value: String? = null
+            var commits = 0
+            override fun read() = value
+            override fun commit(value: String?) = true.also { commits++; this.value = value }
+        }
+        val registry = AccountCreationRegistry(storage)
+        val a = AccountCreationRegistry.Record("a", "i", AccountCreationRegistry.Phase.PREPARED, 1, "t")
+        val b = AccountCreationRegistry.Record("b", "j", AccountCreationRegistry.Phase.PREPARED, 2, "t")
+        // Exact stored form after every kind of mutation: newline separated, never newline terminated.
+        assertTrue(registry.prepare(b))
+        assertEquals("v1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.prepare(a))
+        assertEquals("v1\n74|61|69|PREPARED|1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.RECOVERY_REQUIRED)))
+        assertEquals("v1\n74|61|69|RECOVERY_REQUIRED|1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.clearOwned("t", "a", "i"))
+        assertEquals("v1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.clearOwned("t", "b", "j"))
+        assertEquals("v1", storage.value)
+        assertEquals(DecodeStatus.OK, registry.readResult().status)
+        assertEquals(emptyList<AccountCreationRegistry.Record>(), registry.records())
+
+        // The newline-terminated form written by earlier builds is still read identically,
+        storage.value = "v1\n"
+        assertEquals(emptyList<AccountCreationRegistry.Record>(), registry.readResult().records)
+        storage.value = "v1\n74|61|69|PREPARED|1\n74|62|6a|PREPARED|2\n"
+        assertEquals(DecodeStatus.OK, registry.readResult().status)
+        assertEquals(listOf(a, b), registry.records())
+        assertEquals("i", registry.get("t", "a")!!.creationId)
+        // and the next owned mutation of such a readable store keeps every record.
+        assertTrue(registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.CREATING)))
+        assertEquals("v1\n74|61|69|CREATING|1\n74|62|6a|PREPARED|2", storage.value)
+
+        // Whitespace persisted after a terminal newline stays rejected: nothing trims or skips it,
+        // and no mutator replaces the stored value.
+        listOf(
+            "v1\n    " to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1\n74|61|69|PREPARED|1\n    " to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1\n74|61|69|PREPARED|1\n\t" to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1    " to DecodeStatus.INVALID_HEADER,
+            "v1\n74|61|69|PREPARED|1    " to DecodeStatus.INVALID_TIMESTAMP,
+        ).forEachIndexed { index, (damaged, expected) ->
+            storage.value = damaged
+            storage.commits = 0
+            val result = registry.readResult()
+            assertEquals("case $index", expected, result.status)
+            assertEquals("case $index", null, result.records)
+            assertEquals("case $index", null, registry.records())
+            assertEquals("case $index", null, registry.get("t", "a"))
+            assertFalse("case $index", registry.prepare(b.copy(accountName = "c")))
+            assertFalse("case $index", registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.CREATING)))
+            assertFalse("case $index", registry.clearOwned("t", "a", "i"))
+            assertEquals("case $index", 0, storage.commits)
+            assertTrue("case $index", storage.value == damaged)
+        }
+    }
+
+    @Test fun `unexpected decode failures keep only a bounded kind`() {
+        for (step in DecodeStatus.values()) {
+            assertEquals(step, AccountCreationRegistry.failureStatus(NumberFormatException("secret"), step))
+            assertEquals(DecodeStatus.UNEXPECTED_RUNTIME_EXCEPTION,
+                AccountCreationRegistry.failureStatus(IndexOutOfBoundsException("secret"), step))
+            assertEquals(DecodeStatus.UNEXPECTED_ERROR, AccountCreationRegistry.failureStatus(OutOfMemoryError("secret"), step))
+            assertEquals(DecodeStatus.UNEXPECTED_OTHER, AccountCreationRegistry.failureStatus(java.io.IOException("secret"), step))
+        }
+        assertEquals(
+            listOf("OK", "NOT_STORED", "INVALID_HEADER", "INVALID_FIELD_COUNT", "INVALID_ENCODING", "INVALID_PHASE",
+                "INVALID_TIMESTAMP", "UNEXPECTED_RUNTIME_EXCEPTION", "UNEXPECTED_ERROR", "UNEXPECTED_OTHER"),
+            DecodeStatus.values().map { it.name },
+        )
+    }
+
+    @Test fun `every phase round trips through the production encoding`() {
+        val storage = object : AccountCreationRegistry.Store {
+            var value: String? = null
+            override fun read() = value
+            override fun commit(value: String?) = true.also { this.value = value }
+        }
+        val registry = AccountCreationRegistry(storage)
+        val records = AccountCreationRegistry.Phase.values().mapIndexed { index, phase ->
+            AccountCreationRegistry.Record("name|$index\né名", "id-$index", phase, Long.MAX_VALUE - index, "type")
+        }
+        records.forEach { record ->
+            assertTrue(registry.prepare(record.copy(phase = AccountCreationRegistry.Phase.PREPARED)))
+            assertTrue(registry.updateOwned(record))
+        }
+        val result = registry.readResult()
+        assertEquals(AccountCreationRegistry.DecodeStatus.OK, result.status)
+        assertEquals(records.toSet(), result.records!!.toSet())
+        records.forEach { assertTrue(registry.clearOwned(it.accountType, it.accountName, it.creationId)) }
+        assertEquals("v1", storage.value)
+        assertEquals(AccountCreationRegistry.DecodeStatus.OK, registry.readResult().status)
+    }
+
     @Test fun `preflight rejects exact existing row and registry owns matching repair only`() {
         assertFalse(AccountCreationRegistry.canPrepare("alice", setOf("alice")))
         assertTrue(AccountCreationRegistry.canPrepare("alice", emptySet()))
