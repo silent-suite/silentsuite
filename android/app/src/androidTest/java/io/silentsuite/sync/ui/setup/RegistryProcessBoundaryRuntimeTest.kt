@@ -40,18 +40,41 @@ class RegistryProcessBoundaryRuntimeTest {
         assertTrue(registry.prepare(seed))
         assertTrue(registry.clearOwned(seed.accountType, seed.accountName, seed.creationId))
         // A stored header-only value, not an absent key: the reader must tell these apart.
-        assertEquals("v1\n", storedValue())
+        assertEquals("registry value in the writer process", exact, RegistryTransportControls.classify(EMPTY_REGISTRY, storedValue()))
         assertEquals(DecodeStatus.OK, registry.readResult().status)
+        // Plain SharedPreferences controls in a separate test-only file; the registry is not involved.
+        assertTrue("transport controls were not committed", RegistryTransportControls.commit(context))
+        assertTrue(
+            "transport controls changed inside the writer process",
+            RegistryTransportControls.observe(context).values.all { it == exact },
+        )
         writeState("empty")
     }
 
     @Test fun readerLoadsEmptyRegistryInFreshProcess() {
         assertFreshProcessAfterWriter("empty")
         val beforeLaunch = requireProbe()
-        assertEquals(DecodeStatus.OK, beforeLaunch.status)
+        val controls = RegistryTransportControls.observe(context)
+        val registryChange = RegistryTransportControls.classify(EMPTY_REGISTRY, storedValue())
+        val evidence = RegistryTransportControls.evidence(beforeLaunch.status, registryChange, controls)
+        // The experiment is only meaningful if every control came back and newline-free endings survived.
+        assertTrue(
+            "$evidence verdict=CONTROL_MISSING",
+            controls.values.none { it.change == RegistryTransportControls.Change.MISSING },
+        )
+        assertTrue(
+            "$evidence verdict=NEWLINE_FREE_ENDING_CHANGED",
+            RegistryTransportControls.plainEndingNames.all { controls.getValue(it) == exact },
+        )
+        // The registry value and its identical plain control crossed the same boundary.
+        assertEquals(
+            "$evidence verdict=REGISTRY_DIFFERS_FROM_IDENTICAL_CONTROL",
+            controls.getValue(RegistryTransportControls.REGISTRY_TWIN), registryChange,
+        )
+        assertEquals("$evidence verdict=REGISTRY_PROBE_STATUS", DecodeStatus.OK, beforeLaunch.status)
         assertEquals(emptyList<Record>(), beforeLaunch.records)
         assertEquals(PostLoginStartupOutcome.SUCCEEDED, PostLoginStartupChecks.snapshot().launchOutcome)
-        assertEquals("v1\n", storedValue())
+        assertEquals("$evidence verdict=REGISTRY_VALUE_CHANGED", exact, registryChange)
     }
 
     @Test fun writerCommitsEveryPhaseThroughProductionStore() {
@@ -82,6 +105,9 @@ class RegistryProcessBoundaryRuntimeTest {
         existing.forEach { assertTrue(registry.clearOwned(it.accountType, it.accountName, it.creationId)) }
     }
 
+    private val exact = RegistryTransportControls.Observation(RegistryTransportControls.Change.EXACT)
+
+    /** Read only, and only ever classified: the stored value never reaches an assertion message. */
     private fun storedValue(): String? =
         context.getSharedPreferences("account_creation_registry", Context.MODE_PRIVATE).getString("rows", null)
 
@@ -107,5 +133,10 @@ class RegistryProcessBoundaryRuntimeTest {
         assertEquals(kind, state[1])
         assertEquals(36, state[0].length)
         assertNotEquals("Reader shares the writer's process", state[0], RegistryProcessBoundaryProbe.processNonce)
+    }
+
+    private companion object {
+        /** What the production encoder stores for a registry with no rows. */
+        const val EMPTY_REGISTRY = "v1\n"
     }
 }

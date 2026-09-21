@@ -205,6 +205,26 @@ def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
     assert "AccountCreationRegistry.open(context)" in runtime
     for forbidden in (".edit()", "putString", "remove(", "resetForTest", "ActivityScenario"):
         assert forbidden not in runtime, forbidden
+    # Transport controls: plain SharedPreferences in their own test-only file, never the registry,
+    # never a reset, and nothing but names, enums and a capped count can leave them.
+    controls = (
+        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/RegistryTransportControls.kt"
+    ).read_text(encoding="utf-8")
+    assert 'private const val PREFS = "registry_transport_controls_test"' in controls
+    assert controls.count("getSharedPreferences(") == 1
+    for forbidden in (
+        "account_creation_registry", "AccountCreationRegistry.open", ".clear()", "remove(", "Log.", "println",
+        "MessageDigest", "hashCode", ".code", "toByteArray", "File(",
+    ):
+        assert forbidden not in controls, forbidden
+    assert "minOf(suffix.length, MAX_REPORTED_SUFFIX)" in controls
+    assert "RegistryTransportControls.commit(context)" in runtime
+    assert "RegistryTransportControls.observe(context)" in runtime
+    # The fail-closed expectation is unchanged; it now carries the content-free evidence line.
+    assert 'assertEquals("$evidence verdict=REGISTRY_PROBE_STATUS", DecodeStatus.OK, beforeLaunch.status)' in runtime
+    assert runtime.count("DecodeStatus.OK, beforeLaunch.status)") == 2
+    # A raw stored value can never reach an assertion message.
+    assert "storedValue())" not in runtime.replace("RegistryTransportControls.classify(EMPTY_REGISTRY, storedValue())", "")
     assert "if (registryBoundaryProbe) RegistryProcessBoundaryProbe.captureBeforeLaunch(app)" in runner
     # The pair is meaningless inside one process, so it stays out of the single-process ledger.
     assert "RegistryProcessBoundaryRuntimeTest" not in ledger
