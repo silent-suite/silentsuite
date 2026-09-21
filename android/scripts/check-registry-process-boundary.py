@@ -22,6 +22,23 @@ EXPECTED_STEPS = (
 REINSTALL_FILES = ("reinstall-before.txt", "reinstall-install.txt", "reinstall-after.txt")
 REINSTALL_EXIT = "reinstall-install.exit"
 INVENTORY = "inventory.json"
+# The empty reader publishes one content-free transport line: control names, enum names and a
+# capped count only. Anything else is rejected here and never copied into the inventory.
+EVIDENCE_STEP = "empty-read"
+EVIDENCE_PREFIX = "INSTRUMENTATION_STATUS: registryTransport="
+EVIDENCE_CODE = "2"
+EVIDENCE_SHAPE = re.compile(r"registry-transport( [a-z_]+=[A-Z_]+(/[A-Z_]+/[0-9]{1,2})?)+")
+
+
+def evidence_problem(step, text):
+    """Returns (problem, evidence): exactly one well-formed line on the evidence step, none elsewhere."""
+    found = [line.strip()[len(EVIDENCE_PREFIX):] for line in text.replace("\r", "").split("\n")
+             if line.strip().startswith(EVIDENCE_PREFIX)]
+    if step != EVIDENCE_STEP:
+        return ("unexpected transport evidence" if found else None), None
+    if len(found) != 1 or EVIDENCE_SHAPE.fullmatch(found[0]) is None:
+        return "missing or malformed transport evidence", None
+    return None, found[0]
 
 
 def exit_problem(path):
@@ -39,7 +56,16 @@ def step_problem(text, method):
     lines = [line.strip() for line in text.replace("\r", "").split("\n")]
     classes = {line.split("=", 1)[1] for line in lines if line.startswith("INSTRUMENTATION_STATUS: class=")}
     tests = {line.split("=", 1)[1] for line in lines if line.startswith("INSTRUMENTATION_STATUS: test=")}
-    codes = [line.split(": ", 1)[1] for line in lines if line.startswith("INSTRUMENTATION_STATUS_CODE: ")]
+    codes, evidence_pending = [], False
+    for line in lines:
+        if line.startswith(EVIDENCE_PREFIX):
+            evidence_pending = True
+        elif line.startswith("INSTRUMENTATION_STATUS_CODE: "):
+            code = line.split(": ", 1)[1]
+            if evidence_pending and code == EVIDENCE_CODE:
+                evidence_pending = False  # the evidence block is not a test result
+            else:
+                codes.append(code)
     if any(marker in text for marker in ("INSTRUMENTATION_FAILED", "INSTRUMENTATION_ABORTED", "Process crashed", "FAILURES!!!")):
         return "instrumentation reported a failure or crash"
     if classes != {TEST_CLASS} or tests != {method}:
@@ -74,11 +100,12 @@ def evaluate(directory, api):
     steps = []
     for step, method in EXPECTED_STEPS:
         path = directory / f"{step}.txt"
+        text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+        missing_evidence, evidence = evidence_problem(step, text or "")
         problem = exit_problem(directory / f"{step}.exit") or (
-            "missing transcript" if not path.is_file() else step_problem(
-                path.read_text(encoding="utf-8", errors="replace"), method))
-        steps.append({"step": step, "test": f"{TEST_CLASS}#{method}", "outcome": "FAIL" if problem else "PASS",
-                      "problem": problem})
+            "missing transcript" if text is None else step_problem(text, method)) or missing_evidence
+        steps.append({"evidence": evidence, "step": step, "test": f"{TEST_CLASS}#{method}",
+                      "outcome": "FAIL" if problem else "PASS", "problem": problem})
     texts = [(directory / name).read_text(encoding="utf-8", errors="replace") if (directory / name).is_file() else ""
              for name in REINSTALL_FILES]
     reinstall = exit_problem(directory / REINSTALL_EXIT) or reinstall_problem(*texts)

@@ -49,6 +49,65 @@ class AccountCreationRegistryTest {
         )
     }
 
+    @Test fun `stored output never ends in a newline while earlier accepted forms stay readable`() {
+        val storage = object : AccountCreationRegistry.Store {
+            var value: String? = null
+            var commits = 0
+            override fun read() = value
+            override fun commit(value: String?) = true.also { commits++; this.value = value }
+        }
+        val registry = AccountCreationRegistry(storage)
+        val a = AccountCreationRegistry.Record("a", "i", AccountCreationRegistry.Phase.PREPARED, 1, "t")
+        val b = AccountCreationRegistry.Record("b", "j", AccountCreationRegistry.Phase.PREPARED, 2, "t")
+        // Exact stored form after every kind of mutation: newline separated, never newline terminated.
+        assertTrue(registry.prepare(b))
+        assertEquals("v1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.prepare(a))
+        assertEquals("v1\n74|61|69|PREPARED|1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.RECOVERY_REQUIRED)))
+        assertEquals("v1\n74|61|69|RECOVERY_REQUIRED|1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.clearOwned("t", "a", "i"))
+        assertEquals("v1\n74|62|6a|PREPARED|2", storage.value)
+        assertTrue(registry.clearOwned("t", "b", "j"))
+        assertEquals("v1", storage.value)
+        assertEquals(DecodeStatus.OK, registry.readResult().status)
+        assertEquals(emptyList<AccountCreationRegistry.Record>(), registry.records())
+
+        // The newline-terminated form written by earlier builds is still read identically,
+        storage.value = "v1\n"
+        assertEquals(emptyList<AccountCreationRegistry.Record>(), registry.readResult().records)
+        storage.value = "v1\n74|61|69|PREPARED|1\n74|62|6a|PREPARED|2\n"
+        assertEquals(DecodeStatus.OK, registry.readResult().status)
+        assertEquals(listOf(a, b), registry.records())
+        assertEquals("i", registry.get("t", "a")!!.creationId)
+        // and the next owned mutation of such a readable store keeps every record.
+        assertTrue(registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.CREATING)))
+        assertEquals("v1\n74|61|69|CREATING|1\n74|62|6a|PREPARED|2", storage.value)
+
+        // Whitespace persisted after a terminal newline stays rejected: nothing trims or skips it,
+        // and no mutator replaces the stored value.
+        listOf(
+            "v1\n    " to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1\n74|61|69|PREPARED|1\n    " to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1\n74|61|69|PREPARED|1\n\t" to DecodeStatus.INVALID_FIELD_COUNT,
+            "v1    " to DecodeStatus.INVALID_HEADER,
+            "v1\n74|61|69|PREPARED|1    " to DecodeStatus.INVALID_TIMESTAMP,
+        ).forEachIndexed { index, (damaged, expected) ->
+            storage.value = damaged
+            storage.commits = 0
+            val result = registry.readResult()
+            assertEquals("case $index", expected, result.status)
+            assertEquals("case $index", null, result.records)
+            assertEquals("case $index", null, registry.records())
+            assertEquals("case $index", null, registry.get("t", "a"))
+            assertFalse("case $index", registry.prepare(b.copy(accountName = "c")))
+            assertFalse("case $index", registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.CREATING)))
+            assertFalse("case $index", registry.clearOwned("t", "a", "i"))
+            assertEquals("case $index", 0, storage.commits)
+            assertTrue("case $index", storage.value == damaged)
+        }
+    }
+
     @Test fun `unexpected decode failures keep only a bounded kind`() {
         for (step in DecodeStatus.values()) {
             assertEquals(step, AccountCreationRegistry.failureStatus(NumberFormatException("secret"), step))
@@ -82,7 +141,7 @@ class AccountCreationRegistryTest {
         assertEquals(AccountCreationRegistry.DecodeStatus.OK, result.status)
         assertEquals(records.toSet(), result.records!!.toSet())
         records.forEach { assertTrue(registry.clearOwned(it.accountType, it.accountName, it.creationId)) }
-        assertEquals("v1\n", storage.value)
+        assertEquals("v1", storage.value)
         assertEquals(AccountCreationRegistry.DecodeStatus.OK, registry.readResult().status)
     }
 

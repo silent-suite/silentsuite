@@ -1,6 +1,8 @@
 package io.silentsuite.sync.ui.setup
 
 import android.content.Context
+import android.os.Bundle
+import androidx.test.platform.app.InstrumentationRegistry
 
 /**
  * Synthetic SharedPreferences controls for [RegistryProcessBoundaryRuntimeTest]. They live in their
@@ -12,7 +14,11 @@ object RegistryTransportControls {
     private const val MAX_REPORTED_SUFFIX = 16
 
     /** Same shape as the header-only registry value, stored through plain SharedPreferences. */
-    const val REGISTRY_TWIN = "header_newline"
+    const val REGISTRY_TWIN = "header_plain"
+
+    /** Distinct from every AndroidJUnitRunner per-test status code. */
+    private const val EVIDENCE_STATUS_CODE = 2
+    private const val EVIDENCE_KEY = "registryTransport"
 
     enum class Change { EXACT, TRAILING_WHITESPACE_APPENDED, MISSING, OTHER }
     enum class Suffix { NONE, SPACES_ONLY, OTHER_WHITESPACE }
@@ -23,8 +29,9 @@ object RegistryTransportControls {
     }
 
     private val controls = linkedMapOf(
-        "header_plain" to "v1",
-        REGISTRY_TWIN to "v1\n",
+        REGISTRY_TWIN to "v1",
+        // The form earlier builds stored; kept to keep showing what the boundary does to it.
+        "header_newline" to "v1\n",
         "row_plain" to "v1\n61|62|63|PREPARED|1",
         "row_newline" to "v1\n61|62|63|PREPARED|1\n",
         "inner_newlines" to "a\n\nb",
@@ -34,6 +41,15 @@ object RegistryTransportControls {
 
     /** Controls that do not end in a newline; these are the ones that must survive a fresh process. */
     val plainEndingNames: List<String> = controls.filterValues { !it.endsWith("\n") }.keys.toList()
+
+    /** Diagnostic only: these may come back padded, but never missing or otherwise altered. */
+    val newlineEndingNames: List<String> = controls.filterValues { it.endsWith("\n") }.keys.toList()
+
+    /** Publishes the evidence line in the instrumentation transcript whether or not the test passes. */
+    fun report(evidence: String) {
+        InstrumentationRegistry.getInstrumentation()
+            .sendStatus(EVIDENCE_STATUS_CODE, Bundle().apply { putString(EVIDENCE_KEY, evidence) })
+    }
 
     fun commit(context: Context): Boolean {
         val editor = prefs(context).edit()

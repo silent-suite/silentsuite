@@ -57,6 +57,7 @@ class RegistryProcessBoundaryRuntimeTest {
         val controls = RegistryTransportControls.observe(context)
         val registryChange = RegistryTransportControls.classify(EMPTY_REGISTRY, storedValue())
         val evidence = RegistryTransportControls.evidence(beforeLaunch.status, registryChange, controls)
+        RegistryTransportControls.report(evidence)
         // The experiment is only meaningful if every control came back and newline-free endings survived.
         assertTrue(
             "$evidence verdict=CONTROL_MISSING",
@@ -65,6 +66,14 @@ class RegistryProcessBoundaryRuntimeTest {
         assertTrue(
             "$evidence verdict=NEWLINE_FREE_ENDING_CHANGED",
             RegistryTransportControls.plainEndingNames.all { controls.getValue(it) == exact },
+        )
+        // Newline-terminated controls only document the boundary: padded is allowed, anything else is not.
+        assertTrue(
+            "$evidence verdict=NEWLINE_CONTROL_UNEXPECTED",
+            RegistryTransportControls.newlineEndingNames.all {
+                controls.getValue(it).change == RegistryTransportControls.Change.EXACT ||
+                    controls.getValue(it).change == RegistryTransportControls.Change.TRAILING_WHITESPACE_APPENDED
+            },
         )
         // The registry value and its identical plain control crossed the same boundary.
         assertEquals(
@@ -136,7 +145,7 @@ class RegistryProcessBoundaryRuntimeTest {
     }
 
     private companion object {
-        /** What the production encoder stores for a registry with no rows. */
-        const val EMPTY_REGISTRY = "v1\n"
+        /** What the production encoder stores for a registry with no rows: no terminal newline. */
+        const val EMPTY_REGISTRY = "v1"
     }
 }

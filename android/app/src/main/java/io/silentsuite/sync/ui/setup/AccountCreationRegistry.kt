@@ -79,12 +79,13 @@ class AccountCreationRegistry(private val store: Store) {
             null to failureStatus(error, step)
         }
     }
-    private fun encode(rows: Map<String, Record>): String = buildString {
-        append("v").append(VERSION).append('\n'); rows.values.sortedBy { key(it.accountType, it.accountName) }.forEach { r ->
-            append(escape(r.accountType)).append('|').append(escape(r.accountName)).append('|')
-                .append(escape(r.creationId)).append('|').append(r.phase.name).append('|').append(r.timestamp).append('\n')
-        }
-    }
+    // Newlines only separate lines; the value never ends in one. The platform preferences file pads a
+    // string that ends in a newline with indentation, which the next process start reads back as
+    // an extra line this decoder rejects. What the decoder accepts is unchanged.
+    private fun encode(rows: Map<String, Record>): String =
+        (listOf("v$VERSION") + rows.values.sortedBy { key(it.accountType, it.accountName) }.map { r ->
+            "${escape(r.accountType)}|${escape(r.accountName)}|${escape(r.creationId)}|${r.phase.name}|${r.timestamp}"
+        }).joinToString("\n")
     private fun escape(value: String) = value.toByteArray(Charsets.UTF_8).joinToString("") { "%02x".format(it.toInt() and 0xff) }
     private fun unescape(value: String): String {
         require(value.length % 2 == 0)
