@@ -135,11 +135,10 @@ const commands = {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     const apkPath = join(dir, binding.assets.apk.name)
     const local = await gh.downloadAsset(binding.assets.apk.id, apkPath)
-    const sidecar = hashFromChecksumText(await gh.getText(`/releases/assets/${binding.assets.sidecar.id}`))
-    const sums = hashFromChecksumText(await gh.getText(`/releases/assets/${binding.assets.sums.id}`), { fileName: binding.assets.apk.name })
-    verifyApkHashes({ binding, localSha256: local.sha256, localSize: local.size, sidecarSha256: sidecar, sumsSha256: sums })
+    const sidecar = hashFromChecksumText(await gh.getText(`/releases/assets/${binding.assets.sidecar.id}`), { fileName: binding.assets.apk.name, sidecar: true })
+    verifyApkHashes({ binding, localSha256: local.sha256, localSize: local.size, sidecarSha256: sidecar })
     output('apk_path', apkPath)
-    summary(`APK ${binding.assets.apk.name}: local sha256, GitHub digest, sidecar and SHA256SUMS.txt all agree (${local.sha256}, ${local.size} bytes)`)
+    summary(`APK ${binding.assets.apk.name}: local sha256, GitHub digest and Android sidecar all agree (${local.sha256}, ${local.size} bytes)`)
   },
 
   'verify-apksigner'() {
