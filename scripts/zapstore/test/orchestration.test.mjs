@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -252,6 +253,45 @@ test('collectFailures reports failures and missing evidence only, never successf
   const enumerateFailed = collectFailures({ candidates: [], plan: null, assessments: [], results: [], jobs: { enumerate: 'failure' } })
   assert.equal(enumerateFailed.length, 1)
   assert.equal(enumerateFailed[0].phase, 'enumerate')
+})
+
+test('fetch-apk verifies the Android sidecar and GitHub digest without relying on the Bridge manifest', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zapstore-checksums-'))
+  const bytes = Buffer.from('synthetic APK bytes for checksum transport regression')
+  const sha = createHash('sha256').update(bytes).digest('hex')
+  const name = 'silentsuite-android-v0.5.9-beta.apk'
+  const bindingPath = join(dir, 'binding.json')
+  writeFileSync(bindingPath, JSON.stringify({ assets: { apk: { id: 1, name, sha256: sha, size: bytes.length }, sidecar: { id: 2, name: 'silentsuite-android-v0.5.9-beta-installer.sha256' }, sums: { id: 3, name: 'SHA256SUMS.txt' } } }))
+  let sidecar = `${sha}  ${name}\n`
+  let apk = bytes
+  const requests = []
+  const server = createServer((request, response) => {
+    requests.push(request.url)
+    const id = request.url.split('/').at(-1)
+    if (id === '1') response.end(apk)
+    else if (id === '2') response.end(sidecar)
+    else if (id === '3') response.end(`${'b'.repeat(64)}  silentsuite-bridge-linux-arm64\n`)
+    else { response.writeHead(404); response.end() }
+  })
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise))
+  const invoke = () => runAsync('fetch-apk', ['--binding', bindingPath, '--out-dir', join(dir, 'apk')], { GITHUB_API_URL: `http://127.0.0.1:${server.address().port}` })
+  try {
+    const ok = await invoke()
+    assert.equal(ok.status, 0, ok.stderr)
+    assert.ok(!requests.some((url) => url.endsWith('/3')), 'Bridge manifest is not Android authority')
+    assert.deepEqual(readFileSync(join(dir, 'apk', name)), bytes)
+    for (const invalid of [`${'c'.repeat(64)}  ${name}\n`, `${sha}  other.apk\n`, `${sha}\n`, `${sidecar}${sidecar}`, `${sidecar}malformed checksum\n`]) {
+      sidecar = invalid
+      const refused = await invoke()
+      assert.notEqual(refused.status, 0, 'invalid or mismatched sidecar must fail')
+      assert.equal(refused.outputs, '', 'failed verification must not emit an APK path')
+    }
+    sidecar = `${sha}  ${name}\n`
+    apk = Buffer.from('corrupted artifact')
+    const corrupted = await invoke()
+    assert.notEqual(corrupted.status, 0)
+    assert.match(corrupted.stderr, /local bytes/)
+  } finally { await new Promise((resolvePromise) => server.close(resolvePromise)) }
 })
 
 function fakeGitHub() {

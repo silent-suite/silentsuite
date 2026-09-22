@@ -173,19 +173,20 @@ test('source build.gradle literals bind version name and code; interpolations ar
 
 test('asset binding refuses missing assets, ambiguous names and missing digests', () => {
   assert.throws(() => bindReleaseAssets(release({ assets: release().assets.filter((a) => !a.name.endsWith('.apk')) }), 'v0.5.6-beta'), /exactly one asset named silentsuite-android-v0.5.6-beta.apk, found 0/)
-  assert.throws(() => bindReleaseAssets(release({ assets: release().assets.filter((a) => a.name !== 'SHA256SUMS.txt') }), 'v0.5.6-beta'), /SHA256SUMS.txt/)
+  assert.ok(bindReleaseAssets(release({ assets: release().assets.filter((a) => a.name !== 'SHA256SUMS.txt') }), 'v0.5.6-beta'))
+  assert.throws(() => bindReleaseAssets(release({ assets: release().assets.filter((a) => !a.name.endsWith('-installer.sha256')) }), 'v0.5.6-beta'), /installer.sha256/)
   assert.throws(() => bindReleaseAssets(release({ assets: release().assets.map((a) => ({ ...a, digest: undefined })) }), 'v0.5.6-beta'), /no sha256 digest/)
   assert.equal(hashFromChecksumText(`${APK_SHA}  silentsuite-android-v0.5.6-beta.apk\n`), APK_SHA)
   assert.equal(hashFromChecksumText(`${'b'.repeat(64)}  other.aab\n${APK_SHA}  silentsuite-android-v0.5.6-beta.apk\n`, { fileName: 'silentsuite-android-v0.5.6-beta.apk' }), APK_SHA)
   assert.throws(() => hashFromChecksumText('nothing here'), /found 0/)
 })
 
-test('APK hash binding requires local bytes, GitHub digest, sidecar and manifest to agree', () => {
+test('APK hash binding requires local bytes, GitHub digest and Android sidecar to agree', () => {
   const binding = { assets: { apk: { sha256: APK_SHA, size: 26916361 } } }
-  assert.ok(verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: APK_SHA, sumsSha256: APK_SHA }))
-  assert.throws(() => verifyApkHashes({ binding, localSha256: 'c'.repeat(64), localSize: 26916361, sidecarSha256: APK_SHA, sumsSha256: APK_SHA }), /local bytes/)
-  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 1, sidecarSha256: APK_SHA, sumsSha256: APK_SHA }), /size/)
-  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: 'c'.repeat(64), sumsSha256: APK_SHA }), /sidecar/)
+  assert.ok(verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: APK_SHA }))
+  assert.throws(() => verifyApkHashes({ binding, localSha256: 'c'.repeat(64), localSize: 26916361, sidecarSha256: APK_SHA }), /local bytes/)
+  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 1, sidecarSha256: APK_SHA }), /size/)
+  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: 'c'.repeat(64) }), /sidecar/)
 })
 
 test('release enumeration paginates with a bound and fails instead of truncating', async () => {

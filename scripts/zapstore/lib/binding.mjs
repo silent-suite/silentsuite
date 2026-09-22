@@ -52,21 +52,18 @@ export async function revalidateBinding({ client, binding, verifyIdentity = veri
   for (const key of ['releaseId', 'tag', 'version', 'channel', 'sourceSha']) if (fresh[key] !== binding[key]) drift.push(key)
   for (const key of ['id', 'name', 'size', 'sha256']) if (fresh.assets.apk[key] !== binding.assets.apk[key]) drift.push(`assets.apk.${key}`)
   if (fresh.assets.sidecar.id !== binding.assets.sidecar.id) drift.push('assets.sidecar.id')
-  if (fresh.assets.sums.id !== binding.assets.sums.id) drift.push('assets.sums.id')
   if (drift.length) throw new Error(`release binding drifted before signing: ${drift.join(', ')}`)
   return fresh
 }
 
-// The three independent statements about the APK bytes must agree with the
-// locally computed hash: GitHub's digest, the -installer.sha256 sidecar and the
-// SHA256SUMS.txt manifest.
-export function verifyApkHashes({ binding, localSha256, localSize, sidecarSha256, sumsSha256 }) {
+// Local APK bytes must match GitHub's digest and the Android-specific sidecar.
+// SHA256SUMS.txt belongs to Bridge and is not Android checksum authority.
+export function verifyApkHashes({ binding, localSha256, localSize, sidecarSha256 }) {
   const expected = binding.assets.apk.sha256
   const problems = []
   if (localSha256 !== expected) problems.push('local bytes do not match the GitHub asset digest')
   if (localSize !== binding.assets.apk.size) problems.push('local size does not match the GitHub asset size')
   if (sidecarSha256 !== expected) problems.push('-installer.sha256 sidecar disagrees with the asset digest')
-  if (sumsSha256 !== expected) problems.push('SHA256SUMS.txt disagrees with the asset digest')
   if (problems.length) throw new Error(`APK hash binding failed: ${problems.join('; ')}`)
   return true
 }

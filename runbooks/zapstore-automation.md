@@ -106,7 +106,7 @@ evidence that signing occurred. Do not approve or retry merely to clear the issu
 | S2 | Revision binding | `admit` exports the revision; every job runs `checkout-guard`; the manifest records it | `cli.mjs` |
 | S3 | Activation switch | Repository variable `ZAPSTORE_AUTOMATION_ENABLED` must equal `enabled`; absent today | `admit` |
 | S4 | Eligibility | `vX.Y.Z` or `vX.Y.Z-beta`; drafts refused; GitHub `prerelease=true` allowed only with `-beta`; only the newest eligible tag may be published | `lib/eligibility.mjs` |
-| S5 | Exact binding | Release id, tag, dereferenced tag commit, APK asset id, GitHub digest, sidecar, `SHA256SUMS.txt` | `lib/github.mjs`, `lib/binding.mjs` |
+| S5 | Exact binding | Release id, tag, dereferenced tag commit, APK asset id, GitHub digest, Android `-installer.sha256` sidecar | `lib/github.mjs`, `lib/binding.mjs` |
 | S6 | Source admission | Trusted `scripts/verify-release-identity.sh` from the protected checkout with the real `GITHUB_REF` | `lib/identity.mjs` |
 | S7 | APK verification | Three digests, `apksigner verify --print-certs -v` with only the direct-release certificate, identity facts from official `zsp` offline output, `versionName`/`versionCode` literals from the tag's `build.gradle` | `lib/apksigner.mjs`, `lib/zsp.mjs`, `lib/source-metadata.mjs` |
 | S8 | Store metadata | Trusted template at the protected revision; media bytes hashed; six approved screenshots in order; copy byte-identical to `zapstore.yaml` | `release-template.json`, `lib/metadata.mjs` |
@@ -191,6 +191,15 @@ one `e` pointing at a matching APK. Legacy sets are never rewritten.
   review by the owner.
 
 ## 3. Regression and CI coverage
+
+Android checksum authority is the exact release's `-installer.sha256` sidecar,
+which must contain one well-formed line naming the bound APK. Its hash must
+equal both the GitHub asset digest and the locally computed APK hash; size and
+signing-certificate checks remain mandatory. `SHA256SUMS.txt` is the Bridge
+manifest and is neither required nor fetched for Android assessment/publication.
+Both jobs exercise the same `fetch-apk` command. The transport regression covers
+a Bridge-only manifest, wrong filenames/hashes, malformed or duplicate sidecar
+lines, and corrupt downloaded bytes.
 
 `pnpm run check:zapstore-automation` (pull requests, no secrets) runs:
 
