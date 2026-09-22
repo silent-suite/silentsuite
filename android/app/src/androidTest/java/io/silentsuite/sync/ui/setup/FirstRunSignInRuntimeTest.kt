@@ -96,6 +96,7 @@ class FirstRunSignInRuntimeTest {
         val monitor = instrumentation.addMonitor(
             "io.silentsuite.sync.ui.WebViewActivity", null, true,
         )
+        lateinit var dismissedDialog: androidx.appcompat.app.AlertDialog
         try {
             scenario.onActivity { activity ->
                 val password = activity.findViewById<TextView>(requiredId(activity, "login_password"))
@@ -114,14 +115,23 @@ class FirstRunSignInRuntimeTest {
                 assertTrue(message.contains("cannot reset a forgotten password"))
                 assertTrue(message.contains("password manager"))
                 assertTrue(message.contains("current password"))
+                dismissedDialog = dialog
                 dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+            }
+            // AlertDialog posts button dismissal to the main looper. Fragment transactions
+            // alone do not drain that message while this callback still owns the UI thread.
+            instrumentation.waitForIdleSync()
+            scenario.onActivity { activity ->
+                val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content)!!
                 fragment.childFragmentManager.executePendingTransactions()
-                assertFalse(dialog.isShowing)
+                assertFalse(dismissedDialog.isShowing)
+                assertTrue(fragment.childFragmentManager.findFragmentByTag("forgot-password-help") == null)
+                val password = activity.findViewById<TextView>(requiredId(activity, "login_password"))
                 assertEquals("help-dialog-test-password", password.text.toString())
                 password.text = ""
                 assertVisibleDestination(activity, "LoginCredentialsFragment")
                 assertEquals(1, activity.supportFragmentManager.backStackEntryCount)
-                action.performClick()
+                activity.findViewById<View>(requiredId(activity, "forgot_password")).performClick()
                 fragment.childFragmentManager.executePendingTransactions()
             }
             scenario.recreate()
