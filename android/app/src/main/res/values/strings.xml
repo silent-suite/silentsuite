@@ -383,6 +383,7 @@
     <string name="login_encryption_account_label">Account:</string>
     <string name="login_service_details_description">This is your login password, *not* your encryption password!</string>
     <string name="login_forgot_password">Forgot password?</string>
+    <string name="login_forgot_password_message">SilentSuite cannot reset a forgotten password or recover your encrypted data for you. Your password protects your encryption keys.\n\nCheck your password manager for a saved password. Changing your password in settings requires your current password.\n\nIf you still have access to your data on another device, keep that access and back up any data you can before signing out or removing the account.</string>
 
     <string name="login_wrong_username_or_password">Couldn\'t authenticate (probably wrong email or password).\nHave you registered?</string>
     <string name="login_connection_error">Couldn\'t connect. Check your connection and try again.</string>
