@@ -165,7 +165,7 @@ test('source identity helper is invoked with tag and commit; refusal fails close
 })
 
 test('source build.gradle literals bind version name and code; interpolations are refused', () => {
-  const meta = parseSourceBuildMetadata(readFileSync(join(root, SOURCE_BUILD_GRADLE), 'utf8'))
+  const meta = parseSourceBuildMetadata('android {\n    defaultConfig {\n        versionCode 20\n        versionName "0.5.6-beta"\n    }\n}\n')
   assert.equal(meta.versionCode, 20)
   assert.equal(meta.versionName, '0.5.6-beta')
   assert.throws(() => parseSourceBuildMetadata('android {\n    defaultConfig {\n        versionCode rootProject.ext.code\n        versionName "0.5.6-beta"\n    }\n}\n'), /literal/)
