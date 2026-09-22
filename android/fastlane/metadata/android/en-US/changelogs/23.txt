@@ -1,0 +1,1 @@
+New writes of the local registry SilentSuite reads at startup now use an encoding that reads back reliably after the app restarts. If that registry cannot be read, the diagnostic report now includes content-free details of the decoding failure, with none of your data. Reports are never sent automatically. Registries that are already unreadable are left unchanged.

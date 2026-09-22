@@ -1,6 +1,6 @@
 {
   "name": "@silentsuite/core",
-  "version": "0.5.8-beta",
+  "version": "0.5.9-beta",
   "private": true,
   "sideEffects": false,
   "main": "./src/index.ts",
