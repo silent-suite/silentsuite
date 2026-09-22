@@ -21,9 +21,7 @@ import androidx.fragment.app.Fragment
 
 import androidx.core.view.ViewCompat
 
-import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
-import io.silentsuite.sync.ui.WebViewActivity
 import io.silentsuite.sync.ui.applySystemBarInsetsAsPadding
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
@@ -96,7 +94,12 @@ class LoginCredentialsFragment : Fragment() {
         }
 
         val forgotPassword = v.findViewById<View>(R.id.forgot_password) as TextView
-        forgotPassword.setOnClickListener { WebViewActivity.openUrl(requireContext(), Constants.forgotPassword) }
+        forgotPassword.setOnClickListener {
+            if (!childFragmentManager.isStateSaved &&
+                childFragmentManager.findFragmentByTag(ForgotPasswordDialogFragment.TAG) == null) {
+                ForgotPasswordDialogFragment().showNow(childFragmentManager, ForgotPasswordDialogFragment.TAG)
+            }
+        }
 
         val advancedLayout = v.findViewById<View>(R.id.advanced_layout) as ExpandableLayout
         if (advancedExpanded) {

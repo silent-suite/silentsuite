@@ -69,6 +69,19 @@ class LoginMaterial3ContractTest {
     }
 
     @Test
+    fun forgotPasswordHelpDoesNotNavigateToAnUnsupportedResetPage() {
+        val dialog = File("src/main/java/io/silentsuite/sync/ui/setup/ForgotPasswordDialogFragment.kt").readText()
+        val constants = File("src/main/java/io/silentsuite/sync/Constants.kt").readText()
+        assertFalse(credentialsFragment.contains("WebViewActivity"))
+        assertFalse(credentialsFragment.contains("Constants.forgotPassword"))
+        assertFalse(constants.contains("forgot-password"))
+        assertTrue(credentialsFragment.contains("ForgotPasswordDialogFragment().showNow(childFragmentManager"))
+        assertTrue(dialog.contains("DialogFragment()"))
+        assertTrue(dialog.contains("R.string.login_forgot_password_message"))
+        assertTrue(strings.contains("cannot reset a forgotten password"))
+    }
+
+    @Test
     fun stableCredentialIdsAndChoiceAccessibilityContractsRemain() {
         listOf(
             "user_name", "url_password", "login_password", "forgot_password",

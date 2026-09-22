@@ -58,6 +58,7 @@ class FirstRunSignInRuntimeTest {
                     assertEquals("Sign in", activity.title.toString())
                     assertEquals(1, activity.supportFragmentManager.backStackEntryCount)
                 }
+                assertForgotPasswordHelpStaysInApp(scenario)
                 assertImeKeepsPrimaryActionVisible(scenario)
                 scenario.onActivity { activity ->
                     val leaseBeforeMalformedRestore = requireNotNull(activity.setupLease())
@@ -87,6 +88,55 @@ class FirstRunSignInRuntimeTest {
             passed = true
         } finally {
             finishScenario("choice-credentials-back-up", passed)
+        }
+    }
+
+    private fun assertForgotPasswordHelpStaysInApp(scenario: ActivityScenario<LoginActivity>) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val monitor = instrumentation.addMonitor(
+            "io.silentsuite.sync.ui.WebViewActivity", null, true,
+        )
+        try {
+            scenario.onActivity { activity ->
+                val password = activity.findViewById<TextView>(requiredId(activity, "login_password"))
+                password.text = "help-dialog-test-password"
+                val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content)!!
+                val action = activity.findViewById<View>(requiredId(activity, "forgot_password"))
+                action.performClick()
+                action.performClick()
+                fragment.childFragmentManager.executePendingTransactions()
+                assertEquals(1, fragment.childFragmentManager.fragments.filterIsInstance<androidx.fragment.app.DialogFragment>().size)
+                val help = fragment.childFragmentManager.findFragmentByTag("forgot-password-help")
+                    as androidx.fragment.app.DialogFragment
+                val dialog = help.requireDialog() as androidx.appcompat.app.AlertDialog
+                assertTrue(dialog.isShowing)
+                val message = dialog.findViewById<TextView>(android.R.id.message)!!.text.toString()
+                assertTrue(message.contains("cannot reset a forgotten password"))
+                assertTrue(message.contains("password manager"))
+                assertTrue(message.contains("current password"))
+                dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+                fragment.childFragmentManager.executePendingTransactions()
+                assertFalse(dialog.isShowing)
+                assertEquals("help-dialog-test-password", password.text.toString())
+                password.text = ""
+                assertVisibleDestination(activity, "LoginCredentialsFragment")
+                assertEquals(1, activity.supportFragmentManager.backStackEntryCount)
+                action.performClick()
+                fragment.childFragmentManager.executePendingTransactions()
+            }
+            scenario.recreate()
+            scenario.onActivity { activity ->
+                assertVisibleDestination(activity, "LoginCredentialsFragment")
+                val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content)!!
+                val help = fragment.childFragmentManager.findFragmentByTag("forgot-password-help")
+                    as androidx.fragment.app.DialogFragment
+                assertTrue(help.requireDialog().isShowing)
+                help.dismissNow()
+                assertEquals(1, activity.supportFragmentManager.backStackEntryCount)
+            }
+            assertEquals("Password help must not open a web page", 0, monitor.hits)
+        } finally {
+            instrumentation.removeMonitor(monitor)
         }
     }
 

@@ -38,7 +38,6 @@ object Constants {
     val dashboard: Uri = webUri.buildUpon().appendEncodedPath("dashboard/").build()
     val faqUri: Uri = docsUri.buildUpon().appendEncodedPath("faq/").build()
     val helpUri: Uri = docsUri
-    val forgotPassword: Uri = webAppUri.buildUpon().appendEncodedPath("forgot-password").build()
 
     // TODO(Phase2): Add Sentry crash reporting URL
     const val crashReportingUrl = ""
