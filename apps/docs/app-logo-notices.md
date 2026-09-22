@@ -20,6 +20,16 @@ The files are served locally so loading the documentation does not contact third
 
 No logo artwork was recolored, redrawn, or combined with the SilentSuite mark. Files were copied at their source dimensions and are resized only by browser layout rules, except for the Orion Store bitmap transformation recorded above.
 
+## Android Calendar Icons
+
+These official icons were retrieved on 2026-09-21 and copied without transformations. They identify the calendar apps only; they do not imply endorsement. Canonical destinations are the corresponding upstream repositories.
+
+| Asset | Owner / creator | Immutable source | Asset terms |
+|---|---|---|---|
+| Etar | Etar contributors | [`metadata/en-US/images/icon.png`](https://github.com/Etar-Group/Etar-Calendar/blob/60b20da5eeb4418d55133f05affbbe75621aa9c9/metadata/en-US/images/icon.png) | Repository [GPL-3.0 license](https://github.com/Etar-Group/Etar-Calendar/blob/60b20da5eeb4418d55133f05affbbe75621aa9c9/LICENSE); Etar mark; no separate trademark permission asserted |
+| Fossify Calendar | Fossify contributors | [`fastlane/metadata/android/en-US/images/icon.png`](https://github.com/FossifyOrg/Calendar/blob/4e7dbf1fb926fc04b32fc81bf4892aaf25f60c78/fastlane/metadata/android/en-US/images/icon.png) | Repository [GPL-3.0 license](https://github.com/FossifyOrg/Calendar/blob/4e7dbf1fb926fc04b32fc81bf4892aaf25f60c78/LICENSE); Fossify mark; no separate trademark permission asserted |
+| KashCal | onekash labs | [`images/kashcal-app.png`](https://github.com/KashCal/KashCal/blob/0baf1b3a5955cde2d378a71693ecd85744b32687/images/kashcal-app.png) | The [licensing notice](https://github.com/KashCal/KashCal/blob/0baf1b3a5955cde2d378a71693ecd85744b32687/LICENSING.md) reserves the name and icon separately from the Apache-2.0 code license. Reproduced for identification only; excluded from SilentSuite's license grant. No upstream trademark permission asserted. |
+
 ## Integrity Inventory
 
 The original app-directory files were retrieved or verified against their listed sources on 2026-08-01. The Orion Store icon was retrieved, transformed, and verified on 2026-08-09.
@@ -36,4 +46,7 @@ d67b8bb4bb8d7afe8e71e066112452d5d681ea7991fa1ec7c37df962246b2c31  outlook.svg
 85411d976f96746405ff810c695c574bef835d9d8edf6b3f2f964ffdf946d553  tasks-org.svg
 c64b09547bec63b6742e3810b0df8a23210f33e218345a430c9722822b272157  thunderbird.png
 69b7fc5c13b932e88e8309edf838ce1b835826cebf1bd0559543043b9d315fcd  orion.png
+22a3e958427b2137a36b934797190bb2ac42c6c9716bb07a0a9146f80d999394  etar.png
+e863058d9a3b5e4730c5abbc9dbfc1f0c9e5884db22623f29d433baa0248db8f  fossify-calendar.png
+8cc2c6cd1e4a794a2dda666afee1b78662359d1c4e07b068a4764666b4bdc8bf  kashcal.png
 ```
