@@ -70,6 +70,19 @@ CLI_CASES = [
         },
         id="fresh-install-no-env-no-pinning",
     ),
+    pytest.param(
+        {"SILENTSUITE_SERVER_HOSTS": "127.0.0.1:45123,0.0.0.0:45124", "SILENTSUITE_ALLOW_REMOTE": "1"},
+        {
+            "exit": 0,
+            "network": {"serverHosts": "127.0.0.1:45123,0.0.0.0:45124", "allowRemote": True},
+            "address": "127.0.0.1",
+            "port": 37358,
+            "radicale_hosts": [["127.0.0.1", 45123], ["0.0.0.0", 45124]],
+            "dashboard": True,
+            "web": "silentsuite_bridge.web",
+        },
+        id="mixed-loopback-wildcard-with-permission",
+    ),
 ]
 
 # Base-compatible probe: no reference to helpers introduced by the fix.

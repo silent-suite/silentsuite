@@ -60,6 +60,10 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
      * STARTED and add a second drain to every ordinary launch before the onResume drain.
      */
     val bootstrapRunning = MutableLiveData<Boolean>()
+    /** Retained result of the latest explicit startup retry, rendered in the status live region. */
+    enum class StartupRetryFeedback { NONE, FAILED, NOT_RUN }
+    var startupRetryFeedback = StartupRetryFeedback.NONE
+        private set
     val recoveryRemoval = MutableLiveData<RecoveryRemovalCoordinator.State>()
     private var initializedAccount: Account? = null
     private var started = false
@@ -102,26 +106,44 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
 
     /** Explicit, single-flight startup retry retained across Activity recreation. */
     fun retryBootstrap(account: Account, creationId: String) {
-        if (bootstrapRunning.value == true) return
+        if (bootstrapRunning.value == true || PostLoginStartupChecks.snapshot().retryInFlight) return
         val context = getApplication<Application>().applicationContext
         val manager = AccountManager.get(context)
-        if (ExactAccountRouting.validate(account, creationId, App.accountType, manager) == null) return
+        val exact = try {
+            ExactAccountRouting.validate(account, creationId, App.accountType, manager) != null
+        } catch (_: RuntimeException) {
+            null
+        }
+        if (exact != true) {
+            startupRetryFeedback =
+                if (exact == null) StartupRetryFeedback.FAILED else StartupRetryFeedback.NOT_RUN
+            bootstrapRunning.value = false
+            return
+        }
+        startupRetryFeedback = StartupRetryFeedback.NONE
         bootstrapRunning.value = true
         viewModelScope.launch {
             try {
-                val succeeded = withContext(Dispatchers.IO) {
-                    if (ExactAccountRouting.validate(account, creationId, App.accountType, manager) == null) {
-                        false
-                    } else {
-                        PostLoginSetupMigration.bootstrap(context)
+                // The process owner serializes runs and publishes App.postLoginBootstrapSucceeded
+                // before returning, so cancelling this scope can neither discard nor overlap a run.
+                val result = withContext(Dispatchers.IO) {
+                    PostLoginStartupChecks.retry(context) {
+                        ExactAccountRouting.validate(account, creationId, App.accountType, manager) != null
                     }
                 }
-                App.postLoginBootstrapSucceeded = succeeded
+                startupRetryFeedback = when (result) {
+                    is PostLoginStartupChecks.RetryResult.Completed ->
+                        if (result.outcome.succeeded) StartupRetryFeedback.NONE else StartupRetryFeedback.FAILED
+                    PostLoginStartupChecks.RetryResult.AccountChanged -> StartupRetryFeedback.NOT_RUN
+                    // Another screen's run is reported through PostLoginStartupChecks.retryStateChanges.
+                    PostLoginStartupChecks.RetryResult.AlreadyRunning -> startupRetryFeedback
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
                 // Startup diagnostics must not expose account or session exception details.
                 App.postLoginBootstrapSucceeded = false
+                startupRetryFeedback = StartupRetryFeedback.FAILED
             } finally {
                 bootstrapRunning.value = false
             }

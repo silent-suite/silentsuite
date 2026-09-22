@@ -40,7 +40,7 @@ SilentSuite encrypts calendar events, contacts, tasks, and notes on your device 
 
 | Surface | What works today |
 |---|---|
-| **Web** | Calendar, contact, task, and Markdown note management in the hosted web app |
+| **Web** | Calendar, contact, and task management, plus experimental Markdown notes, in the hosted web app |
 | **Android** | Sync through Android's calendar, contacts, and task providers |
 | **Desktop** | Local CalDAV/CardDAV Bridge for compatible calendar and address-book apps |
 | **Self-hosting** | Open-source server deployment on infrastructure you control |
@@ -85,7 +85,7 @@ See the [latest public beta release](https://github.com/silent-suite/silentsuite
 |---|---|
 | **Available now** | Hosted web app, self-hosting, Google Play, Obtainium, Zapstore, signed Android APK, desktop Bridge binaries, import/export, and GitHub Releases |
 | **In progress** | Official F-Droid inclusion, broader Android testing, and more DAV compatibility reports |
-| **Not in this beta** | Native iOS app, push notifications, shared or multiple collections, first-class encrypted notes, and OAuth-based Google/iCloud import |
+| **Not in this beta** | Native iOS app, push notifications, shared or multiple collections, encrypted notes outside the web app (Android and Bridge), and OAuth-based Google/iCloud import |
 
 The source is public for inspection, but SilentSuite has not yet completed an independent third-party security audit. See the [security page](https://silentsuite.io/security) for the threat model, limitations, and disclosure route.
 
@@ -131,6 +131,30 @@ Useful contributions include:
 Browse the open [good first issues](https://github.com/silent-suite/silentsuite/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22), read the [contributing guide](./docs/contributing/), or open a [GitHub issue](https://github.com/silent-suite/silentsuite/issues).
 
 Do not include passwords, recovery material, private calendar/contact data, or other secrets in reports. Send security disclosures to <info@silentsuite.io> rather than opening a public issue.
+
+### Contributors
+
+Thanks to everyone helping build SilentSuite, from code and translations to testing and documentation.
+
+<a href="https://github.com/silent-suite/silentsuite/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=silent-suite/silentsuite" alt="GitHub contributors to SilentSuite" />
+</a>
+
+[Meet the code contributors](https://github.com/silent-suite/silentsuite/graphs/contributors) · [Find a way to contribute](./docs/contributing/)
+
+### Stargazers
+
+If SilentSuite is useful to you, a star helps others discover the project.
+
+<a href="https://www.star-history.com/#silent-suite/silentsuite&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&amp;type=Date&amp;theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=silent-suite/silentsuite&amp;type=Date" />
+    <img src="https://api.star-history.com/svg?repos=silent-suite/silentsuite&amp;type=Date" alt="SilentSuite GitHub stars over time" width="100%" />
+  </picture>
+</a>
+
+[See everyone who starred SilentSuite](https://github.com/silent-suite/silentsuite/stargazers)
 
 ## Documentation
 

@@ -379,7 +379,12 @@ def test_frozen_baseline_reader_and_matrix_regressions_are_present():
     assert "incomplete = incomplete || contacts" in frozen
     assert "persistFaults" in (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/SyncStatusStore.kt").read_text(encoding="utf-8")
     for name in ("failed request is repaired", "background success and failure", "contacts skipped children",
-                  "frozen v1 reader", "confirmed child removal snapshots", "excludes every prohibited"):
+                  "frozen v1 reader", "confirmed child removal snapshots", "excludes every prohibited",
+                  "lost terminal stays fail closed through a lifecycle only generation until a real terminal commit",
+                  "contacts lost terminal after prior success never shows that success while skipped generations follow",
+                  "in process only lost terminal stays fail closed until a real terminal commit",
+                  "absent v2 with persisted v1 sentinel still fails closed",
+                  "failed clear stays fail closed across a later lifecycle write"):
         assert name in tests
 
 
@@ -501,7 +506,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(canonical) == 86
+    assert len(canonical) == 88
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
@@ -513,8 +518,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
         for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes")
     }
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 84, 86)
-    assert tuple(len(api36[key]) for key in api36) == (27, 17, 42)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 86, 88)
+    assert tuple(len(api36[key]) for key in api36) == (27, 19, 42)
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())
@@ -575,8 +580,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':85,'35:all':86,'36:account-dashboard':27,'36:first-run-setup':17,'36:status-routes':42}" in assertion
-    assert '"21:remaining": 84' in script
+    assert "expected_sizes={'21:mixed':1,'21:remaining':87,'35:all':88,'36:account-dashboard':27,'36:first-run-setup':19,'36:status-routes':42}" in assertion
+    assert '"21:remaining": 86' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper
@@ -632,6 +637,18 @@ def test_dashboard_text_polling_is_bounded_without_waiting_for_global_idle():
     assert "System.nanoTime()" in helper
     assert "repeat(200)" not in helper
     assert "SystemClock.sleep(50)" in helper
+
+
+def test_dashboard_install_task_app_routes_to_android_apps_docs():
+    # Source-routing contract only; runtime intent behaviour is not exercised here.
+    activity = ACTIVITY.read_text(encoding="utf-8")
+
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> WebViewActivity.openUrl(this, Constants.androidAppsDocsUri)" in activity
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> installPackage(" not in activity
+    assert "AccountDashboardAction.INSTALL_TASK_APP -> R.string.dashboard_install_task_app" in activity
+    assert "installPackage(tasksOrgPackage)" in activity
+    assert "installPackage(openTasksPackage)" in activity
+    assert "fun installPackage(packagename: String)" in activity
 
 
 def test_api21_lifecycle_observer_avoids_blocking_activity_polling():

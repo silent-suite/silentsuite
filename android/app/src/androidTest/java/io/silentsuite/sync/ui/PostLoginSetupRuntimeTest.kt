@@ -17,6 +17,7 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
 import io.silentsuite.sync.syncadapter.syncRequestId
@@ -27,6 +28,11 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry
 import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
+import io.silentsuite.sync.ui.setup.PostLoginStartupChecks
+import io.silentsuite.sync.ui.setup.PostLoginStartupOutcome
+import io.silentsuite.sync.ui.setup.PostLoginSetupMigration
+import io.silentsuite.sync.ui.setup.StartupDiagnosticReport
+import io.silentsuite.sync.ui.setup.StartupDiagnosticReportDialog
 import io.silentsuite.sync.utils.AndroidCompat
 import at.bitfire.ical4android.TaskProvider
 import org.junit.Assert.assertEquals
@@ -791,6 +797,386 @@ class PostLoginSetupRuntimeTest {
             requestSyncDispatchOverride = null
             AndroidCompat.removeAccount(manager, target)
             AndroidCompat.removeAccount(manager, sibling)
+        }
+    }
+
+    @Test fun startupFailureRetryFeedbackAndDiagnosticReportStayExactAcrossRecreation() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val manager = AccountManager.get(context)
+        val target = Account("diagnostic-${System.nanoTime()}@example.invalid", App.accountType)
+        val sibling = Account("diagnostic-sibling-${System.nanoTime()}@example.invalid", App.accountType)
+        val targetId = "diagnostic-target-generation"
+        val siblingId = "diagnostic-sibling-generation"
+        check(manager.addAccountExplicitly(target, null, null)); check(manager.addAccountExplicitly(sibling, null, null))
+        AccountSettings.setUserData(manager, target, URI("https://diagnostic.example.invalid/"), target.name)
+        AccountSettings.setUserData(manager, sibling, URI("https://diagnostic.example.invalid/"), sibling.name)
+        check(AccountSettings.writeVerified(manager, target, AccountSettings.KEY_CREATION_ID, targetId))
+        check(AccountSettings.writeVerified(manager, sibling, AccountSettings.KEY_CREATION_ID, siblingId))
+        check(AccountSettings.writeSetupState(manager, target, PostLoginSetupState.COMPLETE))
+        check(AccountSettings.writeSetupState(manager, sibling, PostLoginSetupState.COMPLETE))
+        val registryPreferences = context.getSharedPreferences(
+            "account_creation_registry", android.content.Context.MODE_PRIVATE,
+        )
+        val previousRegistry = registryPreferences.getString("rows", null)
+        fun restoreRegistry() {
+            val editor = registryPreferences.edit()
+            if (previousRegistry == null) editor.remove("rows") else editor.putString("rows", previousRegistry)
+            check(editor.commit())
+        }
+        // Hostile unreadable ownership blob carrying identity-like content that must never leak.
+        val hostileRegistry = "invalid-registry|${target.name}|$targetId|https://diagnostic.example.invalid/"
+        val forbidden = listOf(target.name, sibling.name, targetId, siblingId, hostileRegistry, "example.invalid", "invalid-registry")
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        val retryEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseRetry = java.util.concurrent.CountDownLatch(1)
+        val sharedIntents = mutableListOf<android.content.Intent>()
+        var dashboardMonitor: android.app.Instrumentation.ActivityMonitor? = null
+        try {
+            check(registryPreferences.edit().putString("rows", hostileRegistry).commit())
+            PostLoginStartupChecks.resetForTest()
+            org.junit.Assert.assertFalse(PostLoginStartupChecks.runAtLaunch(context))
+            org.junit.Assert.assertFalse(App.postLoginBootstrapSucceeded)
+            assertEquals(
+                PostLoginStartupOutcome(PostLoginStartupOutcome.Phase.REGISTRY_READ, PostLoginStartupOutcome.Reason.REGISTRY_UNREADABLE,
+                    registryDecode = io.silentsuite.sync.ui.setup.AccountCreationRegistry.DecodeStatus.INVALID_HEADER),
+                PostLoginStartupChecks.snapshot().outcome,
+            )
+            assertEquals(PostLoginStartupChecks.snapshot().outcome, PostLoginStartupChecks.snapshot().launchOutcome)
+            dashboardMonitor = instrumentation.addMonitor(AccountActivity::class.java.name, null, true)
+            ActivityScenario.launch<PostLoginSetupActivity>(
+                PostLoginSetupActivity.newIntent(context, target, targetId),
+            ).use { scenario ->
+                scenario.onActivity { activity ->
+                    val retry = activity.findViewById<android.widget.Button>(R.id.setup_retry_inventory)
+                    val report = activity.findViewById<android.widget.Button>(R.id.setup_view_diagnostic_report)
+                    val status = activity.findViewById<android.widget.TextView>(R.id.setup_status)
+                    assertTrue(retry.isShown)
+                    assertTrue("Retry must be enabled before any tap", retry.isEnabled)
+                    assertTrue(report.isShown); assertTrue(report.isEnabled)
+                    org.junit.Assert.assertFalse(status.isShown)
+                    assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, status.accessibilityLiveRegion)
+                }
+                PostLoginStartupChecks.beforeRetryBootstrapForTest = {
+                    retryEntered.countDown()
+                    check(releaseRetry.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                }
+                scenario.onActivity { activity ->
+                    val retry = activity.findViewById<android.widget.Button>(R.id.setup_retry_inventory)
+                    retry.performClick(); retry.performClick()
+                }
+                check(retryEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                scenario.recreate()
+                scenario.onActivity { activity ->
+                    val retry = activity.findViewById<android.widget.Button>(R.id.setup_retry_inventory)
+                    val status = activity.findViewById<android.widget.TextView>(R.id.setup_status)
+                    org.junit.Assert.assertFalse(retry.isEnabled)
+                    assertTrue(status.isShown)
+                    assertEquals(activity.getString(R.string.post_login_bootstrap_retry_running), status.text.toString())
+                    // A duplicate tap after recreation must not start an overlapping bootstrap.
+                    retry.performClick()
+                    val report = activity.findViewById<android.widget.Button>(R.id.setup_view_diagnostic_report)
+                    assertTrue(report.isEnabled)
+                    report.performClick()
+                }
+                instrumentation.waitForIdleSync()
+                val inFlightReport = reportText(scenario)
+                assertTrue(inFlightReport.contains("retry_in_flight: yes\n"))
+                assertReportAllowlisted(inFlightReport, forbidden)
+                releaseRetry.countDown()
+                val settleDeadline = android.os.SystemClock.uptimeMillis() + 5_000
+                var settled = false
+                while (!settled && android.os.SystemClock.uptimeMillis() < settleDeadline) {
+                    scenario.onActivity { settled = it.findViewById<android.widget.Button>(R.id.setup_retry_inventory).isEnabled }
+                    if (!settled) android.os.SystemClock.sleep(25)
+                }
+                assertTrue("Failed startup retry did not settle", settled)
+                PostLoginStartupChecks.beforeRetryBootstrapForTest = null
+                val failed = PostLoginStartupChecks.snapshot()
+                assertEquals(1, failed.retryAttempts)
+                assertEquals(PostLoginStartupOutcome.Source.RETRY, failed.source)
+                assertEquals(PostLoginStartupOutcome.Reason.REGISTRY_UNREADABLE, failed.outcome?.reason)
+                org.junit.Assert.assertFalse(App.postLoginBootstrapSucceeded)
+                // The open preview keeps its frozen in-flight snapshot.
+                assertEquals(inFlightReport, reportText(scenario))
+                scenario.onActivity { activity ->
+                    val status = activity.findViewById<android.widget.TextView>(R.id.setup_status)
+                    assertTrue(status.isShown)
+                    assertEquals(activity.getString(R.string.post_login_bootstrap_retry_failed), status.text.toString())
+                    reportFragment(activity).dismissNow()
+                    activity.findViewById<android.widget.Button>(R.id.setup_view_diagnostic_report).performClick()
+                }
+                // Fail closed: unreadable ownership is never erased, quarantined or bypassed.
+                assertEquals(hostileRegistry, registryPreferences.getString("rows", null))
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, target, true))
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, sibling, true))
+                assertEquals(targetId, manager.getUserData(target, AccountSettings.KEY_CREATION_ID))
+                assertEquals(siblingId, manager.getUserData(sibling, AccountSettings.KEY_CREATION_ID))
+                assertEquals(0, requireNotNull(dashboardMonitor).hits)
+
+                instrumentation.waitForIdleSync()
+                val settledReport = reportText(scenario)
+                assertReportAllowlisted(settledReport, forbidden)
+                listOf(
+                    "schema_version: 3",
+                    "startup_outcome: FAILED", "startup_phase: REGISTRY_READ", "startup_reason: REGISTRY_UNREADABLE",
+                    "exception_category: NONE", "last_check: RETRY", "retry_attempts_this_process: 1",
+                    "retry_in_flight: no",
+                    // The Retry and the earlier launch check each keep their own captured decode step.
+                    "registry_decode: INVALID_HEADER", "launch_outcome: FAILED", "launch_phase: REGISTRY_READ",
+                    "launch_reason: REGISTRY_UNREADABLE", "launch_exception_category: NONE",
+                    "launch_registry_decode: INVALID_HEADER",
+                    // The unreadable registry fails before any row is classified or session parsed.
+                    "rows_classified: 0", "session_parses: 0",
+                ).forEach { assertTrue("Missing report line $it", settledReport.contains("$it\n")) }
+                assertRecordedBucket(settledReport)
+                assertRecordedBucket(inFlightReport)
+
+                StartupDiagnosticReportDialog.shareStarterForTest = { sharedIntents += it }
+                scenario.onActivity { activity ->
+                    val dialog = reportDialog(activity)
+                    dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+                    dialog.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).performClick()
+                    assertTrue(dialog.isShowing)
+                    val clipboard = activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    assertEquals(settledReport, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+                    assertEquals(
+                        activity.getString(R.string.startup_report_copied),
+                        requireNotNull(dialog.findViewById<android.widget.TextView>(R.id.startup_report_feedback)).text.toString(),
+                    )
+                }
+                val chooser = sharedIntents.single()
+                assertEquals(android.content.Intent.ACTION_CHOOSER, chooser.action)
+                val send = requireNotNull(chooser.getParcelableExtra<android.content.Intent>(android.content.Intent.EXTRA_INTENT))
+                assertEquals(android.content.Intent.ACTION_SEND, send.action)
+                assertEquals("text/plain", send.type)
+                assertEquals(settledReport, send.getStringExtra(android.content.Intent.EXTRA_TEXT))
+                org.junit.Assert.assertFalse(send.hasExtra(android.content.Intent.EXTRA_STREAM))
+
+                StartupDiagnosticReportDialog.shareStarterForTest = { throw android.content.ActivityNotFoundException() }
+                scenario.onActivity { activity ->
+                    val dialog = reportDialog(activity)
+                    dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+                    assertTrue(dialog.isShowing)
+                    assertEquals(
+                        activity.getString(R.string.startup_report_share_unavailable),
+                        requireNotNull(dialog.findViewById<android.widget.TextView>(R.id.startup_report_feedback)).text.toString(),
+                    )
+                }
+                scenario.recreate()
+                instrumentation.waitForIdleSync()
+                assertEquals(settledReport, reportText(scenario))
+                assertEquals(1, sharedIntents.size)
+
+                // Removing only the injected fault lets the same retry run the real bootstrap
+                // and route to the exact dashboard without resetting setup.
+                scenario.onActivity { reportFragment(it).dismissNow() }
+                restoreRegistry()
+                scenario.onActivity { it.findViewById<android.widget.Button>(R.id.setup_retry_inventory).performClick() }
+                val recoveryDeadline = android.os.SystemClock.uptimeMillis() + 5_000
+                while (requireNotNull(dashboardMonitor).hits == 0 && android.os.SystemClock.uptimeMillis() < recoveryDeadline) {
+                    android.os.SystemClock.sleep(25)
+                }
+                assertEquals(1, requireNotNull(dashboardMonitor).hits)
+                assertTrue(App.postLoginBootstrapSucceeded)
+                val recovered = PostLoginStartupChecks.snapshot()
+                assertEquals(PostLoginStartupOutcome.SUCCEEDED, recovered.outcome)
+                assertEquals(PostLoginStartupOutcome.Source.RETRY, recovered.source)
+                assertEquals(2, recovered.retryAttempts)
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, target, true))
+                assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, sibling, true))
+                assertEquals(targetId, manager.getUserData(target, AccountSettings.KEY_CREATION_ID))
+                assertEquals(siblingId, manager.getUserData(sibling, AccountSettings.KEY_CREATION_ID))
+            }
+        } finally {
+            releaseRetry.countDown()
+            PostLoginStartupChecks.beforeRetryBootstrapForTest = null
+            StartupDiagnosticReportDialog.shareStarterForTest = null
+            dashboardMonitor?.let(instrumentation::removeMonitor)
+            restoreRegistry()
+            App.postLoginBootstrapSucceeded = previousBootstrap
+            PostLoginStartupChecks.resetForTest()
+            AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling)
+        }
+    }
+
+    /**
+     * Synthetic existing-install upgrade shape only (no real identity, server or session). This is
+     * not timing evidence: an unparsable session fails fast, so no duration is asserted.
+     */
+    @Test fun existingInstallFixtureBootstrapsAndPreservesOwnershipGates() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val manager = AccountManager.get(context)
+        val nonce = System.nanoTime()
+        val username = "existing-install-$nonce@example.invalid"
+        val uri = "https://existing-install.example.invalid/"
+        val session = "synthetic-unparsable-session-$nonce"
+        val account = Account(username, App.accountType)
+        val child = Account("existing-install-child-$nonce@example.invalid", App.addressBookAccountType)
+        val legacyRow = Bundle().apply {
+            putString(AccountSettings.KEY_SETTINGS_VERSION, "1")
+            putString(AccountSettings.KEY_USERNAME, username)
+            putString(AccountSettings.KEY_URI, uri)
+            putString(AccountSettings.KEY_ETEBASE_SESSION, session)
+        }
+        // Legacy child row: main-account name/type and URL, but no child creation ID or main identity.
+        val legacyChild = Bundle().apply {
+            putString(LocalAddressBook.USER_DATA_MAIN_ACCOUNT_NAME, account.name)
+            putString(LocalAddressBook.USER_DATA_MAIN_ACCOUNT_TYPE, account.type)
+            putString(LocalAddressBook.USER_DATA_URL, "https://existing-install.example.invalid/address-book")
+        }
+        val migrationPreferences = context.getSharedPreferences("post_login_setup_migration", android.content.Context.MODE_PRIVATE)
+        val previousMarker = migrationPreferences.takeIf { it.contains("version") }?.getInt("version", 0)
+        val statusPreferences = context.getSharedPreferences("sync_status_v1", android.content.Context.MODE_PRIVATE)
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        val seededStatusKeys = mutableListOf<String>()
+        var setupMonitor: android.app.Instrumentation.ActivityMonitor? = null
+        try {
+            check(manager.addAccountExplicitly(account, null, legacyRow))
+            check(manager.addAccountExplicitly(child, null, legacyChild))
+            // Keep the platform from syncing the synthetic rows while bootstrap and assertions observe them.
+            (listOf(App.addressBooksAuthority, android.provider.CalendarContract.AUTHORITY) +
+                TaskProvider.TASK_PROVIDERS.map { it.authority }).forEach { authority ->
+                ContentResolver.removePeriodicSync(account, authority, Bundle())
+                ContentResolver.setSyncAutomatically(account, authority, false)
+                ContentResolver.setIsSyncable(account, authority, 0)
+            }
+            ContentResolver.removePeriodicSync(child, android.provider.ContactsContract.AUTHORITY, Bundle())
+            ContentResolver.setSyncAutomatically(child, android.provider.ContactsContract.AUTHORITY, false)
+            ContentResolver.setIsSyncable(child, android.provider.ContactsContract.AUTHORITY, 0)
+            // Pre-bootstrap generation: the store hashes the absent creation ID, as legacy builds did.
+            val legacyIdentity = SyncStatusStore(context).identity(account)
+            val recordKey = "status.${legacyIdentity.storageKey}.CONTACTS"
+            val faultKey = "fault.$recordKey"
+            val v1Record = "1|10||||;"
+            val v1Fault = "1|11|STORAGE"
+            seededStatusKeys += listOf(recordKey, faultKey)
+            check(statusPreferences.edit().putString(recordKey, v1Record).putString(faultKey, v1Fault).commit())
+            check(migrationPreferences.edit().remove("version").commit())
+            val childBefore = childUserData(manager, child)
+            assertEquals(null, manager.getUserData(child, LocalAddressBook.USER_DATA_CREATION_ID))
+            assertEquals(null, manager.getUserData(child, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY))
+            PostLoginStartupChecks.resetForTest()
+
+            val succeeded = PostLoginStartupChecks.runAtLaunch(context)
+            // The Boolean is only a summary; the typed snapshot is the evidence.
+            val snapshot = PostLoginStartupChecks.snapshot()
+            assertEquals(PostLoginStartupOutcome.SUCCEEDED, snapshot.outcome)
+            assertEquals(PostLoginStartupOutcome.Source.LAUNCH, snapshot.source)
+            assertEquals(snapshot.outcome?.succeeded, succeeded)
+            assertEquals(succeeded, App.postLoginBootstrapSucceeded)
+            org.junit.Assert.assertNotEquals(PostLoginStartupChecks.BootstrapElapsedBucket.NOT_RECORDED, snapshot.bootstrapElapsedBucket)
+            assertTrue(snapshot.rowsClassified in 1..99)
+            assertTrue(snapshot.sessionParses in 1..99)
+
+            val creationId = manager.getUserData(account, AccountSettings.KEY_CREATION_ID)
+            assertTrue("Legacy row did not receive a creation ID", !creationId.isNullOrBlank())
+            assertEquals(PostLoginSetupState.RECOVERY_REQUIRED.name,
+                manager.getUserData(account, AccountSettings.KEY_POST_LOGIN_SETUP_STATE))
+            assertEquals(PostLoginSetupState.RECOVERY_REQUIRED, AccountSettings.setupState(manager, account, true))
+            assertTrue(PostLoginSetupMigration.isBootstrapped(context))
+            // Recovery classification never rewrites legacy credentials or the child row.
+            assertEquals("1", manager.getUserData(account, AccountSettings.KEY_SETTINGS_VERSION))
+            assertEquals(session, manager.getUserData(account, AccountSettings.KEY_ETEBASE_SESSION))
+            assertEquals(childBefore, childUserData(manager, child))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertTrue(child in manager.getAccountsByType(App.addressBookAccountType))
+
+            // v1-only Contacts evidence for the pre-bootstrap generation stays fail-closed and untouched.
+            val legacyStatus = SyncStatusStore(context).status(legacyIdentity, SyncStatusStore.Service.CONTACTS)
+            assertTrue(legacyStatus.structuralStorageFailure)
+            assertEquals(SyncStatusStore.FailureCategory.STORAGE, legacyStatus.lastFailureCategory)
+            assertEquals(v1Record, statusPreferences.getString(recordKey, null))
+            assertEquals(v1Fault, statusPreferences.getString(faultKey, null))
+
+            // The launcher never opens the dashboard for a recovery row.
+            setupMonitor = instrumentation.addMonitor(PostLoginSetupActivity::class.java.name, null, true)
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account, creationId)).use { scenario ->
+                instrumentation.waitForIdleSync()
+                assertEquals(1, requireNotNull(setupMonitor).hits)
+                assertEquals(androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.state)
+            }
+            assertEquals(PostLoginSetupState.RECOVERY_REQUIRED, AccountSettings.setupState(manager, account, true))
+            assertEquals(creationId, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertTrue(child in manager.getAccountsByType(App.addressBookAccountType))
+
+            val report = StartupDiagnosticReport.capture(context, uiRetryInFlight = false)
+            assertReportAllowlisted(report, listOf(username, uri, session, "example.invalid", requireNotNull(creationId),
+                legacyIdentity.storageKey))
+            assertTrue(report.contains("schema_version: 3\n"))
+            assertTrue(report.contains("startup_outcome: SUCCEEDED\n"))
+            assertRecordedBucket(report)
+        } finally {
+            setupMonitor?.let(instrumentation::removeMonitor)
+            if (seededStatusKeys.isNotEmpty()) {
+                val editor = statusPreferences.edit()
+                seededStatusKeys.forEach { editor.remove(it) }
+                check(editor.commit())
+            }
+            val markerEditor = migrationPreferences.edit()
+            if (previousMarker == null) markerEditor.remove("version") else markerEditor.putInt("version", previousMarker)
+            check(markerEditor.commit())
+            App.postLoginBootstrapSucceeded = previousBootstrap
+            PostLoginStartupChecks.resetForTest()
+            AndroidCompat.removeAccount(manager, child)
+            AndroidCompat.removeAccount(manager, account)
+        }
+    }
+
+    private fun childUserData(manager: AccountManager, child: Account): List<String?> = listOf(
+        LocalAddressBook.USER_DATA_MAIN_ACCOUNT_NAME, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_TYPE,
+        LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY, LocalAddressBook.USER_DATA_URL,
+        LocalAddressBook.USER_DATA_CREATION_ID, LocalAddressBook.USER_DATA_READ_ONLY,
+    ).map { manager.getUserData(child, it) }
+
+    private fun assertRecordedBucket(report: String) {
+        val bucket = report.lines().single { it.startsWith("bootstrap_elapsed_bucket: ") }.substringAfter(": ")
+        val recorded = PostLoginStartupChecks.BootstrapElapsedBucket.values()
+            .filter { it != PostLoginStartupChecks.BootstrapElapsedBucket.NOT_RECORDED }
+            .map { it.reportValue }
+        assertTrue("Bootstrap elapsed bucket was not recorded", bucket in recorded)
+    }
+
+    private fun reportFragment(activity: PostLoginSetupActivity): androidx.fragment.app.DialogFragment =
+        requireNotNull(
+            activity.supportFragmentManager.findFragmentByTag(StartupDiagnosticReportDialog.TAG)
+        ) { "Startup diagnostic report preview is not open" } as androidx.fragment.app.DialogFragment
+
+    private fun reportDialog(activity: PostLoginSetupActivity): androidx.appcompat.app.AlertDialog =
+        reportFragment(activity).requireDialog() as androidx.appcompat.app.AlertDialog
+
+    private fun reportText(scenario: ActivityScenario<PostLoginSetupActivity>): String {
+        var text: String? = null
+        scenario.onActivity { activity ->
+            text = requireNotNull(
+                reportDialog(activity).findViewById<android.widget.TextView>(R.id.startup_report_text)
+            ).text.toString()
+        }
+        return requireNotNull(text)
+    }
+
+    private fun assertReportAllowlisted(report: String, forbidden: List<String>) {
+        val lines = report.removeSuffix("\n").split("\n")
+        assertEquals("SilentSuite startup diagnostic report", lines.first())
+        assertEquals(
+            listOf(
+                "schema_version", "app_version", "app_version_code", "android_sdk", "startup_outcome",
+                "startup_phase", "startup_reason", "exception_category", "last_check",
+                "retry_attempts_this_process", "retry_in_flight", "bootstrap_elapsed_bucket",
+                "rows_classified", "session_parses", "migration_marker_present",
+                "registry_decode", "launch_outcome", "launch_phase", "launch_reason",
+                "launch_exception_category", "launch_registry_decode",
+            ),
+            lines.drop(1).map { it.substringBefore(": ") },
+        )
+        val shape = Regex("[a-z_]+: [A-Za-z0-9._+-]+")
+        lines.drop(1).forEach { assertTrue("Report line outside allowlist shape", shape.matches(it)) }
+        val deviceIdentifiers = listOfNotNull(Build.MODEL, Build.DEVICE, Build.MANUFACTURER, Build.FINGERPRINT, Build.DISPLAY)
+            .filter { it.length >= 6 }
+        (forbidden + deviceIdentifiers).forEachIndexed { index, value ->
+            org.junit.Assert.assertFalse("Report contains forbidden value #$index", report.contains(value))
         }
     }
 
