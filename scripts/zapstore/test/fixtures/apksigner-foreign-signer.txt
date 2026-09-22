@@ -1,0 +1,9 @@
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): false
+Number of signers: 2
+Signer #1 certificate DN: CN=SilentSuite
+Signer #1 certificate SHA-256 digest: 8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79
+Signer #2 certificate DN: CN=Unknown
+Signer #2 certificate SHA-256 digest: 1111111111111111111111111111111111111111111111111111111111111111

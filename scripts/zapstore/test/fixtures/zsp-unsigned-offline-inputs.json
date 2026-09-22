@@ -1,0 +1,50 @@
+[
+  {
+    "path": "android/fastlane/metadata/android/en-US/images/icon.png",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "8789159e7de6210211641d0c42da09af44d60aeb6717c027b7010ee194b68290",
+    "size": 17871
+  },
+  {
+    "path": "android/fastlane/metadata/android/en-US/images/phoneScreenshots/1-encrypted-sync.png",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "20ac235aff8d46ea6a7b041b22c2451940767bf01110fe842c7fe9be3ae85008",
+    "size": 605021
+  },
+  {
+    "path": "android/fastlane/metadata/android/en-US/images/phoneScreenshots/2-cross-platform-sync.png",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "d173b54204f6d0bbb104fec2bee92d954194653c53369d8d8eb99a302c7029a9",
+    "size": 626465
+  },
+  {
+    "path": "android/fastlane/metadata/android/en-US/images/phoneScreenshots/3-calendar-contacts-tasks.png",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "915d7e2658d12c98f9357357946ff195cc4bf51e44a06f967249dba9bcecd338",
+    "size": 519340
+  },
+  {
+    "path": "android/fastlane/metadata/android/en-US/images/phoneScreenshots/4-collections-sharing.png",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "3679bd24cad93c5a28012086f09f93a7e98044f58fd14a4a17e22b938527acad",
+    "size": 637394
+  },
+  {
+    "path": "android/fastlane/metadata/android/en-US/images/phoneScreenshots/5-import-export.png",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "9ca9c441e499ec6b785b691c30fa47e2d07514231da6620ba487b6d62bebb946",
+    "size": 633899
+  },
+  {
+    "path": "android/fastlane/metadata/android/en-US/images/phoneScreenshots/6-encryption-fingerprint.png",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "ef60926ac68296a985849c52b599e84c921a69d9c0348123dd44657132f475d9",
+    "size": 633930
+  },
+  {
+    "path": "android/fastlane/metadata/android/en-US/changelogs/20.txt",
+    "source": "3111352dbccfaaeee3b83ad325906e591343cfa3",
+    "sha256": "0f19f3356107e150265c27248fcbb66145cb4a2b6c8c07e45ec4de40534dd5d2",
+    "size": 106
+  }
+]

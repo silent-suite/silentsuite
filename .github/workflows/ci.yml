@@ -122,6 +122,12 @@ jobs:
       - name: Test closed annual-only public Stage A to Stage B handshake
         run: pnpm run check:annual-public-handshake
 
+      - name: Install the isolated Zapstore lane package
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix scripts/zapstore
+
+      - name: Test the dormant Zapstore publication lane
+        run: pnpm run check:zapstore-automation
+
       - name: Run tests
         run: pnpm run test
 
