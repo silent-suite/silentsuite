@@ -40,25 +40,56 @@ function refuse(reason, release) {
   }
 }
 
-// Bounded window for the scheduled reconciliation: only releases published
-// within `windowDays` are candidates. Older releases are listed as omitted with
-// a reason so the report never silently drops anything.
+// Scheduled reconciliation candidates. The newest eligible release is always a
+// candidate by exact id, however old: it is the only release that can ever be
+// published, so it must be retried deterministically by every run until the
+// relay holds it. The `windowDays` bound applies only to verify-only history;
+// older releases are listed as omitted with a reason so the report never
+// silently drops anything.
 export function selectScheduleCandidates(releases, { now = Date.now(), windowDays = 45 } = {}) {
   const cutoff = now - windowDays * 24 * 60 * 60 * 1000
-  const candidates = []
+  const eligible = []
   const omitted = []
   for (const release of releases) {
     const verdict = classifyRelease(release)
-    if (!verdict.eligible) {
-      omitted.push({ releaseId: verdict.releaseId, tag: verdict.tag, reason: verdict.reason })
-      continue
-    }
-    if (Date.parse(verdict.publishedAt) < cutoff) {
-      omitted.push({ releaseId: verdict.releaseId, tag: verdict.tag, reason: `published before the ${windowDays}-day window` })
+    if (verdict.eligible) eligible.push(verdict)
+    else omitted.push({ releaseId: verdict.releaseId, tag: verdict.tag, reason: verdict.reason })
+  }
+  const marked = markPublishable(eligible)
+  const candidates = []
+  for (const verdict of marked) {
+    if (!verdict.publishable && Date.parse(verdict.publishedAt) < cutoff) {
+      omitted.push({ releaseId: verdict.releaseId, tag: verdict.tag, reason: `verify-only history published before the ${windowDays}-day window` })
       continue
     }
     candidates.push(verdict)
   }
   candidates.sort((a, b) => a.releaseId - b.releaseId)
   return { candidates, omitted }
+}
+
+// Numeric tag order: vX.Y.Z-beta sorts below the same vX.Y.Z stable.
+export function compareTags(a, b) {
+  const pa = TAG_GRAMMAR.exec(a)
+  const pb = TAG_GRAMMAR.exec(b)
+  if (!pa || !pb) throw new Error(`cannot order tags outside the release grammar: ${a}, ${b}`)
+  for (let i = 1; i <= 3; i += 1) {
+    const d = Number(pa[i]) - Number(pb[i])
+    if (d !== 0) return d
+  }
+  return (pa[4] ? 0 : 1) - (pb[4] ? 0 : 1)
+}
+
+// Exactly one candidate, the newest eligible tag, may ever be published; every
+// other candidate is verify-only. Two releases with one tag cannot both be
+// published, so equal tags are refused rather than guessed at.
+export function markPublishable(candidates) {
+  if (candidates.length === 0) return candidates
+  let newest = candidates[0]
+  for (const candidate of candidates.slice(1)) {
+    const order = compareTags(candidate.tag, newest.tag)
+    if (order === 0) throw new Error(`two eligible releases share tag ${candidate.tag}: ${newest.releaseId} and ${candidate.releaseId}`)
+    if (order > 0) newest = candidate
+  }
+  return candidates.map((candidate) => ({ ...candidate, publishable: candidate === newest }))
 }

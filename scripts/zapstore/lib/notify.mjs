@@ -26,17 +26,36 @@ export function retryInstructions({ releaseId, tag, sourceSha }) {
   const safeId = /^[1-9][0-9]{0,15}$/.test(String(releaseId)) ? String(releaseId) : '<release-id>'
   const sha = typeof sourceSha === 'string' && /^[0-9a-f]{40}$/.test(sourceSha) ? sourceSha : '<40-hex tag commit>'
   return [
-    'This lane has no repository_dispatch or workflow_dispatch retry (those would be a second control plane or a selected-ref load).',
-    'Exact retry of this release: wait for the next protected-main schedule (04:17 UTC), or as the owner edit the GitHub release so GitHub delivers release: edited. The workflow YAML is loaded from the default branch and the job checks out refs/heads/main, never the tag.',
+    'This lane has no repository_dispatch, workflow_dispatch, release-event or tag-edit retry.',
+    'Exact retry: open the failed scheduled run and choose "Re-run failed jobs" (same event, same protected revision, environment approval still required), or wait for the next schedule (every six hours).',
     `  tag ${safeTag}`,
     `  GitHub release id ${safeId}`,
     `  source commit ${sha}`,
-    'Owner-only, string fields only:',
-    `gh api repos/silent-suite/silentsuite/releases/${safeId} -X PATCH -f tag_name='${safeTag}'`,
+    'Runbook: runbooks/zapstore-automation.md section 5.',
   ].join('\n')
 }
 
-export function buildIssue({ releaseId, tag, sourceSha, runUrl, phase, outcome, detail, publication, retry }) {
+// Outcomes a re-run cannot fix. Re-running is harmless (the lane refuses again)
+// but it is not a remedy, and running the publisher by hand would duplicate an
+// accepted immutable APK event or overwrite a listing, so the issue says stop.
+export const MANUAL_STOP_REASONS = ['partial-unrecoverable', 'conflict', 'app-drift']
+
+export function manualStopInstructions({ releaseId, tag, sourceSha, reason }) {
+  const safeTag = typeof tag === 'string' && TAG_GRAMMAR.test(tag) ? tag : '<tag>'
+  const safeId = /^[1-9][0-9]{0,15}$/.test(String(releaseId)) ? String(releaseId) : '<release-id>'
+  const sha = typeof sourceSha === 'string' && /^[0-9a-f]{40}$/.test(sourceSha) ? sourceSha : '<40-hex tag commit>'
+  return [
+    `STOP: outcome ${reason} is not fixed by a re-run. The lane will keep refusing and nothing will be published for this release.`,
+    'Do not run the publisher by hand and do not use --overwrite-release: every publisher run builds a new APK event and rewrites the listing, which would duplicate an accepted immutable event named in the detail above or overwrite the current listing.',
+    'Collect evidence: the event ids in the detail above, this run\'s zapstore-assessment artifact, and a read-only relay query for this package.',
+    'Then follow runbooks/zapstore-automation.md section 5.3. Automatic recovery of this state waits for supported publisher functionality; it is a known, accepted limitation.',
+    `  tag ${safeTag}`,
+    `  GitHub release id ${safeId}`,
+    `  source commit ${sha}`,
+  ].join('\n')
+}
+
+export function buildIssue({ releaseId, tag, sourceSha, runUrl, phase, outcome, reason, detail, publication, retry }) {
   const safeTag = typeof tag === 'string' && TAG_GRAMMAR.test(tag) ? tag : '[tag failed validation]'
   const safeId = /^[1-9][0-9]{0,15}$/.test(String(releaseId)) ? String(releaseId) : '[unknown]'
   const safeSha = typeof sourceSha === 'string' && /^[0-9a-f]{40}$/.test(sourceSha) ? sourceSha : '[source sha unknown]'
@@ -44,7 +63,11 @@ export function buildIssue({ releaseId, tag, sourceSha, runUrl, phase, outcome, 
   const safePhase = cleanText(phase, 60).replace(/[^a-z0-9 _-]/gi, '')
   const safeOutcome = cleanText(outcome, 40).replace(/[^a-z0-9-]/gi, '')
   const claim = publication || 'unknown'
-  const title = `Zapstore publication failed: ${safeTag} (release ${safeId})`
+  const safeReason = cleanText(reason, 40).replace(/[^a-z0-9-]/gi, '')
+  const manualStop = MANUAL_STOP_REASONS.includes(safeReason)
+  const title = safeId === '[unknown]' && safeTag === '[tag failed validation]'
+    ? `Zapstore lane failed: ${safePhase || 'run'}`
+    : `Zapstore publication failed: ${safeTag} (release ${safeId})`
   const claimLine = {
     'already-published': 'Relay read-back already reports a complete match; this failure is after publication.',
     'published': 'Read-back reports the exact set is now on the relay.',
@@ -62,6 +85,7 @@ export function buildIssue({ releaseId, tag, sourceSha, runUrl, phase, outcome, 
     `- Run: ${safeRun}`,
     `- Phase: ${safePhase || '[unknown]'}`,
     `- Outcome: ${safeOutcome || '[unknown]'}`,
+    `- Decision: ${safeReason || '[none recorded]'}`,
     `- Publication claim: ${claim}`,
     '',
     '### Detail (untrusted text, quoted)',
@@ -70,12 +94,12 @@ export function buildIssue({ releaseId, tag, sourceSha, runUrl, phase, outcome, 
     cleanText(detail, 1500) || '[no detail]',
     '```',
     '',
-    '### Exact retry',
+    manualStop ? '### Manual handling required (do not re-run as a fix)' : '### Exact retry',
     '',
     'Follow `runbooks/zapstore-automation.md` section 5 for the outcome above.',
     '',
     '```',
-    retry || retryInstructions({ releaseId: safeId === '[unknown]' ? '' : safeId, tag: safeTag === '[tag failed validation]' ? '' : safeTag, sourceSha: safeSha === '[source sha unknown]' ? '' : safeSha }),
+    retry || (manualStop ? manualStopInstructions : retryInstructions)({ reason: safeReason, releaseId: safeId === '[unknown]' ? '' : safeId, tag: safeTag === '[tag failed validation]' ? '' : safeTag, sourceSha: safeSha === '[source sha unknown]' ? '' : safeSha }),
     '```',
   ].join('\n')
   return { title, body, labels: [ISSUE_LABEL] }

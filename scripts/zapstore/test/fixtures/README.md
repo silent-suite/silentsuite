@@ -14,6 +14,11 @@ All fixtures are labelled by origin. None of them came from a live publication.
   `wss://relay.zapstore.dev` (EOSE reached, 20 events). These are real signed
   events and are used to prove that id and Schnorr verification pass on real
   data and fail on tampered copies.
+- `nip44.vectors.json` — the published NIP-44 v2 test vectors
+  (`https://raw.githubusercontent.com/paulmillr/nip44/main/nip44.vectors.json`,
+  SHA-256 `269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040`),
+  copied unchanged. They prove the local encryption used by the read-only
+  NIP-46 handshake, not any signer product.
 - `apksigner-verifies.txt` / `apksigner-foreign-signer.txt` — **synthetic**
   samples in the `apksigner verify --print-certs -v` output format. No local
   `apksigner` exists on the development machine; the real tool runs only in CI.

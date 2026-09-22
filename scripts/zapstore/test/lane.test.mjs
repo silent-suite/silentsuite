@@ -10,21 +10,21 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { classifyRelease, selectScheduleCandidates } from '../lib/eligibility.mjs'
-import { activationState, admitTrigger, requireOwnerSender, requireProtectedRef, requireProtectedWorkflow, validateReleaseEvent } from '../lib/dispatch.mjs'
+import { classifyRelease, compareTags, markPublishable, selectScheduleCandidates } from '../lib/eligibility.mjs'
+import { activationState, admitTrigger, requireProtectedRef, requireProtectedSchedule, requireProtectedWorkflow } from '../lib/dispatch.mjs'
 import { bindReleaseAssets, createGitHubClient, EnumerationIncomplete, hashFromChecksumText } from '../lib/github.mjs'
 import { buildBinding, revalidateBinding, verifyApkHashes } from '../lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from '../lib/apksigner.mjs'
 import { generateConfig, loadTemplate, parseZapstoreYaml, resolveChangelog, stageMedia } from '../lib/metadata.mjs'
 import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, verifyEvent } from '../lib/nostr.mjs'
-import { assessRelayState, expectedSet, isSafePartialRecovery, publicationAction } from '../lib/reconcile.mjs'
+import { assessRelayState, compareApk, compareApp, compareRelease, expectedSet, publicationAction } from '../lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, zspArgs, zspEnv, ZSP } from '../lib/zsp.mjs'
 import { materializeClientKey } from '../lib/bunker-key.mjs'
 import { redact } from '../lib/redact.mjs'
 import { buildIssue, createIssueWithReadback, publicationClaim } from '../lib/notify.mjs'
 import { verifyReferencedBlobs } from '../lib/cdn.mjs'
 import { parseSourceBuildMetadata, SOURCE_BUILD_GRADLE } from '../lib/source-metadata.mjs'
-import { verifySourceIdentity } from '../lib/identity.mjs'
+import { helperEnvironment, verifySourceIdentity } from '../lib/identity.mjs'
 
 const here = resolve(new URL('.', import.meta.url).pathname)
 const root = resolve(here, '..', '..', '..')
@@ -56,36 +56,72 @@ test('eligibility: stable and -beta (either GitHub prerelease flag) pass; drafts
   assert.equal(classifyRelease(release({ published_at: null })).eligible, false)
 })
 
-test('schedule candidates are bounded to the window and every omission carries a reason', () => {
+test('schedule candidates are bounded to the window, every omission carries a reason, and exactly the newest tag is publishable', () => {
   const now = Date.parse('2026-09-12T00:00:00Z')
-  const { candidates, omitted } = selectScheduleCandidates([release(), release({ id: 5, tag_name: 'v0.5.4-beta', published_at: '2026-01-01T00:00:00Z' }), release({ id: 6, tag_name: 'v0.5.5-rc1' })], { now })
-  assert.deepEqual(candidates.map((c) => c.releaseId), [383603104])
+  const { candidates, omitted } = selectScheduleCandidates([
+    release(),
+    release({ id: 382146589, tag_name: 'v0.5.5-beta', published_at: '2026-09-03T00:00:00Z' }),
+    release({ id: 5, tag_name: 'v0.5.4-beta', published_at: '2026-01-01T00:00:00Z' }),
+    release({ id: 6, tag_name: 'v0.5.5-rc1' }),
+  ], { now })
+  assert.deepEqual(candidates.map((c) => [c.releaseId, c.publishable]), [[382146589, false], [383603104, true]])
   assert.equal(omitted.length, 2)
   assert.ok(omitted.every((o) => o.reason))
+  // Deterministic exact retry: the newest eligible release stays a candidate by
+  // exact id on every run, however old, because it is the only publishable one.
+  // The window bounds verify-only history alone.
+  const stale = selectScheduleCandidates([
+    release({ published_at: '2026-01-01T00:00:00Z' }),
+    release({ id: 382146589, tag_name: 'v0.5.5-beta', published_at: '2025-12-01T00:00:00Z' }),
+    release({ id: 7, tag_name: 'v0.5.7-rc1', published_at: '2026-09-10T00:00:00Z' }),
+  ], { now })
+  assert.deepEqual(stale.candidates.map((c) => [c.releaseId, c.tag, c.publishable]), [[383603104, 'v0.5.6-beta', true]])
+  assert.match(stale.omitted.find((o) => o.releaseId === 382146589).reason, /verify-only history published before the 45-day window/)
+  const later = selectScheduleCandidates([release({ published_at: '2026-01-01T00:00:00Z' })], { now: now + 300 * 24 * 60 * 60 * 1000 })
+  assert.deepEqual(later.candidates.map((c) => c.releaseId), [383603104], 'a later run selects the same exact release')
+  const replaced = selectScheduleCandidates([release({ published_at: '2026-01-01T00:00:00Z' }), release({ id: 400000000, tag_name: 'v0.5.7-beta', published_at: '2026-09-11T00:00:00Z' })], { now })
+  assert.deepEqual(replaced.candidates.map((c) => [c.releaseId, c.publishable]), [[400000000, true]], 'an older release is never published once a newer eligible one exists')
+  assert.ok(compareTags('v0.5.6', 'v0.5.6-beta') > 0, 'stable outranks its beta')
+  assert.ok(compareTags('v0.10.0-beta', 'v0.9.9') > 0, 'numeric, not lexical')
+  assert.throws(() => markPublishable([{ releaseId: 1, tag: 'v1.0.0' }, { releaseId: 2, tag: 'v1.0.0' }]), /share tag/)
+  assert.deepEqual(markPublishable([]), [])
 })
 
-test('admission: schedule and owner release events; dispatch and selected-ref triggers refused', () => {
-  assert.ok(requireOwnerSender('265568982'))
-  assert.throws(() => requireOwnerSender('1'), /not the release owner/)
-  assert.throws(() => requireOwnerSender(''), /no numeric sender/)
+test('admission: only a protected-main schedule bound to its own definition revision; release and dispatch events are refused', () => {
   assert.throws(() => requireProtectedRef('refs/heads/feature'), /not refs\/heads\/main/)
   assert.throws(() => requireProtectedRef('refs/tags/v0.5.6-beta'))
   assert.ok(requireProtectedWorkflow(WORKFLOW_REF, { repository: 'silent-suite/silentsuite' }))
   assert.throws(() => requireProtectedWorkflow('silent-suite/silentsuite/.github/workflows/zapstore-publish.yml@refs/heads/feat', { repository: 'silent-suite/silentsuite' }), /loaded from/)
+  assert.throws(() => requireProtectedWorkflow('silent-suite/silentsuite/.github/workflows/zapstore-publish.yml@refs/tags/v0.5.6-beta', { repository: 'silent-suite/silentsuite' }), /loaded from/)
   assert.equal(admitTrigger('schedule'), 'schedule')
-  assert.equal(admitTrigger('release'), 'release')
-  assert.throws(() => admitTrigger('repository_dispatch'), /unsupported event/)
-  assert.throws(() => admitTrigger('workflow_dispatch'), /unsupported event/)
-  assert.deepEqual(validateReleaseEvent({ id: '383603104', tag: 'v0.5.6-beta', draft: 'false' }), { releaseId: 383603104, tag: 'v0.5.6-beta', sourceSha: null })
-  assert.throws(() => validateReleaseEvent({ id: 383603104, tag: 'v0.5.6-beta' }), /release_id is not a positive integer string/)
-  assert.throws(() => validateReleaseEvent({ id: 'latest', tag: 'v0.5.6-beta' }), /release_id/)
-  assert.throws(() => validateReleaseEvent({ id: '383603104', tag: 'v0.5.6-rc1' }), /release_tag/)
-  assert.throws(() => validateReleaseEvent({ id: '383603104', tag: 'v0.5.6-beta', draft: 'true' }), /draft/)
+  for (const event of ['release', 'repository_dispatch', 'workflow_dispatch', 'push', undefined]) assert.throws(() => admitTrigger(event), /unsupported event/, String(event))
+  const context = { eventName: 'schedule', ref: 'refs/heads/main', workflowRef: WORKFLOW_REF, sha: SHA, workflowSha: SHA, repository: 'silent-suite/silentsuite' }
+  assert.deepEqual(requireProtectedSchedule(context), { revision: SHA })
+  assert.throws(() => requireProtectedSchedule({ ...context, eventName: 'release', ref: 'refs/tags/v0.5.6-beta' }), /unsupported event release/)
+  assert.throws(() => requireProtectedSchedule({ ...context, workflowSha: 'a'.repeat(40) }), /GITHUB_WORKFLOW_SHA/)
+  assert.throws(() => requireProtectedSchedule({ ...context, sha: 'main' }), /GITHUB_SHA/)
   assert.equal(activationState(undefined).active, false)
   assert.match(activationState(undefined).label, /DISABLED/)
   assert.equal(activationState('true').active, false)
   assert.equal(activationState('rehearsal').active, false)
+  assert.equal(activationState('rehearsal').rehearsal, true)
   assert.equal(activationState('enabled').active, true)
+})
+
+test('the identity helper sees the real GITHUB_REF and is never handed a fabricated one', () => {
+  const env = { PATH: '/usr/bin', HOME: '/tmp', GITHUB_REPOSITORY: 'silent-suite/silentsuite', GITHUB_REF: 'refs/heads/main', GITHUB_TOKEN: 't' }
+  assert.deepEqual(helperEnvironment(env), { PATH: '/usr/bin', HOME: '/tmp', GITHUB_REPOSITORY: 'silent-suite/silentsuite', GITHUB_API_URL: 'https://api.github.com', GITHUB_TOKEN: 't', GITHUB_REF: 'refs/heads/main' })
+  assert.equal('GITHUB_REF' in helperEnvironment({ PATH: '/usr/bin' }), false, 'absent stays absent')
+  assert.throws(() => helperEnvironment({ ...env, GITHUB_REF: 'refs/tags/v0.5.6-beta' }), /refusing identity check/)
+  const spawned = []
+  const spawn = (cmd, args, options) => { spawned.push({ cmd, args, env: options.env }); return { status: 0, stdout: 'ok' } }
+  assert.ok(verifySourceIdentity({ tag: 'v0.5.6-beta', commit: SHA, spawn, env }))
+  assert.equal(spawned[0].env.GITHUB_REF, 'refs/heads/main')
+  assert.deepEqual(spawned[0].args, ['scripts/verify-release-identity.sh', '--tag', 'v0.5.6-beta', '--commit', SHA, '--stage', 'zapstore-binding'])
+  assert.throws(() => verifySourceIdentity({ tag: 'v0.5.6-beta', commit: SHA, spawn, env: { ...env, GITHUB_REF: 'refs/tags/v0.5.6-beta' } }), /refusing identity check/)
+  assert.equal(spawned.length, 1, 'the helper is not even started for a non-protected ref')
+  const refuse = () => ({ status: 1, stderr: 'Refusing release (probe): not on the protected branch' })
+  assert.throws(() => verifySourceIdentity({ tag: 'v0.5.6-beta', commit: SHA, spawn: refuse, env }), /identity helper refused/)
 })
 
 function fakeGitHub(routes) {
@@ -126,8 +162,6 @@ test('source identity helper is invoked with tag and commit; refusal fails close
   const verifyIdentity = async (args) => { calls.push(args); throw new Error('release identity helper refused (zapstore-binding): off-main') }
   await assert.rejects(buildBinding({ client, releaseId: 383603104, verifyIdentity }), /off-main/)
   assert.deepEqual(calls, [{ tag: 'v0.5.6-beta', commit: SHA, stage: 'zapstore-binding', gitAncestry: null }])
-  const spawn = () => ({ status: 1, stderr: 'Refusing release (probe): not on the protected branch' })
-  assert.throws(() => verifySourceIdentity({ tag: 'v0.5.6-beta', commit: SHA, spawn }), /identity helper refused/)
 })
 
 test('source build.gradle literals bind version name and code; interpolations are refused', () => {
@@ -220,8 +254,6 @@ test('zsp invocation is exact: pinned binary facts, flags, unsigned vs live, bun
   assert.deepEqual(zspArgs({ configPath: '/w/c.yaml', commit: SHA, mode: 'unsigned' }), ['publish', '--json', '--quiet', '--skip-preview', '--skip-metadata', '--no-compress', '--skip-certificate-linking', '--commit', SHA, '--channel', 'main', '--offline', '/w/c.yaml'])
   const live = zspArgs({ configPath: '/w/c.yaml', commit: SHA, mode: 'live' })
   assert.ok(live.includes('--overwrite-release') && !live.includes('--offline') && !live.includes('--indexer-mode') && !live.includes('--pre-release'))
-  assert.match(readFileSync(join(here, '..', 'lib', 'zsp.mjs'), 'utf8'), /CheckExistingRelease/)
-  assert.match(readFileSync(join(here, '..', 'lib', 'zsp.mjs'), 'utf8'), /MinReleaseTimestamp/)
   assert.throws(() => zspArgs({ configPath: '/w/c.yaml', commit: SHA, mode: 'live', channel: 'beta' }), /channel must stay main/)
   assert.throws(() => zspArgs({ configPath: '/w/c.yaml', commit: 'main', mode: 'live' }), /40-hex/)
   const npub = 'npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35'
@@ -288,14 +320,15 @@ test('relay subscription completes only on EOSE; timeout, close and truncation a
   await assert.rejects(queryRelay({ filters, WebSocketImpl: fakeSocketFactory(() => ['CLOSE']) }), /closed before EOSE/)
   await assert.rejects(queryRelay({ filters, limit: 1, WebSocketImpl: fakeSocketFactory((sub) => [['EVENT', sub, observed[0]], ['EOSE', sub]]) }), /truncated/)
   await assert.rejects(queryRelay({ filters, WebSocketImpl: fakeSocketFactory((sub) => [['CLOSED', sub, 'auth-required']]) }), /closed the subscription/)
+  assert.equal(publicationAction({ assessment: { outcome: 'incomplete', detail: 'no EOSE' }, publishable: true }).action, 'fail')
 })
 
+// Signed copies of the expected set under a test key, so relay-state tests
+// exercise real id and signature verification with controlled mutations.
 async function signedCopies(mutate = (e) => e) {
-  const { secp256k1 } = await import('@noble/curves/secp256k1.js')
   const priv = Uint8Array.from(Buffer.from('1'.repeat(64), 'hex'))
   const pub = Buffer.from(schnorr.getPublicKey(priv)).toString('hex')
   const sign = (event) => { const e = { ...event, pubkey: pub }; e.id = eventId(e); e.sig = Buffer.from(schnorr.sign(Uint8Array.from(Buffer.from(e.id, 'hex')), priv)).toString('hex'); return e }
-  void secp256k1
   const apk = sign(mutate({ ...unsigned.apk, tags: unsigned.apk.tags.map((t) => [...t]) }, 'apk'))
   const releaseTags = unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', apk.id, t[2]] : [...t]))
   const rel = sign(mutate({ ...unsigned.release, tags: releaseTags }, 'release'))
@@ -304,58 +337,173 @@ async function signedCopies(mutate = (e) => e) {
   return { expected, apk, release: rel, app, pub, sign }
 }
 
-test('reconciliation: absent, complete-match, partial, conflict, superseded and invalid signatures', async () => {
+test('reconciliation outcomes: absent, complete-match, partial (never recovered), conflict, superseded, invalid signatures', async () => {
   const { expected, apk, release: rel, app, sign } = await signedCopies()
   assert.equal(assessRelayState({ expected, observed: [], schnorr }).outcome, 'absent')
-  assert.equal(assessRelayState({ expected, observed: [app], schnorr }).outcome, 'absent', 'existing app metadata alone does not block a new version')
-  assert.equal(assessRelayState({ expected, observed: [app, rel, apk], schnorr }).outcome, 'complete-match')
-  assert.equal(assessRelayState({ expected, observed: [apk], schnorr }).outcome, 'partial')
-  assert.equal(assessRelayState({ expected, observed: [rel, apk], schnorr }).outcome, 'partial')
+  assert.equal(assessRelayState({ expected, observed: [app], schnorr }).outcome, 'absent', 'equal app metadata alone does not block a new version')
+  const complete = assessRelayState({ expected, observed: [app, rel, apk], schnorr })
+  assert.equal(complete.outcome, 'complete-match')
+  assert.deepEqual(complete.present, { apk: apk.id, release: rel.id, app: app.id })
+  // An accepted immutable APK event can never be reused by the official
+  // publisher, so any partial state that contains one is refused, not regenerated.
+  for (const [name, events] of [['apk only', [apk]], ['apk+release', [rel, apk]], ['apk+app', [apk, app]]]) {
+    const partial = assessRelayState({ expected, observed: events, schnorr })
+    assert.equal(partial.outcome, 'partial', name)
+    assert.equal(partial.recoverable, false, name)
+    assert.ok(partial.missing.length > 0, name)
+    assert.equal(partial.present.apk, apk.id, `${name}: the accepted APK id is preserved and named`)
+    for (const publishable of [true, false]) assert.deepEqual(publicationAction({ assessment: partial, publishable }), { action: 'fail', reason: 'partial-unrecoverable', verifyCdn: false }, `${name}: never regenerated`)
+    for (const id of Object.values(partial.present).filter(Boolean)) assert.match(partial.detail, new RegExp(id), 'the exact present ids are named for manual recovery')
+  }
   const otherHash = sign({ ...unsigned.apk, tags: unsigned.apk.tags.map((t) => (t[0] === 'x' ? ['x', 'e'.repeat(64)] : [...t])) })
   assert.equal(assessRelayState({ expected, observed: [otherHash], schnorr }).outcome, 'conflict')
-  const staleApp = sign({ ...unsigned.app, content: 'older description' })
-  const stale = assessRelayState({ expected, observed: [staleApp, rel, apk], schnorr })
-  assert.equal(stale.outcome, 'conflict')
-  assert.match(stale.detail, /app.description/)
+  const duplicate = sign({ ...unsigned.apk, created_at: unsigned.apk.created_at + 60 })
+  const dup = assessRelayState({ expected, observed: [app, rel, apk, duplicate], schnorr })
+  assert.equal(dup.outcome, 'conflict', 'a second lane APK event for one version is interference, not history')
+  assert.match(dup.detail, /exactly one/)
   const newer = sign({ ...unsigned.apk, tags: unsigned.apk.tags.map((t) => (t[0] === 'version_code' ? ['version_code', '21'] : t[0] === 'version' ? ['version', '0.5.7-beta'] : t[0] === 'x' ? ['x', 'f'.repeat(64)] : [...t])) })
-  assert.equal(assessRelayState({ expected, observed: [newer], schnorr }).outcome, 'superseded')
+  const superseded = assessRelayState({ expected, observed: [newer], schnorr })
+  assert.equal(superseded.outcome, 'superseded')
+  assert.equal(publicationAction({ assessment: superseded, publishable: true }).action, 'skip')
   assert.equal(assessRelayState({ expected, observed: [newer, app, rel, apk], schnorr }).outcome, 'complete-match', 'an already-complete historical set is not a downgrade incident')
   const foreign = { ...apk, pubkey: observed[0].pubkey }
   assert.throws(() => assessRelayState({ expected, observed: [foreign], schnorr }), InvalidRelayEvent, 'a foreign pubkey with our signature is corrupt, not ignorable')
   assert.throws(() => assessRelayState({ expected, observed: [{ ...apk, sig: 'a'.repeat(128) }], schnorr }), /invalid signature/)
-  assert.equal(assessRelayState({ expected: unsigned, observed, schnorr }).outcome, 'absent')
 })
 
-test('exact relay match refuses extra APK url tags and extra release e-links; APK is selected by the e-link', async () => {
+test('partial recovery: a release left without its APK event is completed by one publisher run, and the recovered relay state reads back as an exact match', async () => {
   const { expected, apk, release: rel, app, sign } = await signedCopies()
-  const extraUrl = sign({ ...unsigned.apk, tags: [...unsigned.apk.tags.map((t) => [...t]), ['url', 'https://cdn.zapstore.dev/' + 'e'.repeat(64)]] })
-  const extraUrlRelease = sign({ ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', extraUrl.id, t[2]] : [...t])) })
-  const extraUrlState = assessRelayState({ expected, observed: [app, extraUrlRelease, extraUrl], schnorr })
-  assert.equal(extraUrlState.outcome, 'conflict')
-  assert.match(extraUrlState.detail, /url\.cardinality|apk\.url/)
-  const extraE = sign({ ...unsigned.release, tags: [...rel.tags, ['e', 'f'.repeat(64)]] })
-  const extraEState = assessRelayState({ expected, observed: [app, extraE, apk], schnorr })
-  assert.equal(extraEState.outcome, 'conflict')
-  assert.match(extraEState.detail, /e-link/)
+  // The state a failed asset publish leaves behind: upstream publishes app,
+  // release, then asset. The stranded release links an APK id the relay never
+  // accepted.
+  const strandedTags = unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', 'd'.repeat(64), t[2]] : [...t]))
+  const stranded = sign({ ...unsigned.release, created_at: unsigned.release.created_at - 600, tags: strandedTags })
+  for (const [name, events] of [['release only', [stranded]], ['release+app', [stranded, app]]]) {
+    const partial = assessRelayState({ expected, observed: events, schnorr })
+    assert.equal(partial.outcome, 'partial', name)
+    assert.equal(partial.recoverable, true, name)
+    assert.ok(partial.missing.includes('apk'), name)
+    assert.equal(partial.present.apk, undefined, `${name}: no immutable APK event exists to preserve`)
+    assert.deepEqual(publicationAction({ assessment: partial, publishable: true }), { action: 'publish', reason: 'partial-recovery', verifyCdn: false })
+    assert.deepEqual(publicationAction({ assessment: partial, publishable: false }), { action: 'fail', reason: 'partial-not-newest', verifyCdn: false }, 'only the newest eligible release is ever published')
+  }
+  // After the run the relay holds the regenerated APK, and the regenerated
+  // release has superseded the stranded one under its d tag: exact match, one
+  // APK event, no duplicate.
+  const recovered = assessRelayState({ expected, observed: [app, rel, apk], schnorr })
+  assert.equal(recovered.outcome, 'complete-match')
+  // A relay that kept both releases is reported truthfully rather than accepted.
+  assert.equal(assessRelayState({ expected, observed: [app, rel, stranded, apk], schnorr }).outcome, 'conflict')
+  // Guards: the stranded release must already equal the expected tuples, the
+  // listing must equal the template, and recovery must not regress a newer version.
+  const wrongNotes = sign({ ...unsigned.release, content: 'other notes', tags: strandedTags })
+  assert.equal(assessRelayState({ expected, observed: [wrongNotes], schnorr }).outcome, 'conflict')
+  const wrongHint = sign({ ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', 'd'.repeat(64), 'wss://other.example'] : [...t])) })
+  assert.equal(assessRelayState({ expected, observed: [wrongHint], schnorr }).outcome, 'conflict')
+  const twoLinks = sign({ ...unsigned.release, tags: [...strandedTags, ['e', 'c'.repeat(64), 'wss://relay.zapstore.dev']] })
+  assert.equal(assessRelayState({ expected, observed: [twoLinks], schnorr }).outcome, 'conflict')
+  const driftedApp = sign({ ...unsigned.app, content: 'Newer owner-published store description' })
+  const drift = assessRelayState({ expected, observed: [stranded, driftedApp], schnorr })
+  assert.equal(drift.outcome, 'app-drift')
+  assert.equal(publicationAction({ assessment: drift, publishable: true }).action, 'fail', 'recovery never overwrites a differing listing')
+  const newer = sign({ ...unsigned.apk, tags: unsigned.apk.tags.map((t) => (t[0] === 'version_code' ? ['version_code', '21'] : t[0] === 'version' ? ['version', '0.5.7-beta'] : t[0] === 'x' ? ['x', 'f'.repeat(64)] : [...t])) })
+  const regress = assessRelayState({ expected, observed: [stranded, app, newer], schnorr })
+  assert.equal(regress.outcome, 'partial')
+  assert.equal(regress.recoverable, false)
+  assert.equal(publicationAction({ assessment: regress, publishable: true }).action, 'fail')
+  // A release whose link names a different APK event that does exist is a conflict, not a recovery.
+  const otherApk = sign({ ...unsigned.apk, tags: unsigned.apk.tags.map((t) => (t[0] === 'version' ? ['version', '0.5.5-beta'] : t[0] === 'version_code' ? ['version_code', '19'] : [...t])) })
+  const pointsElsewhere = sign({ ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', otherApk.id, t[2]] : [...t])) })
+  assert.equal(assessRelayState({ expected, observed: [pointsElsewhere, otherApk], schnorr }).outcome, 'conflict')
 })
 
-test('publication action: schedule skips superseded history; complete-match is never re-signed; partial recovers only when present events match', async () => {
+test('publication is bounded to the newest eligible release and to an absent relay state', async () => {
   const { expected, apk, release: rel, app } = await signedCopies()
+  const absent = assessRelayState({ expected, observed: [app], schnorr })
+  assert.deepEqual(publicationAction({ assessment: absent, publishable: true }), { action: 'publish', reason: 'absent', verifyCdn: false })
+  assert.deepEqual(publicationAction({ assessment: absent, publishable: false }), { action: 'skip', reason: 'not-newest-eligible', verifyCdn: false })
+  assert.deepEqual(publicationAction({ assessment: absent, publishable: 'true' }).action, 'publish')
   const complete = assessRelayState({ expected, observed: [app, rel, apk], schnorr })
-  assert.deepEqual(publicationAction({ assessment: complete, triggerMode: 'schedule' }).action, 'skip')
-  assert.equal(publicationAction({ assessment: complete, triggerMode: 'schedule' }).verifyCdn, true)
-  const superseded = assessRelayState({ expected, observed: [], schnorr })
-  void superseded
-  const newerOnly = { outcome: 'superseded', newestVersionCode: 21, candidateVersionCode: 20 }
-  assert.equal(publicationAction({ assessment: newerOnly, triggerMode: 'schedule', candidateVersionCode: 20 }).action, 'skip')
-  assert.equal(publicationAction({ assessment: newerOnly, triggerMode: 'release', candidateVersionCode: 20 }).action, 'fail')
-  const partial = assessRelayState({ expected, observed: [apk], schnorr })
-  assert.equal(partial.outcome, 'partial')
-  assert.equal(isSafePartialRecovery({ ...partial, candidateVersionCode: 20 }), true)
-  assert.equal(publicationAction({ assessment: partial, triggerMode: 'schedule', candidateVersionCode: 20 }).action, 'publish')
-  assert.equal(publicationAction({ assessment: partial, triggerMode: 'schedule', candidateVersionCode: 20 }).reason, 'safe-partial-recovery')
-  assert.equal(isSafePartialRecovery({ ...partial, candidateVersionCode: 20, newestVersionCode: 21 }), false)
-  assert.equal(publicationAction({ assessment: { outcome: 'incomplete', detail: 'no EOSE' }, triggerMode: 'schedule' }).action, 'fail')
+  assert.deepEqual(publicationAction({ assessment: complete, publishable: true }), { action: 'skip', reason: 'complete-match', verifyCdn: true })
+})
+
+test('absent path never overwrites app metadata that differs from the template; the difference is named tuple by tuple', async () => {
+  const { expected, apk, release: rel, sign } = await signedCopies()
+  const newerListing = sign({ ...unsigned.app, created_at: unsigned.app.created_at + 3600, content: 'Newer owner-published store description' })
+  const drift = assessRelayState({ expected, observed: [newerListing], schnorr })
+  assert.equal(drift.outcome, 'app-drift')
+  assert.match(drift.detail, /app\.content/)
+  assert.equal(publicationAction({ assessment: drift, publishable: true }).action, 'fail')
+  assert.equal(publicationAction({ assessment: drift, publishable: false }).action, 'skip')
+  const community = sign({ ...unsigned.app, tags: unsigned.app.tags.map((t) => (t[0] === 'h' ? ['h', 'f'.repeat(64)] : [...t])) })
+  const communityDrift = assessRelayState({ expected, observed: [community], schnorr })
+  assert.equal(communityDrift.outcome, 'app-drift')
+  assert.match(communityDrift.detail, /app\.tags\[\d+\] expected \["h"/)
+  const withRelease = assessRelayState({ expected, observed: [community, rel, apk], schnorr })
+  assert.equal(withRelease.outcome, 'app-drift', 'release and APK match but the listing differs')
+  assert.equal(publicationAction({ assessment: withRelease, publishable: true }).action, 'fail')
+})
+
+test('exact comparison covers content, every tag tuple, ordering and the release e-link tuple', async () => {
+  const { apk, release: rel, sign } = await signedCopies()
+  assert.deepEqual(compareApk(unsigned.apk, { ...unsigned.apk }), [])
+  assert.deepEqual(compareApk(unsigned.apk, { ...unsigned.apk, content: 'unexpected content' }), ['apk.content'])
+  assert.match(compareApk(unsigned.apk, { ...unsigned.apk, tags: [...unsigned.apk.tags, ['min_allowed_version_code', '999']] })[0], /apk\.tags\[\d+\] extra \["min_allowed_version_code","999"\]/)
+  assert.match(compareApk(unsigned.apk, { ...unsigned.apk, tags: unsigned.apk.tags.slice(0, -1) })[0], /missing \["apk_certificate_hash"/)
+  assert.match(compareApk(unsigned.apk, { ...unsigned.apk, tags: [...unsigned.apk.tags].reverse() })[0], /expected .* observed/)
+  assert.match(compareApk(unsigned.apk, { ...unsigned.apk, tags: unsigned.apk.tags.map((t) => (t[0] === 'commit' ? ['commit', 'a'.repeat(40)] : t)) })[0], /"commit"/)
+  assert.deepEqual(compareRelease(unsigned.release, { ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', apk.id, 'wss://relay.zapstore.dev'] : t)) }, apk.id), [])
+  assert.match(compareRelease(unsigned.release, { ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', apk.id, 'wss://different.example'] : t)) }, apk.id)[0], /relay\.zapstore\.dev.*different\.example/)
+  assert.match(compareRelease(unsigned.release, { ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', apk.id, 'wss://relay.zapstore.dev', 'unexpected'] : t)) }, apk.id)[0], /unexpected/)
+  assert.deepEqual(compareApp(unsigned.app, { ...unsigned.app, created_at: 1, id: 'x', sig: 'y' }), [], 'id, sig and created_at are the only permitted differences')
+  assert.match(compareApp(unsigned.app, { ...unsigned.app, tags: unsigned.app.tags.map((t) => (t[0] === 'image' ? ['image', 'https://cdn.zapstore.dev/' + '0'.repeat(64)] : t)) })[0], /"image"/)
+  const { expected } = await signedCopies()
+  const extraE = sign({ ...unsigned.release, tags: [...rel.tags, ['e', 'f'.repeat(64)]] })
+  const extraEState = assessRelayState({ expected, observed: [extraE, apk], schnorr })
+  assert.equal(extraEState.outcome, 'conflict')
+  assert.match(extraEState.detail, /e-links/)
+  const extraUrl = sign({ ...unsigned.apk, tags: [...unsigned.apk.tags.map((t) => [...t]), ['url', 'https://cdn.zapstore.dev/' + 'e'.repeat(64)]] })
+  const extraUrlState = assessRelayState({ expected, observed: [extraUrl], schnorr })
+  assert.equal(extraUrlState.outcome, 'conflict')
+  assert.match(extraUrlState.detail, /extra \["url"/)
+})
+
+// The recorded relay history was published by hand before this lane existed:
+// no commit tags, and several versions with duplicate same-hash APK events.
+function historicalExpected(version) {
+  const apk = observed.find((e) => e.kind === 3063 && e.tags.some((t) => t[0] === 'version' && t[1] === version))
+  const rel = observed.find((e) => e.kind === 30063 && e.tags.some((t) => t[0] === 'version' && t[1] === version))
+  // The lane's expected APK always carries exactly the CDN url (unsigned offline
+  // zsp output from a local file) plus the commit tag; hand publications from a
+  // GitHub source additionally carried the original download url.
+  const laneTags = apk.tags.filter((t) => t[0] !== 'url' || t[1].startsWith('https://cdn.zapstore.dev/'))
+  return { app: unsigned.app, release: rel, apk: { ...apk, tags: [...laneTags, ['commit', '0'.repeat(40)]] } }
+}
+
+test('historical relay state (no commit tags, duplicate APK events) is legacy-complete: verified, skipped, never rewritten, never an incident', () => {
+  const state54 = assessRelayState({ expected: historicalExpected('0.5.4-beta'), observed, schnorr })
+  assert.equal(state54.outcome, 'legacy-complete')
+  assert.equal(state54.duplicateApks, 0)
+  assert.equal(state54.present.apk, '50abb429c1488ab32350243fbc2fa4231ac0d3533485df622aaf12fd867bdc0f')
+  assert.deepEqual(publicationAction({ assessment: state54, publishable: false }), { action: 'skip', reason: 'legacy-complete', verifyCdn: true })
+  const state50 = assessRelayState({ expected: historicalExpected('0.5.0-beta'), observed, schnorr })
+  assert.equal(state50.outcome, 'legacy-complete')
+  assert.equal(state50.duplicateApks, 1, 'two same-hash APK events from earlier manual publications are tolerated')
+  assert.equal(state50.present.apk, '23ccc69f5815a25a179f05de4fc263808e574684fca2b83bfc985ed6aca4b955', 'the e-linked event is the canonical one')
+  const state20 = assessRelayState({ expected: historicalExpected('0.2.0-beta'), observed, schnorr })
+  assert.equal(state20.outcome, 'legacy-complete', 'an extra legacy a tag on the release is tolerated in legacy mode')
+  assert.equal(state20.duplicateApks, 2)
+  const tamperedHash = historicalExpected('0.5.4-beta')
+  tamperedHash.apk = { ...tamperedHash.apk, tags: tamperedHash.apk.tags.map((t) => (t[0] === 'size' ? ['size', '1'] : t)) }
+  assert.equal(assessRelayState({ expected: tamperedHash, observed, schnorr }).outcome, 'conflict', 'legacy identity still has to match')
+  const current = assessRelayState({ expected: unsigned, observed, schnorr })
+  assert.equal(current.outcome, 'absent', 'the recorded app metadata equals the trusted template, so 0.5.6-beta is absent, not drifted')
+  assert.equal(current.newestVersionCode, 18)
+  assert.equal(publicationAction({ assessment: current, publishable: true }).action, 'publish')
+  const olderMissing = { ...unsigned, apk: { ...unsigned.apk, tags: unsigned.apk.tags.map((t) => (t[0] === 'version' ? ['version', '0.5.1-beta'] : t[0] === 'version_code' ? ['version_code', '15'] : t)) }, release: { ...unsigned.release, tags: unsigned.release.tags.map((t) => (t[0] === 'd' ? ['d', 'io.silentsuite.android@0.5.1-beta'] : t[0] === 'version' ? ['version', '0.5.1-beta'] : t)) } }
+  const superseded = assessRelayState({ expected: olderMissing, observed, schnorr })
+  assert.equal(superseded.outcome, 'superseded', 'a never-published older version is skipped, not backfilled')
+  assert.equal(publicationAction({ assessment: superseded, publishable: false }).action, 'skip')
 })
 
 test('CDN read-back fetches every referenced blob and compares hashes', async () => {
@@ -397,18 +545,17 @@ test('redaction removes bunker URLs, connection requests, nsec and secrets from 
   assert.equal(redact('event 3007b514 ok'), 'event 3007b514 ok')
 })
 
-test('failure issue is structured, quotes untrusted text safely, dedupes, and is read back', async () => {
+test('failure issue is structured, quotes untrusted text safely, names the re-run retry, dedupes, and is read back', async () => {
   assert.equal(publicationClaim({ publishAttempted: true, signExit: 1, readbackOutcome: 'incomplete' }), 'unknown')
-  const issue = buildIssue({ releaseId: '383603104', tag: 'v0.5.6-beta', sourceSha: SHA, runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/1/attempts/2', phase: 'publish', outcome: 'partial', detail: 'x ``` @owner bunker://' + 'a'.repeat(64) + '?secret=s', publication: 'unknown' })
+  const issue = buildIssue({ releaseId: '383603104', tag: 'v0.5.6-beta', sourceSha: SHA, runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/1/attempts/2', phase: 'sign', outcome: 'partial', detail: 'x ``` @owner bunker://' + 'a'.repeat(64) + '?secret=s', publication: 'unknown' })
   assert.equal(issue.title, 'Zapstore publication failed: v0.5.6-beta (release 383603104)')
   assert.doesNotMatch(issue.body, /secret=s\b/)
   assert.doesNotMatch(issue.body, /\n```\n@owner/)
   assert.match(issue.body, /GitHub release id 383603104/)
   assert.match(issue.body, /source commit 3111352dbccfaaeee3b83ad325906e591343cfa3/)
   assert.match(issue.body, /Do not assume nothing was published/)
-  assert.match(issue.body, /-f tag_name='v0\.5\.6-beta'/)
-  assert.doesNotMatch(issue.body, /client_payload/)
-  assert.doesNotMatch(issue.body, /silentsuite_zapstore_publish/)
+  assert.match(issue.body, /Re-run failed jobs/)
+  assert.doesNotMatch(issue.body, /PATCH|tag_name|client_payload|workflow_dispatch retry/)
   const hostile = buildIssue({ releaseId: 'x', tag: 'v1.0.0; rm -rf', runUrl: 'https://evil', phase: '<script>', outcome: 'ok', detail: '' })
   assert.match(hostile.body, /\[tag failed validation\]/)
   assert.match(hostile.body, /\[run url failed validation\]/)
@@ -443,43 +590,46 @@ test('failure issue is structured, quotes untrusted text safely, dedupes, and is
   await assert.rejects(createIssueWithReadback({ fetchImpl: drift, token: 't', issue }), /different content/)
 })
 
-test('cli admit: disabled state is reported loudly; owner release retry works; dispatch is refused', () => {
-  const run = (env) => {
-    const dir = mkdtempSync(join(tmpdir(), 'zapstore-cli-'))
-    const out = join(dir, 'out'); const sum = join(dir, 'summary')
-    writeFileSync(out, ''); writeFileSync(sum, '')
-    const result = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'admit'], {
-      env: {
-        PATH: process.env.PATH,
-        HOME: dir,
-        GITHUB_OUTPUT: out,
-        GITHUB_STEP_SUMMARY: sum,
-        GITHUB_REF: 'refs/heads/main',
-        GITHUB_REPOSITORY: 'silent-suite/silentsuite',
-        GITHUB_WORKFLOW_REF: WORKFLOW_REF,
-        ...env,
-      },
-      encoding: 'utf8',
-    })
-    return { ...result, outputs: readFileSync(out, 'utf8'), summary: readFileSync(sum, 'utf8') }
+test('issues for states a re-run cannot fix say stop, preserve the event ids, and never advise a re-run or a hand-run publisher as the remedy', () => {
+  const apkId = 'a'.repeat(64)
+  const base = { releaseId: '383603104', tag: 'v0.5.6-beta', sourceSha: SHA, runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/1/attempts/1', phase: 'reconcile', outcome: 'partial', publication: 'not-attempted', detail: `present: apk ${apkId}; missing: release; the accepted APK event cannot be reused by the official publisher` }
+  const stop = buildIssue({ ...base, reason: 'partial-unrecoverable' })
+  assert.match(stop.body, /- Decision: partial-unrecoverable/)
+  assert.match(stop.body, new RegExp(apkId), 'the preserved immutable event id is in the issue')
+  assert.match(stop.body, /### Manual handling required \(do not re-run as a fix\)/)
+  assert.match(stop.body, /STOP: outcome partial-unrecoverable is not fixed by a re-run/)
+  assert.match(stop.body, /Do not run the publisher by hand and do not use --overwrite-release/)
+  assert.match(stop.body, /Collect evidence/)
+  assert.match(stop.body, /section 5\.3/)
+  assert.match(stop.body, /accepted limitation/)
+  assert.doesNotMatch(stop.body, /### Exact retry|choose "Re-run failed jobs"|wait for the next schedule/)
+  assert.doesNotMatch(stop.body, /recover(ed|y) automatically|will be recovered/i, 'no false automatic-recovery claim')
+  for (const reason of ['conflict', 'app-drift']) assert.match(buildIssue({ ...base, outcome: reason, reason }).body, /STOP: outcome/, reason)
+  // Transient and recoverable failures keep the exact-retry guidance.
+  for (const reason of ['incomplete', 'partial-not-newest', undefined, 'partial-unrecoverable; rm -rf']) {
+    const retry = buildIssue({ ...base, outcome: 'incomplete', reason })
+    assert.match(retry.body, /### Exact retry/, String(reason))
+    assert.doesNotMatch(retry.body, /STOP: outcome/, String(reason))
   }
-  const disabled = run({ GITHUB_EVENT_NAME: 'schedule' })
-  assert.equal(disabled.status, 0, disabled.stderr)
-  assert.match(disabled.outputs, /active=false/)
-  assert.match(disabled.summary, /DISABLED/)
-  const wrongRef = run({ GITHUB_EVENT_NAME: 'schedule', GITHUB_REF: 'refs/heads/feat' })
-  assert.notEqual(wrongRef.status, 0)
-  const dispatch = run({ GITHUB_EVENT_NAME: 'repository_dispatch', SENDER_ID: '265568982', ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
-  assert.notEqual(dispatch.status, 0)
-  assert.match(dispatch.stderr, /unsupported event/)
-  const nonOwner = run({ GITHUB_EVENT_NAME: 'release', SENDER_ID: '42', RELEASE_ID: '383603104', RELEASE_TAG: 'v0.5.6-beta', RELEASE_DRAFT: 'false', ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
-  assert.notEqual(nonOwner.status, 0)
-  assert.match(nonOwner.stderr, /not the release owner/)
-  const owner = run({ GITHUB_EVENT_NAME: 'release', SENDER_ID: '265568982', RELEASE_ID: '383603104', RELEASE_TAG: 'v0.5.6-beta', RELEASE_DRAFT: 'false', ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
-  assert.equal(owner.status, 0, owner.stderr)
-  assert.match(owner.outputs, /active=true/)
-  assert.match(owner.outputs, /release_id=383603104/)
-  assert.match(owner.outputs, /mode=release/)
+  assert.match(buildIssue({ ...base, reason: '<script>' }).body, /- Decision: script/, 'the decision text is sanitised')
+  // The procedure the issue points at exists and does not instruct duplication.
+  const runbook = readFileSync(join(root, 'runbooks', 'zapstore-automation.md'), 'utf8')
+  const section = runbook.slice(runbook.indexOf('### 5.3 '), runbook.indexOf('## 6. '))
+  assert.match(section, /\*\*Stop\.\*\*/)
+  assert.match(section, /Do not run `zsp` by hand for this version, with or\s+without `--overwrite-release`/)
+  assert.match(section, /Collect evidence/)
+  assert.match(section, /will not sign events itself/)
+  assert.doesNotMatch(runbook, /publishes the missing replaceable release event by hand/)
+  assert.match(runbook, /Accepted first-version scope/, 'the accepted reduced scope is recorded')
+  assert.match(runbook, /no\s+on-demand trigger for an arbitrary exact release id/)
+  assert.match(runbook, /replay has not been demonstrated on a\s+live run/, 'acceptance of scope does not turn the replay into proven behaviour')
+  assert.match(runbook, /Until then the replay is unverified/)
+  assert.doesNotMatch(runbook, /acceptance decision that has not been made/)
+})
+
+test('cli publish refuses without signer credentials before touching any key material or the publisher', () => {
   const noCreds = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'publish', '--binding', '/nonexistent.json', '--config', 'x', '--zsp', 'x', '--work-dir', tmpdir()], { env: { PATH: process.env.PATH }, encoding: 'utf8' })
   assert.notEqual(noCreds.status, 0)
+  const unknown = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'nope'], { env: { PATH: process.env.PATH }, encoding: 'utf8' })
+  assert.equal(unknown.status, 2)
 })
