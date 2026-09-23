@@ -506,7 +506,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(canonical) == 88
+    assert len(canonical) == 90
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
@@ -518,8 +518,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
         for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes")
     }
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 86, 88)
-    assert tuple(len(api36[key]) for key in api36) == (27, 19, 42)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 88, 90)
+    assert tuple(len(api36[key]) for key in api36) == (29, 19, 42)
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())
@@ -580,8 +580,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':87,'35:all':88,'36:account-dashboard':27,'36:first-run-setup':19,'36:status-routes':42}" in assertion
-    assert '"21:remaining": 86' in script
+    assert "expected_sizes={'21:mixed':1,'21:remaining':89,'35:all':90,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':42}" in assertion
+    assert '"21:remaining": 88' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper
@@ -709,6 +709,45 @@ def test_api21_mixed_dashboard_observers_precede_mutation_and_avoid_post_refresh
     assert "dashboard_status_never_synced" in mixed
     assert "mixed-diagnostic" not in mixed
     assert "helper-diagnostic" not in runtime
+
+
+def test_orphan_sweep_reads_owner_nullably_and_is_pinned_by_wired_runtime_methods():
+    sweep = (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/AccountAuthenticatorService.kt").read_text(encoding="utf-8")
+    policy = (ROOT / "android/app/src/main/java/io/silentsuite/sync/syncadapter/AddressBookCleanupPolicy.kt").read_text(encoding="utf-8")
+    address_book = (ROOT / "android/app/src/main/java/io/silentsuite/sync/resource/LocalAddressBook.kt").read_text(encoding="utf-8")
+    runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDrawerSignOutRuntimeTest.kt").read_text(encoding="utf-8")
+    ledger = json.loads(FOCUSED_RUNTIME_LEDGER.read_text(encoding="utf-8"))
+
+    # The main-looper sweep must never reach the throwing owner getter for an enumerated row.
+    cleanup = sweep.split("internal fun cleanupAccounts(context: Context) {", 1)[1].split("\n        }\n", 1)[0]
+    assert "AddressBookCleanupPolicy.orphans(" in cleanup
+    assert "addressBook.mainAccountOrNull?.let { AddressBookOwner(it.name, it.type) }" in cleanup
+    assert ".mainAccount." not in cleanup
+    assert "catch (e: ContactsStorageException)" in cleanup
+    assert "catch (e: Exception)" not in cleanup and "runCatching" not in cleanup
+    assert "owner == null -> AddressBookCleanupDecision.SKIP_UNREADABLE_OWNER" in policy
+    assert "val mainAccountOrNull: Account?" in address_book
+    delete = address_book.split("fun delete() {", 1)[1].split("val recordConfirmedRemoval =", 1)[0]
+    assert "val main = mainAccountOrNull" in delete
+    assert "val main = mainAccount\n" not in delete
+
+    # Wired regressions run in every shard that owns the drawer sign-out class.
+    drawer = ledger["classes"]["io.silentsuite.sync.ui.AccountDrawerSignOutRuntimeTest"]
+    for method in (
+        "cleanupSweepKeepsUnreadableOwnerChildAndDeletesOnlyOrphans",
+        "deleteAfterChildRowVanishedDoesNotThrowAndLeavesSiblingRowsIntact",
+    ):
+        assert f"@Test fun {method}()" in runtime
+        assert method in drawer
+    sweep_test = runtime.split("@Test fun cleanupSweepKeepsUnreadableOwnerChildAndDeletesOnlyOrphans()", 1)[1].split("\n    @Test", 1)[0]
+    assert "AccountAuthenticatorService.cleanupAccounts(sibling.context)" in sweep_test
+    assert "addAccountExplicitly(unreadable, null, null)" in sweep_test
+    assert "unreadable in sibling.manager.getAccountsByType(unreadable.type)" in sweep_test
+    assert "orphan !in sibling.manager.getAccountsByType(orphan.type)" in sweep_test
+    vanish_test = runtime.split("@Test fun deleteAfterChildRowVanishedDoesNotThrowAndLeavesSiblingRowsIntact()", 1)[1].split("\n    @Test", 1)[0]
+    assert "assertNull(addressBook.mainAccountOrNull)" in vanish_test
+    assert "addressBook.delete()" in vanish_test
+    assert "siblingChild in sibling.manager.getAccountsByType(siblingChild.type)" in vanish_test
 
 
 def test_account_replacement_visibility_poll_does_not_wait_for_global_main_queue_idle():
