@@ -156,6 +156,17 @@ def test_registry_decode_status_is_content_free_and_still_fails_closed():
     assert "parts.drop(1).filter { it.isNotEmpty() }.forEach { line ->" in decoder
     for forbidden in ("trim", "isBlank", "isNotBlank", "strip", "dropLastWhile"):
         assert forbidden not in registry, forbidden
+    # Exactly one extra stored shape is readable: a terminal newline the platform preferences file
+    # padded with four spaces, accepted only when the whole payload re-encodes to itself.
+    assert 'private const val LEGACY_PADDING = "    "' in registry
+    assert 'private const val LEGACY_PADDED_ENDING = "\\n    "' in registry
+    assert "raw.endsWith(LEGACY_PADDED_ENDING)" in decoder
+    assert "raw.substring(0, raw.length - LEGACY_PADDING.length)" in decoder
+    assert 'encode(rows) + "\\n" == payload' in decoder
+    assert "private fun decodeExact(raw: String?)" in registry
+    # Recovery is read-only: the decode path still commits nothing and reads nothing back.
+    for forbidden in ("store.commit", "edit()", "readResult()"):
+        assert forbidden not in decoder, forbidden
 
 
 def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
@@ -171,7 +182,7 @@ def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
     job = workflow.split("\n  registry-process-boundary:\n", 1)[1]
     assert "timeout-minutes: 60" in job and "contents: read" in job and "needs: conscrypt-r28" in job
     assert re.findall(r"api-level: (\d+)\n\s+image-required: (true|false)", job) == [
-        ("21", "true"), ("35", "true"), ("36", "true"), ("37", "false"),
+        ("21", "true"), ("34", "true"), ("35", "true"), ("36", "true"), ("37", "false"),
     ]
     assert 'script: bash android/scripts/run-registry-process-boundary.sh "${{ matrix.api-level }}"' in job
     # A lane that did not run says exactly why; a broken probe is never reported as a missing image.
@@ -232,7 +243,7 @@ def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
     assert "RegistryTransportControls.observe(context)" in runtime
     # The fail-closed expectation is unchanged; it now carries the content-free evidence line.
     assert 'assertEquals("$evidence verdict=REGISTRY_PROBE_STATUS", DecodeStatus.OK, beforeLaunch.status)' in runtime
-    assert runtime.count("DecodeStatus.OK, beforeLaunch.status)") == 2
+    assert runtime.count("DecodeStatus.OK, beforeLaunch.status)") == 4
     # The registry's twin is the newline-free control; the newline-terminated one stays as a diagnostic.
     assert 'const val EMPTY_REGISTRY = "v1"\n' in runtime
     assert 'const val REGISTRY_TWIN = "header_plain"' in controls
@@ -246,6 +257,64 @@ def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
     assert "if (registryBoundaryProbe) RegistryProcessBoundaryProbe.captureBeforeLaunch(app)" in runner
     # The pair is meaningless inside one process, so it stays out of the single-process ledger.
     assert "RegistryProcessBoundaryRuntimeTest" not in ledger
+
+    # Legacy padded state: a fresh process records the shape it loaded before Application.onCreate,
+    # because launch reconciliation rewrites a recovered populated store before a reader could look.
+    probe = (
+        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/RegistryProcessBoundaryProbe.kt"
+    ).read_text(encoding="utf-8")
+    assert "enum class Ending { ABSENT, NEWLINE_FREE, NEWLINE_TERMINATED, PADDED_FOUR_SPACES, OTHER }" in probe
+    assert "check(PostLoginStartupChecks.snapshot().launchOutcome == null)" in probe
+    assert probe.index("beforeLaunchEnding = ending(app)") < probe.index(
+        "beforeLaunch = AccountCreationRegistry.open(app).readResult()")
+    for forbidden in ("Log.", "println", "sendStatus", "commit()", "putString"):
+        assert forbidden not in probe, forbidden
+    for reader in ("readerRecoversLegacyPaddedEmptyRegistryInFreshProcess",
+                   "readerRecoversLegacyPaddedEveryPhaseInFreshProcess"):
+        body = runtime.split(f"@Test fun {reader}()", 1)[1].split("\n    @Test", 1)[0]
+        # Never a vacuous pass: an unpadded fixture fails instead of proving nothing.
+        assert ('assertEquals("verdict=LEGACY_PADDING_NOT_REPRODUCED",\n'
+                "            Ending.PADDED_FOUR_SPACES, RegistryProcessBoundaryProbe.beforeLaunchEnding)") in body
+        assert "PostLoginStartupOutcome.SUCCEEDED, PostLoginStartupChecks.snapshot().launchOutcome" in body
+    # The empty store has nothing to reconcile, so read-only recovery leaves it padded; the populated
+    # one is rewritten canonically by ordinary reconciliation, never by the read path.
+    empty_reader_body = runtime.split("@Test fun readerRecoversLegacyPaddedEmptyRegistryInFreshProcess()", 1)[1]
+    assert ('assertEquals("verdict=PADDED_VALUE_REWRITTEN",\n'
+            "            Ending.PADDED_FOUR_SPACES, RegistryProcessBoundaryProbe.ending(context))") in empty_reader_body
+    populated_reader_body = runtime.split("@Test fun readerRecoversLegacyPaddedEveryPhaseInFreshProcess()", 1)[1]
+    assert ('assertEquals("verdict=RECONCILED_VALUE_NOT_CANONICAL",\n'
+            "            exact, RegistryTransportControls.classify(EMPTY_REGISTRY, storedValue()))"
+            ) in populated_reader_body.split("\n    @Test", 1)[0]
+
+    # The synthetic unreadable value runs last and is still rejected and untouched after a restart.
+    assert checker.EXPECTED_STEPS[-2:] == (
+        ("malformed-write", "writerSeedsMalformedRegistryValue"),
+        ("malformed-read", "readerKeepsMalformedRegistryUnreadableAndUntouchedInFreshProcess"),
+    )
+    assert script.index("run_step reinstall-read") < script.index("run_step malformed-write")
+    malformed_body = runtime.split(
+        "@Test fun readerKeepsMalformedRegistryUnreadableAndUntouchedInFreshProcess()", 1)[1]
+    assert "PostLoginStartupOutcome.Reason.REGISTRY_UNREADABLE" in malformed_body
+    assert "registryDecode = DecodeStatus.INVALID_FIELD_COUNT" in malformed_body
+    assert "RegistryLegacySeed.malformedValueIntact(context)" in malformed_body
+
+    # The only test-only writer of a raw registry value: two fixed values, no caller-supplied one,
+    # no clear and no remove, and every write is verified by reading it back.
+    seed = (
+        ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/setup/RegistryLegacySeed.kt"
+    ).read_text(encoding="utf-8")
+    assert 'private const val PREFS = "account_creation_registry"' in seed
+    assert seed.count("getSharedPreferences(") == 1
+    assert re.findall(r"putString\(KEY, (\w+)\)", seed) == ["legacy", "MALFORMED"]
+    assert 'val legacy = current + "\\n"' in seed
+    assert 'const val MALFORMED = "v1\\n\\t"' in seed
+    assert seed.count(".commit()") == 2
+    assert "AccountCreationRegistry.DecodeStatus.OK) {\n            return false" in seed
+    for forbidden in (".clear()", "remove(", "Log.", "println", "apply()", "MessageDigest", "hashCode"):
+        assert forbidden not in seed, forbidden
+    # Only the two seeded shapes reach the registry preferences from the lane's test code.
+    assert runtime.count("RegistryLegacySeed.appendLegacyNewline(context)") == 2
+    assert runtime.count("RegistryLegacySeed.seedMalformed(context)") == 1
 
 
 def _load_boundary_checker():
