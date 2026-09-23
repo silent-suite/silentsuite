@@ -99,7 +99,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
         const text = await file.text()
         const vcardStrings = splitVCards(text)
         for (const vcStr of vcardStrings) {
-          allContacts.push(parseVCard(vcStr))
+          allContacts.push(parseVCard(vcStr, { strictTextEncoding: true }))
         }
       }
       if (allContacts.length === 0) {
