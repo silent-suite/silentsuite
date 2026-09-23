@@ -3,9 +3,9 @@
 #
 # Each step is its own `am instrument` invocation, and the app process is terminated before every
 # step, so a reader can only see what the writer's production store made durable. App data is never
-# cleared and the package is never removed between steps; the last pair reads across an
-# in-place reinstall of the same debug-signed APK (an emulator existing-install gate, not a
-# real-device upgrade and not release signing).
+# cleared and the package is never removed between steps; the reinstall pair reads legacy persisted
+# state across an in-place reinstall of the same debug-signed APK (an emulator existing-install
+# fixture with legacy state, not an old-version binary upgrade and not release signing).
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,7 +77,11 @@ run_step empty-write writerCommitsEmptyRegistryThroughProductionStore
 run_step empty-read readerLoadsEmptyRegistryInFreshProcess
 run_step populated-write writerCommitsEveryPhaseThroughProductionStore
 run_step populated-read readerLoadsEveryPhaseInFreshProcess
-run_step reinstall-write writerCommitsEveryPhaseThroughProductionStore
+run_step legacy-empty-write writerCommitsLegacyNewlineTerminatedEmptyRegistry
+run_step legacy-empty-read readerRecoversLegacyPaddedEmptyRegistryInFreshProcess
+run_step legacy-populated-write writerCommitsLegacyNewlineTerminatedEveryPhase
+run_step legacy-populated-read readerRecoversLegacyPaddedEveryPhaseInFreshProcess
+run_step reinstall-write writerCommitsLegacyNewlineTerminatedEveryPhase
 
 apk="$(python3 - <<'PY'
 import json, pathlib
@@ -100,4 +104,9 @@ timeout --signal=TERM --kill-after=10s 300s adb install -r "${apk}" > "${output}
 printf '%s\n' "${reinstall_status}" > "${output}/reinstall-install.exit"
 install_times > "${output}/reinstall-after.txt"
 
-run_step reinstall-read readerLoadsEveryPhaseInFreshProcess
+run_step reinstall-read readerRecoversLegacyPaddedEveryPhaseInFreshProcess
+
+# Last: a value no decoder accepts is seeded and must still be unreadable and unchanged after a
+# restart. It runs after every other step so no later writer can inherit that state.
+run_step malformed-write writerSeedsMalformedRegistryValue
+run_step malformed-read readerKeepsMalformedRegistryUnreadableAndUntouchedInFreshProcess

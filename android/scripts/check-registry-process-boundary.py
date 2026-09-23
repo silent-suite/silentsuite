@@ -16,8 +16,14 @@ EXPECTED_STEPS = (
     ("empty-read", "readerLoadsEmptyRegistryInFreshProcess"),
     ("populated-write", "writerCommitsEveryPhaseThroughProductionStore"),
     ("populated-read", "readerLoadsEveryPhaseInFreshProcess"),
-    ("reinstall-write", "writerCommitsEveryPhaseThroughProductionStore"),
-    ("reinstall-read", "readerLoadsEveryPhaseInFreshProcess"),
+    ("legacy-empty-write", "writerCommitsLegacyNewlineTerminatedEmptyRegistry"),
+    ("legacy-empty-read", "readerRecoversLegacyPaddedEmptyRegistryInFreshProcess"),
+    ("legacy-populated-write", "writerCommitsLegacyNewlineTerminatedEveryPhase"),
+    ("legacy-populated-read", "readerRecoversLegacyPaddedEveryPhaseInFreshProcess"),
+    ("reinstall-write", "writerCommitsLegacyNewlineTerminatedEveryPhase"),
+    ("reinstall-read", "readerRecoversLegacyPaddedEveryPhaseInFreshProcess"),
+    ("malformed-write", "writerSeedsMalformedRegistryValue"),
+    ("malformed-read", "readerKeepsMalformedRegistryUnreadableAndUntouchedInFreshProcess"),
 )
 REINSTALL_FILES = ("reinstall-before.txt", "reinstall-install.txt", "reinstall-after.txt")
 REINSTALL_EXIT = "reinstall-install.exit"

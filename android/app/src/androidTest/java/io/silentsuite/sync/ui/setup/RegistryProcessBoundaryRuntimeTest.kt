@@ -5,6 +5,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry.DecodeStatus
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry.Phase
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry.Record
+import io.silentsuite.sync.ui.setup.RegistryProcessBoundaryProbe.Ending
 import java.io.File
 import java.io.FileOutputStream
 import org.junit.Assert.assertEquals
@@ -18,8 +19,10 @@ import org.junit.Test
  * `am instrument` invocations with the app process terminated in between. A reader run alone, or in
  * the writer's process, fails by design. It is deliberately outside the focused runtime ledger.
  *
- * Nothing here resets storage: registry state is only changed through the production mutators,
- * and an unreadable registry fails the writer instead of being replaced.
+ * Registry state is only changed through the production mutators, except for the two exact values
+ * [RegistryLegacySeed] writes: the newline-terminated form earlier builds stored, and one synthetic
+ * unreadable value seeded by the last pair. An unreadable registry fails a writer instead of being
+ * replaced, and no reader ever writes.
  */
 class RegistryProcessBoundaryRuntimeTest {
     private val context: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
@@ -107,6 +110,94 @@ class RegistryProcessBoundaryRuntimeTest {
         // The real launch check then ran over that state: rows without an account are cleared.
         assertEquals(PostLoginStartupOutcome.SUCCEEDED, PostLoginStartupChecks.snapshot().launchOutcome)
         assertEquals(emptyList<Record>(), AccountCreationRegistry.open(context).records())
+    }
+
+    @Test fun writerCommitsLegacyNewlineTerminatedEmptyRegistry() {
+        val registry = AccountCreationRegistry.open(context)
+        clearThroughProductionMutators(registry)
+        val seed = populated.first()
+        assertTrue(registry.prepare(seed))
+        assertTrue(registry.clearOwned(seed.accountType, seed.accountName, seed.creationId))
+        // The grammar earlier builds stored, produced by the platform serialization path itself:
+        // the four spaces only appear once this file is parsed again in a fresh process.
+        assertTrue("legacy newline was not seeded", RegistryLegacySeed.appendLegacyNewline(context))
+        assertEquals(Ending.NEWLINE_TERMINATED, RegistryProcessBoundaryProbe.ending(context))
+        assertEquals(DecodeStatus.OK, registry.readResult().status)
+        assertEquals(emptyList<Record>(), registry.records())
+        writeState("legacy-empty")
+    }
+
+    @Test fun readerRecoversLegacyPaddedEmptyRegistryInFreshProcess() {
+        assertFreshProcessAfterWriter("legacy-empty")
+        val beforeLaunch = requireProbe()
+        // The fixture only means something if this process really loaded a padded value from disk,
+        // so an unpadded one fails here instead of passing vacuously.
+        assertEquals("verdict=LEGACY_PADDING_NOT_REPRODUCED",
+            Ending.PADDED_FOUR_SPACES, RegistryProcessBoundaryProbe.beforeLaunchEnding)
+        assertEquals("verdict=REGISTRY_PROBE_STATUS", DecodeStatus.OK, beforeLaunch.status)
+        assertEquals(emptyList<Record>(), beforeLaunch.records)
+        assertEquals(PostLoginStartupOutcome.SUCCEEDED, PostLoginStartupChecks.snapshot().launchOutcome)
+        // Recovery is read-only, and an empty store has no row to reconcile, so it is still padded.
+        assertEquals("verdict=PADDED_VALUE_REWRITTEN",
+            Ending.PADDED_FOUR_SPACES, RegistryProcessBoundaryProbe.ending(context))
+        assertEquals(emptyList<Record>(), AccountCreationRegistry.open(context).records())
+    }
+
+    @Test fun writerCommitsLegacyNewlineTerminatedEveryPhase() {
+        assertEquals(Phase.values().toSet(), populated.map { it.phase }.toSet())
+        val registry = AccountCreationRegistry.open(context)
+        clearThroughProductionMutators(registry)
+        populated.forEach { record ->
+            assertTrue(registry.prepare(record.copy(phase = Phase.PREPARED)))
+            if (record.phase != Phase.PREPARED) assertTrue(registry.updateOwned(record))
+        }
+        assertTrue("legacy newline was not seeded", RegistryLegacySeed.appendLegacyNewline(context))
+        assertEquals(Ending.NEWLINE_TERMINATED, RegistryProcessBoundaryProbe.ending(context))
+        assertEquals(populated.toSet(), requireNotNull(registry.readResult().records).toSet())
+        writeState("legacy-populated")
+    }
+
+    @Test fun readerRecoversLegacyPaddedEveryPhaseInFreshProcess() {
+        assertFreshProcessAfterWriter("legacy-populated")
+        val beforeLaunch = requireProbe()
+        assertEquals("verdict=LEGACY_PADDING_NOT_REPRODUCED",
+            Ending.PADDED_FOUR_SPACES, RegistryProcessBoundaryProbe.beforeLaunchEnding)
+        assertEquals("verdict=REGISTRY_PROBE_STATUS", DecodeStatus.OK, beforeLaunch.status)
+        assertEquals(populated.size, requireNotNull(beforeLaunch.records).size)
+        assertEquals(populated.toSet(), requireNotNull(beforeLaunch.records).toSet())
+        // Ordinary launch reconciliation then ran over the recovered rows and cleared them, which is
+        // also the only thing that rewrote the value: the read path itself never commits.
+        assertEquals(PostLoginStartupOutcome.SUCCEEDED, PostLoginStartupChecks.snapshot().launchOutcome)
+        assertEquals(emptyList<Record>(), AccountCreationRegistry.open(context).records())
+        assertEquals("verdict=RECONCILED_VALUE_NOT_CANONICAL",
+            exact, RegistryTransportControls.classify(EMPTY_REGISTRY, storedValue()))
+    }
+
+    @Test fun writerSeedsMalformedRegistryValue() {
+        // Last pair in the lane: it deliberately leaves a value no decoder accepts, so no later
+        // writer inherits it.
+        assertTrue("malformed value was not seeded", RegistryLegacySeed.seedMalformed(context))
+        assertEquals(DecodeStatus.INVALID_FIELD_COUNT, AccountCreationRegistry.open(context).readResult().status)
+        writeState("malformed")
+    }
+
+    @Test fun readerKeepsMalformedRegistryUnreadableAndUntouchedInFreshProcess() {
+        assertFreshProcessAfterWriter("malformed")
+        val beforeLaunch = requireProbe()
+        assertEquals("verdict=MALFORMED_VALUE_DECODED", DecodeStatus.INVALID_FIELD_COUNT, beforeLaunch.status)
+        assertEquals(null, beforeLaunch.records)
+        // Legacy recovery did not widen what is accepted: the gate still fails closed with the step.
+        assertEquals(
+            PostLoginStartupOutcome(
+                PostLoginStartupOutcome.Phase.REGISTRY_READ,
+                PostLoginStartupOutcome.Reason.REGISTRY_UNREADABLE,
+                registryDecode = DecodeStatus.INVALID_FIELD_COUNT,
+            ),
+            PostLoginStartupChecks.snapshot().launchOutcome,
+        )
+        // Nothing repaired, cleared or rewrote the value it could not read.
+        assertTrue("verdict=UNREADABLE_VALUE_CHANGED", RegistryLegacySeed.malformedValueIntact(context))
+        assertEquals(null, AccountCreationRegistry.open(context).records())
     }
 
     private fun clearThroughProductionMutators(registry: AccountCreationRegistry) {
