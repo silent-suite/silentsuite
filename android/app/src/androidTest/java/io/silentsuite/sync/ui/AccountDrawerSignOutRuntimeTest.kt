@@ -20,6 +20,7 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.resource.LocalAddressBook
+import io.silentsuite.sync.syncadapter.AccountAuthenticatorService
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.utils.AndroidCompat
@@ -275,6 +276,72 @@ class AccountDrawerSignOutRuntimeTest {
             removeAccountAndWait(target.manager, child)
             sibling.close()
             target.close()
+        }
+    }
+
+    @Test fun cleanupSweepKeepsUnreadableOwnerChildAndDeletesOnlyOrphans() {
+        val sibling = Fixture("sweep-sibling")
+        val departed = Fixture("sweep-departed")
+        val statusStore = SyncStatusStore(sibling.context)
+        val owned = Account("sweep-owned-${System.nanoTime()}@example.invalid", App.addressBookAccountType)
+        val unreadable = Account("sweep-unreadable-${System.nanoTime()}@example.invalid", App.addressBookAccountType)
+        val orphan = Account("sweep-orphan-${System.nanoTime()}@example.invalid", App.addressBookAccountType)
+        try {
+            check(sibling.manager.addAccountExplicitly(owned, null,
+                LocalAddressBook.initialUserData(sibling.account, statusStore.identity(sibling.account), "https://example.invalid/owned")))
+            // The platform still enumerates this row but its owner metadata is unreadable: exactly
+            // what the sweep observes when a sign-out removes a child between enumeration and read.
+            check(sibling.manager.addAccountExplicitly(unreadable, null, null))
+            check(sibling.manager.addAccountExplicitly(orphan, null,
+                LocalAddressBook.initialUserData(departed.account, statusStore.identity(departed.account), "https://example.invalid/orphan")))
+            removeAccountAndWait(departed.manager, departed.account)
+            assertNull(LocalAddressBook(sibling.context, unreadable, null).mainAccountOrNull)
+
+            AccountAuthenticatorService.cleanupAccounts(sibling.context)
+
+            waitUntil("orphaned child removal") { orphan !in sibling.manager.getAccountsByType(orphan.type) }
+            assertTrue("sibling-owned child was removed", owned in sibling.manager.getAccountsByType(owned.type))
+            assertTrue("unreadable-owner child was removed", unreadable in sibling.manager.getAccountsByType(unreadable.type))
+            assertTrue("sibling main was removed", sibling.account in sibling.manager.getAccountsByType(sibling.account.type))
+        } finally {
+            removeAccountAndWait(sibling.manager, owned)
+            removeAccountAndWait(sibling.manager, unreadable)
+            removeAccountAndWait(sibling.manager, orphan)
+            departed.close()
+            sibling.close()
+        }
+    }
+
+    @Test fun deleteAfterChildRowVanishedDoesNotThrowAndLeavesSiblingRowsIntact() {
+        val sibling = Fixture("vanish-sibling")
+        val departed = Fixture("vanish-departed")
+        val statusStore = SyncStatusStore(sibling.context)
+        val siblingChild = Account("vanish-sibling-child-${System.nanoTime()}@example.invalid", App.addressBookAccountType)
+        val vanished = Account("vanish-child-${System.nanoTime()}@example.invalid", App.addressBookAccountType)
+        try {
+            check(sibling.manager.addAccountExplicitly(siblingChild, null,
+                LocalAddressBook.initialUserData(sibling.account, statusStore.identity(sibling.account), "https://example.invalid/sibling-child")))
+            check(sibling.manager.addAccountExplicitly(vanished, null,
+                LocalAddressBook.initialUserData(departed.account, statusStore.identity(departed.account), "https://example.invalid/vanished")))
+            val addressBook = LocalAddressBook(sibling.context, vanished, null)
+            assertEquals(departed.account, addressBook.mainAccount)
+            val siblingStatusBefore = statusStore.status(sibling.account, SyncStatusStore.Service.CONTACTS)
+            // The sweep decided to delete this orphan, but a concurrent sign-out removed the row first.
+            removeAccountAndWait(sibling.manager, vanished)
+            removeAccountAndWait(departed.manager, departed.account)
+            assertNull(addressBook.mainAccountOrNull)
+
+            addressBook.delete()
+
+            assertFalse(vanished in sibling.manager.getAccountsByType(vanished.type))
+            assertTrue("sibling child was removed", siblingChild in sibling.manager.getAccountsByType(siblingChild.type))
+            assertTrue("sibling main was removed", sibling.account in sibling.manager.getAccountsByType(sibling.account.type))
+            assertEquals(siblingStatusBefore, statusStore.status(sibling.account, SyncStatusStore.Service.CONTACTS))
+        } finally {
+            removeAccountAndWait(sibling.manager, siblingChild)
+            removeAccountAndWait(sibling.manager, vanished)
+            departed.close()
+            sibling.close()
         }
     }
 
