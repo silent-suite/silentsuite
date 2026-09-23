@@ -1,0 +1,1 @@
+Recover a legacy account-setup storage format that could prevent startup after updating, without clearing app data. Replace the broken “Forgot password?” link with in-app help explaining password recovery limitations.
