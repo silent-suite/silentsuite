@@ -78,7 +78,7 @@ class EditCollectionFragment : Fragment() {
     }
 
     private fun initFixtureUi(v: View, fixture: RuntimeCollectionFixture) {
-        (activity as? BaseActivity?)?.supportActionBar?.setTitle(if (isCreating) R.string.create_calendar else R.string.edit_collection)
+        (activity as? BaseActivity?)?.supportActionBar?.setTitle(if (isCreating) createTitleFor(fixture.type) else R.string.edit_collection)
         val title = v.findViewById<EditText>(R.id.display_name)
         val desc = v.findViewById<EditText>(R.id.description)
         title.isSaveEnabled = false
@@ -93,24 +93,16 @@ class EditCollectionFragment : Fragment() {
         else color.setBackgroundColor(draft.color)
     }
 
+    private fun createTitleFor(collectionType: String): Int = when (collectionType) {
+        Constants.ETEBASE_TYPE_TASKS -> R.string.create_tasklist
+        Constants.ETEBASE_TYPE_ADDRESS_BOOK -> R.string.create_addressbook
+        Constants.ETEBASE_TYPE_NOTES -> R.string.create_notebook
+        else -> R.string.create_calendar
+    }
+
     fun updateTitle() {
         cachedCollection.let {
-            var titleId: Int = R.string.create_calendar
-            if (isCreating) {
-                when (cachedCollection.collectionType) {
-                    Constants.ETEBASE_TYPE_CALENDAR -> {
-                        titleId = R.string.create_calendar
-                    }
-                    Constants.ETEBASE_TYPE_TASKS -> {
-                        titleId = R.string.create_tasklist
-                    }
-                    Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
-                        titleId = R.string.create_addressbook
-                    }
-                }
-            } else {
-                titleId = R.string.edit_collection
-            }
+            val titleId = if (isCreating) createTitleFor(cachedCollection.collectionType) else R.string.edit_collection
             (activity as? BaseActivity?)?.supportActionBar?.setTitle(titleId)
         }
     }
@@ -167,6 +159,22 @@ class EditCollectionFragment : Fragment() {
 
                 val colorGroup = v.findViewById<View>(R.id.color_group)
                 colorGroup.visibility = View.GONE
+            }
+            Constants.ETEBASE_TYPE_NOTES -> {
+                title.setHint(R.string.create_notebook_display_name_hint)
+
+                val color = draft.color
+                colorSquare.setBackgroundColor(color)
+                colorSquare.setOnClickListener {
+                    AmbilWarnaDialog(context, (colorSquare.background as ColorDrawable).color, true, object : AmbilWarnaDialog.OnAmbilWarnaListener {
+                        override fun onCancel(dialog: AmbilWarnaDialog) {}
+
+                        override fun onOk(dialog: AmbilWarnaDialog, color: Int) {
+                            colorSquare.setBackgroundColor(color)
+                            draft.color = color
+                        }
+                    }).show()
+                }
             }
         }
     }
@@ -279,7 +287,7 @@ class EditCollectionFragment : Fragment() {
 
         if (ok) {
             when (cachedCollection.collectionType) {
-                Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS -> {
+                Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS, Constants.ETEBASE_TYPE_NOTES -> {
                     val view = v.findViewById<View>(R.id.color)
                     val color = (view.background as ColorDrawable).color
                     meta.color = String.format("#%06X", 0xFFFFFF and color)

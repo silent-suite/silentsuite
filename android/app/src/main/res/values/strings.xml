@@ -725,4 +725,26 @@
     <string name="settings_privacy_local_summary">Global preferences stay on this device. Sync schedule, Wi-Fi restrictions, setup state, and session data remain scoped to the selected Android account.</string>
     <string name="settings_invalid_proxy_host">Enter a valid proxy host</string>
     <string name="settings_invalid_proxy_port">Enter a proxy port from 1 to 65535</string>
+
+    <!-- Notes (experimental, per-account opt-in) -->
+    <string name="settings_notes">Notes</string>
+    <string name="navigation_drawer_notes">Notes</string>
+    <string name="dashboard_notes_destination">Syncs notebooks for the Notes screen in this app</string>
+    <string name="settings_experimental_title">Experimental</string>
+    <string name="settings_notes_enabled">Notes (experimental)</string>
+    <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. There is no separate background schedule yet.</string>
+    <string name="create_notebook">Create notebook</string>
+    <string name="create_notebook_display_name_hint">Notebook name</string>
+    <string name="notes_open">Open notes</string>
+    <string name="notes_title">Notes</string>
+    <string name="notes_empty_notebooks">No notebooks yet. Create one to start reading notes here, or accept an invitation to a shared notebook.</string>
+    <string name="notes_new_notebook">New notebook</string>
+    <string name="notes_empty_notes">No notes in this notebook yet.</string>
+    <string name="notes_untitled">Untitled</string>
+    <string name="notes_manage_notebook">Manage notebook</string>
+    <string name="notes_notebooks_hint">Tap a notebook to read its notes. Touch and hold to manage sharing and settings.</string>
+    <string name="notes_read_only_hint">Notes are read-only on Android in this version. Edit them in the web app.</string>
+    <string name="notes_edited">Edited %1$s</string>
+    <string name="notes_refresh">Refresh</string>
+    <string name="notes_loading_failed">Could not load notes. Sync and try again.</string>
 </resources>

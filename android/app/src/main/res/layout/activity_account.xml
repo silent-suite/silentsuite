@@ -214,6 +214,24 @@
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/notes_service_module"
+                        style="@style/Widget.AppTheme.Dashboard.ServiceCard"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/spacing_8"
+                        android:visibility="gone">
+                        <LinearLayout android:id="@+id/notes_status_row" style="@style/Widget.AppTheme.Dashboard.StatusRow" android:layout_width="match_parent" android:layout_height="wrap_content">
+                            <ImageView android:id="@+id/notes_status_icon" style="@style/Widget.AppTheme.Dashboard.StatusIcon" android:src="@drawable/ic_menu_book" />
+                            <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
+                                <TextView style="@style/TextAppearance.Material3.TitleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/settings_notes" />
+                                <TextView android:id="@+id/notes_status" style="@style/TextAppearance.Material3.BodyMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_status_checking" />
+                                <TextView android:id="@+id/notes_status_detail" style="@style/TextAppearance.Material3.BodySmall" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_notes_destination" />
+                            </LinearLayout>
+                            <ProgressBar android:id="@+id/notes_refreshing" style="?android:attr/progressBarStyleSmall" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
                     <TextView
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
@@ -242,6 +260,14 @@
                             <com.google.android.material.appbar.MaterialToolbar android:id="@+id/taskdav_menu" style="@style/Widget.AppTheme.Dashboard.CollectionToolbar" app:navigationIcon="@drawable/ic_task_light" app:title="@string/settings_taskdav" />
                             <TextView android:id="@+id/taskdav_opentasks_warning" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="@dimen/spacing_8" android:background="@color/semantic_surface_variant" android:padding="@dimen/spacing_16" android:text="@string/account_tasks_not_showing" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" android:textColor="@color/semantic_on_surface" android:visibility="gone" />
                             <io.silentsuite.sync.ui.widget.MaximizedListView android:id="@+id/tasklists" android:layout_width="match_parent" android:layout_height="wrap_content" android:choiceMode="multipleChoice" android:descendantFocusability="beforeDescendants" />
+                        </LinearLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <com.google.android.material.card.MaterialCardView android:id="@+id/notes" style="@style/Widget.AppTheme.Dashboard.CollectionCard" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:visibility="gone">
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+                            <com.google.android.material.appbar.MaterialToolbar android:id="@+id/notes_menu" style="@style/Widget.AppTheme.Dashboard.CollectionToolbar" app:navigationIcon="@drawable/ic_menu_book" app:title="@string/settings_notes" />
+                            <TextView android:id="@+id/notes_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_margin="@dimen/spacing_8" android:background="@color/semantic_surface_variant" android:padding="@dimen/spacing_16" android:text="@string/notes_empty_notebooks" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" android:textColor="@color/semantic_on_surface" android:visibility="gone" />
+                            <io.silentsuite.sync.ui.widget.MaximizedListView android:id="@+id/notebooks" android:layout_width="match_parent" android:layout_height="wrap_content" android:choiceMode="singleChoice" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 

@@ -119,6 +119,9 @@ class ViewCollectionFragment : Fragment() {
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
                 colorSquare.visibility = View.GONE
             }
+            Constants.ETEBASE_TYPE_NOTES -> {
+                colorSquare.setBackgroundColor(color)
+            }
         }
 
         title.text = meta.name
@@ -139,6 +142,16 @@ class ViewCollectionFragment : Fragment() {
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
         super.onCreateOptionsMenu(menu, inflater)
         inflater.inflate(R.menu.fragment_view_collection, menu)
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu) {
+        super.onPrepareOptionsMenu(menu)
+        // Notebooks have no import or export in this version: a generic text export would drop
+        // note titles and the notebook structure, so the actions stay hidden rather than misleading.
+        val type = runtimeFixture(requireContext(), requireIdentity())?.type ?: collectionModel.value?.collectionType
+        val notebook = type == Constants.ETEBASE_TYPE_NOTES
+        menu.findItem(R.id.on_import)?.isVisible = !notebook
+        menu.findItem(R.id.on_export)?.isVisible = !notebook
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

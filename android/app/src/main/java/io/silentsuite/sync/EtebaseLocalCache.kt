@@ -47,13 +47,34 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
         return fsCache.collectionLoadStoken(colUid)
     }
 
-    fun collectionList(colMgr: CollectionManager, withDeleted: Boolean = false): List<CachedCollection> {
+    /**
+     * Cached collections, optionally of one [type], without decoding their metadata. Filtering by
+     * type here means a collection of another type whose metadata this client cannot decode (for
+     * example a notebook written by another app) never reaches a caller that only wants its own type.
+     */
+    fun collections(colMgr: CollectionManager, withDeleted: Boolean = false, type: String? = null): List<Collection> {
         return fsCache._unstable_collectionList(colMgr).filter {
-            withDeleted || !it.isDeleted
-        }.map{
+            (withDeleted || !it.isDeleted) && (type == null || it.collectionType == type)
+        }
+    }
+
+    fun collectionList(colMgr: CollectionManager, withDeleted: Boolean = false, type: String? = null): List<CachedCollection> {
+        return collections(colMgr, withDeleted, type).map {
             CachedCollection(it, it.meta, it.collectionType)
         }
     }
+
+    /**
+     * For display only: like [collectionList], but a collection whose metadata cannot be decoded is
+     * reported and left out instead of failing the whole list. Sync code that reconciles local data
+     * against the list must keep using [collectionList], where a missing entry means a removal.
+     */
+    fun decodableCollectionList(
+        colMgr: CollectionManager,
+        type: String,
+        onUndecodable: (uid: String, error: EtebaseException) -> Unit,
+    ): List<CachedCollection> =
+        decodeEach(collections(colMgr, type = type), { it.uid }, { CachedCollection(it, it.meta, it.collectionType) }, onUndecodable)
 
     fun collectionGet(colMgr: CollectionManager, colUid: String): CachedCollection {
         return fsCache.collectionGet(colMgr, colUid).let {
@@ -78,6 +99,30 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
             withDeleted || !it.isDeleted
         }.map {
             CachedItem(it, it.meta, it.contentString)
+        }
+    }
+
+    /**
+     * For display only: like [itemList], but an item whose metadata or content cannot be decoded
+     * (for example a note another app wrote with a fractional mtime) is reported and left out
+     * instead of failing the whole list.
+     */
+    fun decodableItemList(
+        itemMgr: ItemManager,
+        colUid: String,
+        withDeleted: Boolean = false,
+        onUndecodable: (uid: String, error: EtebaseException) -> Unit,
+    ): List<CachedItem> {
+        val items = fsCache._unstable_itemList(itemMgr, colUid).filter { withDeleted || !it.isDeleted }
+        return decodeEach(items, { it.uid }, { CachedItem(it, it.meta, it.contentString) }, onUndecodable)
+    }
+
+    /** The cached revision of an item, read without decoding it; null when the item is not cached. */
+    fun itemEtag(itemMgr: ItemManager, colUid: String, itemUid: String): String? {
+        return try {
+            fsCache.itemGet(itemMgr, colUid, itemUid).etag
+        } catch (e: EtebaseException) {
+            null
         }
     }
 
@@ -167,3 +212,22 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
 data class CachedCollection(val col: Collection, val meta: ItemMetadata, val collectionType: String)
 
 data class CachedItem(val item: Item, val meta: ItemMetadata, val content: String)
+
+/**
+ * Decodes each entry on its own: an entry the binding cannot decode is reported and left out, and
+ * the rest still come back. Only [EtebaseException] is treated as undecodable data; anything else
+ * is a real failure and propagates.
+ */
+internal inline fun <T, R : Any> decodeEach(
+    entries: List<T>,
+    uidOf: (T) -> String,
+    decode: (T) -> R,
+    onUndecodable: (uid: String, error: EtebaseException) -> Unit,
+): List<R> = entries.mapNotNull { entry ->
+    try {
+        decode(entry)
+    } catch (e: EtebaseException) {
+        onUndecodable(uidOf(entry), e)
+        null
+    }
+}

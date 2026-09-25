@@ -134,6 +134,7 @@ class ImportFragment : DialogFragment() {
             CollectionInfo.Type.CALENDAR -> intent.type = "text/calendar"
             CollectionInfo.Type.TASKS -> intent.type = "text/calendar"
             CollectionInfo.Type.ADDRESS_BOOK -> intent.type = "text/x-vcard"
+            CollectionInfo.Type.NOTES -> intent.type = "text/plain"
         }
 
         val chooser = Intent.createChooser(

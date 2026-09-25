@@ -304,6 +304,20 @@ class AccountDashboardStateTest {
         } }
     }
 
+    @Test fun `an optional fourth service only shapes the aggregate while it is supplied`() {
+        val synced = AccountDashboardModel(AccountDashboardState.SUCCESS)
+        val threeSynced = listOf(synced, synced, synced)
+        assertEquals(AccountDashboardState.SUCCESS, aggregateAccountDashboard(threeSynced).state)
+        assertEquals(AccountDashboardState.NEVER_SYNCED,
+            aggregateAccountDashboard(threeSynced + AccountDashboardModel(AccountDashboardState.NEVER_SYNCED)).state)
+        assertEquals(AccountDashboardState.REQUESTED,
+            aggregateAccountDashboard(threeSynced + AccountDashboardModel(AccountDashboardState.REQUESTED)).state)
+        val notesFailure = AccountDashboardModel(AccountDashboardState.TRANSIENT, failure = SyncStatusStore.FailureCategory.NETWORK)
+        val aggregate = aggregateAccountDashboard(threeSynced + notesFailure)
+        assertEquals(AccountDashboardState.TRANSIENT, aggregate.state)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, aggregate.failure)
+    }
+
     @Test fun `announcement dedupe ignores checking and repeats`() {
         val deduper = MeaningfulDashboardTransitionDeduper()
         val requested = presentAccountDashboard(AccountDashboardModel(AccountDashboardState.REQUESTED), null)

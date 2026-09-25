@@ -9,6 +9,11 @@
             android:icon="@drawable/ic_sync_light"
             android:title="@string/navigation_drawer_sync_overview"/>
         <item
+            android:id="@+id/nav_notes"
+            android:icon="@drawable/ic_menu_book"
+            android:title="@string/navigation_drawer_notes"
+            android:visible="false"/>
+        <item
             android:id="@+id/nav_invitations"
             android:icon="@drawable/ic_people_light"
             android:title="@string/invitations_title"/>

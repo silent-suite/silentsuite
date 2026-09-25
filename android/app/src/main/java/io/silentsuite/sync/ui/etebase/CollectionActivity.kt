@@ -297,7 +297,11 @@ class ItemsViewModel : ViewModel() {
                 val itemMgr = accountCollectionHolder.colMgr.getItemManager(col)
                 if (ExactAccountRouting.validate(account, creationId, App.accountType, AccountManager.get(context)) == null ||
                     accountCollectionHolder.account != account || cachedCollection.col.uid != collectionUid) return@withContext null
-                val value = accountCollectionHolder.etebaseLocalCache.itemList(itemMgr, col.uid, withDeleted = true)
+                // Display only: an item another client wrote with metadata this client cannot decode
+                // is left out instead of crashing the screen.
+                val value = accountCollectionHolder.etebaseLocalCache.decodableItemList(itemMgr, col.uid, withDeleted = true) { uid, error ->
+                    io.silentsuite.sync.log.Logger.log.warning("Skipping an item that could not be decoded (uid $uid): ${error.message}")
+                }
                 if (ExactAccountRouting.validate(account, creationId, App.accountType, AccountManager.get(context)) == null ||
                     accountCollectionHolder.account != account || cachedCollection.col.uid != collectionUid) null else value
             }

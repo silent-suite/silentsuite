@@ -80,6 +80,9 @@ object AndroidDataExporter {
             account, creationId, App.accountType, AccountManager.get(context)
         ) != null
         if (!exactGenerationStillCurrent()) return false
+        // Notebooks are excluded on purpose: a flat text dump would lose note titles and the
+        // notebook structure. A dedicated notes export can come with the editing slice.
+        if (collectionType == Constants.ETEBASE_TYPE_NOTES) return false
         val exportData = when (collectionType) {
             Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS -> calendarData(itemContents)
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> contactData(itemContents)
@@ -286,10 +289,12 @@ object AndroidDataExporter {
         exactGenerationStillCurrent: () -> Boolean,
     ): String? {
         if (!exactGenerationStillCurrent()) return null
-        val collections = cache.collectionList(collectionManager)
+        // Filtering by type before decoding keeps a collection of another type (for example a
+        // notebook another app wrote) from failing this export.
+        val collections = cache.collectionList(collectionManager, type = type)
         if (!exactGenerationStillCurrent()) return null
         val contents = mutableListOf<String>()
-        for (collection in collections.filter { it.collectionType == type }) {
+        for (collection in collections) {
             if (!exactGenerationStillCurrent()) return null
             val itemManager = collectionManager.getItemManager(collection.col)
             if (!exactGenerationStillCurrent()) return null
@@ -323,10 +328,10 @@ object AndroidDataExporter {
         exactGenerationStillCurrent: () -> Boolean,
     ): String? {
         if (!exactGenerationStillCurrent()) return null
-        val collections = cache.collectionList(collectionManager)
+        val collections = cache.collectionList(collectionManager, type = Constants.ETEBASE_TYPE_ADDRESS_BOOK)
         if (!exactGenerationStillCurrent()) return null
         val contents = mutableListOf<String>()
-        for (collection in collections.filter { it.collectionType == Constants.ETEBASE_TYPE_ADDRESS_BOOK }) {
+        for (collection in collections) {
             if (!exactGenerationStillCurrent()) return null
             val itemManager = collectionManager.getItemManager(collection.col)
             if (!exactGenerationStillCurrent()) return null

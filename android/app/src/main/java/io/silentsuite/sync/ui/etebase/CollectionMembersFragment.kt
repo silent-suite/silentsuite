@@ -103,6 +103,9 @@ class CollectionMembersFragment : Fragment() {
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
                 colorSquare.visibility = View.GONE
             }
+            Constants.ETEBASE_TYPE_NOTES -> {
+                colorSquare.setBackgroundColor(color)
+            }
         }
 
         val title = v.findViewById<View>(R.id.display_name) as TextView

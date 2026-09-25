@@ -1,11 +1,15 @@
 package io.silentsuite.sync.syncadapter
 
 import android.accounts.Account
+import android.accounts.AccountManager
 import android.content.ContentResolver
 import android.content.Context
 import android.os.Bundle
 import android.provider.CalendarContract
+import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
+import io.silentsuite.sync.notes.NotesSyncCoordinator
+import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.utils.TaskProviderHandling
 import java.util.UUID
 import androidx.annotation.VisibleForTesting
@@ -38,10 +42,18 @@ fun requestSync(
     val requestId = explicitRequestId ?: UUID.randomUUID().toString()
     val statusStore = account?.let { SyncStatusStore(context) }
     val requestedIdentity = account?.let { statusStore?.identity(it) }
+    // Notes is an in-app job without an authority; it joins the request only while enabled.
+    val accountManager = AccountManager.get(context)
+    val notesEnabled = account != null && AccountSettings.notesEnabled(accountManager, account)
+    val notesCreationId = account?.takeIf { notesEnabled }
+        ?.let { accountManager.getUserData(it, AccountSettings.KEY_CREATION_ID) }
+        ?.takeIf { it.isNotBlank() }
 
     // Durable UI evidence must lead scheduling, but a storage failure never blocks real sync.
     requestedIdentity?.let {
         statusStore?.recordRequested(it, authorities.values.toSet(), requestId, System.currentTimeMillis())
+        if (notesCreationId != null)
+            statusStore?.recordRequested(it, setOf(SyncStatusStore.Service.NOTES), requestId, System.currentTimeMillis())
     }
 
     for ((authority, _) in authorities) {
@@ -57,5 +69,9 @@ fun requestSync(
         }
         requestSyncDispatchOverride?.invoke(account, authority, extras)
             ?: ContentResolver.requestSync(account, authority, extras)
+    }
+
+    if (account != null && notesCreationId != null) {
+        NotesSyncCoordinator.request(context, account, notesCreationId, NotesSyncPolicy.Trigger.MANUAL, requestId)
     }
 }
