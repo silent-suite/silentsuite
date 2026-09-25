@@ -47,6 +47,7 @@ class InvitationAcceptRefreshTest {
     fun forcedPostAcceptSyncBypassesCollectionRefreshSuppressionAndStoken() {
         val requestSyncSource = File(sourceRoot, "io/silentsuite/sync/syncadapter/RequestSync.kt").readText()
         val syncAdapterSource = File(sourceRoot, "io/silentsuite/sync/syncadapter/SyncAdapterService.kt").readText()
+        val listRefreshSource = File(sourceRoot, "io/silentsuite/sync/syncadapter/CollectionListRefresh.kt").readText()
 
         assertTrue(
             "requestSync must expose an explicit forced collection refresh extra",
@@ -54,12 +55,16 @@ class InvitationAcceptRefreshTest {
                     requestSyncSource.contains("extras.putBoolean(EXTRA_FORCE_COLLECTION_REFRESH, true)")
         )
         assertTrue(
+            "the adapter must hand the forced flag to the shared collection-list refresh",
+            syncAdapterSource.contains("CollectionListRefresh.run(context, account, settings, httpClient.okHttpClient, forceRefresh)")
+        )
+        assertTrue(
             "forced refresh must bypass the 5 second collection refresh suppression",
-            syncAdapterSource.contains("if (!forceRefresh && abs(now - lastCollectionsFetch) <= cacheAge)")
+            listRefreshSource.contains("if (!forceRefresh && abs(now - lastCollectionsFetch) <= CACHE_AGE_MILLIS)")
         )
         assertTrue(
             "forced refresh must perform a full collection-list fetch instead of reusing the old stoken",
-            syncAdapterSource.contains("var stoken = if (forceRefresh) null else etebaseLocalCache.loadStoken()")
+            listRefreshSource.contains("var stoken = if (forceRefresh || discoveryChanged) null else etebaseLocalCache.loadStoken()")
         )
     }
 }

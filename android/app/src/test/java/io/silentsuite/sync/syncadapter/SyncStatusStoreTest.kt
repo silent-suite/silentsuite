@@ -47,6 +47,28 @@ class SyncStatusStoreTest {
         } },
         childAccountKey = { children[it] ?: error("missing child") })
 
+    @Test fun `notes lifecycle uses its own keys and follows the generic request attempt terminal path`() {
+        assertTrue(store.recordRequested(first, setOf(SyncStatusStore.Service.NOTES), "notes-request", 10))
+        assertEquals("notes-request", store.status(first, SyncStatusStore.Service.NOTES).activeRequestId)
+        assertNull(store.status(first, SyncStatusStore.Service.CALENDAR).activeRequestId)
+        assertTrue(storage.values.keys.any { it == "status_v2.first-generation.NOTES" })
+        assertEquals(SyncStatusStore.MutationResult.REJECTED,
+            store.beginAttemptResult(first, SyncStatusStore.Service.NOTES, "attempt", 11, "other-request"))
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            store.beginAttemptResult(first, SyncStatusStore.Service.NOTES, "attempt", 11, "notes-request"))
+        assertEquals("attempt", store.status(first, SyncStatusStore.Service.NOTES).activeAttemptId)
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            store.recordSuccessResult(first, SyncStatusStore.Service.NOTES, "attempt", "notes-request", 12))
+        val status = store.status(first, SyncStatusStore.Service.NOTES)
+        assertNull(status.activeRequestId)
+        assertNull(status.activeAttemptId)
+        assertEquals(12L, status.lastSuccessAt)
+        assertEquals(SyncStatusStore.TerminalResult.SUCCESS, status.lastTerminalResult)
+        assertTrue(storage.values.keys.any { it == "status.first-generation.NOTES" })
+        assertTrue(store.clear(first))
+        assertFalse(storage.values.keys.any { it.endsWith(".NOTES") })
+    }
+
     @Test fun `v2 terminals write exact private v1 shadows and clear both faults atomically`() {
         assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 10))
         assertTrue(storage.values.keys.any { it.startsWith("status_v2.") })

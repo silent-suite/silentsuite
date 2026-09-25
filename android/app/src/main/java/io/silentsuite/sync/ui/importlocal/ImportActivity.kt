@@ -45,6 +45,7 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
             CollectionInfo.Type.CALENDAR -> Constants.ETEBASE_TYPE_CALENDAR
             CollectionInfo.Type.TASKS -> Constants.ETEBASE_TYPE_TASKS
             CollectionInfo.Type.ADDRESS_BOOK -> Constants.ETEBASE_TYPE_ADDRESS_BOOK
+            CollectionInfo.Type.NOTES -> Constants.ETEBASE_TYPE_NOTES
             null -> null
         }
         identity = runCatching {

@@ -17,7 +17,7 @@ class SyncStatusStore internal constructor(
     private val mainAccountKey: (Account) -> String = { hashIdentity(it.type, it.name, null) },
     private val childAccountKey: (Account) -> String? = { hashIdentity(it.type, it.name, null) },
 ) {
-    enum class Service { CALENDAR, CONTACTS, TASKS }
+    enum class Service { CALENDAR, CONTACTS, TASKS, NOTES }
     enum class FailureCategory {
         NETWORK, AUTHENTICATION, PERMISSION, PROVIDER, STORAGE, CONFIGURATION, SETUP_REQUIRED,
         PARENT_REFRESH, CHILD_REMOVED, UNKNOWN, INTERRUPTED

@@ -21,20 +21,18 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import at.bitfire.ical4android.CalendarStorageException
 import at.bitfire.vcard4android.ContactsStorageException
-import com.etebase.client.FetchOptions
 import com.etebase.client.exceptions.ConnectionException
 import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
 import io.silentsuite.sync.*
-import io.silentsuite.sync.Constants.COLLECTION_TYPES
 import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.ui.DebugInfoActivity
 import io.silentsuite.sync.ui.AppSettingsActivity
 import io.silentsuite.sync.ui.PermissionsActivity
 import io.silentsuite.sync.utils.NotificationUtils
-import java.lang.Math.abs
 import java.util.*
 import java.util.logging.Level
 
@@ -211,6 +209,13 @@ abstract class SyncAdapterService : Service() {
                 notificationManager.notify(title, context.getString(syncPhase))
                 persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.UNKNOWN) }
             }
+
+            // Notes has no sync authority, so a finished adapter sync is its periodic trigger. The
+            // coordinator collapses adapters finishing together into one run, and a manual sync
+            // dispatches Notes itself, so only uncorrelated (system-scheduled) syncs piggyback.
+            if (syncRequestId(extras) == null && accountCreationId != null) {
+                NotesSyncCoordinator.piggybackAfterAdapterSync(context, account, accountCreationId)
+            }
         }
 
         protected open fun recordSuccess(account: Account, extras: Bundle): SyncStatusStore.MutationResult {
@@ -292,32 +297,7 @@ abstract class SyncAdapterService : Service() {
             NotificationUtils.notify(context, Constants.NOTIFICATION_PERMISSIONS, notify)
         }
 
-        protected fun checkSyncConditions(settings: AccountSettings): Boolean {
-            if (settings.syncWifiOnly) {
-                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-                val network = cm.activeNetworkInfo
-                if (network == null) {
-                    Logger.log.info("No network available, stopping")
-                    return false
-                }
-                if (network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected) {
-                    Logger.log.info("Not on connected WiFi, stopping")
-                    return false
-                }
-
-                var onlySSID = settings.syncWifiOnlySSID
-                if (onlySSID != null) {
-                    onlySSID = "\"" + onlySSID + "\""
-                    val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                    val info = wifi.connectionInfo
-                    if (info == null || onlySSID != info.ssid) {
-                        Logger.log.info("Connected to wrong WiFi network (" + info!!.ssid + ", required: " + onlySSID + "), ignoring")
-                        return false
-                    }
-                }
-            }
-            return true
-        }
+        protected fun checkSyncConditions(settings: AccountSettings): Boolean = syncConditionsAllow(context, settings)
 
         inner class RefreshCollections internal constructor(
             private val account: Account,
@@ -336,49 +316,44 @@ abstract class SyncAdapterService : Service() {
 
                 val settings = AccountSettings(context, account)
                 HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
-                    val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
-                    synchronized(etebaseLocalCache) {
-                        val cacheAge = 5 * 1000 // 5 seconds - it's just a hack for burst fetching
-                        val now = System.currentTimeMillis()
-                        val lastCollectionsFetch = collectionLastFetchMap[account.name] ?: 0
-
-                        if (!forceRefresh && abs(now - lastCollectionsFetch) <= cacheAge) {
-                            return@synchronized
-                        }
-
-                        val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
-                        val colMgr = etebase.collectionManager
-                        // Post-invite acceptance must not depend on the previous collection-list
-                        // cursor: a full list refresh makes newly accepted shared collections
-                        // visible even when an old stoken would otherwise hide the membership change.
-                        var stoken = if (forceRefresh) null else etebaseLocalCache.loadStoken()
-                        var done = false
-                        while (!done) {
-                            val colList = colMgr.list(COLLECTION_TYPES, FetchOptions().stoken(stoken))
-                            for (col in colList.data) {
-                                etebaseLocalCache.collectionSet(colMgr, col)
-                            }
-
-                            for (col in colList.removedMemberships) {
-                                etebaseLocalCache.collectionUnset(colMgr, col.uid())
-                            }
-
-                            stoken = colList.stoken
-                            done = colList.isDone
-                            if (stoken != null) {
-                                etebaseLocalCache.saveStoken(stoken)
-                            }
-                        }
-                        collectionLastFetchMap[account.name] = now
-                    }
+                    CollectionListRefresh.run(context, account, settings, httpClient.okHttpClient, forceRefresh)
                 }
             }
         }
     }
 
     companion object {
-        var collectionLastFetchMap = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        val collectionLastFetchMap: java.util.concurrent.ConcurrentHashMap<String, Long>
+            get() = CollectionListRefresh.collectionLastFetchMap
     }
+}
+
+/** Wi-Fi-only sync restriction shared by the adapters and the in-app Notes job. */
+internal fun syncConditionsAllow(context: Context, settings: AccountSettings): Boolean {
+    if (settings.syncWifiOnly) {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetworkInfo
+        if (network == null) {
+            Logger.log.info("No network available, stopping")
+            return false
+        }
+        if (network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected) {
+            Logger.log.info("Not on connected WiFi, stopping")
+            return false
+        }
+
+        var onlySSID = settings.syncWifiOnlySSID
+        if (onlySSID != null) {
+            onlySSID = "\"" + onlySSID + "\""
+            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val info = wifi.connectionInfo
+            if (info == null || onlySSID != info.ssid) {
+                Logger.log.info("Connected to wrong WiFi network (" + info!!.ssid + ", required: " + onlySSID + "), ignoring")
+                return false
+            }
+        }
+    }
+    return true
 }
 
 internal fun putSyncAttempt(extras: Bundle, attemptId: String) = extras.putString(SyncStatusStore.EXTRA_SYNC_ATTEMPT, attemptId)

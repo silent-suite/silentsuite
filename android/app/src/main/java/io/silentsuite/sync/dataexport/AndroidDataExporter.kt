@@ -80,6 +80,9 @@ object AndroidDataExporter {
             account, creationId, App.accountType, AccountManager.get(context)
         ) != null
         if (!exactGenerationStillCurrent()) return false
+        // Notebooks are excluded on purpose: a flat text dump would lose note titles and the
+        // notebook structure. A dedicated notes export can come with the editing slice.
+        if (collectionType == Constants.ETEBASE_TYPE_NOTES) return false
         val exportData = when (collectionType) {
             Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS -> calendarData(itemContents)
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> contactData(itemContents)

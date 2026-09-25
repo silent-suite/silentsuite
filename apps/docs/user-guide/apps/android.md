@@ -1,6 +1,6 @@
 # SilentSuite for Android
 
-SilentSuite has its own Android app for end-to-end encrypted sync of your calendar, contacts, and tasks. It's a maintained fork of the EteSync Android app, pre-configured to work with SilentSuite.
+SilentSuite has its own Android app for end-to-end encrypted sync of your calendar, contacts, and tasks, plus an experimental read-only view of your notes. It's a maintained fork of the EteSync Android app, pre-configured to work with SilentSuite.
 
 ## What You Get
 
@@ -122,6 +122,23 @@ For tasks, use:
 
 - [Tasks.org](./tasks-org.md) -- has built-in EteSync/Etebase support and can also read from the Android task provider.
 - **OpenTasks** -- reads tasks from the Android task provider populated by SilentSuite.
+
+## Notes (experimental)
+
+The app can show your encrypted [notes](../notes.md) read-only. It is off by default and is turned on per account:
+
+1. Open **Settings**, then **Account**.
+2. Under **Experimental**, turn on **Notes (experimental)**. The app syncs your notebooks right away.
+3. Open **Notes** from the navigation drawer. Tap a notebook to read its notes; touch and hold a notebook to manage sharing, or to rename or delete it.
+
+What to expect in this version:
+
+- Notes are read-only on Android. Create and edit notes in the web app; they appear here after the next sync.
+- Notes sync when you open the Notes screen, when you tap **Sync now** or pull to refresh, and after a calendar, contact, or task sync finishes. There is no separate background schedule for notes yet, so if the other services do not sync on this device, notes only refresh when you open them.
+- Shared notebooks appear with the same shared and read-only markers as other collections. You can accept notebook invitations and manage members like any other collection.
+- No notebook is created for you. Use **New notebook** if your account has none yet.
+- Notebooks are left out of the export options for now.
+- Turning Notes off hides it again and removes it from the sync overview without deleting anything.
 
 ## Source Code
 

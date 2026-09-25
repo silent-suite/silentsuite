@@ -85,6 +85,10 @@ open class CreateCollectionActivity : BaseActivity() {
                 val colorGroup = findViewById<View>(R.id.color_group)
                 colorGroup.visibility = View.GONE
             }
+            CollectionInfo.Type.NOTES -> {
+                setTitle(R.string.create_notebook)
+                displayName.setHint(R.string.create_notebook_display_name_hint)
+            }
             null -> {
             }
         }
@@ -121,7 +125,7 @@ open class CreateCollectionActivity : BaseActivity() {
 
         if (ok) {
             when (info.enumType) {
-                CollectionInfo.Type.CALENDAR, CollectionInfo.Type.TASKS -> {
+                CollectionInfo.Type.CALENDAR, CollectionInfo.Type.TASKS, CollectionInfo.Type.NOTES -> {
                     val view = findViewById<View>(R.id.color)
                     info.color = (view.background as ColorDrawable).color
                 }

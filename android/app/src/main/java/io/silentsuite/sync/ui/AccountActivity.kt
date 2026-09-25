@@ -50,12 +50,15 @@ import io.silentsuite.sync.*
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
+import io.silentsuite.sync.Constants.ETEBASE_TYPE_NOTES
 import io.silentsuite.sync.Constants.KEY_ACCOUNT
 import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NotesSyncCoordinator
+import io.silentsuite.sync.ui.notes.NotesActivity
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.requestSync
@@ -98,6 +101,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     internal var listCalDAV: ListView? = null
     internal var listCardDAV: ListView? = null
     internal var listTaskDAV: ListView? = null
+    internal var listNotes: ListView? = null
 
     internal val openTasksPackage = "org.dmfs.tasks"
     internal val tasksOrgPackage = "org.tasks"
@@ -254,6 +258,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
         // Setup nav header with account switcher
         setupNavHeader(navigationView)
+        // Notes is an experimental per-account opt-in; its route only exists while enabled.
+        navigationView.menu.findItem(R.id.nav_notes)?.isVisible = AccountSettings.notesEnabled(accountManager, account)
         signOutModel.state.observe(this) { renderSignOutState(it) }
 
         // Back press closes drawer first
@@ -291,6 +297,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         tbTaskDAV.inflateMenu(R.menu.taskdav_actions)
         tbTaskDAV.setOnMenuItemClickListener(this)
         tbTaskDAV.setTitle(R.string.settings_taskdav)
+
+        // Notes toolbar (experimental; the card stays hidden until the account opts in)
+        val tbNotes = findViewById<View>(R.id.notes_menu) as Toolbar
+        tbNotes.overflowIcon = icMenu
+        tbNotes.inflateMenu(R.menu.notes_actions)
+        tbNotes.setOnMenuItemClickListener(this)
+        tbNotes.setTitle(R.string.settings_notes)
+
         val tasksOrgInstalled = packageInstalled(this, tasksOrgPackage)
         val openTasksInstalled = packageInstalled(this, openTasksPackage)
         if (!tasksOrgInstalled) {
@@ -454,6 +468,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             swipeRefreshLayout?.post { updateSwipeRefreshState() }
         }
         updateSwipeRefreshState()
+        // The Notes toggle lives in Settings; returning here must reflect it without a sync event.
+        accountInfo?.let { info ->
+            if (info.notesEnabled != AccountSettings.notesEnabled(AccountManager.get(this), account)) model.loadAccount()
+        }
     }
 
     override fun onPause() {
@@ -525,6 +543,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.create_addressbook -> {
                 launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_ADDRESS_BOOK))
             }
+            R.id.create_notebook -> {
+                launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_NOTES))
+            }
+            R.id.open_notes -> {
+                launchExactAccountRoute(NotesActivity.newIntent(this, account, accountCreationId))
+            }
             R.id.install_tasksorg ->  {
                 installPackage(tasksOrgPackage)
             }
@@ -543,6 +567,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 AppSettingsActivity.newIntent(this, account, accountCreationId))
             R.id.nav_invitations -> launchExactAccountRoute(
                 InvitationsActivity.newIntent(this, account, accountCreationId))
+            R.id.nav_notes -> launchExactAccountRoute(
+                NotesActivity.newIntent(this, account, accountCreationId))
             R.id.nav_logout -> confirmLogout()
             R.id.nav_sync_overview -> Unit
         }
@@ -734,6 +760,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         internal var carddav: ServiceInfo? = null
         internal var caldav: ServiceInfo? = null
         internal var taskdav: ServiceInfo? = null
+        /** Present only while the account has the experimental Notes opt-in turned on. */
+        internal var notes: ServiceInfo? = null
+        internal var notesEnabled: Boolean = false
 
         class ServiceInfo {
             internal var refreshing: Boolean = false
@@ -797,7 +826,30 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             val opentasksWarning = findViewById<View>(R.id.taskdav_opentasks_warning)
             opentasksWarning.visibility = if (hasTaskProvider) View.GONE else View.VISIBLE
         }
+        renderNotesSurfaces(info)
         renderDashboard(info)
+        updateSwipeRefreshState()
+    }
+
+    /** Notes surfaces (drawer route, service card, notebook card) exist only while enabled. */
+    private fun renderNotesSurfaces(info: AccountInfo) {
+        val enabled = info.notesEnabled
+        findViewById<View>(R.id.notes_service_module).visibility = if (enabled) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.notes).visibility = if (enabled) View.VISIBLE else View.GONE
+        findViewById<NavigationView>(R.id.nav_view).menu.findItem(R.id.nav_notes)?.isVisible = enabled
+        val notes = info.notes ?: return
+        val progress = findViewById<View>(R.id.notes_refreshing) as ProgressBar
+        progress.visibility = if (notes.refreshing) View.VISIBLE else View.GONE
+
+        listNotes = findViewById<View>(R.id.notebooks) as ListView
+        listNotes!!.isEnabled = !notes.refreshing
+        listNotes!!.setAlpha(if (notes.refreshing) 0.5f else 1f)
+
+        val adapter = CollectionListAdapter(this, account)
+        adapter.addAll(notes.infos ?: emptyList())
+        listNotes!!.adapter = adapter
+        listNotes!!.onItemClickListener = onItemClickListener
+        findViewById<View>(R.id.notes_empty).visibility = if (notes.infos.isNullOrEmpty()) View.VISIBLE else View.GONE
     }
 
     private data class DashboardServiceUi(
@@ -825,7 +877,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             ContextCompat.checkSelfPermission(this, permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
         } ?: true
 
-        fun reduce(service: AccountInfo.ServiceInfo?, permission: Boolean, provider: Boolean = true) =
+        fun reduce(
+            service: AccountInfo.ServiceInfo?,
+            permission: Boolean,
+            provider: Boolean = true,
+            collectionsAvailable: Boolean = service?.infos?.isNotEmpty() == true,
+        ) =
             reduceAccountDashboardState(AccountDashboardInput(
                 loaded = service != null,
                 loadFailed = info.loadFailed,
@@ -834,13 +891,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 masterSyncEnabled = master,
                 permissionReady = permission,
                 providerReady = provider,
-                collectionsAvailable = service?.infos?.isNotEmpty() == true,
+                collectionsAvailable = collectionsAvailable,
                 status = service?.status,
                 pending = service?.pending == true,
                 now = System.currentTimeMillis(),
             ))
 
-        val services = listOf(
+        val services = listOfNotNull(
             DashboardServiceUi(R.string.settings_caldav, R.id.caldav_status, R.id.caldav_status_detail,
                 R.id.caldav_status_icon, R.id.caldav_status_row, R.id.caldav, R.string.dashboard_calendar_destination,
                 reduce(info.caldav, calendarPermissions), info.caldav?.status),
@@ -850,6 +907,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             DashboardServiceUi(R.string.settings_taskdav, R.id.taskdav_status, R.id.taskdav_status_detail,
                 R.id.taskdav_status_icon, R.id.taskdav_status_row, R.id.taskdav, R.string.dashboard_tasks_destination,
                 reduce(info.taskdav, taskPermissions, taskProvider != null), info.taskdav?.status),
+            // Notes joins the overall status only while enabled. An account without notebooks is a
+            // normal state for Notes (nothing is auto-created), never "Finish setup".
+            info.notes?.let { notes ->
+                DashboardServiceUi(R.string.settings_notes, R.id.notes_status, R.id.notes_status_detail,
+                    R.id.notes_status_icon, R.id.notes_status_row, R.id.notes, R.string.dashboard_notes_destination,
+                    reduce(notes, permission = true, collectionsAvailable = true), notes.status)
+            },
         )
         services.forEach(::renderServiceStatus)
 
@@ -960,6 +1024,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         R.string.dashboard_calendar_destination -> R.string.settings_caldav
         R.string.dashboard_contacts_destination -> R.string.settings_carddav
         R.string.dashboard_tasks_destination -> R.string.settings_taskdav
+        R.string.dashboard_notes_destination -> R.string.settings_notes
         else -> R.string.dashboard_services_title
     })
 
@@ -1040,7 +1105,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             TaskProviderHandling.getWantedTaskSyncProvider(this) != null
 
 
-    class AccountInfoViewModel : ViewModel(), AccountUpdateService.RefreshingStatusListener, ServiceConnection, SyncStatusObserver {
+    class AccountInfoViewModel : ViewModel(), AccountUpdateService.RefreshingStatusListener, ServiceConnection, SyncStatusObserver,
+        NotesSyncCoordinator.Listener {
         private val holder = MutableLiveData<AccountActivity.AccountInfo>()
         private lateinit var context: Context
         private lateinit var account: Account
@@ -1076,6 +1142,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
             syncStatusListener = ContentResolver.addStatusChangeListener(
                 SYNC_OBSERVER_TYPE_ACTIVE or ContentResolver.SYNC_OBSERVER_TYPE_PENDING, this)
+            // The in-app Notes job has no ContentResolver footprint; observe it directly.
+            NotesSyncCoordinator.addListener(this)
 
             context.bindService(Intent(context, AccountUpdateService::class.java), this, Context.BIND_AUTO_CREATE)
         }
@@ -1145,6 +1213,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 ContentResolver.removeStatusChangeListener(syncStatusListener)
                 syncStatusListener = null
             }
+            NotesSyncCoordinator.removeListener(this)
         }
 
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
@@ -1168,11 +1237,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             loadAccount()
         }
 
+        override fun onNotesSyncStateChanged(identity: ExactAccountIdentity) {
+            if (identity == initializedIdentity) loadAccount()
+        }
+
         private fun getCollections(etebaseLocalCache: EtebaseLocalCache, colMgr: CollectionManager, type: CollectionInfo.Type): List<CollectionListItemInfo> {
             val strType = when (type) {
                 CollectionInfo.Type.ADDRESS_BOOK -> ETEBASE_TYPE_ADDRESS_BOOK
                 CollectionInfo.Type.CALENDAR -> ETEBASE_TYPE_CALENDAR
                 CollectionInfo.Type.TASKS -> ETEBASE_TYPE_TASKS
+                CollectionInfo.Type.NOTES -> ETEBASE_TYPE_NOTES
             }
 
             synchronized(etebaseLocalCache) {
@@ -1186,7 +1260,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
                         val metaColor = meta.color
                         val color = if (!metaColor.isNullOrBlank()) LocalCalendar.parseColor(metaColor) else null
-                        CollectionListItemInfo(it.col.uid, type, meta.name!!, meta.description
+                        // Notebooks created by other clients may carry no name; the row falls back to the uid.
+                        val displayName = if (type == CollectionInfo.Type.NOTES) meta.name.orEmpty() else meta.name!!
+                        CollectionListItemInfo(it.col.uid, type, displayName, meta.description
                                 ?: "", color, isReadOnly, isAdmin)
                     }
             }
@@ -1285,6 +1361,21 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             if (!exactGenerationStillCurrent()) return null
             info.taskdav!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.TASKS)
 
+            // Notes is an in-app job: its active and pending facts come from the coordinator, and
+            // the service only enters the dashboard while the account has it enabled.
+            info.notesEnabled = AccountSettings.notesEnabled(accountManager, account)
+            if (info.notesEnabled) {
+                val notesIdentity = ExactAccountIdentity(account.type, account.name, accountCreationId)
+                info.notes = AccountInfo.ServiceInfo()
+                info.notes!!.refreshing = NotesSyncCoordinator.isActive(notesIdentity)
+                info.notes!!.pending = NotesSyncCoordinator.isPending(notesIdentity)
+                if (!exactGenerationStillCurrent()) return null
+                info.notes!!.status = lifecycleStatus(statusStore, SyncStatusStore.Service.NOTES,
+                    info.notes!!.refreshing, info.notes!!.pending)
+                if (!exactGenerationStillCurrent()) return null
+                info.notes!!.infos = getCollections(etebaseLocalCache, colMgr, CollectionInfo.Type.NOTES)
+            }
+
             // This runs on Dispatchers.IO immediately after the final private read and before
             // the result can reach the publisher.
             return info.takeIf { exactGenerationStillCurrent() }
@@ -1301,6 +1392,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private fun maintainLifecycle() {
             if (!exactGenerationStillCurrent()) return
             val store = SyncStatusStore(context)
+            val notesIdentity = ExactAccountIdentity(account.type, account.name, accountCreationId)
             var contactsActive = ContentResolver.isSyncActive(account, App.addressBooksAuthority)
             var contactsPending = ContentResolver.isSyncPending(account, App.addressBooksAuthority)
             AccountManager.get(context).getAccountsByType(App.addressBookAccountType).forEach { child ->
@@ -1319,6 +1411,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 SyncStatusStore.Service.CONTACTS to (contactsActive to contactsPending),
                 SyncStatusStore.Service.TASKS to (TASK_PROVIDERS.any { ContentResolver.isSyncActive(account, it.authority) } to
                     TASK_PROVIDERS.any { ContentResolver.isSyncPending(account, it.authority) }),
+                SyncStatusStore.Service.NOTES to (NotesSyncCoordinator.isActive(notesIdentity) to
+                    NotesSyncCoordinator.isPending(notesIdentity)),
             )
             val now = lifecycleNow()
             facts.forEach { (service, fact) ->
@@ -1330,7 +1424,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private fun scheduleLifecycleDeadline(info: AccountActivity.AccountInfo) {
             lifecycleDeadlineJob?.cancel()
             val now = lifecycleNow()
-            val deadline = listOf(info.caldav, info.carddav, info.taskdav)
+            val deadline = listOf(info.caldav, info.carddav, info.taskdav, info.notes)
                 .filterNotNull()
                 .filter { service -> service.status?.let { !it.structuralStorageFailure } == true &&
                     !service.refreshing && !service.pending }
@@ -1480,7 +1574,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     private fun requestSync() {
         if (!exactAccountStillCurrent()) return
-        if (isSyncActive()) return        // don't stack a duplicate concurrent sync
+        // Only adapter activity blocks a new request: the in-app Notes job coalesces a manual
+        // request into a follow-up run on its own, so it must not turn Sync now into a no-op.
+        if (isAdapterSyncActive()) return        // don't stack a duplicate concurrent sync
         syncRequestOverride?.invoke(applicationContext, account)
             ?: requestSync(applicationContext, account)
         model.loadAccount()
@@ -1519,7 +1615,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         swipeRefreshLayout?.isRefreshing = isSyncActive()
     }
 
+    /** Adapter and Notes activity together; drives the pull-to-refresh spinner. */
     private fun isSyncActive(): Boolean {
+        if (!exactAccountStillCurrent()) return false
+        return isAdapterSyncActive() ||
+            NotesSyncCoordinator.isActive(ExactAccountIdentity(account.type, account.name, accountCreationId))
+    }
+
+    private fun isAdapterSyncActive(): Boolean {
         if (!exactAccountStillCurrent()) return false
         syncActiveOverride?.let { return it(account) }
         val authorities = mutableListOf(App.addressBooksAuthority, CalendarContract.AUTHORITY)
