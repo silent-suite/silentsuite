@@ -72,8 +72,12 @@ internal object NotesLoader {
             val row = notebookRows(cache, colMgr).firstOrNull { it.uid == notebookUid } ?: return@load null
             val collection = cache.collectionGet(colMgr, notebookUid)
             val itemMgr = colMgr.getItemManager(collection.col)
-            val notes = cache.itemList(itemMgr, notebookUid)
-                .filter { isMarkdownNote(it.meta) }
+            // One note another app wrote in a shape this client cannot decode is left out, not
+            // allowed to fail the whole notebook.
+            val notes = cache.decodableItemList(itemMgr, notebookUid) { uid, error ->
+                Logger.log.warning("Skipping a note that could not be decoded (uid $uid): ${error.message}")
+            }
+                .filter { isMarkdownNote(it.meta.itemType) }
                 .map { NoteRow(it.item.uid, titleOf(it.meta), previewOf(it.content), it.meta.mtime) }
             NotebookContents(row, sortNotes(notes))
         }
@@ -88,13 +92,16 @@ internal object NotesLoader {
             val collection = cache.collectionGet(colMgr, notebookUid)
             val itemMgr = colMgr.getItemManager(collection.col)
             val cached = cache.itemGet(itemMgr, notebookUid, noteUid) ?: return@load null
-            if (cached.item.isDeleted || !isMarkdownNote(cached.meta)) return@load null
+            if (cached.item.isDeleted || !isMarkdownNote(cached.meta.itemType)) return@load null
             NoteContent(cached.item.uid, titleOf(cached.meta), cached.content, cached.meta.mtime)
         }
     }
 
-    /** Items with a non-empty type are not notes (the web keeps the same rule). */
-    internal fun isMarkdownNote(meta: ItemMetadata): Boolean = meta.itemType.isNullOrBlank()
+    /**
+     * A note is an item with a missing or empty type; any other type, including one of only
+     * spaces, is something else (isMarkdownNoteItem in packages/core/src/models/note.ts).
+     */
+    internal fun isMarkdownNote(itemType: String?): Boolean = itemType.isNullOrEmpty()
 
     internal fun titleOf(meta: ItemMetadata): String = meta.name?.trim().orEmpty()
 
@@ -113,8 +120,9 @@ internal object NotesLoader {
         notes.sortedWith(compareByDescending<NoteRow> { it.editedAt ?: Long.MIN_VALUE }.thenBy { it.title.lowercase() })
 
     private fun notebookRows(cache: EtebaseLocalCache, colMgr: CollectionManager): List<NotebookRow> =
-        cache.collectionList(colMgr)
-            .filter { it.collectionType == Constants.ETEBASE_TYPE_NOTES }
+        cache.decodableCollectionList(colMgr, Constants.ETEBASE_TYPE_NOTES) { uid, error ->
+            Logger.log.warning("Skipping a notebook that could not be decoded (uid $uid): ${error.message}")
+        }
             .map { cached ->
                 val meta = cached.meta
                 val metaColor = meta.color

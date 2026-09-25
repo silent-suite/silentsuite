@@ -13,6 +13,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.ImageView
 import android.widget.TextView
+import androidx.annotation.VisibleForTesting
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
@@ -208,17 +209,15 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
 
     companion object {
         private val dateFormatter = SimpleDateFormat()
-        private fun getLine(content: String?, prefix: String): String? {
-            var content: String? = content ?: return null
-
-            val start = content!!.indexOf(prefix)
-            if (start >= 0) {
-                val end = content.indexOf("\n", start)
-                content = content.substring(start + prefix.length, end)
-            } else {
-                content = null
-            }
-            return content
+        /** The rest of the line after [prefix]; the last line may have no line break after it. */
+        @VisibleForTesting
+        internal fun getLine(content: String?, prefix: String): String? {
+            val text = content ?: return null
+            val start = text.indexOf(prefix)
+            if (start < 0) return null
+            val from = start + prefix.length
+            val end = text.indexOf("\n", from).let { if (it < 0) text.length else it }
+            return text.substring(from, end)
         }
 
         fun setItemView(v: View, collectionType: String, item: CachedItem) {
@@ -239,7 +238,12 @@ class ListEntriesFragment : ListFragment(), AdapterView.OnItemClickListener {
             }
 
             val fullContent = item.content
-            var content = getLine(fullContent, prefix)
+            // A note keeps its title in the metadata; its body is free text, not a vCard or iCalendar.
+            var content = if (collectionType == Constants.ETEBASE_TYPE_NOTES) {
+                item.meta.name?.trim()?.takeIf { it.isNotEmpty() }
+            } else {
+                getLine(fullContent, prefix)
+            }
             content = content ?: v.context.getString(R.string.journal_item_title_unavailable)
             tv.text = content
 

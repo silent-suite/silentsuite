@@ -1249,9 +1249,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 CollectionInfo.Type.NOTES -> ETEBASE_TYPE_NOTES
             }
 
+            // Display only: a collection another client wrote with metadata this client cannot
+            // decode is left off the card instead of failing the whole dashboard load.
             synchronized(etebaseLocalCache) {
-                return etebaseLocalCache.collectionList(colMgr)
-                    .filter { it.collectionType == strType }
+                return etebaseLocalCache.decodableCollectionList(colMgr, strType) { uid, error ->
+                    Logger.log.warning("Skipping a collection that could not be decoded (uid $uid): ${error.message}")
+                }
                     .map {
                         val meta = it.meta
                         val accessLevel = it.col.accessLevel

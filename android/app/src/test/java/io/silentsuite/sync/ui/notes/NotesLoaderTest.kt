@@ -1,6 +1,8 @@
 package io.silentsuite.sync.ui.notes
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NotesLoaderTest {
@@ -21,5 +23,13 @@ class NotesLoaderTest {
             NoteRow("d", "delta", "", null),
         )).map { it.uid }
         assertEquals(listOf("b", "a", "c", "d"), sorted)
+    }
+
+    @Test fun `only a missing or empty item type is a note as on the web`() {
+        assertTrue(NotesLoader.isMarkdownNote(null))
+        assertTrue(NotesLoader.isMarkdownNote(""))
+        // packages/core isMarkdownNoteItem skips these, so Android must too.
+        assertFalse(NotesLoader.isMarkdownNote(" "))
+        assertFalse(NotesLoader.isMarkdownNote("attachment"))
     }
 }

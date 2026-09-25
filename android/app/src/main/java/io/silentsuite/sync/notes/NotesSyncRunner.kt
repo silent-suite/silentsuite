@@ -3,6 +3,7 @@ package io.silentsuite.sync.notes
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
+import com.etebase.client.Collection
 import com.etebase.client.CollectionManager
 import com.etebase.client.FetchOptions
 import com.etebase.client.exceptions.ConnectionException
@@ -10,7 +11,6 @@ import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
-import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
@@ -81,8 +81,11 @@ internal object NotesSyncRunner {
                 val cache = EtebaseLocalCache.getInstance(appContext, account.name)
                 val etebase = EtebaseLocalCache.getEtebase(appContext, httpClient.okHttpClient, settings)
                 val colMgr = etebase.collectionManager
+                // The fetch needs only each notebook's uid and cursor, so notebook metadata is never
+                // decoded here: one notebook another app wrote in a shape this client cannot decode
+                // must not stop the others from syncing.
                 val notebooks = synchronized(cache) {
-                    cache.collectionList(colMgr).filter { it.collectionType == Constants.ETEBASE_TYPE_NOTES }
+                    cache.collections(colMgr, type = Constants.ETEBASE_TYPE_NOTES)
                 }
                 for (notebook in notebooks) {
                     if (Thread.interrupted()) throw InterruptedException()
@@ -120,12 +123,16 @@ internal object NotesSyncRunner {
         }
     }
 
-    /** Mirrors the adapters' item fetch: skip when the notebook's cursor is unchanged, else page until done. */
-    private fun fetchNotebookItems(cache: EtebaseLocalCache, colMgr: CollectionManager, notebook: CachedCollection) {
-        val colUid = notebook.col.uid
-        val itemMgr = colMgr.getItemManager(notebook.col)
+    /**
+     * Mirrors the adapters' item fetch: skip when the notebook's cursor is unchanged, else page until
+     * done. The cached copy is compared by revision only and never decoded, so a note whose metadata
+     * this client cannot decode cannot fail the page and pin the cursor.
+     */
+    private fun fetchNotebookItems(cache: EtebaseLocalCache, colMgr: CollectionManager, notebook: Collection) {
+        val colUid = notebook.uid
+        val itemMgr = colMgr.getItemManager(notebook)
         var stoken = synchronized(cache) { cache.collectionLoadStoken(colUid) }
-        if (notebook.col.stoken == stoken) {
+        if (notebook.stoken == stoken) {
             Logger.log.fine("Notebook unchanged; skipping item fetch")
             return
         }
@@ -134,8 +141,7 @@ internal object NotesSyncRunner {
             val itemList = itemMgr.list(FetchOptions().stoken(stoken))
             synchronized(cache) {
                 for (item in itemList.data) {
-                    val cached = cache.itemGet(itemMgr, colUid, item.uid)
-                    if (cached?.item?.etag != item.etag) {
+                    if (cache.itemEtag(itemMgr, colUid, item.uid) != item.etag) {
                         cache.itemSet(itemMgr, colUid, item)
                     }
                 }
