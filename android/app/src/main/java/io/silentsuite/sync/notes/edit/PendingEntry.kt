@@ -1,0 +1,75 @@
+package io.silentsuite.sync.notes.edit
+
+/**
+ * One note's unpushed local change. [blob] is the note item in the encrypted form the Etebase
+ * cache uses (`ItemManager.cacheSaveWithContent`), so no title or text is ever stored in plain
+ * text, and the item keeps its base revision for the server's conflict check.
+ */
+internal data class PendingEntry(
+    val noteUid: String,
+    val notebookUid: String,
+    val state: State,
+    /**
+     * Moves on every local content change (save, delete, rebase), never on bookkeeping. Drawn from a
+     * store-wide counter, so it only ever grows, even across a drop and a new entry for the same note.
+     */
+    val version: Long,
+    /** The revision uid of [blob], as the item's etag reported when the blob was written. */
+    val revision: String,
+    /** True while the note has never been confirmed on the server (a local create). */
+    val isCreate: Boolean,
+    /** Revision uids sent but not yet confirmed, oldest first, capped at [MAX_SENT]. */
+    val sent: List<String> = emptyList(),
+    val failureCount: Int = 0,
+    val lastFailureAt: Long? = null,
+    val lastFailureCategory: String? = null,
+    /** Set on a note created from a conflict: which entry it replaced, so a crash can be finished. */
+    val origin: Origin? = null,
+    /** Set only in the [State.HELD] state. */
+    val held: Held? = null,
+    val blob: ByteArray,
+) {
+    enum class State { UPSERT, DELETE, HELD }
+
+    /** The replaced entry, identified by version and revision (a random uid), so it cannot be confused with a later entry. */
+    data class Origin(val noteUid: String, val revision: String, val version: Long, val serverRevision: String)
+
+    data class Held(val reason: HeldReason, val at: Long)
+
+    init {
+        require((state == State.HELD) == (held != null)) { "held details exist exactly in the HELD state" }
+        require(sent.size <= MAX_SENT) { "sent list over its cap" }
+    }
+
+    /** Records [rev] as sent, oldest dropped first once the cap is reached. */
+    fun withSent(rev: String): PendingEntry =
+        if (sent.lastOrNull() == rev) this else copy(sent = (sent + rev).takeLast(MAX_SENT))
+
+    override fun equals(other: Any?): Boolean =
+        other is PendingEntry && noteUid == other.noteUid && notebookUid == other.notebookUid &&
+            state == other.state && version == other.version && revision == other.revision &&
+            isCreate == other.isCreate && sent == other.sent && failureCount == other.failureCount &&
+            lastFailureAt == other.lastFailureAt && lastFailureCategory == other.lastFailureCategory &&
+            origin == other.origin && held == other.held && blob.contentEquals(other.blob)
+
+    override fun hashCode(): Int = noteUid.hashCode() * 31 + version.hashCode()
+
+    companion object {
+        const val MAX_SENT = 32
+    }
+}
+
+internal enum class HeldReason { READ_ONLY, LOST_ACCESS, NOTEBOOK_DELETED, REJECTED }
+
+/**
+ * The saved item after a successful push, kept until the open editor has rebound or closed. While it
+ * exists, a later save or delete of the note starts from it: the note is known to exist on the server
+ * at [revision], so it is not a create, and a 409 against [revision] is our own write.
+ */
+internal data class LandedRecord(val noteUid: String, val revision: String, val version: Long, val blob: ByteArray) {
+    override fun equals(other: Any?): Boolean =
+        other is LandedRecord && noteUid == other.noteUid && revision == other.revision &&
+            version == other.version && blob.contentEquals(other.blob)
+
+    override fun hashCode(): Int = noteUid.hashCode() * 31 + revision.hashCode()
+}
