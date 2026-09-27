@@ -3,9 +3,12 @@ package io.silentsuite.sync.ui.notes
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
+import com.etebase.client.Collection
 import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.CollectionManager
+import com.etebase.client.ItemManager
 import com.etebase.client.ItemMetadata
+import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
@@ -13,9 +16,12 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.edit.PendingEntry
+import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
+import java.io.IOException
 import java.util.logging.Level
 
 /** A notebook row as shown in the Notes screen; mirrors the dashboard's collection markers. */
@@ -26,13 +32,41 @@ data class NotebookRow(
     val color: Int?,
     val readOnly: Boolean,
     val shared: Boolean,
+    /** Local changes in this notebook waiting to be pushed. */
+    val waiting: Int = 0,
 )
 
-data class NoteRow(val uid: String, val title: String, val preview: String, val editedAt: Long?)
+/**
+ * The notebook list, and how many local changes belong in the unsynced text screen instead. [failed]
+ * means the notebooks could not be read, though the local changes were, so they still count.
+ */
+data class NotebookOverview(val notebooks: List<NotebookRow>, val unsyncedText: Int, val failed: Boolean = false)
 
-data class NoteContent(val uid: String, val title: String, val body: String, val editedAt: Long?)
+data class NoteRow(
+    val uid: String,
+    val title: String,
+    val preview: String,
+    val editedAt: Long?,
+    val sync: NoteSync = NoteSync.SYNCED,
+)
 
-data class NotebookContents(val notebook: NotebookRow, val notes: List<NoteRow>)
+data class NoteContent(
+    val uid: String,
+    val title: String,
+    val body: String,
+    val editedAt: Long?,
+    val sync: NoteSync = NoteSync.SYNCED,
+    /** The version of the pending entry this result reflects: its text, or its marker when held or unreadable. */
+    val pendingVersion: Long? = null,
+    /**
+     * The pending store's sequence when this was loaded, set whether or not an entry existed. An editor
+     * drops a load below its last saved version: the load read the store before that save.
+     */
+    val observedSequence: Long = 0,
+)
+
+/** [unreadable] counts items the cache holds for this notebook that could not be decoded. */
+data class NotebookContents(val notebook: NotebookRow, val notes: List<NoteRow>, val unreadable: Int = 0)
 
 /** Every private read reports whether the exact account generation still owns the result. */
 sealed class NotesLoad<out T> {
@@ -45,43 +79,73 @@ sealed class NotesLoad<out T> {
 internal data class NotesRuntimeFixture(
     val notebooks: List<NotebookRow>,
     val notes: Map<String, List<NoteContent>>,
+    val unsyncedText: Int = 0,
+    val unreadable: Map<String, Int> = emptyMap(),
 )
 
 @Volatile
 internal var notesFixtureOverride: ((Context, Account, String) -> NotesRuntimeFixture?)? = null
 
+/** Test seam: the pending store the loader reads for an exact account generation. */
+@Volatile
+internal var pendingStoreOverride: ((Context, Account, String) -> PendingNotesStore)? = null
+
 /**
- * Reads notebooks and notes from the local Etebase cache. Everything here is offline: the session
- * is restored without a network call and the cache decrypts on read. Sync is the coordinator's job.
+ * Reads notebooks and notes from the local Etebase cache, with unpushed local changes from the pending
+ * store laid over them ([NotesOverlay]). Everything here is offline: the session is restored without a
+ * network call and the cache decrypts on read. Sync is the coordinator's job.
  */
 internal object NotesLoader {
-    fun notebooks(context: Context, account: Account, creationId: String): NotesLoad<List<NotebookRow>> {
+    fun notebooks(context: Context, account: Account, creationId: String): NotesLoad<NotebookOverview> {
         notesFixtureOverride?.let { fixture ->
-            return fixture(context, account, creationId)?.let { NotesLoad.Loaded(it.notebooks) } ?: NotesLoad.Stale
+            return fixture(context, account, creationId)?.let { NotesLoad.Loaded(NotebookOverview(it.notebooks, it.unsyncedText)) }
+                ?: NotesLoad.Stale
         }
-        return load(context, account, creationId) { cache, colMgr -> notebookRows(cache, colMgr) }
+        // Headers are enough to count, so no blob is kept and nothing is decrypted for the list.
+        return load(context, account, creationId, { store -> store.snapshot { false } }) { cache, colMgr, snapshot ->
+            val unreadableEntries = NotesOverlay.unreadableEntryUids(snapshot.unreadable, snapshot.headers)
+            val rows = try {
+                notebookRows(cache, colMgr)
+            } catch (e: EtebaseException) {
+                // The local changes were read, so the way to them stays on screen (design 3.5).
+                Logger.log.log(Level.WARNING, "Notebooks could not be read from the local cache", e)
+                return@load NotesOverlay.notebooks(emptyList(), snapshot.headers, unreadableEntries, failed = true)
+            }
+            NotesOverlay.notebooks(rows, snapshot.headers, unreadableEntries)
+        }
     }
 
     fun notebook(context: Context, account: Account, creationId: String, notebookUid: String): NotesLoad<NotebookContents> {
         notesFixtureOverride?.let { fixture ->
             val data = fixture(context, account, creationId) ?: return NotesLoad.Stale
             val row = data.notebooks.firstOrNull { it.uid == notebookUid } ?: return NotesLoad.Failed
-            val notes = data.notes[notebookUid].orEmpty().map { NoteRow(it.uid, it.title, previewOf(it.body), it.editedAt) }
-            return NotesLoad.Loaded(NotebookContents(row, sortNotes(notes)))
+            val notes = data.notes[notebookUid].orEmpty().map { NoteRow(it.uid, it.title, previewOf(it.body), it.editedAt, it.sync) }
+            return NotesLoad.Loaded(NotebookContents(row, sortNotes(notes), data.unreadable[notebookUid] ?: 0))
         }
-        return load(context, account, creationId) { cache, colMgr ->
+        // One snapshot under the pending lock; only this notebook's edits keep their blobs.
+        val readPending = { store: PendingNotesStore ->
+            val snapshot = store.snapshot { it.notebookUid == notebookUid && it.state == PendingEntry.State.UPSERT }
+            PendingRead(snapshot, if (snapshot.entries.isEmpty()) null else notebookCopy(store, notebookUid))
+        }
+        return load(context, account, creationId, readPending) { cache, colMgr, pending ->
             val row = notebookRows(cache, colMgr).firstOrNull { it.uid == notebookUid } ?: return@load null
             val collection = cache.collectionGet(colMgr, notebookUid)
             val itemMgr = colMgr.getItemManager(collection.col)
-            // One note another app wrote in a shape this client cannot decode is left out, not
-            // allowed to fail the whole notebook.
-            val notes = cache.decodableItemList(itemMgr, notebookUid) { _, error ->
+            // One item another app wrote in a shape this client cannot decode is counted and left
+            // out, not allowed to fail the whole notebook.
+            val unreadable = HashSet<String>()
+            val notes = cache.decodableItemList(itemMgr, notebookUid) { uid, error ->
                 // The binding's message can quote a decrypted value; log only the exception class.
                 Logger.log.warning("Skipping a note that could not be decoded: ${error.javaClass.name}")
+                unreadable += uid
             }
                 .filter { isMarkdownNote(it.meta.itemType) }
                 .map { NoteRow(it.item.uid, titleOf(it.meta), previewOf(it.content), it.meta.mtime) }
-            NotebookContents(row, sortNotes(notes))
+            val source by lazy { notebookSource(colMgr, pending.notebookCopy, collection.col, notebookUid) }
+            NotesOverlay.notebook(row, notes, unreadable, pending.snapshot.headers,
+                NotesOverlay.unreadableEntryUids(pending.snapshot.unreadable, pending.snapshot.headers)) { header ->
+                pending.snapshot.entries[header.noteUid]?.let { decrypt(source, it, keepBody = false) }
+            }
         }
     }
 
@@ -90,12 +154,26 @@ internal object NotesLoader {
             val data = fixture(context, account, creationId) ?: return NotesLoad.Stale
             return data.notes[notebookUid]?.firstOrNull { it.uid == noteUid }?.let { NotesLoad.Loaded(it) } ?: NotesLoad.Failed
         }
-        return load(context, account, creationId) { cache, colMgr ->
+        val readPending = { store: PendingNotesStore ->
+            val observed = store.observe(noteUid)
+            val needsCopy = (observed.read as? PendingNotesStore.Read.Present)?.entry?.state == PendingEntry.State.UPSERT
+            ObservedRead(observed, if (needsCopy) notebookCopy(store, notebookUid) else null)
+        }
+        return load(context, account, creationId, readPending) { cache, colMgr, pending ->
             val collection = cache.collectionGet(colMgr, notebookUid)
             val itemMgr = colMgr.getItemManager(collection.col)
-            val cached = cache.itemGet(itemMgr, notebookUid, noteUid) ?: return@load null
-            if (cached.item.isDeleted || !isMarkdownNote(cached.meta.itemType)) return@load null
-            NoteContent(cached.item.uid, titleOf(cached.meta), cached.content, cached.meta.mtime)
+            // Isolated like the list: a server copy that cannot be decoded must not hide a pending edit.
+            val cached = try {
+                cache.itemGet(itemMgr, notebookUid, noteUid)
+                    ?.takeIf { !it.item.isDeleted && isMarkdownNote(it.meta.itemType) }
+                    ?.let { NoteContent(it.item.uid, titleOf(it.meta), it.content, it.meta.mtime) }
+            } catch (e: EtebaseException) {
+                Logger.log.warning("Skipping a note that could not be decoded (uid $noteUid): ${e.message}")
+                null
+            }
+            NotesOverlay.note(noteUid, notebookUid, cached, pending.observed.read, pending.observed.sequence, isWritable(collection.col)) { entry ->
+                decrypt(notebookSource(colMgr, pending.notebookCopy, collection.col, notebookUid), entry, keepBody = true)
+            }
         }
     }
 
@@ -103,6 +181,51 @@ internal object NotesLoader {
     fun everSynced(context: Context, account: Account, creationId: String): Boolean {
         val store = SyncStatusStore(context.applicationContext)
         return store.status(store.identity(account, creationId), SyncStatusStore.Service.NOTES).lastSuccessAt != null
+    }
+
+    /** What the notebook screen read under the pending lock, with the stored notebook copy. */
+    private class PendingRead(val snapshot: PendingNotesStore.Snapshot, val notebookCopy: ByteArray?)
+
+    /** What the viewer read under the pending lock, with the stored notebook copy. */
+    private class ObservedRead(val observed: PendingNotesStore.Observed, val notebookCopy: ByteArray?)
+
+    /** The same rule as the lists: a deleted notebook is gone, and a read-only one shows only the server version. */
+    private fun isWritable(col: Collection): Boolean = !col.isDeleted && col.accessLevel != CollectionAccessLevel.ReadOnly
+
+    private fun notebookCopy(store: PendingNotesStore, notebookUid: String): ByteArray? = try {
+        store.notebook(notebookUid)
+    } catch (e: IOException) {
+        Logger.log.warning("The stored copy of a notebook could not be read (uid $notebookUid): ${e.message}")
+        null
+    }
+
+    /**
+     * The notebook pending edits are decrypted through: the copy the store keeps (design 3.1), so the
+     * text stays readable after the Etebase cache drops the notebook. The live collection, which uses the
+     * same key, stands in when the copy is missing or cannot be loaded; on these paths it is always there.
+     */
+    private fun notebookSource(colMgr: CollectionManager, copy: ByteArray?, live: Collection, notebookUid: String): ItemManager {
+        val loaded = copy?.let {
+            try {
+                colMgr.cacheLoad(it)
+            } catch (e: EtebaseException) {
+                Logger.log.warning("The stored copy of a notebook could not be loaded (uid $notebookUid): ${e.message}")
+                null
+            }
+        }
+        if (copy == null) Logger.log.warning("No stored copy of a notebook with pending notes (uid $notebookUid); using the cached one")
+        return colMgr.getItemManager(loaded ?: live)
+    }
+
+    /** One pending edit, decrypted; null when it cannot be read. The body is kept only for the viewer. */
+    private fun decrypt(itemMgr: ItemManager, entry: PendingEntry, keepBody: Boolean): NotesOverlay.Decrypted? = try {
+        val item = itemMgr.cacheLoad(entry.blob)
+        val meta = item.meta
+        val content = item.contentString
+        NotesOverlay.Decrypted(titleOf(meta), previewOf(content), if (keepBody) content else null, meta.mtime)
+    } catch (e: EtebaseException) {
+        Logger.log.warning("A pending note could not be read (uid ${entry.noteUid}): ${e.message}")
+        null
     }
 
     /**
@@ -145,11 +268,12 @@ internal object NotesLoader {
             }
             .sortedBy { it.name.lowercase() }
 
-    private fun <T : Any> load(
+    private fun <P, T : Any> load(
         context: Context,
         account: Account,
         creationId: String,
-        block: (EtebaseLocalCache, CollectionManager) -> T?,
+        readPending: (PendingNotesStore) -> P,
+        block: (EtebaseLocalCache, CollectionManager, P) -> T?,
     ): NotesLoad<T> {
         val appContext = context.applicationContext
         val manager = AccountManager.get(appContext)
@@ -165,8 +289,19 @@ internal object NotesLoader {
             // Account.restore is offline; reading the cache never touches the network.
             val etebase = EtebaseLocalCache.getEtebase(appContext, HttpClient.sharedClient, settings)
             if (!exactGenerationStillCurrent()) return NotesLoad.Stale
+            // The pending store is read first, and never while holding the cache monitor (the two locks
+            // are never held together). This order is safe only because of a rule on the runner: before
+            // any store change that lets a note fall back to the cache (dropping an entry after a push,
+            // the conflict drops, removing an original for a conflict copy), it writes the server item
+            // it holds, deleted ones included, into the cache under the cache monitor alone, and keeps
+            // the entry if that write fails. A load then sees either the entry or a cache at least as
+            // new, so a change that just landed can show as waiting until the next reload, but older
+            // server text, or a note deleted here, never comes back in its place.
+            val pending = readPending(pendingStoreOverride?.invoke(appContext, account, creationId)
+                ?: PendingNotesStore.forIdentity(appContext, account.type, account.name, creationId))
+            if (!exactGenerationStillCurrent()) return NotesLoad.Stale
             val value = synchronized(cache) {
-                if (!exactGenerationStillCurrent()) null else block(cache, etebase.collectionManager)
+                if (!exactGenerationStillCurrent()) null else block(cache, etebase.collectionManager, pending)
             }
             when {
                 !exactGenerationStillCurrent() -> NotesLoad.Stale
@@ -176,6 +311,10 @@ internal object NotesLoader {
         } catch (_: InvalidAccountException) {
             // The row vanished between the generation check and the settings read: stale, not an error.
             NotesLoad.Stale
+        } catch (e: OutOfMemoryError) {
+            // Very large notes: fail this screen, as the Notes runner does, rather than the app.
+            Logger.log.log(Level.WARNING, "Notes were too large to read", e)
+            if (exactGenerationStillCurrent()) NotesLoad.Failed else NotesLoad.Stale
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Logger.log.log(Level.WARNING, "Notes could not be read from the local cache", e)

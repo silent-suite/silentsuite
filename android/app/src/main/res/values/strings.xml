@@ -753,4 +753,8 @@
     <string name="notes_edited">Edited %1$s</string>
     <string name="notes_refresh">Refresh</string>
     <string name="notes_loading_failed">Could not load notes. Sync and try again.</string>
+    <string name="notes_not_synced_yet">Not synced yet</string>
+    <string name="notes_local_change_unreadable">A local change could not be read</string>
+    <string name="notes_local_text_held">Your local text is kept in Unsynced text</string>
+    <string name="notes_unsynced_text">Unsynced text (%1$d)</string>
 </resources>

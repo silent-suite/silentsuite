@@ -5,6 +5,17 @@
     android:orientation="vertical">
 
     <TextView
+        android:id="@+id/notebooks_unsynced"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="@dimen/spacing_8"
+        android:background="@color/semantic_surface_variant"
+        android:padding="@dimen/spacing_16"
+        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+        android:textColor="@color/semantic_on_surface"
+        android:visibility="gone" />
+
+    <TextView
         android:id="@+id/notebooks_hint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

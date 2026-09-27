@@ -27,6 +27,7 @@ import io.silentsuite.sync.ui.account.SyncLifecycleWindows
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteListFragment
+import io.silentsuite.sync.ui.notes.NoteSync
 import io.silentsuite.sync.ui.notes.NoteViewFragment
 import io.silentsuite.sync.ui.notes.NotebookListFragment
 import io.silentsuite.sync.ui.notes.NotebookRow
@@ -183,19 +184,30 @@ class NotesRuntimeTest {
         AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
         check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
         check(AccountSettings.writeNotesEnabled(manager, account, true))
-        val own = NotebookRow("nb-own", "Personal Notes", "", 0xff10b981.toInt(), readOnly = false, shared = false)
+        val own = NotebookRow("nb-own", "Personal Notes", "Drafts and lists", 0xff10b981.toInt(), readOnly = false, shared = false, waiting = 2)
         val shared = NotebookRow("nb-shared", "Team notes", "Shared by a colleague", 0xff059669.toInt(), readOnly = true, shared = true)
-        val notes = mapOf("nb-shared" to listOf(
-            NoteContent("note-old", "Older note", "# Older\nFirst line of the older note", 1_000L),
-            NoteContent("note-new", "Newer note", "- item one\n- item two", 2_000L),
-        ))
+        val notes = mapOf(
+            "nb-shared" to listOf(
+                NoteContent("note-old", "Older note", "# Older\nFirst line of the older note", 1_000L),
+                NoteContent("note-new", "Newer note", "- item one\n- item two", 2_000L),
+            ),
+            // Pending changes as the loader's overlay reports them in a writable notebook.
+            "nb-own" to listOf(
+                NoteContent("note-local", "Local edit", "Changed on this device", 3_000L, NoteSync.WAITING, pendingVersion = 4),
+                NoteContent("note-bad", "Server copy", "Server text", 500L, NoteSync.LOCAL_UNREADABLE, pendingVersion = 5),
+            ),
+        )
         val identity = ExactAccountIdentity(account.type, account.name, generation)
         // The cache starts empty, as it is before the first Notes sync fills it.
         val rows = AtomicReference(emptyList<NotebookRow>())
         val loads = java.util.concurrent.atomic.AtomicInteger()
         notesFixtureOverride = { _, exact, creationId ->
             loads.incrementAndGet()
-            if (exact == account && creationId == generation) NotesRuntimeFixture(rows.get(), notes) else null
+            if (exact == account && creationId == generation) {
+                NotesRuntimeFixture(rows.get(), notes, unsyncedText = 3, unreadable = mapOf("nb-shared" to 1))
+            } else {
+                null
+            }
         }
         NotesSyncCoordinator.runnerOverride = { _, _, _, _ -> }
         val routes = mutableListOf<Intent>()
@@ -236,6 +248,13 @@ class NotesRuntimeTest {
                     val ownRow = list.adapter.getView(0, null, list)
                     assertEquals(View.GONE, ownRow.findViewById<View>(R.id.read_only).visibility)
                     assertEquals(View.GONE, ownRow.findViewById<View>(R.id.shared).visibility)
+                    // The count comes first: the row shows at most two lines of description.
+                    assertEquals("2 changes not synced yet\nDrafts and lists", ownRow.findViewById<TextView>(R.id.description).text.toString())
+                    assertTrue(ownRow.contentDescription.toString().contains("2 changes not synced yet"))
+                    val unsynced = activity.findViewById<TextView>(R.id.notebooks_unsynced)
+                    assertEquals(View.VISIBLE, unsynced.visibility)
+                    assertEquals("Unsynced text (3)", unsynced.text.toString())
+                    assertEquals(3, notebookFragment(scenario)!!.renderedUnsyncedText)
                     val sharedRow = list.adapter.getView(1, null, list)
                     assertEquals("Team notes", sharedRow.findViewById<TextView>(R.id.title).text.toString())
                     assertEquals(View.VISIBLE, sharedRow.findViewById<View>(R.id.read_only).visibility)
@@ -272,7 +291,11 @@ class NotesRuntimeTest {
                     assertEquals("item one", fragment.renderedNotes.first().preview)
                     assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.note_list_read_only).visibility)
                     assertEquals("Team notes", activity.title.toString())
+                    val unreadable = activity.findViewById<TextView>(R.id.notes_unreadable)
+                    assertEquals(View.VISIBLE, unreadable.visibility)
+                    assertEquals("1 item in this notebook could not be read", unreadable.text.toString())
                     val list = activity.findViewById<ListView>(R.id.notes_list)
+                    assertEquals(View.GONE, list.adapter.getView(0, null, list).findViewById<View>(R.id.note_sync).visibility)
                     list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
                 }
                 waitUntil("note rendered") { noteViewFragment(scenario)?.renderedNote != null }
@@ -284,6 +307,48 @@ class NotesRuntimeTest {
                 waitUntil("note rendered after recreation") { noteViewFragment(scenario)?.renderedNote?.uid == "note-new" }
                 scenario.onActivity { activity ->
                     assertEquals("Newer note", activity.findViewById<TextView>(R.id.note_title).text.toString())
+                    assertFalse(activity.findViewById<TextView>(R.id.note_meta).text.toString().contains("Not synced yet"))
+                    activity.supportFragmentManager.popBackStackImmediate()
+                    activity.supportFragmentManager.popBackStackImmediate()
+                }
+
+                // A writable notebook with local changes: each row says so, and so does the viewer.
+                waitUntil("notebooks rendered again") { notebookFragment(scenario)?.renderedNotebooks?.size == 2 }
+                scenario.onActivity { activity ->
+                    val list = activity.findViewById<ListView>(R.id.notebooks_list)
+                    list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
+                }
+                waitUntil("own notes rendered") { noteListFragment(scenario)?.renderedNotes?.map { it.uid } == listOf("note-local", "note-bad") }
+                scenario.onActivity { activity ->
+                    val list = activity.findViewById<ListView>(R.id.notes_list)
+                    val waiting = list.adapter.getView(0, null, list).findViewById<TextView>(R.id.note_sync)
+                    assertEquals(View.VISIBLE, waiting.visibility)
+                    assertEquals("Not synced yet", waiting.text.toString())
+                    val unreadableChange = list.adapter.getView(1, null, list).findViewById<TextView>(R.id.note_sync)
+                    assertEquals(View.VISIBLE, unreadableChange.visibility)
+                    assertEquals("A local change could not be read", unreadableChange.text.toString())
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.notes_unreadable).visibility)
+                    list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
+                }
+                waitUntil("pending note rendered") { noteViewFragment(scenario)?.renderedNote?.uid == "note-local" }
+                scenario.onActivity { activity ->
+                    assertTrue(activity.findViewById<TextView>(R.id.note_meta).text.toString().contains("Not synced yet"))
+                    assertEquals("Changed on this device", activity.findViewById<TextView>(R.id.note_body).text.toString())
+                    assertEquals(4L, noteViewFragment(scenario)!!.renderedNote!!.pendingVersion)
+                }
+            }
+
+            // With no notebook left, local text still has its way in next to the empty state.
+            notesFixtureOverride = { _, exact, creationId ->
+                if (exact == account && creationId == generation) NotesRuntimeFixture(emptyList(), emptyMap(), unsyncedText = 1) else null
+            }
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, generation)).use { scenario ->
+                waitUntil("empty notebook list rendered") { notebookFragment(scenario)?.renderedUnsyncedText == 1 }
+                scenario.onActivity { activity ->
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.notebooks_empty).visibility)
+                    val unsynced = activity.findViewById<TextView>(R.id.notebooks_unsynced)
+                    assertEquals(View.VISIBLE, unsynced.visibility)
+                    assertEquals("Unsynced text (1)", unsynced.text.toString())
                 }
 
                 // Back to the notebooks, through a recreation while they were on the back stack: the

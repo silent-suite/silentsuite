@@ -25,6 +25,7 @@ import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.Constants
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -41,6 +42,7 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private var loaded = false
     private var lastLoadFailed = false
     private var everSynced = false
+    private var loadJob: Job? = null
 
     /** Last rendered rows; process-only observation point for runtime tests. */
     internal var renderedNotebooks: List<NotebookRow> = emptyList()
@@ -48,6 +50,9 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
 
     /** What the empty list currently says, or null while rows show; observation point for runtime tests. */
     internal var renderedEmptyState: NotesEmptyState? = null
+        private set
+
+    internal var renderedUnsyncedText: Int = 0
         private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -175,7 +180,9 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private fun reload() {
         val host = host() ?: return
         val appContext = host.applicationContext
-        viewLifecycleOwner.lifecycleScope.launch {
+        // A newer load replaces an older one, so an older result can never render last.
+        loadJob?.cancel()
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val (result, synced) = withContext(Dispatchers.IO) {
                 NotesLoader.notebooks(appContext, account, creationId) to NotesLoader.everSynced(appContext, account, creationId)
             }
@@ -188,25 +195,35 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
                     // A failure repeats on every sync notification until it clears; say it once.
                     if (!lastLoadFailed) Toast.makeText(current, R.string.notes_loading_failed, Toast.LENGTH_LONG).show()
                     lastLoadFailed = true
-                    // Keep whatever was already shown rather than blanking the list.
-                    render(renderedNotebooks)
+                    // Nothing was read this time; keep the rows and the last known way to unsynced text.
+                    render(NotebookOverview(renderedNotebooks, renderedUnsyncedText))
                 }
                 is NotesLoad.Loaded -> if (current.exactAccountStillCurrent()) {
-                    lastLoadFailed = false
-                    render(result.value)
-                } else current.finish()
+                    // The notebooks could not be read but the local changes were (design 3.5): still a
+                    // failure to report once, and the rows already shown stay.
+                    val overview = result.value
+                    if (overview.failed && !lastLoadFailed) {
+                        Toast.makeText(current, R.string.notes_loading_failed, Toast.LENGTH_LONG).show()
+                    }
+                    lastLoadFailed = overview.failed
+                    render(if (overview.failed) overview.copy(notebooks = renderedNotebooks) else overview)
+                } else {
+                    current.finish()
+                }
             }
         }
     }
 
-    private fun render(rows: List<NotebookRow>) {
+    private fun render(overview: NotebookOverview) {
+        val rows = overview.notebooks
         renderedNotebooks = rows
+        renderedUnsyncedText = overview.unsyncedText
         loaded = true
         notebookAdapter?.apply {
             setNotifyOnChange(false)
             clear()
             addAll(rows.map {
-                AccountActivity.CollectionListItemInfo(it.uid, CollectionInfo.Type.NOTES, it.name, it.description,
+                AccountActivity.CollectionListItemInfo(it.uid, CollectionInfo.Type.NOTES, it.name, describe(it),
                     it.color, it.readOnly, isAdmin = !it.shared)
             })
             notifyDataSetChanged()
@@ -214,6 +231,12 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
         if (rows.isNotEmpty()) listState?.let { state ->
             list?.onRestoreInstanceState(state)
             listState = null
+        }
+        // Held text and changes whose notebook is gone or read-only are counted here, so they stay
+        // findable even with no notebook left. The row opens the unsynced text screen once it exists.
+        view?.findViewById<TextView>(R.id.notebooks_unsynced)?.apply {
+            text = getString(R.string.notes_unsynced_text, overview.unsyncedText)
+            visibility = if (overview.unsyncedText > 0) View.VISIBLE else View.GONE
         }
         renderEmptyState()
     }
@@ -239,6 +262,16 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
         // Offer to create a notebook only once a sync has shown there really are none.
         view.findViewById<View>(R.id.notebooks_create).visibility =
             if (state == NotesEmptyState.EMPTY) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * The notebook's description, after its count of waiting changes when there are any. The count goes
+     * first because the row shows at most two lines of description.
+     */
+    private fun describe(row: NotebookRow): String {
+        if (row.waiting == 0) return row.description
+        val waiting = resources.getQuantityString(R.plurals.notes_waiting_changes, row.waiting, row.waiting)
+        return if (row.description.isBlank()) waiting else "$waiting\n${row.description}"
     }
 
     companion object {

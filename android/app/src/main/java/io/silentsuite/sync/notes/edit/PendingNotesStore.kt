@@ -42,6 +42,23 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
 
     data class Scan(val entries: List<PendingEntry>, val unreadable: List<Read.Unreadable>)
 
+    /** An entry without its blob: enough to count, filter, and choose entries. */
+    data class EntryHeader(val noteUid: String, val notebookUid: String, val state: PendingEntry.State, val version: Long)
+
+    /**
+     * One consistent view taken under one lock: every header, the full entries the caller asked for,
+     * the files that cannot be read, and the store-wide sequence at that moment.
+     */
+    data class Snapshot(
+        val headers: List<EntryHeader>,
+        val entries: Map<String, PendingEntry>,
+        val unreadable: List<Read.Unreadable>,
+        val sequence: Long,
+    )
+
+    /** One note's entry and the store-wide sequence, read together. */
+    data class Observed(val read: Read, val sequence: Long)
+
     sealed class SaveOutcome {
         data class Saved(val version: Long) : SaveOutcome()
         /** The text is held (read-only, lost access, rejected): kept there, never pushed. The editor becomes a viewer. */
@@ -75,7 +92,7 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
     /** Lists every entry. A committed file that cannot be read is reported in [Scan.unreadable], never deleted. */
     fun scan(): Scan = locked {
         val entries = mutableListOf<PendingEntry>()
-        val unreadable = recoveryProblems.toMutableList()
+        val unreadable = mutableListOf<Read.Unreadable>()
         for (file in files(NOTE)) {
             when (val read = decodeFile(file)) {
                 is Read.Present -> entries += read.entry
@@ -83,8 +100,40 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
                 Read.Missing -> Unit
             }
         }
+        unreadable += currentRecoveryProblems(entries.mapTo(HashSet()) { it.noteUid })
         Scan(entries.sortedBy { it.noteUid }, unreadable.sortedBy { it.file })
     }
+
+    /**
+     * Like [scan], but keeps a blob only for the entries [keep] selects, so a screen that needs a few
+     * blobs, or none, does not hold every one. [keep] runs under the store lock and must not take the
+     * Etebase cache monitor.
+     */
+    fun snapshot(keep: (EntryHeader) -> Boolean): Snapshot = locked {
+        val headers = mutableListOf<EntryHeader>()
+        val kept = HashMap<String, PendingEntry>()
+        val unreadable = mutableListOf<Read.Unreadable>()
+        for (file in files(NOTE)) {
+            when (val read = decodeFile(file)) {
+                is Read.Present -> {
+                    val e = read.entry
+                    val header = EntryHeader(e.noteUid, e.notebookUid, e.state, e.version)
+                    headers += header
+                    if (keep(header)) kept[e.noteUid] = e
+                }
+                is Read.Unreadable -> unreadable += read
+                Read.Missing -> Unit
+            }
+        }
+        unreadable += currentRecoveryProblems(headers.mapTo(HashSet()) { it.noteUid })
+        Snapshot(headers.sortedBy { it.noteUid }, kept, unreadable.sortedBy { it.file }, currentSequence())
+    }
+
+    /**
+     * One note's entry with the store-wide sequence at the same moment. A load carries the sequence, so
+     * an editor can drop any load older than its last save whether or not an entry existed.
+     */
+    fun observe(noteUid: String): Observed = locked { Observed(readEntry(noteUid), currentSequence()) }
 
     // ---- the one primitive every change goes through ----
 
@@ -375,15 +424,26 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
 
     /** The next value of the store-wide counter, persisted before it is handed out. */
     private fun nextVersion(): Long {
-        val file = File(dir, SEQUENCE)
-        val stored = if (file.exists()) (PendingCodec.decodeSequence(file.readBytes()) as? PendingCodec.Decoded.Ok)?.value else null
-        // A lost or damaged counter restarts above every version still on disk.
-        val floor = stored ?: (files(NOTE).mapNotNull { (decodeFile(it) as? Read.Present)?.entry?.version } +
-            files(LANDED).mapNotNull { (PendingCodec.decodeLanded(it.readBytes()) as? PendingCodec.Decoded.Ok)?.value?.version }).maxOrNull() ?: 0L
-        val next = floor + 1
-        writeAtomically(file, PendingCodec.encodeSequence(next))
+        val next = currentSequence() + 1
+        writeAtomically(File(dir, SEQUENCE), PendingCodec.encodeSequence(next))
         return next
     }
+
+    /** The last version handed out. A lost or damaged counter restarts above every version still on disk. */
+    private fun currentSequence(): Long {
+        val file = File(dir, SEQUENCE)
+        val stored = if (file.exists()) (PendingCodec.decodeSequence(file.readBytes()) as? PendingCodec.Decoded.Ok)?.value else null
+        return stored ?: (files(NOTE).mapNotNull { (decodeFile(it) as? Read.Present)?.entry?.version } +
+            files(LANDED).mapNotNull { (PendingCodec.decodeLanded(it.readBytes()) as? PendingCodec.Decoded.Ok)?.value?.version }).maxOrNull() ?: 0L
+    }
+
+    /**
+     * Recovery problems that still stand: the file is still there and is not an entry that now reads
+     * fine (a failed step of a conflict copy is recorded under the copy's own name). Without this a
+     * problem would outlive its file until the process restarts, and a readable entry would count twice.
+     */
+    private fun currentRecoveryProblems(presentUids: Set<String>): List<Read.Unreadable> =
+        recoveryProblems.filter { File(dir, it.file).exists() && it.file.removeSuffix(NOTE) !in presentUids }
 
     private fun readEntry(noteUid: String): Read {
         val file = noteFile(noteUid)

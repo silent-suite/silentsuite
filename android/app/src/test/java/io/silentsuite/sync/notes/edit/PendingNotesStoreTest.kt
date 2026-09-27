@@ -372,6 +372,43 @@ class PendingNotesStoreTest {
         assertEquals("bad.note.new", scan.unreadable.single().file)
     }
 
+    // ---- views for the screens ----
+
+    @Test fun `a snapshot keeps only the blobs asked for and reads the sequence with the headers`() {
+        val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false))
+        store.saveLocal("n2", "b2", "r1", blob("two"), isCreate = true)
+        store.markDeleted("n3", "b1", "d", blob("gone"))
+        val snapshot = store.snapshot { it.notebookUid == "b1" && it.state == PendingEntry.State.UPSERT }
+        assertEquals(listOf("n1", "n2", "n3"), snapshot.headers.map { it.noteUid })
+        assertEquals(PendingNotesStore.EntryHeader("n1", "b1", PendingEntry.State.UPSERT, v1), snapshot.headers.first())
+        assertEquals(PendingEntry.State.DELETE, snapshot.headers.last().state)
+        assertEquals(setOf("n1"), snapshot.entries.keys)
+        assertArrayEquals(blob("one"), snapshot.entries.getValue("n1").blob)
+        assertEquals(3L, snapshot.sequence)
+    }
+
+    @Test fun `observing a note reads its entry and the sequence together, also when there is no entry`() {
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        store.saveLocal("n1", "b1", "r2", blob("two"), isCreate = false)
+        assertEquals(PendingNotesStore.Observed(Read.Present(entry("n1")), 2), store.observe("n1"))
+        assertEquals(PendingNotesStore.Observed(Read.Missing, 2), store.observe("n9"))
+        // A drop leaves the sequence where it was, so a load after a push is never taken for an older one.
+        store.discard("n1")
+        assertEquals(2L, store.observe("n1").sequence)
+        assertEquals(0L, PendingNotesStore.open(tmp.newFolder("empty")).observe("n1").sequence)
+    }
+
+    @Test fun `a recovery problem does not outlive its file`() {
+        store.saveLocal("n1", "b1", "r1", blob("fine"), isCreate = false)
+        File(dir, "bad.note.new").mkdirs()
+        val reopened = restarted()
+        assertEquals(listOf("bad.note.new"), reopened.scan().unreadable.map { it.file })
+        assertEquals(listOf("bad.note.new"), reopened.snapshot { false }.unreadable.map { it.file })
+        File(dir, "bad.note.new").delete()
+        assertTrue(reopened.scan().unreadable.isEmpty())
+        assertTrue(reopened.snapshot { false }.unreadable.isEmpty())
+    }
+
     // ---- notebooks, identity, safety ----
 
     @Test fun `notebook copies stay while an entry or held text needs them`() {
