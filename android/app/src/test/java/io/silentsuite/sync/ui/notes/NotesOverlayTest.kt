@@ -34,7 +34,7 @@ class NotesOverlayTest {
         texts: Map<String, Decrypted> = emptyMap(),
         row: NotebookRow = own,
         unreadableCached: Set<String> = emptySet(),
-        unreadableEntries: Set<String> = emptySet(),
+        unreadableEntries: Map<String, String?> = emptyMap(),
         fake: Fake = Fake(texts),
     ) = NotesOverlay.notebook(row, cached, unreadableCached, headers, unreadableEntries, fake::decrypt)
 
@@ -112,41 +112,86 @@ class NotesOverlayTest {
     }
 
     @Test fun `a note whose entry file cannot be read is marked`() {
-        val result = notebook(emptyList(), unreadableEntries = setOf("a", "not-here"))
+        val result = notebook(emptyList(), unreadableEntries = mapOf("a" to null, "not-here" to null))
         assertEquals(listOf(newer, older.copy(sync = NoteSync.LOCAL_UNREADABLE)), result.notes)
+    }
+
+    @Test fun `an entry whose header names this notebook but whose rest is damaged is never out of view`() {
+        // A damaged create gets a placeholder, a damaged edit or delete marks the server row, and one
+        // filed under another notebook, or with no readable header, adds nothing here.
+        val result = notebook(emptyList(), unreadableEntries = mapOf("c" to "own", "b" to "own", "d" to "team", "e" to null))
+        assertEquals(listOf(newer.copy(sync = NoteSync.LOCAL_UNREADABLE), older, NoteRow("c", "", "", null, NoteSync.LOCAL_UNREADABLE)), result.notes)
+        assertEquals("a read-only notebook shows no placeholder; the list counts it as unsynced text", listOf("b", "a"),
+            notebook(emptyList(), row = readOnly, unreadableEntries = mapOf("c" to "ro")).notes.map { it.uid })
     }
 
     // ---- the notebook list ----
 
+    /** The notebooks as the loader reads them from the cached collections, without decoding them. */
+    private val access = listOf(
+        NotesOverlay.NotebookAccess("own", deleted = false, readOnly = false),
+        NotesOverlay.NotebookAccess("team", deleted = false, readOnly = false),
+        NotesOverlay.NotebookAccess("ro", deleted = false, readOnly = true),
+    )
+
     @Test fun `waiting changes are counted per writable notebook`() {
-        val overview = NotesOverlay.notebooks(listOf(own, team, readOnly),
-            listOf(header("n1", State.UPSERT), header("n2", State.DELETE), header("n3", State.UPSERT, "team")), emptySet())
+        val overview = NotesOverlay.notebooks(listOf(own, team, readOnly), access,
+            listOf(header("n1", State.UPSERT), header("n2", State.DELETE), header("n3", State.UPSERT, "team")), emptyMap())
         assertEquals(listOf(2, 1, 0), overview.notebooks.map { it.waiting })
         assertEquals(0, overview.unsyncedText)
     }
 
-    @Test fun `held text, changes in read-only or missing notebooks, and unreadable files count as unsynced text`() {
-        val overview = NotesOverlay.notebooks(listOf(own, readOnly), listOf(
-            header("n1", State.HELD),
-            header("n2", State.UPSERT, "ro"),
-            header("n3", State.UPSERT, "gone"),
-            header("n4", State.DELETE, "gone"),
-            header("n5", State.UPSERT),
-        ), unreadableEntryUids = setOf("x", "y"))
-        assertEquals(listOf(1, 0), overview.notebooks.map { it.waiting })
-        assertEquals(6, overview.unsyncedText)
+    @Test fun `held text, changes in read-only, deleted or missing notebooks, and unreadable files count as unsynced text`() {
+        // "team" still has a row from the cache, but the collection is now marked deleted.
+        val overview = NotesOverlay.notebooks(listOf(own, team, readOnly),
+            access.map { if (it.uid == "team") it.copy(deleted = true) else it }, listOf(
+                header("n1", State.HELD),
+                header("n2", State.UPSERT, "ro"),
+                header("n3", State.UPSERT, "gone"),
+                header("n4", State.DELETE, "gone"),
+                header("n5", State.UPSERT),
+                header("n6", State.UPSERT, "team"),
+            ), unreadableEntries = mapOf("x" to null, "y" to "own"))
+        assertEquals(listOf(1, 0, 0), overview.notebooks.map { it.waiting })
+        assertEquals(7, overview.unsyncedText)
+    }
+
+    @Test fun `a change in a notebook this client cannot show counts as unsynced text, the one place that shows it`() {
+        // "hidden" accepts writes, so the runner will push to it, but it has no row: its metadata cannot
+        // be decoded here. Counted nowhere, the change would be out of view.
+        val overview = NotesOverlay.notebooks(listOf(own), access + NotesOverlay.NotebookAccess("hidden", false, false),
+            listOf(header("n1", State.UPSERT, "hidden"), header("n2", State.HELD, "hidden"), header("n3", State.UPSERT)), emptyMap())
+        assertEquals(listOf(1), overview.notebooks.map { it.waiting })
+        assertEquals(2, overview.unsyncedText)
+    }
+
+    @Test fun `every change is in exactly one place`() {
+        val headers = listOf(header("n1", State.UPSERT), header("n2", State.HELD), header("n3", State.UPSERT, "ro"),
+            header("n4", State.DELETE, "team"), header("n5", State.UPSERT, "hidden"), header("n6", State.UPSERT, "gone"))
+        val unreadable = mapOf("x" to null)
+        val overview = NotesOverlay.notebooks(listOf(own, team, readOnly), access + NotesOverlay.NotebookAccess("hidden", false, false), headers, unreadable)
+        assertEquals(headers.size + unreadable.size, overview.notebooks.sumOf { it.waiting } + overview.unsyncedText)
     }
 
     @Test fun `unsynced text still counts when no notebook is left or the list could not be read`() {
-        assertEquals(NotebookOverview(emptyList(), 1), NotesOverlay.notebooks(emptyList(), listOf(header("n", State.UPSERT, "gone")), emptySet()))
+        assertEquals(NotebookOverview(emptyList(), 1),
+            NotesOverlay.notebooks(emptyList(), emptyList(), listOf(header("n", State.UPSERT, "gone")), emptyMap()))
         assertEquals(NotebookOverview(emptyList(), 2, failed = true),
-            NotesOverlay.notebooks(emptyList(), listOf(header("n", State.UPSERT)), setOf("x"), failed = true))
+            NotesOverlay.notebooks(emptyList(), emptyList(), listOf(header("n", State.UPSERT)), mapOf("x" to null), failed = true))
     }
 
-    @Test fun `an unreadable entry file counts once by uid and not when its entry reads fine`() {
+    @Test fun `after a failed load the rows on screen stay without counts, since every change is unsynced text then`() {
+        val shown = listOf(own.copy(waiting = 2), team.copy(waiting = 1))
+        val failed = NotesOverlay.notebooks(emptyList(), emptyList(),
+            listOf(header("n1", State.UPSERT), header("n2", State.UPSERT), header("n3", State.UPSERT, "team")), emptyMap(), failed = true)
+        assertEquals(NotebookOverview(listOf(own, team), 3, failed = true), NotesOverlay.keptAfterFailure(shown, failed))
+    }
+
+    @Test fun `an unreadable entry file counts once by uid, keeps its notebook when known, and not when its entry reads fine`() {
         val unreadable = listOf("x.note", "x.note.new", "y.note.new", "z.note", "b1.notebook", "n1.landed", "sequence.new")
-            .map { Read.Unreadable(it, "bad") }
-        assertEquals(setOf("x", "y"), NotesOverlay.unreadableEntryUids(unreadable, listOf(header("z", State.UPSERT))))
+            .map { Read.Unreadable(it, "bad") } + Read.Unreadable("w.note", "bad", notebookUid = "own")
+        assertEquals(mapOf("x" to null, "y" to null, "w" to "own"),
+            NotesOverlay.unreadableEntries(unreadable, listOf(header("z", State.UPSERT))))
     }
 
     // ---- the viewer ----

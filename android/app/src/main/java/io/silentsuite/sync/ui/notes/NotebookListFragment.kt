@@ -206,7 +206,7 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
                         Toast.makeText(current, R.string.notes_loading_failed, Toast.LENGTH_LONG).show()
                     }
                     lastLoadFailed = overview.failed
-                    render(if (overview.failed) overview.copy(notebooks = renderedNotebooks) else overview)
+                    render(if (overview.failed) NotesOverlay.keptAfterFailure(renderedNotebooks, overview) else overview)
                 } else {
                     current.finish()
                 }

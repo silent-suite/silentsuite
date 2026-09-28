@@ -22,6 +22,8 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
+import io.silentsuite.sync.notes.edit.HeldReason
+import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.account.SyncLifecycleWindows
 import io.silentsuite.sync.ui.etebase.CollectionActivity
@@ -31,8 +33,11 @@ import io.silentsuite.sync.ui.notes.NoteSync
 import io.silentsuite.sync.ui.notes.NoteViewFragment
 import io.silentsuite.sync.ui.notes.NotebookListFragment
 import io.silentsuite.sync.ui.notes.NotebookRow
+import io.silentsuite.sync.ui.notes.NotebookOverview
 import io.silentsuite.sync.ui.notes.NotesActivity
 import io.silentsuite.sync.ui.notes.NotesEmptyState
+import io.silentsuite.sync.ui.notes.NotesLoad
+import io.silentsuite.sync.ui.notes.NotesLoader
 import io.silentsuite.sync.ui.notes.NotesRuntimeFixture
 import io.silentsuite.sync.ui.notes.notesFixtureOverride
 import io.silentsuite.sync.ui.settings.SettingsCategory
@@ -104,6 +109,38 @@ class NotesRuntimeTest {
             AppSettingsActivity.notesToggleEffectOverride = null
             removeAccountAndWait(manager, first)
             removeAccountAndWait(manager, second)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    @Test fun loaderReadsLocalChangesFirstAndKeepsThemWhenTheCacheCannotBeRead() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("notes-pending-${System.nanoTime()}@example.invalid", App.accountType)
+        check(manager.addAccountExplicitly(account, null, null))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+        check(AccountSettings.writeNotesEnabled(manager, account, true))
+        // No Etebase session is stored, so everything after the pending store read fails, the way a
+        // damaged session or cache would. The real loader runs against the real store for this exact
+        // account generation, written through the device's own rename and directory sync.
+        val store = PendingNotesStore.forIdentity(context, account.type, account.name, generation)
+        assertTrue("outside backup and device transfer",
+            store.dir.canonicalPath.startsWith(context.noBackupFilesDir.canonicalPath + java.io.File.separator))
+        store.saveLocal("waiting", "nb", "r1", byteArrayOf(1), isCreate = true)
+        store.saveLocal("held", "nb", "r1", byteArrayOf(2), isCreate = true)
+        store.saveLocal("held", "nb", "r2", byteArrayOf(3), isCreate = true)
+        check(store.hold("held", HeldReason.READ_ONLY, now = 1) == PendingNotesStore.HoldOutcome.HELD)
+        assertFalse("no uncommitted write is left behind", store.dir.listFiles()!!.any { it.name.endsWith(".new") })
+        try {
+            // The notebook list still leads to the local changes: both count as unsynced text.
+            assertEquals(NotesLoad.Loaded(NotebookOverview(emptyList(), unsyncedText = 2, failed = true)),
+                NotesLoader.notebooks(context, account, generation))
+            // One notebook's notes need the cache, so that screen reports the failure.
+            assertEquals(NotesLoad.Failed, NotesLoader.notebook(context, account, generation, "nb"))
+        } finally {
+            store.clearAll()
+            removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }
     }

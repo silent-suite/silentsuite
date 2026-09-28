@@ -5,7 +5,9 @@ import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
 import io.silentsuite.sync.log.Logger
+import java.io.DataInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
@@ -22,16 +24,29 @@ import java.util.concurrent.ConcurrentHashMap
  * identity. Every operation runs under it. Callers must never hold the Etebase cache monitor while
  * calling in, and transforms passed to [update] must not take it either.
  */
-internal class PendingNotesStore private constructor(val dir: File, private val syncDirectory: (File) -> Unit) {
+internal class PendingNotesStore private constructor(
+    val dir: File,
+    private val syncDirectory: (File) -> Unit,
+    /** Replaces the target in one step or throws; the committed file is never deleted first. */
+    private val rename: (File, File) -> Unit,
+) {
     private val lock = Any()
     private var closed = false
     private var recovered = false
     private var recoveryProblems: List<Read.Unreadable> = emptyList()
 
+    /** Open editors per note uid. Landed records exist only while one is open (design 3.1). */
+    private val openEditors = HashMap<String, Int>()
+
+    /** Originals whose conflict copy is written but whose removal failed in the last recovery. */
+    private var unfinishedOriginals: Set<String> = emptySet()
+
     sealed class Read {
         object Missing : Read()
         data class Present(val entry: PendingEntry) : Read()
-        data class Unreadable(val file: String, val reason: String) : Read()
+
+        /** [notebookUid] is known when the entry's own header read fine and only the rest did not. */
+        data class Unreadable(val file: String, val reason: String, val notebookUid: String? = null) : Read()
     }
 
     sealed class Change {
@@ -67,6 +82,8 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
         object Discarded : SaveOutcome()
         /** The existing entry cannot be read; it is never overwritten, so it can still be reported. */
         object Blocked : SaveOutcome()
+        /** The note is larger than the store keeps ([PendingCodec.MAX_BLOB]); nothing was written. */
+        object TooLarge : SaveOutcome()
     }
 
     sealed class DeleteOutcome {
@@ -106,22 +123,31 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
 
     /**
      * Like [scan], but keeps a blob only for the entries [keep] selects, so a screen that needs a few
-     * blobs, or none, does not hold every one. [keep] runs under the store lock and must not take the
-     * Etebase cache monitor.
+     * blobs, or none, does not hold every one. Entries it does not keep are read by header alone
+     * ([PendingCodec.decodeEntryHeader]), so their blobs are not read at all: a blob damaged after its
+     * header was written counts by its header here, and is found by whatever reads the whole entry (the
+     * notebook's own screen, the viewer, a push). A kept entry that fails its full read is reported with
+     * the notebook its header names. [keep] runs under the store lock and must not take the Etebase
+     * cache monitor.
      */
     fun snapshot(keep: (EntryHeader) -> Boolean): Snapshot = locked {
         val headers = mutableListOf<EntryHeader>()
         val kept = HashMap<String, PendingEntry>()
         val unreadable = mutableListOf<Read.Unreadable>()
         for (file in files(NOTE)) {
+            val header = readHeader(file)
+            if (header != null && !keep(header)) {
+                headers += header
+                continue
+            }
             when (val read = decodeFile(file)) {
                 is Read.Present -> {
                     val e = read.entry
-                    val header = EntryHeader(e.noteUid, e.notebookUid, e.state, e.version)
-                    headers += header
-                    if (keep(header)) kept[e.noteUid] = e
+                    val full = EntryHeader(e.noteUid, e.notebookUid, e.state, e.version)
+                    headers += full
+                    if (keep(full)) kept[e.noteUid] = e
                 }
-                is Read.Unreadable -> unreadable += read
+                is Read.Unreadable -> unreadable += read.copy(notebookUid = header?.notebookUid)
                 Read.Missing -> Unit
             }
         }
@@ -168,6 +194,7 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
         isCreate: Boolean,
         notebookCopy: ByteArray? = null,
     ): SaveOutcome = locked {
+        if (blob.size > PendingCodec.MAX_BLOB) return@locked SaveOutcome.TooLarge
         var outcome: SaveOutcome = SaveOutcome.Blocked
         update(noteUid) { read ->
             when (read) {
@@ -256,9 +283,12 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
 
     /**
      * Records the entry's current revision as sent and returns the snapshot to upload, or null when
-     * there is nothing to push (missing, held, or unreadable). The version does not move.
+     * there is nothing to push (missing, held, or unreadable). The version does not move. An original
+     * that a conflict copy has not finished replacing is not sent either: it would conflict again and
+     * make a second copy. Recovery keeps trying to finish it before every operation.
      */
     fun beginSend(noteUid: String): PendingEntry? = locked {
+        if (noteUid in unfinishedOriginals) return@locked null
         var snapshot: PendingEntry? = null
         update(noteUid) { read ->
             val e = (read as? Read.Present)?.entry
@@ -272,11 +302,23 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
     }
 
     /**
-     * After a successful upload of the snapshot at [sentVersion]: keep the landed item, then drop the
-     * entry, unless the user changed the note meanwhile, in which case the entry stays for a rebase.
+     * After a successful upload of the snapshot at [sentVersion]: keep the landed item while an editor
+     * for the note is open, then drop the entry, unless the user changed the note meanwhile, in which
+     * case the entry stays for a rebase. With no editor open nothing can start from the landed item, so
+     * no full copy of the note is kept. A pushed delete keeps nothing: the note is gone.
      */
     fun completeSend(noteUid: String, sentVersion: Long, revision: String, blob: ByteArray): SendOutcome = locked {
-        writeAtomically(landedFile(noteUid), PendingCodec.encodeLanded(LandedRecord(noteUid, revision, sentVersion, blob)))
+        val sent = (readEntry(noteUid) as? Read.Present)?.entry?.takeIf { it.version == sentVersion }
+        if (sent?.state == PendingEntry.State.DELETE) {
+            remove(landedFile(noteUid))
+            remove(noteFile(noteUid))
+            return@locked SendOutcome.Done
+        }
+        if (noteUid in openEditors) {
+            writeAtomically(landedFile(noteUid), PendingCodec.encodeLanded(LandedRecord(noteUid, revision, sentVersion, blob)))
+        } else {
+            remove(landedFile(noteUid))
+        }
         var outcome: SendOutcome = SendOutcome.Done
         update(noteUid) { read ->
             val e = (read as? Read.Present)?.entry
@@ -322,14 +364,45 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
      * Moves the entry's text to the holding area: kept, readable, never pushed. [sentVersion] is given
      * when the reason is about the content (a rejection), so a newer change is not held with it; a
      * reason about the notebook (read-only, lost access, deleted) holds whatever is there.
+     *
+     * A pending delete has no text worth keeping (its blob is the item with the body dropped), and the
+     * server copy stays, which is the right result when the delete cannot be pushed. So a delete is
+     * dropped instead of held: [HoldOutcome.DELETE_DROPPED], for the runner to report.
      */
-    fun hold(noteUid: String, reason: HeldReason, now: Long, sentVersion: Long? = null): Boolean = locked {
+    fun hold(noteUid: String, reason: HeldReason, now: Long, sentVersion: Long? = null): HoldOutcome = locked {
+        var outcome = HoldOutcome.NOT_APPLIED
+        update(noteUid) { read ->
+            val e = (read as? Read.Present)?.entry
+            when {
+                e == null || e.state == PendingEntry.State.HELD || (sentVersion != null && e.version != sentVersion) -> Change.Keep
+                e.state == PendingEntry.State.DELETE -> {
+                    outcome = HoldOutcome.DELETE_DROPPED
+                    Change.Remove
+                }
+                else -> {
+                    outcome = HoldOutcome.HELD
+                    Change.Write(e.copy(state = PendingEntry.State.HELD, held = PendingEntry.Held(reason, now)))
+                }
+            }
+        }
+        outcome
+    }
+
+    enum class HoldOutcome { HELD, DELETE_DROPPED, NOT_APPLIED }
+
+    /**
+     * The user's "Try again" on held text: it waits for a push again, with a fresh backoff. Its base is
+     * unchanged, so if the server copy moved on meanwhile the push conflicts and goes through the
+     * conflict table rather than overwriting it. False when the note has no held entry.
+     */
+    fun release(noteUid: String): Boolean = locked {
         var applied = false
         update(noteUid) { read ->
             val e = (read as? Read.Present)?.entry
-            if (e == null || e.state == PendingEntry.State.HELD || (sentVersion != null && e.version != sentVersion)) Change.Keep else {
+            if (e == null || e.state != PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.copy(state = PendingEntry.State.HELD, held = PendingEntry.Held(reason, now)))
+                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(), held = null,
+                    failureCount = 0, lastFailureAt = null, lastFailureCategory = null))
             }
         }
         applied
@@ -362,6 +435,23 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
 
     fun clearLanded(noteUid: String): Unit = locked { remove(landedFile(noteUid)) }
 
+    /** An editor for [noteUid] opened. Each call is matched by one [editorClosed]. */
+    fun editorOpened(noteUid: String): Unit = locked {
+        checkedUid(noteUid)
+        openEditors[noteUid] = (openEditors[noteUid] ?: 0) + 1
+    }
+
+    /** An editor for [noteUid] closed. With none left open, the note's landed record has no use and goes. */
+    fun editorClosed(noteUid: String): Unit = locked {
+        val left = (openEditors[checkedUid(noteUid)] ?: return@locked) - 1
+        if (left > 0) {
+            openEditors[noteUid] = left
+        } else {
+            openEditors.remove(noteUid)
+            remove(landedFile(noteUid))
+        }
+    }
+
     // ---- notebook copies ----
 
     fun putNotebook(notebookUid: String, blob: ByteArray): Unit = locked { putNotebookLocked(notebookUid, blob) }
@@ -384,24 +474,33 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
             .onEach { remove(notebookFile(it)) }
     }
 
-    /** Sign-out: everything for this identity goes, and this instance refuses any later use. */
+    /**
+     * Sign-out: everything for this identity goes. The closed instance stays registered for the rest of
+     * the process, so a late save that opens the store again gets this instance and is refused instead
+     * of recreating the directory. The identity (account generation) never comes back after sign-out. A
+     * call after a failed one tries the deletion again, so a sign-out cleanup retry does real work.
+     */
     fun clearAll() {
         synchronized(lock) {
-            if (closed) return
             closed = true
-            registry.remove(dir.canonicalPath, this)
+            beforeClearForTesting?.invoke()
             if (dir.exists() && !dir.deleteRecursively()) throw IOException("could not clear the pending store")
         }
     }
 
     // ---- internals ----
 
-    /** Every public operation: refuse after [clearAll], and finish any interrupted work once first. */
+    /**
+     * Every public operation: refuse after [clearAll], and finish any interrupted work first. Recovery
+     * runs again before the next operation for as long as anything in it did not work out, including a
+     * write or removal inside recovery itself.
+     */
     private inline fun <T> locked(block: () -> T): T = synchronized(lock) {
         check(!closed) { "the pending store was cleared" }
         if (!recovered) {
-            recoveryProblems = recoverLocked()
             recovered = true
+            recoveryProblems = recoverLocked()
+            if (recoveryProblems.isNotEmpty()) recovered = false
         }
         block()
     }
@@ -445,9 +544,16 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
     private fun currentRecoveryProblems(presentUids: Set<String>): List<Read.Unreadable> =
         recoveryProblems.filter { File(dir, it.file).exists() && it.file.removeSuffix(NOTE) !in presentUids }
 
+    /**
+     * A leftover "<uid>.note.new" with no committed file is one that recovery could not finish; it may
+     * be the only copy of the text, so the note reads as unreadable, which keeps every save and delete
+     * from writing through the same path over it. Recovery tries it again before the next operation.
+     */
     private fun readEntry(noteUid: String): Read {
         val file = noteFile(noteUid)
-        return if (file.exists()) decodeFile(file) else Read.Missing
+        if (file.exists()) return decodeFile(file)
+        val stranded = File(dir, file.name + NEW)
+        return if (stranded.exists()) Read.Unreadable(stranded.name, "an interrupted write is not recovered yet") else Read.Missing
     }
 
     private fun decodeFile(file: File): Read = try {
@@ -459,24 +565,35 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
         Read.Unreadable(file.name, e.message ?: "unreadable")
     }
 
-    /** Finishes interrupted writes and conflict copies. One bad file never stops the others. */
+    /** Finishes interrupted writes and conflict copies, and drops unused landed records. One bad file never stops the others. */
     private fun recoverLocked(): List<Read.Unreadable> {
         val problems = mutableListOf<Read.Unreadable>()
+        val unfinished = HashSet<String>()
         // 1. A leftover "<name>.new" was never committed while "<name>" exists. Without a committed
-        // file it is kept only if it is complete (the rename fallback deletes the target first).
+        // file it is the first write of that file, stopped before its rename; it is kept if complete.
         for (tmp in dir.listFiles()?.filter { it.name.endsWith(NEW) }.orEmpty()) {
             try {
                 val target = File(dir, tmp.name.removeSuffix(NEW))
                 if (target.exists() || !isComplete(tmp.readBytes(), target.name)) {
                     if (!tmp.delete()) throw IOException("could not remove ${tmp.name}")
-                } else if (!tmp.renameTo(target)) {
-                    throw IOException("could not restore ${target.name}")
+                } else {
+                    rename(tmp, target)
                 }
             } catch (e: IOException) {
                 problems += Read.Unreadable(tmp.name, e.message ?: "unreadable")
             }
         }
-        // 2. A new note from a conflict: remove the original it replaced if that exact entry is still
+        // 2. A landed record only matters while an editor for its note is open. Any other is left from an
+        // editor that closed without clearing it, or from an earlier process (no editor survives one),
+        // and would otherwise keep a full copy of the note on the device.
+        for (file in files(LANDED).filter { it.name.removeSuffix(LANDED) !in openEditors }) {
+            try {
+                remove(file)
+            } catch (e: IOException) {
+                problems += Read.Unreadable(file.name, e.message ?: "unreadable")
+            }
+        }
+        // 3. A new note from a conflict: remove the original it replaced if that exact entry is still
         // here (same version and revision), then clear the origin. A later entry for the same note has
         // a higher version and a new revision, so it is never touched.
         for (file in files(NOTE)) {
@@ -486,7 +603,12 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
                 val original = readEntry(origin.noteUid)
                 val sameEntry = original is Read.Present &&
                     original.entry.version == origin.version && original.entry.revision == origin.revision
-                if (sameEntry) remove(noteFile(origin.noteUid))
+                if (sameEntry) {
+                    // Until the original is gone it must not be pushed: it would conflict and be copied again.
+                    unfinished += origin.noteUid
+                    remove(noteFile(origin.noteUid))
+                    unfinished -= origin.noteUid
+                }
                 // Keep the link only while the original cannot be read, since then it cannot be told apart.
                 if (original !is Read.Unreadable) {
                     writeAtomically(noteFile(copy.noteUid), PendingCodec.encodeEntry(copy.copy(origin = null)))
@@ -495,6 +617,7 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
                 problems += Read.Unreadable(file.name, e.message ?: "unreadable")
             }
         }
+        unfinishedOriginals = unfinished
         return problems
     }
 
@@ -514,11 +637,9 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
     private fun notebookFile(uid: String) = File(dir, checkedUid(uid) + NOTEBOOK)
 
     /**
-     * Writes to "<name>.new", syncs it, renames it over "<name>", and syncs the directory so the
-     * rename itself survives a power loss. On Android the rename replaces the target in one step.
-     * Where the platform refuses to rename over an existing file (Windows, where the JVM tests run),
-     * the target is deleted first, and recovery restores the complete ".new" file if a crash lands
-     * between the two steps.
+     * Writes to "<name>.new", syncs it, renames it over "<name>" in one step ([rename]), and syncs the
+     * directory so the rename itself survives a power loss. The committed file is never deleted first,
+     * so at every moment either the old or the new content is there under its own name.
      */
     private fun writeAtomically(target: File, bytes: ByteArray) {
         if (!dir.exists() && !dir.mkdirs()) throw IOException("could not create the pending store")
@@ -529,11 +650,7 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
                 out.fd.sync()
             }
             beforeRenameForTesting?.invoke(target)
-            if (forceRenameFallbackForTesting || !tmp.renameTo(target)) {
-                if (target.exists() && !target.delete()) throw IOException("could not replace ${target.name}")
-                afterFallbackDeleteForTesting?.invoke(target)
-                if (!tmp.renameTo(target)) throw IOException("could not replace ${target.name}")
-            }
+            rename(tmp, target)
             syncDirectory(dir)
         } catch (e: Throwable) {
             // Anything left half done is sorted out by recovery before the next operation.
@@ -544,12 +661,38 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
 
     /** Removes a committed file together with any leftover ".new" beside it, and makes the removal stick. */
     private fun remove(file: File) {
-        val tmp = File(dir, file.name + NEW)
-        if (tmp.exists() && !tmp.delete()) throw IOException("could not remove ${tmp.name}")
-        if (file.exists()) {
-            if (!file.delete()) throw IOException("could not remove ${file.name}")
-            syncDirectory(dir)
+        try {
+            beforeRemoveForTesting?.invoke(file)
+            val tmp = File(dir, file.name + NEW)
+            if (tmp.exists() && !tmp.delete()) throw IOException("could not remove ${tmp.name}")
+            if (file.exists()) {
+                if (!file.delete()) throw IOException("could not remove ${file.name}")
+                syncDirectory(dir)
+            }
+        } catch (e: Throwable) {
+            // A removal stopped halfway (for example inside a conflict copy) is finished by recovery.
+            recovered = false
+            throw e
         }
+    }
+
+    /**
+     * The entry's header alone, from the first bytes of a format 2 file; null when the file is format 1
+     * or anything about it does not check out, so the caller reads it whole and reports it properly.
+     */
+    private fun readHeader(file: File): EntryHeader? = try {
+        DataInputStream(FileInputStream(file)).use { input ->
+            val prefix = ByteArray(PendingCodec.ENTRY_PREFIX)
+            input.readFully(prefix)
+            if (prefix[4].toInt() != PendingCodec.ENTRY_FORMAT_VERSION) return@use null
+            val end = PendingCodec.entryHeaderEnd(prefix) ?: return@use null
+            val head = prefix.copyOf(end)
+            input.readFully(head, prefix.size, end - prefix.size)
+            (PendingCodec.decodeEntryHeader(head) as? PendingCodec.Decoded.Ok)?.value
+                ?.let { it as? PendingCodec.HeaderRead.Header }?.header
+        }
+    } catch (e: IOException) {
+        null
     }
 
     companion object {
@@ -561,15 +704,32 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
         private val UID = Regex("^[A-Za-z0-9_-]{1,128}$")
         private val registry = ConcurrentHashMap<String, PendingNotesStore>()
 
-        /** Test seams: crash points inside the write and conflict sequences. */
+        /** Test seams: crash points inside the write, conflict, and sign-out sequences. */
         @Volatile internal var beforeOriginalRemovedForTesting: (() -> Unit)? = null
         @Volatile internal var beforeRenameForTesting: ((File) -> Unit)? = null
-        @Volatile internal var afterFallbackDeleteForTesting: ((File) -> Unit)? = null
-        @Volatile internal var forceRenameFallbackForTesting = false
+        @Volatile internal var beforeRemoveForTesting: ((File) -> Unit)? = null
+        @Volatile internal var beforeClearForTesting: (() -> Unit)? = null
 
-        /** The single instance for [dir] in this process, so every caller shares its lock. */
-        fun open(dir: File, syncDirectory: (File) -> Unit = {}): PendingNotesStore =
-            registry.computeIfAbsent(dir.canonicalPath) { PendingNotesStore(File(it), syncDirectory) }
+        /** rename(2) through File.renameTo: on Android and Linux it replaces the target in one step. */
+        private val renameTo: (File, File) -> Unit = { from, to ->
+            if (!from.renameTo(to)) throw IOException("could not replace ${to.name}")
+        }
+
+        /** rename(2) directly, so a failure says why instead of returning false. */
+        private val androidRename: (File, File) -> Unit = { from, to ->
+            try {
+                Os.rename(from.path, to.path)
+            } catch (e: ErrnoException) {
+                throw IOException("could not replace ${to.name}", e)
+            }
+        }
+
+        /**
+         * The single instance for [dir] in this process, so every caller shares its lock. [rename] must
+         * replace an existing target in one step; JVM tests on Windows pass a java.nio atomic move.
+         */
+        fun open(dir: File, syncDirectory: (File) -> Unit = {}, rename: (File, File) -> Unit = renameTo): PendingNotesStore =
+            registry.computeIfAbsent(dir.canonicalPath) { PendingNotesStore(File(it), syncDirectory, rename) }
 
         /** Test seam: forget every instance, as a process restart would. */
         internal fun resetForTesting() = registry.clear()
@@ -597,12 +757,12 @@ internal class PendingNotesStore private constructor(val dir: File, private val 
                     Os.close(fd)
                 }
             } catch (e: ErrnoException) {
-                Logger.log.warning("Pending notes directory sync not available: ${e.message}")
+                Logger.log.warning("Pending notes directory sync not available: ${OsConstants.errnoName(e.errno)}")
             }
         }
 
         /** Outside backup and device transfer, and outside the Etebase cache's per-username directories. */
         fun forIdentity(context: Context, accountType: String, accountName: String, creationId: String) =
-            open(identityDir(context.noBackupFilesDir, accountType, accountName, creationId), androidDirectorySync)
+            open(identityDir(context.noBackupFilesDir, accountType, accountName, creationId), androidDirectorySync, androidRename)
     }
 }

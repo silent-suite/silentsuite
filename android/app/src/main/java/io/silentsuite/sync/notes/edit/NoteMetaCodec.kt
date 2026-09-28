@@ -22,7 +22,10 @@ internal object NoteMetaCodec {
         /**
          * The merged map: one map, no trailing bytes, header at the smallest width for its count.
          * [name] is the name as written (an unpaired surrogate becomes U+FFFD), which is what a typed
-         * read of the result returns.
+         * read of the result returns. The web reads it the same, with one exception: it decodes a
+         * string over 200 bytes with TextDecoder, which drops a leading U+FEFF, so such a title
+         * starting with that invisible character reads there without it. The title is written as
+         * typed, as the web writes its own, and the web reads its own such titles without it too.
          */
         class Merged(val bytes: ByteArray, val name: String) : Merge()
 
@@ -205,22 +208,37 @@ internal object NoteMetaCodec {
                     else -> KeyKind.OTHER
                 }
             }
-            // Unsigned integers are field indexes to the typed decoder: 0 type, 1 name, 2 mtime.
-            type <= 0x7f || type in 0xcc..0xcf -> when (if (type <= 0x7f) type.toLong() else unsigned(b, start + 1, end - start - 1)) {
-                1L -> KeyKind.NAME_ALIAS
-                2L -> KeyKind.MTIME_ALIAS
-                else -> KeyKind.OTHER
+            // Unsigned integers are field indexes to the typed decoder, in the order of its fields.
+            type <= 0x7f || type in 0xcc..0xcf -> {
+                val index = if (type <= 0x7f) type.toLong() else unsigned(b, start + 1, end - start - 1)
+                val field = if (index in 0..TYPED_FIELDS.lastIndex) TYPED_FIELDS[index.toInt()] else null
+                when (field) {
+                    "name" -> KeyKind.NAME_ALIAS
+                    "mtime" -> KeyKind.MTIME_ALIAS
+                    else -> KeyKind.OTHER
+                }
             }
             else -> KeyKind.OTHER
         }
     }
 
     /**
-     * Whether the web's decoder could read the key bytes in [from, end) as [target]. It decodes keys
-     * of up to 16 bytes with @msgpack/msgpack's utf8DecodeJs, which does not validate: overlong forms
-     * decode to ASCII, and a sequence cut off at the end of the key reads on into the bytes after it
-     * (and the result is cached by those first bytes), so a cut-off sequence counts as a match.
-     * Valid UTF-8 decodes exactly, so a valid key matches only when its bytes equal [target].
+     * The typed decoder's fields in order, which is how it reads an unsigned integer key (measured on a
+     * device for 1 and 2). A note merge writes only name and mtime, so only those two are refused as
+     * aliases here; a notebook merge, which also writes description and color, must refuse 3 and 4 too.
+     */
+    private val TYPED_FIELDS = listOf("type", "name", "mtime", "description", "color")
+
+    /**
+     * Whether the web's decoder could read the key bytes in [from, end) as [target]. The web decodes
+     * with @msgpack/msgpack 1.12.2, the same way in the browser as in Node, because Next.js provides
+     * `process` in the browser bundle: a string of up to 200 bytes, key or value, goes through
+     * utf8DecodeJs, and a longer one through TextDecoder; keys of up to 16 bytes are also cached by
+     * their bytes. utf8DecodeJs does not validate: overlong forms decode to ASCII, and a sequence cut off
+     * at the end of the key reads on into the bytes after it, so a cut-off sequence counts as a match.
+     * TextDecoder turns malformed bytes into U+FFFD, so a key over 200 bytes never reads as a short
+     * one, and checking every length is a safe superset. Valid UTF-8 decodes exactly, so a valid key
+     * matches only when its bytes equal [target].
      */
     private fun webMayRead(b: ByteArray, from: Int, end: Int, target: ByteArray): Boolean {
         var offset = from

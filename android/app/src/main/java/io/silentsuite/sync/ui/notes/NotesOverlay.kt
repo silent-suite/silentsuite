@@ -1,5 +1,6 @@
 package io.silentsuite.sync.ui.notes
 
+import io.silentsuite.sync.notes.edit.NotePushPolicy
 import io.silentsuite.sync.notes.edit.PendingEntry
 import io.silentsuite.sync.notes.edit.PendingNotesStore.EntryHeader
 import io.silentsuite.sync.notes.edit.PendingNotesStore.Read
@@ -41,12 +42,24 @@ internal object NotesOverlay {
     data class Decrypted(val title: String, val preview: String, val body: String?, val editedAt: Long?)
 
     /**
-     * Uids of note entry files that cannot be read at all, taken from their names ("<uid>.note", or a
-     * leftover "<uid>.note.new"), leaving out any uid whose entry reads fine in the same snapshot.
+     * A cached notebook as the runner sees it: from the collection itself, without decoding its
+     * metadata, so a notebook whose name this client cannot decode is still known here.
      */
-    fun unreadableEntryUids(unreadable: List<Read.Unreadable>, headers: List<EntryHeader>): Set<String> {
+    data class NotebookAccess(val uid: String, val deleted: Boolean, val readOnly: Boolean)
+
+    /**
+     * Note entry files that cannot be read, by note uid (from "<uid>.note", or a leftover
+     * "<uid>.note.new"), with the notebook when the entry's own header named it. A uid whose entry reads
+     * fine in the same snapshot is left out.
+     */
+    fun unreadableEntries(unreadable: List<Read.Unreadable>, headers: List<EntryHeader>): Map<String, String?> {
         val present = headers.mapTo(HashSet()) { it.noteUid }
-        return unreadable.mapNotNull { entryUid(it.file) }.filterTo(HashSet()) { it !in present }
+        val result = HashMap<String, String?>()
+        for (u in unreadable) {
+            val uid = entryUid(u.file) ?: continue
+            if (uid !in present && result[uid] == null) result[uid] = u.notebookUid
+        }
+        return result
     }
 
     internal fun entryUid(file: String): String? = when {
@@ -57,16 +70,29 @@ internal object NotesOverlay {
 
     /**
      * The notebook rows with their counts of waiting changes, and the number of changes that belong in
-     * the unsynced text screen: held ones, ones whose notebook is read-only or gone, and entry files
-     * that cannot be read at all. [failed] passes through a notebook list that could not be read, in
-     * which case every change counts as unsynced text.
+     * the unsynced text screen, so that every pending change is in exactly one of the two places. A
+     * change waits on its notebook's row when it is not held and the notebook accepts writes the way
+     * the runner decides it ([access], [NotePushPolicy.acceptsWrites]). Everything else is unsynced
+     * text: held text, changes in a read-only, deleted or missing notebook, entry files that cannot be
+     * read, and changes in a notebook that accepts writes but has no row because this client cannot
+     * decode its metadata. The runner still pushes those last ones; the unsynced text screen is the only
+     * place that can show them. [failed] passes through a notebook list that could not be read, in which
+     * case no notebook is known and every change counts as unsynced text.
      */
-    fun notebooks(rows: List<NotebookRow>, headers: List<EntryHeader>, unreadableEntryUids: Set<String>, failed: Boolean = false): NotebookOverview {
-        val writable = rows.filter { !it.readOnly }.mapTo(HashSet()) { it.uid }
+    fun notebooks(
+        rows: List<NotebookRow>,
+        access: List<NotebookAccess>,
+        headers: List<EntryHeader>,
+        unreadableEntries: Map<String, String?>,
+        failed: Boolean = false,
+    ): NotebookOverview {
+        val shown = rows.mapTo(HashSet()) { it.uid }
+        val waitsOnRow = access.filter { it.uid in shown && NotePushPolicy.acceptsWrites(it.deleted, it.readOnly) }
+            .mapTo(HashSet()) { it.uid }
         val waiting = HashMap<String, Int>()
-        var unsynced = unreadableEntryUids.size
+        var unsynced = unreadableEntries.size
         for (h in headers) {
-            if (h.state != PendingEntry.State.HELD && h.notebookUid in writable) {
+            if (h.state != PendingEntry.State.HELD && h.notebookUid in waitsOnRow) {
                 waiting[h.notebookUid] = (waiting[h.notebookUid] ?: 0) + 1
             } else {
                 unsynced++
@@ -74,6 +100,14 @@ internal object NotesOverlay {
         }
         return NotebookOverview(rows.map { it.copy(waiting = waiting[it.uid] ?: 0) }, unsynced, failed)
     }
+
+    /**
+     * What the list shows after a load that read the local changes but not the notebooks: the rows
+     * already on screen stay, without their waiting counts, since [failed] counts every change as
+     * unsynced text and a change must not show in both places.
+     */
+    fun keptAfterFailure(shown: List<NotebookRow>, failed: NotebookOverview): NotebookOverview =
+        failed.copy(notebooks = shown.map { it.copy(waiting = 0) })
 
     /**
      * The rows of one notebook. [unreadableCached] are cached items that could not be decoded; one that
@@ -85,7 +119,7 @@ internal object NotesOverlay {
         cached: List<NoteRow>,
         unreadableCached: Set<String>,
         headers: List<EntryHeader>,
-        unreadableEntryUids: Set<String>,
+        unreadableEntries: Map<String, String?>,
         decrypt: (EntryHeader) -> Decrypted?,
     ): NotebookContents {
         val writable = !row.readOnly
@@ -110,11 +144,16 @@ internal object NotesOverlay {
                 (rows[h.noteUid] ?: NoteRow(h.noteUid, "", "", null)).copy(sync = NoteSync.LOCAL_UNREADABLE)
             }
         }
-        // An entry file that cannot be read names its note; its notebook is unknown, so only a row that
-        // is already here is marked.
-        for (uid in unreadableEntryUids) {
-            val existing = rows[uid] ?: continue
-            if (existing.sync == NoteSync.SYNCED) rows[uid] = existing.copy(sync = NoteSync.LOCAL_UNREADABLE)
+        // An entry file that cannot be read names its note. A row already here is marked. When the file's
+        // own header named this notebook (only the rest of it is damaged), a note with no row, such as a
+        // local create, gets a marked placeholder; with the notebook unknown it stays under Unsynced text.
+        for ((uid, notebookUid) in unreadableEntries) {
+            val existing = rows[uid]
+            if (existing == null) {
+                if (writable && notebookUid == row.uid) rows[uid] = NoteRow(uid, "", "", null, NoteSync.LOCAL_UNREADABLE)
+            } else if (existing.sync == NoteSync.SYNCED) {
+                rows[uid] = existing.copy(sync = NoteSync.LOCAL_UNREADABLE)
+            }
         }
         return NotebookContents(row, NotesLoader.sortNotes(rows.values.toList()), unreadableCached.count { it !in covered })
     }

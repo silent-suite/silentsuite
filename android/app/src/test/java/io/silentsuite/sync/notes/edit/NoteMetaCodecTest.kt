@@ -72,10 +72,13 @@ class NoteMetaCodecTest {
     // Captured on a device from the binding's typed writer: type 't', name 'Typed', mtime, description 'd', color '#aabbcc'
     private val typedAll = "85a474797065a174a46e616d65a55479706564a56d74696d65cf0000019980a63400ab6465736372697074696f6ea164a5636f6c6f72a723616162626363"
 
+    // hand-encoded: {mtime: 1, extra: 'x', name: 'A'}, both keys present with mtime first and a field between
+    private val mtimeFirst = "83a56d74696d6501a56578747261a178a46e616d65a141"
+
     private val allFixtures = listOf(
         webNote, webNoteExtra, webNoteNested, webLongTitle, webUnicodeTitle, webFloatMtime, webNoMtime, webEmpty,
         webFifteenNoMtime, webSixteen, webNegative, webDateSeconds, webDateMillis, webDateFar, webExt, webWidths,
-        webDeepArray, webDeepMap, typedAll,
+        webDeepArray, webDeepMap, typedAll, mtimeFirst,
     )
 
     // ---- merging produces exactly what the web would write for the same object ----
@@ -139,6 +142,11 @@ class NoteMetaCodecTest {
         assertEquals("82a46e616d65a178a56d74696d6501", merged(webEmpty, "x", 1))
         // hand-encoded: mtime first, then another key, and no name; the name goes after everything
         assertEquals("83a56d74696d6505a16ba131a46e616d65a34e6577", merged("82a56d74696d6501a16ba131", "New", 5))
+    }
+
+    @Test fun `both values are replaced in place whichever key comes first`() {
+        // The two replacements are made in the order they appear in the input, with the bytes between copied once.
+        assertEquals("83a56d74696d6505a56578747261a178a46e616d65a34e6577", merged(mtimeFirst, "New", 5))
     }
 
     @Test fun `name and mtime keys written at any string width are the same keys`() {
@@ -216,8 +224,11 @@ class NoteMetaCodecTest {
         assertEquals(Merge.Refused("mtime", Why.ALIASED), merge("82a46e616d65a34f6c64cf000000000000000205"))
         assertEquals(Merge.Refused("name", Why.ALIASED), merge("82c4046e616d65a34f6c64a56d74696d6505"))
         assertEquals(Merge.Refused("mtime", Why.ALIASED), merge("82a46e616d65a141c4056d74696d6505"))
-        // other integer keys are not name or mtime: 0 is type, 10 and signed keys the typed decoder rejects anyway
+        // other integer keys are not name or mtime: 0 is type, 3 and 4 are description and color (which a
+        // notebook merge would refuse, a note merge copies), 10 and signed keys the typed decoder rejects anyway
         assertEquals("8300a141a56d74696d6505a46e616d65a34e6577", hex((merge("8200a141a56d74696d6501") as Merge.Merged).bytes))
+        assertEquals("8303a141a56d74696d6505a46e616d65a34e6577", hex((merge("8203a141a56d74696d6501") as Merge.Merged).bytes))
+        assertEquals("8304a141a56d74696d6505a46e616d65a34e6577", hex((merge("8204a141a56d74696d6501") as Merge.Merged).bytes))
         assertEquals("830aa141a56d74696d6505a46e616d65a34e6577", hex((merge("820aa141a56d74696d6501") as Merge.Merged).bytes))
         assertEquals("83d001a141a56d74696d6505a46e616d65a34e6577", hex((merge("82d001a141a56d74696d6501") as Merge.Merged).bytes))
     }
@@ -233,6 +244,18 @@ class NoteMetaCodecTest {
         assertEquals(Merge.Refused("name", Why.ALIASED), merge("83a46e616d65a55469746c65a8c1aec1a1c1adc1a5a54f74686572a56d74696d6505"))
         // a sequence cut off at the end of the key reads into the bytes after it ('nam' + c1 + a5 reads as 'name')
         assertEquals(Merge.Refused("name", Why.ALIASED), merge("82a46e616dc1a55469746c65a56d74696d6505"))
+    }
+
+    @Test fun `keys longer than 16 bytes are read the same lenient way`() {
+        // The browser decodes every key with utf8DecodeJs, not only the short, cached ones.
+        // 'mtime' as five 4-byte overlong forms: a 20-byte key that reads as mtime there.
+        val overlongMtime = "f08081adf08081b4f08081a9f08081adf08081a5"
+        assertEquals(Merge.Refused("mtime", Why.ALIASED), merge("82a46e616d65a141b4${overlongMtime}05"))
+        // 'mtim' in 16 overlong bytes and a lead byte cut off at the end: 17 bytes that read on into the value
+        assertEquals(Merge.Refused("mtime", Why.ALIASED), merge("82a46e616d65a141b1${overlongMtime.substring(0, 32)}f005"))
+        // a long key that is plainly something else is copied as it is
+        val longKey = "78".repeat(40)
+        assertEquals("83a46e616d65a34e6577d928${longKey}01a56d74696d6505", hex((merge("82a46e616d65a141d928${longKey}01") as Merge.Merged).bytes))
     }
 
     @Test fun `other malformed or near-miss keys are copied as they are`() {
@@ -298,10 +321,14 @@ class NoteMetaCodecTest {
         }
         // HotSpot's per-thread allocation counter, by reflection since unit tests compile against android.jar
         val bean = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null)
-        val counter = Class.forName("com.sun.management.ThreadMXBean").getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
+        val mx = Class.forName("com.sun.management.ThreadMXBean")
+        val counter = mx.getMethod("getThreadAllocatedBytes", Long::class.javaPrimitiveType)
+        // Without a working counter every difference below is 0 and the test would pass without measuring.
+        assertTrue("allocation counting is supported", mx.getMethod("isThreadAllocatedMemorySupported").invoke(bean) as Boolean)
+        assertTrue("allocation counting is enabled", mx.getMethod("isThreadAllocatedMemoryEnabled").invoke(bean) as Boolean)
         val id = Thread.currentThread().id
         fun allocated() = counter.invoke(bean, id) as Long
-        allocated()
+        assertTrue("the counter reports a value", allocated() >= 0)
         NoteMetaCodec.merge(unhex(webNote), "warm", 1)
         NoteMetaCodec.peek(unhex(webNote))
         val beforeMerge = allocated()

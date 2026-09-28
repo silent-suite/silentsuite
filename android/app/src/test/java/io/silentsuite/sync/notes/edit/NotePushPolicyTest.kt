@@ -107,11 +107,39 @@ class NotePushPolicyTest {
     }
 
     @Test fun `only permanent refusals move text to the holding area`() {
-        assertEquals(HeldReason.READ_ONLY, NotePushPolicy.heldReasonFor(FailureKind.READ_ONLY))
-        assertEquals(HeldReason.LOST_ACCESS, NotePushPolicy.heldReasonFor(FailureKind.LOST_ACCESS))
-        assertEquals(HeldReason.REJECTED, NotePushPolicy.heldReasonFor(FailureKind.REJECTED))
         for (kind in listOf(FailureKind.CONFLICT, FailureKind.AUTHENTICATION, FailureKind.TRANSIENT, FailureKind.LOCAL, FailureKind.CANCELLED)) {
+            assertFalse(kind.name, NotePushPolicy.needsNotebookCheck(kind))
             assertNull(kind.name, NotePushPolicy.heldReasonFor(kind))
+            assertNull(kind.name, NotePushPolicy.heldReasonFor(kind, previousFailure = kind.name))
+        }
+    }
+
+    @Test fun `a rejection holds text only when the same content was rejected the time before too`() {
+        assertFalse(NotePushPolicy.needsNotebookCheck(FailureKind.REJECTED))
+        assertNull("one odd answer moves nothing", NotePushPolicy.heldReasonFor(FailureKind.REJECTED))
+        assertNull(NotePushPolicy.heldReasonFor(FailureKind.REJECTED, previousFailure = FailureKind.TRANSIENT.name))
+        assertEquals(HeldReason.REJECTED, NotePushPolicy.heldReasonFor(FailureKind.REJECTED, previousFailure = FailureKind.REJECTED.name))
+    }
+
+    @Test fun `a notebook takes pushes only when it is neither deleted nor read-only`() {
+        assertTrue(NotePushPolicy.acceptsWrites(deleted = false, readOnly = false))
+        assertFalse(NotePushPolicy.acceptsWrites(deleted = true, readOnly = false))
+        assertFalse(NotePushPolicy.acceptsWrites(deleted = false, readOnly = true))
+        assertFalse(NotePushPolicy.acceptsWrites(deleted = true, readOnly = true))
+    }
+
+    @Test fun `a 403 or 404 holds text only once a fetch of the notebook confirms it`() {
+        val found = { readOnly: Boolean, deleted: Boolean -> NotePushPolicy.NotebookCheck.Found(readOnly, deleted) }
+        for (kind in listOf(FailureKind.READ_ONLY, FailureKind.LOST_ACCESS)) {
+            assertTrue(NotePushPolicy.needsNotebookCheck(kind))
+            assertNull("not checked yet", NotePushPolicy.heldReasonFor(kind))
+            assertNull("the check itself failed", NotePushPolicy.heldReasonFor(kind, NotePushPolicy.NotebookCheck.Unknown))
+            // This server also answers 403 for the whole account; a writable notebook means passing trouble.
+            assertNull("the notebook is still writable", NotePushPolicy.heldReasonFor(kind, found(false, false)))
+            assertEquals(HeldReason.READ_ONLY, NotePushPolicy.heldReasonFor(kind, found(true, false)))
+            assertEquals(HeldReason.NOTEBOOK_DELETED, NotePushPolicy.heldReasonFor(kind, found(false, true)))
+            assertEquals(HeldReason.NOTEBOOK_DELETED, NotePushPolicy.heldReasonFor(kind, found(true, true)))
+            assertEquals(HeldReason.LOST_ACCESS, NotePushPolicy.heldReasonFor(kind, NotePushPolicy.NotebookCheck.Gone))
         }
     }
 
@@ -127,11 +155,17 @@ class NotePushPolicyTest {
 
     @Test fun `an entry is skipped only inside its backoff window`() {
         val failedTwice = upsert("r1").copy(failureCount = 2, lastFailureAt = 1_000)
-        assertTrue(NotePushPolicy.inBackoff(failedTwice, now = 1_000 + 119_999))
-        assertFalse(NotePushPolicy.inBackoff(failedTwice, now = 1_000 + 120_000))
-        assertFalse(NotePushPolicy.inBackoff(upsert("r1"), now = 0))
+        assertTrue(NotePushPolicy.inBackoff(failedTwice, now = 1_000 + 119_999, userInitiated = false))
+        assertFalse(NotePushPolicy.inBackoff(failedTwice, now = 1_000 + 120_000, userInitiated = false))
+        assertFalse(NotePushPolicy.inBackoff(upsert("r1"), now = 0, userInitiated = false))
         // The clock went back after the failure was recorded: retry rather than wait out the difference.
-        assertFalse(NotePushPolicy.inBackoff(failedTwice, now = 500))
+        assertFalse(NotePushPolicy.inBackoff(failedTwice, now = 500, userInitiated = false))
+    }
+
+    @Test fun `a sync the user asked for tries every entry, backoff or not`() {
+        val failedOften = upsert("r1").copy(failureCount = 10, lastFailureAt = 1_000)
+        assertTrue(NotePushPolicy.inBackoff(failedOften, now = 2_000, userInitiated = false))
+        assertFalse(NotePushPolicy.inBackoff(failedOften, now = 2_000, userInitiated = true))
     }
 
     // ---- conflicted copy title ----

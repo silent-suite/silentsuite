@@ -23,20 +23,31 @@ class PendingNotesStoreTest {
     @get:Rule val tmp = TemporaryFolder()
 
     private val dir by lazy { tmp.newFolder("store") }
-    private val store by lazy { PendingNotesStore.open(dir) }
+    private val store by lazy { open(dir) }
+
+    /**
+     * Replaces the target in one step on every platform the tests run on. File.renameTo does that on
+     * Linux and Android, but not on Windows, where these tests also run.
+     */
+    private val atomicMove: (File, File) -> Unit = { from, to ->
+        java.nio.file.Files.move(from.toPath(), to.toPath(),
+            java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+
+    private fun open(d: File) = PendingNotesStore.open(d, rename = atomicMove)
 
     @After fun reset() {
         PendingNotesStore.beforeOriginalRemovedForTesting = null
         PendingNotesStore.beforeRenameForTesting = null
-        PendingNotesStore.afterFallbackDeleteForTesting = null
-        PendingNotesStore.forceRenameFallbackForTesting = false
+        PendingNotesStore.beforeRemoveForTesting = null
+        PendingNotesStore.beforeClearForTesting = null
         PendingNotesStore.resetForTesting()
     }
 
     /** A process restart: the in-memory instance is gone, the directory stays. */
     private fun restarted(): PendingNotesStore {
         PendingNotesStore.resetForTesting()
-        return PendingNotesStore.open(dir)
+        return open(dir)
     }
 
     private fun PendingNotesStore.entry(uid: String): PendingEntry = (read(uid) as Read.Present).entry
@@ -50,22 +61,39 @@ class PendingNotesStoreTest {
     // ---- one instance and one lock per identity ----
 
     @Test fun `every caller for one directory gets the same instance and so the same lock`() {
-        assertSame(store, PendingNotesStore.open(dir))
-        assertSame(store, PendingNotesStore.open(File(dir.parentFile, "./store")))
-        assertNotSame(store, PendingNotesStore.open(tmp.newFolder("other")))
+        assertSame(store, open(dir))
+        assertSame(store, open(File(dir.parentFile, "./store")))
+        assertNotSame(store, open(tmp.newFolder("other")))
     }
 
-    @Test fun `a cleared store refuses any later use and the next open starts fresh`() {
+    @Test fun `a cleared store stays closed for the rest of the process, whoever opens it again`() {
         store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
         store.putNotebook("b1", blob("k"))
         store.clearAll()
         assertFalse(dir.exists())
         assertThrows(IllegalStateException::class.java) { store.saveLocal("n2", "b1", "r1", blob("late"), isCreate = false) }
         assertThrows(IllegalStateException::class.java) { store.completeSend("n1", 1, "r1", blob("late landing")) }
+        // A late save that opens the store again (an editor or runner still unwinding) gets the same
+        // closed instance, so it cannot bring the signed-out identity's directory back.
+        val reopened = open(dir)
+        assertSame(store, reopened)
+        assertThrows(IllegalStateException::class.java) { reopened.saveLocal("n3", "b1", "r1", blob("later still"), isCreate = false) }
         assertFalse("nothing was written back after sign-out", dir.exists())
-        val fresh = PendingNotesStore.open(dir)
-        assertNotSame(store, fresh)
-        assertTrue(fresh.scan().entries.isEmpty())
+        // Only a new process starts over, and it finds nothing.
+        assertTrue(restarted().scan().entries.isEmpty())
+    }
+
+    @Test fun `a sign-out clear that failed is done by the next try`() {
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        PendingNotesStore.beforeClearForTesting = { throw java.io.IOException("could not clear the pending store") }
+        assertThrows(java.io.IOException::class.java) { store.clearAll() }
+        PendingNotesStore.beforeClearForTesting = null
+        assertTrue(dir.exists())
+        assertThrows("already closed to new writes", IllegalStateException::class.java) {
+            store.saveLocal("n2", "b1", "r1", blob("late"), isCreate = false)
+        }
+        store.clearAll()
+        assertFalse("the retry deleted what the first try left", dir.exists())
     }
 
     // ---- versions ----
@@ -134,6 +162,7 @@ class PendingNotesStoreTest {
     // ---- landed evidence ----
 
     @Test fun `a save after our own create landed is not a create and knows the landed revision is ours`() {
+        store.editorOpened("n1")
         store.saveLocal("n1", "b1", "c1", blob("first"), isCreate = true)
         store.completeSend("n1", store.beginSend("n1")!!.version, "c1", blob("landed"))
         store.saveLocal("n1", "b1", "c2", blob("second"), isCreate = true)
@@ -144,6 +173,7 @@ class PendingNotesStoreTest {
     }
 
     @Test fun `a delete after a landed save still recognizes the landed revision after the editor clears it`() {
+        store.editorOpened("n1")
         store.saveLocal("n1", "b1", "r1", blob("edit"), isCreate = false)
         store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed"))
         store.markDeleted("n1", "b1", "d1", blob("deleted"))
@@ -165,6 +195,7 @@ class PendingNotesStoreTest {
     }
 
     @Test fun `a successful send drops the entry and keeps the landed item with its version`() {
+        store.editorOpened("n1")
         store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = true)
         val snapshot = store.beginSend("n1")!!
         assertEquals(SendOutcome.Done, store.completeSend("n1", snapshot.version, "r1", blob("saved")))
@@ -172,6 +203,44 @@ class PendingNotesStoreTest {
         assertEquals(LandedRecord("n1", "r1", snapshot.version, blob("saved")), store.landed("n1"))
         store.clearLanded("n1")
         assertNull(store.landed("n1"))
+    }
+
+    @Test fun `a pushed delete keeps no landed copy of the note and drops an older one`() {
+        store.editorOpened("n1")
+        store.saveLocal("n1", "b1", "r1", blob("text"), isCreate = false)
+        store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed text"))
+        store.markDeleted("n1", "b1", "d1", blob("deleted"))
+        assertEquals(SendOutcome.Done, store.completeSend("n1", store.beginSend("n1")!!.version, "d1", blob("deleted on server")))
+        assertEquals(Read.Missing, store.read("n1"))
+        assertNull(store.landed("n1"))
+        assertFalse(File(dir, "n1.landed").exists())
+    }
+
+    @Test fun `landed copies exist only while an editor for the note is open`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed a"))
+        assertNull("with no editor open, no full copy of the note is kept", store.landed("n1"))
+        assertFalse(File(dir, "n1.landed").exists())
+        store.editorOpened("n2")
+        store.editorOpened("n2")
+        store.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        store.completeSend("n2", store.beginSend("n2")!!.version, "r1", blob("landed b"))
+        assertEquals("r1", store.landed("n2")?.revision)
+        store.editorClosed("n2")
+        assertEquals("one editor is still open", "r1", store.landed("n2")?.revision)
+        store.editorClosed("n2")
+        assertNull(store.landed("n2"))
+        assertFalse(File(dir, "n2.landed").exists())
+        store.editorClosed("n2")
+    }
+
+    @Test fun `no landed copy outlives the process that kept it`() {
+        store.editorOpened("n1")
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed a"))
+        assertTrue(File(dir, "n1.landed").exists())
+        assertNull("no editor survives a restart, so the copy has no use", restarted().landed("n1"))
+        assertFalse(File(dir, "n1.landed").exists())
     }
 
     @Test fun `a save during the upload keeps the entry for a rebase that keeps its sent list`() {
@@ -202,11 +271,24 @@ class PendingNotesStoreTest {
         val snapshot = store.beginSend("n1")!!
         store.saveLocal("n1", "b1", "r2", blob("trimmed"), isCreate = false)
         assertFalse(store.recordFailure("n1", snapshot.version, "TRANSIENT", now = 10))
-        assertFalse("a rejection of the old content does not hold the new", store.hold("n1", HeldReason.REJECTED, 10, sentVersion = snapshot.version))
+        assertEquals("a rejection of the old content does not hold the new", PendingNotesStore.HoldOutcome.NOT_APPLIED,
+            store.hold("n1", HeldReason.REJECTED, 10, sentVersion = snapshot.version))
         val e = entry("n1")
         assertEquals(PendingEntry.State.UPSERT, e.state)
         assertEquals(0, e.failureCount)
-        assertTrue("a notebook-level reason holds whatever is there", store.hold("n1", HeldReason.READ_ONLY, 11))
+        assertEquals("a notebook-level reason holds whatever is there", PendingNotesStore.HoldOutcome.HELD,
+            store.hold("n1", HeldReason.READ_ONLY, 11))
+    }
+
+    @Test fun `a delete that cannot be pushed is dropped, not held as text`() {
+        store.markDeleted("n1", "b1", "d1", blob("title only"))
+        assertEquals(PendingNotesStore.HoldOutcome.DELETE_DROPPED, store.hold("n1", HeldReason.READ_ONLY, now = 5))
+        assertEquals("the server copy stays; nothing local is left to show", Read.Missing, store.read("n1"))
+        store.markDeleted("n2", "b1", "d2", blob("title only"))
+        val sent = store.beginSend("n2")!!
+        assertEquals(PendingNotesStore.HoldOutcome.DELETE_DROPPED,
+            store.hold("n2", HeldReason.REJECTED, now = 6, sentVersion = sent.version))
+        assertEquals(Read.Missing, store.read("n2"))
     }
 
     @Test fun `failures count up without moving the version`() {
@@ -226,7 +308,7 @@ class PendingNotesStoreTest {
     @Test fun `held text takes the editor's latest save and is never sent`() {
         store.saveLocal("n1", "b1", "r1", blob("Hello"), isCreate = false)
         val snapshot = store.beginSend("n1")!!
-        assertTrue(store.hold("n1", HeldReason.READ_ONLY, now = 50))
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.READ_ONLY, now = 50))
         val outcome = store.saveLocal("n1", "b1", "r2", blob("Hello world"), isCreate = false)
         assertTrue(outcome is SaveOutcome.SavedToHolding)
         val e = entry("n1")
@@ -240,6 +322,23 @@ class PendingNotesStoreTest {
         assertTrue(snapshot.version < e.version)
         store.discard("n1")
         assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `try again puts held text back in line for a push with a fresh backoff`() {
+        val v = saved(store.saveLocal("n1", "b1", "r1", blob("rejected once"), isCreate = false))
+        assertTrue(store.recordFailure("n1", v, "REJECTED", now = 5))
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.REJECTED, now = 6, sentVersion = v))
+        assertTrue(store.release("n1"))
+        val e = entry("n1")
+        assertEquals(PendingEntry.State.UPSERT, e.state)
+        assertNull(e.held)
+        assertEquals(0, e.failureCount)
+        assertNull(e.lastFailureCategory)
+        assertEquals("the base is kept, so a changed server copy still conflicts", "r1", e.revision)
+        assertTrue(e.version > v)
+        assertArrayEquals(blob("rejected once"), store.beginSend("n1")!!.blob)
+        assertFalse("only held text is released", store.release("n1"))
+        assertFalse(store.release("none"))
     }
 
     // ---- conflicts ----
@@ -278,6 +377,34 @@ class PendingNotesStoreTest {
         assertArrayEquals(blob("merged by hand"), restarted().entry("orig").blob)
     }
 
+    @Test fun `a failed removal of the original is finished by the same instance, with no second copy`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        val copy = PendingEntry("copy1", "b1", PendingEntry.State.UPSERT, 0, "c1", true, blob = blob("mine as copy"))
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "orig.note") throw java.io.IOException("could not remove orig.note") }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", copy) }
+        PendingNotesStore.beforeRemoveForTesting = null
+        // No restart: the next operation of this instance runs recovery again and finishes the copy.
+        assertEquals(listOf("copy1"), store.scan().entries.map { it.noteUid })
+        assertNull(entry("copy1").origin)
+    }
+
+    @Test fun `an original whose conflict copy is unfinished is never sent, and recovery keeps trying`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        val copy = PendingEntry("copy1", "b1", PendingEntry.State.UPSERT, 0, "c1", true, blob = blob("mine as copy"))
+        var failures = 2
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (it.name == "orig.note" && failures-- > 0) throw java.io.IOException("could not remove orig.note")
+        }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", copy) }
+        // The recovery before the next operation fails the same way: the original is still there, but a
+        // push of it would conflict and make a second copy, so it is not sent.
+        assertNull(store.beginSend("orig"))
+        assertTrue(File(dir, "orig.note").exists())
+        // Recovery runs again before the operation after that, and this time finishes the copy.
+        assertEquals(listOf("copy1"), store.scan().entries.map { it.noteUid })
+        assertNull(entry("copy1").origin)
+    }
+
     @Test fun `if the original changed after the copy was taken both are kept`() {
         store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
         val copy = PendingEntry("copy1", "b1", PendingEntry.State.UPSERT, 0, "c1", true, blob = blob("mine as copy"))
@@ -305,26 +432,46 @@ class PendingNotesStoreTest {
         assertFalse("the complete but uncommitted write was dropped", File(dir, "n1.note.new").exists())
     }
 
-    @Test fun `a crash in the rename fallback after the old file went restores the complete new one`() {
-        store.saveLocal("n1", "b1", "r1", blob("old"), isCreate = false)
-        PendingNotesStore.forceRenameFallbackForTesting = true
-        PendingNotesStore.afterFallbackDeleteForTesting = { if (it.name == "n1.note") throw IllegalStateException("process died") }
-        assertThrows(IllegalStateException::class.java) { store.saveLocal("n1", "b1", "r2", blob("new"), isCreate = false) }
-        PendingNotesStore.afterFallbackDeleteForTesting = null
-        PendingNotesStore.forceRenameFallbackForTesting = false
-        val after = restarted()
-        assertEquals("r2", after.entry("n1").revision)
-        assertArrayEquals(blob("new"), after.entry("n1").blob)
+    /** A store whose rename of "<target>" fails while [refuse] says so, as rename(2) can (EBUSY, EIO). */
+    private fun refusingRenames(d: File, target: String, refuse: () -> Boolean) = PendingNotesStore.open(d, rename = { from, to ->
+        if (refuse() && to.name == target) throw java.io.IOException("rename refused") else atomicMove(from, to)
+    })
+
+    @Test fun `a refused rename never loses the committed entry and is sorted out by the same instance`() {
+        var refuse = false
+        val d = tmp.newFolder("refusing")
+        val s = refusingRenames(d, "n1.note") { refuse }
+        s.saveLocal("n1", "b1", "r1", blob("old"), isCreate = false)
+        refuse = true
+        assertThrows(java.io.IOException::class.java) { s.saveLocal("n1", "b1", "r2", blob("new"), isCreate = false) }
+        refuse = false
+        // The committed file was never deleted, so the old text is still there under its own name.
+        assertEquals("r1", s.entry("n1").revision)
+        assertFalse("the uncommitted write was dropped", File(d, "n1.note.new").exists())
+        s.saveLocal("n1", "b1", "r3", blob("newer"), isCreate = false)
+        assertEquals("a later save still works", "r3", s.entry("n1").revision)
     }
 
-    @Test fun `a failed write is sorted out before the next operation of the same instance`() {
-        store.saveLocal("n1", "b1", "r1", blob("old"), isCreate = false)
-        PendingNotesStore.forceRenameFallbackForTesting = true
-        PendingNotesStore.afterFallbackDeleteForTesting = { if (it.name == "n1.note") throw java.io.IOException("rename refused") }
-        assertThrows(java.io.IOException::class.java) { store.saveLocal("n1", "b1", "r2", blob("new"), isCreate = false) }
-        PendingNotesStore.afterFallbackDeleteForTesting = null
-        PendingNotesStore.forceRenameFallbackForTesting = false
-        assertEquals("the same instance recovers the synced write instead of reading Missing", "r2", entry("n1").revision)
+    @Test fun `a write that recovery could not finish is never written over, and is finished later`() {
+        var refuse = true
+        val d = tmp.newFolder("stranded")
+        // The first write of n1 stopped before its rename: this file is the only copy of the text.
+        val only = PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("the only copy"))
+        File(d, "n1.note.new").writeBytes(PendingCodec.encodeEntry(only))
+        val s = refusingRenames(d, "n1.note") { refuse }
+        assertEquals(SaveOutcome.Blocked, s.saveLocal("n1", "b1", "r5", blob("typed over it"), isCreate = false))
+        assertEquals(DeleteOutcome.Blocked, s.markDeleted("n1", "b1", "d", blob("x")))
+        assertEquals(Read.Unreadable("n1.note.new", "an interrupted write is not recovered yet"), s.read("n1"))
+        assertArrayEquals(PendingCodec.encodeEntry(only), File(d, "n1.note.new").readBytes())
+        refuse = false
+        assertEquals("the recovery before the next operation commits it", only, s.entry("n1"))
+    }
+
+    @Test fun `a save larger than the store keeps is refused before anything is written`() {
+        val huge = ByteArray(PendingCodec.MAX_BLOB + 1)
+        assertEquals(SaveOutcome.TooLarge, store.saveLocal("n1", "b1", "r1", huge, isCreate = true))
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals(0L, store.observe("n1").sequence)
     }
 
     @Test fun `an unreadable entry is reported never overwritten and never deleted by a scan`() {
@@ -387,6 +534,34 @@ class PendingNotesStoreTest {
         assertEquals(3L, snapshot.sequence)
     }
 
+    @Test fun `a snapshot reads entries it does not keep by header alone`() {
+        store.saveLocal("n1", "b1", "r1", blob("kept"), isCreate = false)
+        val v2 = saved(store.saveLocal("n2", "b2", "r1", blob("counted only"), isCreate = false))
+        // Damage n2's blob but not its header: a header-only view still counts it, and a full read,
+        // which checks the whole file, reports it.
+        val file = File(dir, "n2.note")
+        val bytes = file.readBytes()
+        bytes[bytes.size - 6] = (bytes[bytes.size - 6].toInt() xor 0x40).toByte()
+        file.writeBytes(bytes)
+        val snapshot = store.snapshot { it.notebookUid == "b1" }
+        assertEquals(PendingNotesStore.EntryHeader("n2", "b2", PendingEntry.State.UPSERT, v2), snapshot.headers.last())
+        assertTrue(snapshot.unreadable.isEmpty())
+        assertEquals(setOf("n1"), snapshot.entries.keys)
+        assertEquals("n2.note", store.scan().unreadable.single().file)
+        assertEquals("a kept entry is read whole, checked, and reported with the notebook its header names",
+            listOf(Read.Unreadable("n2.note", "bad checksum", notebookUid = "b2")),
+            store.snapshot { true }.unreadable.map { it.copy(reason = "bad checksum") })
+    }
+
+    @Test fun `a snapshot still reads format 1 entry files, whole`() {
+        val v1Upsert = "53534e500100066e6f74652d310006626f6f6b2d3101000000000000000300057265762d33010000000100057265762d3200000000ffffffffffffffff0000000000000003010203f0a8313a"
+        dir.mkdirs()
+        File(dir, "note-1.note").writeBytes(ByteArray(v1Upsert.length / 2) { v1Upsert.substring(it * 2, it * 2 + 2).toInt(16).toByte() })
+        val snapshot = store.snapshot { false }
+        assertEquals(PendingNotesStore.EntryHeader("note-1", "book-1", PendingEntry.State.UPSERT, 3), snapshot.headers.single())
+        assertTrue(snapshot.unreadable.isEmpty())
+    }
+
     @Test fun `observing a note reads its entry and the sequence together, also when there is no entry`() {
         store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
         store.saveLocal("n1", "b1", "r2", blob("two"), isCreate = false)
@@ -395,7 +570,7 @@ class PendingNotesStoreTest {
         // A drop leaves the sequence where it was, so a load after a push is never taken for an older one.
         store.discard("n1")
         assertEquals(2L, store.observe("n1").sequence)
-        assertEquals(0L, PendingNotesStore.open(tmp.newFolder("empty")).observe("n1").sequence)
+        assertEquals(0L, open(tmp.newFolder("empty")).observe("n1").sequence)
     }
 
     @Test fun `a recovery problem does not outlive its file`() {
@@ -437,6 +612,8 @@ class PendingNotesStoreTest {
             assertThrows(uid, IllegalArgumentException::class.java) { store.notebook(uid) }
             assertThrows(uid, IllegalArgumentException::class.java) { store.landed(uid) }
             assertThrows(uid, IllegalArgumentException::class.java) { store.clearLanded(uid) }
+            assertThrows(uid, IllegalArgumentException::class.java) { store.editorOpened(uid) }
+            assertThrows(uid, IllegalArgumentException::class.java) { store.editorClosed(uid) }
             assertThrows(uid, IllegalArgumentException::class.java) { store.completeSend(uid, 1, "r", blob("x")) }
             assertThrows(uid, IllegalArgumentException::class.java) { store.discard(uid) }
             assertThrows(uid, IllegalArgumentException::class.java) { store.saveLocal("n1", uid, "r", blob("x"), isCreate = false, notebookCopy = blob("k")) }

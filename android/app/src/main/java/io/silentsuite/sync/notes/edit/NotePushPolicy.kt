@@ -100,7 +100,7 @@ internal object NotePushPolicy {
         else -> FailureKind.LOCAL
     }
 
-    /** Statuses that clear up on their own retry; other 4xx hold the text; anything unreadable retries. */
+    /** Statuses that clear up on their own retry; other 4xx are rejections; anything unreadable retries. */
     private fun statusKind(message: String?): FailureKind {
         val status = message?.let { HTTP_STATUS.find(it) }?.groupValues?.get(1)?.toIntOrNull() ?: return FailureKind.TRANSIENT
         return when (status) {
@@ -110,11 +110,50 @@ internal object NotePushPolicy {
         }
     }
 
-    /** The holding-area reason for a failure kind, or null when the entry stays pending. */
-    fun heldReasonFor(kind: FailureKind): HeldReason? = when (kind) {
-        FailureKind.READ_ONLY -> HeldReason.READ_ONLY
-        FailureKind.LOST_ACCESS -> HeldReason.LOST_ACCESS
-        FailureKind.REJECTED -> HeldReason.REJECTED
+    /**
+     * What a fetch of the notebook itself showed, made after a push failed with 403 or 404 and before
+     * anything is held. A single status on the item upload says little on its own: this server also
+     * answers 403 for the whole account (for example a user no longer in the LDAP directory), and a
+     * proxy can answer anything.
+     */
+    sealed class NotebookCheck {
+        data class Found(val readOnly: Boolean, val deleted: Boolean) : NotebookCheck()
+        /** The notebook fetch answered 404: this account is no longer a member. */
+        object Gone : NotebookCheck()
+        /** The notebook fetch failed some other way, so nothing is known yet. */
+        object Unknown : NotebookCheck()
+    }
+
+    /**
+     * Whether a notebook takes pushes: not deleted and not read-only. The one rule for the runner, which
+     * holds changes for any other notebook, and for the screens, which show what the runner will do.
+     */
+    fun acceptsWrites(deleted: Boolean, readOnly: Boolean): Boolean = !deleted && !readOnly
+
+    /** Whether [kind] needs a [NotebookCheck] before [heldReasonFor] can decide. */
+    fun needsNotebookCheck(kind: FailureKind): Boolean = kind == FailureKind.READ_ONLY || kind == FailureKind.LOST_ACCESS
+
+    /**
+     * The holding-area reason for a failure, or null when the entry stays pending and backs off. A
+     * notebook-level reason holds text only when [check] confirms it: a read-only or deleted notebook,
+     * or one this account can no longer see. A rejection holds text only when the same content was
+     * rejected the time before too ([previousFailure] is the entry's last recorded failure category,
+     * which the runner records as the [FailureKind] name), so one odd answer from a proxy moves nothing.
+     * Anything else is treated as passing trouble. Held text goes back to waiting only through the
+     * user's "Try again" ([PendingNotesStore.release]).
+     */
+    fun heldReasonFor(kind: FailureKind, check: NotebookCheck? = null, previousFailure: String? = null): HeldReason? = when (kind) {
+        FailureKind.READ_ONLY, FailureKind.LOST_ACCESS -> when (check) {
+            is NotebookCheck.Found -> when {
+                check.deleted -> HeldReason.NOTEBOOK_DELETED
+                check.readOnly -> HeldReason.READ_ONLY
+                else -> null
+            }
+            NotebookCheck.Gone -> HeldReason.LOST_ACCESS
+            NotebookCheck.Unknown, null -> null
+        }
+        // A rejection is about this content: nothing else to ask, but it has to happen twice in a row.
+        FailureKind.REJECTED -> if (previousFailure == FailureKind.REJECTED.name) HeldReason.REJECTED else null
         FailureKind.CONFLICT, FailureKind.AUTHENTICATION, FailureKind.TRANSIENT, FailureKind.LOCAL, FailureKind.CANCELLED -> null
     }
 
@@ -128,8 +167,13 @@ internal object NotePushPolicy {
         return min(BACKOFF_MAX_MILLIS, BACKOFF_BASE_MILLIS shl shift)
     }
 
-    /** A failure time in the future (the clock was corrected backwards since) never keeps an entry waiting. */
-    fun inBackoff(entry: PendingEntry, now: Long): Boolean {
+    /**
+     * Whether an entry sits out this run. A run the user started (Sync now, pull to refresh) tries every
+     * entry, so a waiting edit is never skipped for hours after the user asked to sync. A failure time
+     * in the future (the clock was corrected backwards since) never keeps an entry waiting.
+     */
+    fun inBackoff(entry: PendingEntry, now: Long, userInitiated: Boolean): Boolean {
+        if (userInitiated) return false
         val last = entry.lastFailureAt ?: return false
         return now >= last && now < last + backoffMillis(entry.failureCount)
     }
