@@ -308,12 +308,17 @@ class NotesRuntimeTest {
                 scenario.onActivity { activity ->
                     assertEquals("Newer note", activity.findViewById<TextView>(R.id.note_title).text.toString())
                     assertFalse(activity.findViewById<TextView>(R.id.note_meta).text.toString().contains("Not synced yet"))
-                    activity.supportFragmentManager.popBackStackImmediate()
-                    activity.supportFragmentManager.popBackStackImmediate()
                 }
 
+                // Back to the notebooks, through a recreation while they were on the back stack: the
+                // list comes back where the user left it.
+                scenario.onActivity { it.onSupportNavigateUp() }
+                waitUntil("notes rendered after going back") { noteListFragment(scenario)?.renderedNotes?.size == 2 }
+                scenario.onActivity { it.onSupportNavigateUp() }
+                waitUntil("notebooks rendered after going back") { notebookFragment(scenario)?.renderedNotebooks?.size == 62 }
+                waitUntil("notebook list position restored") { notebookListPosition(scenario) == 20 }
+
                 // A writable notebook with local changes: each row says so, and so does the viewer.
-                waitUntil("notebooks rendered again") { notebookFragment(scenario)?.renderedNotebooks?.size == 2 }
                 scenario.onActivity { activity ->
                     val list = activity.findViewById<ListView>(R.id.notebooks_list)
                     list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
@@ -350,14 +355,6 @@ class NotesRuntimeTest {
                     assertEquals(View.VISIBLE, unsynced.visibility)
                     assertEquals("Unsynced text (1)", unsynced.text.toString())
                 }
-
-                // Back to the notebooks, through a recreation while they were on the back stack: the
-                // list comes back where the user left it.
-                scenario.onActivity { it.onSupportNavigateUp() }
-                waitUntil("notes rendered after going back") { noteListFragment(scenario)?.renderedNotes?.size == 2 }
-                scenario.onActivity { it.onSupportNavigateUp() }
-                waitUntil("notebooks rendered after going back") { notebookFragment(scenario)?.renderedNotebooks?.size == 62 }
-                waitUntil("notebook list position restored") { notebookListPosition(scenario) == 20 }
             }
         } finally {
             notesFixtureOverride = null
