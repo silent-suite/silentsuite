@@ -92,7 +92,7 @@ class DebugInfoActivity : BaseActivity() {
         fun generateReport(extras: Bundle?) {
             viewModelScope.launch {
                 val result = withContext(Dispatchers.IO) {
-                    buildReport(extras)
+                    if (extras?.getBoolean(KEY_SCHEDULING_ONLY) == true) SchedulingDiagnostics.report(getApplication<Application>()) else buildReport(extras)
                 }
                 reportData.value = result
             }
@@ -156,7 +156,7 @@ class DebugInfoActivity : BaseActivity() {
             // power saving
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager?
             if (powerManager != null && Build.VERSION.SDK_INT >= 23)
-                report.append("Power saving disabled: ")
+                report.append("Battery optimization exemption: ")
                         .append(if (powerManager.isIgnoringBatteryOptimizations(BuildConfig.APPLICATION_ID)) "yes" else "no")
                         .append("\n")
             // permissions
@@ -236,6 +236,11 @@ class DebugInfoActivity : BaseActivity() {
         val KEY_LOGS = "logs"
         val KEY_AUTHORITY = "authority"
         val KEY_PHASE = "phase"
+
+        val KEY_SCHEDULING_ONLY = "schedulingOnly"
+
+        fun newSchedulingIntent(context: Context?): Intent =
+                Intent(context, DebugInfoActivity::class.java).putExtra(KEY_SCHEDULING_ONLY, true)
 
         fun newIntent(context: Context?, caller: String): Intent {
             val intent = Intent(context, DebugInfoActivity::class.java)

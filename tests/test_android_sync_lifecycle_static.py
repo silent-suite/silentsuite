@@ -580,8 +580,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':89,'35:all':90,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':42}" in assertion
-    assert '"21:remaining": 88' in script
+    assert "expected_sizes={'21:mixed':1,'21:remaining':91,'35:all':92,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':44}" in assertion
+    assert '"21:remaining": 90' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper

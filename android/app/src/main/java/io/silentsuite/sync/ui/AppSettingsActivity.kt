@@ -452,6 +452,10 @@ class AppSettingsActivity : BaseActivity() {
                 isChecked = appPreferences.verboseLogging
                 setOnPreferenceChangeListener { _, value -> appPreferences.verboseLogging = value as Boolean; true }
             }
+            requirePreference<Preference>("show_scheduling_diagnostics").setOnPreferenceClickListener {
+                startActivity(DebugInfoActivity.newSchedulingIntent(requireContext()))
+                true
+            }
             requirePreference<Preference>("show_debug_info").setOnPreferenceClickListener {
                 startActivity(DebugInfoActivity.newIntent(requireContext(), AppSettingsActivity::class.java.name))
                 true
