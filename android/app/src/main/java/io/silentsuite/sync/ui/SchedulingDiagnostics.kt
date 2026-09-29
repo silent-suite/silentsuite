@@ -103,34 +103,55 @@ object SchedulingDiagnostics {
         null
     }
 
+    /** [present] is null when the platform could not say whether there is an active network. */
+    internal fun networkLabel(supported: Boolean, present: Boolean?): String = when {
+        !supported -> "unavailable"
+        present == null -> "unknown"
+        present -> "yes"
+        else -> "no"
+    }
+
+    /** A present network without readable capabilities is unknown, never an observed absence. */
+    internal fun capabilityLabel(supported: Boolean, networkPresent: Boolean?, value: Boolean?): String = when {
+        !supported -> "unavailable"
+        networkPresent == null -> "unknown"
+        !networkPresent -> "unavailable"
+        value == null -> "unknown"
+        value -> "yes"
+        else -> "no"
+    }
+
     private fun appendNetwork(out: StringBuilder, context: Context) {
         val connectivity = service<ConnectivityManager>(context, Context.CONNECTIVITY_SERVICE)
-        var sampled = false
-        val capabilities: NetworkCapabilities? = try {
-            if (Build.VERSION.SDK_INT >= 23 && connectivity != null) {
+        val supported = Build.VERSION.SDK_INT >= 23 && connectivity != null
+        var present: Boolean? = null
+        var readCapabilities: NetworkCapabilities? = null
+        if (Build.VERSION.SDK_INT >= 23 && connectivity != null)
+            try {
                 val network = connectivity.activeNetwork
-                sampled = true
-                if (network != null) connectivity.getNetworkCapabilities(network) else null
-            } else
-                null
-        } catch (e: Exception) {
-            sampled = false
-            null
-        }
+                present = network != null
+                if (network != null)
+                    readCapabilities = connectivity.getNetworkCapabilities(network)
+            } catch (e: Exception) {
+                readCapabilities = null
+            }
+        val networkPresent = present
+        val capabilities = readCapabilities
         out.append("\nNETWORK\n")
-        out.append("Active network: ").append(when {
-            Build.VERSION.SDK_INT < 23 || connectivity == null -> "unavailable"
-            !sampled -> "unknown"
-            capabilities != null -> "yes"
-            else -> "no"
-        }).append("\n")
-        out.append("Validated: ").append(flag {
-            if (Build.VERSION.SDK_INT >= 23) capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) else null
-        }).append("\n")
+        out.append("Active network: ").append(networkLabel(supported, networkPresent)).append("\n")
+        out.append("Validated: ").append(capabilityLabel(supported, networkPresent, value {
+            capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        })).append("\n")
         out.append("Metered: ").append(flag { connectivity?.isActiveNetworkMetered }).append("\n")
-        out.append("VPN: ").append(flag { capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) }).append("\n")
-        out.append("Wi-Fi: ").append(flag { capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }).append("\n")
-        out.append("Cellular: ").append(flag { capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) }).append("\n")
+        out.append("VPN: ").append(capabilityLabel(supported, networkPresent, value {
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        })).append("\n")
+        out.append("Wi-Fi: ").append(capabilityLabel(supported, networkPresent, value {
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        })).append("\n")
+        out.append("Cellular: ").append(capabilityLabel(supported, networkPresent, value {
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        })).append("\n")
         out.append("Data Saver: ").append(try {
             if (Build.VERSION.SDK_INT >= 24 && connectivity != null)
                 when (connectivity.restrictBackgroundStatus) {
@@ -163,33 +184,60 @@ object SchedulingDiagnostics {
             out.append("Account #").append(index + 1)
             val sample = if (store != null) sampleAccount(context, store, account, now) else null
             if (sample == null)
-                out.append(": changed or unavailable while sampling; sample dropped\n")
+                out.append(": changed, unidentified or unavailable while sampling; sample dropped\n")
             else
                 out.append("\n").append(sample)
         }
     }
 
-    /** Returns null unless the same account generation was present before and after sampling. */
-    private fun sampleAccount(context: Context, store: SyncStatusStore, account: Account, now: Long): String? = try {
-        val before = store.identity(account)
-        val sample = StringBuilder()
-        for (target in services()) {
-            sample.append("  ").append(target.label).append("\n")
-            for ((label, authority) in target.authorities)
-                sample.append("    platform (").append(label).append("): syncable=").append(syncable(account, authority))
-                    .append(" automatic=").append(flag { ContentResolver.getSyncAutomatically(account, authority) })
-                    .append(" pending=").append(flag { ContentResolver.isSyncPending(account, authority) })
-                    .append(" active=").append(flag { ContentResolver.isSyncActive(account, authority) })
-                    .append("\n")
-            appendRecorded(sample, store.status(before, target.service), now)
+    /**
+     * Returns the sample only when the same generation was captured before and after sampling.
+     * A missing capture never counts as a generation, so it can never certify a sample.
+     */
+    internal fun <I : Any> stableSample(capture: () -> I?, sample: (I) -> String): String? = try {
+        val before = capture()
+        if (before == null)
+            null
+        else {
+            val sampled = sample(before)
+            if (capture() == before) sampled else null
         }
-        val present = accountsOfType(context, App.accountType)?.contains(account) == true
-        if (present && store.identity(account) == before) sample.toString() else null
     } catch (e: Exception) {
         null
     }
 
-    private fun appendRecorded(out: StringBuilder, status: SyncStatusStore.Status, now: Long) {
+    private fun sampleAccount(context: Context, store: SyncStatusStore, account: Account, now: Long): String? = stableSample(
+        capture = {
+            if (accountsOfType(context, App.accountType)?.contains(account) == true)
+                SyncStatusStore.exactIdentity(context, account)
+            else
+                null
+        },
+        sample = { identity ->
+            val sample = StringBuilder()
+            for (target in services()) {
+                sample.append("  ").append(target.label).append("\n")
+                for ((label, authority) in target.authorities)
+                    sample.append("    platform (").append(label).append("): syncable=").append(syncable(account, authority))
+                        .append(" automatic=").append(flag { ContentResolver.getSyncAutomatically(account, authority) })
+                        .append(" pending=").append(flag { ContentResolver.isSyncPending(account, authority) })
+                        .append(" active=").append(flag { ContentResolver.isSyncActive(account, authority) })
+                        .append("\n")
+                sample.append(recordedLines(store.status(identity, target.service), now))
+            }
+            sample.toString()
+        }
+    )
+
+    /** Unreadable stored evidence is unknown throughout; it never becomes "none" or a count. */
+    internal fun recordedLines(status: SyncStatusStore.Status, now: Long): String {
+        if (status.structuralStorageFailure)
+            return "    recorded request: unknown age=unknown\n" +
+                "    recorded attempt: unknown age=unknown for open request=unknown\n" +
+                "    last result: unknown age=unknown\n" +
+                "    last success age=unknown last failure age=unknown category=unknown\n" +
+                "    incomplete=unknown pending children=unknown storage=unknown\n"
+        val out = StringBuilder()
         out.append("    recorded request: ").append(if (status.activeRequestId != null) "open" else "none")
             .append(" age=").append(age(status.requestedAt, now)).append("\n")
         out.append("    recorded attempt: ").append(if (status.activeAttemptId != null) "open" else "none")
@@ -209,7 +257,8 @@ object SchedulingDiagnostics {
             .append(" category=").append(failureCategory(status.lastFailureCategory)).append("\n")
         out.append("    incomplete=").append(if (status.latestGenerationIncomplete) "yes" else "no")
             .append(" pending children=").append(count(status.pendingChildren))
-            .append(" storage=").append(if (status.structuralStorageFailure) "unknown" else "readable").append("\n")
+            .append(" storage=readable\n")
+        return out.toString()
     }
 
     private fun appendAddressBooks(out: StringBuilder, context: Context) {
@@ -286,6 +335,12 @@ object SchedulingDiagnostics {
 
     private inline fun <reified T> service(context: Context, id: String): T? = try {
         context.getSystemService(id) as? T
+    } catch (e: Exception) {
+        null
+    }
+
+    private inline fun value(read: () -> Boolean?): Boolean? = try {
+        read()
     } catch (e: Exception) {
         null
     }

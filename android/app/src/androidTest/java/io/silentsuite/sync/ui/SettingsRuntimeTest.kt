@@ -329,11 +329,28 @@ class SettingsRuntimeTest {
         val account = Account("scheduling-marker-${System.nanoTime()}@example.invalid", App.accountType)
         val creationId = "scheduling-marker-generation"
         val requestId = java.util.UUID.randomUUID().toString()
+        val monitor = android.app.Instrumentation.ActivityMonitor(DebugInfoActivity::class.java.name, null, false)
+        var chooserIntent: Intent? = null
+        // Inspecting a started intent needs API 26; older lanes can only count the blocked chooser.
+        val chooser = if (android.os.Build.VERSION.SDK_INT >= 26)
+            object : android.app.Instrumentation.ActivityMonitor() {
+                override fun onStartActivity(intent: Intent): android.app.Instrumentation.ActivityResult? {
+                    if (intent.action != Intent.ACTION_CHOOSER) return null
+                    chooserIntent = intent
+                    return android.app.Instrumentation.ActivityResult(0, null)
+                }
+            }
+        else
+            android.app.Instrumentation.ActivityMonitor(
+                android.content.IntentFilter(Intent.ACTION_CHOOSER),
+                android.app.Instrumentation.ActivityResult(0, null),
+                true
+            )
         check(manager.addAccountExplicitly(account, null, null))
-        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
-        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, creationId))
-        val monitor = instrumentation.addMonitor(DebugInfoActivity::class.java.name, null, false)
         try {
+            AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+            check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, creationId))
+            instrumentation.addMonitor(monitor)
             val store = io.silentsuite.sync.syncadapter.SyncStatusStore(context)
             check(store.recordRequested(
                 account,
@@ -364,13 +381,31 @@ class SettingsRuntimeTest {
                         while (System.nanoTime() < deadline && !shown.contains("--- END SCHEDULING DIAGNOSTICS ---")) {
                             Thread.sleep(100)
                             instrumentation.runOnMainSync {
-                                runCatching {
-                                    shown = debugInfo.tvReport.text.toString()
-                                    shared = debugInfo.report
-                                }
+                                runCatching { shown = debugInfo.tvReport.text.toString() }
                             }
                         }
-                        instrumentation.runOnMainSync { debugInfo.finish() }
+                        assertTrue(shown.contains("--- END SCHEDULING DIAGNOSTICS ---"))
+                        instrumentation.addMonitor(chooser)
+                        try {
+                            instrumentation.runOnMainSync {
+                                debugInfo.onShare(android.widget.PopupMenu(debugInfo, debugInfo.tvReport).menu.add("share"))
+                            }
+                            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                                val send = chooserIntent!!.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)!!
+                                assertEquals(Intent.ACTION_SEND, send.action)
+                                assertEquals("text/plain", send.type)
+                                assertEquals(setOf(Intent.EXTRA_TEXT), send.extras!!.keySet())
+                                assertEquals(null, send.data)
+                                assertEquals(null, send.clipData)
+                                shared = send.getStringExtra(Intent.EXTRA_TEXT)!!
+                            } else {
+                                assertEquals(1, chooser.hits)
+                                shared = shown
+                            }
+                        } finally {
+                            instrumentation.removeMonitor(chooser)
+                            instrumentation.runOnMainSync { debugInfo.finish() }
+                        }
                     }
                 }
             }

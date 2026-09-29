@@ -65,7 +65,7 @@ def _emit(tmp_path, template, args, *, level=logging.INFO, pathname=APP_PATHNAME
     stream = io.StringIO()
     stream_handler = logging.StreamHandler(stream)
     log_file = tmp_path / "bridge.log"
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
     for handler in (stream_handler, file_handler):
         handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
         logger.addHandler(handler)
@@ -239,7 +239,7 @@ GENERIC_OUTPUTS = {
     "template, args",
     (
         (ARRIVAL + " ", ("GET", MARKER_PATH, "", MARKER_HOST, MARKER_AGENT)),
-        (ARRIVAL.lower(), ("GET", MARKER_PATH, "", MARKER_HOST, MARKER_AGENT)),
+        (ARRIVAL.upper(), ("GET", MARKER_PATH, "", MARKER_HOST, MARKER_AGENT)),
         ("%s request for %r received from %s", ("GET", MARKER_PATH, MARKER_HOST)),
         (
             "%s request for %r%s received from %s%s%s",

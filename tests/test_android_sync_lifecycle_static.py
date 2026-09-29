@@ -506,7 +506,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             (class_name, method)
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
-    assert len(canonical) == 90
+    ledger_size = sum(len(methods) for methods in ledger["classes"].values())
+    assert len(canonical) == len(runtime_methods) == ledger_size
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
@@ -518,8 +519,13 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
         for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes")
     }
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 88, 90)
-    assert tuple(len(api36[key]) for key in api36) == (29, 19, 42)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (
+        1, 1, ledger_size - 2, ledger_size
+    )
+    assert tuple(len(api36[key]) for key in api36) == tuple(
+        sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
+        for key in api36
+    )
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())

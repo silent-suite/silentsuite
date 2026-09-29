@@ -88,6 +88,92 @@ class SchedulingDiagnosticsContractTest {
     }
 
     @Test
+    fun absentOrBlankGenerationMetadataYieldsNoIdentity() {
+        val store = io.silentsuite.sync.syncadapter.SyncStatusStore
+        for (creationId in listOf(null, "", " ", "\t", "synthetic generation", "synthetic/generation", "g".repeat(129)))
+            org.junit.Assert.assertNull("creation id [$creationId]", store.exactIdentityOf("type", "synthetic", creationId))
+        val first = store.exactIdentityOf("type", "synthetic", "generation-1")
+        org.junit.Assert.assertNotNull(first)
+        assertEquals(first, store.exactIdentityOf("type", "synthetic", "generation-1"))
+        assertFalse(first == store.exactIdentityOf("type", "synthetic", "generation-2"))
+
+        var sampled = 0
+        org.junit.Assert.assertNull(SchedulingDiagnostics.stableSample<String>({ null }) { sampled++; "sample" })
+        assertEquals(0, sampled)
+    }
+
+    @Test
+    fun sampleIsDroppedWhenGenerationChangesDuringSampling() {
+        for (after in listOf<String?>("generation-b", null, "")) {
+            val captures = mutableListOf<String?>("generation-a", after)
+            org.junit.Assert.assertNull("after [$after]", SchedulingDiagnostics.stableSample({ captures.removeAt(0) }) { "sample" })
+            assertTrue(captures.isEmpty())
+        }
+        var replacedDuringSampling = "generation-a"
+        org.junit.Assert.assertNull(SchedulingDiagnostics.stableSample({ replacedDuringSampling }) {
+            replacedDuringSampling = "generation-b"
+            "sample"
+        })
+        org.junit.Assert.assertNull(SchedulingDiagnostics.stableSample<String>({ throw IllegalStateException("synthetic") }) { "sample" })
+        org.junit.Assert.assertNull(SchedulingDiagnostics.stableSample({ "generation-a" }) { throw IllegalStateException("synthetic") })
+        assertEquals("sample", SchedulingDiagnostics.stableSample({ "generation-a" }) { "sample" })
+    }
+
+    @Test
+    fun malformedStoredStateIsUnknownNeverNoneOrZero() {
+        val status = io.silentsuite.sync.syncadapter.SyncStatusStore.Status(
+                lastSuccessAt = 1_000L,
+                lastFailureCategory = io.silentsuite.sync.syncadapter.SyncStatusStore.FailureCategory.STORAGE,
+                structuralStorageFailure = true
+        )
+        val lines = SchedulingDiagnostics.recordedLines(status, 2_000L)
+
+        assertEquals(
+                "    recorded request: unknown age=unknown\n" +
+                "    recorded attempt: unknown age=unknown for open request=unknown\n" +
+                "    last result: unknown age=unknown\n" +
+                "    last success age=unknown last failure age=unknown category=unknown\n" +
+                "    incomplete=unknown pending children=unknown storage=unknown\n",
+                lines
+        )
+    }
+
+    @Test
+    fun readableStoredStateKeepsNoneAndFutureTimestampSemantics() {
+        val now = 10 * 60_000L
+        val empty = SchedulingDiagnostics.recordedLines(io.silentsuite.sync.syncadapter.SyncStatusStore.Status(), now)
+        assertTrue(empty.contains("recorded request: none age=none\n"))
+        assertTrue(empty.contains("pending children=0 storage=readable\n"))
+
+        val future = SchedulingDiagnostics.recordedLines(io.silentsuite.sync.syncadapter.SyncStatusStore.Status(
+                activeRequestId = "synthetic-request", requestedAt = now + 1,
+                activeAttemptId = "synthetic-attempt", attemptStartedAt = now - 5 * 60_000L,
+                attemptRequestId = "synthetic-request", lastSuccessAt = -1L
+        ), now)
+        assertTrue(future.contains("recorded request: open age=unknown\n"))
+        assertTrue(future.contains("recorded attempt: open age=1m_to_15m for open request=yes\n"))
+        assertTrue(future.contains("last success age=unknown "))
+        assertFalse(future.contains("synthetic"))
+    }
+
+    @Test
+    fun unreadableCapabilitiesNeverClaimThereIsNoNetwork() {
+        assertEquals("yes", SchedulingDiagnostics.networkLabel(true, true))
+        assertEquals("no", SchedulingDiagnostics.networkLabel(true, false))
+        assertEquals("unknown", SchedulingDiagnostics.networkLabel(true, null))
+        assertEquals("unavailable", SchedulingDiagnostics.networkLabel(false, null))
+        assertEquals("unavailable", SchedulingDiagnostics.networkLabel(false, true))
+
+        assertEquals("unknown", SchedulingDiagnostics.capabilityLabel(true, true, null))
+        assertEquals("unknown", SchedulingDiagnostics.capabilityLabel(true, null, null))
+        assertEquals("unknown", SchedulingDiagnostics.capabilityLabel(true, null, true))
+        assertEquals("unavailable", SchedulingDiagnostics.capabilityLabel(true, false, null))
+        assertEquals("unavailable", SchedulingDiagnostics.capabilityLabel(false, true, true))
+        assertEquals("yes", SchedulingDiagnostics.capabilityLabel(true, true, true))
+        assertEquals("no", SchedulingDiagnostics.capabilityLabel(true, true, false))
+    }
+
+    @Test
     fun boundedReportIsReachableFromExistingAdvancedSettings() {
         val preferences = File(main, "res/xml/settings_advanced.xml").readText()
         val strings = File(main, "res/values/strings.xml").readText()
