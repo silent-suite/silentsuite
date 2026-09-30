@@ -140,6 +140,18 @@ if ! SILENTSUITE_DIR="$SS_INSTALL_DIR" \
   ss_fail "the SilentSuite installer failed (see the messages above)."
 fi
 
+# The installer copies the bundle files under this script's umask 077, so the
+# public landing template ends up 0600 root. Compose bind-mounts it into the
+# server, which runs as a non-root user and renders it at "/"; unreadable, every
+# request to the site root is a 500. Open up only this non-secret template.
+# .env, the marker and the other root-only files keep their modes; the server
+# config is already made 0644 by the installer itself.
+SUCCESS_PAGE="$SS_INSTALL_DIR/success.html"
+if [ -L "$SUCCESS_PAGE" ] || [ ! -f "$SUCCESS_PAGE" ]; then
+  ss_fail "the installer did not create success.html as a regular file."
+fi
+chmod 0644 -- "$SUCCESS_PAGE"
+
 SERVER_IMAGE="$(grep -E '^SILENTSUITE_SERVER_IMAGE=' "$SS_INSTALL_DIR/.env" 2>/dev/null | head -n 1 | cut -d= -f2-)" || SERVER_IMAGE=""
 printf '%s' "$SERVER_IMAGE" | grep -Eqx 'ghcr\.io/silent-suite/silentsuite-server@sha256:[0-9a-f]{64}' ||
   ss_fail "the installer did not record a digest-pinned server image."

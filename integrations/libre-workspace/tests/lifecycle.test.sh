@@ -110,6 +110,11 @@ DATABASE_PASSWORD=$STUB_DB_SECRET
 ETEBASE_BOOTSTRAP_ADMIN_TOKEN=$STUB_TOKEN
 ENV
 : > "$SILENTSUITE_DIR/docker-compose.yml"
+# Like install.sh: cp under the inherited umask, so this public template lands
+# with whatever mode the caller's umask gives it.
+printf '<html>SilentSuite</html>\n' > "$SILENTSUITE_DIR/success.html"
+printf '[global]\n' > "$SILENTSUITE_DIR/etebase-server.ini"
+chmod 644 "$SILENTSUITE_DIR/etebase-server.ini"
 echo "  https://$SILENTSUITE_DOMAIN/?bootstrap_token=$STUB_TOKEN"
 echo "DATABASE_PASSWORD=$STUB_DB_SECRET"
 if [ -e "$STUB_STATE/installer-fail-late" ]; then
@@ -268,6 +273,11 @@ check "only one TRUSTED_PROXY_IPS line" [ "$(grep -c '^TRUSTED_PROXY_IPS=' "$INS
 check "state records the trusted proxy" contains "$MARKER/addon-state" "trusted_proxy=172.18.0.1"
 check "only the server container was recreated" grep -q '^compose .* up -d --force-recreate --no-deps server$' "$F/state/docker.log"
 check ".env stays 0600 after the rewrite" mode_is "$INSTALL/.env" 600
+check "success.html (mounted into the non-root server) is 0644" mode_is "$INSTALL/success.html" 644
+check "success.html is a regular file, not a link" [ -f "$INSTALL/success.html" ] && [ ! -L "$INSTALL/success.html" ]
+check "server config keeps the installer's 0644" mode_is "$INSTALL/etebase-server.ini" 644
+check "marker stays 0700" mode_is "$MARKER" 700
+check "addon-state is not world-readable" [ "$(( 0$(stat -c %a "$MARKER/addon-state") & 077 ))" = 0 ]
 check "no volume deletion" no_volume_deletion
 finish
 
