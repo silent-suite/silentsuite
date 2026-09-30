@@ -105,6 +105,7 @@ touch "$STUB_STATE/container-silentsuite-postgres" "$STUB_STATE/container-silent
   "$STUB_STATE/volume-silentsuite-server_pgdata" "$STUB_STATE/volume-silentsuite-server_server_data"
 cat > "$SILENTSUITE_DIR/.env" <<ENV
 SILENTSUITE_SERVER_IMAGE=$STUB_IMAGE
+TRUSTED_PROXY_IPS=$(cat "$STUB_STATE/installer-trusted" 2>/dev/null || echo 127.0.0.1)
 DATABASE_PASSWORD=$STUB_DB_SECRET
 ETEBASE_BOOTSTRAP_ADMIN_TOKEN=$STUB_TOKEN
 ENV
@@ -143,7 +144,10 @@ case "${1:-}" in
     [ "${2:-}" = ls ] || exit 1
     list volume ;;
   inspect)
-    cat "$STUB_STATE/health" 2>/dev/null || echo healthy
+    case "$*" in
+      *Networks*) cat "$STUB_STATE/networks" 2>/dev/null || echo "silentsuite-server_silentsuite 172.18.0.1" ;;
+      *) cat "$STUB_STATE/health" 2>/dev/null || echo healthy ;;
+    esac
     exit 0 ;;
 esac
 exit 0
@@ -259,6 +263,11 @@ check "first-account instructions are 0600" mode_is "$MARKER/FIRST-ACCOUNT.txt" 
 check "first-account instructions carry no token" lacks "$MARKER/FIRST-ACCOUNT.txt" "$TOKEN"
 check "first-account instructions show the token URL shape" contains "$MARKER/FIRST-ACCOUNT.txt" "https://silentsuite.example.org/?bootstrap_token=<token>"
 check "output points at the instructions" contains "$F/out" "FIRST-ACCOUNT.txt"
+check "trusts exactly loopback and the network gateway" contains "$INSTALL/.env" "TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.1"
+check "only one TRUSTED_PROXY_IPS line" [ "$(grep -c '^TRUSTED_PROXY_IPS=' "$INSTALL/.env")" = 1 ]
+check "state records the trusted proxy" contains "$MARKER/addon-state" "trusted_proxy=172.18.0.1"
+check "only the server container was recreated" grep -q '^compose .* up -d --force-recreate --no-deps server$' "$F/state/docker.log"
+check ".env stays 0600 after the rewrite" mode_is "$INSTALL/.env" 600
 check "no volume deletion" no_volume_deletion
 finish
 
@@ -487,6 +496,45 @@ check "no failed directory" no_match "$F/root/silentsuite-failed-*"
 check "Caddyfile untouched" caddy_untouched
 check "no volume deletion" no_volume_deletion
 check "no secrets in output" no_secrets_in_output
+finish
+
+proxy_refused() {
+  check "exits non-zero" rc_nonzero
+  check "marker gone" absent "$F/root/silentsuite"
+  check "files kept in a failed directory" one_match "$F/root/silentsuite-failed-*/silentsuite-server/.env"
+  check "compose down was called" grep -q '^compose .* down$' "$F/state/docker.log"
+  check "server not recreated" lacks "$F/state/docker.log" "--force-recreate"
+  check "Caddyfile untouched" caddy_untouched
+  check "no volume deletion" no_volume_deletion
+  check "no secrets in output" no_secrets_in_output
+}
+
+begin "a server on more than one network is refused (no guessing the proxy peer)"
+new_fixture twonets
+printf 'silentsuite-server_silentsuite 172.18.0.1\nproxy 172.19.0.1\n' > "$F/state/networks"
+run setup_silentsuite.sh
+proxy_refused
+check "explains the refusal" contains "$F/out" "not attached to exactly one network"
+finish
+
+begin "a missing or non-IPv4 gateway is refused"
+for gateway in "" "fe80::1" "0.0.0.0" "172.18.0.256" "172.18.0" "10.0.0.1/8"; do
+  new_fixture "badgw-$(printf '%s' "$gateway" | tr -c 'a-z0-9' '_')"
+  printf 'silentsuite-server_silentsuite %s\n' "$gateway" > "$F/state/networks"
+  run setup_silentsuite.sh
+  proxy_refused
+done
+check "explains the refusal" contains "$F/out" "no usable IPv4 gateway"
+finish
+
+begin "an unexpected installer TRUSTED_PROXY_IPS is not overwritten"
+new_fixture customtrust
+echo "10.0.0.0/8" > "$F/state/installer-trusted"
+run setup_silentsuite.sh
+proxy_refused
+check "explains the refusal" contains "$F/out" "unexpected TRUSTED_PROXY_IPS"
+check "setting left as written" one_match "$F/root/silentsuite-failed-*/silentsuite-server/.env"
+check "value unchanged" grep -qx 'TRUSTED_PROXY_IPS=10.0.0.0/8' "$F"/root/silentsuite-failed-*/silentsuite-server/.env
 finish
 
 # ── Remove refusals ─────────────────────────────────────────────────────

@@ -150,6 +150,17 @@ docker exec silentsuite-postgres pg_isready -U silentsuite -d silentsuite
 migrations="$(docker exec silentsuite-postgres psql -U silentsuite -d silentsuite -tAc 'select count(*) from django_migrations')"
 [ "${migrations:-0}" -gt 0 ] || fail "no Django migrations recorded in PostgreSQL"
 echo "django_migrations rows: $migrations"
+
+step "The server trusts exactly loopback and its Compose network gateway"
+NETWORK_GATEWAYS="$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.Gateway}} {{end}}' silentsuite-server | xargs)"
+STATE_GATEWAY="$(grep -E '^trusted_proxy=' "$MARKER/addon-state" | cut -d= -f2-)"
+[ -n "$STATE_GATEWAY" ] && [ "$NETWORK_GATEWAYS" = "$STATE_GATEWAY" ] ||
+  fail "recorded trusted proxy '$STATE_GATEWAY' is not the server network gateway '$NETWORK_GATEWAYS'"
+RUNNING_TRUST="$(docker exec silentsuite-server printenv TRUSTED_PROXY_IPS)"
+[ "$RUNNING_TRUST" = "127.0.0.1,$STATE_GATEWAY" ] || fail "running server trusts '$RUNNING_TRUST'"
+docker port silentsuite-server 3735/tcp | grep -qxF "127.0.0.1:3735" || fail "server port is not published on loopback only"
+[ "$(docker port silentsuite-server 3735/tcp | wc -l)" = "1" ] || fail "server port is published more than once"
+echo "TRUSTED_PROXY_IPS=$RUNNING_TRUST; published on 127.0.0.1:3735 only"
 SERVER_IMAGE="$(grep -E '^SILENTSUITE_SERVER_IMAGE=' "$INSTALL/.env" | cut -d= -f2-)"
 printf '%s' "$SERVER_IMAGE" | grep -Eqx 'ghcr\.io/silent-suite/silentsuite-server@sha256:[0-9a-f]{64}' ||
   fail "server image is not digest-pinned"
@@ -169,7 +180,12 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 [ -f "$CA_ROOT" ] || fail "Caddy's internal CA root was not created"
-[ "$status" = "200" ] || fail "https://$HOST/ answered '$status' through Caddy, expected 200"
+if [ "$status" != "200" ]; then
+  # Status line and redirect target only: no headers that could carry state.
+  curl -sS -o /dev/null -D - --max-time 15 --cacert "$CA_ROOT" "https://$HOST/" 2>&1 |
+    grep -iE '^(HTTP/|location:)' || true
+  fail "https://$HOST/ answered '$status' through Caddy, expected 200"
+fi
 echo "https://$HOST/ -> HTTP $status (certificate verified against Caddy's internal CA)"
 
 step "First account is gated by the one-time token (over HTTPS through Caddy)"
@@ -215,7 +231,13 @@ assert_output_has_no_secrets "$WORK/remove_silentsuite.sh.out"
 for volume in silentsuite-server_pgdata silentsuite-server_server_data; do
   docker volume inspect "$volume" >/dev/null || fail "volume $volume was deleted"
 done
-POSTGRES_IMAGE="$(grep -E '^[[:space:]]*image:[[:space:]]*postgres@sha256:' /root/silentsuite-removed-*/silentsuite-server/docker-compose.yml | awk '{print $2}')"
+# The exact digest the packaged installer pins, and the one the retained
+# Compose file actually ran.
+POSTGRES_IMAGE="$(sed -n 's/^POSTGRES_IMAGE="\(postgres@sha256:[0-9a-f]\{64\}\)"$/\1/p' "$MODULE/install.sh")"
+[ "$(printf '%s\n' "$POSTGRES_IMAGE" | grep -c .)" = "1" ] || fail "could not read the pinned PostgreSQL digest from install.sh"
+RETAINED_COMPOSE="$(ls /root/silentsuite-removed-*/silentsuite-server/docker-compose.yml)"
+[ "$(printf '%s\n' "$RETAINED_COMPOSE" | wc -l)" = "1" ] || fail "expected exactly one retained installation"
+[ "$(grep -cxF "    image: $POSTGRES_IMAGE" "$RETAINED_COMPOSE")" = "1" ] || fail "retained compose does not run $POSTGRES_IMAGE"
 docker run --rm -v silentsuite-server_pgdata:/var/lib/postgresql/data:ro --entrypoint cat "$POSTGRES_IMAGE" \
   /var/lib/postgresql/data/PG_VERSION >/dev/null || fail "the database volume has no cluster"
 [ ! -e "$MARKER" ] || fail "$MARKER still exists after remove"

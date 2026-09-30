@@ -146,25 +146,60 @@ printf '%s' "$SERVER_IMAGE" | grep -Eqx 'ghcr\.io/silent-suite/silentsuite-serve
 ss_log "server image: $SERVER_IMAGE"
 
 HEALTH_TIMEOUT="${SILENTSUITE_ADDON_HEALTH_TIMEOUT:-180}"
-elapsed=0
-while :; do
-  healthy=0
-  for container in $SS_CONTAINERS; do
-    status="$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo unknown)"
-    if [ "$status" = "healthy" ]; then
-      healthy=$((healthy + 1))
+wait_healthy() {
+  local elapsed=0 healthy container status
+  while :; do
+    healthy=0
+    for container in $SS_CONTAINERS; do
+      status="$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo unknown)"
+      if [ "$status" = "healthy" ]; then
+        healthy=$((healthy + 1))
+      fi
+    done
+    if [ "$healthy" -eq 2 ]; then
+      return 0
     fi
+    if [ "$elapsed" -ge "$HEALTH_TIMEOUT" ]; then
+      ss_fail "the SilentSuite containers did not become healthy within ${HEALTH_TIMEOUT}s$1."
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
   done
-  if [ "$healthy" -eq 2 ]; then
-    break
-  fi
-  if [ "$elapsed" -ge "$HEALTH_TIMEOUT" ]; then
-    ss_fail "the SilentSuite containers did not become healthy within ${HEALTH_TIMEOUT}s."
-  fi
-  sleep 5
-  elapsed=$((elapsed + 5))
-done
+}
+wait_healthy ""
 ss_log "database and server are healthy."
+
+# ── Trust the host-side proxy peer ─────────────────────────────────────
+#
+# Caddy runs on the host and reaches the loopback-published port through
+# Docker's port publishing, so the server sees those connections coming from
+# the gateway of its Compose network, not from 127.0.0.1. Unless that one
+# address is trusted, the server ignores Caddy's X-Forwarded-Proto and
+# redirects every HTTPS request back to itself. Trust exactly that gateway
+# (plus loopback), the way the self-host installer tells operators to trust a
+# proxy that is not on 127.0.0.1, and recreate only the server container.
+networks="$(docker inspect --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{$net.Gateway}}{{"\n"}}{{end}}' silentsuite-server)" ||
+  ss_fail "could not read the server container's network."
+networks="$(printf '%s\n' "$networks" | sed '/^[[:space:]]*$/d')"
+if [ -z "$networks" ] || [ "$(printf '%s\n' "$networks" | wc -l | tr -d ' ')" != "1" ]; then
+  ss_fail "the server container is not attached to exactly one network; refusing to guess which proxy address to trust."
+fi
+GATEWAY="${networks##* }"
+ss_valid_ipv4 "$GATEWAY" || ss_fail "the server's network has no usable IPv4 gateway to trust as the proxy."
+if [ "$(grep -c '^TRUSTED_PROXY_IPS=' "$SS_INSTALL_DIR/.env" | tr -d ' ')" != "1" ] ||
+  ! grep -qx 'TRUSTED_PROXY_IPS=127\.0\.0\.1' "$SS_INSTALL_DIR/.env"; then
+  ss_fail "the installer wrote an unexpected TRUSTED_PROXY_IPS setting; refusing to change it."
+fi
+# Only this one line is rewritten; nothing from .env is printed.
+sed -i "s/^TRUSTED_PROXY_IPS=127\\.0\\.0\\.1\$/TRUSTED_PROXY_IPS=127.0.0.1,$GATEWAY/" "$SS_INSTALL_DIR/.env"
+grep -qxF "TRUSTED_PROXY_IPS=127.0.0.1,$GATEWAY" "$SS_INSTALL_DIR/.env" ||
+  ss_fail "could not record the trusted proxy address."
+printf 'trusted_proxy=%s\n' "$GATEWAY" >> "$SS_STATE_FILE"
+ss_log "trusting forwarded HTTPS headers only from 127.0.0.1 and the Compose network gateway $GATEWAY."
+ss_compose up -d --force-recreate --no-deps server >&2 ||
+  ss_fail "could not recreate the server with the proxy setting."
+wait_healthy " after the proxy setting was applied"
+ss_log "server is healthy with the proxy setting."
 
 # ── Publish through Caddy ──────────────────────────────────────────────
 

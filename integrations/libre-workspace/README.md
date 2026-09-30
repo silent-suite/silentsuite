@@ -95,6 +95,22 @@ Setup stops without changing anything if:
 - the Caddyfile already has a SilentSuite block or a site for the host;
 - `caddy validate` rejects the new configuration.
 
+Caddy runs on the host and reaches the server's loopback-only port through
+Docker's port publishing. The server therefore sees Caddy's connections coming
+from the gateway address of its Compose network, not from `127.0.0.1`. After
+the installer starts the server, setup does three things:
+
+- sets `TRUSTED_PROXY_IPS` in the install directory's `.env` to `127.0.0.1`
+  plus that one gateway address (no subnet ranges);
+- records the address in `/root/silentsuite/addon-state`;
+- recreates only the server container.
+
+Without this, the server ignores Caddy's `X-Forwarded-Proto` header and
+redirects every HTTPS request back to itself. Setup stops without guessing if
+the server is on more than one network, has no IPv4 gateway, or the installer
+wrote a different `TRUSTED_PROXY_IPS` value. The port stays published on
+`127.0.0.1` only.
+
 If setup fails after the server was created (the installer fails, the
 containers are unhealthy, or Caddy does not reload), it:
 

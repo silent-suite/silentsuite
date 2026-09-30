@@ -53,6 +53,16 @@ ss_valid_domain() {
   esac
 }
 
+# A single dotted-quad IPv4 address (not 0.0.0.0), nothing else.
+ss_valid_ipv4() {
+  local ip="$1"
+  case "$ip" in
+    "" | *[!0-9.]* | 0.0.0.0) return 1 ;;
+  esac
+  printf '%s\n' "$ip" | awk -F. 'NF == 4 && $1 != "" && $2 != "" && $3 != "" && $4 != "" &&
+    $1 <= 255 && $2 <= 255 && $3 <= 255 && $4 <= 255 && length($0) <= 15 { ok = 1 } END { exit !ok }'
+}
+
 # The release this package was built for. Exactly one line holding one
 # SilentSuite umbrella release tag; the same grammar install.sh accepts.
 ss_read_release() {
