@@ -27,6 +27,7 @@ on:
       - 'scripts/stage-bridge-release-assets.sh'
       - 'tests/test_self_host_*.py'
       - 'tests/fixtures/self-host-backup/**'
+      - 'integrations/libre-workspace/**'
       - 'tests/test_umbrella_release_*.py'
       - 'tests/test_server_image_verifier.py'
       - 'tests/test_reusable_workflow_caller_permissions.py'
@@ -63,6 +64,7 @@ on:
       - 'scripts/stage-bridge-release-assets.sh'
       - 'tests/test_self_host_*.py'
       - 'tests/fixtures/self-host-backup/**'
+      - 'integrations/libre-workspace/**'
       - 'tests/test_umbrella_release_*.py'
       - 'tests/test_server_image_verifier.py'
       - 'tests/test_reusable_workflow_caller_permissions.py'
@@ -214,6 +216,11 @@ jobs:
             scripts/stage-bridge-release-assets.sh; do
             bash -n "$script"
           done
+
+      # Runs the real add-on setup/update/remove/build scripts against isolated
+      # fixtures with stubbed docker, caddy and systemctl, and builds the .deb.
+      - name: Run the Libre Workspace add-on lifecycle tests
+        run: integrations/libre-workspace/tests/lifecycle.test.sh
 
       - name: Compile the release control-plane Python helpers
         run: |

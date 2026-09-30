@@ -1,0 +1,57 @@
+name: Libre Workspace Add-on
+
+# Deployment runtime smoke for the Libre Workspace add-on on a disposable
+# GitHub-hosted runner: the packaged lifecycle scripts, the published release
+# and its digest-pinned images, and a real Caddy service serving HTTPS. The
+# Libre Workspace portal itself is not installed, so this is not Libre
+# Workspace acceptance. No secrets, no registry credentials, no publishing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'integrations/libre-workspace/**'
+      - 'self-host/install.sh'
+      - 'scripts/self-host-image-smoke-probe.py'
+      - '.github/workflows/libre-workspace-addon.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'integrations/libre-workspace/**'
+      - 'self-host/install.sh'
+      - 'scripts/self-host-image-smoke-probe.py'
+      - '.github/workflows/libre-workspace-addon.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: libre-workspace-addon-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime-smoke:
+    name: Add-on deployment runtime smoke (amd64; not portal acceptance)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # The published release the package pins. The bundled self-host/install.sh
+      # from this checkout must accept that release's bundle.
+      ADDON_RELEASE: v0.5.10-beta
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run the add-on fixture lifecycle tests
+        run: integrations/libre-workspace/tests/lifecycle.test.sh
+
+      - name: Run the add-on deployment runtime smoke
+        run: |
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_ENVIRONMENT \
+            bash integrations/libre-workspace/tests/runtime-smoke.sh "$ADDON_RELEASE"
