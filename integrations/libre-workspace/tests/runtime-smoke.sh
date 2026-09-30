@@ -192,12 +192,22 @@ step "First account is gated by the one-time token (over HTTPS through Caddy)"
 SMOKE_TOKEN="$(grep -E '^ETEBASE_BOOTSTRAP_ADMIN_TOKEN=' "$INSTALL/.env" | cut -d= -f2-)"
 [ -n "$SMOKE_TOKEN" ] || fail "no bootstrap token was generated"
 export SMOKE_TOKEN
+# Caddy keeps its CA root readable only by the caddy user, and the probe runs
+# as the image's non-root user. Hand it a 0644 copy of the PUBLIC root
+# certificate only (never the private key beside it).
+PROBE_CA="$WORK/ca.crt"
+grep -q -- '-----BEGIN CERTIFICATE-----' "$CA_ROOT" || fail "Caddy's CA root is not a PEM certificate"
+if grep -q -- 'PRIVATE KEY' "$CA_ROOT"; then
+  fail "Caddy's CA root file contains key material; refusing to share it"
+fi
+install -m 0644 -- "$CA_ROOT" "$PROBE_CA"
+[ "$(stat -c %a "$PROBE_CA")" = "644" ] || fail "could not make a readable copy of the CA certificate"
 # The shared image-smoke probe only speaks plain HTTP (its boundary is the
 # container port), so only its msgpack body/decoder are reused here; the
 # requests go over real HTTPS through Caddy, verified against Caddy's CA.
 docker run --rm -i --network host --add-host "$HOST:127.0.0.1" \
   -e SMOKE_TOKEN \
-  -v "$CA_ROOT:/smoke/ca.crt:ro" -v "$PROBE:/smoke/probe.py:ro" \
+  -v "$PROBE_CA:/smoke/ca.crt:ro" -v "$PROBE:/smoke/probe.py:ro" \
   --entrypoint python3 "$SERVER_IMAGE" - "$HOST" <<'PY'
 import http.client, importlib.util, os, ssl, sys
 spec = importlib.util.spec_from_file_location("probe", "/smoke/probe.py")
