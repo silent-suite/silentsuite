@@ -88,6 +88,7 @@ new_fixture() {
   cp "$ADDON"/module/* "$F/module/"
   printf 'v9.9.9-test\n' > "$F/module/silentsuite-release"
   printf 'portal.example.org {\n    reverse_proxy localhost:8080\n}\n' > "$F/etc/caddy/Caddyfile"
+  chmod 640 "$F/etc/caddy/Caddyfile"
   cp "$F/etc/caddy/Caddyfile" "$F/Caddyfile.orig"
 
   cat > "$F/module/install.sh" <<'EOF'
@@ -183,6 +184,25 @@ EOF
 [ -e "$STUB_STATE/port-busy" ] && echo "LISTEN 0 4096 127.0.0.1:3735 0.0.0.0:*"
 exit 0
 EOF
+  # mv onto the Caddyfile can be made to fail once, or to complete and then
+  # deliver SIGTERM to the calling script (a portal task being killed).
+  stub mv <<'EOF'
+#!/usr/bin/env bash
+if [ "$(basename -- "${@: -1}")" = Caddyfile ]; then
+  if [ -e "$STUB_STATE/mv-fail" ]; then
+    rm -f "$STUB_STATE/mv-fail"
+    echo "mv: No space left on device" >&2
+    exit 1
+  fi
+  if [ -e "$STUB_STATE/mv-term-after" ]; then
+    rm -f "$STUB_STATE/mv-term-after"
+    /usr/bin/mv "$@" || exit 1
+    kill -TERM "$PPID"
+    exit 0
+  fi
+fi
+exec /usr/bin/mv "$@"
+EOF
   stub sleep <<'EOF'
 #!/usr/bin/env bash
 exit 0
@@ -261,6 +281,7 @@ check "exactly one site for the host" [ "$(grep -cxF 'silentsuite.example.org {'
 check "proxies to the loopback server port" contains "$F/etc/caddy/Caddyfile" "    reverse_proxy 127.0.0.1:3735"
 check "no internal TLS for a public domain" lacks "$F/etc/caddy/Caddyfile" "tls internal"
 check "Caddy was reloaded" contains "$F/state/systemctl.log" "reload-or-restart caddy"
+check "Caddyfile keeps its mode after replacement" mode_is "$F/etc/caddy/Caddyfile" 640
 check "Caddyfile was validated" contains "$F/state/caddy.log" "validate --adapter caddyfile"
 check "no candidate files left beside the Caddyfile" caddy_dir_clean
 check "first-account instructions exist" present "$MARKER/FIRST-ACCOUNT.txt"
@@ -285,10 +306,15 @@ begin "update is a no-op on an installed add-on"
 DOCKER_LINES="$(wc -l < "$F/state/docker.log")"
 SYSTEMCTL_LINES="$(wc -l < "$F/state/systemctl.log")"
 cp "$F/etc/caddy/Caddyfile" "$F/Caddyfile.installed"
+cp "$INSTALL/.env" "$F/env.installed"
+cp "$MARKER/addon-state" "$F/state.installed"
 run update_silentsuite.sh
 check "exits 0" rc_zero
 check "says updates are manual" contains "$F/out" "automatic updates are disabled for SilentSuite v9.9.9-test"
-check "no docker calls" [ "$(wc -l < "$F/state/docker.log")" = "$DOCKER_LINES" ]
+check "docker was only inspected (read-only)" bash -c '[ -z "$(tail -n +$(( $2 + 1 )) "$1" | grep -v "^inspect ")" ]' _ "$F/state/docker.log" "$DOCKER_LINES"
+check "confirms the trusted proxy address" contains "$F/out" "trusted proxy address 172.18.0.1 still matches"
+check ".env unchanged by update" same "$INSTALL/.env" "$F/env.installed"
+check "state unchanged by update" same "$MARKER/addon-state" "$F/state.installed"
 check "no systemctl calls" [ "$(wc -l < "$F/state/systemctl.log")" = "$SYSTEMCTL_LINES" ]
 check "Caddyfile unchanged" same "$F/etc/caddy/Caddyfile" "$F/Caddyfile.installed"
 check "still installed" present "$MARKER"
@@ -298,6 +324,7 @@ begin "remove drops only our site, stops the stack and keeps the data"
 run remove_silentsuite.sh
 check "exits 0" rc_zero
 check "Caddyfile is byte-identical to before setup" caddy_untouched
+check "Caddyfile keeps its mode after removal" mode_is "$F/etc/caddy/Caddyfile" 640
 check "compose down was called" grep -q '^compose .* down$' "$F/state/docker.log"
 check "no volume deletion" no_volume_deletion
 check "marker directory is gone" absent "$MARKER"
@@ -599,6 +626,119 @@ check "exits non-zero" rc_nonzero
 check "Caddyfile restored" same "$F/etc/caddy/Caddyfile" "$F/Caddyfile.before-remove"
 check "marker kept" present "$F/root/silentsuite/silentsuite-server/.env"
 check "no volume deletion" no_volume_deletion
+finish
+
+# ── Caddyfile write path: failure and interruption ─────────────────────
+
+begin "setup: a failed Caddyfile write leaves the live file intact and rolls back"
+new_fixture setupmvfail
+touch "$F/state/mv-fail"
+run setup_silentsuite.sh
+check "exits non-zero" rc_nonzero
+check "says the write failed" contains "$F/out" "could not write"
+check "Caddyfile byte-identical" caddy_untouched
+check "Caddyfile mode kept" mode_is "$F/etc/caddy/Caddyfile" 640
+check "no staged or candidate files left" caddy_dir_clean
+check "marker gone, files kept aside" one_match "$F/root/silentsuite-failed-*/silentsuite-server/.env"
+check "no volume deletion" no_volume_deletion
+finish
+
+begin "setup: SIGTERM right after the Caddyfile is replaced restores it"
+new_fixture setupterm
+touch "$F/state/mv-term-after"
+run setup_silentsuite.sh
+check "exits 143" [ "$RC" -eq 143 ]
+check "says it restored the Caddyfile" contains "$F/out" "restored the previous"
+check "Caddyfile byte-identical" caddy_untouched
+check "Caddyfile mode kept" mode_is "$F/etc/caddy/Caddyfile" 640
+check "no staged or candidate files left" caddy_dir_clean
+check "compose down was called" grep -q '^compose .* down$' "$F/state/docker.log"
+check "marker gone, files kept aside" one_match "$F/root/silentsuite-failed-*/silentsuite-server/.env"
+check "no secrets in output" no_secrets_in_output
+finish
+
+begin "remove: a failed Caddyfile write leaves the live file intact and the marker in place"
+new_fixture removemvfail
+run setup_silentsuite.sh
+cp "$F/etc/caddy/Caddyfile" "$F/Caddyfile.before-remove"
+touch "$F/state/mv-fail"
+run remove_silentsuite.sh
+check "exits non-zero" rc_nonzero
+check "Caddyfile unchanged" same "$F/etc/caddy/Caddyfile" "$F/Caddyfile.before-remove"
+check "Caddyfile mode kept" mode_is "$F/etc/caddy/Caddyfile" 640
+check "no staged or candidate files left" caddy_dir_clean
+check "marker kept" present "$F/root/silentsuite/silentsuite-server/.env"
+check "no volume deletion" no_volume_deletion
+finish
+
+begin "remove: SIGTERM right after the Caddyfile is replaced restores it"
+new_fixture removeterm
+run setup_silentsuite.sh
+cp "$F/etc/caddy/Caddyfile" "$F/Caddyfile.before-remove"
+touch "$F/state/mv-term-after"
+run remove_silentsuite.sh
+check "exits 143" [ "$RC" -eq 143 ]
+check "says it restored the Caddyfile" contains "$F/out" "restored the previous"
+check "Caddyfile restored" same "$F/etc/caddy/Caddyfile" "$F/Caddyfile.before-remove"
+check "Caddyfile mode kept" mode_is "$F/etc/caddy/Caddyfile" 640
+check "no staged or candidate files left" caddy_dir_clean
+check "marker kept" present "$F/root/silentsuite/silentsuite-server/.env"
+check "no volume deletion" no_volume_deletion
+finish
+
+begin "a symlinked Caddyfile is refused, not replaced"
+new_fixture symlink
+mv "$F/etc/caddy/Caddyfile" "$F/Caddyfile.real"
+ln -s "$F/Caddyfile.real" "$F/etc/caddy/Caddyfile"
+run setup_silentsuite.sh
+check "exits non-zero" rc_nonzero
+check "says it is a symbolic link" contains "$F/out" "symbolic link"
+check "still a symlink" [ -L "$F/etc/caddy/Caddyfile" ]
+check "target unchanged" same "$F/Caddyfile.real" "$F/Caddyfile.orig"
+check "installer never ran" installer_not_run
+check "marker never created" absent "$F/root/silentsuite"
+finish
+
+begin "remove without addon-state refuses and points at the recovery steps"
+new_fixture nostate
+mkdir -m 700 "$F/root/silentsuite"
+run remove_silentsuite.sh
+check "exits non-zero" rc_nonzero
+check "points at the README recovery section" contains "$F/out" "Recovering an interrupted setup"
+check "marker left alone" present "$F/root/silentsuite"
+check "Caddyfile untouched" caddy_untouched
+finish
+
+# ── Update: read-only trusted-proxy diagnostics ────────────────────────
+
+begin "update warns on gateway drift without changing anything"
+new_fixture drift
+run setup_silentsuite.sh
+cp "$F/root/silentsuite/silentsuite-server/.env" "$F/env.installed"
+cp "$F/root/silentsuite/addon-state" "$F/state.installed"
+: > "$F/state/docker.log"
+: > "$F/state/systemctl.log"
+echo "silentsuite-server_silentsuite 172.19.0.1" > "$F/state/networks"
+run update_silentsuite.sh
+check "exits 0" rc_zero
+check "reports the new gateway" contains "$F/out" "gateway is now 172.19.0.1 but 172.18.0.1 is trusted"
+check "points at the README" contains "$F/out" "Trusted proxy address"
+check "only read-only docker inspect" [ -z "$(grep -v '^inspect ' "$F/state/docker.log")" ]
+check "no systemctl calls" [ ! -s "$F/state/systemctl.log" ]
+check ".env unchanged" same "$F/root/silentsuite/silentsuite-server/.env" "$F/env.installed"
+check "state unchanged" same "$F/root/silentsuite/addon-state" "$F/state.installed"
+finish
+
+begin "update warns when the pin cannot be verified or is missing"
+touch "$F/state/docker-down"
+run update_silentsuite.sh
+check "exits 0 with the daemon down" rc_zero
+check "says it could not verify" contains "$F/out" "could not verify the trusted proxy address"
+rm -f "$F/state/docker-down"
+sed -i '/^trusted_proxy=/d' "$F/root/silentsuite/addon-state"
+run update_silentsuite.sh
+check "exits 0 without a pin" rc_zero
+check "says no address is recorded" contains "$F/out" "no trusted proxy address is recorded"
 finish
 
 # ── Package build ───────────────────────────────────────────────────────

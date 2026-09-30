@@ -11,6 +11,8 @@ on:
     branches: [main]
     paths:
       - 'integrations/libre-workspace/**'
+      - 'LICENSE'
+      - 'apps/docs/public/logo.svg'
       - 'self-host/install.sh'
       - 'scripts/self-host-image-smoke-probe.py'
       - '.github/workflows/libre-workspace-addon.yml'
@@ -18,6 +20,8 @@ on:
     branches: [main]
     paths:
       - 'integrations/libre-workspace/**'
+      - 'LICENSE'
+      - 'apps/docs/public/logo.svg'
       - 'self-host/install.sh'
       - 'scripts/self-host-image-smoke-probe.py'
       - '.github/workflows/libre-workspace-addon.yml'

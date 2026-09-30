@@ -107,6 +107,58 @@ ss_caddy_candidate_path() {
   printf '%s/.Caddyfile.silentsuite-candidate.%s' "$(dirname -- "$SS_CADDYFILE")" "$$"
 }
 
+ss_caddy_staged_path() {
+  printf '%s/.Caddyfile.silentsuite-new.%s' "$(dirname -- "$SS_CADDYFILE")" "$$"
+}
+
+# The Caddyfile is replaced by rename, so it must be one plain file: a symlink
+# (a file managed elsewhere) or extra hard links would be silently detached.
+ss_caddy_assert_replaceable() {
+  if [ -L "$SS_CADDYFILE" ]; then
+    ss_fail "$SS_CADDYFILE is a symbolic link; refusing to replace a file managed elsewhere. Nothing was changed."
+  fi
+  [ -f "$SS_CADDYFILE" ] || ss_fail "$SS_CADDYFILE is not a regular file; nothing was changed."
+  [ "$(stat -c %h -- "$SS_CADDYFILE")" = "1" ] ||
+    ss_fail "$SS_CADDYFILE has other hard links; refusing to replace it. Nothing was changed."
+}
+
+# Replace the Caddyfile with the content of $1 in one rename. The new file is
+# staged beside it as a copy of the current one (same owner and mode) and only
+# then overwritten, so a failed or interrupted write never touches the live
+# Caddyfile.
+ss_caddy_replace() {
+  local source="$1" staged
+  staged="$(ss_caddy_staged_path)"
+  rm -f -- "$staged"
+  if ! cp -p -- "$SS_CADDYFILE" "$staged" || ! cat -- "$source" > "$staged" ||
+    ! mv -f -- "$staged" "$SS_CADDYFILE"; then
+    rm -f -- "$staged"
+    return 1
+  fi
+}
+
+# Sets SS_GATEWAY to the IPv4 gateway of the server container's one network,
+# or SS_GATEWAY_ERROR and fails. Read-only.
+ss_server_gateway() {
+  local networks
+  SS_GATEWAY=""
+  SS_GATEWAY_ERROR=""
+  if ! networks="$(docker inspect --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{$net.Gateway}}{{"\n"}}{{end}}' silentsuite-server 2>/dev/null)"; then
+    SS_GATEWAY_ERROR="could not read the server container's network"
+    return 1
+  fi
+  networks="$(printf '%s\n' "$networks" | sed '/^[[:space:]]*$/d')"
+  if [ -z "$networks" ] || [ "$(printf '%s\n' "$networks" | wc -l | tr -d ' ')" != "1" ]; then
+    SS_GATEWAY_ERROR="the server container is not attached to exactly one network; refusing to guess which proxy address to trust"
+    return 1
+  fi
+  if ! ss_valid_ipv4 "${networks##* }"; then
+    SS_GATEWAY_ERROR="the server's network has no usable IPv4 gateway to trust as the proxy"
+    return 1
+  fi
+  SS_GATEWAY="${networks##* }"
+}
+
 # Refuse to add a second definition of the host, or to guess at a block this
 # add-on did not write.
 ss_caddy_assert_absent() {

@@ -192,22 +192,46 @@ step "First account is gated by the one-time token (over HTTPS through Caddy)"
 SMOKE_TOKEN="$(grep -E '^ETEBASE_BOOTSTRAP_ADMIN_TOKEN=' "$INSTALL/.env" | cut -d= -f2-)"
 [ -n "$SMOKE_TOKEN" ] || fail "no bootstrap token was generated"
 export SMOKE_TOKEN
+# The shared image-smoke probe only speaks plain HTTP (its boundary is the
+# container port), so only its msgpack body/decoder are reused here; the
+# requests go over real HTTPS through Caddy, verified against Caddy's CA.
 docker run --rm -i --network host --add-host "$HOST:127.0.0.1" \
-  -e SMOKE_TOKEN -e SSL_CERT_FILE=/smoke/ca.crt \
+  -e SMOKE_TOKEN \
   -v "$CA_ROOT:/smoke/ca.crt:ro" -v "$PROBE:/smoke/probe.py:ro" \
-  --entrypoint python3 "$SERVER_IMAGE" - "https://$HOST" <<'PY'
-import importlib.util, os, sys
+  --entrypoint python3 "$SERVER_IMAGE" - "$HOST" <<'PY'
+import http.client, importlib.util, os, ssl, sys
 spec = importlib.util.spec_from_file_location("probe", "/smoke/probe.py")
 probe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(probe)
-base = sys.argv[1]
+host = sys.argv[1]
+context = ssl.create_default_context(cafile="/smoke/ca.crt")
+
+def signup(token):
+    path = f"{probe.API_PREFIX}/signup/"
+    if token is not None:
+        path = f"{path}?bootstrap_token={token}"
+    connection = http.client.HTTPSConnection(host, 443, context=context, timeout=20)
+    try:
+        connection.request(
+            "POST", path,
+            body=probe.signup_body("lwadmin", "lwadmin@example.invalid"),
+            headers={"Content-Type": "application/msgpack", "Accept": "application/msgpack"},
+        )
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
 for label, token in (("no token", None), ("wrong token", "not-the-token")):
-    status, _, payload = probe.post_signup(base, "lwadmin", "lwadmin@example.invalid", token)
-    code = probe.decode_msgpack(payload).get("code") if payload else None
+    status, payload = signup(token)
+    try:
+        code = probe.decode_msgpack(payload).get("code") if payload else None
+    except Exception:
+        code = None
     if status != 403 or code != "bootstrap_token_required":
         sys.exit(f"first signup with {label} was not refused (HTTP {status}, code {code})")
     print(f"first signup with {label}: refused (403 bootstrap_token_required)")
-status, _, _ = probe.post_signup(base, "lwadmin", "lwadmin@example.invalid", os.environ["SMOKE_TOKEN"])
+status, _ = signup(os.environ["SMOKE_TOKEN"])
 if status not in (200, 201):
     sys.exit(f"first signup with the stored token failed (HTTP {status})")
 print(f"first signup with the stored token: accepted (HTTP {status})")
@@ -220,6 +244,7 @@ cp /etc/caddy/Caddyfile "$WORK/Caddyfile.installed"
 portal_run update_silentsuite.sh || fail "update failed"
 assert_output_has_no_secrets "$WORK/update_silentsuite.sh.out"
 grep -qF "automatic updates are disabled" "$WORK/update_silentsuite.sh.out" || fail "update did not explain the manual boundary"
+grep -qF "still matches the server network's gateway" "$WORK/update_silentsuite.sh.out" || fail "update did not confirm the trusted proxy address"
 after="$(docker inspect --format '{{.Id}} {{.State.StartedAt}}' silentsuite-postgres silentsuite-server)"
 [ "$before" = "$after" ] || fail "update recreated or restarted containers"
 cmp -s /etc/caddy/Caddyfile "$WORK/Caddyfile.installed" || fail "update changed the Caddyfile"

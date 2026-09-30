@@ -34,14 +34,40 @@ case "$HOST" in
   "$SS_ADDON_ID".*) ss_valid_domain "${HOST#"$SS_ADDON_ID".}" || HOST="" ;;
   *) HOST="" ;;
 esac
-[ -n "$HOST" ] || ss_fail "$SS_STATE_FILE is missing or unreadable; nothing was changed."
+[ -n "$HOST" ] || ss_fail "$SS_STATE_FILE is missing or unreadable, so this add-on cannot tell what it installed; nothing was changed. See 'Recovering an interrupted setup' in README.md."
+
+# ── Rollback for the Caddy change ──────────────────────────────────────
+
+CANDIDATE="$(ss_caddy_candidate_path)"
+CADDY_BACKUP="$SS_MARKER_DIR/Caddyfile.before-removal"
+CADDY_SWAPPED=0
+CADDY_COMMITTED=0
+
+on_exit() {
+  local rc=$?
+  # A second signal must not cut the restore short.
+  trap '' INT TERM
+  rm -f -- "$CANDIDATE" "$(ss_caddy_staged_path)"
+  if [ "$CADDY_SWAPPED" = "1" ] && [ "$CADDY_COMMITTED" = "0" ]; then
+    if [ -f "$CADDY_BACKUP" ] && ss_caddy_replace "$CADDY_BACKUP"; then
+      ss_caddy_reload || ss_warn "Caddy did not reload after its configuration was restored; check 'systemctl status caddy'."
+      ss_warn "restored the previous $SS_CADDYFILE. The SilentSuite containers are stopped and $SS_MARKER_DIR was kept."
+    else
+      ss_warn "could not restore $SS_CADDYFILE; the previous version is $CADDY_BACKUP. $SS_MARKER_DIR was kept."
+    fi
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ── Work out the Caddy change before stopping anything ─────────────────
 
-CANDIDATE="$(ss_caddy_candidate_path)"
-trap 'rm -f -- "$CANDIDATE"' EXIT
 CADDY_CHANGE=0
-if [ -f "$SS_CADDYFILE" ] && grep -qxF -e "$SS_CADDY_BEGIN" -e "$SS_CADDY_END" "$SS_CADDYFILE"; then
+if { [ -e "$SS_CADDYFILE" ] || [ -L "$SS_CADDYFILE" ]; } &&
+  grep -qxF -e "$SS_CADDY_BEGIN" -e "$SS_CADDY_END" "$SS_CADDYFILE"; then
+  ss_caddy_assert_replaceable
   if ! ss_caddy_render_without_block "$HOST" > "$CANDIDATE"; then
     ss_fail "the SilentSuite block in $SS_CADDYFILE is not in the shape this add-on wrote; nothing was changed. Remove it by hand, then run the removal again."
   fi
@@ -63,14 +89,17 @@ if [ -n "$leftover" ]; then
   ss_fail "these SilentSuite containers are still present: $(printf '%s ' $leftover)- nothing else was changed and $SS_MARKER_DIR was kept."
 fi
 
+# ── Remove our Caddy site ──────────────────────────────────────────────
+
 if [ "$CADDY_CHANGE" = "1" ]; then
-  cp -p -- "$SS_CADDYFILE" "$SS_MARKER_DIR/Caddyfile.before-removal"
-  cat -- "$CANDIDATE" > "$SS_CADDYFILE"
-  if ! ss_caddy_reload; then
-    cat -- "$SS_MARKER_DIR/Caddyfile.before-removal" > "$SS_CADDYFILE"
-    ss_caddy_reload || true
-    ss_fail "Caddy failed to reload without the SilentSuite site; the previous Caddyfile was restored. The containers are stopped and $SS_MARKER_DIR was kept."
-  fi
+  ss_caddy_assert_replaceable
+  cp -p -- "$SS_CADDYFILE" "$CADDY_BACKUP"
+  # Flag first: from here on the exit handler restores the backup, including
+  # when the replacement below fails or is interrupted.
+  CADDY_SWAPPED=1
+  ss_caddy_replace "$CANDIDATE" || ss_fail "could not write $SS_CADDYFILE."
+  ss_caddy_reload || ss_fail "Caddy failed to reload without the SilentSuite site."
+  CADDY_COMMITTED=1
   ss_log "removed https://$HOST from Caddy."
 fi
 

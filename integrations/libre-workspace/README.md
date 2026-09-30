@@ -92,6 +92,9 @@ Setup stops without changing anything if:
 - a `silentsuite-server_pgdata` or `silentsuite-server_server_data` volume
   already exists, which happens after an earlier installation was removed;
 - port 3735 is in use, or `ss` cannot tell;
+- the Caddyfile is a symbolic link or has other hard links. The add-on
+  replaces the Caddyfile by rename, which would detach a file managed
+  elsewhere, so it refuses instead;
 - the Caddyfile already has a SilentSuite block or a site for the host;
 - `caddy validate` rejects the new configuration.
 
@@ -111,20 +114,28 @@ the server is on more than one network, has no IPv4 gateway, or the installer
 wrote a different `TRUSTED_PROXY_IPS` value. The port stays published on
 `127.0.0.1` only.
 
+The Caddyfile is changed by writing a staged copy beside it, with the same
+owner and mode, and renaming it into place. A failed or interrupted write
+never truncates the live file. If setup fails or is stopped (SIGINT/SIGTERM)
+after it started changing the Caddyfile, it puts the previous one back.
+
 If setup fails after the server was created (the installer fails, the
-containers are unhealthy, or Caddy does not reload), it:
+containers are unhealthy, the Caddyfile cannot be written, Caddy does not
+reload, or the task is stopped), it restores the previous Caddyfile and stops
+the containers without deleting their volumes. What happens next depends on
+whether the containers are really gone.
 
-- stops the containers but keeps their volumes;
-- restores the previous Caddyfile;
-- moves the files to `/root/silentsuite-failed-<UTC time>`.
+**All containers are gone.** Setup moves the files to
+`/root/silentsuite-failed-<UTC time>`, and the portal shows the add-on as not
+installed. The data volumes are kept, so a new installation is refused. Look
+into the cause first. Then either keep the data, or delete it as described in
+[Deleting the data](#deleting-the-data).
 
-If any SilentSuite container is still there after `docker compose down`, or
-Docker cannot say, setup leaves `/root/silentsuite` in place. The portal then
-still lists the add-on as installed, and the output names the containers.
-Remove the add-on from the portal before retrying.
-
-The portal then shows the add-on as not installed. Before retrying, look into
-the cause and then delete the data (see [Deleting the data](#deleting-the-data)).
+**A container is still there, or Docker cannot say, or the Caddyfile could not
+be restored.** Setup leaves `/root/silentsuite` in place, and the portal still
+lists the add-on as installed. The output names the containers, or the
+Caddyfile backup to restore by hand. Remove the add-on from the portal first.
+Do **not** delete volumes while any SilentSuite container exists.
 
 The installer's standard output is not shown because it contains the one-time
 signup token. Its error messages are shown.
@@ -149,8 +160,38 @@ server can create an account.
 ## Updates
 
 The portal's update action and nightly updates run `update_silentsuite.sh`.
-It does nothing and says so. It never pulls images, follows mutable tags or
-restarts the server.
+It changes nothing and says so. It never pulls images, follows mutable tags,
+restarts the server or rewrites settings.
+
+### Trusted proxy address
+
+Update does run one read-only check with `docker inspect`. It compares three
+values: the trusted proxy address recorded in `/root/silentsuite/addon-state`
+(`trusted_proxy=`), the `TRUSTED_PROXY_IPS` line in the install directory's
+`.env`, and the current gateway of the server container's network. It warns
+if:
+
+- no address is recorded;
+- `.env` does not trust exactly `127.0.0.1,<recorded address>`;
+- the check cannot be made (Docker does not answer, the server container is
+  missing, or it is not on exactly one network with an IPv4 gateway);
+- the gateway differs from the recorded address. This can happen if the
+  Compose network was recreated, for example by a manual `docker compose down`
+  followed by `up`. Caddy's HTTPS requests are then redirected again.
+
+To re-pin by hand, as root (nothing below prints a secret):
+
+```bash
+docker inspect --format '{{range $n, $net := .NetworkSettings.Networks}}{{$n}} {{$net.Gateway}}{{"\n"}}{{end}}' silentsuite-server
+# Expect exactly one line: "<network> <IPv4 gateway>". Use that one address as G.
+G=172.18.0.1   # replace with the gateway printed above
+cd /root/silentsuite/silentsuite-server
+sed -i "s/^TRUSTED_PROXY_IPS=.*/TRUSTED_PROXY_IPS=127.0.0.1,$G/" .env
+sed -i "s/^trusted_proxy=.*/trusted_proxy=$G/" ../addon-state
+docker compose -p silentsuite-server up -d --force-recreate --no-deps server
+```
+
+Trust only that single address. Never trust a subnet or `*`.
 
 A newer add-on package only changes the release used by **new**
 installations. It does not change a running server. The release that is
@@ -168,8 +209,10 @@ Removing the add-on in the portal runs `remove_silentsuite.sh`. It:
    If any SilentSuite container is still there afterwards, or Docker cannot
    say, it stops here: the Caddyfile and `/root/silentsuite` are left as they
    were;
-3. removes only the SilentSuite block from the Caddyfile and reloads Caddy.
-   If Caddy fails to reload, it restores the previous Caddyfile;
+3. removes only the SilentSuite block from the Caddyfile (staged copy and
+   rename, as in setup) and reloads Caddy. If the write fails, Caddy fails to
+   reload, or removal is stopped (SIGINT/SIGTERM) before the reload succeeds,
+   it restores the previous Caddyfile and keeps `/root/silentsuite`;
 4. moves `/root/silentsuite` to `/root/silentsuite-removed-<UTC time>`.
 
 **User data is kept.** The database and server data stay in the Docker volumes
@@ -178,9 +221,40 @@ configuration and its secrets stay in the moved directory. This differs from
 the upstream add-on convention on purpose, so a click in the portal cannot
 erase data. A new installation is refused while those volumes exist.
 
+### Uninstalling the package
+
+Remove the add-on from the portal **before** you uninstall the package with
+`apt remove` or `apt purge`. The package has no maintainer scripts, so
+uninstalling it while the add-on is installed only deletes the lifecycle
+scripts. The containers, the Caddy site and the data stay behind with no
+packaged way to remove them. Reinstalling the same package version brings the
+scripts back.
+
+### Recovering an interrupted setup
+
+If setup was killed outright (for example with SIGKILL, or by a power loss)
+before it recorded `/root/silentsuite/addon-state`, removal refuses to act. It
+cannot tell what was installed. Setup also refuses, because
+`/root/silentsuite` exists. To recover without losing data, as root:
+
+1. Check for containers with `docker ps -a --filter name=silentsuite-`. If
+   `/root/silentsuite/silentsuite-server/docker-compose.yml` exists, run
+   `docker compose -p silentsuite-server down` in that directory. Do not add
+   `--volumes`.
+2. If the Caddyfile has a `# BEGIN silentsuite add-on` block, delete that block
+   by hand, run `caddy validate --config /etc/caddy/Caddyfile`, then
+   `systemctl reload caddy`.
+3. Move the marker aside instead of deleting it:
+   `mv /root/silentsuite /root/silentsuite-recovered-$(date -u +%Y%m%dT%H%M%SZ)`.
+
+Any data volumes left behind still block a new installation until you delete
+them, as described below.
+
 ### Deleting the data
 
-This cannot be undone. Make a backup first if you might need the data.
+This cannot be undone. Make a backup first if you might need the data. Only
+do this after removal, when `docker ps -a --filter name=silentsuite-` shows
+no SilentSuite container.
 
 ```bash
 docker volume rm silentsuite-server_pgdata silentsuite-server_server_data

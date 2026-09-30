@@ -66,7 +66,8 @@ listeners="$(ss -Hltn "sport = :$SS_SERVER_PORT")" ||
 if [ -n "$listeners" ]; then
   ss_fail "TCP port $SS_SERVER_PORT is already in use; nothing was changed."
 fi
-[ -f "$SS_CADDYFILE" ] || ss_fail "$SS_CADDYFILE does not exist; nothing was changed."
+[ -e "$SS_CADDYFILE" ] || [ -L "$SS_CADDYFILE" ] || ss_fail "$SS_CADDYFILE does not exist; nothing was changed."
+ss_caddy_assert_replaceable
 ss_caddy_assert_absent "$HOST"
 
 INTERNAL_TLS="$(ss_internal_tls_for_host "$HOST")"
@@ -80,13 +81,19 @@ CADDY_SWAPPED=0
 DONE=0
 
 rollback() {
-  local rc=$? retired leftover
-  rm -f -- "$CANDIDATE"
+  local rc=$? retired leftover restore_failed=0
+  # A second signal must not cut the rollback short.
+  trap '' INT TERM
+  rm -f -- "$CANDIDATE" "$(ss_caddy_staged_path)"
   [ "$DONE" = "1" ] && return 0
-  if [ "$CADDY_SWAPPED" = "1" ] && [ -n "$CADDY_BACKUP" ] && [ -f "$CADDY_BACKUP" ]; then
-    cat -- "$CADDY_BACKUP" > "$SS_CADDYFILE"
-    ss_caddy_reload || ss_warn "Caddy did not reload after its configuration was restored; check 'systemctl status caddy'."
-    ss_warn "restored the previous $SS_CADDYFILE."
+  if [ "$CADDY_SWAPPED" = "1" ]; then
+    if [ -f "$CADDY_BACKUP" ] && ss_caddy_replace "$CADDY_BACKUP"; then
+      ss_caddy_reload || ss_warn "Caddy did not reload after its configuration was restored; check 'systemctl status caddy'."
+      ss_warn "restored the previous $SS_CADDYFILE."
+    else
+      restore_failed=1
+      ss_warn "could not restore $SS_CADDYFILE; the previous version is $CADDY_BACKUP."
+    fi
   fi
   if [ "$CLAIMED" = "1" ]; then
     if [ -d "$SS_INSTALL_DIR" ]; then
@@ -94,7 +101,9 @@ rollback() {
         ss_compose down >&2 || ss_warn "'docker compose down' failed for the partial installation."
       fi
       leftover="$(ss_existing_containers)" || leftover="(Docker did not answer, so their state is unknown)"
-      if [ -n "$leftover" ]; then
+      if [ "$restore_failed" = "1" ]; then
+        ss_warn "$SS_MARKER_DIR was kept (it holds the Caddyfile backup), so the portal still lists the add-on as installed. Restore $SS_CADDYFILE from the backup, then remove the add-on from the portal."
+      elif [ -n "$leftover" ]; then
         # Retiring the marker now would make the portal report "not installed"
         # while containers are still there.
         ss_warn "setup failed and these SilentSuite containers are still present: $(printf '%s ' $leftover)"
@@ -190,14 +199,8 @@ ss_log "database and server are healthy."
 # redirects every HTTPS request back to itself. Trust exactly that gateway
 # (plus loopback), the way the self-host installer tells operators to trust a
 # proxy that is not on 127.0.0.1, and recreate only the server container.
-networks="$(docker inspect --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}} {{$net.Gateway}}{{"\n"}}{{end}}' silentsuite-server)" ||
-  ss_fail "could not read the server container's network."
-networks="$(printf '%s\n' "$networks" | sed '/^[[:space:]]*$/d')"
-if [ -z "$networks" ] || [ "$(printf '%s\n' "$networks" | wc -l | tr -d ' ')" != "1" ]; then
-  ss_fail "the server container is not attached to exactly one network; refusing to guess which proxy address to trust."
-fi
-GATEWAY="${networks##* }"
-ss_valid_ipv4 "$GATEWAY" || ss_fail "the server's network has no usable IPv4 gateway to trust as the proxy."
+ss_server_gateway || ss_fail "$SS_GATEWAY_ERROR."
+GATEWAY="$SS_GATEWAY"
 if [ "$(grep -c '^TRUSTED_PROXY_IPS=' "$SS_INSTALL_DIR/.env" | tr -d ' ')" != "1" ] ||
   ! grep -qx 'TRUSTED_PROXY_IPS=127\.0\.0\.1' "$SS_INSTALL_DIR/.env"; then
   ss_fail "the installer wrote an unexpected TRUSTED_PROXY_IPS setting; refusing to change it."
@@ -221,10 +224,12 @@ ss_caddy_assert_absent "$HOST"
 ss_caddy_render_with_block "$HOST" "$INTERNAL_TLS" > "$CANDIDATE"
 ss_caddy_validate "$CANDIDATE" || ss_fail "Caddy rejected the configuration with the SilentSuite site added."
 CADDY_BACKUP="$SS_MARKER_DIR/Caddyfile.before-silentsuite"
+ss_caddy_assert_replaceable
 cp -p -- "$SS_CADDYFILE" "$CADDY_BACKUP"
-# Rewrite in place so the file keeps its owner and mode.
-cat -- "$CANDIDATE" > "$SS_CADDYFILE"
+# Flag first: from here on the rollback restores the backup, including when
+# the replacement below fails or is interrupted.
 CADDY_SWAPPED=1
+ss_caddy_replace "$CANDIDATE" || ss_fail "could not write $SS_CADDYFILE."
 ss_caddy_reload || ss_fail "Caddy failed to reload with the SilentSuite site."
 ss_log "Caddy now serves https://$HOST"
 
