@@ -532,9 +532,11 @@ class SettingsRuntimeTest {
             "scheduling-marker", "example.invalid", "@", "Exception", "DEBUG INFO",
             "SOFTWARE INFORMATION", "SYSTEM INFORMATION", "Android version", "Device:", "permission:"
         )).forEach { assertFalse(it, report.contains(it)) }
+        // Build.UNKNOWN ("unknown") is the platform placeholder for an unset field, e.g. MANUFACTURER on the
+        // API 21 emulator. It identifies nothing and is also one of the report's fixed category values.
         listOf(android.os.Build.MODEL, android.os.Build.DEVICE, android.os.Build.DISPLAY, android.os.Build.MANUFACTURER)
-            .filter { it.length >= 4 }
-            .forEach { assertFalse(report.contains(it, ignoreCase = true)) }
+            .filter { it.length >= 4 && !it.equals(android.os.Build.UNKNOWN, ignoreCase = true) }
+            .forEach { assertFalse(it, report.contains(it, ignoreCase = true)) }
         assertFalse(Regex("[0-9]{5,}").containsMatchIn(report))
         assertFalse(Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-").containsMatchIn(report))
         val line = Regex("[A-Za-z0-9 #:=_.,;()/-]*")
