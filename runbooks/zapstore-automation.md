@@ -23,9 +23,17 @@ tags carry none. Checking out `main` afterwards cannot change the jobs,
 permissions, or secret references that were already loaded. The lane therefore
 uses exactly one trigger:
 
-- **`schedule`** (`17 */6 * * *` UTC). Scheduled runs are loaded from the
+- **`schedule`** (`17 * * * *` UTC, hourly). Scheduled runs are loaded from the
   default branch; `github.sha` is that branch head and is the revision that
   supplied the definition.
+
+  **Temporary commissioning cadence.** The owner approved hourly runs so the
+  rehearsal can be observed sooner; no manual trigger was added. The steady
+  cadence is six-hourly (`17 */6 * * *`). After a successful rehearsal and
+  before live activation, restore the six-hour cron in
+  `.github/workflows/zapstore-publish.yml`, the exact cron assertion in
+  `scripts/zapstore/test/workflow-boundary.test.mjs`, and the cadence wording
+  here, in 5.1 and in `scripts/zapstore/lib/notify.mjs`.
 
 Admission proves this every run, from the run's own context and never from a
 value the lane fabricates: `GITHUB_EVENT_NAME=schedule`,
@@ -261,7 +269,9 @@ For transient failures (relay `incomplete`, a download or signer timeout), open
 the failed scheduled run and choose **Re-run failed jobs**; it is expected to
 replay the release id frozen in that run (see the open limitations in 1.1).
 Publication still waits for environment approval. Without any action, the next
-schedule (at most six hours) retries the same exact newest release. To retry
+schedule (nominally hourly during temporary commissioning, six-hourly once
+restored; see 1.1) retries the same exact newest release. GitHub may delay or
+drop scheduled runs; this is not a maximum retry-time guarantee. To retry
 with a code fix, merge the fix to `main` and wait for the next schedule. After
 any publication attempt whose outcome is `unknown`, do not re-run blindly: wait
 for the next scheduled reconciliation to read the relay first.
