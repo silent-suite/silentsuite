@@ -21,8 +21,9 @@ import java.util.concurrent.ConcurrentHashMap
  * notebook, and a store-wide version counter (`sequence`).
  *
  * There is exactly one instance per directory in a process ([open]), so its lock is the one lock per
- * identity. Every operation runs under it. Callers must never hold the Etebase cache monitor while
- * calling in, and transforms passed to [update] must not take it either.
+ * identity. Every operation runs under it. Callers must never hold the Etebase cache monitor or the
+ * cache's write fence (EtebaseLocalCache.writeIfCurrent) while calling in, and transforms passed to
+ * [update] must not take either.
  */
 internal class PendingNotesStore private constructor(
     val dir: File,
@@ -128,7 +129,7 @@ internal class PendingNotesStore private constructor(
      * header was written counts by its header here, and is found by whatever reads the whole entry (the
      * notebook's own screen, the viewer, a push). A kept entry that fails its full read is reported with
      * the notebook its header names. [keep] runs under the store lock and must not take the Etebase
-     * cache monitor.
+     * cache monitor or the cache's write fence.
      */
     fun snapshot(keep: (EntryHeader) -> Boolean): Snapshot = locked {
         val headers = mutableListOf<EntryHeader>()

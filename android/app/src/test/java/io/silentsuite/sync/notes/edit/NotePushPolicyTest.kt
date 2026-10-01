@@ -13,6 +13,7 @@ import com.etebase.client.exceptions.UnauthorizedException
 import io.silentsuite.sync.notes.edit.NotePushPolicy.ConflictOutcome
 import io.silentsuite.sync.notes.edit.NotePushPolicy.FailureKind
 import io.silentsuite.sync.notes.edit.NotePushPolicy.ServerCopy
+import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -102,6 +103,7 @@ class NotePushPolicyTest {
         assertEquals("a redirect is not lost access", FailureKind.TRANSIENT, NotePushPolicy.classify(NotFoundException("Got a redirect - should never happen")))
         assertEquals(FailureKind.CANCELLED, NotePushPolicy.classify(InterruptedException()))
         assertEquals(FailureKind.CANCELLED, NotePushPolicy.classify(InterruptedIOException("timeout interrupted")))
+        assertEquals("a run that is no longer current is not a failure", FailureKind.CANCELLED, NotePushPolicy.classify(StaleSyncRunException()))
         assertEquals(FailureKind.LOCAL, NotePushPolicy.classify(MsgPackException("encode")))
         assertEquals(FailureKind.LOCAL, NotePushPolicy.classify(EtebaseException("other")))
     }

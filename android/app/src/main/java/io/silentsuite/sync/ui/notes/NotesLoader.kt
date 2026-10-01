@@ -301,14 +301,16 @@ internal object NotesLoader {
         var pending: PendingValue<P>? = null
         return try {
             // The pending store is read first: before the session and the cache, so what it holds can
-            // still be shown if they fail, and never while holding the cache monitor (the two locks are
-            // never held together). This order is safe only because of a rule on the runner: before any
-            // store change that lets a note fall back to the cache (dropping an entry after a push, the
-            // conflict drops, removing an original for a conflict copy), it writes the server item it
-            // holds, deleted ones included, into the cache under the cache monitor alone, and keeps the
-            // entry if that write fails. A load then sees either the entry or a cache at least as new, so
-            // a change that just landed can show as waiting until the next reload, but older server
-            // text, or a note deleted here, never comes back in its place.
+            // still be shown if they fail, and never while holding the cache monitor or the cache's write
+            // fence (the pending lock is never held together with either). This order is safe only
+            // because of a rule on the runner: before any store change that lets a note fall back to the
+            // cache (dropping an entry after a push, the conflict drops, removing an original for a
+            // conflict copy), it writes the server item it holds, deleted ones included, into the cache
+            // through the run's SyncRunGuard.write (the cache monitor, then the write fence) without
+            // holding the pending lock, and keeps the entry if that write fails or is refused because
+            // the run is no longer current. A load then sees either the entry or a cache at least as
+            // new, so a change that just landed can show as waiting until the next reload, but older
+            // server text, or a note deleted here, never comes back in its place.
             val read = readPending(PendingNotesStore.forIdentity(appContext, account.type, account.name, creationId))
             pending = PendingValue(read)
             if (!exactGenerationStillCurrent()) return NotesLoad.Stale

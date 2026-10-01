@@ -8,6 +8,7 @@ import com.etebase.client.exceptions.PermissionDeniedException
 import com.etebase.client.exceptions.ServerErrorException
 import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
+import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import java.io.IOException
 import java.io.InterruptedIOException
 import kotlin.math.min
@@ -74,8 +75,11 @@ internal object NotePushPolicy {
         /** A failure on this device (encoding, storage): back off and retry. */
         LOCAL,
         /**
-         * The run was cancelled. Not a failure: no backoff, nothing held. The runner must also check the
-         * thread's interrupt flag first, since an interrupted network call reaches it as a ConnectionException.
+         * The run was cancelled or is no longer current (sign-out, Notes turned off, the account replaced).
+         * Not a failure: no backoff, nothing held. Before recording any failure the runner must first ask
+         * whether the run may still write (SyncRunGuard.mayWrite). The interrupt flag alone is not enough:
+         * a cancelled network call reaches the runner as a ConnectionException and can clear the flag on
+         * the way.
          */
         CANCELLED,
     }
@@ -87,7 +91,7 @@ internal object NotePushPolicy {
     private const val REDIRECT_MESSAGE = "Got a redirect"
 
     fun classify(error: Throwable): FailureKind = when (error) {
-        is InterruptedException, is InterruptedIOException -> FailureKind.CANCELLED
+        is InterruptedException, is InterruptedIOException, is StaleSyncRunException -> FailureKind.CANCELLED
         is ConflictException -> FailureKind.CONFLICT
         is PermissionDeniedException -> FailureKind.READ_ONLY
         is NotFoundException -> if (error.message?.startsWith(REDIRECT_MESSAGE) == true) FailureKind.TRANSIENT else FailureKind.LOST_ACCESS
