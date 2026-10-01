@@ -464,7 +464,7 @@ class NotesSyncBoundaryRuntimeTest {
                 cursorOf(listing), readWhileHeld("a read of the list cursor") { listCursor(account) })
             assertEquals(setOf(first), readWhileHeld("a read of the cached collections") { cachedNotebooks(account) })
             val shown = readWhileHeld("the Notes screen's load") { NotesLoader.notebooks(context, account, "gen-open") }
-            assertEquals(listOf("Listed first"), (shown as NotesLoad.Loaded).value.map { it.name })
+            assertEquals(listOf("Listed first"), (shown as NotesLoad.Loaded).value.notebooks.map { it.name })
             assertTrue("the refresh is still waiting for its answer", refresh.thread.isAlive)
         } finally {
             listing.release()
@@ -898,7 +898,7 @@ class NotesSyncBoundaryRuntimeTest {
 
         // The replacement's notes were in the cache all along, readable by the same loader.
         val theirNotebooks = NotesLoader.notebooks(context, account, "gen-new")
-        assertEquals(listOf("Replacement notebook"), (theirNotebooks as NotesLoad.Loaded).value.map { it.name })
+        assertEquals(listOf("Replacement notebook"), (theirNotebooks as NotesLoad.Loaded).value.notebooks.map { it.name })
         val theirNote = NotesLoader.note(context, account, "gen-new", notebook, note.uid)
         assertEquals(NoteContent(note.uid, "Replacement note", "Replacement body", 2_000L), (theirNote as NotesLoad.Loaded).value)
     }
