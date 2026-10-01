@@ -7,7 +7,7 @@ describe('listCollections', () => {
     const legacyActive = { uid: 'legacy-active', isDeleted: false };
     const deleted = { uid: 'deleted', isDeleted: true };
     const collectionManager = {
-      list: vi.fn().mockResolvedValue({ data: [active, deleted, legacyActive] }),
+      list: vi.fn().mockResolvedValue({ data: [active, deleted, legacyActive], stoken: 'stoken-1', done: true }),
     };
     const account = {
       getCollectionManager: vi.fn().mockReturnValue(collectionManager),
@@ -15,8 +15,72 @@ describe('listCollections', () => {
 
     const collections = await listCollections(account as any, 'etebase.vevent');
 
-    expect(collectionManager.list).toHaveBeenCalledWith('etebase.vevent');
+    expect(collectionManager.list).toHaveBeenCalledTimes(1);
+    expect(collectionManager.list).toHaveBeenCalledWith('etebase.vevent', { stoken: null });
     expect(collections).toEqual([active, legacyActive]);
+  });
+
+  it('keeps listing with the returned stoken until the server reports done', async () => {
+    const first = { uid: 'first' };
+    const deleted = { uid: 'deleted', isDeleted: true };
+    const second = { uid: 'second' };
+    const third = { uid: 'third' };
+    const collectionManager = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ data: [first, deleted], stoken: 'stoken-1', done: false })
+        .mockResolvedValueOnce({ data: [second], stoken: 'stoken-2', done: false })
+        .mockResolvedValueOnce({ data: [third], stoken: 'stoken-3', done: true }),
+    };
+    const account = {
+      getCollectionManager: vi.fn().mockReturnValue(collectionManager),
+    };
+
+    const collections = await listCollections(account as any, 'etebase.md.note');
+
+    expect(collectionManager.list.mock.calls).toEqual([
+      ['etebase.md.note', { stoken: null }],
+      ['etebase.md.note', { stoken: 'stoken-1' }],
+      ['etebase.md.note', { stoken: 'stoken-2' }],
+    ]);
+    expect(collections).toEqual([first, second, third]);
+  });
+
+  it('returns a collection that changed between two pages once, as its newer copy', async () => {
+    const unchanged = { uid: 'unchanged' };
+    const staleCopy = { uid: 'changed', revision: 'old' };
+    const freshCopy = { uid: 'changed', revision: 'new' };
+    const last = { uid: 'last' };
+    const collectionManager = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ data: [staleCopy, unchanged], stoken: 'stoken-1', done: false })
+        .mockResolvedValueOnce({ data: [last, freshCopy], stoken: 'stoken-2', done: true }),
+    };
+    const account = {
+      getCollectionManager: vi.fn().mockReturnValue(collectionManager),
+    };
+
+    const collections = await listCollections(account as any, 'etebase.md.note');
+
+    expect(collections).toEqual([unchanged, last, freshCopy]);
+    expect(collections[2]).toBe(freshCopy);
+  });
+
+  it('drops a collection that was deleted between two pages', async () => {
+    const kept = { uid: 'kept' };
+    const liveCopy = { uid: 'gone', isDeleted: false };
+    const tombstone = { uid: 'gone', isDeleted: true };
+    const collectionManager = {
+      list: vi.fn()
+        .mockResolvedValueOnce({ data: [liveCopy, kept], stoken: 'stoken-1', done: false })
+        .mockResolvedValueOnce({ data: [tombstone], stoken: 'stoken-2', done: true }),
+    };
+    const account = {
+      getCollectionManager: vi.fn().mockReturnValue(collectionManager),
+    };
+
+    const collections = await listCollections(account as any, 'etebase.md.note');
+
+    expect(collections).toEqual([kept]);
   });
 });
 

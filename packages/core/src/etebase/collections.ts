@@ -54,14 +54,33 @@ export async function createCollection(
 
 /**
  * List all collections of a given type.
+ *
+ * The server returns one page at a time (50 collections by default, tombstones
+ * included), least recently changed first, so keep listing until it says it is done.
  */
 export async function listCollections(
   account: Etebase.Account,
   collectionType: string,
 ): Promise<Etebase.Collection[]> {
   const collectionManager = account.getCollectionManager();
-  const response = await collectionManager.list(collectionType);
-  return response.data.filter((collection) => !(collection as any).isDeleted);
+  const collections = new Map<string, Etebase.Collection>();
+  let stoken: string | null = null;
+  let done = false;
+
+  while (!done) {
+    const response = await collectionManager.list(collectionType, { stoken });
+    for (const collection of response.data) {
+      // A collection that changes between two pages is listed again on a later one.
+      // Keep the newer copy, in its newer place.
+      collections.delete(collection.uid);
+      collections.set(collection.uid, collection);
+    }
+    stoken = response.stoken ?? null;
+    done = response.done;
+  }
+
+  // Filter tombstones last: a collection deleted between two pages is live on the earlier one.
+  return Array.from(collections.values()).filter((collection) => !(collection as any).isDeleted);
 }
 
 /**
