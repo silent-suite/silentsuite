@@ -306,11 +306,12 @@ internal object NotesLoader {
             // because of a rule on the runner: before any store change that lets a note fall back to the
             // cache (dropping an entry after a push, the conflict drops, removing an original for a
             // conflict copy), it writes the server item it holds, deleted ones included, into the cache
-            // through the run's SyncRunGuard.write (the cache monitor, then the write fence) without
-            // holding the pending lock, and keeps the entry if that write fails or is refused because
-            // the run is no longer current. A load then sees either the entry or a cache at least as
-            // new, so a change that just landed can show as waiting until the next reload, but older
-            // server text, or a note deleted here, never comes back in its place.
+            // under the cache monitor and, inside it, through the run's SyncRunGuard.write (which takes
+            // the write fence), without holding the pending lock, and keeps the entry if that write
+            // fails or is refused because the run is no longer current. A load then sees either the
+            // entry or a cache at least as new, so a change that just landed can show as waiting until
+            // the next reload, but older server text, or a note deleted here, never comes back in its
+            // place.
             val read = readPending(PendingNotesStore.forIdentity(appContext, account.type, account.name, creationId))
             pending = PendingValue(read)
             if (!exactGenerationStillCurrent()) return NotesLoad.Stale
