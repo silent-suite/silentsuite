@@ -84,11 +84,9 @@ class AccountCreationRegistryTest {
         assertTrue(registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.CREATING)))
         assertEquals("v1\n74|61|69|CREATING|1\n74|62|6a|PREPARED|2", storage.value)
 
-        // Whitespace persisted after a terminal newline stays rejected: nothing trims or skips it,
-        // and no mutator replaces the stored value.
+        // Whitespace persisted after a terminal newline stays rejected unless it is exactly the legacy
+        // four-space shape covered by the next test: nothing trims or skips it, and no mutator writes.
         listOf(
-            "v1\n    " to DecodeStatus.INVALID_FIELD_COUNT,
-            "v1\n74|61|69|PREPARED|1\n    " to DecodeStatus.INVALID_FIELD_COUNT,
             "v1\n74|61|69|PREPARED|1\n\t" to DecodeStatus.INVALID_FIELD_COUNT,
             "v1    " to DecodeStatus.INVALID_HEADER,
             "v1\n74|61|69|PREPARED|1    " to DecodeStatus.INVALID_TIMESTAMP,
@@ -105,6 +103,85 @@ class AccountCreationRegistryTest {
             assertFalse("case $index", registry.clearOwned("t", "a", "i"))
             assertEquals("case $index", 0, storage.commits)
             assertTrue("case $index", storage.value == damaged)
+        }
+    }
+
+    @Test fun `legacy terminal padding is read losslessly and only in that shape`() {
+        val storage = object : AccountCreationRegistry.Store {
+            var value: String? = null
+            var commits = 0
+            override fun read() = value
+            override fun commit(value: String?) = true.also { commits++; this.value = value }
+        }
+        val registry = AccountCreationRegistry(storage)
+        val a = AccountCreationRegistry.Record("a", "i", AccountCreationRegistry.Phase.PREPARED, 1, "t")
+        val b = AccountCreationRegistry.Record("b", "j", AccountCreationRegistry.Phase.PREPARED, 2, "t")
+        val paddedEmpty = "v1\n    "
+        val paddedPopulated = "v1\n74|61|69|PREPARED|1\n74|62|6a|PREPARED|2\n    "
+
+        // One extra stored shape is readable: a newline terminated value the platform preferences file
+        // padded with exactly four spaces. It yields the records a plain store gives, and reading writes
+        // nothing at all, so a padded store stays padded until an ordinary mutation rewrites it.
+        listOf(
+            paddedEmpty to emptyList<AccountCreationRegistry.Record>(),
+            paddedPopulated to listOf(a, b),
+        ).forEachIndexed { index, (padded, expected) ->
+            storage.value = padded
+            storage.commits = 0
+            val result = registry.readResult()
+            assertEquals("case $index", DecodeStatus.OK, result.status)
+            assertEquals("case $index", expected, result.records)
+            assertEquals("case $index", expected, registry.records())
+            assertEquals("case $index", expected.firstOrNull(), registry.get("t", "a"))
+            assertEquals("case $index", 0, storage.commits)
+            assertEquals("case $index", padded, storage.value)
+        }
+
+        // Ownership on a recovered store is the ordinary one: a stale creation id cannot mutate or clear,
+        // and a duplicate prepare still leaves the first owner's record, all without writing.
+        storage.value = paddedPopulated
+        storage.commits = 0
+        assertFalse(registry.updateOwned(a.copy(creationId = "stale", phase = AccountCreationRegistry.Phase.CREATING)))
+        assertFalse(registry.clearOwned("t", "a", "stale"))
+        assertFalse(registry.prepare(a.copy(creationId = "other")))
+        assertEquals(0, storage.commits)
+        assertEquals(paddedPopulated, storage.value)
+        // The first owned mutation keeps every record and leaves the canonical newline-free form.
+        assertTrue(registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.CREATING)))
+        assertEquals("v1\n74|61|69|CREATING|1\n74|62|6a|PREPARED|2", storage.value)
+        assertEquals(1, storage.commits)
+
+        // Every other stored value keeps exactly the rejection it has today: other whitespace, padding in
+        // the wrong place, and payloads this encoder would never have written.
+        listOf(
+            "v1\n\t" to DecodeStatus.INVALID_FIELD_COUNT,                                             // a tab, not spaces
+            "v1\n   " to DecodeStatus.INVALID_FIELD_COUNT,                                            // three spaces
+            "v1\n     " to DecodeStatus.INVALID_FIELD_COUNT,                                          // five spaces
+            "v1\n    \n    " to DecodeStatus.INVALID_FIELD_COUNT,                                     // padded twice
+            "v1    " to DecodeStatus.INVALID_HEADER,                                                  // no terminal newline
+            "v1    \n    " to DecodeStatus.INVALID_HEADER,                                            // padded header line
+            "v1\n74|61|69|PREPARED|1    " to DecodeStatus.INVALID_TIMESTAMP,                          // padding inside a row
+            "v2\n    " to DecodeStatus.INVALID_HEADER,                                                // unknown version
+            "v1\n74|61|69|PREPARED|1\n74|61|69|CREATING|3\n    " to DecodeStatus.INVALID_FIELD_COUNT, // duplicate key
+            "v1\n74|ff|69|PREPARED|1\n    " to DecodeStatus.INVALID_FIELD_COUNT,                      // invalid UTF-8 field
+            "v1\n74|61|6A|PREPARED|1\n    " to DecodeStatus.INVALID_FIELD_COUNT,                      // uppercase hex
+            "v1\n74|61|69|PREPARED|+1\n    " to DecodeStatus.INVALID_FIELD_COUNT,                     // signed timestamp
+            "v1\n74|61|69|PREPARED|01\n    " to DecodeStatus.INVALID_FIELD_COUNT,                     // leading-zero timestamp
+            "v1\n74|62|6a|PREPARED|2\n74|61|69|PREPARED|1\n    " to DecodeStatus.INVALID_FIELD_COUNT, // rows out of order
+            "v1\n74|61|69|PREPARED|1\n\n    " to DecodeStatus.INVALID_FIELD_COUNT,                    // interior blank line
+        ).forEachIndexed { index, (damaged, expected) ->
+            storage.value = damaged
+            storage.commits = 0
+            val result = registry.readResult()
+            assertEquals("malformed case $index", expected, result.status)
+            assertEquals("malformed case $index", null, result.records)
+            assertEquals("malformed case $index", null, registry.records())
+            assertEquals("malformed case $index", null, registry.get("t", "a"))
+            assertFalse("malformed case $index", registry.prepare(b.copy(accountName = "c")))
+            assertFalse("malformed case $index", registry.updateOwned(a.copy(phase = AccountCreationRegistry.Phase.CREATING)))
+            assertFalse("malformed case $index", registry.clearOwned("t", "a", "i"))
+            assertEquals("malformed case $index", 0, storage.commits)
+            assertEquals("malformed case $index", damaged, storage.value)
         }
     }
 

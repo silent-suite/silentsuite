@@ -233,7 +233,7 @@ function TypeSelector({
       onChange={(e) => onChange(e.target.value)}
       className="rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500"
     >
-      {options.map((o) => (
+      {(options.includes(value) ? options : [value, ...options]).map((o) => (
         <option key={o} value={o}>
           {o.charAt(0).toUpperCase() + o.slice(1)}
         </option>

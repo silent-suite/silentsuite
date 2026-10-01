@@ -152,19 +152,20 @@ class LocalAddressBook(
     var includeGroups = true
 
     private var _mainAccount: Account? = null
-    var mainAccount: Account
+
+    /** Owner recorded in this row's user data, or null when the row or its metadata is no longer readable. */
+    val mainAccountOrNull: Account?
         get() {
             _mainAccount?.let { return it }
 
-            AccountManager.get(context).let { accountManager ->
-                val name = accountManager.getUserData(account, USER_DATA_MAIN_ACCOUNT_NAME)
-                val type = accountManager.getUserData(account, USER_DATA_MAIN_ACCOUNT_TYPE)
-                if (name != null && type != null)
-                    return Account(name, type)
-                else
-                    throw IllegalStateException("No main account assigned to address book account")
-            }
+            val accountManager = AccountManager.get(context)
+            val name = accountManager.getUserData(account, USER_DATA_MAIN_ACCOUNT_NAME) ?: return null
+            val type = accountManager.getUserData(account, USER_DATA_MAIN_ACCOUNT_TYPE) ?: return null
+            return Account(name, type)
         }
+
+    var mainAccount: Account
+        get() = mainAccountOrNull ?: throw IllegalStateException("No main account assigned to address book account")
         set(newMainAccount) {
             AccountManager.get(context).let { accountManager ->
                 accountManager.getUserData(newMainAccount, AccountSettings.KEY_CREATION_ID)
@@ -236,7 +237,8 @@ class LocalAddressBook(
 
     fun delete() {
         val accountManager = AccountManager.get(context)
-        val main = mainAccount
+        // The owner can vanish after the caller decided to delete (a concurrent sign-out removal).
+        val main = mainAccountOrNull
         val child = account
         val statusStore = SyncStatusStore(context)
         runCatching { ensureLifecycleCreationId() }
@@ -249,7 +251,7 @@ class LocalAddressBook(
             if (capturedIdentity != null) {
                 // The platform callback may run after a same-name main account has been replaced.
                 val mainGenerationStillCurrent = {
-                    accountManager.getAccountsByType(main.type).any { candidate ->
+                    main != null && accountManager.getAccountsByType(main.type).any { candidate ->
                         candidate == main &&
                             !accountManager.getUserData(candidate, AccountSettings.KEY_CREATION_ID).isNullOrBlank() &&
                             statusStore.identity(candidate) == capturedIdentity
@@ -258,7 +260,7 @@ class LocalAddressBook(
                 val recorded = if (capturedChildIdentity != null) runCatching {
                     statusStore.recordContactsChildRemoved(capturedIdentity, capturedChildIdentity)
                 }.getOrDefault(false) else false
-                if (!recorded && mainGenerationStillCurrent()) {
+                if (!recorded && main != null && mainGenerationStillCurrent()) {
                     val extras = Bundle().apply {
                         putBoolean(ContentResolver.SYNC_EXTRAS_IGNORE_BACKOFF, true)
                         putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)

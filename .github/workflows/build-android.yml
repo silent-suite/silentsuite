@@ -641,8 +641,8 @@ jobs:
             expected={pair for pair in canonical if pair[0] in owners}
           else:
             raise SystemExit(f'unsupported API/shard {key}')
-          expected_sizes={'21:mixed':1,'21:remaining':87,'35:all':88,'36:account-dashboard':27,'36:first-run-setup':19,'36:status-routes':42}
-          if len(canonical) != 88 or len(expected) != expected_sizes[key]:
+          expected_sizes={'21:mixed':1,'21:remaining':89,'35:all':90,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':42}
+          if len(canonical) != 90 or len(expected) != expected_sizes[key]:
             raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
@@ -794,8 +794,9 @@ jobs:
           retention-days: 14
 
   # Ownership-registry persistence across a real process boundary on the minified debug build:
-  # separate instrumentation invocations with the app process terminated in between, then an
-  # in-place reinstall over the existing data. Debug-signed only; no release lane is involved.
+  # separate instrumentation invocations with the app process terminated in between, including the
+  # newline-terminated values earlier builds stored, then an in-place reinstall over that existing
+  # data. Debug-signed only; no release lane and no old-version binary is involved.
   registry-process-boundary:
     name: Registry process boundary (API ${{ matrix.api-level }}, ${{ matrix.arch }})
     needs: conscrypt-r28
@@ -810,6 +811,9 @@ jobs:
         include:
           - arch: x86
             api-level: 21
+            image-required: true
+          - arch: x86_64
+            api-level: 34
             image-required: true
           - arch: x86_64
             api-level: 35
@@ -924,7 +928,7 @@ jobs:
           import json, pathlib
           inventory=json.loads(pathlib.Path('app/build/outputs/androidTest-results/registry-process-boundary/inventory.json').read_text(encoding='utf-8'))
           steps=[(item['step'],item['outcome']) for item in inventory['steps']]
-          expected=[(step,'PASS') for step in ('empty-write','empty-read','populated-write','populated-read','reinstall-write','reinstall-read')]
+          expected=[(step,'PASS') for step in ('empty-write','empty-read','populated-write','populated-read','legacy-empty-write','legacy-empty-read','legacy-populated-write','legacy-populated-read','reinstall-write','reinstall-read','malformed-write','malformed-read')]
           if inventory['api'] != ${{ matrix.api-level }} or inventory['outcome'] != 'PASS' or steps != expected:
             raise SystemExit(f'registry process boundary inventory is not an exact pass: {inventory}')
           if inventory['reinstall']['outcome'] != 'PASS' or inventory['extraFiles']:

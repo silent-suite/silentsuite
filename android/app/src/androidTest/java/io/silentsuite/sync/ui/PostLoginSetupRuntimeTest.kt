@@ -150,6 +150,7 @@ class PostLoginSetupRuntimeTest {
                 rowAbsent = true
                 InstrumentationRegistry.getInstrumentation().runOnMainSync { callback!!.invoke(true) }
                 InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                assertDestroyedAfterRouting(scenario, "returning to sign-in")
             }
             assertEquals(1, clearActiveCount); assertEquals(1, clearOwnedCount)
             assertEquals(null, registry.get(target.type, target.name))
@@ -207,6 +208,7 @@ class PostLoginSetupRuntimeTest {
                 val deadline = android.os.SystemClock.uptimeMillis() + 5_000
                 while (target in manager.getAccountsByType(target.type) && android.os.SystemClock.uptimeMillis() < deadline)
                     android.os.SystemClock.sleep(25)
+                assertDestroyedAfterRouting(scenario, "returning to sign-in")
             }
             org.junit.Assert.assertFalse(target in manager.getAccountsByType(target.type))
             assertEquals(sibling, ActiveAccountManager.getActiveAccount(context))
@@ -385,6 +387,7 @@ class PostLoginSetupRuntimeTest {
                 assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, target, true))
                 assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, sibling, true))
                 assertEquals(target, ActiveAccountManager.getActiveAccount(context))
+                assertDestroyedAfterRouting(recovery, "opening the dashboard")
             }
         } finally {
             dashboardMonitor?.let(instrumentation::removeMonitor)
@@ -987,6 +990,7 @@ class PostLoginSetupRuntimeTest {
                 assertEquals(PostLoginSetupState.COMPLETE, AccountSettings.setupState(manager, sibling, true))
                 assertEquals(targetId, manager.getUserData(target, AccountSettings.KEY_CREATION_ID))
                 assertEquals(siblingId, manager.getUserData(sibling, AccountSettings.KEY_CREATION_ID))
+                assertDestroyedAfterRouting(scenario, "opening the dashboard")
             }
         } finally {
             releaseRetry.countDown()
@@ -1249,6 +1253,20 @@ class PostLoginSetupRuntimeTest {
             android.os.SystemClock.sleep(25)
         }
         assertEquals(expected, AccountSettings.setupState(manager, account, true))
+    }
+
+    /**
+     * Waits for a setup screen that routed away to be destroyed before the scenario closes. On
+     * API 21, ActivityScenario.close() racing that finish could leave the activity stopping until
+     * the lifecycle timeout; once it is destroyed, close() has nothing to do.
+     */
+    private fun assertDestroyedAfterRouting(scenario: ActivityScenario<*>, route: String) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 10_000
+        while (android.os.SystemClock.uptimeMillis() < deadline) {
+            if (scenario.state == androidx.lifecycle.Lifecycle.State.DESTROYED) return
+            android.os.SystemClock.sleep(25)
+        }
+        assertEquals("Setup was not destroyed after $route", androidx.lifecycle.Lifecycle.State.DESTROYED, scenario.state)
     }
 
     private fun resumedActivityOrNull(): android.app.Activity? {

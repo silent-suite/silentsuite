@@ -56,7 +56,25 @@ class AccountCreationRegistry(private val store: Store) {
 
     private fun decode(raw: String?): MutableMap<String, Record>? = decodeResult(raw).first
 
+    /**
+     * Strict decode first. One legacy stored shape is then read back: a value ending in exactly a
+     * newline and four spaces, which is what the platform preferences file returns for the
+     * newline-terminated values earlier builds wrote. It is accepted only when the value without
+     * that padding is byte for byte what this encoder would write for the rows it contains, plus
+     * that terminal newline. Every other value keeps exactly the rejection it has today.
+     *
+     * Read-only: nothing is repaired, committed or read back here, so a recovered store stays as it
+     * is until an ordinary mutation rewrites it through the usual commit path.
+     */
     private fun decodeResult(raw: String?): Pair<MutableMap<String, Record>?, DecodeStatus> {
+        val strict = decodeExact(raw)
+        if (strict.first != null || raw == null || !raw.endsWith(LEGACY_PADDED_ENDING)) return strict
+        val payload = raw.substring(0, raw.length - LEGACY_PADDING.length)
+        val rows = decodeExact(payload).first ?: return strict
+        return if (encode(rows) + "\n" == payload) rows to DecodeStatus.OK else strict
+    }
+
+    private fun decodeExact(raw: String?): Pair<MutableMap<String, Record>?, DecodeStatus> {
         if (raw == null) return mutableMapOf<String, Record>() to DecodeStatus.NOT_STORED
         // Names the validation step in progress; what is accepted or rejected is unchanged.
         var step = DecodeStatus.INVALID_HEADER
@@ -79,9 +97,9 @@ class AccountCreationRegistry(private val store: Store) {
             null to failureStatus(error, step)
         }
     }
-    // Newlines only separate lines; the value never ends in one. The platform preferences file pads a
-    // string that ends in a newline with indentation, which the next process start reads back as
-    // an extra line this decoder rejects. What the decoder accepts is unchanged.
+    // Newlines only separate lines: what this writes ends in the header or in a row, never in a
+    // newline. Older stored values are newline terminated, and the platform preferences file pads
+    // those with four spaces, the one legacy shape decodeResult reads back without rewriting it.
     private fun encode(rows: Map<String, Record>): String =
         (listOf("v$VERSION") + rows.values.sortedBy { key(it.accountType, it.accountName) }.map { r ->
             "${escape(r.accountType)}|${escape(r.accountName)}|${escape(r.creationId)}|${r.phase.name}|${r.timestamp}"
@@ -98,6 +116,9 @@ class AccountCreationRegistry(private val store: Store) {
     companion object {
         private val LOCK = Any()
         private const val VERSION = 1; private const val PREFS = "account_creation_registry"; private const val KEY = "rows"
+        /** Indentation the platform preferences file appends after a value's terminal newline. */
+        private const val LEGACY_PADDING = "    "
+        private const val LEGACY_PADDED_ENDING = "\n    "
         fun canPrepare(accountName: String, existingNames: Set<String>) = accountName !in existingNames
         fun owns(record: Record?, creationId: String?) = record != null && creationId != null && record.creationId == creationId
         /** Every validation rejection is an IllegalArgumentException; anything else keeps only a coarse kind. */

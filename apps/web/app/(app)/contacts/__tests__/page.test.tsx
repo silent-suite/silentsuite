@@ -86,6 +86,26 @@ describe('ContactsPage mobile reachability', () => {
     expect(screen.queryByText('Bob')).not.toBeInTheDocument()
   })
 
+  it('preserves imported custom and multiple types when editing a value', () => {
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.contactState.isLoading = false
+    storeMock.contactState.contacts = [{ id: 'custom', uid: 'custom', displayName: 'Synthetic', name: { given: 'Synthetic', family: '', prefix: '', suffix: '' }, phones: [{ type: 'Desk: west', value: '111' }, { type: 'home,voice', value: '222' }], emails: [{ type: 'x-emergency', value: 'a@example.invalid' }], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, created_at: new Date(), updated_at: new Date() }]
+    storeMock.contactState.contacts[0]!.listId = 'book'
+    storeMock.contactState.contacts[0]!.addresses = [{ type: 'Postal desk', street: 'Street', city: '', state: '', postalCode: '', country: '' }]
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('Synthetic'))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit contact' }))
+    expect(screen.getByDisplayValue('Desk: west')).toHaveValue('Desk: west')
+    expect(screen.getByDisplayValue('Home,voice')).toHaveValue('home,voice')
+    expect(screen.getByDisplayValue('X-emergency')).toHaveValue('x-emergency')
+    expect(screen.getByDisplayValue('Postal desk')).toHaveValue('Postal desk')
+    fireEvent.change(screen.getByDisplayValue('111'), { target: { value: '333' } })
+    fireEvent.blur(screen.getByDisplayValue('333'))
+    expect(storeMock.contactState.updateContact).toHaveBeenCalledWith('custom', expect.objectContaining({ phones: [{ type: 'Desk: west', value: '333' }, { type: 'home,voice', value: '222' }] }))
+    fireEvent.change(screen.getByDisplayValue('Desk: west'), { target: { value: 'work' } })
+    expect(storeMock.contactState.updateContact).toHaveBeenLastCalledWith('custom', expect.objectContaining({ phones: [{ type: 'work', value: '111' }, { type: 'home,voice', value: '222' }] }))
+  })
+
   it('exposes the primary create action on all widths', () => {
     renderWithIntl(<ContactsPage />)
     const createButton = screen.getByRole('button', { name: 'New Contact' })

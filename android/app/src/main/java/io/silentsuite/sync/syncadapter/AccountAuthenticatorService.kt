@@ -19,7 +19,6 @@ import io.silentsuite.sync.log.Logger
 
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.ui.setup.LoginActivity
-import java.util.*
 import java.util.logging.Level
 
 
@@ -36,22 +35,23 @@ class AccountAuthenticatorService: Service(), OnAccountsUpdateListener {
         internal fun cleanupAccounts(context: Context) {
             Logger.log.info("Cleaning up orphaned accounts")
 
-            val accountNames = LinkedList<String>()
             val am = AccountManager.get(context)
-            for (account in am.getAccountsByType(context.getString(R.string.account_type))) {
-                accountNames.add(account.name)
+            val accountNames = am.getAccountsByType(context.getString(R.string.account_type)).map { it.name }.toSet()
+
+            // Delete orphaned address book accounts. This runs on the main looper while a sign-out
+            // may be removing the same rows: a row whose owner metadata is no longer readable was
+            // either removed after enumeration or has unknown ownership, and is left alone.
+            val addressBooks = am.getAccountsByType(context.getString(R.string.account_type_address_book))
+                .map { LocalAddressBook(context, it, null) }
+            val orphans = AddressBookCleanupPolicy.orphans(accountNames, addressBooks) { addressBook ->
+                addressBook.mainAccountOrNull?.let { AddressBookOwner(it.name, it.type) }
             }
-
-            // delete orphaned address book accounts
-            for (addrBookAccount in am.getAccountsByType(context.getString(R.string.account_type_address_book))) {
-                val addressBook = LocalAddressBook(context, addrBookAccount, null)
+            for (addressBook in orphans) {
                 try {
-                    if (!accountNames.contains(addressBook.mainAccount.name))
-                        addressBook.delete()
+                    addressBook.delete()
                 } catch (e: ContactsStorageException) {
-                    Logger.log.log(Level.SEVERE, "Couldn't get address book main account", e)
+                    Logger.log.log(Level.SEVERE, "Couldn't delete orphaned address book", e)
                 }
-
             }
         }
     }
