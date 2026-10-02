@@ -768,26 +768,67 @@ class PendingNotesStoreTest {
         assertNull(store.landed("copy1"))
     }
 
-    @Test fun `editors follow a copy whose first write was finished by recovery`() {
+    @Test fun `editors follow a copy that recovery had to commit`() {
+        val editor = store.editorOpened("orig")
+        store.saveLocal(editor, "orig", "b1", "r1", blob("first"), isCreate = false)
+        store.completeSend("orig", store.beginSend("orig")!!.version, "r1", blob("first as landed"))
+        store.saveLocal(editor, "orig", "b1", "r2", blob("mine"), isCreate = false)
+        // The copy's file is written in full, and the call ends before its rename with something that is
+        // not an I/O failure, so the same process, with its editors, goes on.
+        PendingNotesStore.beforeRenameForTesting = { if (it.name == "copy1.note") throw IllegalStateException("not an I/O failure") }
+        assertThrows(IllegalStateException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        PendingNotesStore.beforeRenameForTesting = null
+        assertTrue(File(dir, "copy1.note.new").exists())
+        assertEquals("the copy is not committed, so nothing has moved", "orig", editor.noteUid)
+        // The recovery before the next operation commits the copy and finishes the replacement, editors included.
+        assertEquals(SaveOutcome.Moved("copy1"), store.saveLocal(editor, "orig", "b1", "r3", blob("typed after"), isCreate = false))
+        assertEquals("copy1", editor.noteUid)
+        assertEquals(listOf("copy1"), store.scan().entries.map { it.noteUid })
+        assertNull(entry("copy1").origin)
+        assertNull("the original's landed record went with its entry", store.landed("orig"))
+        assertFalse(File(dir, "orig.landed").exists())
+    }
+
+    @Test fun `a copy whose first write fails is not left behind to be committed later as a second copy`() {
         var refuse = true
         val d = tmp.newFolder("refused-copy")
         val s = refusingRenames(d, "copy1.note") { refuse }
         val editor = s.editorOpened("orig")
-        s.saveLocal(editor, "orig", "b1", "r1", blob("first"), isCreate = false)
-        s.completeSend("orig", s.beginSend("orig")!!.version, "r1", blob("first as landed"))
-        s.saveLocal(editor, "orig", "b1", "r2", blob("mine"), isCreate = false)
-        // The copy's file is written in full, and then its rename is refused.
+        s.saveLocal(editor, "orig", "b1", "r1", blob("mine"), isCreate = false)
         assertThrows(java.io.IOException::class.java) { s.replaceWithNewNote("orig", s.entry("orig").version, "srv", newNote()) }
-        assertTrue(File(d, "copy1.note.new").exists())
-        assertEquals("the copy is not committed, so nothing has moved", "orig", editor.noteUid)
+        assertFalse("the complete but uncommitted copy was removed", File(d, "copy1.note.new").exists())
         refuse = false
-        // The recovery before the next operation commits the copy and finishes the replacement, editors included.
-        assertEquals(SaveOutcome.Moved("copy1"), s.saveLocal(editor, "orig", "b1", "r3", blob("typed after"), isCreate = false))
-        assertEquals("copy1", editor.noteUid)
-        assertEquals(listOf("copy1"), s.scan().entries.map { it.noteUid })
+        // The original still owns the text: the editor stays on it and saves into it.
+        assertEquals("orig", editor.noteUid)
+        assertTrue(s.saveLocal(editor, "orig", "b1", "r2", blob("mine, and more"), isCreate = false) is SaveOutcome.Saved)
+        assertEquals(listOf("orig"), s.scan().entries.map { it.noteUid })
+        // The next run resolves the conflict again, and that makes the only copy.
+        assertTrue(s.replaceWithNewNote("orig", s.entry("orig").version, "srv", newNote("copy2", "c2")))
+        assertEquals(listOf("copy2"), s.scan().entries.map { it.noteUid })
+        assertEquals("copy2", editor.noteUid)
+    }
+
+    @Test fun `a save through a handle decides and writes against one recovery, not two`() {
+        var refusals = 0
+        val d = tmp.newFolder("one-recovery")
+        val s = refusingRenames(d, "copy1.note") { refusals-- > 0 }
+        val editor = s.editorOpened("orig")
+        s.saveLocal(editor, "orig", "b1", "r1", blob("mine"), isCreate = false)
+        // The copy is left written but not committed, in a process that goes on.
+        PendingNotesStore.beforeRenameForTesting = { if (it.name == "copy1.note") throw IllegalStateException("not an I/O failure") }
+        assertThrows(IllegalStateException::class.java) { s.replaceWithNewNote("orig", s.entry("orig").version, "srv", newNote()) }
+        PendingNotesStore.beforeRenameForTesting = null
+        // The recovery at the start of this save cannot commit the copy; a recovery right after it could.
+        // The save was decided for the original, so it is written to the original: no second recovery runs
+        // inside the call to remove the original and move the editor under it.
+        refusals = 1
+        assertTrue(s.saveLocal(editor, "orig", "b1", "r2", blob("typed on the original"), isCreate = false) is SaveOutcome.Saved)
+        assertEquals("orig", editor.noteUid)
+        assertArrayEquals(blob("typed on the original"), s.entry("orig").blob)
+        // The original changed after the copy was taken, so both are kept and the editor stays where it is.
+        assertEquals(listOf("copy1", "orig"), s.scan().entries.map { it.noteUid })
         assertNull(s.entry("copy1").origin)
-        assertNull("the original's landed record went with its entry", s.landed("orig"))
-        assertFalse(File(d, "orig.landed").exists())
+        assertEquals("orig", editor.noteUid)
     }
 
     // ---- removing a conflict copy that still carries its origin link ----
@@ -863,6 +904,55 @@ class PendingNotesStoreTest {
         // is removed, the link is cleared, and the copy is sent.
         val snapshot = next.beginSend("copy1")!!
         assertNull(snapshot.origin)
+        assertEquals(Read.Missing, next.read("orig"))
+    }
+
+    /** A copy still linked to an original that the first recovery of a new process could not read, and that reads again. */
+    private fun linkedCopyWhoseOriginalReadsAgain(): PendingNotesStore {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        PendingNotesStore.beforeOriginalRemovedForTesting = { throw IllegalStateException("process died") }
+        assertThrows(IllegalStateException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        PendingNotesStore.beforeOriginalRemovedForTesting = null
+        val file = File(dir, "orig.note")
+        val good = file.readBytes()
+        file.writeBytes(byteArrayOf(0))
+        val next = restarted()
+        assertEquals(listOf("orig.note"), next.scan().unreadable.map { it.file })
+        file.writeBytes(good)
+        return next
+    }
+
+    @Test fun `a send refused for the origin link has recovery look again, so the copy goes with the next try`() {
+        val next = linkedCopyWhoseOriginalReadsAgain()
+        assertNull("recovery has not looked since the original read badly", next.beginSend("copy1"))
+        assertNull(next.beginSend("copy1")!!.origin)
+        assertEquals(Read.Missing, next.read("orig"))
+    }
+
+    @Test fun `deleting a linked copy removes the original it replaced, which is then an ordinary note again`() {
+        val next = linkedCopyWhoseOriginalReadsAgain()
+        // No recovery runs before this delete, so the delete itself removes the original.
+        assertEquals(DeleteOutcome.Removed, next.markDeleted("copy1", "b1", "d", blob("x")))
+        assertEquals(Read.Missing, next.read("orig"))
+        assertTrue(next.scan().entries.isEmpty())
+        // A later edit of the server's version of that note is not held back.
+        next.saveLocal("orig", "b1", "r9", blob("a new edit"), isCreate = false)
+        assertEquals(listOf("r9"), next.beginSend("orig")!!.sent)
+    }
+
+    @Test fun `deleting a linked copy leaves an original that was saved again since`() {
+        val next = linkedCopyWhoseOriginalReadsAgain()
+        next.saveLocal("orig", "b1", "r2", blob("typed later"), isCreate = false)
+        assertEquals(DeleteOutcome.Removed, next.markDeleted("copy1", "b1", "d", blob("x")))
+        assertArrayEquals("it is no longer the entry the copy replaced", blob("typed later"), next.entry("orig").blob)
+        assertEquals(listOf("orig"), next.scan().entries.map { it.noteUid })
+    }
+
+    @Test fun `discarding a linked copy removes the original it replaced`() {
+        val next = linkedCopyWhoseOriginalReadsAgain()
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, next.hold("copy1", HeldReason.READ_ONLY, now = 5))
+        next.discard("copy1")
+        assertTrue(next.scan().entries.isEmpty())
         assertEquals(Read.Missing, next.read("orig"))
     }
 

@@ -567,6 +567,9 @@ internal class PendingNotesStore private constructor(
             is Read.Unreadable -> throw IOException("the note this copy replaced cannot be read")
             Read.Missing -> Unit
         }
+        // The replaced entry is gone, or what is there is a later entry of its own. Either way nothing
+        // links to that note once the copy goes, so an edit of it is not held back from sending.
+        unfinishedOriginals = unfinishedOriginals - origin.noteUid
     }
 
     /**
@@ -587,7 +590,16 @@ internal class PendingNotesStore private constructor(
             require(newNote.noteUid != originalUid) { "a new note needs its own uid" }
             val copy = newNote.copy(version = nextVersion(), fromConflict = true,
                 origin = PendingEntry.Origin(originalUid, e.revision, e.version, serverRevision))
-            writeAtomically(noteFile(copy.noteUid), PendingCodec.encodeEntry(copy))
+            val copyFile = noteFile(copy.noteUid)
+            try {
+                writeAtomically(copyFile, PendingCodec.encodeEntry(copy))
+            } catch (failed: IOException) {
+                // The call fails, the original still owns the text, and the next run resolves the conflict
+                // again. A complete write left behind would be committed by a later recovery, as a second
+                // copy next to the one that run makes.
+                if (!copyFile.exists()) File(dir, copyFile.name + NEW).delete()
+                throw failed
+            }
             moveEditors(originalUid, copy.noteUid)
             beforeOriginalRemovedForTesting?.invoke()
             remove(noteFile(originalUid))
@@ -675,16 +687,29 @@ internal class PendingNotesStore private constructor(
      * Every public operation: refuse after [clearAll], and finish any interrupted work first. Recovery
      * runs again before the next operation for as long as anything in it did not work out, including a
      * write or removal inside recovery itself.
+     *
+     * It runs once per operation, at its start. An operation that calls another one under the lock (a
+     * save through a handle, anything that goes through [update]) does not recover again in between:
+     * recovery can remove an original and move editors, and what the outer call read or decided before
+     * the inner one must still hold when the inner one writes.
      */
     private inline fun <T> locked(block: () -> T): T = synchronized(lock) {
         check(!closed) { "the pending store was cleared" }
-        if (!recovered) {
+        if (depth == 0 && !recovered) {
             recovered = true
             recoveryProblems = recoverLocked()
             if (recoveryProblems.isNotEmpty()) recovered = false
         }
-        block()
+        depth++
+        try {
+            block()
+        } finally {
+            depth--
+        }
     }
+
+    /** How many [locked] calls are open on the thread that holds the lock. */
+    private var depth = 0
 
     /** A new entry for a note that landed earlier starts from that evidence: not a create, and the landed revision is ours. */
     private fun fromLanded(entry: PendingEntry): PendingEntry {

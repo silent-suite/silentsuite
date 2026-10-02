@@ -110,7 +110,8 @@ class NotePushPolicyTest {
         }
     }
 
-    @Test fun `no failure kind leads to the repeated conflict reason, only the conflict decision does`() {
+    @Test fun `no failure kind leads to the repeated conflict reason`() {
+        // Only the conflict decision leads to it; heldReasonFor, which maps failures, never does.
         assertEquals("entry files store this name", "REPEATED_CONFLICT", HeldReason.REPEATED_CONFLICT.name)
         for (kind in FailureKind.values()) {
             for (previous in listOf(null, FailureKind.REJECTED.name, FailureKind.CONFLICT.name)) {
