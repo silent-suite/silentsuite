@@ -417,4 +417,22 @@ class NoteMetaCodecTest {
             assertTrue(raw, NoteMetaCodec.merge(out, "t", 42).let { it is Merge.Merged && it.bytes.contentEquals(out) })
         }
     }
+
+    @Test fun `metadata for a new note is name and mtime only, at the smallest widths`() {
+        // Hand-encoded, at the widths the earlier fixtures show the web's encoder uses.
+        // {name: "Groceries (conflicted copy)", mtime: 1700000000000}
+        val fresh = NoteMetaCodec.fresh("Groceries (conflicted copy)", 1_700_000_000_000)
+        assertEquals("82a46e616d65bb47726f6365726965732028636f6e666c696374656420636f707929a56d74696d65cf0000018bcfe56800", hex(fresh.bytes))
+        assertEquals("Groceries (conflicted copy)", fresh.name)
+        // {name: "A title that is longer than thirty-one bytes", mtime: 5}
+        assertEquals("82a46e616d65d92c41207469746c652074686174206973206c6f6e676572207468616e207468697274792d6f6e65206279746573a56d74696d6505",
+            hex(NoteMetaCodec.fresh("A title that is longer than thirty-one bytes", 5).bytes))
+    }
+
+    @Test fun `a new note's title with an unpaired surrogate is written and returned with U+FFFD`() {
+        val fresh = NoteMetaCodec.fresh("a\ud800b", 5)
+        assertEquals("82a46e616d65a561efbfbd62a56d74696d6505", hex(fresh.bytes))
+        assertEquals("a�b", fresh.name)
+        assertEquals(NoteMetaCodec.Peek("a�b", 5), NoteMetaCodec.peek(fresh.bytes))
+    }
 }

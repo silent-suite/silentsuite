@@ -54,6 +54,7 @@ internal object NoteMetaCodec {
 
     private val NAME = "name".toByteArray(Charsets.UTF_8)
     private val MTIME = "mtime".toByteArray(Charsets.UTF_8)
+    private val EMPTY_MAP = byteArrayOf(0x80.toByte())
 
     fun merge(raw: ByteArray?, name: String, mtime: Long): Merge {
         val scan = try {
@@ -88,6 +89,12 @@ internal object NoteMetaCodec {
         }
         return Merge.Merged(out.toByteArray(), written)
     }
+
+    /**
+     * Metadata for a note this app creates from a conflict: a map of `name` and `mtime` only, as the
+     * web's move writes for the note it creates (design 3.4).
+     */
+    fun fresh(name: String, mtime: Long): Merge.Merged = merge(EMPTY_MAP, name, mtime) as Merge.Merged
 
     /**
      * Reads `name` (a string of valid UTF-8) and `mtime` (an integer, or a finite float truncated
