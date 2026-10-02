@@ -167,8 +167,14 @@ class NotePushStepTest {
     private var rebaseError: Exception? = null
     private var newNoteError: Exception? = null
 
+    /** A notebook whose cached state cannot be read. */
+    private var notebookLookupError: (String) -> Exception? = { null }
+
     private val remote = object : NotePushStep.Remote {
-        override fun notebook(notebookUid: String) = notebooks[notebookUid] ?: Notebook.WRITABLE
+        override fun notebook(notebookUid: String): Notebook {
+            notebookLookupError(notebookUid)?.let { throw it }
+            return notebooks[notebookUid] ?: Notebook.WRITABLE
+        }
 
         override fun upload(entry: PendingEntry): NotePushStep.ServerItem {
             val upload = item(entry.blob)
@@ -411,7 +417,7 @@ class NotePushStepTest {
         // read-only: both are held, and nothing is left stuck.
         save("a", "one")
         save("b", "two")
-        repeat(2) { store.recordFailure("a", entry("a").version, FailureKind.TRANSIENT.name, now - 3_600_000) }
+        repeat(2) { store.recordFailure("a", entry("a").version, FailureKind.TRANSIENT.name, now - 600_000) }
         store.recordFailure("b", entry("b").version, FailureKind.TRANSIENT.name, now - 10_000)
         server.uploadError = { PermissionDeniedException("no_write_access") }
         server.notebookAnswer = { NotebookCheck.Found(readOnly = true, deleted = false) }
@@ -426,7 +432,7 @@ class NotePushStepTest {
         server.uploads.clear()
         save("c", "three", notebook = "b2")
         save("d", "four", notebook = "b2")
-        repeat(2) { store.recordFailure("c", entry("c").version, FailureKind.TRANSIENT.name, now - 3_600_000) }
+        repeat(2) { store.recordFailure("c", entry("c").version, FailureKind.TRANSIENT.name, now - 600_000) }
         store.recordFailure("d", entry("d").version, FailureKind.TRANSIENT.name, now - 59_000)
         var unauthorized = true
         server.uploadError = { if (unauthorized) UnauthorizedException("Invalid token.") else null }
@@ -735,6 +741,8 @@ class NotePushStepTest {
         assertEquals("the notebook takes no pushes, so its text belongs in the holding area, a's too", 3, result.held)
         for (uid in listOf("a", "b", "c")) assertEquals(HeldReason.READ_ONLY, entry(uid).held?.reason)
         assertEquals("the failure a had before the answer stays on record", 1, entry("a").failureCount)
+        assertEquals("and stays the run's failure: that request did fail in this run", FailureKind.TRANSIENT, result.failure)
+        assertFalse(result.succeeded)
     }
 
     @Test fun `a 403 on the push and on the notebook fetch is about the account, and ends the step`() {
@@ -1356,6 +1364,87 @@ class NotePushStepTest {
         assertEquals("the text is untouched", "one", item(entry("a").blob).text)
         assertTrue(run().succeeded)
         assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a failure that cannot be written down still ends the step when the error is not about one entry`() {
+        save("a", "one")
+        save("b", "two")
+        // Both failed in an earlier run, so their revisions are already recorded as sent and the next
+        // send has nothing to write before the upload.
+        server.uploadError = { http(500) }
+        run()
+        server.uploads.clear()
+        // The store can no longer write, and the server stops answering.
+        PendingNotesStore.beforeRenameForTesting = { if (it.name.endsWith(".note")) throw IOException("no space left on device") }
+        server.uploadError = { ConnectionException("timeout") }
+        val result = run()
+        assertEquals("one request and one timeout, not one per waiting entry", listOf("a"), uploaded())
+        assertEquals(Ended.STOPPED, result.ended)
+        assertEquals(FailureKind.TRANSIENT, result.failure)
+        assertEquals("a", memory.endedLastStep)
+    }
+
+    @Test fun `a store failure for one entry is not repeated in the pass after a renewal`() {
+        save("a", "one")
+        save("b", "two")
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "a.note") throw IOException("could not remove a.note") }
+        var unauthorized = true
+        server.uploadError = { if (unauthorized && it.uid == "b") UnauthorizedException("Invalid token.") else null }
+        val step = step()
+        assertEquals(Ended.NEEDS_AUTHENTICATION, step.pass().ended)
+        unauthorized = false
+        val second = step.pass()
+        assertEquals("a was settled as failed in the first pass", listOf("a", "b", "b"), uploaded())
+        assertEquals(1, entry("a").failureCount)
+        assertEquals(FailureKind.LOCAL, second.failure)
+        assertEquals(1, second.pushed)
+    }
+
+    @Test fun `a newer change that cannot be stored on the item that landed leaves the push counted and nothing recorded against it`() {
+        save("a", "text")
+        duringUpload = {
+            duringUpload = {}
+            save("a", "text, and more")
+            // From here on the entry's file cannot be rewritten: the next write is the rebase.
+            PendingNotesStore.beforeRenameForTesting = { if (it.name == "a.note") throw IOException("no space left on device") }
+        }
+        val result = run()
+        PendingNotesStore.beforeRenameForTesting = null
+        assertEquals("the upload did land", 1, result.pushed)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("the newer text was never sent, so it has no failure of its own", 0, entry("a").failureCount)
+        assertNull("still on its old base", item(entry("a").blob).base)
+        assertTrue(run().succeeded)
+        assertEquals("text, and more", server.items.getValue("a").text)
+    }
+
+    @Test fun `a conflict is not reported while its copy could not be written, and is reported by the run that makes the copy`() {
+        editedElsewhere()
+        var failing = true
+        PendingNotesStore.beforeRenameForTesting = { if (failing && it.name == "copy-1.note") throw IOException("no space left on device") }
+        val failed = run()
+        assertEquals(FailureKind.LOCAL, failed.failure)
+        assertTrue("the text has no new note yet", failed.conflicts.isEmpty())
+        assertEquals(listOf("n1"), waiting())
+        assertEquals(1, entry("n1").failureCount)
+        failing = false
+        val result = run()
+        assertEquals(mapOf("b1" to 1), result.conflicts)
+        assertTrue(result.succeeded)
+        assertEquals("one copy on the server", 1, server.items.keys.count { it.startsWith("copy-") })
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a notebook whose cached state cannot be read fails the pass before anything is held`() {
+        notebooks["ro"] = Notebook.READ_ONLY
+        save("e1", "one", notebook = "ro")
+        save("e2", "two", notebook = "unreadable")
+        notebookLookupError = { if (it == "unreadable") IllegalStateException("cache entry cannot be read") else null }
+        assertThrows(IllegalStateException::class.java) { run() }
+        assertEquals("nothing was written before the failure", PendingEntry.State.UPSERT, entry("e1").state)
+        assertTrue(server.uploads.isEmpty())
+        notebookLookupError = { null }
+        assertEquals(1, run().held)
     }
 
     @Test fun `a hold that cannot be written is that entry's failure, and the run goes on`() {

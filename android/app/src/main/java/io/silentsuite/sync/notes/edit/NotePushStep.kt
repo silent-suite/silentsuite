@@ -19,19 +19,22 @@ import java.io.IOException
  *
  * Whatever the step repeats because of a server answer has a bound here:
  * - an entry is rebased at most once per run, so one pass pushes it and fetches its server copy at
- *   most twice. A request answered 401 recorded nothing and is made again in the pass after the
- *   renewal, which is the one request a run can add to that;
+ *   most twice. A request answered 401 recorded nothing, and the pass after the renewal starts that
+ *   entry again from its upload: a 401 on an upload repeats that upload, and a 401 on fetch(uid) or
+ *   on the notebook fetch repeats the upload before it as well. A run therefore makes at most three
+ *   uploads and three fetches for one entry;
  * - a conflict whose server copy cannot be fetched is the entry's failure, with backoff;
  * - a note made from a conflict is pushed in the run that makes it, and its mark turns another
  *   conflict into a hold instead of one more note;
- * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused;
+ * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused (a
+ *   confirming fetch answered 401 stored no result and is made once more after the renewal);
  * - a connection error, a temporary server error, or a 403 on the confirming fetch ends the step, so a
  *   run waits out at most one timeout here.
  *
  * No Etebase type appears: the network and the cryptography sit behind [Remote], so every rule is
  * unit-tested with a stand-in. The instance holds the state of one run. A second [pass] is the retry
- * after a token renewal: what the first pass settled is not sent again, and the one rebase and the one
- * confirming fetch are not given a second time.
+ * after a token renewal: what the first pass settled is not sent again, an entry that used its rebase
+ * gets no second one, and a notebook answer the first pass stored is reused.
  *
  * Not here: the token renewal itself and its gate, the follow-up rule (NotesSyncPolicy), notifications,
  * and the fetch that follows the step.
@@ -119,6 +122,7 @@ internal class NotePushStep(
      * @property droppedDeletes pending deletes that were dropped instead of held, so the server's copy shows again.
      * @property conflicts per notebook uid, the conflicts settled with a new note or by giving a note back.
      * @property failure the run's own failure: the error that ended the step, else the first entry failure.
+     * An entry's failure in this run stays the run's failure even when a later notebook answer holds that entry.
      * @property carriedFailure the last failure category of the most recently failed entry that was skipped
      * in backoff and is still waiting, so an automatic run does not record success over an entry that is stuck.
      */
@@ -152,9 +156,10 @@ internal class NotePushStep(
 
     /**
      * Runs the step once. A failure of one entry, a failed store write included, is recorded and the
-     * step goes on. Thrown instead, with nothing recorded: cancellation (InterruptedException,
-     * InterruptedIOException), a run that may no longer write (StaleSyncRunException), and a failure to
-     * read the store or the notebook list before any entry is tried, which fails the run as a whole.
+     * step goes on. Thrown instead: cancellation (InterruptedException, InterruptedIOException) and a
+     * run that may no longer write (StaleSyncRunException), with nothing more recorded, and a failure
+     * to read the store or a notebook's cached state at the start of the pass, before the pass has
+     * written anything, which fails the run as a whole.
      */
     fun pass(): Result {
         val ended = try {
@@ -173,19 +178,24 @@ internal class NotePushStep(
         val snapshot = store.snapshot { false }
         // A file that cannot be read is kept and reported, and the run never records success over it.
         if (snapshot.unreadable.isNotEmpty()) noteFailure(FailureKind.LOCAL)
-        val sendable = ArrayList<PendingNotesStore.EntryHeader>()
-        for (header in snapshot.headers) {
-            if (header.state == PendingEntry.State.HELD || header.noteUid in settled) continue
-            // Design 3.3 step 1: a notebook that takes no pushes gets none. The server would accept
-            // writes into a deleted notebook that no client shows. A confirming fetch made earlier in
-            // this run is a newer answer than the cache.
-            val reason = notebookChecks[header.notebookUid]?.let { NotePushPolicy.heldReasonFor(FailureKind.READ_ONLY, it) }
-                ?: when (remote.notebook(header.notebookUid)) {
+        // Design 3.3 step 1: a notebook that takes no pushes gets none. The server would accept writes
+        // into a deleted notebook that no client shows. A confirming fetch made earlier in this run
+        // is a newer answer than the cache. Every notebook is looked up before anything is held, so a
+        // cache that cannot be read fails the pass before it has written anything.
+        val waiting = snapshot.headers.filter { it.state != PendingEntry.State.HELD && it.noteUid !in settled }
+        val refusals = HashMap<String, HeldReason?>()
+        for (notebookUid in waiting.map { it.notebookUid }.distinct()) {
+            refusals[notebookUid] = notebookChecks[notebookUid]?.let { NotePushPolicy.heldReasonFor(FailureKind.READ_ONLY, it) }
+                ?: when (remote.notebook(notebookUid)) {
                     Notebook.WRITABLE -> null
                     Notebook.READ_ONLY -> HeldReason.READ_ONLY
                     Notebook.DELETED -> HeldReason.NOTEBOOK_DELETED
                     Notebook.MISSING -> HeldReason.LOST_ACCESS
                 }
+        }
+        val sendable = ArrayList<PendingNotesStore.EntryHeader>()
+        for (header in waiting) {
+            val reason = refusals[header.notebookUid]
             if (reason == null) sendable += header else holdForNotebook(header.noteUid, reason)
         }
         // The note that ended the last push step goes last; the others by fewest failures, and among
@@ -285,7 +295,14 @@ internal class NotePushStep(
             // and it is rebased then.
             return
         }
-        store.rebase(newer.noteUid, newer.version, onto = saved.revision, revision = built.revision, blob = built.blob)
+        try {
+            store.rebase(newer.noteUid, newer.version, onto = saved.revision, revision = built.revision, blob = built.blob)
+        } catch (e: IOException) {
+            // The same, and the upload itself did land: the push counts, the run reports the storage
+            // failure, and nothing is recorded against the newer text, which was never sent.
+            classified(e)
+            noteFailure(FailureKind.LOCAL)
+        }
     }
 
     private fun uploadFailed(snapshot: PendingEntry, error: Exception) {
@@ -508,10 +525,18 @@ internal class NotePushStep(
         settled += uid
     }
 
-    /** Counts a failed request for the entry as it was sent; a change made since is left to be tried on its own. */
+    /**
+     * Counts a failed request for the entry as it was sent; a change made since is left to be tried on
+     * its own. If the count cannot be written, the request still failed: the run reports it, and what
+     * the caller does next, ending the step for one, still happens.
+     */
     private fun fail(entry: PendingEntry, kind: FailureKind) {
         ensureCurrent()
-        store.recordFailure(entry.noteUid, entry.version, kind.name, now())
+        try {
+            store.recordFailure(entry.noteUid, entry.version, kind.name, now())
+        } catch (e: IOException) {
+            classified(e)
+        }
         noteFailure(kind)
         settled += entry.noteUid
     }

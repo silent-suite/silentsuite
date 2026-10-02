@@ -498,12 +498,50 @@ class PendingNotesStoreTest {
         // The copy is held in its own right, and keeps its link while the original is there.
         assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("copy1", HeldReason.READ_ONLY, now = 5))
         assertEquals("orig", entry("copy1").origin?.noteUid)
-        failing = false
-        // Held as well, the original would have come back through Try again as a second upload of the same text.
+        // Held as well, the original could be released: Try again gives it a new version, the copy's
+        // link stops matching, and the same text is sent a second time. Not held, there is nothing to release.
+        val version = entry("orig").version
         assertFalse(store.release("orig"))
+        assertEquals(version, entry("orig").version)
+        assertEquals("orig", entry("copy1").origin?.noteUid)
+        failing = false
         assertEquals(listOf("copy1"), store.scan().entries.map { it.noteUid })
         assertEquals(PendingEntry.State.HELD, entry("copy1").state)
         assertNull(entry("copy1").origin)
+    }
+
+    @Test fun `a hold refused for an original that could not be read has recovery look at it again`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        PendingNotesStore.beforeOriginalRemovedForTesting = { throw IllegalStateException("process died") }
+        assertThrows(IllegalStateException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        PendingNotesStore.beforeOriginalRemovedForTesting = null
+        val file = File(dir, "orig.note")
+        file.writeBytes(byteArrayOf(0))
+        val next = restarted()
+        assertEquals(listOf("orig.note"), next.scan().unreadable.map { it.file })
+        assertEquals(PendingNotesStore.HoldOutcome.UNFINISHED_ORIGINAL, next.hold("orig", HeldReason.READ_ONLY, now = 5))
+        // The damaged file goes away behind the store's back. Nothing failed, so only the refused hold
+        // makes the next call look again, find the original gone, and clear the copy's link.
+        assertTrue(file.delete())
+        assertNull(next.entry("copy1").origin)
+    }
+
+    @Test fun `a recovery that ends with an error other than an I O failure is not taken for done`() {
+        val d = tmp.newFolder("interrupted-recovery")
+        val only = PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("the only copy"))
+        File(d, "n1.note.new").writeBytes(PendingCodec.encodeEntry(only))
+        var first = true
+        val s = PendingNotesStore.open(d, rename = { from, to ->
+            if (first) {
+                first = false
+                throw IllegalStateException("not an I/O failure")
+            }
+            atomicMove(from, to)
+        })
+        // The first call's recovery stops while committing the stranded write, and the call fails with it.
+        assertThrows(IllegalStateException::class.java) { s.read("n1") }
+        // The next call recovers again and commits it. Taken for done, the note would read as not recovered.
+        assertEquals(only, s.entry("n1"))
     }
 
     @Test fun `dropDelete removes only the delete it was decided for`() {
