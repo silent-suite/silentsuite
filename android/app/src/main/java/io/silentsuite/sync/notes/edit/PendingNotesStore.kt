@@ -550,6 +550,13 @@ internal class PendingNotesStore private constructor(
      * dropped instead of held: [HoldOutcome.DELETE_DROPPED], for the runner to report.
      */
     fun hold(noteUid: String, reason: HeldReason, now: Long, sentVersion: Long? = null): HoldOutcome = locked {
+        if (noteUid in unfinishedOriginals) {
+            // Its text lives in the conflict copy now, which can be held in its own right. Held here as
+            // well it would be the same text twice, and Try again would give it a new version, which
+            // breaks the copy's link and sends the original as an ordinary edit.
+            recovered = false
+            return@locked HoldOutcome.UNFINISHED_ORIGINAL
+        }
         var outcome = HoldOutcome.NOT_APPLIED
         update(noteUid) { read ->
             val e = (read as? Read.Present)?.entry
@@ -568,7 +575,13 @@ internal class PendingNotesStore private constructor(
         outcome
     }
 
-    enum class HoldOutcome { HELD, DELETE_DROPPED, NOT_APPLIED }
+    enum class HoldOutcome {
+        HELD,
+        DELETE_DROPPED,
+        NOT_APPLIED,
+        /** An original that a conflict copy has not finished replacing: nothing was written. */
+        UNFINISHED_ORIGINAL,
+    }
 
     /**
      * The user's "Try again" on held text: it waits for a push again, with a fresh backoff. Its base is
@@ -751,9 +764,10 @@ internal class PendingNotesStore private constructor(
     private inline fun <T> locked(block: () -> T): T = synchronized(lock) {
         check(!closed) { "the pending store was cleared" }
         if (depth == 0 && !recovered) {
-            recovered = true
+            // Done only once it returned with nothing left over: a recovery that ends with an error
+            // that is not an I/O failure (out of memory on a large entry) runs again as well.
             recoveryProblems = recoverLocked()
-            if (recoveryProblems.isNotEmpty()) recovered = false
+            recovered = recoveryProblems.isEmpty()
         }
         depth++
         try {

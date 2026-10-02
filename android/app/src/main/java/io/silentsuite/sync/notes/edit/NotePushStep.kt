@@ -18,7 +18,9 @@ import java.io.IOException
  * It is one step for the whole run, across all notebooks, between the collection refresh and the fetch.
  *
  * Whatever the step repeats because of a server answer has a bound here:
- * - an entry is rebased at most once per run, so it is pushed and fetched at most twice;
+ * - an entry is rebased at most once per run, so one pass pushes it and fetches its server copy at
+ *   most twice. A request answered 401 recorded nothing and is made again in the pass after the
+ *   renewal, which is the one request a run can add to that;
  * - a conflict whose server copy cannot be fetched is the entry's failure, with backoff;
  * - a note made from a conflict is pushed in the run that makes it, and its mark turns another
  *   conflict into a hold instead of one more note;
@@ -28,7 +30,8 @@ import java.io.IOException
  *
  * No Etebase type appears: the network and the cryptography sit behind [Remote], so every rule is
  * unit-tested with a stand-in. The instance holds the state of one run. A second [pass] is the retry
- * after a token renewal, and the limits above count across both passes.
+ * after a token renewal: what the first pass settled is not sent again, and the one rebase and the one
+ * confirming fetch are not given a second time.
  *
  * Not here: the token renewal itself and its gate, the follow-up rule (NotesSyncPolicy), notifications,
  * and the fetch that follows the step.
@@ -90,7 +93,11 @@ internal class NotePushStep(
      * What the runner keeps per identity between runs, in memory only: the note whose request ended the
      * most recent push step. That note is pushed last in the next run, whatever its failure count, so a
      * note that draws such an error by itself cannot keep the others from being tried while the user
-     * keeps saving it (a save resets the count). Lost with the process, which costs at most one run.
+     * keeps saving it (a save resets the count).
+     *
+     * It is lost with the process, which costs one run each time. If every run starts in a new process
+     * and the note is saved in between, the rule gives no protection. A 401 is treated as about the
+     * whole account, so the request that got one is not remembered here.
      */
     class Memory {
         @Volatile var endedLastStep: String? = null
@@ -109,10 +116,11 @@ internal class NotePushStep(
      * The step so far, over every pass of the run.
      * @property pushed notes that landed, or were found to have landed.
      * @property held texts moved to the holding area.
+     * @property droppedDeletes pending deletes that were dropped instead of held, so the server's copy shows again.
      * @property conflicts per notebook uid, the conflicts settled with a new note or by giving a note back.
      * @property failure the run's own failure: the error that ended the step, else the first entry failure.
      * @property carriedFailure the last failure category of the most recently failed entry that was skipped
-     * in backoff, so an automatic run does not record success over an entry that is still stuck.
+     * in backoff and is still waiting, so an automatic run does not record success over an entry that is stuck.
      */
     data class Result(
         val ended: Ended,
@@ -121,6 +129,7 @@ internal class NotePushStep(
         val conflicts: Map<String, Int>,
         val failure: FailureKind?,
         val carriedFailure: String?,
+        val droppedDeletes: Int = 0,
     ) {
         /** Every entry the run attempted was pushed or resolved, and none was skipped while stuck. */
         val succeeded: Boolean get() = ended == Ended.COMPLETED && failure == null && carriedFailure == null
@@ -133,14 +142,19 @@ internal class NotePushStep(
     private val rebased = HashSet<String>()
     private val notebookChecks = HashMap<String, NotebookCheck>()
     private val conflicts = HashMap<String, Int>()
+
+    /** Entries skipped in backoff, by uid, with the failure time and category they had then. */
+    private val skipped = HashMap<String, Pair<Long, String>>()
     private var pushed = 0
     private var held = 0
+    private var droppedDeletes = 0
     private var failure: FailureKind? = null
-    private var carried: Pair<Long, String>? = null
 
     /**
-     * Runs the step once. Cancellation and a run that may no longer write are thrown
-     * (InterruptedException, StaleSyncRunException) with nothing recorded, as in the slice 1 fetch.
+     * Runs the step once. A failure of one entry, a failed store write included, is recorded and the
+     * step goes on. Thrown instead, with nothing recorded: cancellation (InterruptedException,
+     * InterruptedIOException), a run that may no longer write (StaleSyncRunException), and a failure to
+     * read the store or the notebook list before any entry is tried, which fails the run as a whole.
      */
     fun pass(): Result {
         val ended = try {
@@ -151,7 +165,7 @@ internal class NotePushStep(
         } catch (end: EndPass) {
             end.ended
         }
-        return Result(ended, pushed, held, conflicts.toMap(), failure, carried?.second)
+        return Result(ended, pushed, held, conflicts.toMap(), failure, carriedFailure(), droppedDeletes)
     }
 
     private fun pushWaiting() {
@@ -163,13 +177,15 @@ internal class NotePushStep(
         for (header in snapshot.headers) {
             if (header.state == PendingEntry.State.HELD || header.noteUid in settled) continue
             // Design 3.3 step 1: a notebook that takes no pushes gets none. The server would accept
-            // writes into a deleted notebook that no client shows.
-            val reason = when (remote.notebook(header.notebookUid)) {
-                Notebook.WRITABLE -> null
-                Notebook.READ_ONLY -> HeldReason.READ_ONLY
-                Notebook.DELETED -> HeldReason.NOTEBOOK_DELETED
-                Notebook.MISSING -> HeldReason.LOST_ACCESS
-            }
+            // writes into a deleted notebook that no client shows. A confirming fetch made earlier in
+            // this run is a newer answer than the cache.
+            val reason = notebookChecks[header.notebookUid]?.let { NotePushPolicy.heldReasonFor(FailureKind.READ_ONLY, it) }
+                ?: when (remote.notebook(header.notebookUid)) {
+                    Notebook.WRITABLE -> null
+                    Notebook.READ_ONLY -> HeldReason.READ_ONLY
+                    Notebook.DELETED -> HeldReason.NOTEBOOK_DELETED
+                    Notebook.MISSING -> HeldReason.LOST_ACCESS
+                }
             if (reason == null) sendable += header else holdForNotebook(header.noteUid, reason)
         }
         // The note that ended the last push step goes last; the others by fewest failures, and among
@@ -180,14 +196,23 @@ internal class NotePushStep(
         for (header in sendable.sortedWith(order)) {
             if (header.noteUid in settled) continue
             if (NotePushPolicy.inBackoff(header.failureCount, header.lastFailureAt, now(), userInitiated)) {
-                carry(header)
+                skip(header)
                 continue
             }
             push(header.noteUid)
         }
     }
 
+    /** Sends one entry and applies the answer. A pending-store failure on the way is this entry's failure. */
     private fun push(uid: String) {
+        try {
+            send(uid)
+        } catch (e: IOException) {
+            storageFailed(uid, e)
+        }
+    }
+
+    private fun send(uid: String) {
         ensureCurrent()
         val snapshot = when (val start = store.startSend(uid)) {
             is SendStart.Ready -> start.entry
@@ -195,14 +220,11 @@ internal class NotePushStep(
                 when (start.reason) {
                     // Design 3.4: while the original's removal keeps failing, neither note is sent, and
                     // the run records a storage failure for the original.
-                    Refusal.UNFINISHED_ORIGINAL -> {
-                        (store.read(uid) as? Read.Present)?.entry?.let {
-                            store.recordFailure(uid, it.version, FailureKind.LOCAL.name, now())
-                        }
-                        noteFailure(FailureKind.LOCAL)
-                    }
-                    Refusal.UNREADABLE -> noteFailure(FailureKind.LOCAL)
-                    Refusal.LINKED_COPY, Refusal.NOTHING -> Unit
+                    Refusal.UNFINISHED_ORIGINAL -> unfinishedOriginal(uid)
+                    // A copy still waiting on its original, or on the write that clears its link, and a
+                    // file that cannot be read: the run does not record success over either.
+                    Refusal.LINKED_COPY, Refusal.UNREADABLE -> noteFailure(FailureKind.LOCAL)
+                    Refusal.NOTHING -> Unit
                 }
                 settled += uid
                 return
@@ -229,6 +251,28 @@ internal class NotePushStep(
         pushed++
         settled += uid
         if (memory.endedLastStep == uid) memory.endedLastStep = null
+    }
+
+    private fun unfinishedOriginal(uid: String) {
+        (store.read(uid) as? Read.Present)?.entry?.let { store.recordFailure(uid, it.version, FailureKind.LOCAL.name, now()) }
+        noteFailure(FailureKind.LOCAL)
+        settled += uid
+    }
+
+    /**
+     * A write or removal in the pending store failed while this entry was handled (design 3.3: storage).
+     * It is this entry's failure: the run reports it, the entry backs off if that can still be written,
+     * and the entries after it are still tried. A cancelled request arrives here too and is thrown on.
+     */
+    private fun storageFailed(uid: String, error: IOException) {
+        classified(error)
+        noteFailure(FailureKind.LOCAL)
+        settled += uid
+        try {
+            (store.read(uid) as? Read.Present)?.entry?.let { store.recordFailure(uid, it.version, FailureKind.LOCAL.name, now()) }
+        } catch (e: IOException) {
+            // With the disk full this write fails as well. The run still reports the failure.
+        }
     }
 
     private fun rebaseOntoLanded(newer: PendingEntry, saved: ServerItem) {
@@ -269,24 +313,22 @@ internal class NotePushStep(
     /**
      * A 403 or 404 on a request for this note. A single answer moves nothing: the notebook itself is
      * fetched, once per notebook per run, and the result decides. Read-only, deleted or gone is a
-     * newer answer to step 1, so this entry and the notebook's entries not yet pushed are held without
-     * an upload. Still writable or unknown is passing trouble: the entry backs off and the others are
-     * still pushed, and a later 403 or 404 in the same notebook reuses the result.
+     * newer answer to step 1, so everything still pending in that notebook is held without an upload,
+     * this entry included. Still writable or unknown is passing trouble: the entry backs off and the
+     * others are still pushed, and a later 403 or 404 in the same notebook reuses the result.
      */
     private fun notebookRefused(snapshot: PendingEntry, kind: FailureKind) {
         val notebookUid = snapshot.notebookUid
-        val stored = notebookChecks[notebookUid]
-        val check = stored ?: confirm(snapshot).also { notebookChecks[notebookUid] = it }
+        val check = notebookChecks[notebookUid] ?: confirm(snapshot).also { notebookChecks[notebookUid] = it }
         val reason = NotePushPolicy.heldReasonFor(kind, check)
         if (reason == null) {
             fail(snapshot, kind)
             return
         }
         for (header in store.snapshot { false }.headers) {
-            if (header.notebookUid != notebookUid || header.state == PendingEntry.State.HELD || header.noteUid in settled) continue
-            holdForNotebook(header.noteUid, reason)
+            if (header.notebookUid == notebookUid && header.state != PendingEntry.State.HELD) holdForNotebook(header.noteUid, reason)
         }
-        if (check == NotebookCheck.Gone && stored == null) {
+        if (check == NotebookCheck.Gone) {
             // So the notebook does not stay listed as writable until a later run's refresh drops it.
             try {
                 remote.unsetNotebook(notebookUid)
@@ -412,9 +454,12 @@ internal class NotePushStep(
         val replaced = try {
             store.replaceWithNewNote(uid, latest.version, server.revision, note)
         } catch (e: IOException) {
-            // The original records a storage failure, and neither note is sent in this run.
+            // The original records a storage failure, and neither note is sent in this run. If the
+            // copy's file is there, the text has its new note and recovery finishes the rest, so the
+            // conflict is reported now; a later run would push the copy without knowing it was one.
             fail(latest, FailureKind.LOCAL)
             settled += note.noteUid
+            if (store.read(note.noteUid) is Read.Present) countConflict(latest.notebookUid)
             return
         }
         settled += uid
@@ -437,11 +482,29 @@ internal class NotePushStep(
         false
     }
 
-    private fun holdForNotebook(uid: String, reason: HeldReason) = hold(uid, reason, sentVersion = null)
+    /** A hold for a reason about the notebook: whatever is there is held, and a store failure is that entry's own. */
+    private fun holdForNotebook(uid: String, reason: HeldReason) {
+        try {
+            hold(uid, reason, sentVersion = null)
+        } catch (e: IOException) {
+            storageFailed(uid, e)
+        }
+    }
 
     private fun hold(uid: String, reason: HeldReason, sentVersion: Long?) {
         ensureCurrent()
-        if (store.hold(uid, reason, now(), sentVersion) == HoldOutcome.HELD) held++
+        when (store.hold(uid, reason, now(), sentVersion)) {
+            HoldOutcome.HELD -> held++
+            HoldOutcome.DELETE_DROPPED -> droppedDeletes++
+            // Its text lives in a conflict copy now, which is held in its own right.
+            HoldOutcome.UNFINISHED_ORIGINAL -> {
+                unfinishedOriginal(uid)
+                return
+            }
+            // The entry moved on, or is gone. One whose file cannot be read was not held either, and
+            // the header-only listing did not show that: the run does not record success over it.
+            HoldOutcome.NOT_APPLIED -> if (sentVersion == null && store.read(uid) is Read.Unreadable) noteFailure(FailureKind.LOCAL)
+        }
         settled += uid
     }
 
@@ -468,11 +531,19 @@ internal class NotePushStep(
     }
 
     /** A skipped entry keeps its failure count and time, so its backoff does not grow; the run carries its failure. */
-    private fun carry(header: PendingNotesStore.EntryHeader) {
+    private fun skip(header: PendingNotesStore.EntryHeader) {
         val at = header.lastFailureAt ?: return
         val category = header.lastFailureCategory ?: return
-        if (carried.let { it == null || at > it.first }) carried = at to category
+        skipped[header.noteUid] = at to category
     }
+
+    /**
+     * The failure to carry: of the entries skipped in backoff that nothing settled afterwards (a later
+     * pass may push one whose backoff ran out, and a notebook confirmation may hold one), the most
+     * recent. A recorded failure stays on record only until the entry is pushed, resolved or held.
+     */
+    private fun carriedFailure(): String? =
+        skipped.filterKeys { it !in settled }.values.maxByOrNull { it.first }?.second
 
     /**
      * How a thrown error is handled. A cancelled run is rethrown, and so is anything that arrives once

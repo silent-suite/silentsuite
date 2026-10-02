@@ -214,15 +214,16 @@ class NotePushPolicyTest {
         assertFalse(NotePushPolicy.inBackoff(failedTwice, now = 500, userInitiated = false))
     }
 
-    @Test fun `backoff reads the same from an entry and from its header fields`() {
-        val failedTwice = upsert("r1").copy(failureCount = 2, lastFailureAt = 1_000)
-        for (now in listOf(500L, 1_000L, 1_000L + 119_999, 1_000L + 120_000)) {
-            for (userInitiated in listOf(false, true)) {
-                assertEquals(NotePushPolicy.inBackoff(failedTwice, now, userInitiated),
-                    NotePushPolicy.inBackoff(2, 1_000, now, userInitiated))
-            }
+    @Test fun `backoff is decided from a failure count and time alone, as the push step reads them from entry headers`() {
+        // Two failures, the last at 1000: the window is two minutes.
+        assertFalse("the clock went back", NotePushPolicy.inBackoff(2, 1_000, now = 500, userInitiated = false))
+        assertTrue(NotePushPolicy.inBackoff(2, 1_000, now = 1_000, userInitiated = false))
+        assertTrue(NotePushPolicy.inBackoff(2, 1_000, now = 120_999, userInitiated = false))
+        assertFalse(NotePushPolicy.inBackoff(2, 1_000, now = 121_000, userInitiated = false))
+        for (now in listOf(500L, 1_000L, 120_999L, 121_000L)) {
+            assertFalse("a run the user started", NotePushPolicy.inBackoff(2, 1_000, now, userInitiated = true))
         }
-        assertFalse(NotePushPolicy.inBackoff(0, null, now = 5, userInitiated = false))
+        assertFalse("never failed", NotePushPolicy.inBackoff(0, null, now = 5, userInitiated = false))
     }
 
     @Test fun `only a connection error or a temporary server error ends the push step`() {

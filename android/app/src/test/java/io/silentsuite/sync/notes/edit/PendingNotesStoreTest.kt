@@ -486,6 +486,26 @@ class PendingNotesStoreTest {
         assertEquals("a header read alone agrees with the whole entry", PendingNotesStore.EntryHeader.of(entry("n1")), headers.first())
     }
 
+    @Test fun `an original that a copy has not finished replacing is not held, since its text is the copy's now`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (failing && it.name == "orig.note") throw java.io.IOException("could not remove orig.note")
+        }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        assertEquals(PendingNotesStore.HoldOutcome.UNFINISHED_ORIGINAL, store.hold("orig", HeldReason.READ_ONLY, now = 5))
+        assertEquals(PendingEntry.State.UPSERT, entry("orig").state)
+        // The copy is held in its own right, and keeps its link while the original is there.
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("copy1", HeldReason.READ_ONLY, now = 5))
+        assertEquals("orig", entry("copy1").origin?.noteUid)
+        failing = false
+        // Held as well, the original would have come back through Try again as a second upload of the same text.
+        assertFalse(store.release("orig"))
+        assertEquals(listOf("copy1"), store.scan().entries.map { it.noteUid })
+        assertEquals(PendingEntry.State.HELD, entry("copy1").state)
+        assertNull(entry("copy1").origin)
+    }
+
     @Test fun `dropDelete removes only the delete it was decided for`() {
         store.saveLocal("edit", "b1", "r1", blob("text"), isCreate = false)
         assertFalse("an edit is never dropped this way", store.dropDelete("edit", entry("edit").version))

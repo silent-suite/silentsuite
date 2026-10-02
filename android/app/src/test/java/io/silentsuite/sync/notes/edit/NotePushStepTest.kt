@@ -52,6 +52,7 @@ class NotePushStepTest {
 
     @After fun reset() {
         PendingNotesStore.beforeRemoveForTesting = null
+        PendingNotesStore.beforeRenameForTesting = null
         PendingNotesStore.resetForTesting()
         Thread.interrupted()
     }
@@ -159,6 +160,13 @@ class NotePushStepTest {
     /** Uploads whose answer never arrives: the server has acted on them, and the device sees a connection error. */
     private var loseAnswer: (Item) -> Boolean = { false }
 
+    /** Runs while a fetch(uid) is in flight. */
+    private var duringFetch: (String) -> Unit = {}
+
+    /** Failures of the remote's own work on an item (decrypting, building), not of the server. */
+    private var rebaseError: Exception? = null
+    private var newNoteError: Exception? = null
+
     private val remote = object : NotePushStep.Remote {
         override fun notebook(notebookUid: String) = notebooks[notebookUid] ?: Notebook.WRITABLE
 
@@ -170,8 +178,10 @@ class NotePushStepTest {
             return NotePushStep.ServerItem(upload.revision, upload.deleted, entry.blob)
         }
 
-        override fun fetch(entry: PendingEntry): NotePushStep.ServerItem =
-            server.fetch(entry.noteUid).let { NotePushStep.ServerItem(it.revision, it.deleted, it.blob()) }
+        override fun fetch(entry: PendingEntry): NotePushStep.ServerItem {
+            duringFetch(entry.noteUid)
+            return server.fetch(entry.noteUid).let { NotePushStep.ServerItem(it.revision, it.deleted, it.blob()) }
+        }
 
         override fun fetchNotebook(notebookUid: String) = server.fetchNotebook(notebookUid)
 
@@ -185,10 +195,13 @@ class NotePushStepTest {
             unset += notebookUid
         }
 
-        override fun rebase(entry: PendingEntry, onto: NotePushStep.ServerItem): NotePushStep.Built =
-            item(entry.blob).copy(base = onto.revision, revision = revision()).let { NotePushStep.Built(it.revision, it.blob()) }
+        override fun rebase(entry: PendingEntry, onto: NotePushStep.ServerItem): NotePushStep.Built {
+            rebaseError?.let { throw it }
+            return item(entry.blob).copy(base = onto.revision, revision = revision()).let { NotePushStep.Built(it.revision, it.blob()) }
+        }
 
         override fun newNote(entry: PendingEntry, conflictedCopy: Boolean): PendingEntry {
+            newNoteError?.let { throw it }
             val note = Item("copy-${built.size + 1}", null, revision(), false, item(entry.blob).text)
             built += note.uid
             titledAsCopy[note.uid] = conflictedCopy
@@ -260,11 +273,11 @@ class NotePushStepTest {
     // ---- the ordinary run ----
 
     @Test fun `every waiting change is pushed alone, the oldest first, and the run succeeds`() {
-        save("a", "first")
-        save("b", "second", notebook = "b2")
-        save("c", "third")
+        save("c", "first")
+        save("a", "second", notebook = "b2")
+        save("b", "third")
         val result = run()
-        assertEquals(listOf("a", "b", "c"), uploaded())
+        assertEquals("by age of the change, not by uid", listOf("c", "a", "b"), uploaded())
         assertEquals(NotePushStep.Result(Ended.COMPLETED, pushed = 3, held = 0, conflicts = emptyMap(), failure = null, carriedFailure = null), result)
         assertTrue(result.succeeded)
         assertTrue(waiting().isEmpty())
@@ -334,6 +347,7 @@ class NotePushStepTest {
         assertEquals(HeldReason.NOTEBOOK_DELETED, entry("e2").held?.reason)
         assertEquals(HeldReason.LOST_ACCESS, entry("e3").held?.reason)
         assertEquals("a pending delete has no text to keep", Read.Missing, store.read("d1"))
+        assertEquals("and the run says so", 1, result.droppedDeletes)
         assertEquals("three", item(entry("e3").blob).text)
     }
 
@@ -372,27 +386,62 @@ class NotePushStepTest {
         assertTrue(waiting().isEmpty())
     }
 
-    @Test fun `among skipped entries the most recent failure is the one carried, and a failure of the run's own comes first`() {
+    @Test fun `among skipped entries the most recent failure is the one carried, and a failure of the run's own is reported next to it`() {
         save("a", "one")
-        save("b", "two")
-        server.uploadError = { if (it.uid == "a") http(400) else null }
-        run(userInitiated = false)
-        assertEquals(FailureKind.REJECTED.name, entry("a").lastFailureCategory)
         save("c", "three")
+        // c failed first and a after it, while a is the older change and so is looked at first.
+        store.recordFailure("c", entry("c").version, FailureKind.TRANSIENT.name, now)
         now += 1_000
-        server.uploadError = { if (it.uid == "c") http(500) else null }
-        run(userInitiated = false)
-        assertEquals(FailureKind.TRANSIENT.name, entry("c").lastFailureCategory)
-        server.uploadError = { null }
+        store.recordFailure("a", entry("a").version, FailureKind.REJECTED.name, now)
         now += 1_000
         val carried = run(userInitiated = false)
+        assertTrue("both sat out the run", server.uploads.isEmpty())
         assertNull(carried.failure)
-        assertEquals("c failed after a", FailureKind.TRANSIENT.name, carried.carriedFailure)
+        assertEquals("a failed after c", FailureKind.REJECTED.name, carried.carriedFailure)
         save("d", "four")
         server.uploadError = { if (it.uid == "d") IOException("could not encode") else null }
         val own = run(userInitiated = false)
         assertEquals(FailureKind.LOCAL, own.failure)
-        assertEquals(FailureKind.TRANSIENT.name, own.carriedFailure)
+        assertEquals(FailureKind.REJECTED.name, own.carriedFailure)
+    }
+
+    @Test fun `a skipped entry that the same run then holds, or a later pass pushes, is not carried`() {
+        // b is in backoff and is skipped first (one failure). a, in the same notebook, has two older
+        // failures and is past its backoff; it is answered 403, and the notebook turns out to be
+        // read-only: both are held, and nothing is left stuck.
+        save("a", "one")
+        save("b", "two")
+        repeat(2) { store.recordFailure("a", entry("a").version, FailureKind.TRANSIENT.name, now - 3_600_000) }
+        store.recordFailure("b", entry("b").version, FailureKind.TRANSIENT.name, now - 10_000)
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = true, deleted = false) }
+        val heldBoth = run(userInitiated = false)
+        assertEquals(listOf("a"), uploaded())
+        assertEquals(2, heldBoth.held)
+        assertNull(heldBoth.carriedFailure)
+        assertTrue(heldBoth.succeeded)
+
+        // d is in backoff during the first pass, where it is skipped before c's push gets a 401, and
+        // out of it in the pass after the renewal.
+        server.uploads.clear()
+        save("c", "three", notebook = "b2")
+        save("d", "four", notebook = "b2")
+        repeat(2) { store.recordFailure("c", entry("c").version, FailureKind.TRANSIENT.name, now - 3_600_000) }
+        store.recordFailure("d", entry("d").version, FailureKind.TRANSIENT.name, now - 59_000)
+        var unauthorized = true
+        server.uploadError = { if (unauthorized) UnauthorizedException("Invalid token.") else null }
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = false, deleted = false) }
+        val step = step(userInitiated = false)
+        val first = step.pass()
+        assertEquals(Ended.NEEDS_AUTHENTICATION, first.ended)
+        assertEquals(listOf("c"), uploaded())
+        assertEquals(FailureKind.TRANSIENT.name, first.carriedFailure)
+        unauthorized = false
+        now += 2_000
+        val second = step.pass()
+        assertEquals(listOf("c", "d", "c"), uploaded())
+        assertNull("d was pushed in the second pass", second.carriedFailure)
+        assertTrue(second.succeeded)
     }
 
     // ---- errors about one entry ----
@@ -659,6 +708,33 @@ class NotePushStepTest {
         assertEquals(0, result.held)
         assertEquals(Ended.COMPLETED, result.ended)
         assertEquals(3, waiting().size)
+        for (uid in listOf("a", "b", "c")) {
+            assertEquals(PendingEntry.State.UPSERT, entry(uid).state)
+            assertEquals(1, entry(uid).failureCount)
+        }
+    }
+
+    @Test fun `a redirect on the notebook fetch says nothing about the notebook either`() {
+        threeInOneNotebook()
+        server.uploadError = { NotFoundException("Collection matching query does not exist.") }
+        server.notebookAnswer = { NotFoundException("Got a redirect - should never happen") }
+        val result = run()
+        assertEquals(listOf("a", "b", "c"), uploaded())
+        assertEquals(listOf("b1"), server.notebookFetches)
+        assertEquals("not taken for a notebook that is gone", 0, result.held)
+        assertTrue(unset.isEmpty())
+        for (uid in listOf("a", "b", "c")) assertEquals(1, entry(uid).failureCount)
+    }
+
+    @Test fun `a confirmed refusal also holds an entry of that notebook that failed earlier in the run`() {
+        threeInOneNotebook()
+        server.uploadError = { if (it.uid == "a") http(500) else PermissionDeniedException("no_write_access") }
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = true, deleted = false) }
+        val result = run()
+        assertEquals(listOf("a", "b"), uploaded())
+        assertEquals("the notebook takes no pushes, so its text belongs in the holding area, a's too", 3, result.held)
+        for (uid in listOf("a", "b", "c")) assertEquals(HeldReason.READ_ONLY, entry(uid).held?.reason)
+        assertEquals("the failure a had before the answer stays on record", 1, entry("a").failureCount)
     }
 
     @Test fun `a 403 on the push and on the notebook fetch is about the account, and ends the step`() {
@@ -678,6 +754,9 @@ class NotePushStepTest {
             assertEquals(name, Ended.STOPPED, result.ended)
             assertEquals(name, 0, result.held)
             assertEquals("$name: one failure, on the entry whose push led to the fetch", 1, entry(uids[0]).failureCount)
+            val kind = if (answer is PermissionDeniedException) FailureKind.READ_ONLY else FailureKind.TRANSIENT
+            assertEquals(name, kind, result.failure)
+            assertEquals(name, kind.name, entry(uids[0]).lastFailureCategory)
             assertEquals("$name: the others are untouched, in both notebooks", listOf(0, 0), uids.drop(1).map { entry(it).failureCount })
             assertEquals(name, uids[0], memory.endedLastStep)
             // Clear the store for the next answer.
@@ -699,6 +778,7 @@ class NotePushStepTest {
         assertTrue(result.succeeded)
         for (uid in listOf("a", "b", "c")) assertEquals(HeldReason.READ_ONLY, entry(uid).held?.reason)
         assertEquals(Read.Missing, store.read("d"))
+        assertEquals(1, result.droppedDeletes)
         assertTrue("the notebook is still there for this account", unset.isEmpty())
     }
 
@@ -1142,12 +1222,19 @@ class NotePushStepTest {
         PendingNotesStore.beforeRemoveForTesting = {
             if (failing && it.name == "n1.note") throw IOException("could not remove n1.note")
         }
-        assertEquals(FailureKind.LOCAL, run().failure)
+        val first = run()
+        assertEquals(FailureKind.LOCAL, first.failure)
+        assertEquals("the text has its new note, so the conflict is reported now", mapOf("b1" to 1), first.conflicts)
+        assertEquals("the storage failure is recorded for the original", 1, entry("n1").failureCount)
+        assertEquals(0, entry("copy-1").failureCount)
         repeat(5) { n ->
             val result = run()
             assertEquals("run $n: never a success over them", FailureKind.LOCAL, result.failure)
             assertEquals("run $n", 0, result.pushed)
+            assertEquals("run $n: and once more for the original", n + 2, entry("n1").failureCount)
+            assertTrue("run $n: reported once, not in every run", result.conflicts.isEmpty())
         }
+        assertEquals(FailureKind.LOCAL.name, entry("n1").lastFailureCategory)
         assertEquals("only the first push of the original reached the server", listOf("n1"), uploaded())
         assertEquals(listOf("copy-1"), built)
         assertEquals(listOf("copy-1", "n1"), waiting())
@@ -1233,5 +1320,356 @@ class NotePushStepTest {
         assertFalse(server.items.getValue("n1").deleted)
         assertEquals(listOf("copy-1"), built)
         assertTrue(waiting().isEmpty())
+    }
+
+    // ---- a pending store that fails ----
+
+    @Test fun `a store removal that fails for one entry is that entry's failure, and the others are still pushed`() {
+        save("a", "one")
+        save("b", "two")
+        save("c", "three")
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = { if (failing && it.name == "a.note") throw IOException("could not remove a.note") }
+        val first = run()
+        assertEquals("the run goes on past the entry whose file could not be dropped", listOf("a", "b", "c"), uploaded())
+        assertEquals(Ended.COMPLETED, first.ended)
+        assertEquals(FailureKind.LOCAL, first.failure)
+        assertEquals(2, first.pushed)
+        assertEquals(listOf("a"), waiting())
+        assertEquals("it backs off like any failed entry", 1, entry("a").failureCount)
+        assertEquals(FailureKind.LOCAL.name, entry("a").lastFailureCategory)
+        failing = false
+        assertTrue("the resend of the revision that landed is taken as done", run().succeeded)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a store write that fails before the upload sends nothing for that entry and goes on with the next`() {
+        save("a", "one")
+        save("b", "two")
+        PendingNotesStore.beforeRenameForTesting = { if (it.name == "a.note") throw IOException("no space left on device") }
+        val result = run()
+        assertEquals("a's sent revision could not be recorded, so a is not uploaded", listOf("b"), uploaded())
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(Ended.COMPLETED, result.ended)
+        assertEquals(1, result.pushed)
+        PendingNotesStore.beforeRenameForTesting = null
+        assertEquals("the text is untouched", "one", item(entry("a").blob).text)
+        assertTrue(run().succeeded)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a hold that cannot be written is that entry's failure, and the run goes on`() {
+        notebooks["ro"] = Notebook.READ_ONLY
+        save("e", "one", notebook = "ro")
+        save("ok", "fine")
+        PendingNotesStore.beforeRenameForTesting = { if (it.name == "e.note") throw IOException("no space left on device") }
+        val result = run()
+        assertEquals(listOf("ok"), uploaded())
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(0, result.held)
+        assertEquals(1, result.pushed)
+        PendingNotesStore.beforeRenameForTesting = null
+        assertEquals("not held, and still there", PendingEntry.State.UPSERT, entry("e").state)
+        assertEquals(1, run().held)
+    }
+
+    @Test fun `a copy whose link cannot be cleared is never a success, and its conflict is reported once`() {
+        editedElsewhere()
+        var failing = true
+        var copyWrites = 0
+        // The copy's first write commits. Every later write of its file, which is the one that clears
+        // the link, fails.
+        PendingNotesStore.beforeRenameForTesting = {
+            if (failing && it.name == "copy-1.note" && ++copyWrites >= 2) throw IOException("no space left on device")
+        }
+        val first = run()
+        assertEquals(FailureKind.LOCAL, first.failure)
+        assertEquals("the text has its new note", mapOf("b1" to 1), first.conflicts)
+        assertEquals("the original is gone", Read.Missing, store.read("n1"))
+        repeat(3) { n ->
+            val result = run()
+            assertEquals("run $n", FailureKind.LOCAL, result.failure)
+            assertFalse("run $n: the copy is not sent, and that is not a success", result.succeeded)
+            assertEquals("run $n", 0, result.pushed)
+            assertTrue("run $n", result.conflicts.isEmpty())
+        }
+        assertEquals(listOf("n1"), uploaded())
+        failing = false
+        assertTrue(run().succeeded)
+        assertEquals(listOf("n1", "copy-1"), uploaded())
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `an entry whose text cannot be read is not passed over in silence in a notebook that takes no pushes`() {
+        notebooks["ro"] = Notebook.READ_ONLY
+        save("e", "one", notebook = "ro")
+        // Damage the blob, behind a header that still reads on its own.
+        val file = File(dir, "e.note")
+        val bytes = file.readBytes()
+        bytes[bytes.size - 6] = (bytes[bytes.size - 6].toInt() xor 0x40).toByte()
+        file.writeBytes(bytes)
+        val result = run()
+        assertEquals(0, result.held)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertTrue(server.uploads.isEmpty())
+        assertEquals("kept as it is", bytes.size.toLong(), file.length())
+    }
+
+    @Test fun `an unfinished original in a notebook that takes no pushes is not held next to its copy`() {
+        editedElsewhere()
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (failing && it.name == "n1.note") throw IOException("could not remove n1.note")
+        }
+        run()
+        notebooks["b1"] = Notebook.READ_ONLY
+        val result = run()
+        assertEquals("the text is held once, through the copy", 1, result.held)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(PendingEntry.State.UPSERT, entry("n1").state)
+        assertEquals(PendingEntry.State.HELD, entry("copy-1").state)
+        failing = false
+        assertEquals("recovery removes the original, and the copy stays held", listOf("copy-1"), waiting())
+        assertNull(entry("copy-1").origin)
+        assertEquals(PendingEntry.State.HELD, entry("copy-1").state)
+    }
+
+    // ---- more of the pass after a renewal ----
+
+    @Test fun `in the pass after a renewal a new change in a notebook the run confirmed as deleted is held, not uploaded`() {
+        save("a", "one")
+        save("c", "three", notebook = "b2")
+        var refused = false
+        var unauthorized = true
+        server.uploadError = {
+            when {
+                it.uid == "a" && !refused -> PermissionDeniedException("no_write_access").also { refused = true }
+                it.uid == "c" && unauthorized -> UnauthorizedException("Invalid token.")
+                else -> null
+            }
+        }
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = false, deleted = it == "b1") }
+        val step = step()
+        assertEquals(Ended.NEEDS_AUTHENTICATION, step.pass().ended)
+        assertEquals(HeldReason.NOTEBOOK_DELETED, entry("a").held?.reason)
+        // The cache still lists the notebook, so the editor is still offered and the user saves a new note in it.
+        save("x", "typed meanwhile")
+        unauthorized = false
+        val second = step.pass()
+        assertEquals("x is not sent: the server would take a write into a deleted notebook", listOf("a", "c", "c"), uploaded())
+        assertEquals(HeldReason.NOTEBOOK_DELETED, entry("x").held?.reason)
+        assertEquals("and the notebook is not asked again", listOf("b1"), server.notebookFetches)
+        assertEquals(2, second.held)
+    }
+
+    @Test fun `a 401 on the fetch after a 409 records nothing, and the next pass resolves the conflict`() {
+        editedElsewhere()
+        var unauthorized = true
+        server.fetchError = { if (unauthorized) UnauthorizedException("Invalid token.") else null }
+        val step = step()
+        assertEquals(Ended.NEEDS_AUTHENTICATION, step.pass().ended)
+        assertEquals(0, entry("n1").failureCount)
+        assertTrue(built.isEmpty())
+        unauthorized = false
+        val second = step.pass()
+        assertTrue(second.succeeded)
+        assertEquals(listOf("copy-1"), built)
+        assertEquals(listOf("n1", "n1", "copy-1"), uploaded())
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a 401 on the confirming notebook fetch records nothing, and the next pass makes that fetch`() {
+        save("a", "one")
+        var unauthorized = true
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        server.notebookAnswer = {
+            if (unauthorized) UnauthorizedException("Invalid token.") else NotebookCheck.Found(readOnly = false, deleted = false)
+        }
+        val step = step()
+        assertEquals(Ended.NEEDS_AUTHENTICATION, step.pass().ended)
+        assertEquals(0, entry("a").failureCount)
+        unauthorized = false
+        val second = step.pass()
+        assertEquals("the fetch that got the 401 stored no answer", listOf("b1", "b1"), server.notebookFetches)
+        assertEquals(listOf("a", "a"), uploaded())
+        assertEquals(1, entry("a").failureCount)
+        assertEquals(Ended.COMPLETED, second.ended)
+    }
+
+    // ---- the result is built from the entry as it is when the answer arrives (3.3 step 4) ----
+
+    @Test fun `a save during an upload that conflicts with another client's copy goes into the one copy that is made`() {
+        editedElsewhere()
+        duringUpload = { uid ->
+            if (uid == "n1") {
+                duringUpload = {}
+                save("n1", "mine, and more")
+            }
+        }
+        val result = run()
+        assertTrue(result.succeeded)
+        assertEquals(listOf("copy-1"), built)
+        assertEquals("mine, and more", server.items.getValue("copy-1").text)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a delete during a successful upload stays a delete, built on the item that landed, and the next run deletes the note`() {
+        val first = save("a", "text")
+        duringUpload = {
+            duringUpload = {}
+            val gone = item(entry("a").blob).copy(revision = revision(), deleted = true)
+            assertEquals(DeleteOutcome.Queued, store.markDeleted("a", "b1", gone.revision, gone.blob()))
+        }
+        assertTrue(run().succeeded)
+        val kept = entry("a")
+        assertEquals(PendingEntry.State.DELETE, kept.state)
+        assertEquals(first.revision, item(kept.blob).base)
+        assertTrue(run().succeeded)
+        assertTrue(server.items.getValue("a").deleted)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a failure of the upload is recorded against the text that was sent, not against text saved during it`() {
+        save("a", "too odd")
+        server.uploadError = { http(400) }
+        run()
+        assertEquals(FailureKind.REJECTED.name, entry("a").lastFailureCategory)
+        // The second rejection in a row arrives for the old text, while the user has saved again.
+        duringUpload = {
+            duringUpload = {}
+            save("a", "changed during the upload")
+        }
+        val result = run()
+        assertEquals("the newer text is not held with the text that was rejected", 0, result.held)
+        assertEquals(PendingEntry.State.UPSERT, entry("a").state)
+        assertEquals(0, entry("a").failureCount)
+        assertEquals("changed during the upload", item(entry("a").blob).text)
+        // The same for a server error.
+        save("b", "text")
+        server.uploadError = { if (it.uid == "b") http(500) else null }
+        duringUpload = { uid ->
+            if (uid == "b") {
+                duringUpload = {}
+                save("b", "text, and more")
+            }
+        }
+        run()
+        assertEquals(0, entry("b").failureCount)
+    }
+
+    // ---- the cache write comes first on every path that lets a note fall back to the cache ----
+
+    @Test fun `if the cache cannot take the server's copy a conflict is not resolved, and the next run makes the one copy`() {
+        editedElsewhere()
+        cacheError = IOException("disk full")
+        val failed = run()
+        assertEquals(FailureKind.LOCAL, failed.failure)
+        assertTrue(failed.conflicts.isEmpty())
+        assertEquals("the original stays, with no copy beside it", listOf("n1"), waiting())
+        assertEquals(1, entry("n1").failureCount)
+        cacheError = null
+        assertTrue(run().succeeded)
+        assertTrue(waiting().isEmpty())
+        assertEquals("one copy on the server", 1, server.items.keys.count { it.startsWith("copy-") })
+    }
+
+    @Test fun `if the cache cannot take the server's copy a delete that lost to an edit stays pending`() {
+        server.writeElsewhere("x", "web-1")
+        delete("x", seen = "srv-0")
+        cacheError = IOException("disk full")
+        val failed = run()
+        assertEquals(FailureKind.LOCAL, failed.failure)
+        assertTrue(failed.conflicts.isEmpty())
+        assertEquals("dropping it now would show a note that the cache does not hold yet", PendingEntry.State.DELETE, entry("x").state)
+        cacheError = null
+        val result = run()
+        assertTrue(result.succeeded)
+        assertEquals(mapOf("b1" to 1), result.conflicts)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `if the cache cannot take the server's copy an upload that is found to have landed stays pending`() {
+        save("y", "one")
+        // The upload lands and is answered 409 all the same, so the step fetches the copy and finds its own.
+        server.answerConflictAfterLanding = true
+        cacheError = IOException("disk full")
+        val failed = run()
+        assertEquals(FailureKind.LOCAL, failed.failure)
+        assertEquals(0, failed.pushed)
+        assertEquals(listOf("y"), waiting())
+        cacheError = null
+        server.answerConflictAfterLanding = false
+        assertTrue(run().succeeded)
+        assertTrue(waiting().isEmpty())
+    }
+
+    // ---- work on an item that fails on this device ----
+
+    @Test fun `a rebase or a new note that cannot be built is the entry's failure, and its text stays as it was`() {
+        landedWithoutAnswerThenSaved()
+        rebaseError = IllegalStateException("could not decrypt")
+        val failedRebase = run()
+        assertEquals(FailureKind.LOCAL, failedRebase.failure)
+        assertEquals("one, two", item(entry("n1").blob).text)
+        assertEquals(1, entry("n1").failureCount)
+        rebaseError = null
+        assertTrue(run().succeeded)
+
+        server.writeElsewhere("m", "web-1")
+        save("m", "mine", seen = "srv-0")
+        newNoteError = IllegalStateException("could not encrypt")
+        val failedCopy = run()
+        assertEquals(FailureKind.LOCAL, failedCopy.failure)
+        assertTrue(failedCopy.conflicts.isEmpty())
+        assertEquals(listOf("m"), waiting())
+        assertEquals("mine", item(entry("m").blob).text)
+        newNoteError = null
+        assertTrue(run().succeeded)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `if the newer change cannot be rebased onto the item that landed the push still counts, and the next run rebases it`() {
+        save("a", "text")
+        duringUpload = {
+            duringUpload = {}
+            save("a", "text, and more")
+        }
+        rebaseError = IllegalStateException("could not decrypt")
+        val result = run()
+        assertEquals(1, result.pushed)
+        assertTrue(result.succeeded)
+        assertNull("still on its old base", item(entry("a").blob).base)
+        rebaseError = null
+        // Its push gets a 409 whose server copy is ours, and it is rebased then.
+        assertTrue(run().succeeded)
+        assertEquals(1, server.fetches.size)
+        assertEquals("text, and more", server.items.getValue("a").text)
+        assertTrue(waiting().isEmpty())
+    }
+
+    // ---- more moments at which a run stops being current ----
+
+    @Test fun `a run that stops being current during the fetch of a server copy stores no rebase`() {
+        landedWithoutAnswerThenSaved()
+        server.uploads.clear()
+        val before = entry("n1")
+        var current = true
+        duringFetch = { current = false }
+        assertThrows(StaleSyncRunException::class.java) { step(mayWrite = { current }).pass() }
+        val after = entry("n1")
+        assertEquals(before.version, after.version)
+        assertEquals(before.revision, after.revision)
+        assertEquals(0, after.failureCount)
+        assertTrue(cached.isEmpty())
+        assertEquals(1, server.uploads.size)
+    }
+
+    @Test fun `a 401 that arrives once the run is no longer current is not a reason to renew`() {
+        save("a", "one")
+        var current = true
+        duringUpload = { current = false }
+        server.uploadError = { UnauthorizedException("Invalid token.") }
+        assertThrows(StaleSyncRunException::class.java) { step(mayWrite = { current }).pass() }
+        assertEquals(0, entry("a").failureCount)
     }
 }
