@@ -19,7 +19,12 @@
 // Anything with an invalid signature or id throws before a verdict.
 //
 // Permitted differences between expected and observed events are exactly id,
-// sig, created_at and the release `e` tuple's event id (runbook section 1.4).
+// sig, created_at, the release `e` tuple's event id and the relative order of
+// the platform `f` tuples among themselves (runbook section 1.4). The official
+// publisher collects native architectures in a Go map (upstream
+// internal/apk/parser.go extractArchitectures), so that order changes between
+// two runs over the same APK; which `f` tuples exist, how many, and the
+// positions they occupy still compare exactly.
 
 import { KINDS, tagValue, tagValues, verifyEvent } from './nostr.mjs'
 
@@ -28,11 +33,19 @@ export const LEGACY_RELEASE_IDENTITY = ['i', 'version', 'd', 'c']
 
 const tagJson = (tag) => JSON.stringify(tag)
 
+// Sorts the `f` tuples among the positions they already occupy; every other
+// tuple keeps its place.
+export function canonicalTags(tags) {
+  const platforms = tags.filter((tag) => tag[0] === 'f').map(tagJson).sort()
+  let next = 0
+  return tags.map((tag) => (tag[0] === 'f' ? JSON.parse(platforms[next++]) : tag))
+}
+
 export function compareExact(expected, observed, label, { substitute = (tag) => tag } = {}) {
   const diffs = []
   if (observed.content !== expected.content) diffs.push(`${label}.content`)
-  const exp = expected.tags.map(substitute)
-  const obs = observed.tags
+  const exp = canonicalTags(expected.tags.map(substitute))
+  const obs = canonicalTags(observed.tags)
   for (let i = 0; i < Math.max(exp.length, obs.length); i += 1) {
     const e = exp[i]
     const o = obs[i]

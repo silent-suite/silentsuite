@@ -16,7 +16,7 @@ import { buildBinding, revalidateBinding, verifyApkHashes } from './lib/binding.
 import { parseApksignerOutput, requireSignedBy } from './lib/apksigner.mjs'
 import { generateConfig, loadTemplate, resolveChangelog, stageMedia } from './lib/metadata.mjs'
 import { eventId, KINDS, loadSchnorr, packageFilters, queryRelay, RELAY_URL } from './lib/nostr.mjs'
-import { assessRelayState, expectedSet, publicationAction, requireReadbackComplete } from './lib/reconcile.mjs'
+import { assessRelayState, canonicalTags, expectedSet, publicationAction, requireReadbackComplete } from './lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, ZSP, zspArgs, zspEnv } from './lib/zsp.mjs'
 import { materializeClientKey } from './lib/bunker-key.mjs'
 import { redact, summarizeSignerRun } from './lib/redact.mjs'
@@ -259,6 +259,9 @@ const commands = {
           // relay hint, tuple shape, ordering and all other metadata exact.
           event.tags = event.tags.map((tag) => tag[0] === 'e' ? [tag[0], '<apk-event-id>', ...tag.slice(2)] : tag)
         }
+        // The publisher emits platform `f` tags in Go map order, which changes
+        // between runs; their values and positions stay exact.
+        event.tags = canonicalTags(event.tags)
         delete event.created_at
         delete event.id
         return JSON.stringify(event)

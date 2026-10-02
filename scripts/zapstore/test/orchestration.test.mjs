@@ -113,12 +113,30 @@ test('cli drift accepts regenerated event identities but rejects changed publica
   }
   const ok = invoke(regenerated)
   assert.equal(ok.status, 0, ok.stderr)
+  // The publisher emits platform `f` tags in Go map order, so a regenerated
+  // set may carry them in another order; the APK id and the release link follow.
+  for (const k of [1, 2, 3]) {
+    const rotated = structuredClone(regenerated)
+    for (const event of rotated) {
+      const platforms = event.tags.filter((t) => t[0] === 'f')
+      let next = 0
+      event.tags = event.tags.map((t) => (t[0] === 'f' ? platforms[(next++ + k) % platforms.length] : t))
+    }
+    const rotatedApk = rotated.find((e) => e.kind === 3063)
+    rotatedApk.id = eventId(rotatedApk)
+    rotated.find((e) => e.kind === 30063).tags.find((t) => t[0] === 'e')[1] = rotatedApk.id
+    for (const event of rotated) event.id = eventId(event)
+    const accepted = invoke(rotated)
+    assert.equal(accepted.status, 0, `rotation ${k}: ${accepted.stderr}`)
+  }
   for (const mutate of [
     (es) => { es.find((e) => e.kind === 30063).content += 'changed' },
     (es) => { es.find((e) => e.kind === 3063).tags.find((t) => t[0] === 'x')[1] = 'b'.repeat(64) },
     (es) => { es.find((e) => e.kind === 30063).tags.find((t) => t[0] === 'e')[2] = 'wss://other.example' },
     (es) => { es.find((e) => e.kind === 30063).tags.find((t) => t[0] === 'e')[1] = 'c'.repeat(64) },
     (es) => { es.find((e) => e.kind === 30063).tags.push(['e', apk.id, 'wss://relay.zapstore.dev']) },
+    (es) => { es.find((e) => e.kind === 32267).tags.find((t) => t[0] === 'f' && t[1] === 'android-x86')[1] = 'android-riscv64' },
+    (es) => { const app = es.find((e) => e.kind === 32267); app.tags = app.tags.filter((t) => !(t[0] === 'f' && t[1] === 'android-x86')) },
   ]) {
     const changed = structuredClone(regenerated)
     mutate(changed)

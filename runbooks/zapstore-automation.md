@@ -157,14 +157,21 @@ Sibling paths:
 Expected events are the unsigned offline `zsp` output for the exact APK, trusted
 template and bound changelog. Observed events must match **content and the full
 ordered tag list**, tuple by tuple. Permitted differences are exactly `id`,
-`sig`, `created_at`, and the release `e` tuple, which must be
-`["e", <observed matching APK id>, "wss://relay.zapstore.dev"]`. This covers the
+`sig`, `created_at`, the release `e` tuple, which must be
+`["e", <observed matching APK id>, "wss://relay.zapstore.dev"]`, and the
+relative order of the platform `f` tuples among themselves: the pinned
+publisher collects them in a Go map (upstream `internal/apk/parser.go`
+`extractArchitectures`), so their order changes per invocation. The set of `f`
+values, their count and the positions the `f` tuples occupy must still match.
+This covers the
 app `h` community tag, `icon`, ordered `image`, ordered `t`, `f`, `url`,
 `repository`, `license`; the APK `i`, `x`, `version`, `version_code`, `url`,
 `m`, `size`, `f`, `min_platform_version`, `target_platform_version`,
 `filename`, `commit`, `apk_certificate_hash` and empty content; the release
 `i`, `version`, `d`, `c`, `f`, `e` and changelog content. Any extra tag, missing
-tag, reordered tag, or extra tuple element is a difference.
+tag, reordered tag (other than `f` tuples among their own positions), or extra
+tuple element is a difference. The same `f` canonicalisation applies to the
+assessment-to-publication `drift` check.
 
 Legacy mode applies only to observed APK events that carry no `commit` tag:
 `i`, `x`, `version`, `version_code`, `size`, `m`, `apk_certificate_hash` must
@@ -222,7 +229,10 @@ lines, and corrupt downloaded bytes.
   recoverable `partial` (stranded release, no APK event) through to an exact
   read-back and its guards, unrecoverable `partial` fail-closed, the newest
   release staying an exact candidate outside the window, conflicts on `h`, APK content,
-  `min_allowed_version_code`, e-link relay hint, superseded, incomplete.
+  `min_allowed_version_code`, e-link relay hint, superseded, incomplete;
+  platform `f` tag order: every rotation matches (app, release, APK, recorded
+  relay history, `drift`), while a replaced, removed, added or relocated `f`
+  value is still a difference.
 - `protocol.test.mjs`: NIP-44 v2 against the published test vectors; NIP-46
   `connect`/`get_public_key` round trip against an in-process responder that
   implements the same protocol, mismatch refusal, error and timeout handling,
