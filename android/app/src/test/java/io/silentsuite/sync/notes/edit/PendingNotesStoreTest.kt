@@ -450,6 +450,54 @@ class PendingNotesStoreTest {
         assertEquals(listOf("copy1", "orig"), restarted().scan().entries.map { it.noteUid })
     }
 
+    // ---- what the push step asks of the store ----
+
+    @Test fun `startSend says why nothing is sent`() {
+        val refused = { reason: PendingNotesStore.Refusal -> PendingNotesStore.SendStart.Refused(reason) }
+        assertEquals(refused(PendingNotesStore.Refusal.NOTHING), store.startSend("none"))
+        store.saveLocal("held", "b1", "r1", blob("t"), isCreate = false)
+        store.hold("held", HeldReason.READ_ONLY, now = 1)
+        assertEquals(refused(PendingNotesStore.Refusal.NOTHING), store.startSend("held"))
+        store.saveLocal("bad", "b1", "r1", blob("t"), isCreate = false)
+        File(dir, "bad.note").writeBytes(byteArrayOf(0))
+        assertEquals(refused(PendingNotesStore.Refusal.UNREADABLE), store.startSend("bad"))
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        val ready = store.startSend("n1") as PendingNotesStore.SendStart.Ready
+        assertEquals(listOf("r1"), ready.entry.sent)
+        assertEquals("beginSend is the same call without the reason", ready.entry, store.beginSend("n1"))
+        // An original whose removal keeps failing, and the copy that still links to it.
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "orig.note") throw java.io.IOException("could not remove orig.note") }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        assertEquals(refused(PendingNotesStore.Refusal.UNFINISHED_ORIGINAL), store.startSend("orig"))
+        assertEquals(refused(PendingNotesStore.Refusal.LINKED_COPY), store.startSend("copy1"))
+    }
+
+    @Test fun `a snapshot's headers carry what the push order and the backoff need`() {
+        val v = saved(store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false))
+        store.recordFailure("n1", v, "TRANSIENT", now = 10)
+        store.recordFailure("n1", v, "REJECTED", now = 20)
+        store.saveLocal("n2", "b1", "r1", blob("two"), isCreate = false)
+        val headers = store.snapshot { false }.headers
+        assertEquals(PendingNotesStore.EntryHeader("n1", "b1", PendingEntry.State.UPSERT, v, failureCount = 2,
+            lastFailureAt = 20, lastFailureCategory = "REJECTED"), headers.first())
+        assertEquals(0, headers.last().failureCount)
+        assertNull(headers.last().lastFailureAt)
+        assertEquals("a header read alone agrees with the whole entry", PendingNotesStore.EntryHeader.of(entry("n1")), headers.first())
+    }
+
+    @Test fun `dropDelete removes only the delete it was decided for`() {
+        store.saveLocal("edit", "b1", "r1", blob("text"), isCreate = false)
+        assertFalse("an edit is never dropped this way", store.dropDelete("edit", entry("edit").version))
+        assertEquals(DeleteOutcome.Queued, store.markDeleted("n1", "b1", "d1", blob("deleted")))
+        val version = entry("n1").version
+        assertFalse("a stale version is refused", store.dropDelete("n1", version + 1))
+        assertFalse(store.dropDelete("none", 1))
+        assertTrue(store.dropDelete("n1", version))
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals(PendingEntry.State.UPSERT, entry("edit").state)
+    }
+
     // ---- a conflict copy and its origin link ----
 
     private fun newNote(uid: String = "copy1", revision: String = "c1") =

@@ -96,7 +96,7 @@ internal object PendingCodec {
                             val e = readEntryFields(fields, hasMark = true) { ByteArray(0) }
                             // As in the full read, so the two never disagree about a header of another layout.
                             if (fields.available() != 0) throw IOException("trailing header bytes")
-                            Decoded.Ok(HeaderRead.Header(PendingNotesStore.EntryHeader(e.noteUid, e.notebookUid, e.state, e.version)))
+                            Decoded.Ok(HeaderRead.Header(PendingNotesStore.EntryHeader.of(e)))
                         }
                     }
                     else -> Decoded.Bad("format version $format")

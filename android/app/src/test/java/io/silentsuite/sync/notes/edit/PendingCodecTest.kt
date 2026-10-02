@@ -72,7 +72,8 @@ class PendingCodecTest {
     @Test fun `the header reads on its own from the first bytes of the file`() {
         val bytes = PendingCodec.encodeEntry(full)
         val read = (header(bytes) as PendingCodec.Decoded.Ok).value as PendingCodec.HeaderRead.Header
-        assertEquals(PendingNotesStore.EntryHeader("note_A-1", "book-1", PendingEntry.State.HELD, 7), read.header)
+        assertEquals(PendingNotesStore.EntryHeader("note_A-1", "book-1", PendingEntry.State.HELD, 7,
+            failureCount = 3, lastFailureAt = 1_758_800_000_000, lastFailureCategory = "READ_ONLY"), read.header)
         assertTrue("the header ends before the blob", PendingCodec.entryHeaderEnd(bytes)!! < bytes.size - full.blob.size)
     }
 

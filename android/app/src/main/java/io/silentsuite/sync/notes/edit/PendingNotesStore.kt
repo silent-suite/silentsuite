@@ -87,8 +87,21 @@ internal class PendingNotesStore private constructor(
 
     data class Scan(val entries: List<PendingEntry>, val unreadable: List<Read.Unreadable>)
 
-    /** An entry without its blob: enough to count, filter, and choose entries. */
-    data class EntryHeader(val noteUid: String, val notebookUid: String, val state: PendingEntry.State, val version: Long)
+    /** An entry without its blob: enough to count, filter, order and choose entries. */
+    data class EntryHeader(
+        val noteUid: String,
+        val notebookUid: String,
+        val state: PendingEntry.State,
+        val version: Long,
+        val failureCount: Int = 0,
+        val lastFailureAt: Long? = null,
+        val lastFailureCategory: String? = null,
+    ) {
+        companion object {
+            fun of(e: PendingEntry) =
+                EntryHeader(e.noteUid, e.notebookUid, e.state, e.version, e.failureCount, e.lastFailureAt, e.lastFailureCategory)
+        }
+    }
 
     /**
      * One consistent view taken under one lock: every header, the full entries the caller asked for,
@@ -182,7 +195,7 @@ internal class PendingNotesStore private constructor(
             when (val read = decodeFile(file)) {
                 is Read.Present -> {
                     val e = read.entry
-                    val full = EntryHeader(e.noteUid, e.notebookUid, e.state, e.version)
+                    val full = EntryHeader.of(e)
                     headers += full
                     if (keep(full)) kept[e.noteUid] = e
                 }
@@ -379,28 +392,70 @@ internal class PendingNotesStore private constructor(
      * (design 3.4). Each send refused for this reason has recovery look again before the next operation,
      * since an original that could not be read leaves no failed step behind to do that.
      */
-    fun beginSend(noteUid: String): PendingEntry? = locked {
+    fun beginSend(noteUid: String): PendingEntry? = (startSend(noteUid) as? SendStart.Ready)?.entry
+
+    /** [beginSend] with the reason when nothing is sent, which the push step needs for the run's status. */
+    fun startSend(noteUid: String): SendStart = locked {
         if (noteUid in unfinishedOriginals) {
             recovered = false
-            return@locked null
+            return@locked SendStart.Refused(Refusal.UNFINISHED_ORIGINAL)
         }
-        var snapshot: PendingEntry? = null
+        var start: SendStart = SendStart.Refused(Refusal.NOTHING)
         update(noteUid) { read ->
             val e = (read as? Read.Present)?.entry
             when {
+                read is Read.Unreadable -> {
+                    start = SendStart.Refused(Refusal.UNREADABLE)
+                    Change.Keep
+                }
                 e == null || e.state == PendingEntry.State.HELD -> Change.Keep
                 e.origin != null -> {
                     recovered = false
+                    start = SendStart.Refused(Refusal.LINKED_COPY)
                     Change.Keep
                 }
                 else -> {
                     val updated = e.withSent(e.revision)
-                    snapshot = updated
+                    start = SendStart.Ready(updated)
                     if (updated === e) Change.Keep else Change.Write(updated)
                 }
             }
         }
-        snapshot
+        start
+    }
+
+    sealed class SendStart {
+        /** The snapshot to upload, with its revision recorded as sent. */
+        data class Ready(val entry: PendingEntry) : SendStart()
+        data class Refused(val reason: Refusal) : SendStart()
+    }
+
+    enum class Refusal {
+        /** No entry, or held text: nothing to push. */
+        NOTHING,
+        /** The entry's file cannot be read. */
+        UNREADABLE,
+        /** An original that a conflict copy has not finished replacing. */
+        UNFINISHED_ORIGINAL,
+        /** A conflict copy that still carries its origin link. */
+        LINKED_COPY,
+    }
+
+    /**
+     * Drops a pending delete that a conflict settled without sending it: the note was deleted elsewhere
+     * too, or it was edited elsewhere and that edit wins (design 3.4). The caller has written the
+     * server's copy into the Etebase cache first. False when the entry moved on or is not a delete.
+     */
+    fun dropDelete(noteUid: String, expectedVersion: Long): Boolean = locked {
+        var dropped = false
+        update(noteUid) { read ->
+            val e = (read as? Read.Present)?.entry
+            if (e == null || e.version != expectedVersion || e.state != PendingEntry.State.DELETE) Change.Keep else {
+                dropped = true
+                Change.Remove
+            }
+        }
+        dropped
     }
 
     /**

@@ -40,7 +40,10 @@ internal object NotePushPolicy {
         RESTORE_SERVER_NOTE,
         /** Both sides deleted it: done (web issue #745). */
         ALREADY_DELETED,
-        /** The server copy could not be fetched: leave the entry and try on the next run. */
+        /**
+         * The server copy could not be fetched: the entry is never resolved without it. The failed fetch
+         * is the entry's failure, recorded as [FailureKind.TRANSIENT] with backoff (design 3.8).
+         */
         RETRY_LATER,
     }
 
@@ -192,11 +195,23 @@ internal object NotePushPolicy {
      * entry, so a waiting edit is never skipped for hours after the user asked to sync. A failure time
      * in the future (the clock was corrected backwards since) never keeps an entry waiting.
      */
-    fun inBackoff(entry: PendingEntry, now: Long, userInitiated: Boolean): Boolean {
+    fun inBackoff(entry: PendingEntry, now: Long, userInitiated: Boolean): Boolean =
+        inBackoff(entry.failureCount, entry.lastFailureAt, now, userInitiated)
+
+    fun inBackoff(failureCount: Int, lastFailureAt: Long?, now: Long, userInitiated: Boolean): Boolean {
         if (userInitiated) return false
-        val last = entry.lastFailureAt ?: return false
-        return now >= last && now < last + backoffMillis(entry.failureCount)
+        val last = lastFailureAt ?: return false
+        return now >= last && now < last + backoffMillis(failureCount)
     }
+
+    /**
+     * Whether an error on a request of the push step is not about one entry: a connection error or a
+     * temporary server error ends the step for the whole run (design 3.8), as the same errors end the
+     * slice 1 fetch for every notebook (but for a listing that cannot finish, which fails only its own
+     * notebook there). A 403 ends it too, but only on the confirming notebook fetch, which the step
+     * decides itself.
+     */
+    fun endsPushStep(error: Throwable): Boolean = error is ConnectionException || error is TemporaryServerErrorException
 
     /**
      * "<title> (conflicted copy)", built from the title as displayed, so a blank name becomes

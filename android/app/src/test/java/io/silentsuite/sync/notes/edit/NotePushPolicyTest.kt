@@ -214,6 +214,31 @@ class NotePushPolicyTest {
         assertFalse(NotePushPolicy.inBackoff(failedTwice, now = 500, userInitiated = false))
     }
 
+    @Test fun `backoff reads the same from an entry and from its header fields`() {
+        val failedTwice = upsert("r1").copy(failureCount = 2, lastFailureAt = 1_000)
+        for (now in listOf(500L, 1_000L, 1_000L + 119_999, 1_000L + 120_000)) {
+            for (userInitiated in listOf(false, true)) {
+                assertEquals(NotePushPolicy.inBackoff(failedTwice, now, userInitiated),
+                    NotePushPolicy.inBackoff(2, 1_000, now, userInitiated))
+            }
+        }
+        assertFalse(NotePushPolicy.inBackoff(0, null, now = 5, userInitiated = false))
+    }
+
+    @Test fun `only a connection error or a temporary server error ends the push step`() {
+        assertTrue(NotePushPolicy.endsPushStep(ConnectionException("timeout")))
+        assertTrue(NotePushPolicy.endsPushStep(TemporaryServerErrorException("503")))
+        // About one entry: the others are still tried.
+        assertFalse(NotePushPolicy.endsPushStep(ServerErrorException("500")))
+        assertFalse(NotePushPolicy.endsPushStep(HttpException("HTTP error 429! Code: 'throttled'. Detail: ''")))
+        assertFalse(NotePushPolicy.endsPushStep(NotFoundException("Got a redirect - should never happen")))
+        assertFalse(NotePushPolicy.endsPushStep(ConflictException("wrong_etag")))
+        assertFalse(NotePushPolicy.endsPushStep(IOException("no space left on device")))
+        // A 403 or a 401 on a push is settled by the step: the notebook confirmation, and the renewal.
+        assertFalse(NotePushPolicy.endsPushStep(PermissionDeniedException("no_write_access")))
+        assertFalse(NotePushPolicy.endsPushStep(UnauthorizedException("Invalid token.")))
+    }
+
     @Test fun `a sync the user asked for tries every entry, backoff or not`() {
         val failedOften = upsert("r1").copy(failureCount = 10, lastFailureAt = 1_000)
         assertTrue(NotePushPolicy.inBackoff(failedOften, now = 2_000, userInitiated = false))
