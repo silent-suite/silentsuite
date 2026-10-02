@@ -513,6 +513,15 @@ test('platform f tag order is not significant; which f values exist, how many, a
     }
   }
   assert.match(compareApk(unsigned.apk, { ...unsigned.apk, tags: F_MUTATIONS.replaced(unsigned.apk.tags) }).join('; '), /android-riscv64/)
+  // A transposition is not a rotation: swapping two `f` tuples still matches.
+  const swapF = (tags) => {
+    const [a, b] = tags.flatMap((t, i) => (t[0] === 'f' ? [i] : []))
+    return tags.map((t, i) => [...tags[i === a ? b : i === b ? a : i]])
+  }
+  assert.notDeepEqual(swapF(unsigned.apk.tags), unsigned.apk.tags, 'the swap changes the tag order')
+  assert.deepEqual(compareApp(unsigned.app, { ...unsigned.app, tags: swapF(unsigned.app.tags) }), [], 'app transposition')
+  assert.deepEqual(compareRelease(unsigned.release, { ...unsigned.release, tags: swapF(linked) }, apkId), [], 'release transposition')
+  assert.deepEqual(compareApk(unsigned.apk, { ...unsigned.apk, tags: swapF(unsigned.apk.tags) }), [], 'apk transposition')
 })
 
 test('relay state: a set signed with another f order is complete; a differing f value is drift or conflict', async () => {

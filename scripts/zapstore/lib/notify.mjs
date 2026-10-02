@@ -27,7 +27,7 @@ export function retryInstructions({ releaseId, tag, sourceSha }) {
   const sha = typeof sourceSha === 'string' && /^[0-9a-f]{40}$/.test(sourceSha) ? sourceSha : '<40-hex tag commit>'
   return [
     'This lane has no repository_dispatch, workflow_dispatch, release-event or tag-edit retry.',
-    'Exact retry: open the failed scheduled run and choose "Re-run failed jobs" (same event, same protected revision, environment approval still required), or wait for the next schedule (hourly during temporary commissioning; six-hourly once restored).',
+    'Exact retry: open the failed scheduled run and choose "Re-run failed jobs" (same event, same protected revision, environment approval still required), or wait for the next schedule (six-hourly).',
     `  tag ${safeTag}`,
     `  GitHub release id ${safeId}`,
     `  source commit ${sha}`,

@@ -24,7 +24,7 @@ const JOBS = ['admit', 'enumerate', 'assess', 'plan', 'publish', 'notify']
 
 test('the only trigger is schedule; the definition revision is the only checkout', () => {
   const on = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'))
-  assert.match(on, /\non:\n  schedule:\n    - cron: '17 \* \* \* \*'\n/)
+  assert.match(on, /\non:\n  schedule:\n    - cron: '17 \*\/6 \* \* \*'\n/)
   assert.deepEqual(on.match(/^  [a-z_]+:/gm), ['  schedule:'], 'schedule is the only trigger key')
   assert.doesNotMatch(on.replace(/^#.*$/gm, ''), /release|repository_dispatch|workflow_dispatch|pull_request|push|workflow_call|tags:/)
   assert.equal(workflow.split(shaCheckout).length - 1, JOBS.length, 'every job checks out github.sha exactly once')
