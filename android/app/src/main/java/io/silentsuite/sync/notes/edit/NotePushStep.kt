@@ -139,7 +139,8 @@ internal class NotePushStep(
         val succeeded: Boolean get() = ended == Ended.COMPLETED && failure == null && carriedFailure == null
     }
 
-    private class EndPass(val ended: Ended) : RuntimeException(null, null, false, false)
+    /** Ends the pass from wherever it is. Caught in [pass]; it never leaves this class. */
+    private class EndPass(val ended: Ended) : RuntimeException()
 
     /** Pushed, resolved, held, or recorded as failed in this run: not sent again, in this pass or the next. */
     private val settled = HashSet<String>()
