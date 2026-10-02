@@ -30,6 +30,12 @@ internal object NotePushPolicy {
         KEEP_BOTH,
         /** Deleted elsewhere: the local text becomes a new note with its own title. */
         RECREATE_AS_NEW_NOTE,
+        /**
+         * The entry is itself a note made from a conflict that is not yet known to be on the server
+         * ([PendingEntry.fromConflict]), and the server copy is again not ours: no further note is made.
+         * The text is held as [HeldReason.REPEATED_CONFLICT], with the sent version, as for a rejection.
+         */
+        HOLD_REPEATED_CONFLICT,
         /** A local delete against an edit made elsewhere: the newer edit wins, the note comes back. */
         RESTORE_SERVER_NOTE,
         /** Both sides deleted it: done (web issue #745). */
@@ -43,6 +49,13 @@ internal object NotePushPolicy {
     /**
      * The server revision history is deliberately not consulted: a lost response followed by a
      * write from another client then yields one redundant conflicted copy, never lost text.
+     *
+     * The mark of a note made from a conflict changes only the two rows that make a note. Without it, a
+     * server that answers every push with a 409 and a copy that is not ours would get a new note, a
+     * notification and another push in every run; with it, the run that makes the note also holds it
+     * (design 3.8). A copy of ours is handled as for any entry. So is a pending delete, marked or not:
+     * the delete rows make no note, and the holding area would drop the delete without the cache write
+     * those rows need.
      */
     fun decide(entry: PendingEntry, landedRevision: String?, server: ServerCopy?): ConflictOutcome {
         require(entry.state != PendingEntry.State.HELD) { "held text is never pushed" }
@@ -50,8 +63,11 @@ internal object NotePushPolicy {
         val ours = server.revision in entry.sent || server.revision == landedRevision
         if (ours) return if (server.revision == entry.revision) ConflictOutcome.DONE else ConflictOutcome.REBASE
         return when (entry.state) {
-            PendingEntry.State.UPSERT ->
-                if (server.deleted) ConflictOutcome.RECREATE_AS_NEW_NOTE else ConflictOutcome.KEEP_BOTH
+            PendingEntry.State.UPSERT -> when {
+                entry.fromConflict -> ConflictOutcome.HOLD_REPEATED_CONFLICT
+                server.deleted -> ConflictOutcome.RECREATE_AS_NEW_NOTE
+                else -> ConflictOutcome.KEEP_BOTH
+            }
             PendingEntry.State.DELETE ->
                 if (server.deleted) ConflictOutcome.ALREADY_DELETED else ConflictOutcome.RESTORE_SERVER_NOTE
             PendingEntry.State.HELD -> error("unreachable")

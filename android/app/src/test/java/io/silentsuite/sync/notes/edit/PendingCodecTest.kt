@@ -2,6 +2,7 @@ package io.silentsuite.sync.notes.edit
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -12,7 +13,7 @@ class PendingCodecTest {
         revision = "rev-7", isCreate = true, sent = listOf("rev-5", "rev-6"), failureCount = 3,
         lastFailureAt = 1_758_800_000_000, lastFailureCategory = "READ_ONLY",
         origin = PendingEntry.Origin("note-orig", "rev-orig", 4, "srv-9"), held = PendingEntry.Held(HeldReason.READ_ONLY, 1_758_800_000_500),
-        blob = byteArrayOf(0, 1, 2, -1, 127, -128),
+        fromConflict = true, blob = byteArrayOf(0, 1, 2, -1, 127, -128),
     )
 
     private fun ok(bytes: ByteArray) = (PendingCodec.decodeEntry(bytes) as PendingCodec.Decoded.Ok).value
@@ -23,6 +24,21 @@ class PendingCodecTest {
         assertEquals(full, ok(PendingCodec.encodeEntry(full)))
         val minimal = PendingEntry("n", "b", PendingEntry.State.UPSERT, 1, "r", false, blob = ByteArray(0))
         assertEquals(minimal, ok(PendingCodec.encodeEntry(minimal)))
+    }
+
+    @Test fun `the conflict mark is read back as it was written, set or not`() {
+        for (marked in listOf(true, false)) {
+            val entry = full.copy(fromConflict = marked)
+            assertEquals(marked, ok(PendingCodec.encodeEntry(entry)).fromConflict)
+        }
+        assertTrue("the mark is part of an entry's identity", full != full.copy(fromConflict = false))
+        // The mark is the last byte of the header, so the two files differ only there and in the checksums.
+        val marked = PendingCodec.encodeEntry(full)
+        val unmarked = PendingCodec.encodeEntry(full.copy(fromConflict = false))
+        val markAt = PendingCodec.entryHeaderEnd(marked)!! - 5
+        assertEquals(1, marked[markAt].toInt())
+        assertEquals(0, unmarked[markAt].toInt())
+        assertArrayEquals(marked.copyOf(markAt), unmarked.copyOf(markAt))
     }
 
     @Test fun `a flipped byte anywhere is caught by the checksum`() {
@@ -111,14 +127,38 @@ class PendingCodecTest {
 
     private fun unhex(h: String) = ByteArray(h.length / 2) { h.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 
-    private val v2Upsert = "53534e50020000003c00066e6f74652d310006626f6f6b2d3101000000000000000300057265762d33010000000100057265762d3200000000ffffffffffffffff00000000bacf634300000003010203594d24b4"
-    private val v2Deleted = "53534e50020000004c00066e6f74652d320006626f6f6b2d3102000000000000000900057265762d64000000000200057265762d6100057265762d62000000020000019980a6340000095452414e5349454e54000030ed609400000001099f4f157b"
-    private val v2Held = "53534e50020000006500066e6f74652d330006626f6f6b2d3203000000000000000c00057265762d68000000000000000000ffffffffffffffff00000100066e6f74652d3000057265762d6f000000000000000500057372762d3701000852454a45435445440000019980a635f4e41a9e3e000000005b9e02ad"
+    // Format 2 with the conflict mark as its last header field. The mark was added in place, before any
+    // build had written format 2 on a user's device (design 3.8); from then on a new field needs format 3.
+    // The upsert is the format 1 entry with the mark set; the delete and the held entry are unmarked.
+    private val v2Upsert = "53534e50020000003d00066e6f74652d310006626f6f6b2d3101000000000000000300057265762d33010000000100057265762d3200000000ffffffffffffffff00000000014a6a00520000000301020389a5614f"
+    private val v2Deleted = "53534e50020000004d00066e6f74652d320006626f6f6b2d3102000000000000000900057265762d64000000000200057265762d6100057265762d62000000020000019980a6340000095452414e5349454e54000000255055b0000000010996f19b9c"
+    private val v2Held = "53534e50020000006600066e6f74652d330006626f6f6b2d3203000000000000000c00057265762d68000000000000000000ffffffffffffffff00000100066e6f74652d3000057265762d6f000000000000000500057372762d3701000852454a45435445440000019980a635f4001387e8b800000000748f775f"
+    // Text held for a repeated conflict. The reason is stored by name, so this also freezes that name.
+    private val v2HeldRepeated = "53534e50020000005800066e6f74652d340006626f6f6b2d3203000000000000000f00057265762d63010000000100057265762d6300000000ffffffffffffffff00000001001152455045415445445f434f4e464c4943540000019980a637e801c4ce1c20000000012a337b503d"
+    private val v2HeldRepeatedEntry = PendingEntry("note-4", "book-2", PendingEntry.State.HELD, 15, "rev-c", true, listOf("rev-c"),
+        held = PendingEntry.Held(HeldReason.REPEATED_CONFLICT, 1_758_800_001_000), fromConflict = true, blob = byteArrayOf(42))
+
+    // The three format 2 layouts as they were before the mark, kept only to show they no longer read.
+    private val v2UpsertBeforeMark = "53534e50020000003c00066e6f74652d310006626f6f6b2d3101000000000000000300057265762d33010000000100057265762d3200000000ffffffffffffffff00000000bacf634300000003010203594d24b4"
+    private val v2DeletedBeforeMark = "53534e50020000004c00066e6f74652d320006626f6f6b2d3102000000000000000900057265762d64000000000200057265762d6100057265762d62000000020000019980a6340000095452414e5349454e54000030ed609400000001099f4f157b"
+    private val v2HeldBeforeMark = "53534e50020000006500066e6f74652d330006626f6f6b2d3203000000000000000c00057265762d68000000000000000000ffffffffffffffff00000100066e6f74652d3000057265762d6f000000000000000500057372762d3701000852454a45435445440000019980a635f4e41a9e3e000000005b9e02ad"
 
     @Test fun `format 2 entry files read back exactly and are written byte for byte the same`() {
-        for ((hex, entry) in listOf(v2Upsert to v1UpsertEntry, v2Deleted to v1DeletedEntry, v2Held to v1HeldEntry)) {
+        val fixtures = listOf(v2Upsert to v1UpsertEntry.copy(fromConflict = true), v2Deleted to v1DeletedEntry,
+            v2Held to v1HeldEntry, v2HeldRepeated to v2HeldRepeatedEntry)
+        for ((hex, entry) in fixtures) {
             assertEquals(entry, ok(unhex(hex)))
             assertArrayEquals(unhex(hex), PendingCodec.encodeEntry(entry))
+        }
+    }
+
+    @Test fun `a format 2 file from before the conflict mark is reported as unreadable, not read as unmarked`() {
+        // Such files exist only where a build of the prototype branch ran. They are kept and reported like
+        // any file that cannot be read, and the header-only view refuses them the same way.
+        for (hex in listOf(v2UpsertBeforeMark, v2DeletedBeforeMark, v2HeldBeforeMark)) {
+            val bytes = unhex(hex)
+            assertEquals("truncated", bad(bytes))
+            assertEquals("truncated", (PendingCodec.decodeEntryHeader(bytes.copyOf(PendingCodec.entryHeaderEnd(bytes)!!)) as PendingCodec.Decoded.Bad).reason)
         }
     }
 
@@ -138,6 +178,7 @@ class PendingCodecTest {
     @Test fun `format 1 entry files still read back exactly, and are written as format 2`() {
         for ((hex, entry) in listOf(v1Upsert to v1UpsertEntry, v1Deleted to v1DeletedEntry, v1Held to v1HeldEntry)) {
             assertEquals(entry, ok(unhex(hex)))
+            assertFalse("format 1 has no conflict mark, so it reads as unmarked", ok(unhex(hex)).fromConflict)
             assertEquals(PendingCodec.ENTRY_FORMAT_VERSION, PendingCodec.encodeEntry(entry)[4].toInt())
         }
     }

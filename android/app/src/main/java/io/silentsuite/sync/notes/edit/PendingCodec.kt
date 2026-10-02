@@ -17,6 +17,12 @@ import java.util.zip.CRC32
  * ahead of the blob, so a screen that only counts entries reads a few hundred bytes per file instead
  * of every blob. Format 1 entry files (no header section) are still read, and rewritten as format 2
  * on their next change.
+ *
+ * The last header field of format 2 is the mark of a note made from a conflict
+ * ([PendingEntry.fromConflict]). It was added to format 2 in place, while that format existed only on
+ * an unreleased branch, so a format 2 file without it does not read. Format 1 has no such field and
+ * reads as unmarked. Once a build has written format 2 files on a user's device, a new field needs a
+ * new format version.
  */
 internal object PendingCodec {
     const val ENTRY_FORMAT_VERSION = 2
@@ -60,12 +66,12 @@ internal object PendingCodec {
     fun decodeEntry(bytes: ByteArray): Decoded<PendingEntry> = openEntry(bytes) { format, input ->
         if (format == ENTRY_FORMAT_V1) {
             // Format 1 has the blob right after the fields, so it is read once they are.
-            readEntryFields(input) { readBlob(input) }
+            readEntryFields(input, hasMark = false) { readBlob(input) }
         } else {
             val header = readHeaderSection(input)
             val blob = readBlob(input)
             DataInputStream(ByteArrayInputStream(header)).use { fields ->
-                val entry = readEntryFields(fields) { blob }
+                val entry = readEntryFields(fields, hasMark = true) { blob }
                 if (fields.available() != 0) throw IOException("trailing header bytes")
                 entry
             }
@@ -87,7 +93,7 @@ internal object PendingCodec {
                     ENTRY_FORMAT_VERSION -> {
                         val header = readHeaderSection(input)
                         DataInputStream(ByteArrayInputStream(header)).use { fields ->
-                            val e = readEntryFields(fields) { ByteArray(0) }
+                            val e = readEntryFields(fields, hasMark = true) { ByteArray(0) }
                             Decoded.Ok(HeaderRead.Header(PendingNotesStore.EntryHeader(e.noteUid, e.notebookUid, e.state, e.version)))
                         }
                     }
@@ -133,10 +139,14 @@ internal object PendingCodec {
             out.writeUTF(it.reason.name)
             out.writeLong(it.at)
         }
+        out.writeBoolean(e.fromConflict)
     }
 
-    /** Reads every field but the blob, then takes the blob from [blob]. */
-    private fun readEntryFields(input: DataInputStream, blob: () -> ByteArray): PendingEntry {
+    /**
+     * Reads every field but the blob, then takes the blob from [blob]. [hasMark] is false for format 1,
+     * which ends before the conflict mark.
+     */
+    private fun readEntryFields(input: DataInputStream, hasMark: Boolean, blob: () -> ByteArray): PendingEntry {
         val noteUid = input.readUTF()
         val notebookUid = input.readUTF()
         val state = stateOf(input.readUnsignedByte())
@@ -156,10 +166,11 @@ internal object PendingCodec {
             val reason = HeldReason.values().firstOrNull { it.name == reasonName } ?: throw IOException("held reason $reasonName")
             PendingEntry.Held(reason, input.readLong())
         } else null
+        val fromConflict = hasMark && input.readBoolean()
         val bytes = blob()
         return try {
             PendingEntry(noteUid, notebookUid, state, version, revision, isCreate, sent, failureCount,
-                lastFailureAt, lastFailureCategory, origin, held, bytes)
+                lastFailureAt, lastFailureCategory, origin, held, fromConflict, bytes)
         } catch (e: IllegalArgumentException) {
             throw IOException(e.message)
         }

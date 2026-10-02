@@ -72,6 +72,57 @@ class NotePushPolicyTest {
         assertEquals(ConflictOutcome.ALREADY_DELETED, NotePushPolicy.decide(delete("d1", listOf("d1")), null, ServerCopy("web-del", true)))
     }
 
+    // ---- a note made from a conflict that conflicts again (design section 3.8) ----
+
+    @Test fun `a marked note whose server copy is not ours is held, not copied again`() {
+        // The server answers every push with a 409 and a copy the client never sent, edited or deleted.
+        val marked = upsert("c1", listOf("c1"), isCreate = true).copy(fromConflict = true)
+        assertEquals(ConflictOutcome.HOLD_REPEATED_CONFLICT, NotePushPolicy.decide(marked, null, ServerCopy("srv-1", false)))
+        assertEquals(ConflictOutcome.HOLD_REPEATED_CONFLICT, NotePushPolicy.decide(marked, null, ServerCopy("srv-del", true)))
+        assertEquals("a landed record of another revision does not make the copy ours",
+            ConflictOutcome.HOLD_REPEATED_CONFLICT, NotePushPolicy.decide(marked, "c0", ServerCopy("srv-1", false)))
+    }
+
+    @Test fun `a marked note whose server copy is ours is handled like any other`() {
+        // A healthy server: the copy's upload landed and its response was lost.
+        val marked = upsert("c1", listOf("c1"), isCreate = true).copy(fromConflict = true)
+        assertEquals(ConflictOutcome.DONE, NotePushPolicy.decide(marked, null, ServerCopy("c1", false)))
+        val savedAgain = upsert("c2", listOf("c1", "c2"), isCreate = true).copy(fromConflict = true)
+        assertEquals(ConflictOutcome.REBASE, NotePushPolicy.decide(savedAgain, null, ServerCopy("c1", false)))
+        assertEquals(ConflictOutcome.REBASE, NotePushPolicy.decide(upsert("c3", listOf("c3")).copy(fromConflict = true), "c1", ServerCopy("c1", false)))
+    }
+
+    @Test fun `a marked pending delete follows the delete rows, never the holding area`() {
+        val marked = delete("d1", listOf("c1", "d1")).copy(fromConflict = true)
+        assertEquals(ConflictOutcome.RESTORE_SERVER_NOTE, NotePushPolicy.decide(marked, null, ServerCopy("srv-1", false)))
+        assertEquals(ConflictOutcome.ALREADY_DELETED, NotePushPolicy.decide(marked, null, ServerCopy("srv-del", true)))
+        assertEquals(ConflictOutcome.REBASE, NotePushPolicy.decide(marked, null, ServerCopy("c1", false)))
+        assertEquals(ConflictOutcome.DONE, NotePushPolicy.decide(marked, null, ServerCopy("d1", true)))
+    }
+
+    @Test fun `an unmarked note is never held for a repeated conflict`() {
+        // The bound must not fire in an ordinary sequence: every row of the table as it was.
+        val servers = listOf(ServerCopy("web-1", false), ServerCopy("web-del", true), ServerCopy("r1", false), ServerCopy("r2", false))
+        for (entry in listOf(upsert("r2", listOf("r1", "r2")), upsert("c1", listOf("c1"), isCreate = true), delete("r2", listOf("r1", "r2")))) {
+            for (server in servers) {
+                assertTrue(NotePushPolicy.decide(entry, null, server) != ConflictOutcome.HOLD_REPEATED_CONFLICT)
+            }
+        }
+    }
+
+    @Test fun `a repeated conflict is a reason of its own, apart from a rejection`() {
+        assertTrue(HeldReason.REPEATED_CONFLICT != HeldReason.REJECTED)
+        assertEquals("entry files store this name", "REPEATED_CONFLICT", HeldReason.REPEATED_CONFLICT.name)
+        // No failure kind leads to it: only the conflict decision does.
+        for (kind in FailureKind.values()) {
+            for (previous in listOf(null, FailureKind.REJECTED.name, FailureKind.CONFLICT.name)) {
+                for (check in listOf(null, NotePushPolicy.NotebookCheck.Gone, NotePushPolicy.NotebookCheck.Found(readOnly = true, deleted = false))) {
+                    assertTrue(NotePushPolicy.heldReasonFor(kind, check, previous) != HeldReason.REPEATED_CONFLICT)
+                }
+            }
+        }
+    }
+
     @Test fun `without the server copy nothing is decided`() {
         assertEquals(ConflictOutcome.RETRY_LATER, NotePushPolicy.decide(upsert("r1", listOf("r1")), null, null))
     }

@@ -27,6 +27,13 @@ internal data class PendingEntry(
     val origin: Origin? = null,
     /** Set only in the [State.HELD] state. */
     val held: Held? = null,
+    /**
+     * The mark of a note made from a conflict ([PendingNotesStore.replaceWithNewNote]), set until the
+     * note is known to be on the server. While it is set, another conflict with a server copy that is
+     * not ours holds the text instead of making one more note (design 3.8). [origin] cannot say this:
+     * it is cleared as soon as the original is gone.
+     */
+    val fromConflict: Boolean = false,
     val blob: ByteArray,
 ) {
     enum class State { UPSERT, DELETE, HELD }
@@ -45,12 +52,20 @@ internal data class PendingEntry(
     fun withSent(rev: String): PendingEntry =
         if (sent.lastOrNull() == rev) this else copy(sent = (sent + rev).takeLast(MAX_SENT))
 
+    /**
+     * Puts [rev] at the newest end of the sent list, whether or not it was in it. The cap drops the
+     * oldest end, so a revision that is moved here on every rebase is never dropped.
+     */
+    fun withNewestSent(rev: String): PendingEntry =
+        if (sent.lastOrNull() == rev) this else copy(sent = (sent.filter { it != rev } + rev).takeLast(MAX_SENT))
+
     override fun equals(other: Any?): Boolean =
         other is PendingEntry && noteUid == other.noteUid && notebookUid == other.notebookUid &&
             state == other.state && version == other.version && revision == other.revision &&
             isCreate == other.isCreate && sent == other.sent && failureCount == other.failureCount &&
             lastFailureAt == other.lastFailureAt && lastFailureCategory == other.lastFailureCategory &&
-            origin == other.origin && held == other.held && blob.contentEquals(other.blob)
+            origin == other.origin && held == other.held && fromConflict == other.fromConflict &&
+            blob.contentEquals(other.blob)
 
     override fun hashCode(): Int = noteUid.hashCode() * 31 + version.hashCode()
 
@@ -59,7 +74,15 @@ internal data class PendingEntry(
     }
 }
 
-internal enum class HeldReason { READ_ONLY, LOST_ACCESS, NOTEBOOK_DELETED, REJECTED }
+/** Why text is in the holding area. Entry files store the name, so a constant is never renamed. */
+internal enum class HeldReason {
+    READ_ONLY,
+    LOST_ACCESS,
+    NOTEBOOK_DELETED,
+    REJECTED,
+    /** A note made from a conflict was refused again with a server copy that is not ours (design 3.8). */
+    REPEATED_CONFLICT,
+}
 
 /**
  * The saved item after a successful push, kept until the open editor has rebound or closed. While it
