@@ -13,13 +13,17 @@ name: Zapstore Publication
 # because it loads from a selected ref. Exact manual retry is GitHub's native
 # "Re-run failed jobs" on a scheduled run.
 #
-# Disabled by default: the repository variable ZAPSTORE_AUTOMATION_ENABLED does
-# not exist. Creating it, the zapstore-production environment, and its two
-# secrets are separate owner actions.
+# Disabled by default: nothing publishes unless the repository variable
+# ZAPSTORE_AUTOMATION_ENABLED equals `enabled`. It is `rehearsal` today, and the
+# zapstore-production environment and its two secrets exist; setting the
+# variable to `enabled` is a separate owner action.
+#
+# Cadence: six-hourly. It ran hourly while commissioning repairs landed and was
+# restored once two scheduled rehearsals verified the repair.
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '17 */6 * * *'
 
 # One group for the whole publisher/app: two runs must never publish
 # concurrently. Never cancels; a pending run GitHub discards is picked up by the

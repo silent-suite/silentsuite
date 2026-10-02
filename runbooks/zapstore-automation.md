@@ -23,17 +23,17 @@ tags carry none. Checking out `main` afterwards cannot change the jobs,
 permissions, or secret references that were already loaded. The lane therefore
 uses exactly one trigger:
 
-- **`schedule`** (`17 * * * *` UTC, hourly). Scheduled runs are loaded from the
-  default branch; `github.sha` is that branch head and is the revision that
-  supplied the definition.
+- **`schedule`** (`17 */6 * * *` UTC, six-hourly). Scheduled runs are loaded
+  from the default branch; `github.sha` is that branch head and is the revision
+  that supplied the definition.
 
-  **Temporary commissioning cadence.** The owner approved hourly runs so the
-  rehearsal can be observed sooner; no manual trigger was added. The steady
-  cadence is six-hourly (`17 */6 * * *`). After a successful rehearsal and
-  before live activation, restore the six-hour cron in
-  `.github/workflows/zapstore-publish.yml`, the exact cron assertion in
-  `scripts/zapstore/test/workflow-boundary.test.mjs`, and the cadence wording
-  here, in 5.1 and in `scripts/zapstore/lib/notify.mjs`.
+  **Cadence history.** The owner approved temporary hourly runs
+  (`17 * * * *`) so the rehearsal could be observed sooner while commissioning
+  repairs landed; no manual trigger was added. After two consecutive scheduled
+  rehearsals on the repaired `main` showed the expected verdicts, the six-hourly
+  cadence was restored (2026-10-02) in the workflow, the exact cron assertion in
+  `scripts/zapstore/test/workflow-boundary.test.mjs`, this runbook and
+  `scripts/zapstore/lib/notify.mjs`.
 
 Admission proves this every run, from the run's own context and never from a
 value the lane fabricates: `GITHUB_EVENT_NAME=schedule`,
@@ -112,7 +112,7 @@ evidence that signing occurred. Do not approve or retry merely to clear the issu
 |---|---------|-----------------------------|-------|
 | S1 | Trigger | `schedule` only; definition and checkout are the same protected-main commit (`github.sha`) | `.github/workflows/zapstore-publish.yml`, `lib/dispatch.mjs` |
 | S2 | Revision binding | `admit` exports the revision; every job runs `checkout-guard`; the manifest records it | `cli.mjs` |
-| S3 | Activation switch | Repository variable `ZAPSTORE_AUTOMATION_ENABLED` must equal `enabled`; absent today | `admit` |
+| S3 | Activation switch | Repository variable `ZAPSTORE_AUTOMATION_ENABLED` must equal `enabled`; set to `rehearsal` since 2026-10-01 (verification only, nothing publishes) | `admit` |
 | S4 | Eligibility | `vX.Y.Z` or `vX.Y.Z-beta`; drafts refused; GitHub `prerelease=true` allowed only with `-beta`; only the newest eligible tag may be published | `lib/eligibility.mjs` |
 | S5 | Exact binding | Release id, tag, dereferenced tag commit, APK asset id, GitHub digest, Android `-installer.sha256` sidecar | `lib/github.mjs`, `lib/binding.mjs` |
 | S6 | Source admission | Trusted `scripts/verify-release-identity.sh` from the protected checkout with the real `GITHUB_REF` | `lib/identity.mjs` |
@@ -231,8 +231,8 @@ lines, and corrupt downloaded bytes.
   release staying an exact candidate outside the window, conflicts on `h`, APK content,
   `min_allowed_version_code`, e-link relay hint, superseded, incomplete;
   platform `f` tag order: every rotation matches (app, release, APK, recorded
-  relay history, `drift`), while a replaced, removed, added or relocated `f`
-  value is still a difference.
+  relay history, `drift`), while a replaced, removed, added, duplicated or
+  relocated `f` value is still a difference.
 - `protocol.test.mjs`: NIP-44 v2 against the published test vectors; NIP-46
   `connect`/`get_public_key` round trip against an in-process responder that
   implements the same protocol, mismatch refusal, error and timeout handling,
@@ -279,9 +279,9 @@ For transient failures (relay `incomplete`, a download or signer timeout), open
 the failed scheduled run and choose **Re-run failed jobs**; it is expected to
 replay the release id frozen in that run (see the open limitations in 1.1).
 Publication still waits for environment approval. Without any action, the next
-schedule (nominally hourly during temporary commissioning, six-hourly once
-restored; see 1.1) retries the same exact newest release. GitHub may delay or
-drop scheduled runs; this is not a maximum retry-time guarantee. To retry
+schedule (nominally six-hourly; see 1.1) retries the same exact newest release.
+GitHub may delay or drop scheduled runs; this is not a maximum retry-time
+guarantee. To retry
 with a code fix, merge the fix to `main` and wait for the next schedule. After
 any publication attempt whose outcome is `unknown`, do not re-run blindly: wait
 for the next scheduled reconciliation to read the relay first.
@@ -333,12 +333,14 @@ not fix them and a hand-run publisher would make them worse.
 
 ## 6. Pre-activation checklist (each item needs separate owner approval)
 
-- [ ] Create environment `zapstore-production`: required reviewer (owner),
-      deployment branch policy `main` only.
-- [ ] Environment secret `ZAPSTORE_SIGN_WITH`: a `bunker://` URL. Never a key.
-- [ ] Environment secret `ZAPSTORE_BUNKER_CLIENT_KEY`: the 64-hex NIP-46 client
+- [x] Environment `zapstore-production`: required reviewer (owner, `silent-suite`),
+      deployment branch policy `main` only. Exists since 2026-10-01.
+- [x] Environment secret `ZAPSTORE_SIGN_WITH`: a `bunker://` URL. Never a key.
+      Exists since 2026-10-01 (value not inspected here).
+- [x] Environment secret `ZAPSTORE_BUNKER_CLIENT_KEY`: the 64-hex NIP-46 client
       key already authorised by the signer for kinds `32267`, `30063`, `3063`,
-      `24242` and the `get_public_key` method. No blanket allow.
+      `24242` and the `get_public_key` method. No blanket allow. Exists since
+      2026-10-01 (value and signer-side grant not inspected here).
 - [ ] Signer availability: unattended approval has not been verified; a
       dedicated always-on signer with the grant above is recommended.
 - [ ] Replay verification (open caveat in 1.1): on a rehearsal or first live
@@ -349,6 +351,8 @@ not fix them and a hand-run publisher would make them worse.
 - [ ] Secret-free commissioning first: set `ZAPSTORE_AUTOMATION_ENABLED=rehearsal`
       and confirm `enumerate` and `assess` produce the expected table, the
       recorded history reconciles as `legacy-complete`, and no issue is opened.
+      The variable is `rehearsal` since 2026-10-01; this item stays open until
+      the owner accepts the rehearsal evidence.
 - [ ] Then set `ZAPSTORE_AUTOMATION_ENABLED=enabled`.
 
 ## 7. Pinned tooling

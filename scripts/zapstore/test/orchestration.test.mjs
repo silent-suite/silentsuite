@@ -143,6 +143,22 @@ test('cli drift accepts regenerated event identities but rejects changed publica
     for (const event of changed) event.id = eventId(event)
     assert.notEqual(invoke(changed).status, 0, 'changed input must remain blocked')
   }
+  // A relocated or duplicated APK `f` tuple is a difference even with the
+  // release re-linked to the changed APK, so only the `f` change can block it.
+  for (const [name, mutate] of Object.entries({
+    relocated: (tags) => { const first = tags.findIndex((t) => t[0] === 'f'); return [...tags.filter((_, i) => i !== first), tags[first]] },
+    duplicated: (tags) => { const last = tags.findLastIndex((t) => t[0] === 'f'); return [...tags.slice(0, last + 1), [...tags[last]], ...tags.slice(last + 1)] },
+  })) {
+    const changed = structuredClone(regenerated)
+    const changedApk = changed.find((e) => e.kind === 3063)
+    changedApk.tags = mutate(changedApk.tags)
+    changedApk.id = eventId(changedApk)
+    changed.find((e) => e.kind === 30063).tags.find((t) => t[0] === 'e')[1] = changedApk.id
+    for (const event of changed) event.id = eventId(event)
+    const blocked = invoke(changed)
+    assert.notEqual(blocked.status, 0, `${name} f must remain blocked`)
+    assert.match(blocked.stderr, /drifted from the assessment: expected-events/, name)
+  }
   // Synthetic credential-shaped text must be redacted in both output channels.
   write(join(dir, 'reconcile.json'), { action: 'publish', reason: 'bunker://synthetic-review-fixture?secret=not-a-real-secret' })
   const redacted = invoke(regenerated)
