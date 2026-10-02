@@ -12,6 +12,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -213,11 +214,12 @@ class NotePushBoundsTest {
                     "moved on"
                 }
             }
-            ConflictOutcome.HOLD_REPEATED_CONFLICT -> {
-                assertEquals(PendingNotesStore.HoldOutcome.HELD,
-                    store.hold(uid, HeldReason.REPEATED_CONFLICT, now, sentVersion = latest.version))
-                "held"
-            }
+            ConflictOutcome.HOLD_REPEATED_CONFLICT ->
+                // Design 3.8: held with the sent version, so a change made during the upload is not held with it.
+                when (store.hold(uid, HeldReason.REPEATED_CONFLICT, now, sentVersion = snapshot.version)) {
+                    PendingNotesStore.HoldOutcome.HELD -> "held"
+                    else -> "newer change kept"
+                }
             ConflictOutcome.RESTORE_SERVER_NOTE, ConflictOutcome.ALREADY_DELETED -> {
                 store.update(uid) { if ((it as? Read.Present)?.entry?.version == latest.version) Change.Remove else Change.Keep }
                 "delete dropped"
@@ -227,12 +229,12 @@ class NotePushBoundsTest {
     }
 
     /**
-     * One push step over everything that waits when it starts, the oldest change first. Backoff is not
-     * consulted, as in a run the user started, so every step tries every entry.
+     * One push step over every entry in the store when it starts, the oldest change first. Backoff is
+     * not consulted, as in a run the user started, and held text is not filtered out here: the store has
+     * to refuse it, so every step tries every entry.
      */
     private fun run(): List<String> =
-        store.scan().entries.filter { it.state != PendingEntry.State.HELD }.sortedBy { it.version }
-            .map { "${it.noteUid}: ${push(it.noteUid)}" }
+        store.scan().entries.sortedBy { it.version }.map { "${it.noteUid}: ${push(it.noteUid)}" }
 
     /** n1 was uploaded once, that upload landed and its answer was lost, and the user then saved again. Returns the landed revision. */
     private fun landedWithoutAnswerThenSaved(): String {
@@ -328,7 +330,7 @@ class NotePushBoundsTest {
 
     @Test fun `a server that refuses every push with a copy that is not ours gets one new note, and then the text is held`() {
         refusedUntilHeld()
-        repeat(5) { assertEquals("held text is not sent again", emptyList<String>(), run()) }
+        repeat(5) { assertEquals("held text is not sent again", listOf("copy-1: not sent"), run()) }
         assertEquals(listOf(ConflictOutcome.KEEP_BOTH, ConflictOutcome.HOLD_REPEATED_CONFLICT), decisions)
         assertEquals(listOf("copy-1"), made)
         assertEquals(listOf("copy-1"), waiting())
@@ -347,7 +349,7 @@ class NotePushBoundsTest {
             val heldUid = "copy-$tap"
             assertTrue(store.release(heldUid))
             assertEquals("tap $tap", listOf("$heldUid: new note, held"), run())
-            repeat(3) { assertEquals("nothing further until the next tap", emptyList<String>(), run()) }
+            repeat(3) { assertEquals("nothing further until the next tap", listOf("copy-${tap + 1}: not sent"), run()) }
             assertEquals((1..tap + 1).map { "copy-$it" }, made)
             assertEquals(listOf("copy-${tap + 1}"), waiting())
             assertEquals(HeldReason.REPEATED_CONFLICT, entry("copy-${tap + 1}").held?.reason)
@@ -372,7 +374,31 @@ class NotePushBoundsTest {
         return decisions.last()
     }
 
-    @Test fun `a marked pending delete against an edit made elsewhere gives the note back, and nothing is held`() {
+    @Test fun `a refused marked note that was saved during the upload is held one run later, and still makes no second note`() {
+        save("n1", "mine", seen = "srv-0")
+        server.refuseEveryPush = true
+        server.inventCopies = true
+        duringUpload = { uid ->
+            if (uid == "copy-1") {
+                duringUpload = {}
+                save("copy-1", "mine, and more")
+            }
+        }
+        // The hold names the version that was sent, and the entry has moved on, so it stays pending.
+        assertEquals(listOf("n1: new note, newer change kept"), run())
+        val pending = entry("copy-1")
+        assertEquals(PendingEntry.State.UPSERT, pending.state)
+        assertTrue(pending.fromConflict)
+        assertEquals(0, pending.failureCount)
+        // The next run sends the newer text, gets the same answer, and holds it.
+        assertEquals(listOf("copy-1: held"), run())
+        assertEquals(HeldReason.REPEATED_CONFLICT, entry("copy-1").held?.reason)
+        assertEquals("mine, and more", item(entry("copy-1").blob).text)
+        assertEquals(listOf("copy-1"), made)
+        assertEquals(listOf(ConflictOutcome.KEEP_BOTH, ConflictOutcome.HOLD_REPEATED_CONFLICT, ConflictOutcome.HOLD_REPEATED_CONFLICT), decisions)
+    }
+
+    @Test fun `a marked pending delete against an edit made elsewhere takes the delete row and is dropped, and nothing is held`() {
         assertEquals(ConflictOutcome.RESTORE_SERVER_NOTE, markedDeleteMeets(deletedElsewhere = false))
     }
 
@@ -498,6 +524,25 @@ class NotePushBoundsTest {
         assertTrue(waiting().isEmpty())
         assertEquals(2, server.uploads.size)
         assertEquals("web-1", server.items.getValue("n1").revision)
+    }
+
+    @Test fun `deleting the copy while the original cannot be removed does not bring the text back as a second copy`() {
+        editedElsewhere()
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (failing && it.name == "n1.note") throw IOException("could not remove n1.note")
+        }
+        assertEquals(listOf("n1: storage failure"), run())
+        // The user deletes the conflicted copy. The delete fails with the removal, and both notes stay.
+        val gone = item(entry("copy-1").blob).copy(revision = revision(), deleted = true)
+        assertThrows(IOException::class.java) { store.markDeleted("copy-1", "b1", gone.revision, gone.blob()) }
+        assertEquals(listOf("n1: not sent", "copy-1: not sent"), run())
+        failing = false
+        assertEquals(DeleteOutcome.Removed, store.markDeleted("copy-1", "b1", gone.revision, gone.blob()))
+        assertEquals("the original went with the copy", emptyList<String>(), run())
+        assertTrue(waiting().isEmpty())
+        assertEquals(listOf("copy-1"), made)
+        assertEquals("nothing but the first push of the original reached the server", 1, server.uploads.size)
     }
 
     // ---- an editor that has not rebound when the copy lands ----

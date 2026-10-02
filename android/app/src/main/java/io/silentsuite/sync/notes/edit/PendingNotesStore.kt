@@ -10,6 +10,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+import java.lang.ref.WeakReference
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
@@ -40,11 +41,19 @@ internal class PendingNotesStore private constructor(
     private val editors = ArrayList<EditorHandle>()
 
     /**
-     * One open editor's registration, from [editorOpened] to [editorClosed]. The editor saves and
-     * deletes through it, and it follows the editor's text: when a conflict gives that text a new note
-     * ([replaceWithNewNote]), every handle on the original points at the copy from then on. It belongs
-     * to the editor, not to the uid, so an editor opened on the original afterwards is not moved. Kept
-     * in memory only, which is enough, since no editor outlives its process.
+     * Editors that closed. They count for nothing but the redirect: a save that reaches the store after
+     * its editor closed must still be kept away from a note that a conflict copy replaced. Held weakly,
+     * so a handle goes when its editor drops it.
+     */
+    private val closedEditors = ArrayList<WeakReference<EditorHandle>>()
+
+    /**
+     * One editor's registration, from [editorOpened] to [editorClosed]. The editor saves and deletes
+     * through it, and it follows the editor's text: when a conflict gives that text a new note
+     * ([replaceWithNewNote], or recovery finishing one), every handle on the original points at the copy
+     * from then on, closed handles included. It belongs to the editor, not to the uid, so an editor
+     * opened on the original once that entry is gone is not moved. Kept in memory only, which is enough,
+     * since no editor outlives its process.
      */
     inner class EditorHandle internal constructor(noteUid: String) {
         /** Guarded by the store lock. */
@@ -56,7 +65,10 @@ internal class PendingNotesStore private constructor(
         val noteUid: String get() = synchronized(lock) { target }
     }
 
-    /** Originals whose conflict copy is written but whose removal failed in the last recovery. */
+    /**
+     * Originals that a conflict copy still links to after the last recovery: the removal failed, or the
+     * original could not be read. They are not sent.
+     */
     private var unfinishedOriginals: Set<String> = emptySet()
 
     sealed class Read {
@@ -99,6 +111,8 @@ internal class PendingNotesStore private constructor(
         /**
          * A conflict gave the editor's text a new note, [noteUid], after the editor built this save for
          * the original. Nothing was written. The editor applies its text to that note and saves again.
+         * The answer can repeat, since a copy can be replaced in turn: the save is not done, and the
+         * editor must not report it or close, until a call returns something else.
          */
         data class Moved(val noteUid: String) : SaveOutcome()
         /** The note has a pending delete, which is final until pushed. */
@@ -214,7 +228,8 @@ internal class PendingNotesStore private constructor(
      * its landed record once the copy has been pushed) and saves again. The store cannot take that
      * step, because a blob is encrypted for one item. So a save that still names the original never
      * writes a new entry for it, which would get the same 409 and become a second conflicted copy.
-     * A handle that was closed still saves, with the note it had when it closed.
+     * A handle that was closed still saves, so text is not lost to a save that arrives late, and it is
+     * still redirected.
      */
     fun saveLocal(
         editor: EditorHandle,
@@ -320,6 +335,7 @@ internal class PendingNotesStore private constructor(
                     val e = read.entry
                     when (e.state) {
                         PendingEntry.State.UPSERT -> if (e.isCreate && e.sent.isEmpty()) {
+                            removeReplacedOriginal(e)
                             outcome = DeleteOutcome.Removed
                             Change.Remove
                         } else {
@@ -353,23 +369,35 @@ internal class PendingNotesStore private constructor(
      * Records the entry's current revision as sent and returns the snapshot to upload, or null when
      * there is nothing to push (missing, held, or unreadable). The version does not move. An original
      * that a conflict copy has not finished replacing is not sent either: it would conflict again and
-     * make a second copy. Recovery keeps trying to finish it before every operation.
+     * make a second copy.
      *
      * Neither is the copy, for as long as it carries its origin link. The link in the copy's own file is
      * the only record that the original was replaced. A copy that landed would be dropped together with
      * it, the original would then read as an ordinary pending edit, and its next 409 would make another
      * copy. Recovery clears the link as soon as the original is gone, so the copy waits only while the
-     * removal keeps failing or the original cannot be read (design 3.4).
+     * removal keeps failing, the original cannot be read, or the write that clears the link fails
+     * (design 3.4). Each send refused for this reason has recovery look again before the next operation,
+     * since an original that could not be read leaves no failed step behind to do that.
      */
     fun beginSend(noteUid: String): PendingEntry? = locked {
-        if (noteUid in unfinishedOriginals) return@locked null
+        if (noteUid in unfinishedOriginals) {
+            recovered = false
+            return@locked null
+        }
         var snapshot: PendingEntry? = null
         update(noteUid) { read ->
             val e = (read as? Read.Present)?.entry
-            if (e == null || e.state == PendingEntry.State.HELD || e.origin != null) Change.Keep else {
-                val updated = e.withSent(e.revision)
-                snapshot = updated
-                if (updated === e) Change.Keep else Change.Write(updated)
+            when {
+                e == null || e.state == PendingEntry.State.HELD -> Change.Keep
+                e.origin != null -> {
+                    recovered = false
+                    Change.Keep
+                }
+                else -> {
+                    val updated = e.withSent(e.revision)
+                    snapshot = updated
+                    if (updated === e) Change.Keep else Change.Write(updated)
+                }
             }
         }
         snapshot
@@ -428,7 +456,8 @@ internal class PendingNotesStore private constructor(
      * when it was matched through the landed record. Every rebase makes a new revision and the next send
      * appends it, so under a server that keeps answering 409 with the same copy of ours, the cap would
      * otherwise drop that copy's revision after about 31 runs, and the user's own text would then read
-     * as another client's and become a conflicted copy (design 3.8). Nothing else leaves the list here.
+     * as another client's and become a conflicted copy (design 3.8). No other revision is removed here;
+     * if [onto] joins a list that is already full, the cap drops the oldest one, as on any send.
      */
     fun rebase(noteUid: String, expectedVersion: Long, onto: String, revision: String, blob: ByteArray): Boolean = locked {
         var applied = false
@@ -508,12 +537,36 @@ internal class PendingNotesStore private constructor(
         applied
     }
 
-    /** The user's explicit discard of held or unreadable text. */
+    /**
+     * The user's explicit discard of held or unreadable text. Throws, and discards nothing, when the text
+     * is a conflict copy whose original is still there and cannot be removed or read ([removeReplacedOriginal]).
+     */
     fun discard(noteUid: String): Unit = locked {
+        (readEntry(noteUid) as? Read.Present)?.entry?.let { removeReplacedOriginal(it) }
         remove(noteFile(noteUid))
         // A conflict copy keeps its origin link, and so is not sent, while its original cannot be read.
         // If this was that original, the recovery before the next operation clears the link.
         recovered = false
+    }
+
+    /**
+     * Before a conflict copy that still carries its origin link is removed (a delete of the unsent copy,
+     * a discard), the original it replaced goes first. The link is the only record of the replacement:
+     * with the copy gone, the original would read as an ordinary pending edit again, be sent, get the
+     * same 409, and bring back as another copy the text the user just removed. Throws, leaving the copy
+     * and its link in place, when the original cannot be removed or cannot be read.
+     */
+    private fun removeReplacedOriginal(copy: PendingEntry) {
+        val origin = copy.origin ?: return
+        when (val original = readEntry(origin.noteUid)) {
+            is Read.Present -> if (original.entry.version == origin.version && original.entry.revision == origin.revision) {
+                moveEditors(origin.noteUid, copy.noteUid)
+                remove(noteFile(origin.noteUid))
+                remove(landedFile(origin.noteUid))
+            }
+            is Read.Unreadable -> throw IOException("the note this copy replaced cannot be read")
+            Read.Missing -> Unit
+        }
     }
 
     /**
@@ -535,7 +588,7 @@ internal class PendingNotesStore private constructor(
             val copy = newNote.copy(version = nextVersion(), fromConflict = true,
                 origin = PendingEntry.Origin(originalUid, e.revision, e.version, serverRevision))
             writeAtomically(noteFile(copy.noteUid), PendingCodec.encodeEntry(copy))
-            for (editor in editors) if (editor.target == originalUid) editor.target = copy.noteUid
+            moveEditors(originalUid, copy.noteUid)
             beforeOriginalRemovedForTesting?.invoke()
             remove(noteFile(originalUid))
             remove(landedFile(originalUid))
@@ -557,17 +610,28 @@ internal class PendingNotesStore private constructor(
     /**
      * [editor] closed. With no other editor open on its note, that note's landed record has no use and
      * goes. The note is the one the handle points at now, which is the copy after a conflict. A second
-     * call does nothing.
+     * call does nothing. The handle is still redirected after this, for a save that arrives late, but
+     * no landed record is kept for it: the editor should close only after its last save or delete has
+     * returned something other than Moved.
      */
     fun editorClosed(editor: EditorHandle): Unit = locked {
         require(editor.store === this) { "an editor of another store" }
         if (!editor.open) return@locked
         editor.open = false
         editors.remove(editor)
+        closedEditors.removeAll { it.get() == null }
+        closedEditors += WeakReference(editor)
         if (!hasEditor(editor.target)) remove(landedFile(editor.target))
     }
 
+    /** Whether an open editor is on [noteUid]. Closed handles do not count. */
     private fun hasEditor(noteUid: String): Boolean = editors.any { it.target == noteUid }
+
+    /** Points every handle on [from] at [to], open or closed: the text they edit lives in [to] now. */
+    private fun moveEditors(from: String, to: String) {
+        for (editor in editors) if (editor.target == from) editor.target = to
+        for (closed in closedEditors) closed.get()?.let { if (it.target == from) it.target = to }
+    }
 
     // ---- notebook copies ----
 
@@ -723,11 +787,19 @@ internal class PendingNotesStore private constructor(
                 if (sameEntry) {
                     // Until the original is gone it must not be pushed: it would conflict and be copied again.
                     unfinished += origin.noteUid
+                    // The copy's file is committed, so it owns the text: editors still on the original
+                    // follow it, as in replaceWithNewNote, which may have failed before it moved them.
+                    moveEditors(origin.noteUid, copy.noteUid)
                     remove(noteFile(origin.noteUid))
                     unfinished -= origin.noteUid
+                    remove(landedFile(origin.noteUid))
                 }
                 // Keep the link only while the original cannot be read, since then it cannot be told apart.
-                if (original !is Read.Unreadable) {
+                // It is not pushed in the meantime either. Nothing failed here, so no problem is recorded
+                // and this is not looked at again by itself: beginSend asks for that when it refuses a send.
+                if (original is Read.Unreadable) {
+                    unfinished += origin.noteUid
+                } else {
                     writeAtomically(noteFile(copy.noteUid), PendingCodec.encodeEntry(copy.copy(origin = null)))
                 }
             } catch (e: IOException) {

@@ -153,13 +153,29 @@ class PendingCodecTest {
     }
 
     @Test fun `a format 2 file from before the conflict mark is reported as unreadable, not read as unmarked`() {
-        // Such files exist only where a build of the prototype branch ran. They are kept and reported like
-        // any file that cannot be read, and the header-only view refuses them the same way.
+        // Such files exist only where a build of the prototype branch ran. A committed one is kept and
+        // reported like any file that cannot be read, and the header-only view refuses it the same way.
+        // One left as an uncommitted first write (a ".new" with no committed file) does not read back
+        // complete, so recovery drops it like any write that never finished.
         for (hex in listOf(v2UpsertBeforeMark, v2DeletedBeforeMark, v2HeldBeforeMark)) {
             val bytes = unhex(hex)
             assertEquals("truncated", bad(bytes))
             assertEquals("truncated", (PendingCodec.decodeEntryHeader(bytes.copyOf(PendingCodec.entryHeaderEnd(bytes)!!)) as PendingCodec.Decoded.Bad).reason)
         }
+    }
+
+    @Test fun `a format 2 header with a byte after its last field is refused by the full read and by the header read`() {
+        fun int(v: Int) = byteArrayOf((v ushr 24).toByte(), (v ushr 16).toByte(), (v ushr 8).toByte(), v.toByte())
+        fun crc(b: ByteArray) = java.util.zip.CRC32().apply { update(b) }.value.toInt()
+        val bytes = PendingCodec.encodeEntry(full)
+        val end = PendingCodec.entryHeaderEnd(bytes)!!
+        // The same entry with one more header byte, and both checksums correct for it.
+        val header = bytes.copyOfRange(PendingCodec.ENTRY_PREFIX, end - 4) + 0.toByte()
+        val body = bytes.copyOf(5) + int(header.size) + header + int(crc(header)) + bytes.copyOfRange(end, bytes.size - 4)
+        val file = body + int(crc(body))
+        assertEquals("trailing header bytes", bad(file))
+        assertEquals("trailing header bytes",
+            (PendingCodec.decodeEntryHeader(file.copyOf(PendingCodec.entryHeaderEnd(file)!!)) as PendingCodec.Decoded.Bad).reason)
     }
 
     private val v1UpsertEntry = PendingEntry("note-1", "book-1", PendingEntry.State.UPSERT, 3, "rev-3", true, listOf("rev-2"), blob = byteArrayOf(1, 2, 3))

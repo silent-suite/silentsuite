@@ -18,7 +18,11 @@ internal data class PendingEntry(
     val revision: String,
     /** True while the note has never been confirmed on the server (a local create). */
     val isCreate: Boolean,
-    /** Revision uids sent but not yet confirmed, oldest first, capped at [MAX_SENT]. */
+    /**
+     * Revision uids of ours that the server may hold as its current copy, capped at [MAX_SENT] with the
+     * oldest end dropped first. Each send appends one, and a rebase puts the revision it was built on at
+     * the newest end.
+     */
     val sent: List<String> = emptyList(),
     val failureCount: Int = 0,
     val lastFailureAt: Long? = null,

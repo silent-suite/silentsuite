@@ -289,6 +289,13 @@ class PendingNotesStoreTest {
         assertEquals(listOf("r2", "landed-1"), entry("n1").sent)
         assertEquals("already newest, so nothing moves", listOf("r2", "landed-1"),
             entry("n1").withNewestSent("landed-1").sent)
+        // Joining a list that is already full drops the oldest revision, as any send does.
+        for (i in 1..PendingEntry.MAX_SENT) {
+            store.saveLocal("n2", "b1", "s$i", blob("t$i"), isCreate = false)
+            store.beginSend("n2")
+        }
+        assertTrue(store.rebase("n2", entry("n2").version, onto = "landed-2", revision = "x1", blob = blob("on landed-2")))
+        assertEquals((2..PendingEntry.MAX_SENT).map { "s$it" } + "landed-2", entry("n2").sent)
     }
 
     @Test fun `a failure of an older snapshot does not touch a newer change`() {
@@ -745,6 +752,118 @@ class PendingNotesStoreTest {
         assertThrows(IllegalArgumentException::class.java) { other.markDeleted(editor, "n1", "b1", "d", blob("x")) }
         assertThrows(IllegalArgumentException::class.java) { other.editorClosed(editor) }
         assertEquals(Read.Missing, other.read("n1"))
+    }
+
+    @Test fun `a save that arrives after its editor closed is still kept away from a replaced original`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        val editor = store.editorOpened("orig")
+        store.editorClosed(editor)
+        assertTrue(store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()))
+        assertEquals("copy1", editor.noteUid)
+        assertEquals(SaveOutcome.Moved("copy1"), store.saveLocal(editor, "orig", "b1", "r2", blob("the last flush"), isCreate = false))
+        assertEquals(DeleteOutcome.Moved("copy1"), store.markDeleted(editor, "orig", "b1", "d", blob("x")))
+        assertEquals(Read.Missing, store.read("orig"))
+        // A closed editor keeps no landed record alive: the copy lands and nothing is kept for it.
+        assertEquals(SendOutcome.Done, store.completeSend("copy1", store.beginSend("copy1")!!.version, "c1", blob("copy as landed")))
+        assertNull(store.landed("copy1"))
+    }
+
+    @Test fun `editors follow a copy whose first write was finished by recovery`() {
+        var refuse = true
+        val d = tmp.newFolder("refused-copy")
+        val s = refusingRenames(d, "copy1.note") { refuse }
+        val editor = s.editorOpened("orig")
+        s.saveLocal(editor, "orig", "b1", "r1", blob("first"), isCreate = false)
+        s.completeSend("orig", s.beginSend("orig")!!.version, "r1", blob("first as landed"))
+        s.saveLocal(editor, "orig", "b1", "r2", blob("mine"), isCreate = false)
+        // The copy's file is written in full, and then its rename is refused.
+        assertThrows(java.io.IOException::class.java) { s.replaceWithNewNote("orig", s.entry("orig").version, "srv", newNote()) }
+        assertTrue(File(d, "copy1.note.new").exists())
+        assertEquals("the copy is not committed, so nothing has moved", "orig", editor.noteUid)
+        refuse = false
+        // The recovery before the next operation commits the copy and finishes the replacement, editors included.
+        assertEquals(SaveOutcome.Moved("copy1"), s.saveLocal(editor, "orig", "b1", "r3", blob("typed after"), isCreate = false))
+        assertEquals("copy1", editor.noteUid)
+        assertEquals(listOf("copy1"), s.scan().entries.map { it.noteUid })
+        assertNull(s.entry("copy1").origin)
+        assertNull("the original's landed record went with its entry", s.landed("orig"))
+        assertFalse(File(d, "orig.landed").exists())
+    }
+
+    // ---- removing a conflict copy that still carries its origin link ----
+
+    @Test fun `deleting a conflict copy while its original cannot be removed fails and keeps the link`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (failing && it.name == "orig.note") throw java.io.IOException("could not remove orig.note")
+        }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        // With the copy and its link gone, the original would be an ordinary pending edit again, and its
+        // next 409 would bring back as a second copy the text the user just deleted.
+        assertThrows(java.io.IOException::class.java) { store.markDeleted("copy1", "b1", "d", blob("x")) }
+        assertEquals("orig", entry("copy1").origin?.noteUid)
+        assertNull(store.beginSend("orig"))
+        assertNull(store.beginSend("copy1"))
+        failing = false
+        assertEquals(DeleteOutcome.Removed, store.markDeleted("copy1", "b1", "d", blob("x")))
+        assertTrue("both are gone, so nothing is left to send or to copy again", store.scan().entries.isEmpty())
+    }
+
+    @Test fun `discarding a held conflict copy takes the original it replaced with it, or fails`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (failing && it.name == "orig.note") throw java.io.IOException("could not remove orig.note")
+        }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("copy1", HeldReason.READ_ONLY, now = 5))
+        assertThrows(java.io.IOException::class.java) { store.discard("copy1") }
+        assertEquals(PendingEntry.State.HELD, entry("copy1").state)
+        assertEquals("orig", entry("copy1").origin?.noteUid)
+        failing = false
+        store.discard("copy1")
+        assertTrue(store.scan().entries.isEmpty())
+    }
+
+    @Test fun `a conflict copy whose original cannot be read is not removed until that file is discarded`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        PendingNotesStore.beforeOriginalRemovedForTesting = { throw IllegalStateException("process died") }
+        assertThrows(IllegalStateException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        PendingNotesStore.beforeOriginalRemovedForTesting = null
+        File(dir, "orig.note").writeBytes(byteArrayOf(0))
+        val next = restarted()
+        // The damaged file may be the entry the copy replaced. It cannot be removed unread, and it must
+        // not be left behind without the link.
+        assertThrows(java.io.IOException::class.java) { next.markDeleted("copy1", "b1", "d", blob("x")) }
+        assertThrows(java.io.IOException::class.java) { next.discard("copy1") }
+        assertEquals("orig", next.entry("copy1").origin?.noteUid)
+        next.discard("orig")
+        assertEquals(DeleteOutcome.Removed, next.markDeleted("copy1", "b1", "d", blob("x")))
+        val scan = next.scan()
+        assertTrue(scan.entries.isEmpty())
+        assertTrue(scan.unreadable.isEmpty())
+    }
+
+    @Test fun `an original that could not be read for a moment is not sent, and its copy is released once it reads again`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        PendingNotesStore.beforeOriginalRemovedForTesting = { throw IllegalStateException("process died") }
+        assertThrows(IllegalStateException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        PendingNotesStore.beforeOriginalRemovedForTesting = null
+        val file = File(dir, "orig.note")
+        val good = file.readBytes()
+        file.writeBytes(byteArrayOf(0))
+        val next = restarted()
+        // The first recovery of the new process cannot read the original, and nothing in it fails.
+        assertEquals(listOf("orig.note"), next.scan().unreadable.map { it.file })
+        // The read error was passing. The original reads again, but a copy still links to it.
+        file.writeBytes(good)
+        assertNull("it would get the same 409 and be copied a second time", next.beginSend("orig"))
+        // That refused send had recovery look again: the original is the entry the copy replaced, so it
+        // is removed, the link is cleared, and the copy is sent.
+        val snapshot = next.beginSend("copy1")!!
+        assertNull(snapshot.origin)
+        assertEquals(Read.Missing, next.read("orig"))
     }
 
     // ---- crash safety and damage ----

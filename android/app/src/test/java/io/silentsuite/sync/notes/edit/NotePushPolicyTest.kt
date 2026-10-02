@@ -110,10 +110,8 @@ class NotePushPolicyTest {
         }
     }
 
-    @Test fun `a repeated conflict is a reason of its own, apart from a rejection`() {
-        assertTrue(HeldReason.REPEATED_CONFLICT != HeldReason.REJECTED)
+    @Test fun `no failure kind leads to the repeated conflict reason, only the conflict decision does`() {
         assertEquals("entry files store this name", "REPEATED_CONFLICT", HeldReason.REPEATED_CONFLICT.name)
-        // No failure kind leads to it: only the conflict decision does.
         for (kind in FailureKind.values()) {
             for (previous in listOf(null, FailureKind.REJECTED.name, FailureKind.CONFLICT.name)) {
                 for (check in listOf(null, NotePushPolicy.NotebookCheck.Gone, NotePushPolicy.NotebookCheck.Found(readOnly = true, deleted = false))) {
