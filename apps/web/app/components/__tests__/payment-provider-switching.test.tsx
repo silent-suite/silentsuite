@@ -59,6 +59,9 @@ const stripeOnlyOffer = {
   },
 }
 
+// Billing mints the payment flow id server-side; it never equals the offer requestId.
+const serverFlowId = '2f9e60c2-7a41-4c8e-9d3b-5b1e0c6a8f17'
+
 const activation = {
   contractVersion: 2,
   checkoutIntentToken,
@@ -130,7 +133,7 @@ function renderPanel() {
 
 async function openInlineStripePanel() {
   mockBilling({
-    paymentFlow: async () => response({ contractVersion: 2, kind: 'stripe', authorityId: earlyOffer.requestId, clientSecret: 'pi_secret_value' }),
+    paymentFlow: async () => response({ contractVersion: 2, kind: 'stripe', authorityId: serverFlowId, clientSecret: 'pi_secret_value' }),
   })
   renderPanel()
   fireEvent.click(await screen.findByRole('button', { name: /continue to card payment/i }))
@@ -143,7 +146,7 @@ async function openInlineBitcoinPanel() {
     paymentFlow: async () => response({
       contractVersion: 2,
       kind: 'btcpay',
-      authorityId: earlyOffer.requestId,
+      authorityId: serverFlowId,
       checkoutUrl: 'https://btcpay.test/i/abc123',
       invoiceId: 'invoice-1',
       invoiceLookupToken: 'B'.repeat(43),

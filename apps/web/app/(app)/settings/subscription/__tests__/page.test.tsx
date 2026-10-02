@@ -94,7 +94,8 @@ const annualActivation = {
     bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null,
   },
 }
-const annualStripePayment = { contractVersion: 2, kind: 'stripe', authorityId: annualOffer.requestId, clientSecret: 'cs_test' }
+// Billing mints the payment flow id server-side; it never equals the offer requestId.
+const annualStripePayment = { contractVersion: 2, kind: 'stripe', authorityId: '2f9e60c2-7a41-4c8e-9d3b-5b1e0c6a8f17', clientSecret: 'cs_test' }
 
 function mockSubscription(
   subscription: Record<string, unknown>,
