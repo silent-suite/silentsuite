@@ -60,4 +60,4 @@ Share a notebook from **Settings → Sharing**. Members see the same notebook, e
 
 ## Not in this release
 
-Android, the DAV bridge, attachments, import/export, and rich-text editing. Use Markdown in the web app for now.
+Editing notes on Android, the DAV bridge, attachments, import/export, and rich-text editing are not available yet. Use Markdown in the web app for now.
