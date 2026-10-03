@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 import { classifyRelease, compareTags, markPublishable, selectScheduleCandidates } from '../lib/eligibility.mjs'
-import { activationState, admitTrigger, requireProtectedRef, requireProtectedSchedule, requireProtectedWorkflow } from '../lib/dispatch.mjs'
+import { activationState, admitTrigger, requireManualRehearsal, requireProtectedRef, requireProtectedSchedule, requireProtectedWorkflow } from '../lib/dispatch.mjs'
 import { bindReleaseAssets, createGitHubClient, EnumerationIncomplete, hashFromChecksumText } from '../lib/github.mjs'
 import { buildBinding, revalidateBinding, verifyApkHashes } from '../lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from '../lib/apksigner.mjs'
@@ -106,6 +106,28 @@ test('admission: only a protected-main schedule bound to its own definition revi
   assert.equal(activationState('rehearsal').active, false)
   assert.equal(activationState('rehearsal').rehearsal, true)
   assert.equal(activationState('enabled').active, true)
+})
+
+test('manual rehearsal admission: only a workflow_dispatch of the rehearsal file on protected main; the scheduled admission refuses it', () => {
+  const REHEARSAL_REF = 'silent-suite/silentsuite/.github/workflows/zapstore-rehearsal.yml@refs/heads/main'
+  const context = { eventName: 'workflow_dispatch', ref: 'refs/heads/main', workflowRef: REHEARSAL_REF, sha: SHA, workflowSha: SHA, repository: 'silent-suite/silentsuite' }
+  assert.deepEqual(requireManualRehearsal(context), { revision: SHA })
+  for (const eventName of ['schedule', 'release', 'repository_dispatch', 'push', 'pull_request', undefined]) assert.throws(() => requireManualRehearsal({ ...context, eventName }), /is not workflow_dispatch/, String(eventName))
+  for (const ref of ['refs/heads/feat', 'refs/tags/v0.5.6-beta', undefined]) assert.throws(() => requireManualRehearsal({ ...context, ref }), /is not refs\/heads\/main/, String(ref))
+  for (const workflowRef of [
+    WORKFLOW_REF,
+    REHEARSAL_REF.replace('refs/heads/main', 'refs/heads/feat'),
+    REHEARSAL_REF.replace('refs/heads/main', 'refs/tags/v0.5.6-beta'),
+    'other/repo/.github/workflows/zapstore-rehearsal.yml@refs/heads/main',
+    'silent-suite/silentsuite/nested/.github/workflows/zapstore-rehearsal.yml@refs/heads/main',
+    undefined,
+  ]) assert.throws(() => requireManualRehearsal({ ...context, workflowRef }), /GITHUB_WORKFLOW_REF/, String(workflowRef))
+  for (const repository of [undefined, '', 'silent-suite']) assert.throws(() => requireManualRehearsal({ ...context, repository }), /GITHUB_REPOSITORY/, String(repository))
+  for (const workflowSha of ['a'.repeat(40), undefined, '']) assert.throws(() => requireManualRehearsal({ ...context, workflowSha }), /GITHUB_WORKFLOW_SHA/, String(workflowSha))
+  assert.throws(() => requireManualRehearsal({ ...context, sha: 'main', workflowSha: 'main' }), /GITHUB_SHA/)
+  assert.throws(() => admitTrigger('workflow_dispatch'), /unsupported event/)
+  assert.throws(() => requireProtectedSchedule(context), /unsupported event workflow_dispatch/)
+  assert.throws(() => requireProtectedSchedule({ ...context, eventName: 'schedule' }), /is not \.github\/workflows\/zapstore-publish\.yml/)
 })
 
 test('the identity helper sees the real GITHUB_REF and is never handed a fabricated one', () => {

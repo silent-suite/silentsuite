@@ -249,7 +249,12 @@ lines, and corrupt downloaded bytes.
 - `workflow-boundary.test.mjs`: schedule-only trigger, every checkout is
   `${{ github.sha }}`, no `refs/heads/main` or tag checkout, exactly one secret
   step in the environment-bound job, assess job carries no environment or
-  secret, notify holds only `issues: write`, pinned actions and publisher.
+  secret, notify holds only `issues: write`, pinned actions and publisher; for
+  the manual rehearsal (section 8): `workflow_dispatch` only with no inputs,
+  three jobs, no environment, no secret but `GITHUB_TOKEN`, no publish, plan,
+  notify or issue write, `enumerate`/`assess` identical to production, distinct
+  artifact names. `lane.test.mjs` and `orchestration.test.mjs` cover
+  `requireManualRehearsal` and `admit-rehearsal` refusals.
 
 CI only (cannot run on this machine): the Python signing-boundary checker and
 self-host workflow tests still parse this workflow; real `apksigner`; live
@@ -365,3 +370,60 @@ not fix them and a hand-run publisher would make them worse.
   `actions/setup-node@820762786026740c76f36085b0efc47a31fe5020`,
   `actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`,
   `actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c`.
+
+## 8. Manual assessment rehearsal
+
+`.github/workflows/zapstore-rehearsal.yml` lets the owner run the read-only half
+of the lane on demand. It is a separate workflow file, not a mode of
+`zapstore-publish.yml`, and it does not change the scheduled lane's trigger,
+cron, admission, environment, secret step or publication path.
+
+What it runs: `admit` (via `cli.mjs admit-rehearsal`), then the production
+`enumerate` and `assess` jobs verbatim — exact release binding, the three APK
+digests, `apksigner`, `prepare` with the pinned `zsp` (unsigned), relay
+reconciliation, CDN verification and `record-result`. Evidence is uploaded as
+this run's own artifacts `zapstore-rehearsal-candidates` and
+`zapstore-rehearsal-assessment-<release id>`.
+
+What it cannot do: there is no `plan`, `publish` or `notify` job, no
+environment, no signer secret, no activation variable, and no issue write. Its
+only token is the read-only `GITHUB_TOKEN` (`contents: read`). It cannot sign,
+upload a blob, write a relay event, or touch a GitHub release. The workflow
+boundary tests enforce each of these and require the `enumerate` steps and
+`assess` job to stay textually identical to the production ones apart from
+artifact names.
+
+Admission (`requireManualRehearsal`, fail closed, real run context only):
+
+- `GITHUB_EVENT_NAME` is `workflow_dispatch`; `schedule` and every other event
+  is refused, so the rehearsal never presents itself as a scheduled run.
+- `GITHUB_REF` is `refs/heads/main`. **Main only:** a branch or tag dispatch is
+  refused, because the release identity helper reused by `bind` refuses any
+  other `GITHUB_REF`, and because only main carries protected provenance.
+- `GITHUB_WORKFLOW_REF` is exactly
+  `<repository>/.github/workflows/zapstore-rehearsal.yml@refs/heads/main`.
+- `GITHUB_SHA` is 40-hex and `GITHUB_WORKFLOW_SHA` equals it; the admit
+  checkout and every later job's checkout must be that commit.
+- `admit-rehearsal` emits only `revision`. The scheduled `admit` still refuses
+  `workflow_dispatch`, and refuses this file's workflow ref even if the event
+  were `schedule`.
+
+Running it: GitHub only offers `workflow_dispatch` for a workflow file present on
+the default branch, so the first rehearsal is possible only after this file is
+merged. Then run it from the Actions tab (branch `main`, no inputs) or
+`gh workflow run zapstore-rehearsal.yml --ref main`. If the `admit` step fails
+on `GITHUB_WORKFLOW_SHA`, record the observed value; do not relax the check
+without review.
+
+### 8.1 What each kind of evidence proves
+
+| Evidence | Proves | Does not prove |
+|---|---|---|
+| Manual rehearsal run | The assessment code at the dispatched protected-main commit behaves as expected against live releases, the relay and the CDN | That the schedule fires or is admitted; activation; that the signer, bunker or environment work; that anything may be published |
+| Scheduled run (`zapstore-publish.yml`, including `ZAPSTORE_AUTOMATION_ENABLED=rehearsal`) | Scheduler triggering and protected-main admission of the production definition | Signing, unless the environment-bound `publish` job ran |
+| `publish` job of a scheduled run | Signing-account preflight, signing, upload and read-back | — (only source of signing proof) |
+
+An `action` of `publish` in a rehearsal `reconcile.json` or `assessment.json` is
+the decision the scheduled lane *would* reach; it is not publication
+authorization and nothing consumes it. A green rehearsal does not tick any item
+in section 6.

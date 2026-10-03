@@ -13,13 +13,16 @@ const ci = readFileSync(join(root, '.github', 'workflows', 'ci.yml'), 'utf8')
 const rootPackage = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const expr = (inner) => '${' + '{ ' + inner + ' }}'
 const shaCheckout = 'ref: ' + expr('github.sha')
-const job = (name) => {
-  const start = workflow.indexOf(`\n  ${name}:\n`)
+const rehearsal = readFileSync(join(root, '.github', 'workflows', 'zapstore-rehearsal.yml'), 'utf8')
+const jobOf = (text, name) => {
+  const start = text.indexOf(`\n  ${name}:\n`)
   assert.ok(start >= 0, `job ${name} exists`)
-  const rest = workflow.slice(start + 1)
+  const rest = text.slice(start + 1)
   const next = rest.slice(1).search(/\n  [a-z]+:\n/)
   return next < 0 ? rest : rest.slice(0, next + 1)
 }
+const job = (name) => jobOf(workflow, name)
+const code = (text) => text.replace(/^\s*#.*$/gm, '')
 const JOBS = ['admit', 'enumerate', 'assess', 'plan', 'publish', 'notify']
 
 test('the only trigger is schedule; the definition revision is the only checkout', () => {
@@ -132,6 +135,63 @@ test('publisher binary is pinned by URL and digest and every action is pinned by
   assert.ok(workflow.includes('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'))
   assert.ok(workflow.includes('uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c'))
   assert.equal((workflow.match(/npm ci --ignore-scripts --no-audit --no-fund --prefix scripts\/zapstore/g) ?? []).length, 2, 'only the two verification jobs install the crypto package')
+})
+
+test('manual rehearsal: workflow_dispatch only, no inputs, its own admission, every job bound to the admitted revision', () => {
+  const body = code(rehearsal)
+  const on = body.slice(body.indexOf('\non:'), body.indexOf('\nconcurrency:'))
+  assert.equal(on.trim(), 'on:\n  workflow_dispatch:')
+  assert.deepEqual(body.match(/^  [a-z_]+:$/gm), ['  workflow_dispatch:', '  admit:', '  enumerate:', '  assess:'], 'one trigger and exactly three jobs')
+  assert.doesNotMatch(body, /schedule|cron|inputs|repository_dispatch|workflow_call|pull_request|push:|release:|tags:/)
+  assert.doesNotMatch(body, /refs\/heads|refs\/tags|github\.workflow_sha|github\.ref\b|github\.head_ref|github\.event/)
+  assert.doesNotMatch(body, /^\s+GITHUB_(EVENT_NAME|REF|SHA|WORKFLOW|WORKFLOW_REF|WORKFLOW_SHA|REPOSITORY):/m, 'run context is never overridden')
+  assert.doesNotMatch(body, /GITHUB_ENV|GITHUB_PATH/)
+  assert.equal(rehearsal.split(shaCheckout).length - 1, 3, 'every job checks out github.sha exactly once')
+  assert.equal(rehearsal.split('actions/checkout@').length - 1, 3)
+  for (const name of ['admit', 'enumerate', 'assess']) {
+    const steps = jobOf(rehearsal, name)
+    assert.match(steps, /persist-credentials: false/)
+    if (name === 'admit') assert.match(steps, /cli\.mjs admit-rehearsal --workspace "\$GITHUB_WORKSPACE"/)
+    else assert.match(steps, /cli\.mjs checkout-guard --workspace "\$GITHUB_WORKSPACE" --revision "\$REVISION"/, `${name} binds its checkout`)
+    if (name !== 'admit') assert.match(steps, /REVISION: \$\{\{ needs\.admit\.outputs\.revision \}\}/)
+  }
+  assert.doesNotMatch(body, /cli\.mjs admit /, 'never the scheduled admission')
+  assert.doesNotMatch(jobOf(rehearsal, 'admit'), /outputs\.active|outputs\.rehearsal|vars\./)
+  assert.match(rehearsal, /group: zapstore-rehearsal-io-silentsuite-android\n  cancel-in-progress: false/)
+  assert.doesNotMatch(rehearsal, /group: zapstore-publish-/)
+})
+
+test('manual rehearsal: no environment, no signer, no plan, publication or issue writes; read-only token only', () => {
+  const body = code(rehearsal)
+  assert.match(body, /\npermissions: \{\}\n/)
+  assert.match(jobOf(rehearsal, 'admit'), /permissions: \{\}/)
+  assert.deepEqual([...body.matchAll(/^\s+([a-z-]+): (read|write)$/gm)].map((m) => `${m[1]}: ${m[2]}`), ['contents: read', 'contents: read'])
+  assert.deepEqual([...new Set([...body.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]))], ['GITHUB_TOKEN'])
+  assert.doesNotMatch(body, /environment:|zapstore-production|ZAPSTORE_|vars\.|secrets: inherit|issues:|: write\b|id-token|client_payload/)
+  for (const command of ['publish', 'plan', 'drift', 'revalidate', 'notify']) assert.doesNotMatch(body, new RegExp(`cli\\.mjs ${command}\\b`), command)
+  assert.doesNotMatch(body, /--readback|--publishable true|download-artifact|softprops|\bgh (release|issue|api)\b|android-release|ANDROID_KEYSTORE|actions\/cache/)
+  assert.equal((body.match(/\bcurl /g) ?? []).length, 1, 'the only network fetch outside the CLI is the pinned publisher download')
+  assert.deepEqual([...body.matchAll(/^\s+"\$RUNNER_TEMP\/zsp" (.*)$/gm)].map((m) => m[1]), ['--version'], 'the publisher is only run unsigned through prepare')
+})
+
+test('manual rehearsal reuses the production assessment verbatim and uploads evidence under distinct names', () => {
+  assert.equal(jobOf(rehearsal, 'assess').trimEnd(), job('assess').trimEnd().replace('name: zapstore-assessment-', 'name: zapstore-rehearsal-assessment-'))
+  const steps = (body) => body.slice(body.indexOf('    steps:\n')).trimEnd()
+  assert.equal(steps(jobOf(rehearsal, 'enumerate')), steps(job('enumerate')).replace('name: zapstore-candidates', 'name: zapstore-rehearsal-candidates'))
+  assert.match(jobOf(rehearsal, 'enumerate'), /needs: admit\n/)
+  const artifacts = [...rehearsal.matchAll(/^\s+name: (zapstore-.+)$/gm)].map((m) => m[1])
+  assert.deepEqual(artifacts, ['zapstore-rehearsal-candidates', 'zapstore-rehearsal-assessment-${{ matrix.release_id }}'])
+  const productionUses = new Set([...workflow.matchAll(/uses: ([^\s]+)/g)].map((m) => m[1]))
+  for (const uses of rehearsal.matchAll(/uses: ([^\s]+)/g)) {
+    assert.match(uses[1], /@[0-9a-f]{40}$/, uses[1])
+    assert.ok(productionUses.has(uses[1]), `${uses[1]} is pinned exactly as in the production lane`)
+  }
+  assert.equal((rehearsal.match(/3f241da6a5dc7a85fe851d3b42b77790b651bd36c7029382a701262bda832d20  \$RUNNER_TEMP\/zsp" \| sha256sum -c -/g) ?? []).length, 1)
+})
+
+test('the production lane is unchanged by the rehearsal and never references it', () => {
+  assert.doesNotMatch(workflow, /zapstore-rehearsal|admit-rehearsal|workflow_dispatch:/)
+  assert.match(workflow, /\non:\n  schedule:\n    - cron: '17 \* \* \* \*'\n/)
 })
 
 test('the lane tests are wired into continuous integration without secrets', () => {
