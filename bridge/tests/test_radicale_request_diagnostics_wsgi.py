@@ -204,6 +204,37 @@ def test_anonymous_request_reports_no_auth_result(app, sink):
     _assert_private_values_absent(sink, errors)
 
 
+def test_same_process_auth_journey_reports_one_bounded_result_per_request(app, sink):
+    # One application keeps the shipped Auth and its credential store across
+    # requests, including the legacy-hash upgrade on the first valid login.
+    journey = (
+        (None, "401", None),
+        (_basic_auth(PASSWORD), "207", "INFO Local authentication succeeded"),
+        (_basic_auth(PASSWORD), "207", "INFO Local authentication succeeded"),
+        (_basic_auth(WRONG_PASSWORD), "401", "WARNING Local authentication failed"),
+        (_basic_auth(PASSWORD), "207", "INFO Local authentication succeeded"),
+    )
+    expected = []
+    errors = ""
+    for authorization, status_code, auth_line in journey:
+        status, request_errors = _request(app, authorization=authorization)
+        errors += request_errors
+        assert status.split(" ", 1)[0] == status_code
+        expected.append("INFO DAV request received (method=PROPFIND)")
+        if auth_line is not None:
+            expected.append(auth_line)
+        expected.append(
+            f"INFO DAV request completed (method=PROPFIND status={status_code})"
+        )
+
+    assert [
+        line
+        for line in sink.lines
+        if "DAV request" in line or "Local authentication" in line
+    ] == expected
+    _assert_private_values_absent(sink, errors)
+
+
 def test_unlisted_method_is_reported_without_its_name(app, sink):
     status, errors = _request(
         app, method="MARKERMETHOD", authorization=_basic_auth(PASSWORD)
