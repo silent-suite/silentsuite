@@ -4,6 +4,8 @@ import { BillingResponseError, cancelUnclaimedAnnualSelection, activateAnnualChe
 
 const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
 const requestKey = '5fd4d86d-34de-4b82-9a66-9598ddf6e02f'
+// Billing mints the payment flow id server-side; it never equals the offer requestId.
+const authorityId = '6d1f0a94-8c52-4b7e-9f31-2a5d6e8b0c47'
 const token = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
 const offer = { contractVersion: 2, requestId, offer: { planId: 'early_annual', customerClass: 'early', billingInterval: 'annual', annualAmountMinor: 3600, monthlyEquivalentMinor: 300, currency: 'EUR', providers: ['stripe', 'btcpay'], offerRevision: 1, offerToken: 'signed-offer', expiresAt: '2026-08-10T12:10:00Z' } }
 const prepaidDisclosure = { kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null, monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null, cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: true, refundWindowDays: 30, bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null }
@@ -52,7 +54,7 @@ describe('billing v2 public authority client', () => {
 
   it('rejects relative payment return URLs before fetch', async () => {
     const fetcher = vi.fn<BillingV2Fetch>()
-    await expect(startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, expectedAuthorityId: requestId, returnUrl: '/settings/subscription' })).rejects.toThrow('absolute HTTP')
+    await expect(startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, returnUrl: '/settings/subscription' })).rejects.toThrow('absolute HTTP')
     expect(fetcher).not.toHaveBeenCalled()
   })
 
@@ -79,34 +81,50 @@ describe('billing v2 public authority client', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify(offer)))
       .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, expiresAt: '2026-08-10T12:05:00Z', disclosure: chargeNowDisclosure })))
       .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, kind: 'stripe', clientSecret: 'pi_secret', paymentSessionToken: token })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, kind: 'stripe', authorityId: requestKey, clientSecret: 'pi_secret' })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ contractVersion: 2, kind: 'stripe', authorityId, clientSecret: 'pi_secret' })))
     await requestSignupEmailOwnership({ fetcher, billingApiUrl: 'https://billing.example.test', email: 'customer@example.test', requestId })
     await consumeSignupEmailOwnership({ fetcher, billingApiUrl: 'https://billing.example.test', email: 'customer@example.test', token })
     const authenticatedOffer = await fetchAuthenticatedAnnualOffer({ fetcher, billingApiUrl: 'https://billing.example.test' })
     await activateAuthenticatedAnnualCheckout({ fetcher, billingApiUrl: 'https://billing.example.test', offer: authenticatedOffer, trialPath: 'immediate', provider: 'stripe', behavior: 'immediate_card' })
     await startSignupAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, email: 'customer@example.test', requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })
-    await startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, expectedAuthorityId: requestKey, returnUrl: 'https://app.example.test/settings/subscription' })
+    await expect(startAuthenticatedAnnualPayment({ fetcher, billingApiUrl: 'https://billing.example.test', checkoutIntentToken: signedCheckoutIntent, returnUrl: 'https://app.example.test/settings/subscription' }))
+      .resolves.toEqual({ contractVersion: 2, kind: 'stripe', authorityId, clientSecret: 'pi_secret' })
     expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['https://billing.example.test/auth/signup-email-verifications/v2', 'https://billing.example.test/auth/signup-email-verifications/v2/consume', 'https://billing.example.test/subscription/offers/v2', 'https://billing.example.test/subscription/offers/v2/activate', 'https://billing.example.test/auth/signup/payment-session/v2', 'https://billing.example.test/subscription/payment-flows/v2'])
     expect(JSON.parse(String(fetcher.mock.calls[4][1]?.body))).toEqual({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, email: 'customer@example.test', requestKey, recoverySecret: token, wantsProductUpdates: true, rememberDevice: false, returnUrl: 'https://app.example.test/signup/success' })
     expect(JSON.parse(String(fetcher.mock.calls[5][1]?.body))).toEqual({ contractVersion: 2, checkoutIntentToken: signedCheckoutIntent, returnUrl: 'https://app.example.test/settings/subscription' })
   })
 
+  const authenticatedStripe = { contractVersion: 2, kind: 'stripe', authorityId, clientSecret: 'pi_secret' }
+  const authenticatedBtcpay = { contractVersion: 2, kind: 'btcpay', authorityId, checkoutUrl: 'https://btcpay.example.test/i/invoice', invoiceId: 'invoice', invoiceLookupToken: token }
+  const startAuthenticated = (body: unknown) => startAuthenticatedAnnualPayment({
+    fetcher: vi.fn<BillingV2Fetch>().mockResolvedValue(new Response(JSON.stringify(body), { status: 201 })),
+    billingApiUrl: 'https://billing.example.test',
+    checkoutIntentToken: signedCheckoutIntent,
+    returnUrl: 'https://app.example.test/settings/subscription',
+  })
+
+  it.each([authenticatedStripe, authenticatedBtcpay])('accepts an authenticated $kind response for a server-minted flow id distinct from the offer request', async (body) => {
+    expect(body.authorityId).not.toBe(offer.requestId)
+    await expect(startAuthenticated(body)).resolves.toEqual(body)
+  })
+
   it.each([
-    { kind: 'stripe', clientSecret: 'pi_secret' },
-    { kind: 'btcpay', checkoutUrl: 'https://btcpay.example.test/i/invoice', invoiceId: 'invoice', invoiceLookupToken: token },
-  ])('rejects an authenticated $kind response for another authority', async (providerFields) => {
-    const fetcher = vi.fn<BillingV2Fetch>().mockResolvedValue(new Response(JSON.stringify({
-      contractVersion: 2,
-      authorityId: requestKey,
-      ...providerFields,
-    })))
-    await expect(startAuthenticatedAnnualPayment({
-      fetcher,
-      billingApiUrl: 'https://billing.example.test',
-      checkoutIntentToken: signedCheckoutIntent,
-      expectedAuthorityId: requestId,
-      returnUrl: 'https://app.example.test/settings/subscription',
-    })).rejects.toThrow('another annual authority')
+    ['stripe without authorityId', (({ authorityId: _, ...rest }) => rest)(authenticatedStripe)],
+    ['stripe without clientSecret', (({ clientSecret: _, ...rest }) => rest)(authenticatedStripe)],
+    ['stripe with an extra key', { ...authenticatedStripe, requestId }],
+    ['stripe with a non-UUID authorityId', { ...authenticatedStripe, authorityId: 'flow-1' }],
+    ['stripe with an empty clientSecret', { ...authenticatedStripe, clientSecret: '' }],
+    ['btcpay without authorityId', (({ authorityId: _, ...rest }) => rest)(authenticatedBtcpay)],
+    ['btcpay without invoiceLookupToken', (({ invoiceLookupToken: _, ...rest }) => rest)(authenticatedBtcpay)],
+    ['btcpay with an extra key', { ...authenticatedBtcpay, clientSecret: 'pi_secret' }],
+    ['btcpay with a non-UUID authorityId', { ...authenticatedBtcpay, authorityId: 'flow-1' }],
+    ['btcpay with a non-HTTPS checkoutUrl', { ...authenticatedBtcpay, checkoutUrl: 'http://btcpay.example.test/i/invoice' }],
+    ['an unknown kind', { ...authenticatedStripe, kind: 'paypal' }],
+    ['stripe kind with btcpay fields', { ...authenticatedBtcpay, kind: 'stripe' }],
+    ['btcpay kind with stripe fields', { ...authenticatedStripe, kind: 'btcpay' }],
+    ['another contract version', { ...authenticatedStripe, contractVersion: 3 }],
+  ])('rejects an authenticated payment response with %s', async (_label, body) => {
+    await expect(startAuthenticated(body)).rejects.toThrow('valid payment session')
   })
 
   it('accepts email-proof delivery only at 202', async () => {

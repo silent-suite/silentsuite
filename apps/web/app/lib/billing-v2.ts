@@ -335,13 +335,12 @@ export async function startSignupAnnualPayment(params: { fetcher: BillingV2Fetch
   return body
 }
 
-export async function startAuthenticatedAnnualPayment(params: { fetcher: BillingV2Fetch; billingApiUrl: string; checkoutIntentToken: string; expectedAuthorityId: string; returnUrl: string }): Promise<AuthenticatedAnnualPayment> {
+export async function startAuthenticatedAnnualPayment(params: { fetcher: BillingV2Fetch; billingApiUrl: string; checkoutIntentToken: string; returnUrl: string }): Promise<AuthenticatedAnnualPayment> {
   const { fetcher } = params
-  if (!isUuid(params.expectedAuthorityId)) throw new Error('The expected annual authority is invalid')
   const returnUrl = requireAbsoluteHttpUrl(params.returnUrl)
   const body = await jsonOrThrow(await fetcher(api(params.billingApiUrl, '/subscription/payment-flows/v2'), jsonInit('POST', { contractVersion: 2, checkoutIntentToken: params.checkoutIntentToken, returnUrl })))
+  // authorityId is the server-minted payment flow id, not the offer requestId; the checkout intent token binds the flow server-side.
   assertAuthenticatedPayment(body)
-  if (body.authorityId !== params.expectedAuthorityId) throw new Error('Billing returned payment details for another annual authority')
   return body
 }
 
