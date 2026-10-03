@@ -27,7 +27,7 @@ const JOBS = ['admit', 'enumerate', 'assess', 'plan', 'publish', 'notify']
 
 test('the only trigger is schedule; the definition revision is the only checkout', () => {
   const on = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'))
-  assert.match(on, /\non:\n  schedule:\n    - cron: '17 \* \* \* \*'\n/)
+  assert.match(on, /\non:\n  schedule:\n    - cron: '17 \*\/6 \* \* \*'\n/)
   assert.deepEqual(on.match(/^  [a-z_]+:/gm), ['  schedule:'], 'schedule is the only trigger key')
   assert.doesNotMatch(on.replace(/^#.*$/gm, ''), /release|repository_dispatch|workflow_dispatch|pull_request|push|workflow_call|tags:/)
   assert.equal(workflow.split(shaCheckout).length - 1, JOBS.length, 'every job checks out github.sha exactly once')
@@ -191,11 +191,82 @@ test('manual rehearsal reuses the production assessment verbatim and uploads evi
 
 test('the production lane is unchanged by the rehearsal and never references it', () => {
   assert.doesNotMatch(workflow, /zapstore-rehearsal|admit-rehearsal|workflow_dispatch:/)
-  assert.match(workflow, /\non:\n  schedule:\n    - cron: '17 \* \* \* \*'\n/)
+  assert.match(workflow, /\non:\n  schedule:\n    - cron: '17 \*\/6 \* \* \*'\n/)
+})
+
+const signing = readFileSync(join(root, '.github', 'workflows', 'zapstore-signing-rehearsal.yml'), 'utf8')
+
+test('signing rehearsal: main-only workflow_dispatch with its own admission and one release-id input read through env', () => {
+  const body = code(signing)
+  const on = body.slice(body.indexOf('\non:'), body.indexOf('\nconcurrency:'))
+  assert.deepEqual(on.match(/^  [a-z_]+:/gm), ['  workflow_dispatch:'])
+  assert.deepEqual(body.match(/^  [a-z_]+:$/gm), ['  workflow_dispatch:', '  admit:', '  sign:'], 'one trigger and exactly two jobs')
+  assert.doesNotMatch(body, /schedule|cron|repository_dispatch|workflow_call|pull_request|push:|release:|tags:/)
+  assert.doesNotMatch(body, /refs\/heads|refs\/tags|github\.workflow_sha|github\.ref\b|github\.head_ref|github\.event/)
+  assert.doesNotMatch(body, /^\s+GITHUB_(EVENT_NAME|REF|SHA|WORKFLOW|WORKFLOW_REF|WORKFLOW_SHA|REPOSITORY):/m)
+  assert.doesNotMatch(body, /GITHUB_ENV|GITHUB_PATH/)
+  assert.equal((signing.match(/inputs\.release_id/g) ?? []).length, 1, 'the input is read once, into an environment variable')
+  assert.ok(signing.includes('RELEASE_ID: ' + expr('inputs.release_id')))
+  assert.equal(signing.split(shaCheckout).length - 1, 2)
+  assert.match(jobOf(signing, 'admit'), /cli\.mjs admit-signing-rehearsal --workspace "\$GITHUB_WORKSPACE"/)
+  assert.doesNotMatch(body, /cli\.mjs admit(-rehearsal)? /, 'never another admission')
+  assert.match(jobOf(signing, 'sign'), /cli\.mjs checkout-guard --workspace "\$GITHUB_WORKSPACE" --revision "\$REVISION"/)
+  assert.match(jobOf(signing, 'sign'), /needs: admit\n/)
+  assert.match(signing, /group: zapstore-publish-io-silentsuite-android\n  cancel-in-progress: false/, 'serialized with the publication lane')
+})
+
+test('signing rehearsal: one environment job, one secret step, no publication or upload path, counters-only artifact', () => {
+  const body = code(signing)
+  assert.match(body, /\npermissions: \{\}\n/)
+  assert.match(jobOf(signing, 'admit'), /permissions: \{\}/)
+  assert.doesNotMatch(jobOf(body, 'admit'), /environment:|secrets\./)
+  assert.equal((body.match(/environment: zapstore-production/g) ?? []).length, 1)
+  assert.match(jobOf(signing, 'sign'), /environment: zapstore-production/)
+  assert.deepEqual([...body.matchAll(/^\s+([a-z-]+): (read|write)$/gm)].map((m) => `${m[1]}: ${m[2]}`), ['contents: read'])
+  assert.deepEqual([...new Set([...body.matchAll(/secrets\.([A-Za-z0-9_]+)/g)].map((m) => m[1]))].sort(), ['GITHUB_TOKEN', 'ZAPSTORE_BUNKER_CLIENT_KEY', 'ZAPSTORE_SIGN_WITH'])
+  const secretSteps = signing.split('\n      - name: ').filter((step) => /secrets\.ZAPSTORE_/.test(step))
+  assert.equal(secretSteps.length, 1)
+  assert.match(secretSteps[0], /^Verify the signing account, then sign offline without publishing/)
+  assert.match(secretSteps[0], /trap 'rm -rf "\$RUNNER_TEMP\/signing\/signer"' EXIT/)
+  assert.match(secretSteps[0], /cli\.mjs sign-rehearsal /)
+  assert.match(secretSteps[0], /--work-dir "\$RUNNER_TEMP\/signing\/signer"/)
+  for (const command of ['publish', 'plan', 'drift', 'revalidate', 'notify', 'reconcile', 'verify-cdn']) assert.doesNotMatch(body, new RegExp(`cli\\.mjs ${command}\\b`), command)
+  assert.doesNotMatch(body, /--overwrite-release|--readback|vars\.|ZAPSTORE_AUTOMATION_ENABLED|issues:|: write\b|id-token|secrets: inherit|download-artifact|actions\/cache|blossom|cdn\.zapstore|\bgh (release|issue|api)\b|android-release|ANDROID_KEYSTORE/i)
+  assert.deepEqual([...body.matchAll(/^\s+"\$RUNNER_TEMP\/zsp" (.*)$/gm)].map((m) => m[1]), ['--version'], 'the publisher only runs through the CLI')
+  assert.equal((body.match(/\bcurl /g) ?? []).length, 1)
+  const sign = jobOf(signing, 'sign')
+  const order = [
+    'Bind the checkout to the admitted revision',
+    'Fetch and pin the official publisher',
+    'Install apksigner from the fixed build-tools',
+    'List and classify published releases by exact id',
+    'Require the dispatched release to be the newest eligible release',
+    'Bind the exact release, tag commit and assets',
+    'Download the bound APK and check all three digests',
+    'Verify the APK signature with apksigner',
+    'Generate the exact-release configuration and expected events',
+    'Verify the signing account, then sign offline without publishing',
+    'Remove signer material whatever the outcome',
+    'Upload the counters-only verdict',
+  ]
+  let last = -1
+  for (const name of order) {
+    const at = sign.indexOf(`- name: ${name}`)
+    assert.ok(at > last, `${name} out of order`)
+    last = at
+  }
+  assert.match(sign, /- name: Remove signer material whatever the outcome\n\s+if: always\(\)\n\s+run: rm -rf "\$RUNNER_TEMP\/signing\/signer"/)
+  const upload = sign.slice(sign.indexOf('- name: Upload the counters-only verdict'))
+  assert.deepEqual([...upload.matchAll(/\$\{\{ runner\.temp \}\}\/(\S+)/g)].map((m) => m[1]), ['signing/signing-rehearsal.json', 'signing/binding.json', 'signing/prepare/release-manifest.json', 'signing/prepare/expected-events.jsonl'], 'never the signer directory')
+  const productionUses = new Set([...workflow.matchAll(/uses: ([^\s]+)/g)].map((m) => m[1]))
+  for (const uses of signing.matchAll(/uses: ([^\s]+)/g)) assert.ok(productionUses.has(uses[1]), `${uses[1]} is pinned exactly as in the production lane`)
+  assert.equal((signing.match(/3f241da6a5dc7a85fe851d3b42b77790b651bd36c7029382a701262bda832d20  \$RUNNER_TEMP\/zsp" \| sha256sum -c -/g) ?? []).length, 1)
+  assert.doesNotMatch(workflow, /zapstore-signing-rehearsal|admit-signing-rehearsal|sign-rehearsal/, 'the production lane never references it')
+  assert.doesNotMatch(rehearsal, /sign-rehearsal|zapstore-production|ZAPSTORE_/, 'the assessment rehearsal stays secret-free')
 })
 
 test('the lane tests are wired into continuous integration without secrets', () => {
-  for (const file of ['lane', 'protocol', 'orchestration', 'workflow-boundary']) assert.match(rootPackage.scripts['check:zapstore-automation'], new RegExp(`scripts/zapstore/test/${file}\\.test\\.mjs`))
+  for (const file of ['lane', 'protocol', 'orchestration', 'workflow-boundary', 'signing-rehearsal']) assert.match(rootPackage.scripts['check:zapstore-automation'], new RegExp(`scripts/zapstore/test/${file}\\.test\\.mjs`))
   assert.match(ci, /pnpm run check:zapstore-automation/)
   assert.match(ci, /npm ci --ignore-scripts --no-audit --no-fund --prefix scripts\/zapstore/)
 })
