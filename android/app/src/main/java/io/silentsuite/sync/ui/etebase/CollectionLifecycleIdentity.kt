@@ -39,7 +39,8 @@ data class CollectionLifecycleIdentity(
         private val SUPPORTED_TYPES = setOf(
             Constants.ETEBASE_TYPE_CALENDAR,
             Constants.ETEBASE_TYPE_TASKS,
-            Constants.ETEBASE_TYPE_ADDRESS_BOOK
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK,
+            Constants.ETEBASE_TYPE_NOTES
         )
 
         fun existing(account: Account, creationId: String, uid: String, type: String) =

@@ -197,7 +197,7 @@ test('only protected exact-SHA annual cutover can mint Stage B after freshly pro
 test('reusable cutover callers map only declared secrets and every App token can read Actions only', () => {
   const cutover = source('.github/workflows/annual-only-public-cutover.yml')
   assert.doesNotMatch(cutover, /secrets:\s*inherit/)
-  for (const secret of ['ANNUAL_PRIVATE_ADMISSION_APP_ID', 'ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY', 'ANNUAL_PRIVATE_ADMISSION_HMAC_KEY', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'VPS_HOST', 'VPS_USER', 'VPS_SSH_KEY', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) assert.match(cutover, new RegExp(`${secret}: \\$\\{\\{ secrets\\.${secret} \\}\\}`))
+  for (const secret of ['ANNUAL_PRIVATE_ADMISSION_APP_ID', 'ANNUAL_PRIVATE_ADMISSION_APP_PRIVATE_KEY', 'ANNUAL_PRIVATE_ADMISSION_HMAC_KEY', 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', 'VPS_HOST', 'VPS_USER', 'VPS_SSH_KEY', 'VPS_SSH_FINGERPRINT', 'CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']) assert.match(cutover, new RegExp(`${secret}: \\$\\{\\{ secrets\\.${secret} \\}\\}`))
   for (const workflow of ['.github/workflows/deploy-web.yml', '.github/workflows/deploy-docs.yml', '.github/workflows/annual-only-public-cutover.yml']) {
     const text = source(workflow)
     const appTokenBlocks = text.match(/uses: actions\/create-github-app-token@[\s\S]*?(?=\n\s*- name:|\n\s*$)/g) ?? []

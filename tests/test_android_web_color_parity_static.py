@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 184, f"expected 184 Android resource XML files, found {len(files)}"
+    assert len(files) == 190, f"expected 190 Android resource XML files, found {len(files)}"
     return files
 
 
@@ -888,6 +888,9 @@ def test_context_aware_vector_roles_and_tint_consumers_are_exact():
     for icon, consumers in system_bar_icons.items():
         vector = ET.parse(RES / f"drawable/{icon}.xml").getroot()
         assert {path.attrib.get("{http://schemas.android.com/apk/res/android}fillColor") for path in vector.findall("path")} == {"@color/semantic_on_system_bar"}, icon
+        # The white fill is only right on a dark action bar. The theme tint makes the glyph follow
+        # the toolbar it sits on: dark on the light Material3 toolbars, white on the dark overlay.
+        assert vector.attrib.get("{http://schemas.android.com/apk/res/android}tint") == "?attr/colorControlNormal", icon
         for consumer in consumers:
             assert f"@drawable/{icon}" in source(f"android/app/src/main/res/{consumer}"), (icon, consumer)
 
@@ -922,7 +925,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("92", "90", "44"):
+    for count in ("104", "102", "56"):
         assert count in runner
 
 
@@ -1045,6 +1048,6 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert "for _ in {1..10}; do" in focused_script
     assert focused_script.rstrip().endswith(runner)
     assert all(step.get("name") != "Configure required system navigation mode" for step in focused_job["steps"])
-    assert "expected_sizes={'21:mixed':1,'21:remaining':91,'35:all':92,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':44}" in workflow
+    assert "expected_sizes={'21:mixed':1,'21:remaining':103,'35:all':104,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':56}" in workflow
     runner_source = source("android/scripts/run-focused-runtime-tests.sh")
-    assert '"21:remaining": 90' in runner_source
+    assert '"21:remaining": 102' in runner_source

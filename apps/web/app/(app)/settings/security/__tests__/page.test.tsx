@@ -76,4 +76,10 @@ describe('SecurityPage diagnostics', () => {
     expect(writeText.mock.calls[0]![0]).toContain('"failedPhase":null')
     expect(await screen.findByRole('button', { name: 'Diagnostics copied' })).toBeInTheDocument()
   })
+
+  it('tells people you share with to compare the fingerprint over a separate channel', () => {
+    renderWithIntl(<SecurityPage />)
+
+    expect(screen.getByText(/people you share with should compare this fingerprint with you over a separate channel/i)).toBeInTheDocument()
+  })
 })

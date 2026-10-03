@@ -472,6 +472,68 @@ function resolveCollection(
   return typedCollections[0] ?? null
 }
 
+const SHARING_PUBLIC_KEY_LENGTH = 32
+
+export type PendingCollectionInvite = Readonly<{
+  type: CollectionTypeKey
+  collectionUid: string
+  username: string
+  accessLevel: CollectionAccessLevel
+  fingerprint: string
+}>
+
+export type IncomingInvitationView = Readonly<{
+  uid: string
+  senderName: string | null
+  accessLevel: number
+  senderFingerprint: string | null
+}>
+
+interface SharingBoundary {
+  accountEpoch: number
+  account: any
+  accountFingerprint: string | null
+}
+
+interface PendingInviteBinding extends SharingBoundary {
+  collection: any
+  pubkey: Uint8Array
+}
+
+interface IncomingInvitationBinding extends SharingBoundary {
+  invitation: any
+  confirmedFromPubkey: Uint8Array | null
+  used: boolean
+}
+
+// Key bytes and SDK objects stay module-private; React only receives frozen tokens.
+const pendingInviteBindings = new WeakMap<PendingCollectionInvite, PendingInviteBinding>()
+const incomingInvitationBindings = new WeakMap<IncomingInvitationView, IncomingInvitationBinding>()
+
+function copySharingPublicKey(value: unknown): Uint8Array | null {
+  if (!(value instanceof Uint8Array) || value.length !== SHARING_PUBLIC_KEY_LENGTH) return null
+  return value.slice()
+}
+
+/** Sharing targets must match an exact uid; unlike resolveCollection there is no default fallback. */
+function findExactSharingCollection(
+  collections: Record<CollectionTypeKey, any[]>,
+  type: CollectionTypeKey,
+  collectionUid: string,
+): any | null {
+  if (!collectionUid || collectionUid === 'default' || collectionUid === 'all') return null
+  return (collections[type] ?? []).find((collection) => collection.uid === collectionUid) ?? null
+}
+
+function isCurrentSharingBoundary(
+  boundary: SharingBoundary,
+  state: { account: any; accountFingerprint: string | null },
+): boolean {
+  return isCurrentAccountEpoch(boundary.accountEpoch)
+    && state.account === boundary.account
+    && state.accountFingerprint === boundary.accountFingerprint
+}
+
 function getCollectionName(collection: any, fallback: string): string {
   try {
     const meta = collection?.getMeta?.()
@@ -741,9 +803,9 @@ interface EtebaseActions {
   reconcileCollections: () => Promise<void>
 
   /**
-   * List pending incoming sharing invitations for the current account.
+   * List pending incoming sharing invitations as key-free views bound to private list-time snapshots.
    */
-  listIncomingInvitations: () => Promise<any[]>
+  listIncomingInvitations: () => Promise<IncomingInvitationView[]>
 
   /**
    * List pending outgoing sharing invitations for the current account.
@@ -756,19 +818,31 @@ interface EtebaseActions {
   cancelOutgoingInvitation: (invitation: any) => Promise<boolean>
 
   /**
-   * Accept an incoming sharing invitation, then reconcile collections so the shared collection appears.
+   * Accept the list-time snapshot behind a view after the user confirmed its displayed sender fingerprint,
+   * then reconcile collections so the shared collection appears. Single-use.
    */
-  acceptInvitation: (invitation: any) => Promise<boolean>
+  acceptInvitation: (invitation: IncomingInvitationView, displayedFingerprint: string) => Promise<boolean>
 
   /**
-   * Reject an incoming sharing invitation.
+   * Reject an incoming sharing invitation. Single-use.
    */
-  rejectInvitation: (invitation: any) => Promise<boolean>
+  rejectInvitation: (invitation: IncomingInvitationView) => Promise<boolean>
 
   /**
-   * Invite another user to an existing collection.
+   * Fetch the recipient's public key once and return a frozen token carrying its fingerprint for comparison.
+   * Nothing is sent until confirmCollectionInvite.
    */
-  inviteToCollection: (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => Promise<boolean>
+  prepareCollectionInvite: (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => Promise<PendingCollectionInvite | null>
+
+  /**
+   * Send a prepared invite with the exact key captured at prepare time. Single-use.
+   */
+  confirmCollectionInvite: (pending: PendingCollectionInvite) => Promise<boolean>
+
+  /**
+   * Drop a prepared invite without sending it.
+   */
+  discardCollectionInvite: (pending: PendingCollectionInvite) => void
 
   /**
    * List members for a collection.
@@ -1301,14 +1375,47 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
   listIncomingInvitations: async () => {
     const accountEpoch = getAccountEpoch()
-    const { account } = get()
+    const { account, accountFingerprint } = get()
     if (!account) return []
+    const boundary: SharingBoundary = { accountEpoch, account, accountFingerprint }
 
     try {
       const core = await import('@silentsuite/core')
       const invitations = await core.listIncomingInvitations(account)
-      assertCurrentAccountEpoch(accountEpoch)
-      return invitations
+      if (!isCurrentSharingBoundary(boundary, get())) throw new AccountBoundaryChangedError()
+      return invitations.map((invitation: any) => {
+        let snapshot: any = null
+        let confirmedFromPubkey: Uint8Array | null = null
+        let senderFingerprint: string | null = null
+        try {
+          snapshot = core.snapshotInvitation(invitation)
+          confirmedFromPubkey = copySharingPublicKey(snapshot?.fromPubkey)
+          senderFingerprint = confirmedFromPubkey ? core.getPublicKeyFingerprint(confirmedFromPubkey) : null
+        } catch {
+          senderFingerprint = null
+        }
+        if (!snapshot || !confirmedFromPubkey || !senderFingerprint) {
+          // Malformed invitations stay rejectable but can never be accepted.
+          snapshot = null
+          confirmedFromPubkey = null
+          senderFingerprint = null
+        }
+        const source = snapshot ?? invitation
+        const fromUsername = typeof source?.fromUsername === 'string' ? source.fromUsername.trim() : ''
+        const view: IncomingInvitationView = Object.freeze({
+          uid: typeof source?.uid === 'string' ? source.uid : '',
+          senderName: fromUsername || null,
+          accessLevel: typeof source?.accessLevel === 'number' ? source.accessLevel : -1,
+          senderFingerprint,
+        })
+        incomingInvitationBindings.set(view, {
+          ...boundary,
+          invitation: snapshot ?? { ...invitation },
+          confirmedFromPubkey,
+          used: false,
+        })
+        return view
+      })
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return []
       console.error('[etebase-store] Failed to list incoming invitations', getSafeErrorDetails(err))
@@ -1356,17 +1463,26 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  acceptInvitation: async (invitation: any) => {
-    const accountEpoch = getAccountEpoch()
-    const { account } = get()
-    if (!account) {
-      logger.warn('[etebase-store] Cannot accept invitation: no account')
+  acceptInvitation: async (view: IncomingInvitationView, displayedFingerprint: string) => {
+    const binding = incomingInvitationBindings.get(view)
+    if (
+      !binding || binding.used || !binding.confirmedFromPubkey
+      || !view.senderFingerprint || displayedFingerprint !== view.senderFingerprint
+    ) {
+      logger.warn('[etebase-store] Cannot accept invitation: confirmation is missing, mismatched, or already used')
       return false
     }
+    binding.used = true
+    const { accountEpoch, account } = binding
+    const confirmedFromPubkey = binding.confirmedFromPubkey
 
     try {
       const core = await import('@silentsuite/core')
-      await core.acceptInvitation(account, invitation)
+      if (core.getPublicKeyFingerprint(confirmedFromPubkey) !== view.senderFingerprint) {
+        throw new Error('Sender fingerprint changed before accept')
+      }
+      if (!isCurrentSharingBoundary(binding, get())) throw new AccountBoundaryChangedError()
+      await core.acceptInvitation(account, binding.invitation, confirmedFromPubkey)
       assertCurrentAccountEpoch(accountEpoch)
       await get().reconcileCollections()
       assertCurrentAccountEpoch(accountEpoch)
@@ -1379,17 +1495,19 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  rejectInvitation: async (invitation: any) => {
-    const accountEpoch = getAccountEpoch()
-    const { account } = get()
-    if (!account) {
-      logger.warn('[etebase-store] Cannot reject invitation: no account')
+  rejectInvitation: async (view: IncomingInvitationView) => {
+    const binding = incomingInvitationBindings.get(view)
+    if (!binding || binding.used) {
+      logger.warn('[etebase-store] Cannot reject invitation: unknown or already used')
       return false
     }
+    binding.used = true
+    const { accountEpoch, account } = binding
 
     try {
       const core = await import('@silentsuite/core')
-      await core.rejectInvitation(account, invitation)
+      if (!isCurrentSharingBoundary(binding, get())) throw new AccountBoundaryChangedError()
+      await core.rejectInvitation(account, binding.invitation)
       assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
@@ -1400,26 +1518,73 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  inviteToCollection: async (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => {
+  prepareCollectionInvite: async (type: CollectionTypeKey, collectionUid: string, username: string, accessLevel: CollectionAccessLevel) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
-    const collection = resolveCollection(collections, type, collectionUid)
-    if (!account || !collection) {
-      logger.warn(`[etebase-store] Cannot invite to ${type} collection ${collectionUid}: missing account or collection`)
-      return false
+    const collection = findExactSharingCollection(collections, type, collectionUid)
+    const recipient = username.trim()
+    if (!account || !collection || !recipient) {
+      logger.warn(`[etebase-store] Cannot prepare ${type} invite: missing account, exact collection, or username`)
+      return null
     }
+    const boundary: SharingBoundary = { accountEpoch, account, accountFingerprint }
+    const isCurrentTarget = () => isCurrentSharingBoundary(boundary, get())
+      && findExactSharingCollection(get().collections, type, collectionUid) === collection
 
     try {
       const core = await import('@silentsuite/core')
-      await core.inviteToCollection(account, collection, username, accessLevel)
+      if (!isCurrentTarget()) throw new AccountBoundaryChangedError()
+      const profile = await core.fetchUserProfile(account, recipient)
+      if (!isCurrentTarget()) throw new AccountBoundaryChangedError()
+      const pubkey = copySharingPublicKey(profile?.pubkey)
+      if (!pubkey) throw new Error('Recipient sharing key is missing or malformed')
+      const fingerprint = core.getPublicKeyFingerprint(pubkey)
+      const pending: PendingCollectionInvite = Object.freeze({ type, collectionUid, username: recipient, accessLevel, fingerprint })
+      pendingInviteBindings.set(pending, { ...boundary, collection, pubkey })
+      return pending
+    } catch (err) {
+      if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
+      console.error('[etebase-store] Failed to fetch sharing profile', getSafeErrorDetails(err))
+      showErrorToast('Could not fetch the security fingerprint for that account. Please verify the username and try again.')
+      return null
+    }
+  },
+
+  confirmCollectionInvite: async (pending: PendingCollectionInvite) => {
+    const binding = pendingInviteBindings.get(pending)
+    // Single-use: the token is spent before any await, so a second confirm can never dispatch.
+    pendingInviteBindings.delete(pending)
+    if (!binding) {
+      logger.warn('[etebase-store] Cannot send invite: confirmation is unknown, discarded, or already used')
+      return false
+    }
+    const { accountEpoch, account, collection, pubkey } = binding
+
+    try {
+      const core = await import('@silentsuite/core')
+      if (core.getPublicKeyFingerprint(pubkey) !== pending.fingerprint) {
+        throw new Error('Recipient fingerprint changed before invite')
+      }
+      const state = get()
+      if (
+        !isCurrentSharingBoundary(binding, state)
+        || findExactSharingCollection(state.collections, pending.type, pending.collectionUid) !== collection
+      ) {
+        throw new AccountBoundaryChangedError()
+      }
+      await core.inviteToCollection(account, collection, pending.username, pubkey, pending.accessLevel)
       assertCurrentAccountEpoch(accountEpoch)
       return true
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return false
       console.error('[etebase-store] Failed to create sharing invitation', getSafeErrorDetails(err))
-      showErrorToast('Failed to create sharing invitation. Please verify the username and try again.')
+      showErrorToast('Failed to create sharing invitation. Invite again to fetch and compare a fresh fingerprint.')
       return false
     }
+  },
+
+  discardCollectionInvite: (pending: PendingCollectionInvite) => {
+    pendingInviteBindings.delete(pending)
   },
 
   listCollectionMembers: async (type: CollectionTypeKey, collectionUid: string) => {

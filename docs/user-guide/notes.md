@@ -4,7 +4,7 @@ Your notes live at [app.silentsuite.io/notes](https://app.silentsuite.io/notes).
 
 Notes use the [Etebase Markdown notes](https://docs.etebase.com/type-specs/notes) collection type (`etebase.md.note`), so existing EteSync Notes notebooks on the same account appear in SilentSuite without conversion.
 
-Notes is an experimental feature, currently available only in the web app, including mobile browsers. Editing the same note on multiple devices at once may overwrite changes; avoid editing the same note simultaneously.
+Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and read them in the Android app once you turn Notes on for your account there. Editing the same note on multiple devices at once may overwrite changes; avoid editing the same note simultaneously.
 
 ## Notebooks
 
@@ -56,7 +56,7 @@ Reloading the page while offline and reading previously opened notes depends on 
 
 ## Sharing
 
-Share a notebook from **Settings → Sharing**. Members see the same encrypted notebook; the server never sees plaintext. Read-only members can read notes but cannot change them.
+Share a notebook from **Settings → Sharing**. Members see the same notebook, end-to-end encrypted to the public keys you confirm. Before you share or accept, compare security fingerprints with each person over a separate channel, such as in person or on a call; the server supplies usernames and keys, so an unverified fingerprint gives no assurance about who receives access. Read-only members can read notes but cannot change them.
 
 ## Not in this release
 

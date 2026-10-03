@@ -42,6 +42,21 @@ Clearing or changing an approval variable affects only future workflow runs; it 
 
 Server migrations run with Compose interactive stdin and TTY attachment explicitly disabled. The SSH action supplies the deployment script through stdin; an interactive `docker compose run` can otherwise consume the remaining script, exit successfully after migration, and skip container replacement and running-image verification.
 
+## SSH server verification for the Web mutation
+
+The Web `Deploy via SSH` step runs the pinned `appleboy/ssh-action`, whose transport (drone-ssh 1.8.2) skips server host-key verification whenever its `fingerprint` input is empty, and an unprovisioned secret expands to the empty string. The step therefore binds `with.fingerprint` to the dedicated protected secret `VPS_SSH_FINGERPRINT`, and the `Require protected SSH host-key fingerprint before final authorization` step refuses a missing or malformed value immediately before the final live-main re-assertion. The reusable workflow declares the secret as required and `annual-only-public-cutover.yml` maps it explicitly.
+
+Web production dispatch, standalone or through the annual public cutover, is blocked until `VPS_SSH_FINGERPRINT` is commissioned. No value is provisioned by the change that introduced this control, and merging it is not a deployment. Before any dispatch:
+
+1. Derive the fingerprint only from independently trusted custody of the host key, re-validated out of band. Never derive the value from a fresh unauthenticated `ssh-keyscan`, from a workflow log, or from the connection being authorized.
+2. The value is exactly `SHA256:` followed by the 43-character unpadded base64 digest printed by `ssh-keygen -l -E sha256`: no key-size prefix, comment, padding, whitespace, or second line. The transport compares one fingerprint against the single host key it negotiates, and its choice can differ from OpenSSH's: against a synthetic server offering RSA, ECDSA, and Ed25519 host keys, drone-ssh 1.8.2 negotiated the ECDSA key and rejected the other two fingerprints. Confirm from the same trusted custody the fingerprint of the host-key type the server offers to this transport; a trusted known-hosts entry of another key type yields a fingerprint that fails closed.
+3. Store it as the `VPS_SSH_FINGERPRINT` secret of the `web-production` environment, which the deployment job reads in both the standalone and the reusable path. If a repository-level secret of the same name exists for the cutover caller's explicit map, it must hold the identical verified value. A names-only secret inventory does not verify the value; record who verified it, from which trusted source, and when.
+4. Refresh the exact-SHA approval and every existing prerequisite above. This control adds a prerequisite and replaces none.
+
+A host-key mismatch fails the SSH step before any remote command runs and leaves production untouched. Treat it as a possible interception or an unrecorded key rotation: stop, and do not remove, blank, or bypass the fingerprint to recover. A deliberate host-key rotation requires a separate trusted re-verification and an updated secret before the next dispatch.
+
+CI proves the pinned transport rejects a changed server key before running a command against a synthetic loopback server (`scripts/ssh-host-verification-transport.test.mjs`). That proof does not establish which key production presents or that the stored secret matches it; only the custody steps above do.
+
 ## Rollback
 
 An older ancestor is not eligible for direct dispatch because every workflow requires `expected_sha` to equal live `main`. To restore earlier behavior:

@@ -52,6 +52,15 @@ class HttpClient private constructor(
                 .addNetworkInterceptor(UserAgentInterceptor)
 
                 .build()
+
+        /**
+         * Test seam: an interceptor every client built here runs first, so a runtime test can
+         * answer the app's own requests in-process (a stand-in Etebase server). Production leaves
+         * this null.
+         */
+        @androidx.annotation.VisibleForTesting
+        @Volatile
+        @JvmField internal var testInterceptor: Interceptor? = null
     }
 
 
@@ -71,6 +80,8 @@ class HttpClient private constructor(
         private val orig = sharedClient.newBuilder()
 
         init {
+            testInterceptor?.let { orig.addInterceptor(it) }
+
             // add network logging, if requested
             if (logger.isLoggable(Level.FINEST)) {
                 val loggingInterceptor = HttpLoggingInterceptor(object: HttpLoggingInterceptor.Logger {

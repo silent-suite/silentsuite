@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.CalendarContract
 import android.text.TextUtils
+import androidx.annotation.VisibleForTesting
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
@@ -30,6 +31,9 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.notes.NotesSyncCoordinator
+import io.silentsuite.sync.notes.NotesSyncPolicy
+import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.ui.settings.SettingsCategory
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
@@ -39,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import io.silentsuite.sync.ui.settings.ProxySettingsValidation
+import java.util.UUID
 
 class AppSettingsActivity : BaseActivity() {
     var selectedAccount: Account? = null
@@ -57,6 +62,13 @@ class AppSettingsActivity : BaseActivity() {
         private const val STATE_CREATION_ID = "state_creation_id"
         private const val STATE_EXPLICIT_ACCOUNT = "state_explicit_account"
         private const val STATE_CATEGORY = "state_category"
+
+        /**
+         * No-network instrumentation seam for the Notes toggle's side effect: the immediate sync
+         * after enabling, or the job cancellation after disabling. Production leaves this null.
+         */
+        @VisibleForTesting
+        @JvmField internal var notesToggleEffectOverride: ((Context, Account, String, Boolean) -> Unit)? = null
 
         /** Global settings have no account identity and intentionally carry no account extra. */
         fun newIntent(context: Context): Intent = Intent(context, AppSettingsActivity::class.java)
@@ -80,12 +92,14 @@ class AppSettingsActivity : BaseActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
         AppPreferences(this) // complete migration before any screen or process consumer reads values
+        // Restored category fragments build their account-scoped preferences while the framework
+        // recreates them inside super.onCreate, so the exact account must be resolved first.
         val accountRoute = resolveAccount(savedInstanceState)
         selectedAccount = accountRoute.account
         selectedCreationId = accountRoute.creationId
         hasExplicitAccountRoute = accountRoute.explicit
+        super.onCreate(savedInstanceState)
         currentCategory = savedInstanceState?.getString(STATE_CATEGORY)?.let(SettingsCategory::fromRoute)
             ?: SettingsCategory.fromRoute(intent.getStringExtra(EXTRA_CATEGORY))
 
@@ -248,6 +262,32 @@ class AppSettingsActivity : BaseActivity() {
                 setOnPreferenceClickListener {
                     val exact = exactSelectedAccount() ?: return@setOnPreferenceClickListener false
                     startActivity(AccountActivity.newIntent(requireContext(), exact, host.selectedCreationId!!))
+                    true
+                }
+            }
+            requirePreference<SwitchPreferenceCompat>("notes_enabled").apply {
+                isEnabled = account != null
+                isChecked = account != null && AccountSettings.notesEnabled(AccountManager.get(requireContext()), account)
+                setOnPreferenceChangeListener { _, value ->
+                    // Revalidate the retained generation immediately before the account-scoped write.
+                    val exact = exactSelectedAccount() ?: return@setOnPreferenceChangeListener false
+                    val creationId = host.selectedCreationId ?: return@setOnPreferenceChangeListener false
+                    val enabled = value as Boolean
+                    val appContext = requireContext().applicationContext
+                    if (!AccountSettings.writeNotesEnabled(AccountManager.get(appContext), exact, enabled))
+                        return@setOnPreferenceChangeListener false
+                    notesToggleEffectOverride?.invoke(appContext, exact, creationId, enabled) ?: run {
+                        if (enabled) {
+                            // A service that never synced would pull the dashboard to "First sync
+                            // pending", so enabling runs a Notes sync right away.
+                            val requestId = UUID.randomUUID().toString()
+                            SyncStatusStore(appContext).recordRequested(exact, setOf(SyncStatusStore.Service.NOTES),
+                                requestId, System.currentTimeMillis())
+                            NotesSyncCoordinator.request(appContext, exact, creationId, NotesSyncPolicy.Trigger.TOGGLE, requestId)
+                        } else {
+                            NotesSyncCoordinator.cancel(ExactAccountIdentity(exact.type, exact.name, creationId))
+                        }
+                    }
                     true
                 }
             }

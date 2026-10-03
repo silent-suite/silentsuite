@@ -92,7 +92,7 @@ describe('ContactImport categories normalization', () => {
     expect(payload[0]).toMatchObject({
       displayName: 'René', name: { family: 'Ex;ample', given: 'René' },
       phones: [{ type: 'Büro', value: '111' }, { type: 'home,voice', value: '222' }],
-      emails: [{ type: 'x-emergency', value: 'a@example.invalid' }],
+      emails: [{ type: 'Emergency', value: 'a@example.invalid' }],
       addresses: [{ type: 'Postal desk', street: 'Street' }],
       notes: 'First\n日本', categories: ['Team, West', 'Café'], favorite: true, listId: 'default',
     })
@@ -101,6 +101,45 @@ describe('ContactImport categories normalization', () => {
     const restored = deserializeContact(serializeContact({ ...payload[0]!, id: 'synthetic', uid: 'synthetic', created_at: new Date(), updated_at: new Date() }))
     for (const key of ['displayName', 'name', 'phones', 'emails', 'addresses', 'notes', 'categories', 'favorite'] as const) {
       expect(restored[key]).toEqual(payload[0]![key])
+    }
+  })
+
+  it('imports sample-shaped legacy cards without losing unlabeled numbers, photos, or the following duplicate-name card', async () => {
+    const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
+    // Synthetic values reproduce both reports without committing customer contact data.
+    const source = [
+      'BEGIN:VCARD', 'VERSION:2.1', 'N:Example;Contact;;;', 'FN:Contact Example',
+      'TEL;HOME:111', 'TEL;:222', 'TEL;:333',
+      'ADR;HOME;ENCODING=QUOTED-PRINTABLE:;;=31=30=30=20=54=65=73=74=20=53=74=',
+      '=0A=45=78=61=6D=70=6C=65=20=43=69=74=79;;;;', 'END:VCARD',
+      'BEGIN:VCARD', 'VERSION:2.1', 'N:Example;Contact;;;', 'FN:Contact Example',
+      'TEL;WORK:444', 'TEL;HOME:555', 'TEL;CELL:666', 'TEL;X-Desk:777',
+      'PHOTO;ENCODING=BASE64;JPEG:/9j/', ' 2Q==', '', 'END:VCARD',
+      'BEGIN:VCARD', 'VERSION:2.1', 'N:Example;Contact;;;', 'FN:Contact Example',
+      'TEL;CELL:888', 'END:VCARD',
+    ].join('\r\n')
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File([source], 'synthetic-legacy-samples.vcf', { type: 'text/vcard' })] },
+    })
+    mocks.importContacts.mockResolvedValue(3)
+    fireEvent.click(await screen.findByRole('button', { name: /Import 3 contacts/ }))
+    await waitFor(() => expect(mocks.onImportComplete).toHaveBeenCalledWith(3))
+    expect(mocks.importContacts).toHaveBeenCalledTimes(1)
+    const payload = mocks.importContacts.mock.calls[0]![0] as Contact[]
+    expect(payload).toHaveLength(3)
+    expect(payload.map(contact => contact.displayName)).toEqual(['Contact Example', 'Contact Example', 'Contact Example'])
+    expect(payload[0]!.phones).toEqual([{ type: 'home', value: '111' }, { type: 'other', value: '222' }, { type: 'other', value: '333' }])
+    expect(payload[0]!.addresses[0]).toMatchObject({ type: 'home', street: '100 Test St\nExample City' })
+    expect(payload[1]!.phones).toEqual([{ type: 'work', value: '444' }, { type: 'home', value: '555' }, { type: 'cell', value: '666' }, { type: 'Desk', value: '777' }])
+    expect(payload[1]!.photoUrl).toBe('data:image/jpeg;base64,/9j/2Q==')
+    expect(payload[2]!.phones).toEqual([{ type: 'cell', value: '888' }])
+    for (const [index, contact] of payload.entries()) {
+      // The real store supplies empty arrays for fields omitted from NewContact.
+      const normalized = { ...contact, emails: contact.emails ?? [], addresses: contact.addresses ?? [] }
+      const restored = deserializeContact(serializeContact({ ...normalized, id: `synthetic-${index}`, uid: `synthetic-${index}`, created_at: new Date(), updated_at: new Date() }))
+      for (const key of ['displayName', 'name', 'phones', 'addresses', 'photoUrl'] as const) {
+        expect(restored[key]).toEqual(normalized[key])
+      }
     }
   })
 

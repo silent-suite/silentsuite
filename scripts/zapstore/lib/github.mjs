@@ -78,7 +78,6 @@ export function assetNames(tag) {
   return {
     apk: `silentsuite-android-${tag}.apk`,
     sidecar: `silentsuite-android-${tag}-installer.sha256`,
-    sums: 'SHA256SUMS.txt',
   }
 }
 
@@ -97,14 +96,14 @@ export function bindReleaseAssets(release, tag) {
   return {
     apk: { id: apk.id, name: apk.name, size: apk.size, sha256: digest },
     sidecar: { id: pick(names.sidecar).id, name: names.sidecar },
-    sums: { id: pick(names.sums).id, name: names.sums },
   }
 }
 
-// `<hex>  <name>` lines. The sidecar must contain exactly one hash line; the
-// SHA256SUMS manifest must name the APK exactly once.
-export function hashFromChecksumText(text, { fileName = null } = {}) {
+// `<hex>  <name>` lines. Strict sidecar mode requires exactly one well-formed
+// line naming the bound APK; no bare hash, extra entries or malformed text.
+export function hashFromChecksumText(text, { fileName = null, sidecar = false } = {}) {
   const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (sidecar && (!fileName || lines.length !== 1 || !/^[0-9a-f]{64}\s+\*?\S+$/.test(lines[0]))) throw new Error('Android sidecar must contain exactly one named checksum line')
   const found = []
   for (const line of lines) {
     const match = /^([0-9a-f]{64})(?:\s+\*?(.+))?$/.exec(line)

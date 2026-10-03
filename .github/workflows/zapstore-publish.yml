@@ -19,7 +19,7 @@ name: Zapstore Publication
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17 * * * *'
 
 # One group for the whole publisher/app: two runs must never publish
 # concurrently. Never cancels; a pending run GitHub discards is picked up by the

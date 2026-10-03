@@ -16,7 +16,7 @@ import { buildBinding, revalidateBinding, verifyApkHashes } from './lib/binding.
 import { parseApksignerOutput, requireSignedBy } from './lib/apksigner.mjs'
 import { generateConfig, loadTemplate, resolveChangelog, stageMedia } from './lib/metadata.mjs'
 import { eventId, KINDS, loadSchnorr, packageFilters, queryRelay, RELAY_URL } from './lib/nostr.mjs'
-import { assessRelayState, expectedSet, publicationAction, requireReadbackComplete } from './lib/reconcile.mjs'
+import { assessRelayState, canonicalTags, expectedSet, publicationAction, requireReadbackComplete } from './lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, ZSP, zspArgs, zspEnv } from './lib/zsp.mjs'
 import { materializeClientKey } from './lib/bunker-key.mjs'
 import { redact, summarizeSignerRun } from './lib/redact.mjs'
@@ -135,11 +135,10 @@ const commands = {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     const apkPath = join(dir, binding.assets.apk.name)
     const local = await gh.downloadAsset(binding.assets.apk.id, apkPath)
-    const sidecar = hashFromChecksumText(await gh.getText(`/releases/assets/${binding.assets.sidecar.id}`))
-    const sums = hashFromChecksumText(await gh.getText(`/releases/assets/${binding.assets.sums.id}`), { fileName: binding.assets.apk.name })
-    verifyApkHashes({ binding, localSha256: local.sha256, localSize: local.size, sidecarSha256: sidecar, sumsSha256: sums })
+    const sidecar = hashFromChecksumText(await gh.getText(`/releases/assets/${binding.assets.sidecar.id}`), { fileName: binding.assets.apk.name, sidecar: true })
+    verifyApkHashes({ binding, localSha256: local.sha256, localSize: local.size, sidecarSha256: sidecar })
     output('apk_path', apkPath)
-    summary(`APK ${binding.assets.apk.name}: local sha256, GitHub digest, sidecar and SHA256SUMS.txt all agree (${local.sha256}, ${local.size} bytes)`)
+    summary(`APK ${binding.assets.apk.name}: local sha256, GitHub digest and Android sidecar all agree (${local.sha256}, ${local.size} bytes)`)
   },
 
   'verify-apksigner'() {
@@ -260,6 +259,9 @@ const commands = {
           // relay hint, tuple shape, ordering and all other metadata exact.
           event.tags = event.tags.map((tag) => tag[0] === 'e' ? [tag[0], '<apk-event-id>', ...tag.slice(2)] : tag)
         }
+        // The publisher emits platform `f` tags in Go map order, which changes
+        // between runs; their values and positions stay exact.
+        event.tags = canonicalTags(event.tags)
         delete event.created_at
         delete event.id
         return JSON.stringify(event)

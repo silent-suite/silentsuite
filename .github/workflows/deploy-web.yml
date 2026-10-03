@@ -34,6 +34,7 @@ on:
       VPS_HOST: { required: true }
       VPS_USER: { required: true }
       VPS_SSH_KEY: { required: true }
+      VPS_SSH_FINGERPRINT: { required: true }
 
 concurrency:
   group: deploy-web-production
@@ -186,6 +187,20 @@ jobs:
           private_admission_hmac_key: ${{ secrets.ANNUAL_PRIVATE_ADMISSION_HMAC_KEY }}
           public_review_hmac_key: ${{ secrets.ANNUAL_PUBLIC_REVIEW_HMAC_KEY }}
 
+      - name: Require protected SSH host-key fingerprint before final authorization
+        shell: bash
+        env:
+          VPS_SSH_FINGERPRINT: ${{ secrets.VPS_SSH_FINGERPRINT }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          pattern='^SHA256:[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]$'
+          if [[ ! "${VPS_SSH_FINGERPRINT:-}" =~ $pattern ]]; then
+            echo "Refusing deploy: VPS_SSH_FINGERPRINT is missing or is not one strict unpadded SHA256 host-key fingerprint" >&2
+            exit 1
+          fi
+          echo "Protected SSH host-key fingerprint custody is present and well formed"
+
       - name: Re-assert live main immediately before deployment
         shell: bash
         env:
@@ -215,6 +230,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          fingerprint: ${{ secrets.VPS_SSH_FINGERPRINT }}
           envs: IMAGE_NAME,DEPLOY_SHA,IMAGE_DIGEST
           script: |
             bash -se <<'BASH'

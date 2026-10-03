@@ -122,6 +122,11 @@ jobs:
       - name: Test closed annual-only public Stage A to Stage B handshake
         run: pnpm run check:annual-public-handshake
 
+      - name: Prove the pinned SSH transport rejects a changed server key
+        env:
+          SSH_TRANSPORT_PROOF: required
+        run: node --test scripts/ssh-host-verification-transport.test.mjs
+
       - name: Install the isolated Zapstore lane package
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix scripts/zapstore
 

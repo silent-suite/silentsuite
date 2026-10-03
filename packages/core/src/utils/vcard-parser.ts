@@ -250,8 +250,17 @@ function parseProperty(line: string): ParsedProperty {
   return { name, group, params, value };
 }
 
+/** Type segments are comma-joined. Exporters mark custom (non-standard) types
+ *  with a single leading `X-`; strip exactly one per segment and keep the
+ *  remainder's original spelling. Standard segments stay lowercased. */
+function stripCustomTypePrefix(segment: string): string {
+  if (!/^x-/i.test(segment)) return segment.toLowerCase();
+  const remainder = segment.slice(2);
+  return remainder === '' ? segment.toLowerCase() : remainder;
+}
+
 function getTypeParam(params: Record<string, string>): string {
-  return (params['TYPE'] ?? 'other').toLowerCase();
+  return (params['TYPE'] ?? 'other').split(',').map(stripCustomTypePrefix).join(',');
 }
 
 function normalizeTelephoneValue(value: string): string {
@@ -439,7 +448,11 @@ export function generateVCard(vcard: VCard): string {
   let labelIndex = 0;
   // Free-form labels are TEXT, not parameter tokens: preserve spelling safely.
   const typedProperty = (name: string, type: string, value: string) => {
-    if (/^[a-z0-9-]+(?:,[a-z0-9-]+)*$/.test(type)) {
+    // A leading `X-` marks an exporter-added custom type, so such a value must
+    // travel as a literal grouped label: emitting it as a TYPE token would let
+    // the parser strip one prefix per export/import cycle.
+    const typeToken = /^[a-z0-9-]+(?:,[a-z0-9-]+)*$/.test(type) && !/(?:^|,)x-/i.test(type);
+    if (typeToken) {
       lines.push(foldLine(`${name};TYPE=${type}:${value}`));
     } else {
       const group = `item${++labelIndex}`;

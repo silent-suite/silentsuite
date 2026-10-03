@@ -52,16 +52,41 @@ export async function createCollection(
   return collection;
 }
 
+/** Upper bound on server pages read by listCollections before it gives up. */
+const MAX_COLLECTION_LIST_PAGES = 1000;
+
 /**
- * List all collections of a given type.
+ * List all collections of a given type, following every server page.
+ * Throws rather than returning a partial list if paging cannot complete.
  */
 export async function listCollections(
   account: Etebase.Account,
   collectionType: string,
 ): Promise<Etebase.Collection[]> {
   const collectionManager = account.getCollectionManager();
-  const response = await collectionManager.list(collectionType);
-  return response.data.filter((collection) => !(collection as any).isDeleted);
+  let response = await collectionManager.list(collectionType);
+  // Later pages win so a tombstone replaces the live copy seen on an earlier page.
+  const byUid = new Map<string, Etebase.Collection>();
+  for (const collection of response.data) byUid.set(collection.uid, collection);
+  const seenStokens = new Set<string>();
+  let pages = 1;
+  while (response.done !== true) {
+    if (pages >= MAX_COLLECTION_LIST_PAGES) {
+      throw new Error(`Collection list exceeded ${MAX_COLLECTION_LIST_PAGES} pages`);
+    }
+    pages += 1;
+    const stoken = response.stoken;
+    if (!stoken) {
+      throw new Error('Collection list is not done but returned no stoken');
+    }
+    if (seenStokens.has(stoken)) {
+      throw new Error('Collection list returned a repeated stoken');
+    }
+    seenStokens.add(stoken);
+    response = await collectionManager.list(collectionType, { stoken });
+    for (const collection of response.data) byUid.set(collection.uid, collection);
+  }
+  return [...byUid.values()].filter((collection) => !(collection as any).isDeleted);
 }
 
 /**

@@ -10,4 +10,7 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
     <Preference android:key="account_identity" android:title="@string/settings_account_current" android:selectable="false" android:persistent="false" />
     <Preference android:key="manage_account" android:title="@string/settings_account_dashboard" android:summary="@string/settings_account_dashboard_summary" android:persistent="false" />
+    <PreferenceCategory android:title="@string/settings_experimental_title">
+        <SwitchPreferenceCompat android:key="notes_enabled" android:title="@string/settings_notes_enabled" android:summary="@string/settings_notes_enabled_summary" android:persistent="false" />
+    </PreferenceCategory>
 </PreferenceScreen>

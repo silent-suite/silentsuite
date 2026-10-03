@@ -17,7 +17,7 @@ import { buildBinding, revalidateBinding, verifyApkHashes } from '../lib/binding
 import { parseApksignerOutput, requireSignedBy } from '../lib/apksigner.mjs'
 import { generateConfig, loadTemplate, parseZapstoreYaml, resolveChangelog, stageMedia } from '../lib/metadata.mjs'
 import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, verifyEvent } from '../lib/nostr.mjs'
-import { assessRelayState, compareApk, compareApp, compareRelease, expectedSet, publicationAction } from '../lib/reconcile.mjs'
+import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, publicationAction, requireReadbackComplete } from '../lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, zspArgs, zspEnv, ZSP } from '../lib/zsp.mjs'
 import { materializeClientKey } from '../lib/bunker-key.mjs'
 import { redact } from '../lib/redact.mjs'
@@ -173,19 +173,20 @@ test('source build.gradle literals bind version name and code; interpolations ar
 
 test('asset binding refuses missing assets, ambiguous names and missing digests', () => {
   assert.throws(() => bindReleaseAssets(release({ assets: release().assets.filter((a) => !a.name.endsWith('.apk')) }), 'v0.5.6-beta'), /exactly one asset named silentsuite-android-v0.5.6-beta.apk, found 0/)
-  assert.throws(() => bindReleaseAssets(release({ assets: release().assets.filter((a) => a.name !== 'SHA256SUMS.txt') }), 'v0.5.6-beta'), /SHA256SUMS.txt/)
+  assert.ok(bindReleaseAssets(release({ assets: release().assets.filter((a) => a.name !== 'SHA256SUMS.txt') }), 'v0.5.6-beta'))
+  assert.throws(() => bindReleaseAssets(release({ assets: release().assets.filter((a) => !a.name.endsWith('-installer.sha256')) }), 'v0.5.6-beta'), /installer.sha256/)
   assert.throws(() => bindReleaseAssets(release({ assets: release().assets.map((a) => ({ ...a, digest: undefined })) }), 'v0.5.6-beta'), /no sha256 digest/)
   assert.equal(hashFromChecksumText(`${APK_SHA}  silentsuite-android-v0.5.6-beta.apk\n`), APK_SHA)
   assert.equal(hashFromChecksumText(`${'b'.repeat(64)}  other.aab\n${APK_SHA}  silentsuite-android-v0.5.6-beta.apk\n`, { fileName: 'silentsuite-android-v0.5.6-beta.apk' }), APK_SHA)
   assert.throws(() => hashFromChecksumText('nothing here'), /found 0/)
 })
 
-test('APK hash binding requires local bytes, GitHub digest, sidecar and manifest to agree', () => {
+test('APK hash binding requires local bytes, GitHub digest and Android sidecar to agree', () => {
   const binding = { assets: { apk: { sha256: APK_SHA, size: 26916361 } } }
-  assert.ok(verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: APK_SHA, sumsSha256: APK_SHA }))
-  assert.throws(() => verifyApkHashes({ binding, localSha256: 'c'.repeat(64), localSize: 26916361, sidecarSha256: APK_SHA, sumsSha256: APK_SHA }), /local bytes/)
-  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 1, sidecarSha256: APK_SHA, sumsSha256: APK_SHA }), /size/)
-  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: 'c'.repeat(64), sumsSha256: APK_SHA }), /sidecar/)
+  assert.ok(verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: APK_SHA }))
+  assert.throws(() => verifyApkHashes({ binding, localSha256: 'c'.repeat(64), localSize: 26916361, sidecarSha256: APK_SHA }), /local bytes/)
+  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 1, sidecarSha256: APK_SHA }), /size/)
+  assert.throws(() => verifyApkHashes({ binding, localSha256: APK_SHA, localSize: 26916361, sidecarSha256: 'c'.repeat(64) }), /sidecar/)
 })
 
 test('release enumeration paginates with a bound and fails instead of truncating', async () => {
@@ -466,6 +467,92 @@ test('exact comparison covers content, every tag tuple, ordering and the release
   const extraUrlState = assessRelayState({ expected, observed: [extraUrl], schnorr })
   assert.equal(extraUrlState.outcome, 'conflict')
   assert.match(extraUrlState.detail, /extra \["url"/)
+})
+
+// The pinned publisher collects native architectures in a Go map, so two runs
+// over one APK emit the four platform `f` tags in different orders. Rotating
+// them among their own positions covers every order a run can produce for a
+// given starting point; the mutations below must still be differences.
+const ROTATIONS = [0, 1, 2, 3]
+function rotateF(tags, k) {
+  const platforms = tags.filter((t) => t[0] === 'f')
+  let next = 0
+  return tags.map((t) => (t[0] === 'f' ? [...platforms[(next++ + k) % platforms.length]] : [...t]))
+}
+const F_MUTATIONS = {
+  replaced: (tags) => tags.map((t) => (t[0] === 'f' && t[1] === 'android-x86' ? ['f', 'android-riscv64'] : t)),
+  removed: (tags) => tags.filter((t) => !(t[0] === 'f' && t[1] === 'android-x86')),
+  added: (tags) => { const last = tags.findLastIndex((t) => t[0] === 'f'); return [...tags.slice(0, last + 1), ['f', 'android-riscv64'], ...tags.slice(last + 1)] },
+  duplicated: (tags) => { const last = tags.findLastIndex((t) => t[0] === 'f'); return [...tags.slice(0, last + 1), [...tags[last]], ...tags.slice(last + 1)] },
+  // One `f` tuple leaves the block: after `license` on the app, at the end otherwise.
+  relocated: (tags) => {
+    const first = tags.findIndex((t) => t[0] === 'f')
+    const rest = tags.filter((_, i) => i !== first)
+    const license = rest.findIndex((t) => t[0] === 'license')
+    const at = license >= 0 ? license + 1 : rest.length
+    return [...rest.slice(0, at), tags[first], ...rest.slice(at)]
+  },
+}
+
+test('platform f tag order is not significant; which f values exist, how many, and where the block sits still are', () => {
+  const apkId = 'a'.repeat(64)
+  const linked = unsigned.release.tags.map((t) => (t[0] === 'e' ? ['e', apkId, t[2]] : [...t]))
+  for (const event of [unsigned.app, unsigned.release, unsigned.apk]) assert.equal(event.tags.filter((t) => t[0] === 'f').length, 4, `kind ${event.kind} carries four platforms`)
+  for (const k of ROTATIONS) {
+    assert.deepEqual(compareApp(unsigned.app, { ...unsigned.app, tags: rotateF(unsigned.app.tags, k) }), [], `app rotation ${k}`)
+    assert.deepEqual(compareApp({ ...unsigned.app, tags: rotateF(unsigned.app.tags, k) }, unsigned.app), [], `app rotation ${k}, expected side`)
+    assert.deepEqual(compareRelease(unsigned.release, { ...unsigned.release, tags: rotateF(linked, k) }, apkId), [], `release rotation ${k}`)
+    assert.deepEqual(compareApk(unsigned.apk, { ...unsigned.apk, tags: rotateF(unsigned.apk.tags, k) }), [], `apk rotation ${k}`)
+    const canonical = canonicalTags(rotateF(unsigned.app.tags, k))
+    assert.deepEqual(canonical.map((t) => t[0]), unsigned.app.tags.map((t) => t[0]), 'positions are kept')
+    assert.deepEqual(canonical.filter((t) => t[0] !== 'f'), unsigned.app.tags.filter((t) => t[0] !== 'f'), 'every other tuple is untouched')
+    for (const [name, mutate] of Object.entries(F_MUTATIONS)) {
+      assert.notDeepEqual(compareApp(unsigned.app, { ...unsigned.app, tags: mutate(rotateF(unsigned.app.tags, k)) }), [], `app ${name}, rotation ${k}`)
+      assert.notDeepEqual(compareRelease(unsigned.release, { ...unsigned.release, tags: mutate(rotateF(linked, k)) }, apkId), [], `release ${name}, rotation ${k}`)
+      assert.notDeepEqual(compareApk(unsigned.apk, { ...unsigned.apk, tags: mutate(rotateF(unsigned.apk.tags, k)) }), [], `apk ${name}, rotation ${k}`)
+    }
+  }
+  assert.match(compareApk(unsigned.apk, { ...unsigned.apk, tags: F_MUTATIONS.replaced(unsigned.apk.tags) }).join('; '), /android-riscv64/)
+})
+
+test('relay state: a set signed with another f order is complete; a differing f value is drift or conflict', async () => {
+  const rotate = (kinds, k) => (event, kind) => (kinds.includes(kind) ? { ...event, tags: rotateF(event.tags, k) } : event)
+  for (const k of ROTATIONS) {
+    const all = await signedCopies(rotate(['app', 'release', 'apk'], k))
+    const complete = assessRelayState({ expected: all.expected, observed: [all.app, all.release, all.apk], schnorr })
+    assert.equal(complete.outcome, 'complete-match', `rotation ${k}: ${complete.detail}`)
+    assert.deepEqual(publicationAction({ assessment: complete, publishable: true }), { action: 'skip', reason: 'complete-match', verifyCdn: true })
+    assert.ok(requireReadbackComplete(complete), 'post-publication read-back accepts the publisher order')
+    const appOnly = await signedCopies(rotate(['app'], k))
+    const absent = assessRelayState({ expected: appOnly.expected, observed: [appOnly.app], schnorr })
+    assert.equal(absent.outcome, 'absent', `app-only rotation ${k}: ${absent.detail}`)
+    assert.deepEqual(publicationAction({ assessment: absent, publishable: true }), { action: 'publish', reason: 'absent', verifyCdn: false })
+  }
+  for (const [name, mutate] of Object.entries(F_MUTATIONS)) {
+    const change = (kind) => (event, eventKind) => (eventKind === kind ? { ...event, tags: mutate(rotateF(event.tags, 1)) } : event)
+    const app = await signedCopies(change('app'))
+    assert.equal(assessRelayState({ expected: app.expected, observed: [app.app], schnorr }).outcome, 'app-drift', `app ${name}`)
+    assert.equal(assessRelayState({ expected: app.expected, observed: [app.app, app.release, app.apk], schnorr }).outcome, 'app-drift', `app ${name} with release and APK`)
+    for (const kind of ['release', 'apk']) {
+      const lane = await signedCopies(change(kind))
+      const state = assessRelayState({ expected: lane.expected, observed: [lane.app, lane.release, lane.apk], schnorr })
+      assert.equal(state.outcome, 'conflict', `${kind} ${name}: ${state.detail}`)
+      assert.equal(publicationAction({ assessment: state, publishable: true }).action, 'fail')
+    }
+  }
+})
+
+test('recorded relay history: the newest candidate is absent and published whatever f order the publisher emits', () => {
+  for (const k of ROTATIONS) {
+    const expected = { app: { ...unsigned.app, tags: rotateF(unsigned.app.tags, k) }, release: { ...unsigned.release, tags: rotateF(unsigned.release.tags, k) }, apk: { ...unsigned.apk, tags: rotateF(unsigned.apk.tags, k) } }
+    const state = assessRelayState({ expected, observed, schnorr })
+    assert.equal(state.outcome, 'absent', `rotation ${k}: ${state.detail}`)
+    assert.equal(publicationAction({ assessment: state, publishable: true }).action, 'publish')
+    for (const [name, mutate] of Object.entries(F_MUTATIONS)) {
+      const drifted = assessRelayState({ expected: { ...expected, app: { ...expected.app, tags: mutate(expected.app.tags) } }, observed, schnorr })
+      assert.equal(drifted.outcome, 'app-drift', `rotation ${k}, ${name}`)
+    }
+  }
 })
 
 // The recorded relay history was published by hand before this lane existed:

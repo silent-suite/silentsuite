@@ -85,6 +85,23 @@ describe('declared quoted-printable text', () => {
 });
 
 describe('legacy contact labels', () => {
+  it('preserves unlabeled vCard 2.1 phone numbers without inventing missing custom labels', () => {
+    const parsed = parseVCard(card('N:Example;Contact;;;', 'TEL;HOME:111', 'TEL;:222', 'TEL;:333',
+      'ADR;HOME;ENCODING=QUOTED-PRINTABLE:;;=31=30=30=20=54=65=73=74=20=53=74=',
+      '=0A=45=78=61=6D=70=6C=65=20=43=69=74=79;;;;'), { strictTextEncoding: true });
+    expect(parsed.tel).toEqual([{ type: 'home', value: '111' }, { type: 'other', value: '222' }, { type: 'other', value: '333' }]);
+    expect(parsed.adr?.[0]).toMatchObject({ type: 'home', street: '100 Test St\nExample City' });
+    expect(parseVCard(generateVCard(parsed))).toEqual(parsed);
+  });
+
+  it('recovers a bare custom phone label alongside a folded vCard 2.1 photo', () => {
+    const parsed = parseVCard(card('TEL;WORK:111', 'TEL;HOME:222', 'TEL;CELL:333', 'TEL;X-Desk:444',
+      'PHOTO;ENCODING=BASE64;JPEG:/9j/', ' 2Q==', ''), { strictTextEncoding: true });
+    expect(parsed.tel).toEqual([{ type: 'work', value: '111' }, { type: 'home', value: '222' }, { type: 'cell', value: '333' }, { type: 'Desk', value: '444' }]);
+    expect(parsed.photo).toBe('data:image/jpeg;base64,/9j/2Q==');
+    expect(parseVCard(generateVCard(parsed))).toEqual(parsed);
+  });
+
   it('preserves case in wrapped custom labels, canonicalizing only known standard labels', () => {
     const parsed = parseVCard(card('item1.TEL:111', 'item1.X-ABLabel:_$!<Desk West>!$_'));
     expect(parsed.tel?.[0]?.type).toBe('Desk West');
@@ -100,9 +117,96 @@ describe('legacy contact labels', () => {
 
   it('preserves grouped labels regardless of order and Android X- types through export', () => {
     const parsed = parseVCard(card('item1.X-ABLabel:Desk: west; "A"', 'item1.TEL;HOME:111', 'item2.EMAIL;WORK:a@example.invalid', 'item2.X-ABLabel:_$!<Home>!$_', 'TEL;X-Emergency:222', 'item3.ADR:;;Street;City;;;', 'item3.X-ABLabel:Postal desk'));
-    expect(parsed.tel?.map(t => t.type)).toEqual(['Desk: west; "A"', 'x-emergency']);
+    expect(parsed.tel?.map(t => t.type)).toEqual(['Desk: west; "A"', 'Emergency']);
     expect(parsed.email?.[0]?.type).toBe('home');
     expect(parsed.adr?.[0]?.type).toBe('Postal desk');
     expect(parseVCard(generateVCard(parsed))).toEqual(parsed);
+  });
+});
+
+describe('exporter-added X- type prefixes', () => {
+  type TypedField = 'tel' | 'email' | 'adr';
+  const firstType = (vcard: ReturnType<typeof parseVCard>, field: TypedField) =>
+    (field === 'tel' ? vcard.tel?.[0] : field === 'email' ? vcard.email?.[0] : vcard.adr?.[0])?.type;
+  const typeOf = (line: string, field: TypedField = 'tel') => firstType(parseVCard(card(line)), field);
+
+  it.each([
+    ['TEL;TYPE=X-Mary:111', 'tel', 'Mary'],
+    ['EMAIL;TYPE=X-Emergency:a@example.invalid', 'email', 'Emergency'],
+    ['ADR;TYPE=X-Vacation home:;;Street;City;;;', 'adr', 'Vacation home'],
+    ['TEL;TYPE=x-mary:111', 'tel', 'mary'],
+    ['TEL;TYPE=X-X-Mary:111', 'tel', 'X-Mary'],
+    ['TEL;TYPE=HOME,X-Mary:111', 'tel', 'home,Mary'],
+    ['TEL;X-Mary:111', 'tel', 'Mary'],
+  ] as [string, TypedField, string][])('strips exactly one case-insensitive X- prefix from %s', (line, field, expected) => {
+    expect(typeOf(line, field)).toBe(expected);
+  });
+
+  it('keeps a bare X- prefix as a literal token instead of an empty type', () => {
+    expect(typeOf('TEL;TYPE=X-:111')).toBe('x-');
+    expect(typeOf('TEL;TYPE=X-:111')).not.toBe('');
+  });
+
+  it('still yields other when TYPE is absent', () => {
+    expect(typeOf('TEL:111')).toBe('other');
+    expect(typeOf('EMAIL:a@example.invalid', 'email')).toBe('other');
+    expect(typeOf('ADR:;;Street;City;;;', 'adr')).toBe('other');
+  });
+
+  it('keeps standard type tokens lowercased and roundtrip-stable', () => {
+    const parsed = parseVCard(card('TEL;HOME;VOICE:111', 'TEL;TYPE="WORK,CELL";TYPE=PREF:222', 'EMAIL;HOME:a@example.invalid', 'ADR;WORK:;;Street;City;;;'));
+    expect(parsed.tel?.map(t => t.type)).toEqual(['home,voice', 'work,cell,pref']);
+    expect(parsed.email?.[0]?.type).toBe('home');
+    expect(parsed.adr?.[0]?.type).toBe('work');
+    expect(generateVCard(parsed)).toContain('TYPE=work,cell,pref');
+    expect(parseVCard(generateVCard(parsed))).toEqual(parsed);
+  });
+
+  it('keeps a recovered custom type verbatim and stable across at least three serialize/parse cycles', () => {
+    let parsed = parseVCard(card('TEL;TYPE=X-Mary:111'));
+    expect(parsed.tel?.[0]?.type).toBe('Mary');
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const wire = generateVCard(parsed);
+      expect(wire).not.toMatch(/TYPE=/i);
+      parsed = parseVCard(wire);
+      expect(parsed.tel?.[0]?.type).toBe('Mary');
+    }
+  });
+
+  it('preserves a literal grouped label starting with X- and never re-emits it as a TYPE token', () => {
+    const first = parseVCard(card('item1.TEL:111', 'item1.X-ABLabel:X-Mary'));
+    expect(first.tel?.[0]?.type).toBe('X-Mary');
+    let current = first;
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const wire = generateVCard(current);
+      expect(wire).not.toContain('TYPE=X-Mary');
+      current = parseVCard(wire);
+      expect(current.tel?.[0]?.type).toBe('X-Mary');
+      expect(current).toEqual(first);
+    }
+  });
+
+  it('does not erode a literal lowercase label with a stacked prefix over repeated cycles', () => {
+    const first = parseVCard(card('item1.EMAIL:user@example.invalid', 'item1.X-ABLabel:x-x-mary'));
+    expect(first.email?.[0]?.type).toBe('x-x-mary');
+    let current = first;
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const wire = generateVCard(current);
+      expect(wire).not.toMatch(/TYPE=x-/i);
+      current = parseVCard(wire);
+      expect(current.email?.[0]?.type).toBe('x-x-mary');
+      expect(current).toEqual(first);
+    }
+  });
+
+  it('leaves a mixed standard/custom list stable across cycles', () => {
+    const first = parseVCard(card('TEL;TYPE=HOME,X-Mary:111'));
+    expect(first.tel?.[0]?.type).toBe('home,Mary');
+    let current = first;
+    for (let cycle = 0; cycle < 3; cycle++) {
+      current = parseVCard(generateVCard(current));
+      expect(current.tel?.[0]?.type).toBe('home,Mary');
+      expect(current).toEqual(first);
+    }
   });
 });

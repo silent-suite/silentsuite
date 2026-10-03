@@ -2,15 +2,19 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, w
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { parseDocument } from 'yaml'
 
 type WorkflowStep = {
   name?: string
+  if?: string
   uses?: string
+  shell?: string
+  env?: Record<string, string>
   with?: Record<string, string>
   run?: string
+  'continue-on-error'?: boolean
 }
 
 type WorkflowJob = {
@@ -19,6 +23,8 @@ type WorkflowJob = {
   env?: Record<string, string>
   needs?: string
   permissions?: Record<string, string>
+  uses?: string
+  secrets?: Record<string, string>
   steps?: WorkflowStep[]
 }
 
@@ -28,6 +34,7 @@ type ParsedWorkflow = {
       secrets?: Record<string, { required?: boolean }>
     }
   }
+  env?: Record<string, string>
   jobs: Record<string, WorkflowJob>
 }
 
@@ -86,7 +93,7 @@ esac
 const jobContracts: Record<string, Record<string, { steps: string; permissions: string }>> = {
   'deploy-web.yml': {
     'build-and-push': { steps: '879dff8ef54f62febae9b7d55fb6411e3033a843e6b71104914b4922ab63114c', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: '27dd7a182f56f254b5c05c93ac2dbc93057201a55f99c8c59f23fbe289e848a4', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '0c0f3e19720c3a70dc8ac1f9997deae683af96b27de26cf6a249e8976790e90a', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-server.yml': {
     'build-and-push': { steps: 'eaaaecf8738fd3b7d25bfb6f383709911df7c00da94dff1cca81014fdb254a62', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
@@ -99,7 +106,7 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
 }
 
 const workflowContracts: Record<string, string> = {
-  'deploy-web.yml': 'aea6e1ff7b3d1e29474e49c3f973041ce5e7adf1abd6e9ad3d057b7198f928bd',
+  'deploy-web.yml': 'a1507e64f4617da3f9b7a17c9ad8ef81898b01d7e2471c6aadd96f0cc7c39deb',
   'deploy-server.yml': 'ee8015b23a29d0faa6b0ecb0371f049ae9189c37fe4c80591f82f0e844193312',
   'deploy-docs.yml': 'b75623f1069fc1a4d6ede2834a85b9e90bbc190a70260bf3e3d5b9e2d65f1d3d',
 }
@@ -196,6 +203,65 @@ function jobBlock(source: string, name: string): string {
   const relativeEnd = lines.slice(start + 1).findIndex((line) => /^  [A-Za-z0-9_-]+:$/.test(line))
   const end = relativeEnd === -1 ? lines.length : start + 1 + relativeEnd
   return lines.slice(start, end).join('\n')
+}
+
+// drone-ssh, the transport behind the pinned appleboy/ssh-action, skips server
+// verification when its fingerprint input is empty. The mutation connection is
+// authenticated only while with.fingerprint is bound to the protected secret
+// and the runner refuses missing or malformed custody before final authorization.
+const pinnedSshAction = 'appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2'
+const sshFingerprintBinding = '${{ secrets.VPS_SSH_FINGERPRINT }}'
+const sshFingerprintPreflightName = 'Require protected SSH host-key fingerprint before final authorization'
+const sshFingerprintPreflightSha256 = 'afcb1a61e8c77b3de23bf7fe4ce0f19aeb8117660dfb8b033e852de34da642ae'
+
+function sshHostVerificationViolations(parsed: ParsedWorkflow): string[] {
+  const violations: string[] = []
+  const steps = parsed.jobs.deploy?.steps ?? []
+  const allSteps = Object.values(parsed.jobs).flatMap((job) => job.steps ?? [])
+  const reauthorization = steps.findIndex((step) => step.name === 'Re-assert live main immediately before deployment')
+  const mutation = steps.findIndex((step) => step.name === 'Deploy via SSH')
+  const preflight = steps.findIndex((step) => step.name === sshFingerprintPreflightName)
+  const ssh = steps[mutation]
+  const custody = steps[preflight]
+  const environmentNames = [parsed.env, ...Object.values(parsed.jobs).map((job) => job.env), ...allSteps.map((step) => step.env)]
+    .flatMap((env) => Object.keys(env ?? {}))
+
+  if (allSteps.filter((step) => step.uses?.startsWith('appleboy/')).length !== 1 || ssh?.uses !== pinnedSshAction || ssh?.if !== undefined || ssh?.['continue-on-error'] !== undefined) {
+    violations.push('SSH mutation must be the single unconditional reviewed appleboy/ssh-action pin')
+  }
+  if (ssh?.with?.fingerprint !== sshFingerprintBinding) violations.push('SSH mutation must bind with.fingerprint to the protected VPS_SSH_FINGERPRINT secret')
+  if (Object.keys(ssh?.with ?? {}).some((key) => key.startsWith('proxy_')) || environmentNames.some((name) => /^(?:PLUGIN|SSH|INPUT)_FINGERPRINT$/.test(name))) {
+    violations.push('SSH mutation must not proxy or override the transport fingerprint')
+  }
+  if (reauthorization < 0 || mutation !== reauthorization + 1) violations.push('final authorization must remain directly adjacent to the SSH mutation')
+  if (steps.filter((step) => step.name === sshFingerprintPreflightName).length !== 1 || preflight !== reauthorization - 1) {
+    violations.push('fingerprint custody preflight must run immediately before final authorization')
+  }
+  if (custody?.if !== undefined || custody?.['continue-on-error'] !== undefined || custody?.uses !== undefined || custody?.shell !== 'bash' ||
+    JSON.stringify(custody?.env) !== JSON.stringify({ VPS_SSH_FINGERPRINT: sshFingerprintBinding }) || sha256(custody?.run ?? '') !== sshFingerprintPreflightSha256) {
+    violations.push('fingerprint custody preflight must be the exact reviewed fail-closed validation')
+  }
+  if (JSON.stringify(parsed.on?.workflow_call?.secrets?.VPS_SSH_FINGERPRINT) !== '{"required":true}') {
+    violations.push('reusable workflow must declare VPS_SSH_FINGERPRINT as a required secret')
+  }
+  return violations
+}
+
+function moveStep(source: string, stepName: string, beforeStepName: string): string {
+  const start = source.indexOf(`      - name: ${stepName}\n`)
+  if (start === -1) throw new Error(`Missing step: ${stepName}`)
+  const end = source.indexOf('\n      - name: ', start + 1) + 1
+  const block = source.slice(start, end)
+  const remainder = source.slice(0, start) + source.slice(end)
+  const target = remainder.indexOf(`      - name: ${beforeStepName}\n`)
+  if (target === -1) throw new Error(`Missing step: ${beforeStepName}`)
+  return remainder.slice(0, target) + block + remainder.slice(target)
+}
+
+function runSshFingerprintPreflight(run: string, value?: string) {
+  const env: Record<string, string> = { PATH: process.env.PATH ?? '' }
+  if (value !== undefined) env.VPS_SSH_FINGERPRINT = value
+  return spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', run], { env, encoding: 'utf8' })
 }
 
 describe('production deployment workflow integrity', () => {
@@ -421,5 +487,71 @@ describe('production deployment workflow integrity', () => {
     expect(source).toContain('RUNNING_REVISION=')
     expect(source).toContain('rollback()')
     expect(source).toContain(`Automatic ${component} rollback failed`)
+  })
+
+  it('deploy-web.yml verifies the SSH server host key from protected custody before the mutation', () => {
+    expect(sshHostVerificationViolations(parseWorkflow(workflow('deploy-web.yml')))).toEqual([])
+  })
+
+  it.each<[string, (source: string) => string, string]>([
+    ['fingerprint input removed', (source) => source.replace('          fingerprint: ${{ secrets.VPS_SSH_FINGERPRINT }}\n', ''), 'SSH mutation must bind with.fingerprint to the protected VPS_SSH_FINGERPRINT secret'],
+    ['fingerprint bound to another secret', (source) => source.replace('fingerprint: ${{ secrets.VPS_SSH_FINGERPRINT }}', 'fingerprint: ${{ secrets.VPS_HOST }}'), 'SSH mutation must bind with.fingerprint to the protected VPS_SSH_FINGERPRINT secret'],
+    ['fingerprint bound to an unprotected variable', (source) => source.replace('fingerprint: ${{ secrets.VPS_SSH_FINGERPRINT }}', 'fingerprint: ${{ vars.VPS_SSH_FINGERPRINT }}'), 'SSH mutation must bind with.fingerprint to the protected VPS_SSH_FINGERPRINT secret'],
+    ['fingerprint with an empty fallback', (source) => source.replace('fingerprint: ${{ secrets.VPS_SSH_FINGERPRINT }}', "fingerprint: ${{ inputs.expected_sha == '' && secrets.VPS_SSH_FINGERPRINT || '' }}"), 'SSH mutation must bind with.fingerprint to the protected VPS_SSH_FINGERPRINT secret'],
+    ['transport fingerprint overridden through the step environment', (source) => source.replace('          DEPLOY_SHA: ${{ github.sha }}\n', "          DEPLOY_SHA: ${{ github.sha }}\n          PLUGIN_FINGERPRINT: ''\n"), 'SSH mutation must not proxy or override the transport fingerprint'],
+    ['mutable transport pin', (source) => source.replace(pinnedSshAction, 'appleboy/ssh-action@v1'), 'SSH mutation must be the single unconditional reviewed appleboy/ssh-action pin'],
+    ['preflight turned into a no-op', (source) => source.replace('            exit 1\n          fi\n          echo "Protected SSH', '            true\n          fi\n          echo "Protected SSH'), 'fingerprint custody preflight must be the exact reviewed fail-closed validation'],
+    ['preflight detached from the protected secret', (source) => source.replace('          VPS_SSH_FINGERPRINT: ${{ secrets.VPS_SSH_FINGERPRINT }}\n        run:', `          VPS_SSH_FINGERPRINT: SHA256:${'A'.repeat(43)}\n        run:`), 'fingerprint custody preflight must be the exact reviewed fail-closed validation'],
+    ['preflight allowed to fail', (source) => source.replace(`      - name: ${sshFingerprintPreflightName}\n`, `      - name: ${sshFingerprintPreflightName}\n        continue-on-error: true\n`), 'fingerprint custody preflight must be the exact reviewed fail-closed validation'],
+    ['preflight removed', (source) => source.replace(`      - name: ${sshFingerprintPreflightName}\n`, '      - name: Renamed inert step\n'), 'fingerprint custody preflight must run immediately before final authorization'],
+    ['preflight reordered between final authorization and SSH', (source) => moveStep(source, sshFingerprintPreflightName, 'Deploy via SSH'), 'final authorization must remain directly adjacent to the SSH mutation'],
+    ['preflight reordered ahead of the Stage A re-verification', (source) => moveStep(source, sshFingerprintPreflightName, 'Checkout exact approved commit for deployment'), 'fingerprint custody preflight must run immediately before final authorization'],
+    ['reusable secret declaration removed', (source) => source.replace('      VPS_SSH_FINGERPRINT: { required: true }\n', ''), 'reusable workflow must declare VPS_SSH_FINGERPRINT as a required secret'],
+    ['reusable secret made optional', (source) => source.replace('VPS_SSH_FINGERPRINT: { required: true }', 'VPS_SSH_FINGERPRINT: { required: false }'), 'reusable workflow must declare VPS_SSH_FINGERPRINT as a required secret'],
+  ])('rejects an SSH host-verification bypass: %s', (_label, mutate, violation) => {
+    const source = workflow('deploy-web.yml')
+    const mutated = mutate(source)
+    expect(mutated).not.toBe(source)
+    expect(sshHostVerificationViolations(parseWorkflow(mutated))).toContain(violation)
+  })
+
+  it('the fingerprint custody preflight refuses missing or malformed values and admits one strict fingerprint', () => {
+    const steps = parseWorkflow(workflow('deploy-web.yml')).jobs.deploy.steps ?? []
+    const run = steps.find((step) => step.name === sshFingerprintPreflightName)?.run
+    expect(run).toBeTypeOf('string')
+    // A syntactically valid fingerprint of a synthetic value; it is not any real host key.
+    const body = createHash('sha256').update('synthetic-ssh-host-verification-sentinel').digest('base64').replace(/=+$/, '')
+    const sentinel = `SHA256:${body}`
+    const refused = [
+      undefined, '', `${sentinel}=`, sentinel.slice(0, -1), `${sentinel}A`, `sha256:${body}`, `MD5:${body}`, body, ` ${sentinel}`, `${sentinel} `,
+      `${sentinel}\n`, `${sentinel}\n${sentinel}`, `junk\n${sentinel}`, `SHA256:${body.slice(0, -1)}B`, `SHA256:${'-'.repeat(42)}A`,
+      'aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99', `256 ${sentinel} synthetic (ED25519)`,
+    ]
+    for (const value of refused) {
+      const result = runSshFingerprintPreflight(run ?? 'exit 97', value)
+      expect(result.status, JSON.stringify(value)).toBe(1)
+      expect(result.stderr).toContain('Refusing deploy: VPS_SSH_FINGERPRINT is missing or is not one strict unpadded SHA256 host-key fingerprint')
+      expect(`${result.stdout}${result.stderr}`).not.toContain(body.slice(0, 20))
+    }
+    const accepted = runSshFingerprintPreflight(run ?? 'exit 97', sentinel)
+    expect(accepted.status).toBe(0)
+    expect(`${accepted.stdout}${accepted.stderr}`).not.toContain(body.slice(0, 20))
+  })
+
+  it('the reusable cutover caller maps exactly the secrets deploy-web.yml declares, including the host-key fingerprint', () => {
+    const declared = Object.keys(parseWorkflow(workflow('deploy-web.yml')).on?.workflow_call?.secrets ?? {})
+    const caller = parseWorkflow(workflow('annual-only-public-cutover.yml')).jobs['deploy-web']
+
+    expect(declared).toContain('VPS_SSH_FINGERPRINT')
+    expect(caller.uses).toBe('./.github/workflows/deploy-web.yml')
+    expect(caller.secrets).toEqual(Object.fromEntries(declared.map((name) => [name, `\${{ secrets.${name} }}`])))
+  })
+
+  it('documents that Web dispatch is blocked until the host-key fingerprint is commissioned from trusted custody', () => {
+    expect(deployRunbook).toContain('## SSH server verification for the Web mutation')
+    expect(deployRunbook).toContain('Web production dispatch, standalone or through the annual public cutover, is blocked until `VPS_SSH_FINGERPRINT` is commissioned')
+    expect(deployRunbook).toContain('Never derive the value from a fresh unauthenticated `ssh-keyscan`')
+    expect(deployRunbook).toContain('do not remove, blank, or bypass the fingerprint to recover')
+    expect(deployRunbook).toContain('A names-only secret inventory does not verify the value')
   })
 })

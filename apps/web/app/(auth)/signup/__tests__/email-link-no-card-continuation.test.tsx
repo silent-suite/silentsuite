@@ -109,7 +109,9 @@ describe('email-link seven-day no-card continuation', () => {
       window.dispatchEvent(event)
       return event.defaultPrevented
     }
-    expect(warnsOnLeave()).toBe(true)
+    // The waiting panel can commit before the passive effect that registers the
+    // leave warning has flushed; wait for that effect instead of racing it.
+    await waitFor(() => expect(warnsOnLeave()).toBe(true))
     const publish = (id: string, expiresAt = Date.now() + 60_000) => act(() => {
       window.dispatchEvent(new StorageEvent('storage', {
         key: 'silentsuite-signup-email-verified', storageArea: localStorage,
@@ -136,7 +138,7 @@ describe('email-link seven-day no-card continuation', () => {
     await waitFor(() => expect(again).toBeEnabled())
     fireEvent.click(again)
     await screen.findByText(/Check your email and open/)
-    expect(warnsOnLeave()).toBe(true)
+    await waitFor(() => expect(warnsOnLeave()).toBe(true))
     publish(currentRequest)
     expect(screen.queryByText(/Email confirmed/)).not.toBeInTheDocument()
     const [replacement] = Object.keys(JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!))

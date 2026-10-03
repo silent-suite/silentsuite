@@ -49,6 +49,19 @@ class LocalCalendar private constructor(
             }
         }
 
+        /**
+         * [parseColor] for screens. Other clients write collection colors, and a value that is not
+         * hex, such as "orange", reads as no color here instead of throwing and failing the screen.
+         */
+        fun parseColorOrNull(color: String?): Int? {
+            if (color.isNullOrBlank()) return null
+            return try {
+                parseColor(color)
+            } catch (_: NumberFormatException) {
+                null
+            }
+        }
+
         val COLUMN_CTAG = Calendars.CAL_SYNC1
 
         fun create(account: Account, provider: ContentProviderClient, cachedCollection: CachedCollection): Uri {

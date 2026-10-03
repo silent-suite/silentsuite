@@ -16,6 +16,73 @@ export interface CollectionMember {
   accessLevel: Etebase.CollectionAccessLevel;
 }
 
+const SHARING_PUBLIC_KEY_LENGTH = 32;
+
+export class InvalidSharingKeyError extends Error {
+  constructor(message = 'Sharing public key is missing or malformed') {
+    super(message);
+    this.name = 'InvalidSharingKeyError';
+  }
+}
+
+export class InvalidSharingInvitationError extends Error {
+  constructor(message = 'Sharing invitation is missing required fields') {
+    super(message);
+    this.name = 'InvalidSharingInvitationError';
+  }
+}
+
+function copySharingPublicKey(pubkey: unknown): Uint8Array {
+  if (!(pubkey instanceof Uint8Array) || pubkey.length !== SHARING_PUBLIC_KEY_LENGTH) {
+    throw new InvalidSharingKeyError();
+  }
+  return pubkey.slice();
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let index = 0; index < a.length; index += 1) diff |= a[index] ^ b[index];
+  return diff === 0;
+}
+
+/**
+ * Format a sharing public key with the same fingerprint used for the account's own key.
+ */
+export function getPublicKeyFingerprint(pubkey: Uint8Array): string {
+  return Etebase.getPrettyFingerprint(copySharingPublicKey(pubkey));
+}
+
+/**
+ * Return a frozen copy of an incoming invitation whose key material cannot be changed through the original object.
+ */
+export function snapshotInvitation(invitation: Etebase.SignedInvitation): Etebase.SignedInvitation {
+  if (!invitation || typeof invitation !== 'object') throw new InvalidSharingInvitationError();
+  const { uid, version, username, collection, accessLevel, signedEncryptionKey, fromUsername, fromPubkey } = invitation;
+  if (
+    typeof uid !== 'string' || !uid ||
+    typeof version !== 'number' ||
+    typeof username !== 'string' ||
+    typeof collection !== 'string' || !collection ||
+    typeof accessLevel !== 'number' ||
+    !(signedEncryptionKey instanceof Uint8Array) || signedEncryptionKey.length === 0 ||
+    (fromUsername !== undefined && fromUsername !== null && typeof fromUsername !== 'string')
+  ) {
+    throw new InvalidSharingInvitationError();
+  }
+  const snapshot: Etebase.SignedInvitation = {
+    uid,
+    version,
+    username,
+    collection,
+    accessLevel,
+    signedEncryptionKey: signedEncryptionKey.slice(),
+    fromPubkey: copySharingPublicKey(fromPubkey),
+  };
+  if (typeof fromUsername === 'string') snapshot.fromUsername = fromUsername;
+  return Object.freeze(snapshot);
+}
+
 function normalizeAccessLevel(accessLevel: SharingAccessLevel): Etebase.CollectionAccessLevel {
   if (typeof accessLevel === 'number') return accessLevel;
   if (accessLevel === 'admin') return Etebase.CollectionAccessLevel.Admin;
@@ -77,14 +144,20 @@ export async function listOutgoingInvitations(
 }
 
 /**
- * Accept an incoming invitation and create the local collection membership.
+ * Accept an incoming invitation only when its sender key matches the key the user confirmed.
  */
 export async function acceptInvitation(
   account: Etebase.Account,
   invitation: Etebase.SignedInvitation,
+  confirmedFromPubkey: Uint8Array,
 ): Promise<void> {
+  const confirmed = copySharingPublicKey(confirmedFromPubkey);
+  const snapshot = snapshotInvitation(invitation);
+  if (!bytesEqual(snapshot.fromPubkey, confirmed)) {
+    throw new InvalidSharingKeyError('Invitation sender key does not match the confirmed key');
+  }
   const invitationManager = account.getInvitationManager();
-  await invitationManager.accept(invitation);
+  await invitationManager.accept(snapshot);
 }
 
 /**
@@ -118,17 +191,19 @@ export async function fetchUserProfile(account: Etebase.Account, username: strin
 }
 
 /**
- * Invite another user to a collection using their public invitation profile.
+ * Invite another user to a collection with the public key the inviter already confirmed.
+ * Never fetches a replacement key.
  */
 export async function inviteToCollection(
   account: Etebase.Account,
   collection: Etebase.Collection,
   username: string,
+  confirmedPubkey: Uint8Array,
   accessLevel: SharingAccessLevel,
 ): Promise<void> {
+  const pubkey = copySharingPublicKey(confirmedPubkey);
   const invitationManager = account.getInvitationManager();
-  const profile = await invitationManager.fetchUserProfile(username);
-  await invitationManager.invite(collection, username, profile.pubkey, normalizeAccessLevel(accessLevel));
+  await invitationManager.invite(collection, username, pubkey, normalizeAccessLevel(accessLevel));
 }
 
 /**

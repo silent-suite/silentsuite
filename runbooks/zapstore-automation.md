@@ -23,9 +23,17 @@ tags carry none. Checking out `main` afterwards cannot change the jobs,
 permissions, or secret references that were already loaded. The lane therefore
 uses exactly one trigger:
 
-- **`schedule`** (`17 */6 * * *` UTC). Scheduled runs are loaded from the
+- **`schedule`** (`17 * * * *` UTC, hourly). Scheduled runs are loaded from the
   default branch; `github.sha` is that branch head and is the revision that
   supplied the definition.
+
+  **Temporary commissioning cadence.** The owner approved hourly runs so the
+  rehearsal can be observed sooner; no manual trigger was added. The steady
+  cadence is six-hourly (`17 */6 * * *`). After a successful rehearsal and
+  before live activation, restore the six-hour cron in
+  `.github/workflows/zapstore-publish.yml`, the exact cron assertion in
+  `scripts/zapstore/test/workflow-boundary.test.mjs`, and the cadence wording
+  here, in 5.1 and in `scripts/zapstore/lib/notify.mjs`.
 
 Admission proves this every run, from the run's own context and never from a
 value the lane fabricates: `GITHUB_EVENT_NAME=schedule`,
@@ -106,7 +114,7 @@ evidence that signing occurred. Do not approve or retry merely to clear the issu
 | S2 | Revision binding | `admit` exports the revision; every job runs `checkout-guard`; the manifest records it | `cli.mjs` |
 | S3 | Activation switch | Repository variable `ZAPSTORE_AUTOMATION_ENABLED` must equal `enabled`; absent today | `admit` |
 | S4 | Eligibility | `vX.Y.Z` or `vX.Y.Z-beta`; drafts refused; GitHub `prerelease=true` allowed only with `-beta`; only the newest eligible tag may be published | `lib/eligibility.mjs` |
-| S5 | Exact binding | Release id, tag, dereferenced tag commit, APK asset id, GitHub digest, sidecar, `SHA256SUMS.txt` | `lib/github.mjs`, `lib/binding.mjs` |
+| S5 | Exact binding | Release id, tag, dereferenced tag commit, APK asset id, GitHub digest, Android `-installer.sha256` sidecar | `lib/github.mjs`, `lib/binding.mjs` |
 | S6 | Source admission | Trusted `scripts/verify-release-identity.sh` from the protected checkout with the real `GITHUB_REF` | `lib/identity.mjs` |
 | S7 | APK verification | Three digests, `apksigner verify --print-certs -v` with only the direct-release certificate, identity facts from official `zsp` offline output, `versionName`/`versionCode` literals from the tag's `build.gradle` | `lib/apksigner.mjs`, `lib/zsp.mjs`, `lib/source-metadata.mjs` |
 | S8 | Store metadata | Trusted template at the protected revision; media bytes hashed; six approved screenshots in order; copy byte-identical to `zapstore.yaml` | `release-template.json`, `lib/metadata.mjs` |
@@ -149,14 +157,21 @@ Sibling paths:
 Expected events are the unsigned offline `zsp` output for the exact APK, trusted
 template and bound changelog. Observed events must match **content and the full
 ordered tag list**, tuple by tuple. Permitted differences are exactly `id`,
-`sig`, `created_at`, and the release `e` tuple, which must be
-`["e", <observed matching APK id>, "wss://relay.zapstore.dev"]`. This covers the
+`sig`, `created_at`, the release `e` tuple, which must be
+`["e", <observed matching APK id>, "wss://relay.zapstore.dev"]`, and the
+relative order of the platform `f` tuples among themselves: the pinned
+publisher collects them in a Go map (upstream `internal/apk/parser.go`
+`extractArchitectures`), so their order changes per invocation. The set of `f`
+values, their count and the positions the `f` tuples occupy must still match.
+This covers the
 app `h` community tag, `icon`, ordered `image`, ordered `t`, `f`, `url`,
 `repository`, `license`; the APK `i`, `x`, `version`, `version_code`, `url`,
 `m`, `size`, `f`, `min_platform_version`, `target_platform_version`,
 `filename`, `commit`, `apk_certificate_hash` and empty content; the release
 `i`, `version`, `d`, `c`, `f`, `e` and changelog content. Any extra tag, missing
-tag, reordered tag, or extra tuple element is a difference.
+tag, reordered tag (other than `f` tuples among their own positions), or extra
+tuple element is a difference. The same `f` canonicalisation applies to the
+assessment-to-publication `drift` check.
 
 Legacy mode applies only to observed APK events that carry no `commit` tag:
 `i`, `x`, `version`, `version_code`, `size`, `m`, `apk_certificate_hash` must
@@ -192,6 +207,15 @@ one `e` pointing at a matching APK. Legacy sets are never rewritten.
 
 ## 3. Regression and CI coverage
 
+Android checksum authority is the exact release's `-installer.sha256` sidecar,
+which must contain one well-formed line naming the bound APK. Its hash must
+equal both the GitHub asset digest and the locally computed APK hash; size and
+signing-certificate checks remain mandatory. `SHA256SUMS.txt` is the Bridge
+manifest and is neither required nor fetched for Android assessment/publication.
+Both jobs exercise the same `fetch-apk` command. The transport regression covers
+a Bridge-only manifest, wrong filenames/hashes, malformed or duplicate sidecar
+lines, and corrupt downloaded bytes.
+
 `pnpm run check:zapstore-automation` (pull requests, no secrets) runs:
 
 - `lane.test.mjs`: eligibility and newest-only marking; schedule-only admission
@@ -205,7 +229,10 @@ one `e` pointing at a matching APK. Legacy sets are never rewritten.
   recoverable `partial` (stranded release, no APK event) through to an exact
   read-back and its guards, unrecoverable `partial` fail-closed, the newest
   release staying an exact candidate outside the window, conflicts on `h`, APK content,
-  `min_allowed_version_code`, e-link relay hint, superseded, incomplete.
+  `min_allowed_version_code`, e-link relay hint, superseded, incomplete;
+  platform `f` tag order: every rotation matches (app, release, APK, recorded
+  relay history, `drift`), while a replaced, removed, added or relocated `f`
+  value is still a difference.
 - `protocol.test.mjs`: NIP-44 v2 against the published test vectors; NIP-46
   `connect`/`get_public_key` round trip against an in-process responder that
   implements the same protocol, mismatch refusal, error and timeout handling,
@@ -252,7 +279,9 @@ For transient failures (relay `incomplete`, a download or signer timeout), open
 the failed scheduled run and choose **Re-run failed jobs**; it is expected to
 replay the release id frozen in that run (see the open limitations in 1.1).
 Publication still waits for environment approval. Without any action, the next
-schedule (at most six hours) retries the same exact newest release. To retry
+schedule (nominally hourly during temporary commissioning, six-hourly once
+restored; see 1.1) retries the same exact newest release. GitHub may delay or
+drop scheduled runs; this is not a maximum retry-time guarantee. To retry
 with a code fix, merge the fix to `main` and wait for the next schedule. After
 any publication attempt whose outcome is `unknown`, do not re-run blindly: wait
 for the next scheduled reconciliation to read the relay first.

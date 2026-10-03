@@ -24,7 +24,7 @@
   "SettingsSecurity": {
     "AccountFingerprint": {
       "title": "Account fingerprint",
-      "description": "Compare this fingerprint with Android and the bridge to confirm they are connected to the same encrypted account. It is not a recovery secret.",
+      "description": "Compare this fingerprint with Android and the bridge to confirm they are connected to the same encrypted account. It is not a recovery secret. People you share with should compare this fingerprint with you over a separate channel, such as in person or on a call.",
       "hidden": "Hidden until revealed",
       "unavailable": "Fingerprint unavailable. Make sure sync has finished initializing, then try again.",
       "reveal": "Reveal fingerprint",

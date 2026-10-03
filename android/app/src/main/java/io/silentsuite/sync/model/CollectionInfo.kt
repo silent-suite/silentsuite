@@ -29,5 +29,6 @@ class CollectionInfo : Serializable {
         ADDRESS_BOOK,
         CALENDAR,
         TASKS,
+        NOTES,
     }
 }

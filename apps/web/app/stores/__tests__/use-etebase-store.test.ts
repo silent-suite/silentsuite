@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useCalendarStore } from '../use-calendar-store'
 import { useCalendarListStore } from '../use-calendar-list-store'
@@ -33,6 +33,9 @@ const coreMock = vi.hoisted(() => ({
   acceptInvitation: vi.fn(),
   rejectInvitation: vi.fn(),
   inviteToCollection: vi.fn(),
+  fetchUserProfile: vi.fn(),
+  getPublicKeyFingerprint: vi.fn(),
+  snapshotInvitation: vi.fn(),
   listCollectionMembers: vi.fn(),
   removeCollectionMember: vi.fn(),
   leaveCollection: vi.fn(),
@@ -102,6 +105,9 @@ beforeEach(() => {
   coreMock.acceptInvitation.mockReset()
   coreMock.rejectInvitation.mockReset()
   coreMock.inviteToCollection.mockReset()
+  coreMock.fetchUserProfile.mockReset()
+  coreMock.getPublicKeyFingerprint.mockReset()
+  coreMock.snapshotInvitation.mockReset()
   coreMock.listCollectionMembers.mockReset()
   coreMock.removeCollectionMember.mockReset()
   coreMock.leaveCollection.mockReset()
@@ -1259,6 +1265,261 @@ describe('useEtebaseStore sharing account boundary', () => {
     expect(errorSpy).not.toHaveBeenCalled()
     expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
     errorSpy.mockRestore()
+  })
+})
+
+describe('useEtebaseStore sharing key confirmation', () => {
+  const originalReconcile = useEtebaseStore.getState().reconcileCollections
+  const reconcile = vi.fn(async () => {})
+
+  function sharingKey(seed: number) {
+    return new Uint8Array(32).map((_, index) => (seed + index) & 0xff)
+  }
+
+  function hex(bytes: Uint8Array) {
+    return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  }
+
+  function setupSharing(type: 'calendar' | 'tasks' | 'contacts' | 'notes' = 'calendar') {
+    const account = { id: 'sharing-account' }
+    const collection = { uid: `${type}-shared` }
+    const collections: Record<string, any[]> = { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] }
+    collections[type] = [collection]
+    useEtebaseStore.setState({ account: account as any, collections: collections as any, accountFingerprint: 'sharing-account-fp' })
+    return { account, collection }
+  }
+
+  function invitation(overrides: Record<string, unknown> = {}) {
+    return {
+      uid: 'invite-1',
+      version: 1,
+      username: 'me@example.com',
+      collection: 'remote-col',
+      accessLevel: 2,
+      signedEncryptionKey: new Uint8Array([5, 6, 7, 8]),
+      fromUsername: 'friend@example.com',
+      fromPubkey: sharingKey(70),
+      ...overrides,
+    }
+  }
+
+  async function prepare(type: 'calendar' | 'tasks' | 'contacts' | 'notes' = 'calendar', key = sharingKey(1)) {
+    const fixture = setupSharing(type)
+    coreMock.fetchUserProfile.mockResolvedValueOnce({ pubkey: key })
+    const pending = await useEtebaseStore.getState().prepareCollectionInvite(type, fixture.collection.uid, 'friend@example.com', 'readWrite')
+    return { ...fixture, key, pending }
+  }
+
+  beforeEach(() => {
+    coreMock.getPublicKeyFingerprint.mockImplementation((key: unknown) => {
+      if (!(key instanceof Uint8Array) || key.length !== 32) throw new Error('invalid sharing key')
+      return hex(key)
+    })
+    coreMock.snapshotInvitation.mockImplementation((inv: any) => {
+      if (!(inv?.fromPubkey instanceof Uint8Array) || inv.fromPubkey.length !== 32 || !(inv?.signedEncryptionKey instanceof Uint8Array)) {
+        throw new Error('malformed invitation')
+      }
+      return Object.freeze({ ...inv, fromPubkey: inv.fromPubkey.slice(), signedEncryptionKey: inv.signedEncryptionKey.slice() })
+    })
+    coreMock.inviteToCollection.mockResolvedValue(undefined)
+    coreMock.acceptInvitation.mockResolvedValue(undefined)
+    coreMock.rejectInvitation.mockResolvedValue(undefined)
+    reconcile.mockClear()
+    useEtebaseStore.setState({ reconcileCollections: reconcile })
+  })
+
+  afterEach(() => {
+    useEtebaseStore.setState({ reconcileCollections: originalReconcile })
+  })
+
+  it('no longer exposes an unconfirmed one-step invite action', () => {
+    expect('inviteToCollection' in useEtebaseStore.getState()).toBe(false)
+  })
+
+  it.each(['calendar', 'tasks', 'contacts', 'notes'] as const)('invites to a %s collection only with the key captured at prepare time', async (type) => {
+    const { account, collection, key, pending } = await prepare(type, sharingKey(1))
+
+    expect(pending).not.toBeNull()
+    expect(pending!.fingerprint).toBe(hex(key))
+    expect(Object.isFrozen(pending)).toBe(true)
+    expect(Object.values(pending!).some((value) => value instanceof Uint8Array)).toBe(false)
+    expect(coreMock.fetchUserProfile).toHaveBeenCalledWith(account, 'friend@example.com')
+    expect(coreMock.inviteToCollection).not.toHaveBeenCalled()
+
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(pending!)).resolves.toBe(true)
+
+    expect(coreMock.fetchUserProfile).toHaveBeenCalledTimes(1)
+    expect(coreMock.inviteToCollection).toHaveBeenCalledTimes(1)
+    const [calledAccount, calledCollection, calledUsername, calledKey, calledAccess] = coreMock.inviteToCollection.mock.calls[0]
+    expect(calledAccount).toBe(account)
+    expect(calledCollection).toBe(collection)
+    expect(calledUsername).toBe('friend@example.com')
+    expect(hex(calledKey)).toBe(hex(key))
+    expect(calledAccess).toBe('readWrite')
+  })
+
+  it('keeps the captured key when the fetched profile array is mutated after prepare', async () => {
+    const key = sharingKey(3)
+    const expected = hex(key)
+    const { pending } = await prepare('calendar', key)
+    key.fill(0)
+
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(pending!)).resolves.toBe(true)
+    expect(hex(coreMock.inviteToCollection.mock.calls[0][3])).toBe(expected)
+    expect(pending!.fingerprint).toBe(expected)
+  })
+
+  it('is single-use and does nothing after discard', async () => {
+    const first = await prepare()
+    const store = useEtebaseStore.getState()
+    const results = await Promise.all([store.confirmCollectionInvite(first.pending!), store.confirmCollectionInvite(first.pending!)])
+    expect(results.sort()).toEqual([false, true])
+    expect(coreMock.inviteToCollection).toHaveBeenCalledTimes(1)
+
+    const second = await prepare()
+    useEtebaseStore.getState().discardCollectionInvite(second.pending!)
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(second.pending!)).resolves.toBe(false)
+    expect(coreMock.inviteToCollection).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns no pending invite when the account changes before the profile fetch resolves', async () => {
+    const { collection } = setupSharing()
+    coreMock.fetchUserProfile.mockImplementationOnce(async () => {
+      bumpAccountEpoch()
+      return { pubkey: sharingKey(1) }
+    })
+    await expect(useEtebaseStore.getState().prepareCollectionInvite('calendar', collection.uid, 'friend@example.com', 'readOnly')).resolves.toBeNull()
+    expect(coreMock.getPublicKeyFingerprint).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('does not invite when the account epoch changes before confirm', async () => {
+    const { pending } = await prepare()
+    bumpAccountEpoch()
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(pending!)).resolves.toBe(false)
+    expect(coreMock.inviteToCollection).not.toHaveBeenCalled()
+    expect(toastStoreMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('re-checks the account boundary after the confirm import and before dispatch', async () => {
+    const { pending } = await prepare()
+    coreMock.getPublicKeyFingerprint.mockImplementationOnce(() => {
+      bumpAccountEpoch()
+      return pending!.fingerprint
+    })
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(pending!)).resolves.toBe(false)
+    expect(coreMock.inviteToCollection).not.toHaveBeenCalled()
+  })
+
+  it('does not invite after the account, collection, or same-uid collection object changes', async () => {
+    const replacedAccount = await prepare()
+    useEtebaseStore.setState({ account: { id: 'other-account' } as any })
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(replacedAccount.pending!)).resolves.toBe(false)
+
+    const removed = await prepare()
+    useEtebaseStore.setState({ collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] } as any })
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(removed.pending!)).resolves.toBe(false)
+
+    const replaced = await prepare()
+    useEtebaseStore.setState({ collections: { calendar: [{ uid: replaced.collection.uid }], tasks: [], contacts: [], notes: [], preferences: [] } as any })
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(replaced.pending!)).resolves.toBe(false)
+
+    const fingerprintChanged = await prepare()
+    useEtebaseStore.setState({ accountFingerprint: 'another-account-fp' })
+    await expect(useEtebaseStore.getState().confirmCollectionInvite(fingerprintChanged.pending!)).resolves.toBe(false)
+
+    expect(coreMock.inviteToCollection).not.toHaveBeenCalled()
+  })
+
+  it.each(['missing-col', 'default', 'all', ''])('refuses to prepare an invite for collection uid "%s"', async (uid) => {
+    setupSharing()
+    await expect(useEtebaseStore.getState().prepareCollectionInvite('calendar', uid, 'friend@example.com', 'readOnly')).resolves.toBeNull()
+    expect(coreMock.fetchUserProfile).not.toHaveBeenCalled()
+  })
+
+  it('fails closed on a malformed profile key and lets a fresh fetch retry after an error', async () => {
+    const { collection } = setupSharing()
+    coreMock.fetchUserProfile.mockResolvedValueOnce({ pubkey: new Uint8Array(16) })
+    await expect(useEtebaseStore.getState().prepareCollectionInvite('calendar', collection.uid, 'friend@example.com', 'readOnly')).resolves.toBeNull()
+    coreMock.fetchUserProfile.mockRejectedValueOnce(new Error('profile lookup failed'))
+    await expect(useEtebaseStore.getState().prepareCollectionInvite('calendar', collection.uid, 'friend@example.com', 'readOnly')).resolves.toBeNull()
+    expect(toastStoreMock.showErrorToast).toHaveBeenCalledTimes(2)
+
+    coreMock.fetchUserProfile.mockResolvedValueOnce({ pubkey: sharingKey(9) })
+    const pending = await useEtebaseStore.getState().prepareCollectionInvite('calendar', collection.uid, 'friend@example.com', 'readOnly')
+    expect(pending?.fingerprint).toBe(hex(sharingKey(9)))
+    expect(coreMock.fetchUserProfile).toHaveBeenCalledTimes(3)
+    expect(coreMock.inviteToCollection).not.toHaveBeenCalled()
+  })
+
+  it('lists incoming invitations as key-free views with a safe sender fallback', async () => {
+    setupSharing()
+    coreMock.listIncomingInvitations.mockResolvedValueOnce([invitation(), invitation({ uid: 'invite-2', fromUsername: undefined })])
+    const views = await useEtebaseStore.getState().listIncomingInvitations()
+
+    expect(views).toHaveLength(2)
+    expect(Object.keys(views[0]).sort()).toEqual(['accessLevel', 'senderFingerprint', 'senderName', 'uid'])
+    expect(views.every((view) => Object.isFrozen(view))).toBe(true)
+    expect(views[0]).toMatchObject({ uid: 'invite-1', senderName: 'friend@example.com', accessLevel: 2, senderFingerprint: hex(sharingKey(70)) })
+    expect(views[1].senderName).toBeNull()
+  })
+
+  it('accepts only the list-time snapshot, unaffected by mutation or a later refresh', async () => {
+    const { account } = setupSharing()
+    const original = invitation()
+    coreMock.listIncomingInvitations.mockResolvedValueOnce([original])
+    const [view] = await useEtebaseStore.getState().listIncomingInvitations()
+    original.fromPubkey.fill(0)
+    original.signedEncryptionKey.fill(0)
+    coreMock.listIncomingInvitations.mockResolvedValueOnce([invitation({ fromPubkey: sharingKey(200), signedEncryptionKey: new Uint8Array([1]) })])
+    await useEtebaseStore.getState().listIncomingInvitations()
+
+    await expect(useEtebaseStore.getState().acceptInvitation(view, view.senderFingerprint!)).resolves.toBe(true)
+    expect(coreMock.acceptInvitation).toHaveBeenCalledTimes(1)
+    const [calledAccount, snapshot, confirmedKey] = coreMock.acceptInvitation.mock.calls[0]
+    expect(calledAccount).toBe(account)
+    expect(hex(snapshot.fromPubkey)).toBe(hex(sharingKey(70)))
+    expect(Array.from(snapshot.signedEncryptionKey)).toEqual([5, 6, 7, 8])
+    expect(hex(confirmedKey)).toBe(hex(sharingKey(70)))
+    expect(reconcile).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses accept with a wrong fingerprint, a stale account, or a second submit', async () => {
+    setupSharing()
+    coreMock.listIncomingInvitations.mockResolvedValue([invitation()])
+    const [wrong] = await useEtebaseStore.getState().listIncomingInvitations()
+    await expect(useEtebaseStore.getState().acceptInvitation(wrong, 'not-the-displayed-fingerprint')).resolves.toBe(false)
+
+    const [twice] = await useEtebaseStore.getState().listIncomingInvitations()
+    const store = useEtebaseStore.getState()
+    const results = await Promise.all([store.acceptInvitation(twice, twice.senderFingerprint!), store.acceptInvitation(twice, twice.senderFingerprint!)])
+    expect(results.sort()).toEqual([false, true])
+    expect(coreMock.acceptInvitation).toHaveBeenCalledTimes(1)
+
+    const [stale] = await useEtebaseStore.getState().listIncomingInvitations()
+    bumpAccountEpoch()
+    await expect(useEtebaseStore.getState().acceptInvitation(stale, stale.senderFingerprint!)).resolves.toBe(false)
+    await expect(useEtebaseStore.getState().rejectInvitation(stale)).resolves.toBe(false)
+
+    const [replacedAccount] = await useEtebaseStore.getState().listIncomingInvitations()
+    useEtebaseStore.setState({ account: { id: 'other-account' } as any })
+    await expect(useEtebaseStore.getState().acceptInvitation(replacedAccount, replacedAccount.senderFingerprint!)).resolves.toBe(false)
+    await expect(useEtebaseStore.getState().rejectInvitation(replacedAccount)).resolves.toBe(false)
+
+    expect(coreMock.acceptInvitation).toHaveBeenCalledTimes(1)
+    expect(coreMock.rejectInvitation).not.toHaveBeenCalled()
+  })
+
+  it('fails closed for a malformed sender key while still allowing reject', async () => {
+    setupSharing()
+    coreMock.listIncomingInvitations.mockResolvedValueOnce([invitation({ fromPubkey: new Uint8Array(5) })])
+    const [view] = await useEtebaseStore.getState().listIncomingInvitations()
+
+    expect(view.senderFingerprint).toBeNull()
+    await expect(useEtebaseStore.getState().acceptInvitation(view, '')).resolves.toBe(false)
+    expect(coreMock.acceptInvitation).not.toHaveBeenCalled()
+    await expect(useEtebaseStore.getState().rejectInvitation(view)).resolves.toBe(true)
+    expect(coreMock.rejectInvitation).toHaveBeenCalledTimes(1)
   })
 })
 
