@@ -10,8 +10,8 @@ def test_radicale_filter_redacts_packaged_relative_app_diagnostics():
         name="radicale",
         level=logging.INFO,
         pathname="radicale/app/__init__.py",
-        lineno=254,
-        msg="Successful login: %r",
+        lineno=221,
+        msg="Sanitized path: %r",
         args=(private_identifier,),
         exc_info=None,
     )

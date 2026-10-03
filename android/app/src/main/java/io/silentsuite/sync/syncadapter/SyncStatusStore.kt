@@ -851,6 +851,12 @@ class SyncStatusStore internal constructor(
         private val failedWrites = mutableMapOf<String, Long>()
         private fun isSafeOpaqueId(value: String) = value.length in 1..MAX_OPAQUE_ID_LENGTH &&
             value.all { it in 'a'..'z' || it in 'A'..'Z' || it in '0'..'9' || it == '.' || it == '_' || it == '-' }
+        /** Read-only generation capture; absent or unusable metadata yields no identity and is never backfilled. */
+        internal fun exactIdentity(context: Context, account: Account): MainIdentity? = exactIdentityOf(
+            account.type, account.name,
+            AccountManager.get(context.applicationContext).getUserData(account, AccountSettings.KEY_CREATION_ID))
+        internal fun exactIdentityOf(type: String?, name: String?, creationId: String?): MainIdentity? =
+            creationId?.takeIf(::isSafeOpaqueId)?.let { MainIdentity(hashIdentity(type, name, it)) }
         internal fun identityFromStorageKey(storageKey: String?): MainIdentity? =
             storageKey?.takeIf(::isSha256Id)?.let(::MainIdentity)
         internal fun childIdentityFromStorageKey(storageKey: String?): ChildIdentity? =

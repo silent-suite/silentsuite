@@ -141,6 +141,8 @@
     <string name="app_settings_log_verbose_summary">Verbose logs may contain private information</string>
     <string name="app_settings_show_debug_info">Show debug info</string>
     <string name="app_settings_show_debug_info_details">View/share software and configuration details</string>
+    <string name="app_settings_scheduling_diagnostics">Sync scheduling diagnostics</string>
+    <string name="app_settings_scheduling_diagnostics_details">View/share sync scheduling state without account or device details</string>
     <string name="app_settings_force_language">Force Language</string>
     <string name="app_settings_force_language_default">Auto</string>
     <string name="app_settings_change_notification">Show change notifications</string>
