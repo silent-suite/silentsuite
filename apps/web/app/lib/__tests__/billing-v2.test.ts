@@ -5,7 +5,7 @@ import { BillingResponseError, cancelUnclaimedAnnualSelection, activateAnnualChe
 const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
 const requestKey = '5fd4d86d-34de-4b82-9a66-9598ddf6e02f'
 // Billing mints the payment flow id server-side; it never equals the offer requestId.
-const authorityId = '2f9e60c2-7a41-4c8e-9d3b-5b1e0c6a8f17'
+const authorityId = '6d1f0a94-8c52-4b7e-9f31-2a5d6e8b0c47'
 const token = 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG'
 const offer = { contractVersion: 2, requestId, offer: { planId: 'early_annual', customerClass: 'early', billingInterval: 'annual', annualAmountMinor: 3600, monthlyEquivalentMinor: 300, currency: 'EUR', providers: ['stripe', 'btcpay'], offerRevision: 1, offerToken: 'signed-offer', expiresAt: '2026-08-10T12:10:00Z' } }
 const prepaidDisclosure = { kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null, monthlyEquivalentMinor: 300, currency: 'EUR', trialEndsAt: null, firstChargeAt: null, cancelBy: null, cancelByInclusive: false, autoRenew: false, prepaid: true, refundWindowDays: 30, bonusDays: 0, periodEndRule: 'confirmation_plus_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null }

@@ -40,7 +40,7 @@ const annualOffer = {
 }
 
 // Billing mints the payment flow id server-side; it never equals the offer requestId.
-const serverFlowId = '2f9e60c2-7a41-4c8e-9d3b-5b1e0c6a8f17'
+const serverFlowId = '6d1f0a94-8c52-4b7e-9f31-2a5d6e8b0c47'
 
 const activeFlow = {
   flowKind: 'stripe_pay_now',
