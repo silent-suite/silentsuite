@@ -140,7 +140,7 @@ Sibling paths:
 | Relay: nothing for this version, app metadata absent or exactly equal to the template | `absent` → publish (newest only). |
 | Relay: nothing for this version, app metadata differs from the template | `app-drift` → fail closed; the template must be updated by a reviewed change, or the listing reviewed by hand. |
 | Relay: exact lane set present | `complete-match` → skip, CDN verified. |
-| Relay: pre-lane set (APK without `commit` tag) whose identity tuple matches and whose release e-links it | `legacy-complete` → skip, CDN verified, never rewritten; same-hash duplicate APK events from earlier manual publications are tolerated. |
+| Relay: pre-lane set (APK without `commit` tag) whose identity tuple matches and whose release e-links it | `legacy-complete` → skip (newest or not), CDN verified, never rewritten; same-hash duplicate APK events from earlier manual publications are tolerated. The identity tuple is exact (one value each) except the release `c` tag, which is the zsp release channel, not a commit: a `vX.Y.Z-beta` release published by hand on channel `beta` (0.5.0-beta, 0.5.3-beta) matches the lane's `main`. No other channel, version shape, or cardinality is accepted, and lane-owned sets or a release without its APK still compare `c` exactly. |
 | Relay: release (and app) present and equal to the expected tuples, **no APK event** for this version, no newer `version_code` | `partial`, recoverable → one publisher run completes the set (newest candidate only); read-back must be `complete-match`. This is the state a failed asset publish leaves, because upstream publishes app, release, then asset. |
 | Relay: a matching APK event present without its release, or without app metadata | `partial`, unrecoverable → fail closed with the exact preserved ids; see 5.2. |
 | Relay: same version with a different hash, extra e-links, extra APK references, tuple differences | `conflict` → fail closed. |
@@ -177,8 +177,11 @@ Legacy mode applies only to observed APK events that carry no `commit` tag:
 `i`, `x`, `version`, `version_code`, `size`, `m`, `apk_certificate_hash` must
 match exactly once, and the CDN `url` must be among the observed `url` tags
 (hand publications from a GitHub source also carry the original download URL);
-the release must carry `i`, `version`, `d`, `c` equal to expected and exactly
-one `e` pointing at a matching APK. Legacy sets are never rewritten.
+the release must carry exactly one matching `i`, `version` and `d`, and exactly
+one `c` equal to expected except that a numeric `X.Y.Z-beta` version on channel
+`beta` may match the lane's `main`. Exactly one `e` must point at a matching APK.
+Legacy sets are never rewritten; lane-owned and orphan releases retain exact
+channel comparison.
 
 ### 1.5 Invariants
 

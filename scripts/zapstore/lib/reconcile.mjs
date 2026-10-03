@@ -6,6 +6,11 @@
 //   complete-match    this lane's exact set exists (full ordered tuple equality)
 //   legacy-complete   a pre-lane set (APK without a commit tag) whose identity
 //                     tuple matches and whose release links it; never rewritten
+//                     (skipped whether or not it is the newest candidate). The
+//                     identity tuple is exact except the release channel `c`:
+//                     a `-beta` version may carry `beta` where the lane writes
+//                     `main` (legacyChannelAccepted). Lane-owned sets and a
+//                     release without its APK still compare `c` exactly.
 //   absent            nothing for this version; app metadata absent or equal
 //   app-drift         app metadata on the relay differs from the template
 //   partial           some of the set exists. `recoverable` is true only when
@@ -62,10 +67,21 @@ export const compareRelease = (expected, observed, apkEventId) => compareExact(e
   substitute: (tag) => (tag[0] === 'e' ? [tag[0], apkEventId, ...tag.slice(2)] : tag),
 })
 
+// The release `c` tag is the zsp release channel (upstream v0.4.17
+// internal/nostr/events.go, `--channel`, default main), not a commit. Some
+// pre-lane `-beta` releases were published by hand on channel beta (relay:
+// 0.5.0-beta, 0.5.3-beta). Only that historical value is accepted, only for a
+// `-beta` version, only where the lane itself would write main, and only on the
+// legacy path, which never rewrites.
+export function legacyChannelAccepted(expectedChannel, observedChannel, version) {
+  if (observedChannel === expectedChannel) return true
+  return expectedChannel === 'main' && observedChannel === 'beta' && /^\d+\.\d+\.\d+-beta$/.test(version)
+}
+
 // Pre-lane events were published by hand from a GitHub release source, so an
 // APK may carry the original download URL beside the CDN URL. The CDN URL (the
 // hash-addressed one the lane verifies) must be present; every other identity
-// field must be exactly one equal value.
+// field must be exactly one equal value, the release channel excepted as above.
 function compareIdentity(expected, observed, fields, label) {
   const diffs = []
   for (const field of fields) {
@@ -76,7 +92,9 @@ function compareIdentity(expected, observed, fields, label) {
       continue
     }
     if (e.length !== 1 || o.length !== 1) diffs.push(`${label}.${field}.cardinality`)
-    else if (e[0] !== o[0]) diffs.push(`${label}.${field}`)
+    else if (field === 'c' && label === 'release') {
+      if (!legacyChannelAccepted(e[0], o[0], tagValue(expected, 'version'))) diffs.push(`${label}.c (channel ${JSON.stringify(o[0])}, expected ${JSON.stringify(e[0])})`)
+    } else if (e[0] !== o[0]) diffs.push(`${label}.${field}`)
   }
   return diffs
 }
@@ -166,7 +184,7 @@ export function assessRelayState({ expected, observed, schnorr }) {
     const present = { apk: apk.id, release: release.id, app: app?.id }
     if (!app) return verdict('partial', `present: pre-lane apk ${apk.id}, release ${release.id}; missing: app; the accepted APK event cannot be reused by the official publisher`, { present, missing: ['app'], recoverable: false })
     if (appDiffs.length) return verdict('app-drift', `pre-lane release and APK verified; app metadata on the relay differs from the trusted template: ${appDiffs.join('; ')}`, { present, appDiffs })
-    return verdict('legacy-complete', `pre-lane publication verified: ${matching.length} APK event(s) with the expected hash, release links ${apk.id}; never rewritten`, { present, duplicateApks: matching.length - 1 })
+    return verdict('legacy-complete', `pre-lane publication verified: ${matching.length} APK event(s) with the expected hash, release links ${apk.id} on channel ${tagValue(release, 'c')}; never rewritten`, { present, duplicateApks: matching.length - 1, channel: tagValue(release, 'c') })
   }
 
   // Release present, no APK event for this version. Nothing immutable exists

@@ -16,8 +16,8 @@ import { bindReleaseAssets, createGitHubClient, EnumerationIncomplete, hashFromC
 import { buildBinding, revalidateBinding, verifyApkHashes } from '../lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from '../lib/apksigner.mjs'
 import { generateConfig, loadTemplate, parseZapstoreYaml, resolveChangelog, stageMedia } from '../lib/metadata.mjs'
-import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, verifyEvent } from '../lib/nostr.mjs'
-import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, publicationAction, requireReadbackComplete } from '../lib/reconcile.mjs'
+import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, tagValues, verifyEvent } from '../lib/nostr.mjs'
+import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, legacyChannelAccepted, publicationAction, requireReadbackComplete } from '../lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, zspArgs, zspEnv, ZSP } from '../lib/zsp.mjs'
 import { materializeClientKey } from '../lib/bunker-key.mjs'
 import { redact } from '../lib/redact.mjs'
@@ -591,6 +591,72 @@ test('historical relay state (no commit tags, duplicate APK events) is legacy-co
   const superseded = assessRelayState({ expected: olderMissing, observed, schnorr })
   assert.equal(superseded.outcome, 'superseded', 'a never-published older version is skipped, not backfilled')
   assert.equal(publicationAction({ assessment: superseded, publishable: false }).action, 'skip')
+})
+
+// historicalExpected reuses the relay's own release, so it cannot see the
+// channel: the lane always writes `c` = main (zspArgs --channel main), while
+// 0.5.0-beta and 0.5.3-beta were published by hand on channel beta.
+function laneExpected(version, channel = 'main') {
+  const set = historicalExpected(version)
+  return { ...set, release: { ...set.release, tags: set.release.tags.map((t) => (t[0] === 'c' ? ['c', channel] : t)) } }
+}
+
+test('pre-lane beta-channel releases are legacy-complete against the lane main-channel candidate, and nowhere else', () => {
+  for (const [version, apkId] of [['0.5.3-beta', 'e569ce28e3f8647fa98e665185a96b267cf933370dc3481f4d40b2f5c9fb01db'], ['0.5.0-beta', '23ccc69f5815a25a179f05de4fc263808e574684fca2b83bfc985ed6aca4b955']]) {
+    const state = assessRelayState({ expected: laneExpected(version), observed, schnorr })
+    assert.equal(state.outcome, 'legacy-complete', `${version}: ${state.detail}`)
+    assert.equal(state.channel, 'beta')
+    assert.equal(state.present.apk, apkId)
+    for (const publishable of [true, false]) assert.deepEqual(publicationAction({ assessment: state, publishable }), { action: 'skip', reason: 'legacy-complete', verifyCdn: true }, 'never an overwrite candidate, newest or not')
+  }
+  assert.equal(assessRelayState({ expected: laneExpected('0.5.4-beta'), observed, schnorr }).outcome, 'legacy-complete', 'a main-channel pre-lane release still matches')
+  for (const channel of ['beta', 'nightly', 'dev']) {
+    const state = assessRelayState({ expected: laneExpected('0.5.4-beta', channel), observed, schnorr })
+    assert.equal(state.outcome, 'conflict', `relay main vs expected ${channel}`)
+    assert.match(state.detail, /pre-lane release identity differs: release\.c/)
+  }
+  for (const channel of ['nightly', 'dev', 'beta ']) {
+    const state = assessRelayState({ expected: laneExpected('0.5.3-beta', channel), observed, schnorr })
+    assert.equal(state.outcome, 'conflict', `relay beta vs expected ${JSON.stringify(channel)}`)
+  }
+  const tampered = laneExpected('0.5.3-beta')
+  tampered.apk = { ...tampered.apk, tags: tampered.apk.tags.map((t) => (t[0] === 'size' ? ['size', '1'] : t)) }
+  assert.equal(assessRelayState({ expected: tampered, observed, schnorr }).outcome, 'conflict', 'the channel exception does not relax APK identity')
+  const orphaned = observed.filter((e) => e.id !== 'e569ce28e3f8647fa98e665185a96b267cf933370dc3481f4d40b2f5c9fb01db')
+  const orphan = assessRelayState({ expected: laneExpected('0.5.3-beta'), observed: orphaned, schnorr })
+  assert.equal(orphan.outcome, 'conflict', 'a beta-channel release without its APK is never a recovery candidate')
+  assert.match(orphan.detail, /release\.tags\[\d+\] expected \["c","main"\] observed \["c","beta"\]/)
+  const rel53 = observed.find((e) => e.id.startsWith('cf7cf99a650e'))
+  assert.ok(compareRelease(laneExpected('0.5.3-beta').release, rel53, 'e569ce28e3f8647fa98e665185a96b267cf933370dc3481f4d40b2f5c9fb01db').some((d) => d.includes('"c"')), 'lane-path exact comparison still rejects a channel difference')
+  assert.equal(legacyChannelAccepted('main', 'beta', '0.5.3-beta'), true)
+  for (const [e, o, v] of [['main', 'beta', '0.5.3'], ['main', 'beta', '0.5.3-beta.1'], ['main', 'nightly', '0.5.3-beta'], ['beta', 'main', '0.5.3-beta'], ['main', 'Beta', '0.5.3-beta'], ['main', undefined, '0.5.3-beta']]) {
+    assert.equal(legacyChannelAccepted(e, o, v), false, `${e}/${o}/${v}`)
+  }
+})
+
+test('signed end to end: the channel exception needs a commit-less APK and exactly one beta c tag, and only ever skips', async () => {
+  const preLane = (channels) => (e, kind) => {
+    if (kind === 'apk') return { ...e, tags: e.tags.filter((t) => t[0] !== 'commit') }
+    if (kind === 'release') return { ...e, tags: e.tags.flatMap((t) => (t[0] === 'c' ? channels.map((c) => ['c', c]) : [t])) }
+    return e
+  }
+  const beta = await signedCopies(preLane(['beta']))
+  assert.equal(tagValues(beta.apk, 'commit').length, 0)
+  const state = assessRelayState({ expected: beta.expected, observed: [beta.app, beta.release, beta.apk], schnorr })
+  assert.equal(state.outcome, 'legacy-complete', state.detail)
+  assert.equal(state.channel, 'beta')
+  for (const publishable of [true, false]) assert.deepEqual(publicationAction({ assessment: state, publishable }), { action: 'skip', reason: 'legacy-complete', verifyCdn: true })
+  for (const channels of [[], ['beta', 'beta'], ['main', 'beta']]) {
+    const s = await signedCopies(preLane(channels))
+    const out = assessRelayState({ expected: s.expected, observed: [s.app, s.release, s.apk], schnorr })
+    assert.equal(out.outcome, 'conflict', `c tags ${JSON.stringify(channels)}`)
+    assert.match(out.detail, /release\.c\.cardinality/)
+  }
+  const lane = await signedCopies((e, kind) => (kind === 'release' ? { ...e, tags: e.tags.map((t) => (t[0] === 'c' ? ['c', 'beta'] : t)) } : e))
+  assert.equal(tagValues(lane.apk, 'commit').length, 1)
+  const laneState = assessRelayState({ expected: lane.expected, observed: [lane.app, lane.release, lane.apk], schnorr })
+  assert.equal(laneState.outcome, 'conflict', 'a lane-owned (commit-tagged) set on channel beta is not legacy')
+  assert.match(laneState.detail, /published release differs.*\["c","beta"\]/)
 })
 
 test('CDN read-back fetches every referenced blob and compares hashes', async () => {
