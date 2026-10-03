@@ -483,7 +483,6 @@ export default function PaymentChoicePanel({
         fetcher: fetch,
         billingApiUrl: BILLING_API_URL,
         checkoutIntentToken: pending.activation.checkoutIntentToken,
-        expectedAuthorityId: annualOffer.requestId,
         returnUrl: `${window.location.origin}/settings/subscription`,
       })
       if (data.kind !== pending.provider) throw new Error('Billing returned the wrong payment provider.')

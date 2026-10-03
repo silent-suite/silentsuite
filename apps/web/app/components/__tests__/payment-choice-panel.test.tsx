@@ -39,6 +39,9 @@ const annualOffer = {
   },
 }
 
+// Billing mints the payment flow id server-side; it never equals the offer requestId.
+const serverFlowId = '6d1f0a94-8c52-4b7e-9f31-2a5d6e8b0c47'
+
 const activeFlow = {
   flowKind: 'stripe_pay_now',
   provider: 'stripe',
@@ -84,7 +87,7 @@ describe('PaymentChoicePanel cancellation safety', () => {
           periodEndRule: 'confirmation_bonus_then_1_utc_calendar_year', renewalAt: null, entitlementEndsAt: null,
         },
       })
-      if (url.endsWith('/subscription/payment-flows/v2')) return response({ contractVersion: 2, kind: 'stripe', authorityId: annualOffer.requestId, clientSecret: 'pi_secret' })
+      if (url.endsWith('/subscription/payment-flows/v2')) return response({ contractVersion: 2, kind: 'stripe', authorityId: serverFlowId, clientSecret: 'pi_secret' })
       return response({}, false)
     })
     renderPanel()
@@ -103,6 +106,7 @@ describe('PaymentChoicePanel cancellation safety', () => {
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/subscription/payment-flows/v2'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: /confirm annual terms and continue/i }))
     await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/subscription/payment-flows/v2'))).toBe(true))
+    expect(await screen.findByTestId('stripe-payment-form')).toBeInTheDocument()
   })
 
   it('clears rejected activation consent before showing a renewed offer', async () => {
