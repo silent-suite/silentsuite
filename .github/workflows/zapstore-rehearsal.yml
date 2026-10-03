@@ -1,0 +1,213 @@
+name: Zapstore Manual Rehearsal
+
+# Manual, assessment-only rehearsal of the Zapstore lane. See section 8 of
+# runbooks/zapstore-automation.md.
+#
+# This workflow runs the same read-only enumerate and assess jobs as
+# zapstore-publish.yml and nothing else: no plan, no publish, no notify, no
+# environment, no signer secret, no issue writes, no uploads anywhere except
+# this run's own evidence artifacts. It is not the scheduled lane and not a
+# second control plane; its result never feeds a publication.
+#
+# Admission is separate from the scheduled admission and reads the real run
+# context only: a `workflow_dispatch` of exactly this file from refs/heads/main
+# whose definition revision equals the run commit. Any other branch or tag is
+# refused, because the release identity helper only runs on protected main.
+
+on:
+  workflow_dispatch:
+
+# Separate from the publication group: this workflow can never publish, so it
+# neither waits for nor blocks a scheduled run.
+concurrency:
+  group: zapstore-rehearsal-io-silentsuite-android
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  admit:
+    name: Admit the manual rehearsal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      revision: ${{ steps.admit.outputs.revision }}
+    steps:
+      - name: Check out the protected revision that supplied this definition
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Prove manual trigger and definition provenance
+        id: admit
+        run: node scripts/zapstore/cli.mjs admit-rehearsal --workspace "$GITHUB_WORKSPACE"
+
+  enumerate:
+    name: Enumerate exact releases
+    needs: admit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      count: ${{ steps.enumerate.outputs.count }}
+      matrix: ${{ steps.enumerate.outputs.matrix }}
+    steps:
+      - name: Check out the protected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Bind the checkout to the admitted revision
+        env:
+          REVISION: ${{ needs.admit.outputs.revision }}
+        run: node scripts/zapstore/cli.mjs checkout-guard --workspace "$GITHUB_WORKSPACE" --revision "$REVISION"
+      - name: List and classify published releases by exact id
+        id: enumerate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/enumerate"
+          node scripts/zapstore/cli.mjs enumerate --out "$RUNNER_TEMP/enumerate/candidates.json"
+      - name: Upload the candidate list
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zapstore-rehearsal-candidates
+          path: ${{ runner.temp }}/enumerate/candidates.json
+
+  # Read-only per-candidate verification: no environment, no secret, no signer.
+  assess:
+    name: Assess ${{ matrix.tag }}
+    needs: [admit, enumerate]
+    if: needs.enumerate.outputs.count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.enumerate.outputs.matrix) }}
+    steps:
+      - name: Check out the protected revision with history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Bind the checkout to the admitted revision
+        id: guard
+        env:
+          REVISION: ${{ needs.admit.outputs.revision }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/assess"
+          node scripts/zapstore/cli.mjs checkout-guard --workspace "$GITHUB_WORKSPACE" --revision "$REVISION"
+      - name: Install the isolated verification package
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix scripts/zapstore
+      - name: Fetch and pin the official publisher
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/zsp" \
+            https://github.com/zapstore/zsp/releases/download/v0.4.17/zsp-0.4.17-linux-amd64
+          echo "3f241da6a5dc7a85fe851d3b42b77790b651bd36c7029382a701262bda832d20  $RUNNER_TEMP/zsp" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/zsp"
+          "$RUNNER_TEMP/zsp" --version
+      - name: Install apksigner from the fixed build-tools
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -f "$SDKMANAGER" ] && [ -x "$SDKMANAGER" ] \
+            || { echo "fixed Android sdkmanager is missing or not executable" >&2; exit 1; }
+          # A finite acceptance file rather than an infinite yes pipe: under
+          # pipefail the producer takes SIGPIPE and the step would exit 141.
+          for _ in $(seq 100); do echo y; done > /tmp/sdk-license-acceptance
+          "$SDKMANAGER" --licenses < /tmp/sdk-license-acceptance > /dev/null
+          "$SDKMANAGER" "build-tools;36.0.0"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+      - name: Bind the exact release, tag commit and assets
+        id: bind
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ matrix.release_id }}
+        run: node scripts/zapstore/cli.mjs bind --release-id "$RELEASE_ID" --git-ancestry "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/assess/binding.json"
+      - name: Download the bound APK and check all three digests
+        id: apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/zapstore/cli.mjs fetch-apk --binding "$RUNNER_TEMP/assess/binding.json" --out-dir "$RUNNER_TEMP/apk"
+      - name: Verify the APK signature with apksigner
+        id: apksigner
+        env:
+          APK_PATH: ${{ steps.apk.outputs.apk_path }}
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs -v "$APK_PATH" > "$RUNNER_TEMP/apksigner.txt"
+          node scripts/zapstore/cli.mjs verify-apksigner --output "$RUNNER_TEMP/apksigner.txt"
+      - name: Generate the exact-release configuration and expected events
+        id: prepare
+        env:
+          APK_PATH: ${{ steps.apk.outputs.apk_path }}
+          REVISION: ${{ needs.admit.outputs.revision }}
+        run: |
+          node scripts/zapstore/cli.mjs prepare \
+            --binding "$RUNNER_TEMP/assess/binding.json" --apk "$APK_PATH" \
+            --zsp "$RUNNER_TEMP/zsp" --source-root "$GITHUB_WORKSPACE" --revision "$REVISION" \
+            --work-dir "$RUNNER_TEMP/assess/prepare"
+      - name: Reconcile against the relay
+        id: reconcile
+        env:
+          PUBLISHABLE: ${{ matrix.publishable }}
+        run: node scripts/zapstore/cli.mjs reconcile --publishable "$PUBLISHABLE" --expected "$RUNNER_TEMP/assess/prepare/expected-events.jsonl" --out "$RUNNER_TEMP/assess/reconcile.json"
+      - name: Verify CDN bytes for a published set
+        id: cdn
+        if: steps.reconcile.outputs.verify_cdn == 'true'
+        run: node scripts/zapstore/cli.mjs verify-cdn --expected "$RUNNER_TEMP/assess/prepare/expected-events.jsonl" --out "$RUNNER_TEMP/assess/cdn.json"
+      - name: Record the assessment
+        if: always()
+        env:
+          RELEASE_ID: ${{ matrix.release_id }}
+          RELEASE_TAG: ${{ matrix.tag }}
+          REVISION: ${{ needs.admit.outputs.revision }}
+          PHASE_CHECKOUT: ${{ steps.guard.outcome }}
+          PHASE_BIND: ${{ steps.bind.outcome }}
+          PHASE_APK: ${{ steps.apk.outcome }}
+          PHASE_APKSIGNER: ${{ steps.apksigner.outcome }}
+          PHASE_PREPARE: ${{ steps.prepare.outcome }}
+          PHASE_RECONCILE: ${{ steps.reconcile.outcome }}
+          PHASE_CDN: ${{ steps.cdn.outcome }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/assess"
+          node scripts/zapstore/cli.mjs record-result --job assess \
+            --binding "$RUNNER_TEMP/assess/binding.json" \
+            --reconcile "$RUNNER_TEMP/assess/reconcile.json" \
+            --cdn "$RUNNER_TEMP/assess/cdn.json" \
+            --out "$RUNNER_TEMP/assess/assessment.json"
+      - name: Upload assessment evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zapstore-rehearsal-assessment-${{ matrix.release_id }}
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/assess/assessment.json
+            ${{ runner.temp }}/assess/binding.json
+            ${{ runner.temp }}/assess/reconcile.json
+            ${{ runner.temp }}/assess/cdn.json
+            ${{ runner.temp }}/assess/prepare/release-manifest.json
+            ${{ runner.temp }}/assess/prepare/expected-events.jsonl

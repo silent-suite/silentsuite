@@ -78,6 +78,50 @@ test('cli admit: only a protected-main schedule with workflow_sha == sha is admi
   assert.match(wrongCheckout.stderr, /not the admitted protected revision/)
 })
 
+test('cli admit-rehearsal: only a main workflow_dispatch of the rehearsal file bound to its checkout; no activation state; the scheduled admit refuses it', () => {
+  const { dir, head } = tempRepo()
+  const REHEARSAL_REF = 'silent-suite/silentsuite/.github/workflows/zapstore-rehearsal.yml@refs/heads/main'
+  const base = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/main', GITHUB_REPOSITORY: 'silent-suite/silentsuite', GITHUB_WORKFLOW_REF: REHEARSAL_REF, GITHUB_SHA: head, GITHUB_WORKFLOW_SHA: head }
+  const ok = run('admit-rehearsal', ['--workspace', dir], { ...base, ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
+  assert.equal(ok.status, 0, ok.stderr)
+  assert.equal(ok.outputs, `revision=${head}\n`, 'only the revision; never active or rehearsal, even with the activation variable set')
+  assert.match(ok.summary, /ASSESSMENT ONLY/)
+  assert.match(ok.summary, /cannot sign, upload or publish anything/)
+  assert.match(ok.summary, /action of publish is not authorization/)
+  assert.match(ok.summary, /not evidence that the scheduled lane triggers, and not signing proof/)
+  const cases = [
+    ['schedule', { GITHUB_EVENT_NAME: 'schedule' }, /is not workflow_dispatch/],
+    ['schedule with the production definition', { GITHUB_EVENT_NAME: 'schedule', GITHUB_WORKFLOW_REF: WORKFLOW_REF }, /is not workflow_dispatch/],
+    ['repository_dispatch', { GITHUB_EVENT_NAME: 'repository_dispatch' }, /is not workflow_dispatch/],
+    ['missing event', { GITHUB_EVENT_NAME: '' }, /is not workflow_dispatch/],
+    ['production definition', { GITHUB_WORKFLOW_REF: WORKFLOW_REF }, /GITHUB_WORKFLOW_REF/],
+    ['feature branch', { GITHUB_REF: 'refs/heads/feat', GITHUB_WORKFLOW_REF: REHEARSAL_REF.replace('refs/heads/main', 'refs/heads/feat') }, /is not refs\/heads\/main/],
+    ['tag', { GITHUB_REF: 'refs/tags/v0.5.6-beta', GITHUB_WORKFLOW_REF: REHEARSAL_REF.replace('refs/heads/main', 'refs/tags/v0.5.6-beta') }, /is not refs\/heads\/main/],
+    ['definition from another ref', { GITHUB_WORKFLOW_REF: REHEARSAL_REF.replace('refs/heads/main', 'refs/heads/feat') }, /GITHUB_WORKFLOW_REF/],
+    ['definition drift', { GITHUB_WORKFLOW_SHA: 'a'.repeat(40) }, /GITHUB_WORKFLOW_SHA .* is not the run commit/],
+    ['missing definition sha', { GITHUB_WORKFLOW_SHA: '' }, /GITHUB_WORKFLOW_SHA/],
+    ['wrong checkout', { GITHUB_SHA: 'b'.repeat(40), GITHUB_WORKFLOW_SHA: 'b'.repeat(40) }, /not the admitted protected revision/],
+  ]
+  for (const [label, env, pattern] of cases) {
+    const refused = run('admit-rehearsal', ['--workspace', dir], { ...base, ...env })
+    assert.notEqual(refused.status, 0, label)
+    assert.match(refused.stderr, pattern, label)
+    assert.equal(refused.outputs, '', `${label} emits nothing`)
+  }
+  const noWorkspace = run('admit-rehearsal', [], base)
+  assert.notEqual(noWorkspace.status, 0)
+  assert.match(noWorkspace.stderr, /requires --workspace/)
+  assert.equal(noWorkspace.outputs, '')
+  const scheduled = run('admit', ['--workspace', dir], { ...base, ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
+  assert.notEqual(scheduled.status, 0)
+  assert.match(scheduled.stderr, /unsupported event workflow_dispatch/)
+  assert.equal(scheduled.outputs, '')
+  const spoofed = run('admit', ['--workspace', dir], { ...base, GITHUB_EVENT_NAME: 'schedule', ZAPSTORE_AUTOMATION_ENABLED: 'enabled' })
+  assert.notEqual(spoofed.status, 0)
+  assert.match(spoofed.stderr, /is not \.github\/workflows\/zapstore-publish\.yml/)
+  assert.equal(spoofed.outputs, '')
+})
+
 test('cli checkout-guard binds a job to the admitted revision', () => {
   const { dir, head } = tempRepo()
   assert.equal(run('checkout-guard', ['--workspace', dir, '--revision', head]).status, 0)

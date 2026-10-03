@@ -34,6 +34,24 @@ export function requireProtectedSchedule({ eventName, ref, workflowRef, sha, wor
   return { revision: sha }
 }
 
+// Manual, assessment-only rehearsal (.github/workflows/zapstore-rehearsal.yml).
+// A separate admission for a separate definition file: it is not an alternative
+// to requireProtectedSchedule, admits no schedule, and returns nothing that can
+// activate publication. Main-only: the release identity helper refuses any
+// other GITHUB_REF, and the definition must come from protected main.
+export const REHEARSAL_WORKFLOW_PATH = '.github/workflows/zapstore-rehearsal.yml'
+
+export function requireManualRehearsal({ eventName, ref, workflowRef, sha, workflowSha, repository }) {
+  if (eventName !== 'workflow_dispatch') throw new Error(`refusing rehearsal: event ${String(eventName)} is not workflow_dispatch`)
+  requireProtectedRef(ref)
+  if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('refusing rehearsal: GITHUB_REPOSITORY is missing or malformed')
+  const expected = `${repository}/${REHEARSAL_WORKFLOW_PATH}@${PROTECTED_REF}`
+  if (workflowRef !== expected) throw new Error(`refusing rehearsal: GITHUB_WORKFLOW_REF ${String(workflowRef)} is not ${expected}`)
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('refusing rehearsal: GITHUB_SHA is not a 40-hex commit')
+  if (typeof workflowSha !== 'string' || workflowSha !== sha) throw new Error(`refusing rehearsal: GITHUB_WORKFLOW_SHA ${String(workflowSha)} is not the run commit ${sha}`)
+  return { revision: sha }
+}
+
 export function activationState(value) {
   if (value === 'enabled') return { active: true, label: 'ENABLED' }
   if (value === 'rehearsal') return { active: false, rehearsal: true, label: 'REHEARSAL (enumeration and assessment only, no publication)' }

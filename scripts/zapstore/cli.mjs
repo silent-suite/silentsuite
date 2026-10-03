@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 
 import { selectScheduleCandidates } from './lib/eligibility.mjs'
-import { activationState, requireProtectedSchedule } from './lib/dispatch.mjs'
+import { activationState, requireManualRehearsal, requireProtectedSchedule } from './lib/dispatch.mjs'
 import { createGitHubClient, hashFromChecksumText } from './lib/github.mjs'
 import { buildBinding, revalidateBinding, verifyApkHashes } from './lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from './lib/apksigner.mjs'
@@ -104,6 +104,23 @@ const commands = {
     output('rehearsal', String(Boolean(state.rehearsal)))
     output('revision', revision)
     summary(`### Zapstore lane: ${state.label}\n\nProtected revision ${revision} supplied this workflow definition and is the only revision any job checks out. ${state.active ? 'Eligible releases will be reconciled; only the newest eligible release can be published, and only if absent from the relay.' : 'No publication can happen in this run.'}`)
+  },
+
+  // Manual assessment-only rehearsal. Emits only the revision: no activation
+  // state, so nothing downstream can read it as permission to publish.
+  'admit-rehearsal'() {
+    const { revision } = requireManualRehearsal({
+      eventName: process.env.GITHUB_EVENT_NAME,
+      ref: process.env.GITHUB_REF,
+      workflowRef: process.env.GITHUB_WORKFLOW_REF,
+      sha: process.env.GITHUB_SHA,
+      workflowSha: process.env.GITHUB_WORKFLOW_SHA,
+      repository: process.env.GITHUB_REPOSITORY,
+    })
+    if (!opt('workspace')) throw new Error('admit-rehearsal requires --workspace')
+    requireCheckout(opt('workspace'), revision)
+    output('revision', revision)
+    summary(`### Zapstore manual rehearsal: ASSESSMENT ONLY\n\nManually dispatched from protected main at ${revision}; this revision supplied the rehearsal definition and is the only revision any job checks out. This run has no plan, publish or notify job, no environment and no signer secret: it cannot sign, upload or publish anything, and an assessed action of publish is not authorization. It is not evidence that the scheduled lane triggers, and not signing proof.`)
   },
 
   'checkout-guard'() {
