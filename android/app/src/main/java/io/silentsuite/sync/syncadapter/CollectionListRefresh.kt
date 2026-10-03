@@ -73,6 +73,7 @@ internal object CollectionListRefresh {
             fun listFrom(startStoken: String?) {
                 var stoken = startStoken
                 var done = false
+                val paging = PagedListingGuard("collection", startStoken, PagedListingGuard.MAX_COLLECTION_PAGES)
                 while (!done) {
                     guard.check()
                     val colList = colMgr.list(Constants.SYNCED_COLLECTION_TYPES, FetchOptions().stoken(stoken))
@@ -90,6 +91,7 @@ internal object CollectionListRefresh {
                     }
                     stoken = colList.stoken
                     done = colList.isDone
+                    paging.pageApplied(stoken, done)
                 }
             }
 
