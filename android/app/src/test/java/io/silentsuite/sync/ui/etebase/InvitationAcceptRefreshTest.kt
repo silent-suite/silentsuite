@@ -64,7 +64,7 @@ class InvitationAcceptRefreshTest {
         )
         assertTrue(
             "forced refresh must perform a full collection-list fetch instead of reusing the old stoken",
-            listRefreshSource.contains("var stoken = if (forceRefresh || discoveryChanged) null else etebaseLocalCache.loadStoken()")
+            listRefreshSource.contains("listFrom(if (forceRefresh || discoveryChanged) null else savedStoken)")
         )
     }
 }

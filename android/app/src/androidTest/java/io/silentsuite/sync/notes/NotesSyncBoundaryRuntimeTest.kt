@@ -358,7 +358,7 @@ class NotesSyncBoundaryRuntimeTest {
             status(other, "gen-other").lastSuccessAt != null
         }
         assertEquals(setOf("One"), cachedNotes(other, notebook))
-        // The waiting listing holds its own account's cache, so only the coordinator is asked about it.
+        // The coordinator, not the cache, says whether the first account's run is still going.
         assertTrue("the first account's run is still waiting for its answer", NotesSyncCoordinator.isActive(slowIdentity))
 
         listing.release()
