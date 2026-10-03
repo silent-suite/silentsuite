@@ -177,8 +177,11 @@ Legacy mode applies only to observed APK events that carry no `commit` tag:
 `i`, `x`, `version`, `version_code`, `size`, `m`, `apk_certificate_hash` must
 match exactly once, and the CDN `url` must be among the observed `url` tags
 (hand publications from a GitHub source also carry the original download URL);
-the release must carry `i`, `version`, `d`, `c` equal to expected and exactly
-one `e` pointing at a matching APK. Legacy sets are never rewritten.
+the release must carry exactly one matching `i`, `version` and `d`, and exactly
+one `c` equal to expected except that a numeric `X.Y.Z-beta` version on channel
+`beta` may match the lane's `main`. Exactly one `e` must point at a matching APK.
+Legacy sets are never rewritten; lane-owned and orphan releases retain exact
+channel comparison.
 
 ### 1.5 Invariants
 
