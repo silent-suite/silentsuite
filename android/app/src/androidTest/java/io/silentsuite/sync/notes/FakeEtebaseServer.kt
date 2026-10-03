@@ -17,12 +17,18 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * An in-process stand-in for the Etebase server that answers the calls a Notes sync makes (signup,
- * collection create, collection list, item upload, item list), so the real binding, runner, shared
- * collection refresh, and local cache all run unchanged in a runtime test. It answers from an OkHttp
- * interceptor, so no socket is opened and no host is resolved.
+ * collection create, collection list and fetch, item upload, item list and fetch), so the real
+ * binding, runner, shared collection refresh, and local cache all run unchanged in a runtime test. It
+ * answers from an OkHttp interceptor, so no socket is opened and no host is resolved.
  *
  * Collections and items are stored as uploaded, still encrypted, and listed back in the order they
- * last changed, a page at a time ([collectionPageSize], [itemPageSize]).
+ * last changed, a page at a time ([collectionPageSize], [itemPageSize]). Uploads behave as the
+ * project's server does (`server/etebase_server/fastapi/routers/collection.py`, item_create and
+ * item_bulk_common): a transaction checks each item's etag against the item's current revision and
+ * fails as a whole with 409, a batch does not check, an upload of the revision that is already
+ * current succeeds without a change, an upload with a sync token that is not the collection's current
+ * one gets 409, and a read-only member gets 403. [answer], [loseAnswer] and [answerAsFor] make it
+ * misbehave on purpose.
  *
  * [hold] parks the next matching request until the test releases it, which is how a test puts a
  * request in flight. A parked request ignores thread interrupts, like a blocking socket read, so a
@@ -55,6 +61,8 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         var removedAt: Long? = null,
         /** By item uid; an item uploaded again moves to the end. */
         val items: LinkedHashMap<String, StoredItem> = LinkedHashMap(),
+        /** The server's access levels: 0 read-only, 1 admin, 2 read-write. */
+        var accessLevel: Long = 1L,
     )
 
     private val collections = LinkedHashMap<String, StoredCollection>()
@@ -99,6 +107,42 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
     private val holds = CopyOnWriteArrayList<Hold>()
 
     /**
+     * An answer given instead of the route's own: a status with an error body, a dropped connection, the
+     * route's answer lost after it was applied, or the answer the route gives for another path.
+     */
+    private class Scripted(
+        val method: String,
+        val path: Regex,
+        var times: Int,
+        val code: Int? = null,
+        val lose: Boolean = false,
+        val answerFor: String? = null,
+    )
+
+    private val scripted = CopyOnWriteArrayList<Scripted>()
+
+    /** The number of items in each upload the stand-in routed, in order; a scripted answer is not counted. */
+    val uploadSizes: MutableList<Int> = CopyOnWriteArrayList()
+
+    /**
+     * Answers the next [times] requests whose method and path match with [code] and an error body,
+     * without applying them; [code] null drops the connection before anything is applied instead.
+     */
+    fun answer(method: String, pathPattern: Regex, code: Int?, times: Int = 1) {
+        scripted += Scripted(method, pathPattern, times, code = code)
+    }
+
+    /** The next [times] matching requests are applied, and then their answer is lost: the connection drops. */
+    fun loseAnswer(method: String, pathPattern: Regex, times: Int = 1) {
+        scripted += Scripted(method, pathPattern, times, lose = true)
+    }
+
+    /** The next [times] requests for [path] get the answer the server gives for [otherPath], as a server that mixes up rows would. */
+    fun answerAsFor(method: String, path: String, otherPath: String, times: Int = 1) {
+        scripted += Scripted(method, Regex(Regex.escape(path)), times, answerFor = otherPath)
+    }
+
+    /**
      * Parks the next request whose method and path (after "/api/v1/") match, until released. With
      * [skip], that many matching requests pass first, so a later page of a listing can be parked.
      */
@@ -128,6 +172,16 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
     fun removeMembership(uid: String) = synchronized(lock) {
         collections.getValue(uid).removedAt = ++counter
     }
+
+    /** As if the owner changed this account's access to [uid]; a listing from an earlier cursor shows it. */
+    fun setAccessLevel(uid: String, level: Long) = synchronized(lock) {
+        val stored = collections.getValue(uid)
+        stored.accessLevel = level
+        stored.changedAt = ++counter
+    }
+
+    /** The uids of the items the server holds in [uid], deleted ones included. */
+    fun itemUids(uid: String): Set<String> = synchronized(lock) { collections.getValue(uid).items.keys.toSet() }
 
     /** A new item stoken for a collection, as if another device changed its notes. */
     fun touchItems(uid: String) = synchronized(lock) {
@@ -160,7 +214,20 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
             awaitUninterruptibly(hold.releaseLatch, hold.swallowInterrupt)
         }
         val body = request.body?.let { Buffer().also(it::writeTo).readByteArray() }
-        val (code, payload) = synchronized(lock) { route(request.method, path, request.url, body) }
+        val script = synchronized(scripted) {
+            scripted.firstOrNull { it.times > 0 && it.method == request.method && it.path.matches(path) }?.also { it.times-- }
+        }
+        if (script != null && !script.lose && script.answerFor == null) {
+            if (script.code == null) throw IOException("the fake Etebase server dropped the connection")
+            return respond(request, script.code, TestMsgPack.encode(linkedMapOf("code" to "scripted", "detail" to "a scripted answer")))
+        }
+        val routed = script?.answerFor ?: path
+        val (code, payload) = synchronized(lock) { route(request.method, routed, request.url, body) }
+        if (script?.lose == true) throw IOException("the fake Etebase server dropped the connection after applying the request")
+        return respond(request, code, payload)
+    }
+
+    private fun respond(request: okhttp3.Request, code: Int, payload: ByteArray): Response {
         return Response.Builder()
             .request(request)
             .protocol(Protocol.HTTP_1_1)
@@ -204,19 +271,18 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         }
         method == "POST" && path == "collection/list_multi/" -> 200 to TestMsgPack.encode(listCollections(url.queryParameter("stoken")))
         method == "POST" && ITEM_UPLOAD.matches(path) -> {
-            val stored = collections[ITEM_UPLOAD.find(path)!!.groupValues[1]]
-            if (stored == null || stored.removedAt != null) {
-                noCollection()
-            } else {
-                val input = TestMsgPack.decode(body!!) as Map<String, Any?>
-                for (item in input["items"] as List<Map<String, Any?>>) {
-                    val uid = item["uid"] as String
-                    stored.items.remove(uid)
-                    stored.items[uid] = StoredItem(item.filterKeys { it != "etag" }, ++counter)
-                    stored.itemStoken = "i$counter"
-                    stored.changedAt = counter
-                }
-                200 to ByteArray(0)
+            val match = ITEM_UPLOAD.find(path)!!
+            val stored = collections[match.groupValues[1]]
+            val input = TestMsgPack.decode(body!!) as Map<String, Any?>
+            uploadSizes += (input["items"] as List<*>).size
+            val stoken = url.queryParameter("stoken")
+            when {
+                stored == null || stored.removedAt != null -> noCollection()
+                stored.accessLevel == 0L -> 403 to TestMsgPack.encode(linkedMapOf(
+                    "code" to "no_write_access", "detail" to "You need write access to write to this collection"))
+                stoken != null && stoken != stored.itemStoken ->
+                    409 to TestMsgPack.encode(linkedMapOf("code" to "stale_stoken", "detail" to "Stoken is too old"))
+                else -> upload(stored, input, validateEtag = match.groupValues[2] == "transaction")
             }
         }
         method == "GET" && ITEM_LIST.matches(path) -> {
@@ -224,8 +290,66 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
             if (stored == null || stored.removedAt != null) noCollection()
             else 200 to TestMsgPack.encode(listItems(stored, url.queryParameter("stoken")))
         }
+        method == "GET" && ITEM_GET.matches(path) -> {
+            val match = ITEM_GET.find(path)!!
+            val stored = collections[match.groupValues[1]]
+            val item = stored?.items?.get(match.groupValues[2])
+            when {
+                stored == null || stored.removedAt != null -> noCollection()
+                // The project's server has no 404 for this: queryset.get raises, and the answer is a 500.
+                item == null -> 500 to TestMsgPack.encode(linkedMapOf("code" to "server_error", "detail" to "Internal Server Error"))
+                else -> 200 to TestMsgPack.encode(item.body)
+            }
+        }
+        method == "GET" && COLLECTION_GET.matches(path) -> {
+            val stored = collections[COLLECTION_GET.find(path)!!.groupValues[1]]
+            if (stored == null || stored.removedAt != null) noCollection() else 200 to TestMsgPack.encode(collectionOut(stored))
+        }
         else -> 404 to TestMsgPack.encode(linkedMapOf("code" to "not_found", "detail" to "$method $path"))
     }
+
+    /**
+     * item_bulk_common and item_create: all or nothing, and with [validateEtag] each item's etag must
+     * name the item's current revision, unless the item is already at the revision being uploaded.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun upload(stored: StoredCollection, input: Map<String, Any?>, validateEtag: Boolean): Pair<Int, ByteArray> {
+        val items = input["items"] as List<Map<String, Any?>>
+        val errors = items.mapNotNull { item ->
+            val uid = item["uid"] as String
+            val current = stored.items[uid]?.let { revisionOf(it.body) }
+            when {
+                current == revisionOf(item) -> null
+                validateEtag && current != item["etag"] -> linkedMapOf("code" to "wrong_etag",
+                    "detail" to "Wrong etag. Expected $current got ${item["etag"]}", "field" to uid)
+                else -> null
+            }
+        }
+        if (errors.isNotEmpty()) {
+            return 409 to TestMsgPack.encode(linkedMapOf("code" to "item_failed", "detail" to "Items failed to validate", "errors" to errors))
+        }
+        for (item in items) {
+            val uid = item["uid"] as String
+            if (stored.items[uid]?.let { revisionOf(it.body) } == revisionOf(item)) continue
+            stored.items.remove(uid)
+            stored.items[uid] = StoredItem(item.filterKeys { it != "etag" }, ++counter)
+            stored.itemStoken = "i$counter"
+            stored.changedAt = counter
+        }
+        return 200 to ByteArray(0)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun revisionOf(item: Map<String, Any?>): String? = (item["content"] as? Map<String, Any?>)?.get("uid") as? String
+
+    @Suppress("UNCHECKED_CAST")
+    private fun collectionOut(stored: StoredCollection): Map<String, Any?> = linkedMapOf(
+        "collectionType" to stored.body["collectionType"],
+        "collectionKey" to stored.body["collectionKey"],
+        "accessLevel" to stored.accessLevel,
+        "stoken" to stored.itemStoken,
+        "item" to (stored.body["item"] as Map<String, Any?>).filterKeys { it != "etag" },
+    )
 
     @Suppress("UNCHECKED_CAST")
     private fun store(collectionIn: Map<String, Any?>, hiddenFromIncremental: Boolean) {
@@ -268,17 +392,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
             .sortedBy { it.changedAt }
         val page = changed.take(collectionPageSize)
         val done = changed.size <= collectionPageSize
-        val data = page
-            .map { stored ->
-                val item = (stored.body["item"] as Map<String, Any?>).filterKeys { it != "etag" }
-                linkedMapOf(
-                    "collectionType" to stored.body["collectionType"],
-                    "collectionKey" to stored.body["collectionKey"],
-                    "accessLevel" to 1L,
-                    "stoken" to stored.itemStoken,
-                    "item" to item,
-                )
-            }
+        val data = page.map(::collectionOut)
         val next = if (done) "s$counter" else (if (fromScratch) "f" else "s") + page.last().changedAt
         val result = linkedMapOf<String, Any?>("data" to data, "stoken" to next, "done" to done)
         if (since != null && !fromScratch) {
@@ -290,7 +404,9 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
 
     private companion object {
         val ITEM_LIST = Regex("collection/([^/]+)/item/")
-        val ITEM_UPLOAD = Regex("collection/([^/]+)/item/(?:batch|transaction)/")
+        val ITEM_UPLOAD = Regex("collection/([^/]+)/item/(batch|transaction)/")
+        val ITEM_GET = Regex("collection/([^/]+)/item/([^/]+)/")
+        val COLLECTION_GET = Regex("collection/([^/]+)/")
     }
 }
 

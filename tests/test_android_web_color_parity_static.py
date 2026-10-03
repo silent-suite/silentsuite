@@ -925,7 +925,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("102", "100", "54"):
+    for count in ("117", "115", "69"):
         assert count in runner
 
 
@@ -1048,6 +1048,6 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert "for _ in {1..10}; do" in focused_script
     assert focused_script.rstrip().endswith(runner)
     assert all(step.get("name") != "Configure required system navigation mode" for step in focused_job["steps"])
-    assert "expected_sizes={'21:mixed':1,'21:remaining':101,'35:all':102,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':54}" in workflow
+    assert "expected_sizes={'21:mixed':1,'21:remaining':116,'35:all':117,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':69}" in workflow
     runner_source = source("android/scripts/run-focused-runtime-tests.sh")
-    assert '"21:remaining": 100' in runner_source
+    assert '"21:remaining": 115' in runner_source

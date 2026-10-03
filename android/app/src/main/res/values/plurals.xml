@@ -8,4 +8,12 @@
         <item quantity="one">Recent activity: %d item</item>
         <item quantity="other">Recent activity: %d items</item>
     </plurals>
+    <plurals name="notes_waiting_changes">
+        <item quantity="one">%d change not synced yet</item>
+        <item quantity="other">%d changes not synced yet</item>
+    </plurals>
+    <plurals name="notes_items_unreadable">
+        <item quantity="one">%d item in this notebook could not be read</item>
+        <item quantity="other">%d items in this notebook could not be read</item>
+    </plurals>
 </resources>
