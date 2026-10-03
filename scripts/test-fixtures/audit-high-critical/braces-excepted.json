@@ -1,0 +1,30 @@
+{
+  "advisories": {
+    "1240992": {
+      "id": 1240992,
+      "github_advisory_id": "GHSA-vfj7-8cjw-p6xm",
+      "url": "https://github.com/advisories/GHSA-vfj7-8cjw-p6xm",
+      "severity": "high",
+      "module_name": "braces",
+      "title": "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
+      "vulnerable_versions": "<=3.0.3",
+      "patched_versions": "<0.0.0",
+      "findings": [
+        {
+          "version": "3.0.3",
+          "paths": [
+            "apps/web > @ducanh2912/next-pwa@10.2.9 > fast-glob@3.3.2 > micromatch@4.0.8 > braces@3.0.3",
+            "apps/web > eslint-config-next@15.5.24 > @next/eslint-plugin-next@15.5.24 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3",
+            "apps/web > tailwindcss@3.4.19 > chokidar@3.6.0 > braces@3.0.3",
+            "apps/web > tailwindcss@3.4.19 > fast-glob@3.3.3 > micromatch@4.0.8 > braces@3.0.3",
+            "apps/web > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3",
+            "apps/web > tailwindcss-animate@1.0.7 > tailwindcss@3.4.19 > chokidar@3.6.0 > braces@3.0.3",
+            "apps/web > tailwindcss-animate@1.0.7 > tailwindcss@3.4.19 > fast-glob@3.3.3 > micromatch@4.0.8 > braces@3.0.3",
+            "apps/web > tailwindcss-animate@1.0.7 > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3"
+          ]
+        }
+      ]
+    }
+  },
+  "metadata": { "vulnerabilities": { "critical": 0, "high": 1, "moderate": 0, "low": 0 } }
+}
