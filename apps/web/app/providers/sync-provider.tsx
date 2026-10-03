@@ -99,6 +99,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
     let unsubChange: (() => void) | null = null
     let unsubStatus: (() => void) | null = null
+    let unwatchEngine: (() => void) | null = null
 
     async function init() {
       const initStartedAt = markSyncTimingStart()
@@ -156,6 +157,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         const statusHandlerStartedAt = nowMs()
         unsubStatus = wireStatusHandler()
         safeLogSyncTiming('wire-status-handler', statusHandlerStartedAt, { status: unsubStatus ? 'ok' : 'skipped' })
+        if (!unsubChange || !unsubStatus) watchForRecoveredSyncEngine()
 
         // Drain mutations queued before this reload now that the session, item
         // maps, and change handlers are live (initializeSync runs before the
@@ -503,9 +505,25 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
       })
     }
 
+    /**
+     * Initial collection discovery can fail before the SyncEngine starts; a
+     * later successful Retry starts it. Wire the missing handlers once then.
+     */
+    function watchForRecoveredSyncEngine() {
+      unwatchEngine = useEtebaseStore.subscribe((state) => {
+        if (!state.syncEngine) return
+        unwatchEngine?.()
+        unwatchEngine = null
+        if (!isCurrentAccountEpoch(accountEpoch)) return
+        if (!unsubChange) unsubChange = wireChangeHandler()
+        if (!unsubStatus) unsubStatus = wireStatusHandler()
+      })
+    }
+
     init()
 
     return () => {
+      if (unwatchEngine) unwatchEngine()
       if (unsubChange) unsubChange()
       if (unsubStatus) unsubStatus()
     }
