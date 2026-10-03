@@ -64,9 +64,47 @@ function auditBraces(stdout, now = bracesExpiry - 1) {
 
 test('accepts only the exact braces 3.0.3 tooling advisory before its expiry', () => {
   assert.equal(auditBraces(bracesReport()), 0)
-  assert.equal(auditBraces(bracesReport((parsed, advisory) => {
-    advisory.findings[0].paths = advisory.findings[0].paths.slice(0, 1)
-  })), 0)
+})
+
+test('fails closed unless the braces finding reports exactly the reviewed tooling path set', () => {
+  for (const [name, mutate] of [
+    ['path subset', (parsed, advisory) => { advisory.findings[0].paths = advisory.findings[0].paths.slice(0, 1) }],
+    ['duplicate path replacing a reviewed path', (parsed, advisory) => {
+      advisory.findings[0].paths[1] = advisory.findings[0].paths[0]
+    }],
+    ['duplicate path appended', (parsed, advisory) => { advisory.findings[0].paths.push(advisory.findings[0].paths[0]) }],
+    ['second finding', (parsed, advisory) => {
+      advisory.findings.push({ ...advisory.findings[0] })
+      parsed.metadata.vulnerabilities.high = 2
+    }],
+  ]) {
+    assert.equal(auditBraces(bracesReport(mutate)), 1, name)
+  }
+})
+
+test('reconciles pnpm 10.6.5 policy-severity counts with advisory findings before excepting braces', () => {
+  for (const [name, mutate] of [
+    ['excess high count', (parsed) => { parsed.metadata.vulnerabilities.high = 2 }],
+    ['excess critical count', (parsed) => { parsed.metadata.vulnerabilities.critical = 1 }],
+    ['negative high count', (parsed) => { parsed.metadata.vulnerabilities.high = -1 }],
+    ['high record without findings beside braces', (parsed) => {
+      parsed.advisories['2'] = JSON.parse(report('unknown-high.json')).advisories['1']
+      parsed.metadata.vulnerabilities.high = 2
+    }],
+    ['high record with findings and a short count', (parsed) => {
+      parsed.advisories['2'] = {
+        ...JSON.parse(report('unknown-high.json')).advisories['1'],
+        findings: [{ version: '1.0.0', paths: ['apps/web > unexpected-package@1.0.0'] }],
+      }
+    }],
+    ['duplicate finding versions', (parsed, advisory) => {
+      advisory.findings.push({ version: '3.0.3', paths: ['apps/web > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3'] })
+      parsed.metadata.vulnerabilities.high = 2
+    }],
+  ]) {
+    assert.equal(auditBraces(bracesReport(mutate)), 1, name)
+  }
+  assert.equal(auditBraces(bracesReport((parsed) => { parsed.metadata.vulnerabilities.moderate = 3 })), 0)
 })
 
 test('fails closed for the braces exception at and after its expiry boundary', () => {

@@ -8,7 +8,7 @@ function isObject(value) {
 // Owner-approved temporary exception for one leaf advisory with no patched release. It covers
 // only braces 3.0.3 reached through the reviewed build/lint tooling paths and fails closed at
 // expiry. Evidence and expiry remediation: docs/security/braces-ghsa-vfj7-8cjw-p6xm-exception.md
-const bracesException = Object.freeze({
+export const bracesException = Object.freeze({
   githubAdvisoryId: 'GHSA-vfj7-8cjw-p6xm',
   moduleName: 'braces',
   severity: 'high',
@@ -35,11 +35,29 @@ function isExcepted(advisory, now) {
     && advisory.module_name === exception.moduleName
     && advisory.severity === exception.severity
     && advisory.vulnerable_versions === exception.vulnerableVersions
-    && Array.isArray(advisory.findings) && advisory.findings.length > 0
-    && advisory.findings.every((finding) => isObject(finding)
-      && finding.version === exception.version
-      && Array.isArray(finding.paths) && finding.paths.length > 0
-      && finding.paths.every((path) => exception.paths.has(path)))
+    && Array.isArray(advisory.findings) && advisory.findings.length === 1
+    && isObject(advisory.findings[0])
+    && advisory.findings[0].version === exception.version
+    && Array.isArray(advisory.findings[0].paths)
+    && advisory.findings[0].paths.length === exception.paths.size
+    && new Set(advisory.findings[0].paths).size === exception.paths.size
+    && advisory.findings[0].paths.every((path) => exception.paths.has(path))
+}
+
+// pnpm 10.6.5 posts the lockfile tree to the registry's /-/npm/v1/security/audits endpoint and
+// returns its report unchanged; that report counts one vulnerability per (advisory, installed
+// version) finding. Policy severities must reconcile exactly before anything is excepted.
+function findingCount(advisory) {
+  if (!Array.isArray(advisory.findings) || advisory.findings.length === 0) return undefined
+  const versions = new Set()
+  for (const finding of advisory.findings) {
+    if (!isObject(finding) || typeof finding.version !== 'string' || finding.version.trim() === ''
+      || versions.has(finding.version)
+      || !Array.isArray(finding.paths) || finding.paths.length === 0
+      || !finding.paths.every((path) => typeof path === 'string' && path.trim() !== '')) return undefined
+    versions.add(finding.version)
+  }
+  return versions.size
 }
 
 function hasAdvisoryIdentity(advisory) {
@@ -78,6 +96,21 @@ function validateReport(report) {
     const metadataHasVulnerability = report.metadata.vulnerabilities[severity] > 0
     if (hasAdvisory !== metadataHasVulnerability) {
       return `Audit report has contradictory ${severity} vulnerability metadata.`
+    }
+  }
+
+  // Reconciliation is only required once an exception could suppress a policy-severity record.
+  if (advisories.some((advisory) => advisory.github_advisory_id === bracesException.githubAdvisoryId)) {
+    for (const severity of ['critical', 'high']) {
+      let findings = 0
+      for (const advisory of advisories.filter((candidate) => candidate.severity === severity)) {
+        const count = findingCount(advisory)
+        if (count === undefined) return `Audit report has malformed ${severity} advisory findings.`
+        findings += count
+      }
+      if (findings !== report.metadata.vulnerabilities[severity]) {
+        return `Audit report ${severity} vulnerability count does not match its advisory findings.`
+      }
     }
   }
 
