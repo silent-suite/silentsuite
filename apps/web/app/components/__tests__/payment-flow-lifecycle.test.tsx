@@ -84,6 +84,9 @@ const annualOffer = {
   },
 }
 
+// Billing mints the payment flow id server-side; it never equals the offer requestId.
+const serverFlowId = '6d1f0a94-8c52-4b7e-9f31-2a5d6e8b0c47'
+
 const activation = {
   contractVersion: 2,
   checkoutIntentToken,
@@ -107,7 +110,7 @@ function mockBilling(cancel?: () => Promise<Response>, paymentFlow?: () => Promi
     if (url.endsWith('/subscription/offers/v2')) return response(annualOffer)
     if (url.endsWith('/subscription/offers/v2/activate')) return response(activation)
     if (url.endsWith('/subscription/payment-flows/v2')) {
-      return paymentFlow?.() ?? response({ contractVersion: 2, kind: 'stripe', authorityId: annualOffer.requestId, clientSecret: 'pi_secret_value' })
+      return paymentFlow?.() ?? response({ contractVersion: 2, kind: 'stripe', authorityId: serverFlowId, clientSecret: 'pi_secret_value' })
     }
     if (url.endsWith('/subscription/payment-flows/cancel')) return cancel?.() ?? response({ cancelled: true, flowKind: 'stripe_pay_now' })
     if (url.includes('/subscription/crypto/invoice/')) {
@@ -170,7 +173,7 @@ describe('payment lifecycle never cancels an authority implicitly', () => {
 
   it('makes no cancellation request when a Bitcoin authority is unmounted or the page is hidden', async () => {
     mockBilling(undefined, async () => response({
-      contractVersion: 2, kind: 'btcpay', authorityId: annualOffer.requestId,
+      contractVersion: 2, kind: 'btcpay', authorityId: serverFlowId,
       checkoutUrl: 'https://btcpay.test/i/abc123', invoiceId: 'invoice-1', invoiceLookupToken: 'B'.repeat(43),
     }))
     const view = render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
