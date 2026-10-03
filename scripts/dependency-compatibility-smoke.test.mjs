@@ -62,6 +62,29 @@ for (const [line, minimatch, minimatchRequire, braceVersion] of [
   })
 }
 
+test('braces 3.0.3 expands the static apps/web tailwind content globs through its tooling consumers', () => {
+  const webRequire = requireFrom('apps/web/package.json')
+  const tailwindRequire = createRequire(webRequire.resolve('tailwindcss/package.json'))
+  const pwaRequire = createRequire(webRequire.resolve('@ducanh2912/next-pwa'))
+  for (const consumerRequire of [
+    createRequire(tailwindRequire.resolve('micromatch')),
+    createRequire(tailwindRequire.resolve('chokidar')),
+    createRequire(pwaRequire.resolve('fast-glob')),
+  ]) {
+    const consumerBraces = consumerRequire.resolve('braces/package.json')
+    assert.equal(JSON.parse(readFileSync(consumerBraces, 'utf8')).version, '3.0.3')
+  }
+
+  const micromatch = tailwindRequire('micromatch')
+  const fastGlob = tailwindRequire('fast-glob')
+  const pattern = 'app/**/*.{js,ts,jsx,tsx,mdx}'
+  assert.equal(micromatch.isMatch('app/(app)/settings/page.tsx', pattern), true)
+  assert.equal(micromatch.isMatch('app/globals.css', pattern), false)
+  const matches = fastGlob.sync(pattern, { cwd: resolve(import.meta.dirname, '..', 'apps/web') })
+  assert.ok(matches.includes('app/layout.tsx'))
+  assert.ok(matches.every((file) => /\.(js|ts|jsx|tsx|mdx)$/.test(file)))
+})
+
 test('AJV 8 validates URI format through patched fast-uri', () => {
   const ajv = new Ajv({ strict: false })
   addFormats(ajv)
