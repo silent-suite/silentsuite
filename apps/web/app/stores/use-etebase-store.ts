@@ -235,6 +235,23 @@ async function startSyncEngine(
     pollIntervalMs: 30_000,
   })
 
+  try {
+    return await trackAndStartSyncEngine(engine, account, collections, accountEpoch, cacheEnabled, diagnostics)
+  } catch (err) {
+    // A partially started engine may already hold a poll or reconnect timer.
+    engine.stop()
+    throw err
+  }
+}
+
+async function trackAndStartSyncEngine(
+  engine: any,
+  account: any,
+  collections: Record<CollectionTypeKey, any[]>,
+  accountEpoch: number,
+  cacheEnabled: boolean,
+  diagnostics?: RestoreDiagnosticsRecorder,
+): Promise<any | null> {
   // Track all collections
   diagnostics?.startPhase('syncEngineTrackCollections')
   for (const [key, colType] of COLLECTION_DEFINITIONS) {

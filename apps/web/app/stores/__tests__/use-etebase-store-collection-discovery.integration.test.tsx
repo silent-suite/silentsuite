@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto'
 import { act, render, screen, waitFor } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { enqueue, getAll } from '@/app/lib/offline-queue'
 import {
@@ -15,6 +16,7 @@ import { TEST_FINGERPRINT, queueGuard, resetRealOfflineQueue } from './offline-q
 const engineControl = vi.hoisted(() => ({
   instances: [] as any[],
   startGate: null as Promise<void> | null,
+  startError: null as Error | null,
 }))
 const coreMock = vi.hoisted(() => {
   class FakeSyncEngine {
@@ -22,9 +24,12 @@ const coreMock = vi.hoisted(() => {
     untrackCollection = vi.fn()
     setStoken = vi.fn()
     onStokenAdvance = vi.fn()
-    onChange = vi.fn(() => () => {})
-    onStatusChange = vi.fn(() => () => {})
-    start = vi.fn(async () => { if (engineControl.startGate) await engineControl.startGate })
+    onChange = vi.fn(() => vi.fn())
+    onStatusChange = vi.fn(() => vi.fn())
+    start = vi.fn(async () => {
+      if (engineControl.startGate) await engineControl.startGate
+      if (engineControl.startError) throw engineControl.startError
+    })
     stop = vi.fn()
     pause = vi.fn()
     resume = vi.fn()
@@ -137,6 +142,7 @@ describe('useEtebaseStore collection discovery error state', () => {
     sentryMock.captureException.mockReset()
     engineControl.instances.length = 0
     engineControl.startGate = null
+    engineControl.startError = null
   })
 
   it('marks every visible domain failed and reports each terminal domain when a restored discovery page fails', async () => {
@@ -385,5 +391,185 @@ describe('useEtebaseStore collection discovery error state', () => {
     const statusHandler = (engine.onStatusChange.mock.calls[0] as unknown[])[0] as (status: string) => void
     act(() => statusHandler('error'))
     expect(useSyncStore.getState().syncStatus).toBe('error')
+  })
+
+  describe('sync engine and provider lifecycle', () => {
+    function gatedPlan(gated: string) {
+      let release: (fail: boolean) => void = () => {}
+      let failNext = false
+      const gate = new Promise<void>((resolve) => {
+        release = (fail) => {
+          failNext = fail
+          resolve()
+        }
+      })
+      let gateOpen = false
+      const plan: ListPlan = {
+        ...existingPlan(),
+        [gated]: async () => {
+          if (!gateOpen) {
+            await gate
+            gateOpen = true
+            if (failNext) throw serverError()
+          }
+          return page([collection(`${gated}-1`)])
+        },
+      }
+      return { plan, release: (fail: boolean) => release(fail) }
+    }
+
+    async function settleProvider() {
+      await waitFor(() => expect(useEtebaseStore.getState().isInitialized).toBe(true))
+      await waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+    }
+
+    it('a provider disposed during a failing initial discovery registers no watcher and wires no retry engine', async () => {
+      const { plan, release } = gatedPlan(CALENDAR)
+      fakeAccount(plan)
+      const subscribeSpy = vi.spyOn(useEtebaseStore, 'subscribe')
+      try {
+        const { unmount } = render(<SyncProvider><div /></SyncProvider>)
+        await vi.waitFor(() => expect(coreMock.restoreSession).toHaveBeenCalled())
+        unmount()
+        release(true)
+        await settleProvider()
+
+        await useEtebaseStore.getState().reconcileCollections()
+
+        expect(engineControl.instances).toHaveLength(1)
+        expect(subscribeSpy).not.toHaveBeenCalled()
+        expect(engineControl.instances[0].onChange).not.toHaveBeenCalled()
+        expect(engineControl.instances[0].onStatusChange).not.toHaveBeenCalled()
+      } finally {
+        subscribeSpy.mockRestore()
+      }
+    })
+
+    it('a provider disposed during a successful initial discovery attaches no engine handlers', async () => {
+      const { plan, release } = gatedPlan(CALENDAR)
+      fakeAccount(plan)
+      const { unmount } = render(<SyncProvider><div /></SyncProvider>)
+      await vi.waitFor(() => expect(coreMock.restoreSession).toHaveBeenCalled())
+      unmount()
+      release(false)
+      await settleProvider()
+
+      expect(engineControl.instances).toHaveLength(1)
+      expect(useEtebaseStore.getState().syncEngine).toBe(engineControl.instances[0])
+      expect(engineControl.instances[0].onChange).not.toHaveBeenCalled()
+      expect(engineControl.instances[0].onStatusChange).not.toHaveBeenCalled()
+    })
+
+    it('a provider disposed while the retry engine start is pending attaches no handlers', async () => {
+      let failTasks = true
+      fakeAccount({
+        ...existingPlan(),
+        [TASKS]: async () => {
+          if (failTasks) throw serverError()
+          return page([collection('tasks-1')])
+        },
+      })
+      const { unmount } = render(<SyncProvider><div /></SyncProvider>)
+      await settleProvider()
+      failTasks = false
+      let releaseStart = () => {}
+      engineControl.startGate = new Promise<void>((resolve) => { releaseStart = resolve })
+
+      const pending = useEtebaseStore.getState().reconcileCollections()
+      await vi.waitFor(() => expect(engineControl.instances[0]?.start).toHaveBeenCalled())
+      unmount()
+      releaseStart()
+      await pending
+
+      expect(useEtebaseStore.getState().syncEngine).toBe(engineControl.instances[0])
+      expect(engineControl.instances[0].onChange).not.toHaveBeenCalled()
+      expect(engineControl.instances[0].onStatusChange).not.toHaveBeenCalled()
+    })
+
+    it('StrictMode replay wires a retry engine once and unmount releases both handlers', async () => {
+      let failTasks = true
+      fakeAccount({
+        ...existingPlan(),
+        [TASKS]: async () => {
+          if (failTasks) throw serverError()
+          return page([collection('tasks-1')])
+        },
+      })
+      const { unmount } = render(<StrictMode><SyncProvider><div /></SyncProvider></StrictMode>)
+      await settleProvider()
+      failTasks = false
+
+      await useEtebaseStore.getState().reconcileCollections()
+      const engine = engineControl.instances[0]
+      await waitFor(() => expect(engine.onChange).toHaveBeenCalledTimes(1))
+      expect(engine.onStatusChange).toHaveBeenCalledTimes(1)
+      unmount()
+      unmount()
+
+      expect(engine.onChange.mock.results[0].value).toHaveBeenCalledTimes(1)
+      expect(engine.onStatusChange.mock.results[0].value).toHaveBeenCalledTimes(1)
+    })
+
+    it('StrictMode replay wires the startup engine once and unmount releases both handlers', async () => {
+      fakeAccount(existingPlan())
+      const { unmount } = render(<StrictMode><SyncProvider><div /></SyncProvider></StrictMode>)
+      await settleProvider()
+      const engine = engineControl.instances[0]
+      await waitFor(() => expect(engine.onChange).toHaveBeenCalledTimes(1))
+      expect(engine.onStatusChange).toHaveBeenCalledTimes(1)
+
+      unmount()
+
+      expect(engine.onChange.mock.results[0].value).toHaveBeenCalledTimes(1)
+      expect(engine.onStatusChange.mock.results[0].value).toHaveBeenCalledTimes(1)
+    })
+
+    it('stops an engine whose initial start throws', async () => {
+      fakeAccount(existingPlan())
+      engineControl.startError = new Error('engine start failed')
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      try {
+        await useEtebaseStore.getState().initialize()
+      } finally {
+        errorSpy.mockRestore()
+      }
+
+      expect(engineControl.instances).toHaveLength(1)
+      expect(engineControl.instances[0].stop).toHaveBeenCalledTimes(1)
+      expect(useEtebaseStore.getState().syncEngine).toBeNull()
+    })
+
+    it('stops a retry engine whose start throws and starts exactly one owned engine on the next retry', async () => {
+      let failTasks = true
+      fakeAccount({
+        ...existingPlan(),
+        [TASKS]: async () => {
+          if (failTasks) throw serverError()
+          return page([collection('tasks-1')])
+        },
+      })
+      await useEtebaseStore.getState().initialize()
+      failTasks = false
+      engineControl.startError = new Error('engine start failed')
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      try {
+        await expect(useEtebaseStore.getState().reconcileCollections()).rejects.toThrow('engine start failed')
+      } finally {
+        errorSpy.mockRestore()
+      }
+      expect(engineControl.instances).toHaveLength(1)
+      expect(engineControl.instances[0].stop).toHaveBeenCalledTimes(1)
+      expect(useEtebaseStore.getState().syncEngine).toBeNull()
+
+      engineControl.startError = null
+      await useEtebaseStore.getState().reconcileCollections()
+
+      expect(engineControl.instances).toHaveLength(2)
+      expect(useEtebaseStore.getState().syncEngine).toBe(engineControl.instances[1])
+      expect(engineControl.instances[1].start).toHaveBeenCalledTimes(1)
+      expect(engineControl.instances[1].stop).not.toHaveBeenCalled()
+    })
   })
 })
