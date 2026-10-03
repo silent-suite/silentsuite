@@ -5,6 +5,43 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+// Owner-approved temporary exception for one leaf advisory with no patched release. It covers
+// only braces 3.0.3 reached through the reviewed build/lint tooling paths and fails closed at
+// expiry. Evidence and expiry remediation: docs/security/braces-ghsa-vfj7-8cjw-p6xm-exception.md
+const bracesException = Object.freeze({
+  githubAdvisoryId: 'GHSA-vfj7-8cjw-p6xm',
+  moduleName: 'braces',
+  severity: 'high',
+  vulnerableVersions: '<=3.0.3',
+  version: '3.0.3',
+  expiresAt: '2026-10-10T00:00:00Z',
+  paths: new Set([
+    'apps/web > @ducanh2912/next-pwa@10.2.9 > fast-glob@3.3.2 > micromatch@4.0.8 > braces@3.0.3',
+    'apps/web > eslint-config-next@15.5.24 > @next/eslint-plugin-next@15.5.24 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3',
+    'apps/web > tailwindcss@3.4.19 > chokidar@3.6.0 > braces@3.0.3',
+    'apps/web > tailwindcss@3.4.19 > fast-glob@3.3.3 > micromatch@4.0.8 > braces@3.0.3',
+    'apps/web > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3',
+    'apps/web > tailwindcss-animate@1.0.7 > tailwindcss@3.4.19 > chokidar@3.6.0 > braces@3.0.3',
+    'apps/web > tailwindcss-animate@1.0.7 > tailwindcss@3.4.19 > fast-glob@3.3.3 > micromatch@4.0.8 > braces@3.0.3',
+    'apps/web > tailwindcss-animate@1.0.7 > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3',
+  ]),
+})
+
+function isExcepted(advisory, now) {
+  const exception = bracesException
+  return Number.isFinite(now) && now < Date.parse(exception.expiresAt)
+    && advisory.github_advisory_id === exception.githubAdvisoryId
+    && advisory.url === `https://github.com/advisories/${exception.githubAdvisoryId}`
+    && advisory.module_name === exception.moduleName
+    && advisory.severity === exception.severity
+    && advisory.vulnerable_versions === exception.vulnerableVersions
+    && Array.isArray(advisory.findings) && advisory.findings.length > 0
+    && advisory.findings.every((finding) => isObject(finding)
+      && finding.version === exception.version
+      && Array.isArray(finding.paths) && finding.paths.length > 0
+      && finding.paths.every((path) => exception.paths.has(path)))
+}
+
 function hasAdvisoryIdentity(advisory) {
   const id = advisory.id
   if ((typeof id === 'string' && id.trim() !== '') || (Number.isInteger(id) && id > 0)) return true
@@ -47,7 +84,7 @@ function validateReport(report) {
   return undefined
 }
 
-export function runAudit({ spawn = spawnSync, log = console.log, error = console.error } = {}) {
+export function runAudit({ spawn = spawnSync, log = console.log, error = console.error, now = Date.now } = {}) {
   let result
   try {
     result = spawn('pnpm', ['audit', '--audit-level=high', '--json'], {
@@ -82,10 +119,16 @@ export function runAudit({ spawn = spawnSync, log = console.log, error = console
   }
 
   const advisories = Object.values(report.advisories)
-  const highCritical = advisories.filter((advisory) => ['high', 'critical'].includes(advisory.severity))
+  const currentTime = now()
+  const highCritical = advisories.filter((advisory) => ['high', 'critical'].includes(advisory.severity)
+    && !isExcepted(advisory, currentTime))
+  const excepted = advisories.filter((advisory) => isExcepted(advisory, currentTime))
   const counts = report.metadata.vulnerabilities
 
   log(`Dependency audit summary: ${counts.critical} critical, ${counts.high} high, ${counts.moderate} moderate, ${counts.low} low.`)
+  for (const advisory of excepted) {
+    log(`Temporary exception until ${bracesException.expiresAt}: ${advisory.severity}: ${advisory.module_name}@${bracesException.version} — ${advisory.github_advisory_id}`)
+  }
 
   if (highCritical.length > 0) {
     error('')
@@ -94,7 +137,7 @@ export function runAudit({ spawn = spawnSync, log = console.log, error = console
     return 1
   }
 
-  log('No high or critical advisories found.')
+  log(excepted.length > 0 ? 'No unexcepted high or critical advisories found.' : 'No high or critical advisories found.')
   return 0
 }
 

@@ -50,6 +50,83 @@ test('fails closed for unknown high and critical advisories', () => {
   assert.equal(runAudit({ spawn: fakeResult({ status: 1, stdout: report('unknown-critical.json') }), ...quiet }), 1)
 })
 
+const bracesExpiry = Date.parse('2026-10-10T00:00:00Z')
+
+function bracesReport(mutate = () => {}) {
+  const parsed = JSON.parse(report('braces-excepted.json'))
+  mutate(parsed, parsed.advisories['1240992'])
+  return JSON.stringify(parsed)
+}
+
+function auditBraces(stdout, now = bracesExpiry - 1) {
+  return runAudit({ spawn: fakeResult({ status: 1, stdout }), now: () => now, ...quiet })
+}
+
+test('accepts only the exact braces 3.0.3 tooling advisory before its expiry', () => {
+  assert.equal(auditBraces(bracesReport()), 0)
+  assert.equal(auditBraces(bracesReport((parsed, advisory) => {
+    advisory.findings[0].paths = advisory.findings[0].paths.slice(0, 1)
+  })), 0)
+})
+
+test('fails closed for the braces exception at and after its expiry boundary', () => {
+  assert.equal(auditBraces(bracesReport(), bracesExpiry), 1)
+  assert.equal(auditBraces(bracesReport(), bracesExpiry + 1), 1)
+  assert.equal(auditBraces(bracesReport(), Number.NaN), 1)
+})
+
+test('does not except other braces advisories, versions, packages, severities, or ranges', () => {
+  for (const [name, mutate] of [
+    ['older braces advisory', (parsed, advisory) => {
+      advisory.github_advisory_id = 'GHSA-grv7-fg5c-xmjg'
+      advisory.url = 'https://github.com/advisories/GHSA-grv7-fg5c-xmjg'
+      advisory.vulnerable_versions = '<3.0.3'
+    }],
+    ['mismatched url', (parsed, advisory) => { advisory.url = 'https://github.com/advisories/GHSA-grv7-fg5c-xmjg' }],
+    ['missing advisory id', (parsed, advisory) => { delete advisory.github_advisory_id }],
+    ['other braces version', (parsed, advisory) => {
+      advisory.findings[0].version = '3.0.2'
+      advisory.findings[0].paths = advisory.findings[0].paths.map((path) => path.replace('braces@3.0.3', 'braces@3.0.2'))
+    }],
+    ['other package', (parsed, advisory) => { advisory.module_name = 'micromatch' }],
+    ['critical severity', (parsed, advisory) => {
+      advisory.severity = 'critical'
+      parsed.metadata.vulnerabilities = { critical: 1, high: 0, moderate: 0, low: 0 }
+    }],
+    ['widened range', (parsed, advisory) => { advisory.vulnerable_versions = '<=3.0.4' }],
+    ['missing findings', (parsed, advisory) => { delete advisory.findings }],
+    ['empty findings', (parsed, advisory) => { advisory.findings = [] }],
+    ['empty paths', (parsed, advisory) => { advisory.findings[0].paths = [] }],
+    ['malformed finding', (parsed, advisory) => { advisory.findings = ['3.0.3'] }],
+  ]) {
+    assert.equal(auditBraces(bracesReport(mutate)), 1, name)
+  }
+})
+
+test('fails closed when braces 3.0.3 gains a dependency edge outside the reviewed tooling paths', () => {
+  for (const path of [
+    'apps/web > next@15.5.24 > micromatch@4.0.8 > braces@3.0.3',
+    'packages/core > micromatch@4.0.8 > braces@3.0.3',
+    'apps/web > tailwindcss@3.4.20 > micromatch@4.0.8 > braces@3.0.3',
+    'apps/web > @ducanh2912/next-pwa@10.2.9 > fast-glob@3.3.2 > micromatch@4.0.8 > braces@3.0.3 > extra',
+  ]) {
+    assert.equal(auditBraces(bracesReport((parsed, advisory) => { advisory.findings[0].paths.push(path) })), 1, path)
+  }
+})
+
+test('keeps blocking unknown high/critical advisories and malformed reports beside the braces exception', () => {
+  assert.equal(auditBraces(bracesReport((parsed) => {
+    parsed.advisories['2'] = JSON.parse(report('unknown-high.json')).advisories['1']
+  })), 1)
+  assert.equal(auditBraces(bracesReport((parsed) => {
+    parsed.advisories['2'] = JSON.parse(report('unknown-critical.json')).advisories['1']
+    parsed.metadata.vulnerabilities.critical = 1
+  })), 1)
+  assert.equal(auditBraces(bracesReport((parsed) => { parsed.metadata.vulnerabilities.high = 0 })), 1)
+  assert.equal(auditBraces(bracesReport((parsed) => { parsed.error = { code: 'ENOTFOUND' } })), 1)
+  assert.equal(runAudit({ spawn: fakeResult({ status: 2, stdout: bracesReport() }), now: () => bracesExpiry - 1, ...quiet }), 1)
+})
+
 test('fails closed for spawn errors, signals, and unexpected statuses', () => {
   assert.equal(runAudit({ spawn: () => { throw new Error('ENOENT') }, ...quiet }), 1)
   assert.equal(runAudit({ spawn: fakeResult({ stdout: report('clean.json'), error: new Error('ENOENT') }), ...quiet }), 1)
