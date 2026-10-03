@@ -102,7 +102,7 @@ class TasksSyncAdapterService: SyncAdapterService() {
                     val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
                     val colMgr = etebase.collectionManager
 
-                    collections = etebaseLocalCache.collectionList(colMgr).filter { it.collectionType == Constants.ETEBASE_TYPE_TASKS }
+                    collections = etebaseLocalCache.collectionList(colMgr, type = Constants.ETEBASE_TYPE_TASKS)
                 }
             }
 

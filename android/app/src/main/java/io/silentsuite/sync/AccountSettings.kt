@@ -206,6 +206,8 @@ constructor(internal val context: Context, internal val account: Account) {
         const val KEY_LIMITED_INTEGRATIONS = "post_login_limited_integrations_v1"
         const val KEY_INITIAL_SYNC_REQUEST_ID = "post_login_initial_sync_request_id_v1"
         const val KEY_CONTEXTUAL_PERMISSION_DENIALS = "post_login_contextual_permission_denials_v1"
+        const val KEY_NOTES_ENABLED = "notes_enabled_v1"
+        const val KEY_COLLECTION_LIST_TYPES = "collection_list_types_v1"
         private const val MAX_INITIAL_SYNC_REQUEST_ID_LENGTH = 128
         private val CONTEXTUAL_PERMISSION_DENIAL_VALUES = setOf("CALENDAR", "CONTACTS", "TASKS")
         // sync on WiFi only (default: false)
@@ -308,5 +310,24 @@ constructor(internal val context: Context, internal val account: Account) {
 
         fun limitedIntegrations(accountManager: AccountManager, account: Account) =
             accountManager.getUserData(account, KEY_LIMITED_INTEGRATIONS) == "true"
+
+        /** Per-account experimental Notes opt-in. Absent means off; nothing is auto-created. */
+        fun notesEnabled(accountManager: AccountManager, account: Account) =
+            accountManager.getUserData(account, KEY_NOTES_ENABLED) == "true"
+
+        /** Stores an explicit value both ways; clearing user data with null is not verifiable everywhere. */
+        fun writeNotesEnabled(accountManager: AccountManager, account: Account, enabled: Boolean): Boolean =
+            writeVerified(accountManager, account, KEY_NOTES_ENABLED, if (enabled) "true" else "false")
+
+        /**
+         * The collection types the saved account-wide collection-list cursor covers. When the app
+         * starts listing a new type, the next refresh must run without the cursor once so older
+         * collections of that type are not skipped.
+         */
+        fun collectionListTypes(accountManager: AccountManager, account: Account): String? =
+            accountManager.getUserData(account, KEY_COLLECTION_LIST_TYPES)?.takeIf { it.isNotBlank() }
+
+        fun writeCollectionListTypes(accountManager: AccountManager, account: Account, types: String): Boolean =
+            writeVerified(accountManager, account, KEY_COLLECTION_LIST_TYPES, types)
     }
 }

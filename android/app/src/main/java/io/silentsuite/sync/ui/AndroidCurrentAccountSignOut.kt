@@ -73,8 +73,11 @@ internal class AndroidCurrentAccountSignOut(
         return CurrentAccountSignOutSnapshot(main, children, AccountSwitcherPolicy.ordered(siblings))
     }
 
-    override fun cancelSync(identity: Pair<String, String>) =
+    override fun cancelSync(identity: Pair<String, String>) {
         ContentResolver.cancelSync(Account(identity.second, identity.first), null)
+        // The in-app Notes job has no authority; stop it at the same account-name boundary.
+        io.silentsuite.sync.notes.NotesSyncCoordinator.cancelAccount(identity.first, identity.second)
+    }
 
     override fun removeMain(main: ExactAccountIdentity, callback: (Boolean) -> Unit) {
         if (generationInvalidated.get()) {

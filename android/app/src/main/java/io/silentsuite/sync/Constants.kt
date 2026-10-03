@@ -20,6 +20,7 @@ object Constants {
     const val NOTIFICATION_CALENDAR_SYNC = 11
     const val NOTIFICATION_TASK_SYNC = 12
     const val NOTIFICATION_ACCOUNT_UPDATE = 13
+    const val NOTIFICATION_NOTES_SYNC = 14
     const val NOTIFICATION_PERMISSIONS = 20
 
     val webUri: Uri = Uri.parse("https://silentsuite.io/")
@@ -56,9 +57,23 @@ object Constants {
     const val ETEBASE_TYPE_ADDRESS_BOOK = "etebase.vcard"
     const val ETEBASE_TYPE_CALENDAR = "etebase.vevent"
     const val ETEBASE_TYPE_TASKS = "etebase.vtodo"
+    const val ETEBASE_TYPE_NOTES = "etebase.md.note"
+
+    /** Collection types every account is expected to own; post-login setup reconciles these. */
     val COLLECTION_TYPES = arrayOf(
         ETEBASE_TYPE_ADDRESS_BOOK,
         ETEBASE_TYPE_CALENDAR,
         ETEBASE_TYPE_TASKS
+    )
+
+    /**
+     * Every collection type the account-wide collection list refresh keeps in the local cache.
+     * Notebooks are never auto-created, so they are discovered here but not in [COLLECTION_TYPES].
+     */
+    val SYNCED_COLLECTION_TYPES = arrayOf(
+        ETEBASE_TYPE_ADDRESS_BOOK,
+        ETEBASE_TYPE_CALENDAR,
+        ETEBASE_TYPE_TASKS,
+        ETEBASE_TYPE_NOTES
     )
 }

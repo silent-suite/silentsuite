@@ -58,6 +58,8 @@ class CollectionItemFragment : Fragment() {
                 if (container != null) {
                     initUi(inflater, ret, it)
                 }
+                // Restore depends on the collection type, which is only known once it loads.
+                activity?.invalidateOptionsMenu()
             }
         }
 
@@ -83,6 +85,8 @@ class CollectionItemFragment : Fragment() {
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
         inflater.inflate(R.menu.collection_item_fragment, menu)
         menu.setGroupVisible(R.id.journal_item_menu_event_invite, emailInvitationEvent != null)
+        // Only calendars, tasks, and contacts have a local provider to restore into; notes do not.
+        menu.setGroupVisible(R.id.journal_item_menu_restore, collectionModel.value?.collectionType in RESTORABLE_TYPES)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -107,7 +111,7 @@ class CollectionItemFragment : Fragment() {
         val context = requireContext()
         val account = accountHolder.account
         val cachedCol = collectionModel.value!!
-        when (cachedCol.collectionType) {
+        val restored = when (cachedCol.collectionType) {
             Constants.ETEBASE_TYPE_CALENDAR -> {
                 val provider = context.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
                         ?: return
@@ -122,6 +126,7 @@ class CollectionItemFragment : Fragment() {
                         localEvent = LocalEvent(localCalendar, event, event.uid, null)
                         localEvent.addAsDirty()
                     }
+                    true
                 } finally {
                     provider.release()
                 }
@@ -141,10 +146,11 @@ class CollectionItemFragment : Fragment() {
                             localTask = LocalTask(localTaskList, task, task.uid, null)
                             localTask.addAsDirty()
                         }
+                        true
                     } finally {
                         provider.close()
                     }
-                }
+                } ?: false
             }
             Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
                 val provider = context.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
@@ -155,6 +161,7 @@ class CollectionItemFragment : Fragment() {
                     val contact = Contact.fromReader(StringReader(cachedItem.content), null)[0]
                     if (contact.group) {
                         // FIXME: not currently supported
+                        false
                     } else {
                         var localContact = localAddressBook.findByUid(contact.uid!!) as LocalContact?
                         if (localContact != null) {
@@ -163,12 +170,16 @@ class CollectionItemFragment : Fragment() {
                             localContact = LocalContact(localAddressBook, contact, contact.uid, null)
                             localContact.createAsDirty()
                         }
+                        true
                     }
                 } finally {
                     provider.release()
                 }
             }
+            else -> false
         }
+        // Report success only for a restore that happened; the menu hides Restore for other types.
+        if (!restored) return
 
         val dialog = MaterialAlertDialogBuilder(context)
                 .setTitle(R.string.journal_item_restore_action)
@@ -182,6 +193,12 @@ class CollectionItemFragment : Fragment() {
     }
 
     companion object {
+        private val RESTORABLE_TYPES = setOf(
+            Constants.ETEBASE_TYPE_CALENDAR,
+            Constants.ETEBASE_TYPE_TASKS,
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK,
+        )
+
         fun newInstance(cachedItem: CachedItem): CollectionItemFragment {
             val ret = CollectionItemFragment()
             ret.cachedItem = cachedItem
@@ -260,6 +277,11 @@ class PrettyFragment : Fragment() {
             Constants.ETEBASE_TYPE_TASKS -> {
                 v = inflater.inflate(R.layout.task_info, container, false)
                 asyncTask = loadTaskTask(v)
+            }
+            Constants.ETEBASE_TYPE_NOTES -> {
+                // A note is Markdown text; show it as written rather than a blank tab.
+                v = inflater.inflate(R.layout.text_fragment, container, false)
+                v.findViewById<TextView>(R.id.content).text = content
             }
         }
 

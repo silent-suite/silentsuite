@@ -39,6 +39,10 @@ class EditCollectionActivity : CreateCollectionActivity() {
             }
             CollectionInfo.Type.ADDRESS_BOOK -> {
             }
+            CollectionInfo.Type.NOTES -> {
+                val colorSquare = findViewById<View>(R.id.color)
+                colorSquare.setBackgroundColor(info.color ?: LocalCalendar.defaultColor)
+            }
             null -> {
             }
         }
