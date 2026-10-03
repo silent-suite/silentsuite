@@ -1221,6 +1221,12 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // 4. Start SyncEngine
       const engine = await startSyncEngine(core, account, serverUrl, collections, accountEpoch, cacheEnabled, diagnostics)
       if (!engine) return
+      // The boundary can change after the helper's own check; teardown never
+      // saw this unpublished engine, so stop it here instead of publishing.
+      if (!isCurrentAccountEpoch(accountEpoch)) {
+        engine.stop()
+        return
+      }
       set({ syncEngine: engine, isInitialized: true })
       diagnostics.persist()
       logger.debug('[etebase-store] SyncEngine started')
@@ -1461,6 +1467,10 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         try {
           const engine = await startSyncEngine(core, account, getServerUrl(), activeCollections, accountEpoch, isLocalCacheEnabled())
           if (!engine) throw new AccountBoundaryChangedError()
+          if (!isCurrentAccountEpoch(accountEpoch)) {
+            engine.stop()
+            throw new AccountBoundaryChangedError()
+          }
           set({ syncEngine: engine })
         } catch (err) {
           if (isCurrentAccountEpoch(accountEpoch) && !get().syncEngine) pendingSyncEngineStartEpoch = accountEpoch

@@ -17,6 +17,7 @@ const engineControl = vi.hoisted(() => ({
   instances: [] as any[],
   startGate: null as Promise<void> | null,
   startError: null as Error | null,
+  onStarted: null as (() => void) | null,
 }))
 const coreMock = vi.hoisted(() => {
   class FakeSyncEngine {
@@ -29,6 +30,7 @@ const coreMock = vi.hoisted(() => {
     start = vi.fn(async () => {
       if (engineControl.startGate) await engineControl.startGate
       if (engineControl.startError) throw engineControl.startError
+      engineControl.onStarted?.()
     })
     stop = vi.fn()
     pause = vi.fn()
@@ -143,6 +145,7 @@ describe('useEtebaseStore collection discovery error state', () => {
     engineControl.instances.length = 0
     engineControl.startGate = null
     engineControl.startError = null
+    engineControl.onStarted = null
   })
 
   it('marks every visible domain failed and reports each terminal domain when a restored discovery page fails', async () => {
@@ -570,6 +573,106 @@ describe('useEtebaseStore collection discovery error state', () => {
       expect(useEtebaseStore.getState().syncEngine).toBe(engineControl.instances[1])
       expect(engineControl.instances[1].start).toHaveBeenCalledTimes(1)
       expect(engineControl.instances[1].stop).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('sync engine publication after the account boundary changes', () => {
+    // Microtask positions after engine.start resolves at which the boundary
+    // changes; together they span the helper's last check and the caller's
+    // publication.
+    const POSITIONS = [0, 1, 2, 3, 4, 5, 6, 7]
+    const replacementAccount = { getCollectionManager: () => ({}) }
+    const boundaries: [string, () => void][] = [
+      ['destroy', () => useEtebaseStore.getState().destroy()],
+      ['same-name account replacement', () => {
+        useEtebaseStore.getState().destroy()
+        useEtebaseStore.setState({ account: replacementAccount as any, accountFingerprint: TEST_FINGERPRINT })
+      }],
+    ]
+
+    function afterMicrotasks(count: number, fn: () => void) {
+      let chain = Promise.resolve()
+      for (let i = 0; i < count; i++) chain = chain.then(() => {})
+      void chain.then(fn)
+    }
+
+    const drainMicrotasks = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+    function resetAccountState() {
+      useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+      engineControl.instances.length = 0
+      engineControl.onStarted = null
+    }
+
+    function failingTasksAccount() {
+      const control = { failTasks: true }
+      fakeAccount({
+        ...existingPlan(),
+        [TASKS]: async () => {
+          if (control.failTasks) throw serverError()
+          return page([collection('tasks-1')])
+        },
+      })
+      return control
+    }
+
+    function expectNoStaleEngine(label: string, replaced: boolean) {
+      const state = useEtebaseStore.getState()
+      expect(engineControl.instances, label).toHaveLength(1)
+      expect(state.syncEngine, label).toBeNull()
+      expect(state.isInitialized, label).toBe(false)
+      expect(state.account, label).toBe(replaced ? replacementAccount : null)
+      expect(engineControl.instances[0].stop, label).toHaveBeenCalled()
+    }
+
+    for (const [name, changeBoundary] of boundaries) {
+      it(`initial startup neither publishes nor leaks its engine after ${name}`, async () => {
+        for (const position of POSITIONS) {
+          resetAccountState()
+          fakeAccount(existingPlan())
+          engineControl.onStarted = () => afterMicrotasks(position, changeBoundary)
+
+          await useEtebaseStore.getState().initialize()
+          await drainMicrotasks()
+
+          expectNoStaleEngine(`${name} at microtask ${position}`, name !== 'destroy')
+        }
+      })
+
+      it(`retry recovery neither publishes nor leaks its engine after ${name}`, async () => {
+        for (const position of POSITIONS) {
+          resetAccountState()
+          const control = failingTasksAccount()
+          await useEtebaseStore.getState().initialize()
+          control.failTasks = false
+          engineControl.onStarted = () => afterMicrotasks(position, changeBoundary)
+
+          await useEtebaseStore.getState().reconcileCollections()
+          await drainMicrotasks()
+
+          expectNoStaleEngine(`${name} at microtask ${position}`, name !== 'destroy')
+        }
+      })
+    }
+
+    it('publishes the engine for the unchanged account on startup and retry recovery', async () => {
+      fakeAccount(existingPlan())
+      engineControl.onStarted = () => afterMicrotasks(2, () => {})
+      await useEtebaseStore.getState().initialize()
+      await drainMicrotasks()
+      expect(useEtebaseStore.getState().syncEngine).toBe(engineControl.instances[0])
+      expect(useEtebaseStore.getState().isInitialized).toBe(true)
+      expect(engineControl.instances[0].stop).not.toHaveBeenCalled()
+
+      resetAccountState()
+      const control = failingTasksAccount()
+      await useEtebaseStore.getState().initialize()
+      control.failTasks = false
+      engineControl.onStarted = () => afterMicrotasks(2, () => {})
+      await useEtebaseStore.getState().reconcileCollections()
+      await drainMicrotasks()
+      expect(useEtebaseStore.getState().syncEngine).toBe(engineControl.instances[0])
+      expect(engineControl.instances[0].stop).not.toHaveBeenCalled()
     })
   })
 })
