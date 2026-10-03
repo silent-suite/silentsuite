@@ -115,6 +115,9 @@ class NotesSyncBoundaryRuntimeTest {
     /** The pending stores this test opened, cleared when it ends. */
     private val stores = CopyOnWriteArrayList<PendingNotesStore>()
 
+    /** The NOTES status of the account the last manual run was started for, as it was right before that run. */
+    private var statusBeforeRun: SyncStatusStore.Status? = null
+
     /**
      * Android 5 and 6 handle an account change on system_server's main thread by walking
      * SyncManager's list of running syncs, which its handler thread changes without a lock
@@ -1616,6 +1619,7 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     private fun startManualRun(account: Account, generation: String) {
+        statusBeforeRun = status(account, generation)
         forgetLastListing(account.name)
         NotesSyncCoordinator.request(context, account, generation, NotesSyncPolicy.Trigger.MANUAL)
     }
@@ -1681,9 +1685,12 @@ class NotesSyncBoundaryRuntimeTest {
 
     private fun transactionOf(notebook: String) = "POST collection/$notebook/item/transaction/"
 
+    /** The last manual run succeeded, and recorded so itself: a success left by an earlier run does not count. */
     private fun assertSucceeded(status: SyncStatusStore.Status) {
         assertEquals("the run succeeded: $status", SyncStatusStore.TerminalResult.SUCCESS, status.lastTerminalResult)
         assertNull("no attempt left open: $status", status.activeAttemptId)
+        val before = checkNotNull(statusBeforeRun) { "no manual run was started" }
+        assertTrue("the success was recorded by the last run: $status", (status.lastSuccessAt ?: 0L) > (before.lastSuccessAt ?: 0L))
     }
 
     private fun listCursor(account: Account): String? = cache(account).let { synchronized(it) { it.loadStoken() } }

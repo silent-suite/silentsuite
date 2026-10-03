@@ -146,7 +146,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
 
     private val scripted = CopyOnWriteArrayList<Scripted>()
 
-    /** The number of items in each upload, in the order they arrived. */
+    /** The number of items in each upload the stand-in routed, in order; a scripted answer is not counted. */
     val uploadSizes: MutableList<Int> = CopyOnWriteArrayList()
 
     /**
