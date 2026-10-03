@@ -121,6 +121,10 @@ object SchedulingDiagnostics {
         else -> "no"
     }
 
+    /** Metered comes from the same capabilities snapshot, so it shares their unknown and unavailable rules. */
+    internal fun meteredLabel(supported: Boolean, networkPresent: Boolean?, notMetered: Boolean?): String =
+        capabilityLabel(supported, networkPresent, notMetered?.not())
+
     private fun appendNetwork(out: StringBuilder, context: Context) {
         val connectivity = service<ConnectivityManager>(context, Context.CONNECTIVITY_SERVICE)
         val supported = Build.VERSION.SDK_INT >= 23 && connectivity != null
@@ -142,7 +146,9 @@ object SchedulingDiagnostics {
         out.append("Validated: ").append(capabilityLabel(supported, networkPresent, value {
             capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         })).append("\n")
-        out.append("Metered: ").append(flag { connectivity?.isActiveNetworkMetered }).append("\n")
+        out.append("Metered: ").append(meteredLabel(supported, networkPresent, value {
+            capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+        })).append("\n")
         out.append("VPN: ").append(capabilityLabel(supported, networkPresent, value {
             capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
         })).append("\n")
@@ -255,8 +261,12 @@ object SchedulingDiagnostics {
         out.append("    last success age=").append(age(status.lastSuccessAt, now))
             .append(" last failure age=").append(age(status.lastFailureAt, now))
             .append(" category=").append(failureCategory(status.lastFailureCategory)).append("\n")
+        // Legacy Contacts evidence marks a generation incomplete without recording its children, and
+        // the store then reports zero pending; that zero is unknown, never an observed count.
         out.append("    incomplete=").append(if (status.latestGenerationIncomplete) "yes" else "no")
-            .append(" pending children=").append(count(status.pendingChildren))
+            .append(" pending children=").append(
+                if (status.latestGenerationIncomplete && status.pendingChildren == 0) "unknown" else count(status.pendingChildren)
+            )
             .append(" storage=readable\n")
         return out.toString()
     }

@@ -157,6 +157,23 @@ class SchedulingDiagnosticsContractTest {
     }
 
     @Test
+    fun incompleteGenerationWithoutRecordedChildrenIsUnknownNotZero() {
+        val legacyIncomplete = SchedulingDiagnostics.recordedLines(io.silentsuite.sync.syncadapter.SyncStatusStore.Status(
+                latestGenerationIncomplete = true
+        ), 60_000L)
+        assertTrue(legacyIncomplete.contains("    incomplete=yes pending children=unknown storage=readable\n"))
+        assertFalse(legacyIncomplete.contains("pending children=0"))
+
+        val counted = SchedulingDiagnostics.recordedLines(io.silentsuite.sync.syncadapter.SyncStatusStore.Status(
+                latestGenerationIncomplete = true, pendingChildren = 2
+        ), 60_000L)
+        assertTrue(counted.contains("    incomplete=yes pending children=2 storage=readable\n"))
+
+        val complete = SchedulingDiagnostics.recordedLines(io.silentsuite.sync.syncadapter.SyncStatusStore.Status(), 60_000L)
+        assertTrue(complete.contains("    incomplete=no pending children=0 storage=readable\n"))
+    }
+
+    @Test
     fun unreadableCapabilitiesNeverClaimThereIsNoNetwork() {
         assertEquals("yes", SchedulingDiagnostics.networkLabel(true, true))
         assertEquals("no", SchedulingDiagnostics.networkLabel(true, false))
@@ -171,6 +188,17 @@ class SchedulingDiagnosticsContractTest {
         assertEquals("unavailable", SchedulingDiagnostics.capabilityLabel(false, true, true))
         assertEquals("yes", SchedulingDiagnostics.capabilityLabel(true, true, true))
         assertEquals("no", SchedulingDiagnostics.capabilityLabel(true, true, false))
+
+        assertEquals("unavailable", SchedulingDiagnostics.meteredLabel(true, false, null))
+        assertEquals("unavailable", SchedulingDiagnostics.meteredLabel(true, false, true))
+        assertEquals("unavailable", SchedulingDiagnostics.meteredLabel(false, null, null))
+        assertEquals("unavailable", SchedulingDiagnostics.meteredLabel(false, true, false))
+        assertEquals("unknown", SchedulingDiagnostics.meteredLabel(true, null, null))
+        assertEquals("unknown", SchedulingDiagnostics.meteredLabel(true, null, false))
+        assertEquals("unknown", SchedulingDiagnostics.meteredLabel(true, true, null))
+        assertEquals("yes", SchedulingDiagnostics.meteredLabel(true, true, false))
+        assertEquals("no", SchedulingDiagnostics.meteredLabel(true, true, true))
+        assertFalse(helperSource.readText().contains("isActiveNetworkMetered"))
     }
 
     @Test
