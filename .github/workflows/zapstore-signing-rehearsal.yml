@@ -1,0 +1,172 @@
+name: Zapstore Signing Rehearsal
+
+# Manual, environment-gated signing rehearsal of the Zapstore lane. See section
+# 9 of runbooks/zapstore-automation.md.
+#
+# Proves, separately: the signer connection binds the approved publisher; the
+# signer grants one kind-24242 Blossom upload authorization (short-lived, for a
+# hash nobody holds bytes for, never uploaded); and the pinned publisher, run
+# offline, gets real signatures over the exact release's events and they match
+# the prepared metadata. Nothing is published: there is no live publisher run,
+# no EVENT to a public relay and no Blossom request. Signed material is verified,
+# then destroyed; only counters are uploaded.
+#
+# Admission is its own (cli.mjs admit-signing-rehearsal): a workflow_dispatch of
+# exactly this file from refs/heads/main whose definition revision equals the
+# run commit. The dispatched release id must be the newest eligible release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Exact GitHub release id of the newest eligible release
+        required: true
+        type: string
+
+# Shares the publication group so the signer is never driven by two runs.
+concurrency:
+  group: zapstore-publish-io-silentsuite-android
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  admit:
+    name: Admit the signing rehearsal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      revision: ${{ steps.admit.outputs.revision }}
+    steps:
+      - name: Check out the protected revision that supplied this definition
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Prove manual trigger and definition provenance
+        id: admit
+        run: node scripts/zapstore/cli.mjs admit-signing-rehearsal --workspace "$GITHUB_WORKSPACE"
+
+  # The only job that binds the environment; one step sees the signer secrets.
+  sign:
+    name: Sign offline and verify (no publication)
+    needs: admit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: zapstore-production
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the protected revision with history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Bind the checkout to the admitted revision
+        env:
+          REVISION: ${{ needs.admit.outputs.revision }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/signing"
+          node scripts/zapstore/cli.mjs checkout-guard --workspace "$GITHUB_WORKSPACE" --revision "$REVISION"
+      - name: Install the isolated verification package
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix scripts/zapstore
+      - name: Fetch and pin the official publisher
+        run: |
+          set -euo pipefail
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/zsp" \
+            https://github.com/zapstore/zsp/releases/download/v0.4.17/zsp-0.4.17-linux-amd64
+          echo "3f241da6a5dc7a85fe851d3b42b77790b651bd36c7029382a701262bda832d20  $RUNNER_TEMP/zsp" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/zsp"
+          "$RUNNER_TEMP/zsp" --version
+      - name: Install apksigner from the fixed build-tools
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -f "$SDKMANAGER" ] && [ -x "$SDKMANAGER" ] \
+            || { echo "fixed Android sdkmanager is missing or not executable" >&2; exit 1; }
+          for _ in $(seq 100); do echo y; done > /tmp/sdk-license-acceptance
+          "$SDKMANAGER" --licenses < /tmp/sdk-license-acceptance > /dev/null
+          "$SDKMANAGER" "build-tools;36.0.0"
+          test -x "$ANDROID_HOME/build-tools/36.0.0/apksigner"
+      - name: List and classify published releases by exact id
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/zapstore/cli.mjs enumerate --out "$RUNNER_TEMP/signing/candidates.json"
+      - name: Require the dispatched release to be the newest eligible release
+        id: select
+        env:
+          RELEASE_ID: ${{ inputs.release_id }}
+        run: node scripts/zapstore/cli.mjs select-signing-release --candidates "$RUNNER_TEMP/signing/candidates.json" --release-id "$RELEASE_ID"
+      - name: Bind the exact release, tag commit and assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ steps.select.outputs.release_id }}
+        run: node scripts/zapstore/cli.mjs bind --release-id "$RELEASE_ID" --git-ancestry "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/signing/binding.json"
+      - name: Download the bound APK and check all three digests
+        id: apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/zapstore/cli.mjs fetch-apk --binding "$RUNNER_TEMP/signing/binding.json" --out-dir "$RUNNER_TEMP/apk"
+      - name: Verify the APK signature with apksigner
+        env:
+          APK_PATH: ${{ steps.apk.outputs.apk_path }}
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs -v "$APK_PATH" > "$RUNNER_TEMP/apksigner.txt"
+          node scripts/zapstore/cli.mjs verify-apksigner --output "$RUNNER_TEMP/apksigner.txt"
+      - name: Generate the exact-release configuration and expected events
+        id: prepare
+        env:
+          APK_PATH: ${{ steps.apk.outputs.apk_path }}
+          REVISION: ${{ needs.admit.outputs.revision }}
+        run: |
+          node scripts/zapstore/cli.mjs prepare \
+            --binding "$RUNNER_TEMP/signing/binding.json" --apk "$APK_PATH" \
+            --zsp "$RUNNER_TEMP/zsp" --source-root "$GITHUB_WORKSPACE" --revision "$REVISION" \
+            --work-dir "$RUNNER_TEMP/signing/prepare"
+
+      # The only step that can see signer credentials. Account preflight, one
+      # kind-24242 authorization (never uploaded) and an offline signing run of
+      # the pinned publisher. Raw publisher output and the client key live only
+      # under signer/, are shredded by the CLI and removed again by the trap.
+      - name: Verify the signing account, then sign offline without publishing
+        id: sign
+        env:
+          ZAPSTORE_SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+          ZAPSTORE_BUNKER_CLIENT_KEY: ${{ secrets.ZAPSTORE_BUNKER_CLIENT_KEY }}
+          CONFIG_PATH: ${{ steps.prepare.outputs.config_path }}
+          REVISION: ${{ needs.admit.outputs.revision }}
+        run: |
+          set -euo pipefail
+          trap 'rm -rf "$RUNNER_TEMP/signing/signer"' EXIT
+          node scripts/zapstore/cli.mjs sign-rehearsal --binding "$RUNNER_TEMP/signing/binding.json" \
+            --expected "$RUNNER_TEMP/signing/prepare/expected-events.jsonl" --config "$CONFIG_PATH" \
+            --zsp "$RUNNER_TEMP/zsp" --revision "$REVISION" --work-dir "$RUNNER_TEMP/signing/signer" \
+            --out "$RUNNER_TEMP/signing/signing-rehearsal.json"
+      - name: Remove signer material whatever the outcome
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/signing/signer"
+      - name: Upload the counters-only verdict
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: zapstore-signing-rehearsal
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/signing/signing-rehearsal.json
+            ${{ runner.temp }}/signing/binding.json
+            ${{ runner.temp }}/signing/prepare/release-manifest.json
+            ${{ runner.temp }}/signing/prepare/expected-events.jsonl

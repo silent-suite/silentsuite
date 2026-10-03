@@ -25,7 +25,7 @@ export function zspArgs({ configPath, commit, channel = 'main', mode }) {
   if (channel !== 'main') throw new Error('channel must stay main unless a new channel policy is approved')
   if (typeof configPath !== 'string' || configPath === '') throw new Error('configPath is required')
   const args = ['publish', '--json', '--quiet', '--skip-preview', '--skip-metadata', '--no-compress', '--skip-certificate-linking', '--commit', commit, '--channel', channel]
-  if (mode === 'unsigned') args.push('--offline')
+  if (mode === 'unsigned' || mode === 'signed-offline') args.push('--offline')
   else if (mode === 'live') args.push('--overwrite-release')
   else throw new Error(`unknown zsp mode ${String(mode)}`)
   args.push(configPath)
@@ -34,6 +34,9 @@ export function zspArgs({ configPath, commit, channel = 'main', mode }) {
 
 // Unsigned mode signs nothing: SIGN_WITH is the public npub, so zsp emits
 // unsigned events with the correct pubkey. Live mode requires a bunker URL.
+// Signed-offline mode (signing rehearsal only) also requires the bunker: the
+// signer signs the real events, which zsp prints to stdout and never uploads
+// or publishes. Those events are publishable by anyone who holds them.
 export function zspEnv({ mode, npub, signWith, xdgConfigHome }) {
   const env = { HOME: process.env.HOME ?? '/tmp', PATH: process.env.PATH ?? '/usr/bin:/bin', XDG_CONFIG_HOME: xdgConfigHome }
   if (typeof xdgConfigHome !== 'string' || xdgConfigHome === '') throw new Error('XDG_CONFIG_HOME must be an explicit job-scoped directory')
@@ -42,7 +45,7 @@ export function zspEnv({ mode, npub, signWith, xdgConfigHome }) {
     env.SIGN_WITH = npub
     return env
   }
-  if (mode === 'live') {
+  if (mode === 'live' || mode === 'signed-offline') {
     if (typeof signWith !== 'string' || signWith === '') throw new Error('ZAPSTORE_SIGN_WITH is missing; refusing to publish')
     if (!signWith.startsWith('bunker://')) throw new Error('ZAPSTORE_SIGN_WITH must be a bunker:// URL; private keys are never accepted')
     env.SIGN_WITH = signWith

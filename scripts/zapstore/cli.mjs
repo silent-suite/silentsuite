@@ -2,7 +2,8 @@
 // Orchestrator for the dormant Zapstore lane. Every subcommand reads its inputs
 // from files or the run context, writes structured results to files, and prints
 // only redacted, structured text. Secrets never reach stdout. The signing
-// modules are imported only inside `publish`, so no other job loads them.
+// modules are imported only inside `publish` and `sign-rehearsal`, so no other
+// job loads them.
 
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, openSync, closeSync, statSync, readdirSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -10,7 +11,7 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 
 import { selectScheduleCandidates } from './lib/eligibility.mjs'
-import { activationState, requireManualRehearsal, requireProtectedSchedule } from './lib/dispatch.mjs'
+import { activationState, requireManualRehearsal, requireManualSigningRehearsal, requireProtectedSchedule } from './lib/dispatch.mjs'
 import { createGitHubClient, hashFromChecksumText } from './lib/github.mjs'
 import { buildBinding, revalidateBinding, verifyApkHashes } from './lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from './lib/apksigner.mjs'
@@ -121,6 +122,36 @@ const commands = {
     requireCheckout(opt('workspace'), revision)
     output('revision', revision)
     summary(`### Zapstore manual rehearsal: ASSESSMENT ONLY\n\nManually dispatched from protected main at ${revision}; this revision supplied the rehearsal definition and is the only revision any job checks out. This run has no plan, publish or notify job, no environment and no signer secret: it cannot sign, upload or publish anything, and an assessed action of publish is not authorization. It is not evidence that the scheduled lane triggers, and not signing proof.`)
+  },
+
+  // Manual, environment-gated signing rehearsal. Emits only the revision.
+  'admit-signing-rehearsal'() {
+    const { revision } = requireManualSigningRehearsal({
+      eventName: process.env.GITHUB_EVENT_NAME,
+      ref: process.env.GITHUB_REF,
+      workflowRef: process.env.GITHUB_WORKFLOW_REF,
+      sha: process.env.GITHUB_SHA,
+      workflowSha: process.env.GITHUB_WORKFLOW_SHA,
+      repository: process.env.GITHUB_REPOSITORY,
+    })
+    if (!opt('workspace')) throw new Error('admit-signing-rehearsal requires --workspace')
+    requireCheckout(opt('workspace'), revision)
+    output('revision', revision)
+    summary(`### Zapstore signing rehearsal: NO PUBLICATION\n\nManually dispatched from protected main at ${revision}. The environment-bound job signs the exact release offline with the pinned publisher and requests one kind-24242 upload authorization that is never uploaded. Nothing is written to a public relay or Blossom; signed material is verified, then destroyed. Environment approval gates this run, so it is not evidence of unattended signing.`)
+  },
+
+  // The dispatched release id must be the single newest eligible release.
+  'select-signing-release'() {
+    const requested = opt('release-id')
+    if (!/^[1-9][0-9]{0,15}$/.test(requested ?? '')) throw new Error('--release-id must be a positive decimal release id')
+    const { candidates } = readJson(opt('candidates'))
+    const publishable = candidates.filter((c) => c.publishable === true)
+    if (publishable.length !== 1) throw new Error(`expected exactly one newest eligible release, found ${publishable.length}`)
+    const [newest] = publishable
+    if (String(newest.releaseId) !== requested) throw new Error(`release ${requested} is not the newest eligible release ${newest.releaseId} (${newest.tag}); refusing`)
+    output('release_id', requested)
+    output('tag', newest.tag)
+    summary(`Signing rehearsal bound to release ${requested} ${newest.tag}, the newest eligible release`)
   },
 
   'checkout-guard'() {
@@ -338,6 +369,57 @@ const commands = {
     output('sign_exit', String(report.exitCode ?? 'null'))
     summary(`zsp live run exited ${report.exitCode} (stdout ${report.stdoutBytes} bytes, stderr ${report.stderrBytes} bytes; raw output retained only in the runner temp directory). Read-back decides success; a nonzero exit is not proof that nothing was published.`)
     if (run.status !== 0) throw new Error(`zsp exited ${run.status}; redacted stderr tail: ${report.stderrTail}`)
+  },
+
+  // Signing rehearsal: connection, kind-24242 upload authorization and offline
+  // release signing, reported separately. Never publishes or uploads. The raw
+  // publisher output holds publishable signed events and is shredded at once.
+  async 'sign-rehearsal'() {
+    const signWith = process.env.ZAPSTORE_SIGN_WITH
+    const clientKey = process.env.ZAPSTORE_BUNKER_CLIENT_KEY
+    if (!signWith || !clientKey) throw new Error('signer credentials are missing from the environment; refusing the signing rehearsal')
+    const template = loadTemplate(templatePath())
+    const binding = readJson(opt('binding'))
+    const expectedEvents = parseEventsJsonl(readFileSync(opt('expected'), 'utf8'))
+    const workDir = opt('work-dir')
+    const zspPath = verifyZspBinary(opt('zsp'))
+    const revision = requireRevision(opt('revision'))
+    const { requireSigningAccount } = await import('./lib/nip46.mjs')
+    const { rehearseUploadAuthorization } = await import('./lib/upload-auth.mjs')
+    const { runSigningRehearsal, shredFile } = await import('./lib/signing-rehearsal.mjs')
+    const schnorr = await loadSchnorr()
+    const xdg = join(workDir, 'xdg')
+    mkdirSync(xdg, { recursive: true, mode: 0o700 })
+    const key = materializeClientKey({ xdgConfigHome: xdg, bunkerUrl: signWith, clientKey })
+    const signer = { bunkerUrl: signWith, clientKeyHex: clientKey.trim(), expectedPubkeyHex: template.pubkeyHex }
+    let verdict
+    try {
+      verdict = await runSigningRehearsal({
+        expectedEvents,
+        expectedPubkeyHex: template.pubkeyHex,
+        schnorr,
+        preflight: () => requireSigningAccount(signer),
+        uploadAuth: () => rehearseUploadAuthorization({ ...signer, schnorr }),
+        signRelease: () => {
+          const run = runZsp({ zspPath, mode: 'signed-offline', configPath: opt('config'), commit: binding.sourceSha, workDir })
+          shredFile(run.stdoutPath)
+          shredFile(run.stderrPath)
+          return { status: run.status, stdout: run.stdout, stdoutBytes: Buffer.byteLength(run.stdout), stderrBytes: Buffer.byteLength(run.stderr) }
+        },
+        relayObserved: async (ids) => (await queryRelay({ url: RELAY_URL, filters: [{ ids }] })).events.length,
+      })
+    } finally {
+      key.cleanup()
+    }
+    writeJson(opt('out'), { releaseId: binding.releaseId, tag: binding.tag, sourceSha: binding.sourceSha, apkSha256: binding.assets.apk.sha256, protectedRevision: revision, zsp: ZSP.version, ...verdict })
+    const line = (name, phase) => `| ${name} | ${phase.status} | ${phase.detail ?? ''} |`
+    summary(['### Signing rehearsal (no publication)', '', '| Phase | Status | Detail |', '|---|---|---|',
+      line('Signer connection (connect + get_public_key)', verdict.connection),
+      line('Blossom upload authorization (kind 24242, not uploaded)', verdict.uploadAuthorization),
+      line('Release signing (pinned zsp offline, 32267/30063/3063)', verdict.releaseSigning),
+      line('Relay post-check (signed ids absent)', verdict.relayPostCheck),
+      '', verdict.unattendedNote].join('\n'))
+    if (verdict.status !== 'success') throw new Error('signing rehearsal failed; see the phase table')
   },
 
   async 'verify-cdn'() {

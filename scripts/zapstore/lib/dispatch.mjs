@@ -41,15 +41,29 @@ export function requireProtectedSchedule({ eventName, ref, workflowRef, sha, wor
 // other GITHUB_REF, and the definition must come from protected main.
 export const REHEARSAL_WORKFLOW_PATH = '.github/workflows/zapstore-rehearsal.yml'
 
-export function requireManualRehearsal({ eventName, ref, workflowRef, sha, workflowSha, repository }) {
+function requireManualDispatch(path, { eventName, ref, workflowRef, sha, workflowSha, repository }) {
   if (eventName !== 'workflow_dispatch') throw new Error(`refusing rehearsal: event ${String(eventName)} is not workflow_dispatch`)
   requireProtectedRef(ref)
   if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('refusing rehearsal: GITHUB_REPOSITORY is missing or malformed')
-  const expected = `${repository}/${REHEARSAL_WORKFLOW_PATH}@${PROTECTED_REF}`
+  const expected = `${repository}/${path}@${PROTECTED_REF}`
   if (workflowRef !== expected) throw new Error(`refusing rehearsal: GITHUB_WORKFLOW_REF ${String(workflowRef)} is not ${expected}`)
   if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('refusing rehearsal: GITHUB_SHA is not a 40-hex commit')
   if (typeof workflowSha !== 'string' || workflowSha !== sha) throw new Error(`refusing rehearsal: GITHUB_WORKFLOW_SHA ${String(workflowSha)} is not the run commit ${sha}`)
   return { revision: sha }
+}
+
+export function requireManualRehearsal(context) {
+  return requireManualDispatch(REHEARSAL_WORKFLOW_PATH, context)
+}
+
+// Manual, environment-gated signing rehearsal
+// (.github/workflows/zapstore-signing-rehearsal.yml). Same main-only manual
+// admission bound to its own definition file; it signs offline and verifies,
+// and returns nothing that can activate publication.
+export const SIGNING_REHEARSAL_WORKFLOW_PATH = '.github/workflows/zapstore-signing-rehearsal.yml'
+
+export function requireManualSigningRehearsal(context) {
+  return requireManualDispatch(SIGNING_REHEARSAL_WORKFLOW_PATH, context)
 }
 
 export function activationState(value) {
