@@ -367,6 +367,68 @@ class NotesSyncBoundaryRuntimeTest {
         assertNotNull(status(slow, "gen-slow").lastSuccessAt)
     }
 
+    @Test fun aForcedRefreshCutShortByForegroundEditsIsStillOwedToTheNextNotesRun() {
+        val account = newAccount("gen-owed")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-owed")
+        val mine = uploadNotebook("Mine")
+        // A first Notes sync saves the list cursor; the discovery key is already the current one.
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        val cursorBefore = listCursor(account)
+        assertNotNull(cursorBefore)
+        val before = status(account, "gen-owed")
+        assertNotNull(before.lastSuccessAt)
+
+        // An invitation is accepted: only a listing from scratch shows the notebook. The forced
+        // sync that follows first lists from the saved cursor, and each of its three answers is
+        // overtaken by an edit this device uploads and caches, so the refresh stops there, before
+        // the listing from scratch.
+        val accepted = uploadNotebook("Accepted")
+        fake.acceptedFromInvitation(accepted)
+        var mark = fake.requests.size
+        val parked = List(3) { fake.hold("POST", LIST, answerFirst = true) }
+        requestSync(context, account, forceCollectionRefresh = true)
+        try {
+            parked.forEachIndexed { index, answer ->
+                answer.awaitArrival()
+                readWhileHeld("this device's edit") { renameAsEditingDoes(account, mine, "Mine, edit ${index + 1}", cacheIt = true) }
+                answer.release()
+            }
+        } finally {
+            parked.forEach { it.release() }
+        }
+        awaitSettled(identity)
+        assertEquals("the forced run asked three times from the saved cursor and never from scratch",
+            listOf(cursorBefore, cursorBefore, cursorBefore), listings(mark).map(::cursorIn))
+        assertFalse("the accepted notebook is not cached yet", accepted in cachedNotebooks(account))
+        assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
+        status(account, "gen-owed").let {
+            assertEquals("a run whose collection listing was cut short recorded no success: $it", before.lastSuccessAt, it.lastSuccessAt)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+
+        // The next ordinary request still owes the listing from scratch, makes it, and completes.
+        mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("the owed listing from scratch was made: ${listings(mark)}", listings(mark).any(::fromScratch))
+        assertTrue("the accepted notebook was cached", accepted in cachedNotebooks(account))
+        assertEquals("the accepted notebook's notes were fetched", fake.itemStoken(accepted), notebookCursor(account, accepted))
+        assertEquals("Mine, edit 3", cachedNotebookName(account, mine))
+        assertFalse("the cursor moved on", listCursor(account) == cursorBefore)
+        status(account, "gen-owed").let {
+            assertTrue("the completed run succeeded: $it", it.lastSuccessAt!! > before.lastSuccessAt!!)
+            assertNull(it.activeAttemptId)
+        }
+
+        // With nothing owed any more, a further ordinary run lists from its cursor again.
+        forgetLastListing(account.name)
+        mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("an ordinary listing followed: ${listings(mark)}", listings(mark).isNotEmpty() && listings(mark).none(::fromScratch))
+    }
+
     @Test fun aHeldCollectionListLeavesItsAccountsCacheOpenToOtherReaders() {
         val name = "notes-boundary-${System.nanoTime()}@example.invalid"
         val account = newAccount("gen-open", name)
