@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import { MailPlus, RefreshCcw, ShieldCheck, Users } from 'lucide-react'
 import type { CollectionAccessLevel } from '@silentsuite/core'
@@ -94,7 +94,8 @@ function FingerprintConfirmDialog({
   const dialogRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
+  // Layout effect: focus moves in the commit that shows the dialog, never a task later.
+  useLayoutEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
     cancelRef.current?.focus()
     return () => {
@@ -570,13 +571,20 @@ export default function SharingSettingsPage() {
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <input
                     value={inviteUsernames[card.uid] ?? ''}
-                    onChange={(event) => setInviteUsernames((current) => ({ ...current, [card.uid]: event.target.value }))}
+                    onChange={(event) => {
+                      // Read the value now; the updater can run after React has restored the controlled DOM value.
+                      const value = event.target.value
+                      setInviteUsernames((current) => ({ ...current, [card.uid]: value }))
+                    }}
                     placeholder="friend@example.com"
                     className="min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
                   />
                   <select
                     value={inviteAccessLevels[card.uid] ?? 'readOnly'}
-                    onChange={(event) => setInviteAccessLevels((current) => ({ ...current, [card.uid]: event.target.value as CollectionAccessLevel }))}
+                    onChange={(event) => {
+                      const value = event.target.value as CollectionAccessLevel
+                      setInviteAccessLevels((current) => ({ ...current, [card.uid]: value }))
+                    }}
                     className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
                   >
                     {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
@@ -611,10 +619,10 @@ export default function SharingSettingsPage() {
                           <div className="flex flex-wrap items-center gap-2">
                             <select
                               value={memberAccessDrafts[draftKey] ?? accessLevelValue(member.accessLevel)}
-                              onChange={(event) => setMemberAccessDrafts((current) => ({
-                                ...current,
-                                [draftKey]: event.target.value as CollectionAccessLevel,
-                              }))}
+                              onChange={(event) => {
+                                const value = event.target.value as CollectionAccessLevel
+                                setMemberAccessDrafts((current) => ({ ...current, [draftKey]: value }))
+                              }}
                               className="rounded border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs text-[rgb(var(--foreground))]"
                             >
                               {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (

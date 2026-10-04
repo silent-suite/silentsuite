@@ -172,6 +172,30 @@ describe('SharingSettingsPage invite fingerprint confirmation', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('focuses Cancel in the same commit that shows the dialog, even when React yields before passive effects', async () => {
+    const { invitationManager } = setupPage()
+    invitationManager.fetchUserProfile.mockResolvedValueOnce({ pubkey: sharingKey(17) })
+    let focusedWhenShown: Element | null | undefined
+    const observer = new MutationObserver(() => {
+      if (focusedWhenShown === undefined && screen.queryByRole('dialog')) focusedWhenShown = document.activeElement
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    // Every clock read overruns React's 5ms scheduler slice, as on a loaded runner, so work after the commit is deferred to a later task.
+    let clock = performance.now()
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10))
+
+    try {
+      startInvite()
+      const dialog = await inviteDialog()
+
+      expect(focusedWhenShown).toBe(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(invitationManager.invite).not.toHaveBeenCalled()
+    } finally {
+      now.mockRestore()
+      observer.disconnect()
+    }
+  })
+
   it.each([
     ['Cancel', (dialog: HTMLElement) => fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))],
     ['Escape', (dialog: HTMLElement) => fireEvent.keyDown(dialog, { key: 'Escape' })],
@@ -276,6 +300,53 @@ describe('SharingSettingsPage invite fingerprint confirmation', () => {
     expect(within(dialog).getByText(displayedFingerprint(sharingKey(16)))).toBeInTheDocument()
     expect(invitationManager.fetchUserProfile).toHaveBeenCalledTimes(2)
     expect(invitationManager.invite).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Starts an invite and changes a form field in the microtask right after the dialog commit,
+ * before React's deferred effects task. Returns the field value read straight after the change.
+ */
+async function changeFieldAsDialogCommits(field: () => HTMLInputElement | HTMLSelectElement, value: string) {
+  // Every scheduler slice looks overrun, so the dialog commit yields before its passive effects run.
+  let clock = performance.now()
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10))
+  let observer: MutationObserver | undefined
+  try {
+    const changed = new Promise<string>((resolve) => {
+      observer = new MutationObserver(() => {
+        if (!document.querySelector('[role="dialog"]')) return
+        observer?.disconnect()
+        const target = field()
+        fireEvent.change(target, { target: { value } })
+        resolve(target.value)
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+    })
+    startInvite()
+    return await changed
+  } finally {
+    observer?.disconnect()
+    now.mockRestore()
+  }
+}
+
+describe('SharingSettingsPage invite form input as the dialog commits', () => {
+  it.each([
+    ['access selection', () => screen.getByRole('combobox') as HTMLSelectElement, 'admin'],
+    ['username', () => screen.getByPlaceholderText('friend@example.com') as HTMLInputElement, 'other@example.com'],
+  ] as const)('keeps the %s chosen as the dialog commits and closes the pending invite', async (_label, field, value) => {
+    const { invitationManager } = setupPage()
+    invitationManager.fetchUserProfile.mockResolvedValueOnce({ pubkey: sharingKey(17) })
+
+    expect(await changeFieldAsDialogCommits(field, value)).toBe(value)
+
+    expect(field()).toHaveValue(value)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(field()).toHaveValue(value)
+    expect(invitationManager.fetchUserProfile).toHaveBeenCalledTimes(1)
+    expect(invitationManager.invite).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Invitation sent/)).toBeNull()
   })
 })
 
