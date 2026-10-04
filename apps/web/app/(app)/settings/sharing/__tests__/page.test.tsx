@@ -172,6 +172,30 @@ describe('SharingSettingsPage invite fingerprint confirmation', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  it('focuses Cancel in the same commit that shows the dialog, even when React yields before passive effects', async () => {
+    const { invitationManager } = setupPage()
+    invitationManager.fetchUserProfile.mockResolvedValueOnce({ pubkey: sharingKey(17) })
+    let focusedWhenShown: Element | null | undefined
+    const observer = new MutationObserver(() => {
+      if (focusedWhenShown === undefined && screen.queryByRole('dialog')) focusedWhenShown = document.activeElement
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+    // Every clock read overruns React's 5ms scheduler slice, as on a loaded runner, so work after the commit is deferred to a later task.
+    let clock = performance.now()
+    const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10))
+
+    try {
+      startInvite()
+      const dialog = await inviteDialog()
+
+      expect(focusedWhenShown).toBe(within(dialog).getByRole('button', { name: 'Cancel' }))
+      expect(invitationManager.invite).not.toHaveBeenCalled()
+    } finally {
+      now.mockRestore()
+      observer.disconnect()
+    }
+  })
+
   it.each([
     ['Cancel', (dialog: HTMLElement) => fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))],
     ['Escape', (dialog: HTMLElement) => fireEvent.keyDown(dialog, { key: 'Escape' })],
