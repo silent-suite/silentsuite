@@ -23,17 +23,11 @@ tags carry none. Checking out `main` afterwards cannot change the jobs,
 permissions, or secret references that were already loaded. The lane therefore
 uses exactly one trigger:
 
-- **`schedule`** (`17 * * * *` UTC, hourly). Scheduled runs are loaded from the
-  default branch; `github.sha` is that branch head and is the revision that
-  supplied the definition.
-
-  **Temporary commissioning cadence.** The owner approved hourly runs so the
-  rehearsal can be observed sooner; no manual trigger was added. The steady
-  cadence is six-hourly (`17 */6 * * *`). After a successful rehearsal and
-  before live activation, restore the six-hour cron in
-  `.github/workflows/zapstore-publish.yml`, the exact cron assertion in
-  `scripts/zapstore/test/workflow-boundary.test.mjs`, and the cadence wording
-  here, in 5.1 and in `scripts/zapstore/lib/notify.mjs`.
+- **`schedule`** (`17 */6 * * *` UTC, six-hourly). Scheduled runs are loaded
+  from the default branch; `github.sha` is that branch head and is the revision
+  that supplied the definition. (The temporary hourly commissioning cadence
+  ended after the scheduled rehearsal passed; the owner approved restoring
+  six-hourly on 2026-10-03.)
 
 Admission proves this every run, from the run's own context and never from a
 value the lane fabricates: `GITHUB_EVENT_NAME=schedule`,
@@ -287,8 +281,7 @@ For transient failures (relay `incomplete`, a download or signer timeout), open
 the failed scheduled run and choose **Re-run failed jobs**; it is expected to
 replay the release id frozen in that run (see the open limitations in 1.1).
 Publication still waits for environment approval. Without any action, the next
-schedule (nominally hourly during temporary commissioning, six-hourly once
-restored; see 1.1) retries the same exact newest release. GitHub may delay or
+six-hourly schedule retries the same exact newest release. GitHub may delay or
 drop scheduled runs; this is not a maximum retry-time guarantee. To retry
 with a code fix, merge the fix to `main` and wait for the next schedule. After
 any publication attempt whose outcome is `unknown`, do not re-run blindly: wait
@@ -374,7 +367,7 @@ not fix them and a hand-run publisher would make them worse.
 ## 8. Manual assessment rehearsal
 
 `.github/workflows/zapstore-rehearsal.yml` lets the owner run the read-only half
-of the lane on demand. It is a separate workflow file, not a mode of
+of the lane on demand (for the signer, see section 9). It is a separate workflow file, not a mode of
 `zapstore-publish.yml`, and it does not change the scheduled lane's trigger,
 cron, admission, environment, secret step or publication path.
 
@@ -421,9 +414,63 @@ without review.
 |---|---|---|
 | Manual rehearsal run | The assessment code at the dispatched protected-main commit behaves as expected against live releases, the relay and the CDN | That the schedule fires or is admitted; activation; that the signer, bunker or environment work; that anything may be published |
 | Scheduled run (`zapstore-publish.yml`, including `ZAPSTORE_AUTOMATION_ENABLED=rehearsal`) | Scheduler triggering and protected-main admission of the production definition | Signing, unless the environment-bound `publish` job ran |
-| `publish` job of a scheduled run | Signing-account preflight, signing, upload and read-back | — (only source of signing proof) |
+| Signing rehearsal (`zapstore-signing-rehearsal.yml`, section 9) | Environment secrets reach the hosted job; the signer connection binds the approved account; the signer grants kinds 24242, 32267, 30063 and 3063 for this client key; the signed events match the exact-release metadata | Upload, relay publication, CDN serving, scheduler admission, or unattended signer availability |
+| `publish` job of a scheduled run | Signing-account preflight, signing, upload and read-back | — (only source of publication proof) |
 
 An `action` of `publish` in a rehearsal `reconcile.json` or `assessment.json` is
 the decision the scheduled lane *would* reach; it is not publication
 authorization and nothing consumes it. A green rehearsal does not tick any item
 in section 6.
+
+## 9. Signing rehearsal (environment-gated, no publication)
+
+`.github/workflows/zapstore-signing-rehearsal.yml` exercises the signer from a
+hosted runner without publishing. It is a separate workflow file; it does not
+change the scheduled lane's trigger, admission, activation variable or publish
+job, and the assessment rehearsal (section 8) stays secret-free.
+
+**New authority, owner-approved 2026-10-03.** (a) A second workflow binds
+`zapstore-production` and reads its two secrets, in exactly one step. (b) The
+lane's own NIP-46 client, otherwise read-only, may send `sign_event` for one
+shape only: kind 24242, tags exactly `t=upload`, one `x` hash and an
+`expiration` at most 120 s after `created_at` (`requireUploadAuthTemplate`).
+(c) The pinned publisher runs with the bunker in `--offline` mode, which yields
+real, publishable signed release events inside the runner.
+
+Admission (`requireManualSigningRehearsal`): `workflow_dispatch` of exactly
+`<repository>/.github/workflows/zapstore-signing-rehearsal.yml@refs/heads/main`,
+`GITHUB_WORKFLOW_SHA == GITHUB_SHA`, checkout bound to it. The one input,
+`release_id`, must equal the single newest eligible release from a fresh
+enumeration (`select-signing-release`); it is then bound by exact id, its APK
+digests and `apksigner` are verified and `prepare` builds the unsigned expected
+events, exactly as in assessment.
+
+The `sign-rehearsal` step reports four phases separately in
+`signing-rehearsal.json` (artifact `zapstore-signing-rehearsal`, counters only):
+
+| Phase | What happens | Network |
+|---|---|---|
+| `connection` | `connect` + `get_public_key` must return the approved publisher | encrypted kind 24133 on the bunker relay |
+| `uploadAuthorization` | one kind-24242 signature for `sha256` of 32 random bytes that are zeroed at once (nobody can upload that blob), expiring in 120 s; id, signature, account and every tag verified, then dropped | same signer relay only; no Blossom request exists in the code |
+| `releaseSigning` | pinned `zsp` 0.4.17 `--offline` with the bunker on the prepared local config; exactly 3 events, each id/signature valid, signed by the publisher, and equal to the prepared events except timestamp-dependent identities | signer relay; `--offline` uploads and publishes nothing |
+| `relayPostCheck` | read-only REQ for the signed ids on `wss://relay.zapstore.dev`; must observe 0 | read-only |
+
+`unattended` is always `false`: environment approval gates the run, and whether
+Amber prompted is not observable. A success here proves connection, upload
+authorization and release signing permissions for this client key at that
+moment, nothing more.
+
+Containment: the publisher's raw stdout/stderr (signed events) and the client
+key file live only under `$RUNNER_TEMP/signing/signer`; the CLI zero-fills and
+unlinks them right after the run, the step trap and a separate `always()` step
+remove the directory, and the artifact lists explicit paths outside it. The
+summary and verdict hold no event content, signature, bunker URL or key.
+
+Running it: after merge, the owner dispatches from `main` with the newest
+eligible release id (`gh workflow run zapstore-signing-rehearsal.yml --ref main
+-f release_id=<id>`), approves the `zapstore-production` deployment, and keeps
+Amber at hand: setup takes several minutes before the first signer request, and
+the publisher may wait up to 20 minutes for approval. The run shares the
+publication concurrency group, so it waits for (or is queued behind) a
+scheduled run. Do not re-dispatch to "retry" a failed phase without reading the
+verdict first.

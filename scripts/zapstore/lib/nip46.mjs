@@ -3,9 +3,12 @@
 // The bunker URL names the *remote signer* transport key; the account that will
 // sign is whatever `get_public_key` returns. This module resolves that account
 // with the job's client key so the lane can refuse before any signature or
-// upload authorisation is requested. It deliberately has no sign_event, no
-// encryption proxy, and no other method: the publisher itself is the only
-// component that asks the signer to sign.
+// upload authorisation is requested. A conversation is read-only by default.
+// The one exception is the signing rehearsal's upload-authorization check
+// (upload-auth.mjs): a conversation opened with UPLOAD_AUTH_METHODS may send
+// `sign_event`, and only for a kind-24242 template that passes
+// requireUploadAuthTemplate. There is no encryption proxy and no other method;
+// release events are only ever signed by the pinned publisher.
 
 import { randomBytes } from 'node:crypto'
 import { schnorr } from '@noble/curves/secp256k1.js'
@@ -14,7 +17,39 @@ import { eventId, verifyEvent } from './nostr.mjs'
 import { bytesToHex, conversationKey, decrypt, encrypt, hexToBytes } from './nip44.mjs'
 
 export const KIND_NOSTR_CONNECT = 24133
-export const READ_ONLY_METHODS = ['connect', 'get_public_key']
+export const READ_ONLY_METHODS = Object.freeze(['connect', 'get_public_key'])
+export const UPLOAD_AUTH_METHODS = Object.freeze(['sign_event'])
+export const KIND_BLOSSOM_AUTH = 24242
+export const MAX_UPLOAD_AUTH_LIFETIME_SECONDS = 120
+
+// The only event shape the lane's own client may ask the signer to sign: a
+// Blossom upload authorization for exactly one blob hash that expires within
+// MAX_UPLOAD_AUTH_LIFETIME_SECONDS. Anything else is refused before sending.
+export function requireUploadAuthTemplate(template) {
+  if (!template || typeof template !== 'object' || Array.isArray(template)) throw new Error('upload authorization template is not an object')
+  if (Object.keys(template).sort().join(',') !== 'content,created_at,kind,tags') throw new Error('upload authorization template carries unexpected fields')
+  if (template.kind !== KIND_BLOSSOM_AUTH) throw new Error(`refusing to request a signature for kind ${String(template.kind)}; only ${KIND_BLOSSOM_AUTH} is permitted`)
+  if (!Number.isInteger(template.created_at) || template.created_at <= 0) throw new Error('upload authorization created_at is malformed')
+  if (typeof template.content !== 'string' || template.content.length > 200) throw new Error('upload authorization content is malformed')
+  const tags = template.tags
+  if (!Array.isArray(tags) || tags.length !== 3 || !tags.every((t) => Array.isArray(t) && t.length === 2 && t.every((v) => typeof v === 'string'))) throw new Error('upload authorization must carry exactly the t, x and expiration tags')
+  const [[t, verb], [x, hash], [exp, expiration]] = tags
+  if (t !== 't' || verb !== 'upload') throw new Error('upload authorization must be scoped to the upload verb')
+  if (x !== 'x' || !/^[0-9a-f]{64}$/.test(hash)) throw new Error('upload authorization must be scoped to exactly one blob hash')
+  if (exp !== 'expiration' || !/^[1-9][0-9]*$/.test(expiration)) throw new Error('upload authorization must carry an expiration')
+  const lifetime = Number(expiration) - template.created_at
+  if (!(lifetime > 0 && lifetime <= MAX_UPLOAD_AUTH_LIFETIME_SECONDS)) throw new Error(`upload authorization lifetime ${lifetime} s is outside (0, ${MAX_UPLOAD_AUTH_LIFETIME_SECONDS}]`)
+  return template
+}
+
+function requirePermittedRequest(methods, method, params) {
+  if (!methods.includes(method)) throw new Error(`method ${method} is not ${methods === READ_ONLY_METHODS ? 'a read-only handshake method' : 'permitted on this conversation'}`)
+  if (method !== 'sign_event') return
+  if (!Array.isArray(params) || params.length !== 1 || typeof params[0] !== 'string') throw new Error('sign_event takes exactly one serialized template')
+  let template
+  try { template = JSON.parse(params[0]) } catch { throw new Error('sign_event template is not JSON') }
+  requireUploadAuthTemplate(template)
+}
 
 export function parseBunkerUrl(bunkerUrl) {
   let parsed
@@ -36,9 +71,11 @@ function signEvent(event, privateKeyHex) {
 
 // One relay connection carrying encrypted request/response events.
 export class BunkerConversation {
-  constructor({ relay, clientKeyHex, remoteSigner, WebSocketImpl = globalThis.WebSocket, timeoutMs = 20000, now = () => Math.floor(Date.now() / 1000) }) {
+  constructor({ relay, clientKeyHex, remoteSigner, WebSocketImpl = globalThis.WebSocket, timeoutMs = 20000, now = () => Math.floor(Date.now() / 1000), methods = READ_ONLY_METHODS }) {
     if (typeof WebSocketImpl !== 'function') throw new Error('no WebSocket implementation available; pin Node 22 or newer')
     if (!/^[0-9a-f]{64}$/.test(clientKeyHex ?? '')) throw new Error('client key must be 64-hex')
+    if (methods !== READ_ONLY_METHODS && methods !== UPLOAD_AUTH_METHODS) throw new Error('conversation methods must be READ_ONLY_METHODS or UPLOAD_AUTH_METHODS')
+    this.methods = methods
     this.relay = relay
     this.clientKeyHex = clientKeyHex
     this.clientPubkey = bytesToHex(schnorr.getPublicKey(hexToBytes(clientKeyHex)))
@@ -88,7 +125,7 @@ export class BunkerConversation {
   }
 
   rpc(method, params) {
-    if (!READ_ONLY_METHODS.includes(method)) throw new Error(`method ${method} is not a read-only handshake method`)
+    requirePermittedRequest(this.methods, method, params)
     if (!this.socket) throw new Error('conversation is not open')
     const id = randomBytes(8).toString('hex')
     const request = signEvent({

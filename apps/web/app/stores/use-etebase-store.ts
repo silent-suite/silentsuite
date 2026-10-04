@@ -185,11 +185,17 @@ async function ensureCollectionsForAccount(
     preferences: [],
   }
 
-  for (const [key, colType, defaultName] of COLLECTION_DEFINITIONS) {
+  // List every type before creating anything: a default is admitted only when
+  // the whole discovery completed, never from a partial or failed listing.
+  for (const [key, colType] of COLLECTION_DEFINITIONS) {
     const existing = await core.listCollections(account, colType)
     if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+    collections[key] = existing
+  }
+
+  for (const [key, colType, defaultName] of COLLECTION_DEFINITIONS) {
+    const existing = collections[key]
     if (existing.length > 0) {
-      collections[key] = existing
       logger.debug(`[etebase-store] Found ${existing.length} existing ${key} collection(s)`)
     } else if (key !== 'notes') {
       if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
@@ -201,6 +207,86 @@ async function ensureCollectionsForAccount(
   }
 
   return collections
+}
+
+/**
+ * Account epoch whose initial collection discovery failed before the
+ * SyncEngine was started. A later successful reconcile for the same epoch
+ * starts that engine once; any other epoch ignores it.
+ */
+let pendingSyncEngineStartEpoch: number | null = null
+
+/**
+ * Construct, track, and start the SyncEngine for discovered collections.
+ * Returns null (after stopping the engine) when the account boundary changed
+ * while starting.
+ */
+async function startSyncEngine(
+  core: EtebaseCore,
+  account: any,
+  serverUrl: string,
+  collections: Record<CollectionTypeKey, any[]>,
+  accountEpoch: number,
+  cacheEnabled: boolean,
+  diagnostics?: RestoreDiagnosticsRecorder,
+): Promise<any | null> {
+  const engine = new core.SyncEngine({
+    serverUrl,
+    pollIntervalMs: 30_000,
+  })
+
+  try {
+    return await trackAndStartSyncEngine(engine, account, collections, accountEpoch, cacheEnabled, diagnostics)
+  } catch (err) {
+    // A partially started engine may already hold a poll or reconnect timer.
+    engine.stop()
+    throw err
+  }
+}
+
+async function trackAndStartSyncEngine(
+  engine: any,
+  account: any,
+  collections: Record<CollectionTypeKey, any[]>,
+  accountEpoch: number,
+  cacheEnabled: boolean,
+  diagnostics?: RestoreDiagnosticsRecorder,
+): Promise<any | null> {
+  // Track all collections
+  diagnostics?.startPhase('syncEngineTrackCollections')
+  for (const [key, colType] of COLLECTION_DEFINITIONS) {
+    for (const collection of collections[key]) {
+      await trackCollectionWithSyncEngine(engine, colType, key, collection.uid, accountEpoch)
+      assertCurrentAccountEpoch(accountEpoch)
+    }
+  }
+  diagnostics?.completePhase('syncEngineTrackCollections', {
+    collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
+  })
+
+  // Seed persisted stokens before starting so the first sync round
+  // pulls only deltas instead of refetching the whole vault. Wire the
+  // advance handler so subsequent stoken updates are persisted too.
+  if (cacheEnabled) {
+    engine.onStokenAdvance((event: { collectionType: string; collectionUid: string; stoken: string | null }) => {
+      if (!isCurrentAccountEpoch(accountEpoch)) return
+      const key = collectionTypeToKey(event.collectionType)
+      if (!key) return
+      void cacheSetStoken(key, event.collectionUid, event.stoken, accountEpoch).catch((err) => {
+        if (err instanceof AccountBoundaryChangedError) return
+        logger.warn('[etebase-store] Failed to persist sync cursor', getSafeErrorDetails(err))
+      })
+    })
+  }
+
+  diagnostics?.startPhase('syncEngineStart')
+  await engine.start(account)
+  if (!isCurrentAccountEpoch(accountEpoch)) {
+    engine.stop()
+    return null
+  }
+  diagnostics?.completePhase('syncEngineStart')
+  return engine
 }
 
 /**
@@ -1019,7 +1105,40 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // 2. Discover existing collections. Only core domains get automatic defaults;
       // the first Notes notebook is created by the explicit Experimental opt-in.
       diagnostics.startPhase('ensureCollections')
-      const collections = await ensureCollectionsForAccount(account, core, accountEpoch)
+      let collections: Record<CollectionTypeKey, any[]>
+      try {
+        collections = await ensureCollectionsForAccount(account, core, accountEpoch)
+      } catch (err) {
+        if (err instanceof AccountBoundaryChangedError || !isCurrentAccountEpoch(accountEpoch)) {
+          throw new AccountBoundaryChangedError()
+        }
+        // The session restored fine; only discovery failed (offline or server).
+        // Report every visible domain as failed through the per-domain contract
+        // so the existing Retry path can recover, without publishing any partial
+        // discovery or touching cached data and pending local work.
+        diagnostics.failActivePhase(err)
+        diagnostics.persist()
+        logger.warn('[etebase-store] Collection discovery failed', getSafeErrorDetails(err))
+        pendingSyncEngineStartEpoch = accountEpoch
+        const failedState: Partial<DomainLoadState> = {}
+        for (const [key] of COLLECTION_DEFINITIONS) failedState[key] = 'failed'
+        set((state) => ({
+          domainLoadState: { ...state.domainLoadState, ...failedState },
+          isInitialized: true,
+          restoreBlocked: false,
+        }))
+        for (const [key] of COLLECTION_DEFINITIONS) {
+          await options?.onDomainLoaded?.({
+            type: key,
+            status: 'failed',
+            itemCount: 0,
+            pageCount: 0,
+            collectionCount: get().collections[key].length,
+          })
+          assertCurrentAccountEpoch(accountEpoch)
+        }
+        return
+      }
       assertCurrentAccountEpoch(accountEpoch)
       diagnostics.completePhase('ensureCollections', {
         collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
@@ -1100,45 +1219,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       logger.debug(`[etebase-store] Loaded ${totalLoadedItemCount} items into cache`)
 
       // 4. Start SyncEngine
-      const engine = new core.SyncEngine({
-        serverUrl: serverUrl,
-        pollIntervalMs: 30_000,
-      })
-
-      // Track all collections
-      diagnostics.startPhase('syncEngineTrackCollections')
-      for (const [key, colType] of COLLECTION_DEFINITIONS) {
-        for (const collection of collections[key]) {
-          await trackCollectionWithSyncEngine(engine, colType, key, collection.uid, accountEpoch)
-          assertCurrentAccountEpoch(accountEpoch)
-        }
-      }
-      diagnostics.completePhase('syncEngineTrackCollections', {
-        collectionCount: COLLECTION_DEFINITIONS.reduce((count, [key]) => count + collections[key].length, 0),
-      })
-
-      // Seed persisted stokens before starting so the first sync round
-      // pulls only deltas instead of refetching the whole vault. Wire the
-      // advance handler so subsequent stoken updates are persisted too.
-      if (cacheEnabled) {
-        engine.onStokenAdvance((event: { collectionType: string; collectionUid: string; stoken: string | null }) => {
-          if (!isCurrentAccountEpoch(accountEpoch)) return
-          const key = collectionTypeToKey(event.collectionType)
-          if (!key) return
-          void cacheSetStoken(key, event.collectionUid, event.stoken, accountEpoch).catch((err) => {
-            if (err instanceof AccountBoundaryChangedError) return
-            logger.warn('[etebase-store] Failed to persist sync cursor', getSafeErrorDetails(err))
-          })
-        })
-      }
-
-      diagnostics.startPhase('syncEngineStart')
-      await engine.start(account)
+      const engine = await startSyncEngine(core, account, serverUrl, collections, accountEpoch, cacheEnabled, diagnostics)
+      if (!engine) return
+      // The boundary can change after the helper's own check; teardown never
+      // saw this unpublished engine, so stop it here instead of publishing.
       if (!isCurrentAccountEpoch(accountEpoch)) {
         engine.stop()
         return
       }
-      diagnostics.completePhase('syncEngineStart')
       set({ syncEngine: engine, isInitialized: true })
       diagnostics.persist()
       logger.debug('[etebase-store] SyncEngine started')
@@ -1353,16 +1441,42 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         }
       }
 
+      // A visible type with no collections is completely discovered; types with
+      // collections reach 'loaded' through their item refresh.
+      const emptyDomainState: Partial<DomainLoadState> = {}
+      for (const [type] of COLLECTION_DEFINITIONS) {
+        if (activeCollections[type].length === 0) emptyDomainState[type] = 'loaded'
+      }
+
       assertCurrentAccountEpoch(accountEpoch)
-      set({
+      set((state) => ({
         collections: activeCollections,
         itemCache: newItemCache,
         itemTypeMap: newItemTypeMap,
         itemCollectionMap: newItemCollectionMap,
-      })
+        domainLoadState: { ...state.domainLoadState, ...emptyDomainState },
+      }))
       await Promise.all(cleanupPromises)
       assertCurrentAccountEpoch(accountEpoch)
       await hydrateListStores(activeCollections, accountEpoch)
+
+      // Initial discovery failed before the SyncEngine started: start it once
+      // now that discovery succeeded for the same account.
+      if (pendingSyncEngineStartEpoch === accountEpoch && !get().syncEngine) {
+        pendingSyncEngineStartEpoch = null
+        try {
+          const engine = await startSyncEngine(core, account, getServerUrl(), activeCollections, accountEpoch, isLocalCacheEnabled())
+          if (!engine) throw new AccountBoundaryChangedError()
+          if (!isCurrentAccountEpoch(accountEpoch)) {
+            engine.stop()
+            throw new AccountBoundaryChangedError()
+          }
+          set({ syncEngine: engine })
+        } catch (err) {
+          if (isCurrentAccountEpoch(accountEpoch) && !get().syncEngine) pendingSyncEngineStartEpoch = accountEpoch
+          throw err
+        }
+      }
       logger.debug(`[etebase-store] Reconciled collections (${removedCollectionCount} removed)`)
     } catch (err) {
       if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return
