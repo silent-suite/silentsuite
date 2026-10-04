@@ -26,6 +26,12 @@ internal object CollectionListRefresh {
     /** Burst protection: adapters finishing together share one list fetch per account. */
     private const val CACHE_AGE_MILLIS = 5L * 1000L
 
+    /**
+     * How often one list page is asked for when collections keep being written here while its
+     * answer is on the way. After that the refresh ends where it got to and the next one carries on.
+     */
+    private const val PAGE_ATTEMPTS = 3
+
     val collectionLastFetchMap = ConcurrentHashMap<String, Long>()
 
     /**
@@ -80,15 +86,26 @@ internal object CollectionListRefresh {
             // list refresh makes newly accepted shared collections visible even when an old stoken
             // would otherwise hide the membership change. The same applies when a new collection
             // type joins discovery.
-            fun listFrom(startStoken: String?) {
+            // Returns false when a page could not be written because collections kept being written
+            // here; nothing of that page is cached then, and the cursor still points at it.
+            fun listFrom(startStoken: String?): Boolean {
                 var stoken = startStoken
                 var done = false
+                var attempts = 0
                 while (!done) {
                     guard.check()
+                    val writesBefore = etebaseLocalCache.collectionWrites()
                     val colList = colMgr.list(Constants.SYNCED_COLLECTION_TYPES, FetchOptions().stoken(stoken))
-                    // A page is written only if this run is still current when its answer arrives.
+                    // A page is written only if this run is still current when its answer arrives,
+                    // and only if no collection was written here since the page was asked for: the
+                    // answer may have been built before that write was uploaded, and would put an
+                    // older revision (or a collection deleted here) back. The page is asked for
+                    // again instead; that answer is built after the upload the write followed.
+                    var written = false
                     synchronized(etebaseLocalCache) {
                         guard.write(etebaseLocalCache) {
+                            if (etebaseLocalCache.collectionWrites() != writesBefore) return@write
+                            written = true
                             for (col in colList.data) {
                                 etebaseLocalCache.collectionSet(colMgr, col)
                             }
@@ -100,9 +117,18 @@ internal object CollectionListRefresh {
                             colList.stoken?.let { etebaseLocalCache.saveStoken(it) }
                         }
                     }
+                    if (!written) {
+                        if (++attempts >= PAGE_ATTEMPTS) {
+                            Logger.log.info("Collections kept changing locally during the collection list refresh; leaving the rest to the next refresh")
+                            return false
+                        }
+                        continue
+                    }
+                    attempts = 0
                     stoken = colList.stoken
                     done = colList.isDone
                 }
+                return true
             }
 
             val savedStoken = synchronized(etebaseLocalCache) { etebaseLocalCache.loadStoken() }
@@ -110,9 +136,11 @@ internal object CollectionListRefresh {
                 // A cursor-free listing has no "since" point and reports no removed memberships, so
                 // apply everything pending under the old cursor first. Otherwise a collection this
                 // account lost since the last listing would stay cached for good.
-                savedStoken?.let { listFrom(it) }
+                // A replay that had to stop leaves the full listing, the discovery key and the
+                // burst window to the next refresh, which starts from the same saved state.
+                if (savedStoken != null && !listFrom(savedStoken)) return@synchronized
             }
-            listFrom(if (forceRefresh || discoveryChanged) null else savedStoken)
+            if (!listFrom(if (forceRefresh || discoveryChanged) null else savedStoken)) return@synchronized
             synchronized(etebaseLocalCache) {
                 guard.write(etebaseLocalCache) {
                     if (discoveryChanged) AccountSettings.writeCollectionListTypes(manager, account, discoveryTypesKey)

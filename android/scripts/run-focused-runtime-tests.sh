@@ -39,7 +39,7 @@ tests = sorted(
     for class_name, methods in ledger["classes"].items()
     for method in methods
 )
-if len(tests) != 107 or len(set(tests)) != 107:
+if len(tests) != 108 or len(set(tests)) != 108:
     raise SystemExit(f"bad canonical runtime ledger size: {len(tests)}")
 
 mixed = [tuple(pair) for pair in ledger["shards"]["21:mixed"]]
@@ -61,11 +61,11 @@ else:
 expected = {
     "21:mixed": 1,
     "21:requested": 1,
-    "21:remaining": 105,
-    "35:all": 107,
+    "21:remaining": 106,
+    "35:all": 108,
     "36:account-dashboard": 29,
     "36:first-run-setup": 19,
-    "36:status-routes": 59,
+    "36:status-routes": 60,
 }[mode]
 if len(selected) != expected:
     raise SystemExit(f"bad selector count for {mode}: {len(selected)}")

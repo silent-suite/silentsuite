@@ -471,6 +471,65 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("Renamed here", cachedNotebookName(account, notebook))
     }
 
+    @Test fun aListPageOvertakenByForegroundEditsIsAskedForAgainAFewTimesAndThenLeftForTheNextRefresh() {
+        val account = newAccount("gen-again")
+        val kept = uploadNotebook("Kept")
+        val lost = uploadNotebook("Lost elsewhere")
+        assertNull(BackgroundRefresh(account, "gen-again").await())
+        assertEquals(setOf(kept, lost), cachedNotebooks(account))
+
+        // 1. An answer that reports a lost membership is built and parked, and this device edits
+        // another notebook before it arrives. The page is asked for again from the same cursor, and
+        // that answer is applied: the lost notebook goes, the edit stays.
+        fake.removeMembership(lost)
+        forgetLastListing(account.name)
+        var mark = fake.requests.size
+        val removal = fake.hold("POST", LIST, answerFirst = true)
+        val refresh = BackgroundRefresh(account, "gen-again")
+        try {
+            removal.awaitArrival()
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, kept, "Kept, renamed here", cacheIt = true) }
+        } finally {
+            removal.release()
+        }
+        assertNull("the refresh finished normally", refresh.await())
+        assertEquals("the page was asked for once more, from the same cursor",
+            listOf(cursorOf(removal), cursorOf(removal)), listings(mark).map(::cursorIn))
+        assertEquals("the lost notebook was dropped", setOf(kept), cachedNotebooks(account))
+        assertEquals("Kept, renamed here", cachedNotebookName(account, kept))
+        assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-again") })
+
+        // 2. Every answer for a page is overtaken by another edit here. The refresh asks three
+        // times, then ends without an error, without moving the cursor and without recording a
+        // listing time, so the next refresh lists again.
+        forgetLastListing(account.name)
+        val cursorBefore = listCursor(account)
+        mark = fake.requests.size
+        val parked = List(3) { fake.hold("POST", LIST, answerFirst = true) }
+        val crowded = BackgroundRefresh(account, "gen-again")
+        try {
+            parked.forEachIndexed { index, answer ->
+                answer.awaitArrival()
+                readWhileHeld("this device's edit") { renameAsEditingDoes(account, kept, "Edit ${index + 1}", cacheIt = true) }
+                answer.release()
+            }
+        } finally {
+            parked.forEach { it.release() }
+        }
+        assertNull("the refresh ended without an error", crowded.await())
+        assertEquals("the page was asked for three times, from the same cursor",
+            listOf(cursorBefore, cursorBefore, cursorBefore), listings(mark).map(::cursorIn))
+        assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
+        assertEquals("the last edit is what is cached", "Edit 3", cachedNotebookName(account, kept))
+        assertTrue("no listing time was recorded", lastListingKeys(account.name).isEmpty())
+
+        // The next refresh is not affected: it lists, writes and records its time normally.
+        assertNull(BackgroundRefresh(account, "gen-again").await())
+        assertEquals("Edit 3", cachedNotebookName(account, kept))
+        assertFalse("the cursor moved on", listCursor(account) == cursorBefore)
+        assertTrue(lastListingKeys(account.name).any { it.endsWith("gen-again") })
+    }
+
     @Test fun concurrentRefreshesOfOneAccountListOneAtATimeAndNeverMoveTheCursorBack() {
         val account = newAccount("gen-twice")
         val notebook = uploadNotebook("Listed once")
