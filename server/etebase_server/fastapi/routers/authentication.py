@@ -232,8 +232,31 @@ def dashboard_url(request: Request, user: UserType = Depends(get_authenticated_u
     return MsgpackResponse(ret)
 
 
+REGISTRATION_TOKEN_HEADER = "x-silentsuite-registration-token"
+
+
+def check_registration_token(request: Request):
+    """Require the owner registration token header for every signup when configured.
+
+    Only the request header is accepted: never a query parameter, forwarded identity,
+    or the bootstrap token. The supplied value is never logged or echoed."""
+    registration_token = settings.ETEBASE_REGISTRATION_TOKEN
+    if not registration_token:
+        return
+    supplied = request.headers.getlist(REGISTRATION_TOKEN_HEADER)
+    supplied_token = supplied[0] if len(supplied) == 1 else ""
+    valid = hmac.compare_digest(registration_token.encode("utf-8"), supplied_token.encode("utf-8"))
+    if not supplied_token or not valid:
+        raise HttpError(
+            "registration_token_required",
+            "A valid registration token is required to create an account on this server.",
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
 def signup_save(data: SignupIn, request: Request) -> UserType:
     user_data = data.user
+    check_registration_token(request)
     with transaction.atomic():
         bootstrap_token = settings.ETEBASE_BOOTSTRAP_ADMIN_TOKEN
         if bootstrap_token and not models.UserInfo.objects.exists():

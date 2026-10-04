@@ -42,6 +42,9 @@ DEBUG = os.environ.get('ETEBASE_DEBUG', 'false').lower() == 'true'
 ALLOWED_HOSTS = []
 ETEBASE_DISABLE_DJANGO_ADMIN = env_flag("ETEBASE_DISABLE_DJANGO_ADMIN")
 ETEBASE_BOOTSTRAP_ADMIN_TOKEN = os.environ.get("ETEBASE_BOOTSTRAP_ADMIN_TOKEN", "")
+# Opt-in per-install owner authorization required for every signup (sent as the
+# X-SilentSuite-Registration-Token header). Empty keeps signup behavior unchanged.
+ETEBASE_REGISTRATION_TOKEN = os.environ.get("ETEBASE_REGISTRATION_TOKEN", "")
 
 # Database
 # https://docs.djangoproject.com/en/2.0/ref/settings/#databases
