@@ -21,5 +21,6 @@
         <SwitchPreferenceCompat android:key="log_verbose" android:persistent="false" android:title="@string/app_settings_log_verbose" android:summary="@string/app_settings_log_verbose_summary" />
         <ListPreference android:key="select_language" android:persistent="false" android:title="@string/app_settings_force_language" />
         <Preference android:key="show_debug_info" android:title="@string/app_settings_show_debug_info" android:summary="@string/app_settings_show_debug_info_details" android:persistent="false" />
+        <Preference android:key="show_scheduling_diagnostics" android:title="@string/app_settings_scheduling_diagnostics" android:summary="@string/app_settings_scheduling_diagnostics_details" android:persistent="false" />
     </PreferenceCategory>
 </PreferenceScreen>
