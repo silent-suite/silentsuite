@@ -609,6 +609,79 @@ class NotesSyncBoundaryRuntimeTest {
         assertTrue(lastListingKeys(account.name).any { it.endsWith("gen-again") })
     }
 
+    @Test fun aReaskedCollectionPageDoesNotLookLikeAStallButAnAppliedRepeatedCursorDoes() {
+        val account = newAccount("gen-retry-stall")
+        val edited = uploadNotebook("First name")
+        assertNull(BackgroundRefresh(account, "gen-retry-stall").await())
+        val saved = listCursor(account)
+        assertNotNull(saved)
+
+        // 1. A listing of several pages. The answer to its first page is built and parked, and this
+        // device edits a notebook before it arrives, so that page is asked for again from the same
+        // cursor. Asking twice from one cursor is not a listing that fails to move on: the page was
+        // not applied the first time, and the listing goes on to its end.
+        fake.collectionPageSize = 1
+        val added = listOf(uploadNotebook("Added one"), uploadNotebook("Added two"), uploadNotebook("Added three"))
+        forgetLastListing(account.name)
+        var mark = fake.requests.size
+        val overtaken = fake.hold("POST", LIST, answerFirst = true)
+        val paged = BackgroundRefresh(account, "gen-retry-stall")
+        try {
+            overtaken.awaitArrival()
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, edited, "Renamed here", cacheIt = true) }
+        } finally {
+            overtaken.release()
+        }
+        val pagedOutcome = paged.await()
+        assertNull("a page asked for again was not taken for a stalled listing: $pagedOutcome", pagedOutcome)
+        val pagedCursors = listings(mark).map(::cursorIn)
+        assertEquals("the first page was asked for twice, from the saved cursor: $pagedCursors",
+            listOf(saved, saved), pagedCursors.take(2))
+        val laterCursors = pagedCursors.drop(2)
+        assertTrue("further pages followed: $pagedCursors", laterCursors.isNotEmpty())
+        assertTrue("every later page was asked for from a cursor: $pagedCursors", laterCursors.none { it == null })
+        assertEquals("no later page was asked for twice: $pagedCursors", laterCursors.size, laterCursors.toSet().size)
+        assertFalse("no later page went back to the saved cursor: $pagedCursors", saved in laterCursors)
+        assertEquals("every notebook was cached", setOf(edited) + added, cachedNotebooks(account))
+        assertEquals("the edit was kept", "Renamed here", cachedNotebookName(account, edited))
+        assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-retry-stall") })
+
+        // 2. The server now answers every list request "not done" with the cursor it was asked with.
+        // The first answer is overtaken by an edit here and is not applied, so it says nothing yet.
+        // The page is asked for again, that answer is applied, and its cursor is the one the listing
+        // started from: the listing is not moving on, and the refresh ends there.
+        val before = listCursor(account)
+        assertNotNull(before)
+        forgetLastListing(account.name)
+        fake.stalledCollectionList = FakeEtebaseServer.Stall.SAME_CURSOR
+        mark = fake.requests.size
+        val ignored = fake.hold("POST", LIST, answerFirst = true)
+        val stalled = BackgroundRefresh(account, "gen-retry-stall")
+        try {
+            ignored.awaitArrival()
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, edited, "Renamed again", cacheIt = true) }
+        } finally {
+            ignored.release()
+        }
+        val stalledOutcome = stalled.await()
+        assertTrue("the refresh ended as a stalled listing: $stalledOutcome",
+            stalledOutcome is io.silentsuite.sync.syncadapter.PagedListingStalledException)
+        assertEquals("one answer was overtaken, and the one applied after it ended the listing",
+            listOf(before, before), listings(mark).map(::cursorIn))
+        assertEquals("the list cursor did not move", before, listCursor(account))
+        assertTrue("no listing time was recorded", lastListingKeys(account.name).isEmpty())
+        assertEquals("the edit was kept", "Renamed again", cachedNotebookName(account, edited))
+
+        // Once the server answers properly again, the next refresh lists and completes as usual.
+        fake.stalledCollectionList = null
+        forgetLastListing(account.name)
+        val recovered = BackgroundRefresh(account, "gen-retry-stall").await()
+        assertNull("the next refresh finished normally: $recovered", recovered)
+        assertEquals("Renamed again", cachedNotebookName(account, edited))
+        assertEquals(setOf(edited) + added, cachedNotebooks(account))
+        assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-retry-stall") })
+    }
+
     @Test fun concurrentRefreshesOfOneAccountListOneAtATimeAndNeverMoveTheCursorBack() {
         val account = newAccount("gen-twice")
         val notebook = uploadNotebook("Listed once")
