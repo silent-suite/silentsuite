@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import { MailPlus, RefreshCcw, ShieldCheck, Users } from 'lucide-react'
 import type { CollectionAccessLevel } from '@silentsuite/core'
@@ -94,7 +94,8 @@ function FingerprintConfirmDialog({
   const dialogRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
+  // Layout effect: focus moves in the commit that shows the dialog, never a task later.
+  useLayoutEffect(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
     cancelRef.current?.focus()
     return () => {
