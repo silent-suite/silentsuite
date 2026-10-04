@@ -173,6 +173,13 @@ abstract class SyncAdapterService : Service() {
                 // Shouldn't be needed - not sure why it doesn't fail
                 onSecurityException(account, extras, authority, syncResult)
                 persistStatus(syncResult) { recordFailure(account, extras, SyncStatusStore.FailureCategory.PERMISSION) }
+            } catch (e: CollectionRefreshIncompleteException) {
+                // RefreshCollections did not finish: do not reconcile providers, dispatch contact
+                // children or record success. Use the existing soft retry/backoff, not a new job.
+                // The shared discovery key keeps a forced full listing owed without the extras.
+                syncResult.stats.numIoExceptions++
+                syncResult.delayUntil = maxOf(syncResult.delayUntil, Constants.DEFAULT_RETRY_DELAY)
+                persistStatus(syncResult) { finishWithoutOutcome(account, extras) }
             } catch (e: StaleSyncRunException) {
                 // The account was removed or replaced while the collection list was in flight:
                 // nothing was written for it, and there is no failure to report to the new one.

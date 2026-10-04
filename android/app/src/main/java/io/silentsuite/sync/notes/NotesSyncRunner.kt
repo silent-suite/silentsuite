@@ -20,6 +20,7 @@ import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
+import io.silentsuite.sync.syncadapter.CollectionRefreshIncompleteException
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import io.silentsuite.sync.syncadapter.SyncRunGuard
 import io.silentsuite.sync.syncadapter.SyncStatusStore
@@ -135,6 +136,11 @@ internal object NotesSyncRunner {
             }
             if (outcome == NotebooksOutcome.STALE || !guard.mayWrite()) { finishWithoutOutcome(); return true }
             if (outcome == NotebooksOutcome.SOME_FAILED) recordFailure(SyncStatusStore.FailureCategory.UNKNOWN) else recordSuccess()
+        } catch (e: CollectionRefreshIncompleteException) {
+            // No item fetch or success follows an unfinished list. Returning false also keeps
+            // this run's forced refresh owed in the coordinator's existing single-flight policy.
+            Logger.log.info("Notes sync deferred: collection refresh is incomplete")
+            finishWithoutOutcome()
         } catch (e: InterruptedException) {
             Logger.log.info("Notes sync cancelled")
             finishWithoutOutcome()

@@ -26,7 +26,22 @@ internal object CollectionListRefresh {
     /** Burst protection: adapters finishing together share one list fetch per account. */
     private const val CACHE_AGE_MILLIS = 5L * 1000L
 
+    /**
+     * How often one list page is asked for when collections keep being written here while its
+     * answer is on the way. After that the refresh ends where it got to and the next one carries on.
+     */
+    private const val PAGE_ATTEMPTS = 3
+
     val collectionLastFetchMap = ConcurrentHashMap<String, Long>()
+
+    /**
+     * One lock per account generation, held for a whole refresh including its list requests, so
+     * refreshes of that generation list one at a time and the later ones see the burst window and
+     * the cursor the first left. Only this object takes it, always before the cache's monitor. The
+     * cache's monitor is taken for each read and write but never across a list request, so a slow
+     * listing keeps no other user of the account's cache waiting.
+     */
+    private val refreshLocks = ConcurrentHashMap<String, Any>()
 
     /** The saved cursor is only valid for the exact type set it was produced with. */
     internal val discoveryTypesKey: String = Constants.SYNCED_COLLECTION_TYPES.joinToString(",")
@@ -36,6 +51,8 @@ internal object CollectionListRefresh {
      * Every write after a list request goes through a [SyncRunGuard]: once that generation is gone,
      * or [stillWanted] turns false, nothing more is written and the run ends with
      * [StaleSyncRunException].
+     * Throws [CollectionRefreshIncompleteException] when the bounded page attempts are exhausted;
+     * only a normal return permits callers to continue discovery or record success.
      */
     fun run(
         context: Context,
@@ -48,63 +65,109 @@ internal object CollectionListRefresh {
     ) {
         val guard = SyncRunGuard(context, account, creationId, stillWanted)
         val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
-        synchronized(etebaseLocalCache) {
-            // The burst window belongs to one account generation, so a same-name account that
-            // replaced this one is never skipped because the old one listed a moment ago.
-            val fetchKey = "${account.name}\u0000${creationId.orEmpty()}"
+        // The burst window belongs to one account generation, so a same-name account that
+        // replaced this one is never skipped because the old one listed a moment ago. Nor does it
+        // wait for the old one's request: that run's writes are refused once its generation is gone.
+        val fetchKey = "${account.name}\u0000${creationId.orEmpty()}"
+        synchronized(refreshLocks.getOrPut(fetchKey) { Any() }) {
+            guard.check()
+            val manager = AccountManager.get(context)
+            if (forceRefresh) {
+                // Reuse the durable discovery policy: until a full listing completes, its type
+                // coverage is unconfirmed. This survives one-shot adapter extras, Notes slot
+                // cancellation and process death. Both invalidation and completion belong to the
+                // exact account generation and share the cache cleanup fence.
+                synchronized(etebaseLocalCache) {
+                    guard.write(etebaseLocalCache) {
+                        check(AccountSettings.writeCollectionListTypes(manager, account, "")) {
+                            "Could not retain the full collection refresh obligation"
+                        }
+                    }
+                }
+            }
+            val discoveryChanged = AccountSettings.collectionListTypes(manager, account) != discoveryTypesKey
             val now = System.currentTimeMillis()
             val lastCollectionsFetch = collectionLastFetchMap[fetchKey] ?: 0
-            if (!forceRefresh && abs(now - lastCollectionsFetch) <= CACHE_AGE_MILLIS) {
+            if (!forceRefresh && !discoveryChanged && abs(now - lastCollectionsFetch) <= CACHE_AGE_MILLIS) {
                 return@synchronized
             }
             guard.check()
 
             val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings)
             val colMgr = etebase.collectionManager
-            val manager = AccountManager.get(context)
-            val discoveryChanged = AccountSettings.collectionListTypes(manager, account) != discoveryTypesKey
             if (discoveryChanged) {
-                Logger.log.info("Collection discovery types changed; running a full collection list refresh")
+                Logger.log.info("Full collection discovery is pending; running a full collection list refresh")
             }
             // Post-invite acceptance must not depend on the previous collection-list cursor: a full
             // list refresh makes newly accepted shared collections visible even when an old stoken
             // would otherwise hide the membership change. The same applies when a new collection
             // type joins discovery.
-            fun listFrom(startStoken: String?) {
+            // Returns false when a page could not be written because collections kept being written
+            // here; nothing of that page is cached then, and the cursor still points at it.
+            fun listFrom(startStoken: String?): Boolean {
                 var stoken = startStoken
                 var done = false
+                var attempts = 0
                 while (!done) {
                     guard.check()
+                    val writesBefore = etebaseLocalCache.collectionWrites()
                     val colList = colMgr.list(Constants.SYNCED_COLLECTION_TYPES, FetchOptions().stoken(stoken))
-                    // A page is written only if this run is still current when its answer arrives.
-                    guard.write(etebaseLocalCache) {
-                        for (col in colList.data) {
-                            etebaseLocalCache.collectionSet(colMgr, col)
-                        }
+                    // A page is written only if this run is still current when its answer arrives,
+                    // and only if no collection was written here since the page was asked for: the
+                    // answer may have been built before that write was uploaded, and would put an
+                    // older revision (or a collection deleted here) back. The page is asked for
+                    // again instead; that answer is built after the upload the write followed.
+                    var written = false
+                    synchronized(etebaseLocalCache) {
+                        guard.write(etebaseLocalCache) {
+                            if (etebaseLocalCache.collectionWrites() != writesBefore) return@write
+                            written = true
+                            for (col in colList.data) {
+                                etebaseLocalCache.collectionSet(colMgr, col)
+                            }
 
-                        for (col in colList.removedMemberships) {
-                            etebaseLocalCache.collectionUnset(colMgr, col.uid())
-                        }
+                            for (col in colList.removedMemberships) {
+                                etebaseLocalCache.collectionUnset(colMgr, col.uid())
+                            }
 
-                        colList.stoken?.let { etebaseLocalCache.saveStoken(it) }
+                            colList.stoken?.let { etebaseLocalCache.saveStoken(it) }
+                        }
                     }
+                    if (!written) {
+                        if (++attempts >= PAGE_ATTEMPTS) {
+                            Logger.log.info("Collections kept changing locally during the collection list refresh; leaving the rest to the next refresh")
+                            return false
+                        }
+                        continue
+                    }
+                    attempts = 0
                     stoken = colList.stoken
                     done = colList.isDone
                 }
+                return true
             }
 
+            val savedStoken = synchronized(etebaseLocalCache) { etebaseLocalCache.loadStoken() }
             if (forceRefresh || discoveryChanged) {
                 // A cursor-free listing has no "since" point and reports no removed memberships, so
                 // apply everything pending under the old cursor first. Otherwise a collection this
                 // account lost since the last listing would stay cached for good.
-                etebaseLocalCache.loadStoken()?.let { listFrom(it) }
+                // A replay that had to stop leaves the full listing, the discovery key and the
+                // burst window to the next refresh, which starts from the same saved state.
+                if (savedStoken != null && !listFrom(savedStoken)) throw CollectionRefreshIncompleteException()
             }
-            var stoken = if (forceRefresh || discoveryChanged) null else etebaseLocalCache.loadStoken()
-            listFrom(stoken)
-            guard.write(etebaseLocalCache) {
-                if (discoveryChanged) AccountSettings.writeCollectionListTypes(manager, account, discoveryTypesKey)
-                collectionLastFetchMap[fetchKey] = now
+            if (!listFrom(if (forceRefresh || discoveryChanged) null else savedStoken)) throw CollectionRefreshIncompleteException()
+            synchronized(etebaseLocalCache) {
+                guard.write(etebaseLocalCache) {
+                    if (discoveryChanged) check(AccountSettings.writeCollectionListTypes(manager, account, discoveryTypesKey)) {
+                        "Could not confirm completed collection discovery"
+                    }
+                    collectionLastFetchMap[fetchKey] = now
+                }
             }
         }
     }
 }
+
+/** Local edits exhausted the bounded page attempts; this refresh did not complete. */
+internal class CollectionRefreshIncompleteException : Exception("Collection refresh is incomplete")

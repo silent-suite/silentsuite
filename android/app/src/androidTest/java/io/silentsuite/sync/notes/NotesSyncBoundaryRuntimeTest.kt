@@ -27,6 +27,7 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
+import io.silentsuite.sync.syncadapter.CollectionRefreshIncompleteException
 import io.silentsuite.sync.syncadapter.EXTRA_FORCE_COLLECTION_REFRESH
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import io.silentsuite.sync.syncadapter.SyncStatusStore
@@ -358,13 +359,274 @@ class NotesSyncBoundaryRuntimeTest {
             status(other, "gen-other").lastSuccessAt != null
         }
         assertEquals(setOf("One"), cachedNotes(other, notebook))
-        // The waiting listing holds its own account's cache, so only the coordinator is asked about it.
+        // The coordinator, not the cache, says whether the first account's run is still going.
         assertTrue("the first account's run is still waiting for its answer", NotesSyncCoordinator.isActive(slowIdentity))
 
         listing.release()
         awaitSettled(slowIdentity)
         assertEquals(setOf("One"), cachedNotes(slow, notebook))
         assertNotNull(status(slow, "gen-slow").lastSuccessAt)
+    }
+
+    @Test fun aForcedRefreshCutShortByForegroundEditsIsStillOwedToTheNextNotesRun() {
+        val account = newAccount("gen-owed")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-owed")
+        val mine = uploadNotebook("Mine")
+        // A first Notes sync saves the list cursor; the discovery key is already the current one.
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        val cursorBefore = listCursor(account)
+        assertNotNull(cursorBefore)
+        val before = status(account, "gen-owed")
+        assertNotNull(before.lastSuccessAt)
+
+        // An invitation is accepted: only a listing from scratch shows the notebook. The forced
+        // sync that follows first lists from the saved cursor, and each of its three answers is
+        // overtaken by an edit this device uploads and caches, so the refresh stops there, before
+        // the listing from scratch.
+        val accepted = uploadNotebook("Accepted")
+        fake.acceptedFromInvitation(accepted)
+        var mark = fake.requests.size
+        val parked = List(3) { fake.hold("POST", LIST, answerFirst = true) }
+        requestSync(context, account, forceCollectionRefresh = true)
+        try {
+            parked.forEachIndexed { index, answer ->
+                answer.awaitArrival()
+                readWhileHeld("this device's edit") { renameAsEditingDoes(account, mine, "Mine, edit ${index + 1}", cacheIt = true) }
+                answer.release()
+            }
+        } finally {
+            parked.forEach { it.release() }
+        }
+        awaitSettled(identity)
+        assertEquals("the forced run asked three times from the saved cursor and never from scratch",
+            listOf(cursorBefore, cursorBefore, cursorBefore), listings(mark).map(::cursorIn))
+        assertFalse("the accepted notebook is not cached yet", accepted in cachedNotebooks(account))
+        assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
+        status(account, "gen-owed").let {
+            assertEquals("a run whose collection listing was cut short recorded no success: $it", before.lastSuccessAt, it.lastSuccessAt)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+
+        // The next ordinary request still owes the listing from scratch, makes it, and completes.
+        mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("the owed listing from scratch was made: ${listings(mark)}", listings(mark).any(::fromScratch))
+        assertTrue("the accepted notebook was cached", accepted in cachedNotebooks(account))
+        assertEquals("the accepted notebook's notes were fetched", fake.itemStoken(accepted), notebookCursor(account, accepted))
+        assertEquals("Mine, edit 3", cachedNotebookName(account, mine))
+        assertFalse("the cursor moved on", listCursor(account) == cursorBefore)
+        status(account, "gen-owed").let {
+            assertTrue("the completed run succeeded: $it", it.lastSuccessAt!! > before.lastSuccessAt!!)
+            assertNull(it.activeAttemptId)
+        }
+
+        // With nothing owed any more, a further ordinary run lists from its cursor again.
+        forgetLastListing(account.name)
+        mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("an ordinary listing followed: ${listings(mark)}", listings(mark).isNotEmpty() && listings(mark).none(::fromScratch))
+    }
+
+    @Test fun aHeldCollectionListLeavesItsAccountsCacheOpenToOtherReaders() {
+        val name = "notes-boundary-${System.nanoTime()}@example.invalid"
+        val account = newAccount("gen-open", name)
+        val first = uploadNotebook("Listed first")
+        val second = uploadNotebook("Listed second")
+        fake.collectionPageSize = 1
+
+        // 1. The second page of the collection list hangs, as a slow or stalled connection would
+        // leave it. Everything else that reads this account's cache still gets in, and sees exactly
+        // what the first page published.
+        val listing = fake.hold("POST", LIST, skip = 1)
+        val refresh = BackgroundRefresh(account, "gen-open")
+        try {
+            listing.awaitArrival()
+            assertEquals("the first page's cursor was published before the second page was asked for",
+                cursorOf(listing), readWhileHeld("a read of the list cursor") { listCursor(account) })
+            assertEquals(setOf(first), readWhileHeld("a read of the cached collections") { cachedNotebooks(account) })
+            val shown = readWhileHeld("the Notes screen's load") { NotesLoader.notebooks(context, account, "gen-open") }
+            assertEquals(listOf("Listed first"), (shown as NotesLoad.Loaded).value.map { it.name })
+            assertTrue("the refresh is still waiting for its answer", refresh.thread.isAlive)
+        } finally {
+            listing.release()
+        }
+        assertNull("the refresh finished normally", refresh.await())
+        assertEquals("the held page was written, its generation still being current", setOf(first, second), cachedNotebooks(account))
+        val published = listCursor(account)
+        assertNotNull(published)
+        assertFalse("the cursor moved on past the held page", published == cursorOf(listing))
+        assertTrue("the listing time was recorded for this generation", lastListingKeys(name).any { it.endsWith("gen-open") })
+
+        // 2. A listing is in flight when a same-name account replaces this one. Readers still get in
+        // meanwhile, and the answer that arrives afterwards is not written.
+        val third = uploadNotebook("Added before the swap")
+        forgetLastListing(name)
+        val late = fake.hold("POST", LIST)
+        val stale = BackgroundRefresh(account, "gen-open")
+        try {
+            late.awaitArrival()
+            replaceAccount(account, "gen-next")
+            assertEquals(published, readWhileHeld("a read of the list cursor after the swap") { listCursor(account) })
+        } finally {
+            late.release()
+        }
+        assertTrue("the old refresh stopped as stale: ${stale.await()}", stale.await() is StaleSyncRunException)
+        assertEquals("the list cursor did not move", published, listCursor(account))
+        assertFalse("the late page was not written", third in cachedNotebooks(account))
+        assertNull("the replacement's discovery key was not written", AccountSettings.collectionListTypes(manager, account))
+        assertTrue("no listing time was recorded", lastListingKeys(name).isEmpty())
+
+        // The replacement's own refresh is not affected: it lists and writes normally.
+        assertNull(BackgroundRefresh(account, "gen-next").await())
+        assertEquals(setOf(first, second, third), cachedNotebooks(account))
+        assertEquals(CollectionListRefresh.discoveryTypesKey, AccountSettings.collectionListTypes(manager, account))
+    }
+
+    @Test fun aListAnswerBuiltBeforeAForegroundEditDoesNotReplaceTheEditInTheCache() {
+        val account = newAccount("gen-edit")
+        val notebook = uploadNotebook("First name")
+        assertNull(BackgroundRefresh(account, "gen-edit").await())
+        assertEquals("First name", cachedNotebookName(account, notebook))
+
+        // 1. For comparison, nothing is written here while a list answer is on its way back. Another
+        // device renamed the notebook; the answer carrying that is built, parked, and then arrives.
+        renameAsEditingDoes(account, notebook, "Renamed elsewhere", cacheIt = false)
+        forgetLastListing(account.name)
+        val unopposed = fake.hold("POST", LIST, answerFirst = true)
+        val plain = BackgroundRefresh(account, "gen-edit")
+        try {
+            unopposed.awaitArrival()
+            assertEquals("the answer is built but has not arrived", "First name",
+                readWhileHeld("a read of the cached notebook") { cachedNotebookName(account, notebook) })
+        } finally {
+            unopposed.release()
+        }
+        assertNull(plain.await())
+        assertEquals("the other device's rename was cached", "Renamed elsewhere", cachedNotebookName(account, notebook))
+
+        // 2. The other device renames it again and the answer carrying that revision is built and
+        // parked. Before it arrives, this device edits the notebook the way the edit screen saves:
+        // upload, then cache the uploaded revision under the cache's monitor. The server now holds
+        // this device's revision, so the parked answer is out of date when it gets here.
+        renameAsEditingDoes(account, notebook, "Renamed elsewhere again", cacheIt = false)
+        forgetLastListing(account.name)
+        val mark = fake.requests.size
+        val outdated = fake.hold("POST", LIST, answerFirst = true)
+        val late = BackgroundRefresh(account, "gen-edit")
+        try {
+            outdated.awaitArrival()
+            assertEquals("exactly the parked list request was sent", listOf(outdated.request), listings(mark))
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, notebook, "Renamed here", cacheIt = true) }
+            assertEquals("the edit was cached", "Renamed here", cachedNotebookName(account, notebook))
+        } finally {
+            outdated.release()
+        }
+        assertNull("the refresh finished normally", late.await())
+        assertEquals("the answer built before the edit did not put the older revision back",
+            "Renamed here", cachedNotebookName(account, notebook))
+
+        // The next ordinary refresh agrees with the server, which holds this device's revision.
+        forgetLastListing(account.name)
+        assertNull(BackgroundRefresh(account, "gen-edit").await())
+        assertEquals("Renamed here", cachedNotebookName(account, notebook))
+    }
+
+    @Test fun aListPageOvertakenByForegroundEditsIsAskedForAgainAFewTimesAndThenLeftForTheNextRefresh() {
+        val account = newAccount("gen-again")
+        val kept = uploadNotebook("Kept")
+        val lost = uploadNotebook("Lost elsewhere")
+        assertNull(BackgroundRefresh(account, "gen-again").await())
+        assertEquals(setOf(kept, lost), cachedNotebooks(account))
+
+        // 1. An answer that reports a lost membership is built and parked, and this device edits
+        // another notebook before it arrives. The page is asked for again from the same cursor, and
+        // that answer is applied: the lost notebook goes, the edit stays.
+        fake.removeMembership(lost)
+        forgetLastListing(account.name)
+        var mark = fake.requests.size
+        val removal = fake.hold("POST", LIST, answerFirst = true)
+        val refresh = BackgroundRefresh(account, "gen-again")
+        try {
+            removal.awaitArrival()
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, kept, "Kept, renamed here", cacheIt = true) }
+        } finally {
+            removal.release()
+        }
+        assertNull("the refresh finished normally", refresh.await())
+        assertEquals("the page was asked for once more, from the same cursor",
+            listOf(cursorOf(removal), cursorOf(removal)), listings(mark).map(::cursorIn))
+        assertEquals("the lost notebook was dropped", setOf(kept), cachedNotebooks(account))
+        assertEquals("Kept, renamed here", cachedNotebookName(account, kept))
+        assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-again") })
+
+        // 2. Every answer for a page is overtaken by another edit here. The refresh asks three
+        // times, then reports incompletion, without moving the cursor and without recording a
+        // listing time, so the next refresh lists again.
+        forgetLastListing(account.name)
+        val cursorBefore = listCursor(account)
+        mark = fake.requests.size
+        val parked = List(3) { fake.hold("POST", LIST, answerFirst = true) }
+        val crowded = BackgroundRefresh(account, "gen-again")
+        try {
+            parked.forEachIndexed { index, answer ->
+                answer.awaitArrival()
+                readWhileHeld("this device's edit") { renameAsEditingDoes(account, kept, "Edit ${index + 1}", cacheIt = true) }
+                answer.release()
+            }
+        } finally {
+            parked.forEach { it.release() }
+        }
+        assertTrue("the refresh reports truthful incompletion", crowded.await() is CollectionRefreshIncompleteException)
+        assertEquals("the page was asked for three times, from the same cursor",
+            listOf(cursorBefore, cursorBefore, cursorBefore), listings(mark).map(::cursorIn))
+        assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
+        assertEquals("the last edit is what is cached", "Edit 3", cachedNotebookName(account, kept))
+        assertTrue("no listing time was recorded", lastListingKeys(account.name).isEmpty())
+
+        // The next refresh is not affected: it lists, writes and records its time normally.
+        assertNull(BackgroundRefresh(account, "gen-again").await())
+        assertEquals("Edit 3", cachedNotebookName(account, kept))
+        assertFalse("the cursor moved on", listCursor(account) == cursorBefore)
+        assertTrue(lastListingKeys(account.name).any { it.endsWith("gen-again") })
+    }
+
+    @Test fun concurrentRefreshesOfOneAccountListOneAtATimeAndNeverMoveTheCursorBack() {
+        val account = newAccount("gen-twice")
+        val notebook = uploadNotebook("Listed once")
+        assertNull(BackgroundRefresh(account, "gen-twice").await())
+        val saved = listCursor(account)
+        assertNotNull(saved)
+
+        // Two adapters finish together and both ask for the list while the first answer is slow.
+        val added = uploadNotebook("Added since")
+        forgetLastListing(account.name)
+        val mark = fake.requests.size
+        val listing = fake.hold("POST", LIST)
+        val one = BackgroundRefresh(account, "gen-twice")
+        listing.awaitArrival()
+        val two = BackgroundRefresh(account, "gen-twice")
+        try {
+            SystemClock.sleep(1_000)
+            assertEquals("the second refresh sent no list request while the first was in flight", 1, listings(mark).size)
+        } finally {
+            listing.release()
+        }
+        assertNull(one.await())
+        assertNull(two.await())
+
+        val listed = listings(mark)
+        val published = listCursor(account)
+        assertEquals("the first refresh listed from the saved cursor", saved, cursorIn(listed.first()))
+        assertFalse("the first refresh moved the cursor on", published == saved)
+        // The second either shares the first one's listing or lists again from where the first got
+        // to; it never lists again from the cursor the first started with, nor puts that one back.
+        assertTrue("at most one more list request followed: $listed", listed.size <= 2)
+        assertTrue("a second listing continued from the first one's cursor: $listed", listed.drop(1).all { cursorIn(it) == published })
+        assertEquals(setOf(notebook, added), cachedNotebooks(account))
+        assertTrue(lastListingKeys(account.name).any { it.endsWith("gen-twice") })
     }
 
     @Test fun runsForOneAccountNameStayInOrderAcrossItsGenerations() {
@@ -707,6 +969,27 @@ class NotesSyncBoundaryRuntimeTest {
         synchronized(cache) { cache.collections(server.collectionManager, type = Constants.ETEBASE_TYPE_NOTES).mapTo(HashSet()) { it.uid } }
     }
 
+    /** The name the cache holds for [notebook], or null when it is not cached. */
+    private fun cachedNotebookName(account: Account, notebook: String): String? = cache(account).let { cache ->
+        synchronized(cache) {
+            cache.collections(server.collectionManager, type = Constants.ETEBASE_TYPE_NOTES).firstOrNull { it.uid == notebook }?.meta?.name
+        }
+    }
+
+    /**
+     * Renames [notebook] the way EditCollectionFragment.uploadCollection saves an edit: starting
+     * from the cached revision, upload it, then (with [cacheIt]) cache the uploaded revision under
+     * the cache's monitor. Without [cacheIt] only the server changes, as when another device edits.
+     */
+    private fun renameAsEditingDoes(account: Account, notebook: String, name: String, cacheIt: Boolean) {
+        val colMgr = server.collectionManager
+        val cache = cache(account)
+        val col = synchronized(cache) { cache.collectionGet(colMgr, notebook).col }
+        col.meta = ItemMetadata().apply { this.name = name }
+        colMgr.upload(col)
+        if (cacheIt) synchronized(cache) { cache.collectionSet(colMgr, col) }
+    }
+
     /** The titles of the notes cached for [notebook]; none when the notebook itself is not cached. */
     private fun cachedNotes(account: Account, notebook: String): Set<String> = cache(account).let { cache ->
         synchronized(cache) {
@@ -724,8 +1007,10 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     /** The cursor a held list or item request asked to continue from. */
-    private fun cursorOf(held: FakeEtebaseServer.Hold): String? =
-        Regex("[?&]stoken=([^&]+)").find(held.request.orEmpty())?.groupValues?.get(1)
+    private fun cursorOf(held: FakeEtebaseServer.Hold): String? = cursorIn(held.request.orEmpty())
+
+    /** The cursor a recorded list or item request asked to continue from. */
+    private fun cursorIn(request: String): String? = Regex("[?&]stoken=([^&]+)").find(request)?.groupValues?.get(1)
 
     private fun itemRequests(notebook: String) = fake.requests.filter { it.startsWith("GET collection/$notebook/item/") }
 
@@ -808,6 +1093,42 @@ class NotesSyncBoundaryRuntimeTest {
             thread.join(30_000)
             return checkNotNull(outcome.get()) { "the load did not finish" }.getOrThrow()
         }
+    }
+
+    /**
+     * One shared collection refresh on its own thread, as a sync adapter runs it. [await] returns
+     * what it threw, or null when it finished normally.
+     */
+    private inner class BackgroundRefresh(account: Account, generation: String) {
+        private val failure = AtomicReference<Throwable?>()
+        val thread = thread(name = "notes-boundary-refresh") {
+            try {
+                val settings = AccountSettings(context, account)
+                HttpClient.Builder(context, settings).setForeground(false).build().use {
+                    CollectionListRefresh.run(context, account, settings, it.okHttpClient, forceRefresh = false, creationId = generation)
+                }
+            } catch (t: Throwable) {
+                failure.set(t)
+            }
+        }
+
+        fun await(): Throwable? {
+            thread.join(30_000)
+            check(!thread.isAlive) { "the refresh did not finish" }
+            return failure.get()
+        }
+    }
+
+    /**
+     * Runs [read] on its own thread, as another user of the account's cache would while a list
+     * request is held, and fails if it is kept waiting instead of getting its answer.
+     */
+    private fun <T> readWhileHeld(what: String, read: () -> T): T {
+        val outcome = AtomicReference<Result<T>?>()
+        val reader = thread(name = "notes-boundary-reader") { outcome.set(runCatching(read)) }
+        reader.join(10_000)
+        val result = outcome.get() ?: throw AssertionError("$what was kept waiting while the collection list was in flight")
+        return result.getOrThrow()
     }
 
     private fun status(account: Account, generation: String): SyncStatusStore.Status = SyncStatusStore(context).let {
