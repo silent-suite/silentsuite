@@ -33,6 +33,10 @@ ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
 # Durable encrypted local caching. Default-off: every build that does not pass
 # this argument explicitly, production included, ships with the flag disabled.
 ARG NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
+# Self-host build mode. With NEXT_PUBLIC_ETEBASE_SERVER_URL set empty, the web app
+# talks to the Etebase server on the browser's own origin.
+ARG NEXT_PUBLIC_SELF_HOSTED=false
+ENV NEXT_PUBLIC_SELF_HOSTED=$NEXT_PUBLIC_SELF_HOSTED
 ENV NEXT_PUBLIC_BILLING_API_URL=$NEXT_PUBLIC_BILLING_API_URL
 ENV NEXT_PUBLIC_ETEBASE_SERVER_URL=$NEXT_PUBLIC_ETEBASE_SERVER_URL
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
