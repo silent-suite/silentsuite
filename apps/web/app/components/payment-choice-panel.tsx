@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { Crown, Lock, Zap } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
 import {
   activateAuthenticatedAnnualCheckout,
+  classifyAnnualOfferLoadFailure,
   fetchAuthenticatedAnnualOffer,
   isRenewableAnnualOfferError,
   startAuthenticatedAnnualPayment,
@@ -219,6 +220,13 @@ export default function PaymentChoicePanel({
   const [currentFlowLoaded, setCurrentFlowLoaded] = useState(false)
   const [currentFlowLoadFailed, setCurrentFlowLoadFailed] = useState(false)
   const [offerRefreshFailed, setOfferRefreshFailed] = useState(false)
+  const [initialOfferFailed, setInitialOfferFailed] = useState(false)
+  const offerRequestSequence = useRef(0)
+  const offerMounted = useRef(false)
+  useEffect(() => {
+    offerMounted.current = true
+    return () => { offerMounted.current = false; offerRequestSequence.current++ }
+  }, [])
   const [bitcoinCancelAcknowledged, setBitcoinCancelAcknowledged] = useState(false)
   // Set when the authoritative endpoint proves a Bitcoin authority the local
   // state could not identify, so the acknowledgement can be offered truthfully.
@@ -236,22 +244,26 @@ export default function PaymentChoicePanel({
   }, [])
 
   const loadOptions = useCallback(async (isCancelled: () => boolean = () => false) => {
+    const sequence = ++offerRequestSequence.current
+    const current = () => offerMounted.current && sequence === offerRequestSequence.current && !isCancelled()
     setOptionsLoaded(false)
     setAnnualOffer(null)
     setOptions([])
     try {
       const offer = await fetchAuthenticatedAnnualOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL })
-      if (!isCancelled()) {
+      if (current()) {
         applyAnnualOffer(offer)
         setOfferRefreshFailed(false)
+        setInitialOfferFailed(false)
       }
-    } catch {
-      if (!isCancelled()) {
+    } catch (error) {
+      if (current()) {
         setAnnualOffer(null)
         setOptions([])
+        setInitialOfferFailed(classifyAnnualOfferLoadFailure(error) === 'transient')
       }
     } finally {
-      if (!isCancelled()) setOptionsLoaded(true)
+      if (current()) setOptionsLoaded(true)
     }
   }, [applyAnnualOffer])
 
@@ -262,6 +274,8 @@ export default function PaymentChoicePanel({
   }, [loadOptions])
 
   async function renewAnnualOfferAndRequireConsent() {
+    const sequence = ++offerRequestSequence.current
+    const current = () => offerMounted.current && sequence === offerRequestSequence.current
     // Never reuse a provider selection, card secret, or Bitcoin authority
     // after the signed offer that authorized it was rejected.
     setPendingActivation(null)
@@ -273,17 +287,21 @@ export default function PaymentChoicePanel({
     setOfferRefreshFailed(false)
     try {
       const offer = await fetchAuthenticatedAnnualOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL })
+      if (!current()) return
       applyAnnualOffer(offer)
       setError('The annual terms changed. Review the updated offer and choose a payment method again.')
-    } catch {
+    } catch (error) {
+      if (!current()) return
       // Do not leave expired terms actionable if the fresh server authority is
       // unavailable. The explicit retry is the only way back into payment.
       setOptions([])
       setAnnualOffer(null)
-      setOfferRefreshFailed(true)
-      setError('The annual terms changed, but the current offer could not be loaded. Retry to review current terms before continuing.')
+      const transient = classifyAnnualOfferLoadFailure(error) === 'transient'
+      setOfferRefreshFailed(transient)
+      setInitialOfferFailed(false)
+      setError(transient ? 'The annual terms changed, but the current offer could not be loaded. Retry to review current terms before continuing.' : 'Payment options are not available for this account state.')
     } finally {
-      setOptionsLoaded(true)
+      if (current()) setOptionsLoaded(true)
     }
   }
 
@@ -680,7 +698,9 @@ export default function PaymentChoicePanel({
             <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
               {annualOffer
                 ? `Choose a server-authorized payment method for ${annualOfferPlanLabel(annualOffer.offer)}.`
-                : 'Loading the server-owned annual offer before payment options are shown.'}
+                : !optionsLoaded ? 'Loading the server-owned annual offer before payment options are shown.'
+                : initialOfferFailed ? 'The current annual offer could not be loaded. Retry to review current terms before continuing.'
+                : 'Payment options are not available for this account state.'}
             </p>
           </div>
         </div>
@@ -702,10 +722,10 @@ export default function PaymentChoicePanel({
         </div>
       )}
 
-      {offerRefreshFailed && (
+      {(offerRefreshFailed || initialOfferFailed) && (
         <Button
           type="button"
-          onClick={() => { void renewAnnualOfferAndRequireConsent() }}
+          onClick={() => { if (initialOfferFailed) void loadOptions(); else void renewAnnualOfferAndRequireConsent() }}
           disabled={loading !== null}
           variant="outline"
           className="w-full"

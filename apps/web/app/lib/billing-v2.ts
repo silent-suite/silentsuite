@@ -108,6 +108,10 @@ export class BillingResponseError extends Error {
  */
 export const RENEWABLE_ANNUAL_OFFER_PROBLEM_TYPE = 'https://api.silentsuite.io/errors/plan-not-purchasable'
 
+export function classifyAnnualOfferLoadFailure(error: unknown): 'refused' | 'transient' {
+  return isRenewableAnnualOfferError(error) || error instanceof BillingResponseError && error.billingStatus === 401 ? 'refused' : 'transient'
+}
+
 export function isRenewableAnnualOfferError(error: unknown): error is BillingResponseError {
   return error instanceof BillingResponseError
     && error.billingStatus === 409
