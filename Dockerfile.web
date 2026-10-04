@@ -6,6 +6,8 @@ RUN corepack enable && corepack prepare pnpm@10.6.5 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+# pnpm patchedDependencies (e.g. the etebase SDK patch) must exist before a frozen install
+COPY patches/ patches/
 
 # Copy all package.json files so pnpm workspace resolution works
 COPY apps/web/package.json apps/web/

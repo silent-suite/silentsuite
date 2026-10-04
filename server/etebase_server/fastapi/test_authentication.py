@@ -296,6 +296,89 @@ class TestSignup:
         assert decode_response(response)["user"]["username"] == "second_user"
 
 
+REGISTRATION_HEADER = "X-SilentSuite-Registration-Token"
+
+
+@pytest.mark.django_db(transaction=True)
+class TestOwnerRegistrationToken:
+    """Opt-in per-install owner authorization required for every signup (Umbrel)."""
+
+    def _signup_body(self, username, login_pubkey, encryption_pubkey, user_salt):
+        return {
+            "user": {"username": username, "email": f"{username}@example.com"},
+            "salt": user_salt,
+            "loginPubkey": login_pubkey,
+            "pubkey": encryption_pubkey,
+            "encryptedContent": b"\x00" * 64,
+        }
+
+    def _assert_denied_without_rows(self, responses, username):
+        from etebase_server.django.models import UserInfo
+
+        for response in responses:
+            assert response.status_code == 403
+            assert decode_response(response)["code"] == "registration_token_required"
+        assert not get_typed_user_model().objects.filter(username=username).exists()
+        assert not UserInfo.objects.filter(owner__username=username).exists()
+
+    def _attempts(self, auth_client, body, bootstrap_query=""):
+        url = f"{AUTH_PREFIX}/signup/{bootstrap_query}"
+        # The correct token in a URL query parameter must never be accepted.
+        query_url = f"{url}{'&' if bootstrap_query else '?'}registration_token=synthetic-owner-token"
+        return [
+            msgpack_post(auth_client, url, body),
+            msgpack_post(auth_client, url, body, headers={REGISTRATION_HEADER: "wrong-synthetic-token"}),
+            msgpack_post(auth_client, url, body, headers={REGISTRATION_HEADER: ""}),
+            msgpack_post(auth_client, query_url, body),
+        ]
+
+    @override_settings(ETEBASE_REGISTRATION_TOKEN="synthetic-owner-token")
+    def test_missing_or_wrong_header_denies_first_signup(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        body = self._signup_body("first_owner_user", login_pubkey, encryption_pubkey, user_salt)
+
+        self._assert_denied_without_rows(self._attempts(auth_client, body), "first_owner_user")
+
+    @override_settings(ETEBASE_REGISTRATION_TOKEN="synthetic-owner-token")
+    def test_missing_or_wrong_header_denies_signup_after_first_account(
+        self, auth_client, user_factory, login_pubkey, encryption_pubkey, user_salt
+    ):
+        user_factory(username="existing_user", email="existing@example.com")
+        body = self._signup_body("second_owner_user", login_pubkey, encryption_pubkey, user_salt)
+
+        self._assert_denied_without_rows(self._attempts(auth_client, body), "second_owner_user")
+
+    @override_settings(
+        ETEBASE_REGISTRATION_TOKEN="synthetic-owner-token",
+        ETEBASE_BOOTSTRAP_ADMIN_TOKEN="synthetic-bootstrap-token",
+    )
+    def test_legacy_bootstrap_query_token_does_not_bypass_registration_policy(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        body = self._signup_body("bootstrap_bypass_user", login_pubkey, encryption_pubkey, user_salt)
+
+        responses = self._attempts(auth_client, body, bootstrap_query="?bootstrap_token=synthetic-bootstrap-token")
+
+        self._assert_denied_without_rows(responses, "bootstrap_bypass_user")
+
+    @override_settings(ETEBASE_REGISTRATION_TOKEN="synthetic-owner-token")
+    def test_correct_header_admits_signup_before_and_after_first_account(
+        self, auth_client, login_pubkey, encryption_pubkey, user_salt
+    ):
+        headers = {REGISTRATION_HEADER: "synthetic-owner-token"}
+        first = self._signup_body("first_owner_user", login_pubkey, encryption_pubkey, user_salt)
+        second = self._signup_body("second_owner_user", login_pubkey, encryption_pubkey, user_salt)
+
+        first_response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", first, headers=headers)
+        second_response = msgpack_post(auth_client, f"{AUTH_PREFIX}/signup/", second, headers=headers)
+
+        assert first_response.status_code in (200, 201)
+        assert decode_response(first_response)["user"]["username"] == "first_owner_user"
+        assert second_response.status_code in (200, 201)
+        assert decode_response(second_response)["user"]["username"] == "second_owner_user"
+
+
 @pytest.mark.django_db(transaction=True)
 class TestChangePassword:
     """The architectural assertion called out in PR #21:

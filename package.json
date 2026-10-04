@@ -56,6 +56,9 @@
       "@babel/plugin-transform-modules-systemjs": "^7.29.4",
       "ws": "^7.5.11",
       "vitepress>vite": "^6.4.3"
+    },
+    "patchedDependencies": {
+      "etebase@0.43.1": "patches/etebase@0.43.1.patch"
     }
   },
   "dependencies": {
