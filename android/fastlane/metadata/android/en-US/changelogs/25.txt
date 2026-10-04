@@ -1,0 +1,1 @@
+Read your notes on Android with the optional Notes (experimental) setting, off by default and read-only. Improve toolbar icon visibility in light mode. Add a separate, content-free sync scheduling report for troubleshooting pending sync.
