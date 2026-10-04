@@ -279,6 +279,53 @@ describe('SharingSettingsPage invite fingerprint confirmation', () => {
   })
 })
 
+/**
+ * Starts an invite and changes a form field in the microtask right after the dialog commit,
+ * before React's deferred effects task. Returns the field value read straight after the change.
+ */
+async function changeFieldAsDialogCommits(field: () => HTMLInputElement | HTMLSelectElement, value: string) {
+  // Every scheduler slice looks overrun, so the dialog commit yields before its passive effects run.
+  let clock = performance.now()
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => (clock += 10))
+  let observer: MutationObserver | undefined
+  try {
+    const changed = new Promise<string>((resolve) => {
+      observer = new MutationObserver(() => {
+        if (!document.querySelector('[role="dialog"]')) return
+        observer?.disconnect()
+        const target = field()
+        fireEvent.change(target, { target: { value } })
+        resolve(target.value)
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+    })
+    startInvite()
+    return await changed
+  } finally {
+    observer?.disconnect()
+    now.mockRestore()
+  }
+}
+
+describe('SharingSettingsPage invite form input as the dialog commits', () => {
+  it.each([
+    ['access selection', () => screen.getByRole('combobox') as HTMLSelectElement, 'admin'],
+    ['username', () => screen.getByPlaceholderText('friend@example.com') as HTMLInputElement, 'other@example.com'],
+  ] as const)('keeps the %s chosen as the dialog commits and closes the pending invite', async (_label, field, value) => {
+    const { invitationManager } = setupPage()
+    invitationManager.fetchUserProfile.mockResolvedValueOnce({ pubkey: sharingKey(17) })
+
+    expect(await changeFieldAsDialogCommits(field, value)).toBe(value)
+
+    expect(field()).toHaveValue(value)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(field()).toHaveValue(value)
+    expect(invitationManager.fetchUserProfile).toHaveBeenCalledTimes(1)
+    expect(invitationManager.invite).not.toHaveBeenCalled()
+    expect(screen.queryByText(/Invitation sent/)).toBeNull()
+  })
+})
+
 describe('SharingSettingsPage incoming invitation confirmation', () => {
   it('never shows the recipient username as the sender', async () => {
     setupPage('calendar', [incomingInvitation({ fromUsername: undefined })])
