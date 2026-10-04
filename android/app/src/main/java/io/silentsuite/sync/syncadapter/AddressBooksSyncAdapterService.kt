@@ -39,15 +39,18 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
             if (!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(settings))
                 return Completion.SKIPPED
 
-            RefreshCollections(
-                account,
-                CollectionInfo.Type.ADDRESS_BOOK,
-                extras.getBoolean(EXTRA_FORCE_COLLECTION_REFRESH, false),
-            ).run()
+            try {
+                RefreshCollections(
+                    account,
+                    CollectionInfo.Type.ADDRESS_BOOK,
+                    extras.getBoolean(EXTRA_FORCE_COLLECTION_REFRESH, false),
+                ).run()
 
-            updateLocalAddressBooks(contactsProvider, account, settings)
-
-            contactsProvider.release()
+                updateLocalAddressBooks(contactsProvider, account, settings)
+            } finally {
+                // An incomplete refresh exits before child discovery but must release the client.
+                contactsProvider.release()
+            }
 
             val childAccounts = LocalAddressBook.find(context, null, account).map { it.androidAccount }.toSet()
             val attemptId = contactsAttempt(extras)

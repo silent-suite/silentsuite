@@ -51,6 +51,8 @@ internal object CollectionListRefresh {
      * Every write after a list request goes through a [SyncRunGuard]: once that generation is gone,
      * or [stillWanted] turns false, nothing more is written and the run ends with
      * [StaleSyncRunException].
+     * Throws [CollectionRefreshIncompleteException] when the bounded page attempts are exhausted;
+     * only a normal return permits callers to continue discovery or record success.
      */
     fun run(
         context: Context,
@@ -68,19 +70,33 @@ internal object CollectionListRefresh {
         // wait for the old one's request: that run's writes are refused once its generation is gone.
         val fetchKey = "${account.name}\u0000${creationId.orEmpty()}"
         synchronized(refreshLocks.getOrPut(fetchKey) { Any() }) {
+            guard.check()
+            val manager = AccountManager.get(context)
+            if (forceRefresh) {
+                // Reuse the durable discovery policy: until a full listing completes, its type
+                // coverage is unconfirmed. This survives one-shot adapter extras, Notes slot
+                // cancellation and process death. Both invalidation and completion belong to the
+                // exact account generation and share the cache cleanup fence.
+                synchronized(etebaseLocalCache) {
+                    guard.write(etebaseLocalCache) {
+                        check(AccountSettings.writeCollectionListTypes(manager, account, "")) {
+                            "Could not retain the full collection refresh obligation"
+                        }
+                    }
+                }
+            }
+            val discoveryChanged = AccountSettings.collectionListTypes(manager, account) != discoveryTypesKey
             val now = System.currentTimeMillis()
             val lastCollectionsFetch = collectionLastFetchMap[fetchKey] ?: 0
-            if (!forceRefresh && abs(now - lastCollectionsFetch) <= CACHE_AGE_MILLIS) {
+            if (!forceRefresh && !discoveryChanged && abs(now - lastCollectionsFetch) <= CACHE_AGE_MILLIS) {
                 return@synchronized
             }
             guard.check()
 
             val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings)
             val colMgr = etebase.collectionManager
-            val manager = AccountManager.get(context)
-            val discoveryChanged = AccountSettings.collectionListTypes(manager, account) != discoveryTypesKey
             if (discoveryChanged) {
-                Logger.log.info("Collection discovery types changed; running a full collection list refresh")
+                Logger.log.info("Full collection discovery is pending; running a full collection list refresh")
             }
             // Post-invite acceptance must not depend on the previous collection-list cursor: a full
             // list refresh makes newly accepted shared collections visible even when an old stoken
@@ -138,15 +154,20 @@ internal object CollectionListRefresh {
                 // account lost since the last listing would stay cached for good.
                 // A replay that had to stop leaves the full listing, the discovery key and the
                 // burst window to the next refresh, which starts from the same saved state.
-                if (savedStoken != null && !listFrom(savedStoken)) return@synchronized
+                if (savedStoken != null && !listFrom(savedStoken)) throw CollectionRefreshIncompleteException()
             }
-            if (!listFrom(if (forceRefresh || discoveryChanged) null else savedStoken)) return@synchronized
+            if (!listFrom(if (forceRefresh || discoveryChanged) null else savedStoken)) throw CollectionRefreshIncompleteException()
             synchronized(etebaseLocalCache) {
                 guard.write(etebaseLocalCache) {
-                    if (discoveryChanged) AccountSettings.writeCollectionListTypes(manager, account, discoveryTypesKey)
+                    if (discoveryChanged) check(AccountSettings.writeCollectionListTypes(manager, account, discoveryTypesKey)) {
+                        "Could not confirm completed collection discovery"
+                    }
                     collectionLastFetchMap[fetchKey] = now
                 }
             }
         }
     }
 }
+
+/** Local edits exhausted the bounded page attempts; this refresh did not complete. */
+internal class CollectionRefreshIncompleteException : Exception("Collection refresh is incomplete")

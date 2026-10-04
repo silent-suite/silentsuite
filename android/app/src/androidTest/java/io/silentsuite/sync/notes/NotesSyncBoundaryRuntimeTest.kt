@@ -27,6 +27,7 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
+import io.silentsuite.sync.syncadapter.CollectionRefreshIncompleteException
 import io.silentsuite.sync.syncadapter.EXTRA_FORCE_COLLECTION_REFRESH
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import io.silentsuite.sync.syncadapter.SyncStatusStore
@@ -562,7 +563,7 @@ class NotesSyncBoundaryRuntimeTest {
         assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-again") })
 
         // 2. Every answer for a page is overtaken by another edit here. The refresh asks three
-        // times, then ends without an error, without moving the cursor and without recording a
+        // times, then reports incompletion, without moving the cursor and without recording a
         // listing time, so the next refresh lists again.
         forgetLastListing(account.name)
         val cursorBefore = listCursor(account)
@@ -578,7 +579,7 @@ class NotesSyncBoundaryRuntimeTest {
         } finally {
             parked.forEach { it.release() }
         }
-        assertNull("the refresh ended without an error", crowded.await())
+        assertTrue("the refresh reports truthful incompletion", crowded.await() is CollectionRefreshIncompleteException)
         assertEquals("the page was asked for three times, from the same cursor",
             listOf(cursorBefore, cursorBefore, cursorBefore), listings(mark).map(::cursorIn))
         assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
