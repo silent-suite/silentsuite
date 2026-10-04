@@ -183,7 +183,7 @@ class LoginLifecycleContractTest {
         assertTrue(navigationWrapper.contains("settings get secure navigation_mode"))
         assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
-            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 106",
+            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 107",
             "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
             "-PrequireEtebase16Kb=true", "--no-daemon"
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
@@ -261,11 +261,11 @@ class LoginLifecycleContractTest {
     fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         assertTrue(runtimeScript.contains("focused-runtime-ledger-v1.json"))
-        assertTrue(runtimeScript.contains("if len(tests) != 106 or len(set(tests)) != 106"))
+        assertTrue(runtimeScript.contains("if len(tests) != 107 or len(set(tests)) != 107"))
         listOf(
-            "\"21:mixed\": 1", "\"21:requested\": 1", "\"21:remaining\": 104",
-            "\"35:all\": 106", "\"36:account-dashboard\": 29",
-            "\"36:first-run-setup\": 19", "\"36:status-routes\": 58",
+            "\"21:mixed\": 1", "\"21:requested\": 1", "\"21:remaining\": 105",
+            "\"35:all\": 107", "\"36:account-dashboard\": 29",
+            "\"36:first-run-setup\": 19", "\"36:status-routes\": 59",
         ).forEach { assertTrue(runtimeScript.contains(it)) }
         assertTrue(runtimeScript.contains("remaining_selectors=\"\$(ledger_selectors '21:remaining')\""))
         assertTrue(runtimeScript.contains("all_selectors=\"\$(ledger_selectors '35:all')\""))

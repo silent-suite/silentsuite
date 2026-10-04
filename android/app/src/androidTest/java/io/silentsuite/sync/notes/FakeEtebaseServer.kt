@@ -47,7 +47,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
 
     private class StoredCollection(
         val uid: String,
-        val body: Map<String, Any?>,
+        var body: Map<String, Any?>,
         var changedAt: Long,
         var itemStoken: String,
         /** Left out of a listing that starts from a cursor, the way a membership change can be missed. */
@@ -66,6 +66,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         private val predicate: (String, String) -> Boolean,
         internal val swallowInterrupt: Boolean,
         skip: Int,
+        internal val answerFirst: Boolean,
     ) {
         internal val arrivedLatch = CountDownLatch(1)
         internal val releaseLatch = CountDownLatch(1)
@@ -101,9 +102,11 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
     /**
      * Parks the next request whose method and path (after "/api/v1/") match, until released. With
      * [skip], that many matching requests pass first, so a later page of a listing can be parked.
+     * With [answerFirst], the answer is built from the server's state when the request arrives and
+     * is then parked on its way back, so what it carries can be out of date once it is released.
      */
-    fun hold(method: String, pathPattern: Regex, swallowInterrupt: Boolean = false, skip: Int = 0): Hold =
-        Hold({ m, p -> m == method && pathPattern.matches(p) }, swallowInterrupt, skip).also { holds += it }
+    fun hold(method: String, pathPattern: Regex, swallowInterrupt: Boolean = false, skip: Int = 0, answerFirst: Boolean = false): Hold =
+        Hold({ m, p -> m == method && pathPattern.matches(p) }, swallowInterrupt, skip, answerFirst).also { holds += it }
 
     /** Adds a collection the account can see, as if it was just shared with this account and accepted. */
     fun addCollection(collectionIn: Map<String, Any?>, hiddenFromIncremental: Boolean = false) = synchronized(lock) {
@@ -154,13 +157,10 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         val hold = synchronized(holds) {
             holds.firstOrNull { !it.taken && it.matches(request.method, path) }?.takeIf { it.take() }
         }
-        if (hold != null) {
-            hold.request = line
-            hold.arrivedLatch.countDown()
-            awaitUninterruptibly(hold.releaseLatch, hold.swallowInterrupt)
-        }
+        if (hold != null && !hold.answerFirst) park(hold, line)
         val body = request.body?.let { Buffer().also(it::writeTo).readByteArray() }
         val (code, payload) = synchronized(lock) { route(request.method, path, request.url, body) }
+        if (hold != null && hold.answerFirst) park(hold, line)
         return Response.Builder()
             .request(request)
             .protocol(Protocol.HTTP_1_1)
@@ -168,6 +168,12 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
             .message(if (code < 300) "OK" else "Error")
             .body(payload.toResponseBody("application/msgpack".toMediaType()))
             .build()
+    }
+
+    private fun park(hold: Hold, line: String) {
+        hold.request = line
+        hold.arrivedLatch.countDown()
+        awaitUninterruptibly(hold.releaseLatch, hold.swallowInterrupt)
     }
 
     private fun awaitUninterruptibly(latch: CountDownLatch, swallowInterrupt: Boolean) {
@@ -211,6 +217,12 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
                 val input = TestMsgPack.decode(body!!) as Map<String, Any?>
                 for (item in input["items"] as List<Map<String, Any?>>) {
                     val uid = item["uid"] as String
+                    if (uid == stored.uid) {
+                        // The collection's own item: a new revision of the collection, not a note.
+                        stored.body = LinkedHashMap(stored.body).apply { put("item", item) }
+                        stored.changedAt = ++counter
+                        continue
+                    }
                     stored.items.remove(uid)
                     stored.items[uid] = StoredItem(item.filterKeys { it != "etag" }, ++counter)
                     stored.itemStoken = "i$counter"

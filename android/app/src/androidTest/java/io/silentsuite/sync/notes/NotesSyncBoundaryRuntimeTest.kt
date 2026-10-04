@@ -422,6 +422,55 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals(CollectionListRefresh.discoveryTypesKey, AccountSettings.collectionListTypes(manager, account))
     }
 
+    @Test fun aListAnswerBuiltBeforeAForegroundEditDoesNotReplaceTheEditInTheCache() {
+        val account = newAccount("gen-edit")
+        val notebook = uploadNotebook("First name")
+        assertNull(BackgroundRefresh(account, "gen-edit").await())
+        assertEquals("First name", cachedNotebookName(account, notebook))
+
+        // 1. For comparison, nothing is written here while a list answer is on its way back. Another
+        // device renamed the notebook; the answer carrying that is built, parked, and then arrives.
+        renameAsEditingDoes(account, notebook, "Renamed elsewhere", cacheIt = false)
+        forgetLastListing(account.name)
+        val unopposed = fake.hold("POST", LIST, answerFirst = true)
+        val plain = BackgroundRefresh(account, "gen-edit")
+        try {
+            unopposed.awaitArrival()
+            assertEquals("the answer is built but has not arrived", "First name",
+                readWhileHeld("a read of the cached notebook") { cachedNotebookName(account, notebook) })
+        } finally {
+            unopposed.release()
+        }
+        assertNull(plain.await())
+        assertEquals("the other device's rename was cached", "Renamed elsewhere", cachedNotebookName(account, notebook))
+
+        // 2. The other device renames it again and the answer carrying that revision is built and
+        // parked. Before it arrives, this device edits the notebook the way the edit screen saves:
+        // upload, then cache the uploaded revision under the cache's monitor. The server now holds
+        // this device's revision, so the parked answer is out of date when it gets here.
+        renameAsEditingDoes(account, notebook, "Renamed elsewhere again", cacheIt = false)
+        forgetLastListing(account.name)
+        val mark = fake.requests.size
+        val outdated = fake.hold("POST", LIST, answerFirst = true)
+        val late = BackgroundRefresh(account, "gen-edit")
+        try {
+            outdated.awaitArrival()
+            assertEquals("exactly the parked list request was sent", listOf(outdated.request), listings(mark))
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, notebook, "Renamed here", cacheIt = true) }
+            assertEquals("the edit was cached", "Renamed here", cachedNotebookName(account, notebook))
+        } finally {
+            outdated.release()
+        }
+        assertNull("the refresh finished normally", late.await())
+        assertEquals("the answer built before the edit did not put the older revision back",
+            "Renamed here", cachedNotebookName(account, notebook))
+
+        // The next ordinary refresh agrees with the server, which holds this device's revision.
+        forgetLastListing(account.name)
+        assertNull(BackgroundRefresh(account, "gen-edit").await())
+        assertEquals("Renamed here", cachedNotebookName(account, notebook))
+    }
+
     @Test fun concurrentRefreshesOfOneAccountListOneAtATimeAndNeverMoveTheCursorBack() {
         val account = newAccount("gen-twice")
         val notebook = uploadNotebook("Listed once")
@@ -796,6 +845,27 @@ class NotesSyncBoundaryRuntimeTest {
 
     private fun cachedNotebooks(account: Account): Set<String> = cache(account).let { cache ->
         synchronized(cache) { cache.collections(server.collectionManager, type = Constants.ETEBASE_TYPE_NOTES).mapTo(HashSet()) { it.uid } }
+    }
+
+    /** The name the cache holds for [notebook], or null when it is not cached. */
+    private fun cachedNotebookName(account: Account, notebook: String): String? = cache(account).let { cache ->
+        synchronized(cache) {
+            cache.collections(server.collectionManager, type = Constants.ETEBASE_TYPE_NOTES).firstOrNull { it.uid == notebook }?.meta?.name
+        }
+    }
+
+    /**
+     * Renames [notebook] the way EditCollectionFragment.uploadCollection saves an edit: starting
+     * from the cached revision, upload it, then (with [cacheIt]) cache the uploaded revision under
+     * the cache's monitor. Without [cacheIt] only the server changes, as when another device edits.
+     */
+    private fun renameAsEditingDoes(account: Account, notebook: String, name: String, cacheIt: Boolean) {
+        val colMgr = server.collectionManager
+        val cache = cache(account)
+        val col = synchronized(cache) { cache.collectionGet(colMgr, notebook).col }
+        col.meta = ItemMetadata().apply { this.name = name }
+        colMgr.upload(col)
+        if (cacheIt) synchronized(cache) { cache.collectionSet(colMgr, col) }
     }
 
     /** The titles of the notes cached for [notebook]; none when the notebook itself is not cached. */
