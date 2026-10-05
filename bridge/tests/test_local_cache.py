@@ -2949,6 +2949,13 @@ def test_unknown_tombstone_cannot_rebind_identity_bound_contact(mem_db, user):
         eb_item=b"original-cache",
     )
     HrefMapper.create(content=bound, href="contact-name.vcf")
+    # An unrelated identityless row keeps the unknown deletion ambiguous.
+    ItemEntity.create(
+        collection=cache_col,
+        uid="legacy-unrelated",
+        remote_uid=None,
+        eb_item=b"legacy-cache",
+    )
     col = MagicMock(collection_type="etebase.vcard")
     tombstone = MagicMock(
         uid="remote-unrelated",
@@ -3094,6 +3101,16 @@ def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_p
         uid="contacts",
         eb_col=b"collection-cache",
     )
+    # An unrelated identityless row keeps the unknown deletion ambiguous.
+    legacy = ItemEntity.create(
+        collection=cache_col,
+        uid="legacy-unrelated",
+        remote_uid=None,
+        eb_item=b"legacy-cache",
+    )
+    legacy_state = (
+        legacy.uid, legacy.remote_uid, legacy.eb_item, False, False, False
+    )
     tombstone = MagicMock(
         uid="remote-missing-1",
         meta={},
@@ -3118,7 +3135,16 @@ def test_unmatched_identityless_tombstone_is_quarantined_without_duplicate(tmp_p
 
     etebase.pull_collection(cache_col.uid)
 
-    assert ItemEntity.select().count() == 0
+    assert ItemEntity.select().count() == 1
+    persisted_legacy = ItemEntity.get_by_id(legacy.id)
+    assert (
+        persisted_legacy.uid,
+        persisted_legacy.remote_uid,
+        persisted_legacy.eb_item,
+        persisted_legacy.new,
+        persisted_legacy.dirty,
+        persisted_legacy.deleted,
+    ) == legacy_state
     unresolved = models.DavUnresolvedItem.get(collection=cache_col)
     assert unresolved.remote_uid == "remote-missing-1"
     assert unresolved.deleted is True

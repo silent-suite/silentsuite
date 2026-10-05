@@ -670,3 +670,61 @@ def test_char_inconsistent_envelope_without_target_is_not_settled(
 
     assert _quarantined(world) == ["remote-a"]
     assert models.DavUnresolvedItem.get_by_id(quarantine.id).attempts == 1
+
+
+# ---------------------------------------------------------------------------
+# Exhausted quarantines (RED until capped settlement exists)
+# ---------------------------------------------------------------------------
+
+@COLLECTION_TYPES
+@pytest.mark.parametrize("over_limit", [0, 5], ids=["at_limit", "limit_plus_5"])
+def test_capped_tombstone_quarantine_recovers(
+    make_world, col_type, suffix, over_limit
+):
+    """A13: an exhausted unattached tombstone quarantine is removed in place."""
+    world = make_world(col_type)
+    _seed_row(world, "kept-name", "remote-kept", href="kept-name" + suffix)
+    _seed_token(world)
+    _seed_quarantine(
+        world,
+        "remote-gone",
+        _remote("remote-gone", name="gone-name", deleted=True),
+        attempts=DAV_UNRESOLVED_RETRY_LIMIT + over_limit,
+    )
+    before = _snapshot(world)
+    _serve(world, _page("s1"))
+
+    outcome = _sync_outcome(world)
+
+    assert _snapshot(world) == before
+    assert _quarantined(world) == [], "exhausted tombstone quarantine retained"
+    assert outcome == "success"
+
+
+@COLLECTION_TYPES
+def test_capped_tombstone_quarantine_settles_once_identityless_row_is_bound(
+    make_world, col_type, suffix
+):
+    """A14: retained while a NULL row exists; removed after it is bound."""
+    world = make_world(col_type)
+    legacy = _seed_row(world, "legacy-other", None, href="legacy-other" + suffix)
+    quarantine = _seed_quarantine(
+        world,
+        "remote-gone",
+        _remote("remote-gone", name="gone-name", deleted=True),
+        attempts=DAV_UNRESOLVED_RETRY_LIMIT,
+    )
+    quarantine_before = _row(models.DavUnresolvedItem, quarantine.id)
+    _serve(world, _page("s1"), _page("s2"))
+
+    assert _sync_outcome(world) == "unresolved"
+    assert _row(models.DavUnresolvedItem, quarantine.id) == quarantine_before
+
+    models.ItemEntity.update(remote_uid="remote-legacy-bound").where(
+        models.ItemEntity.id == legacy.id
+    ).execute()
+    outcome = _sync_outcome(world)
+
+    assert _local_stoken(world) == "s2"
+    assert _quarantined(world) == [], "exhausted tombstone quarantine retained"
+    assert outcome == "success"
