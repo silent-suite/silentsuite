@@ -429,18 +429,30 @@ describe('useEtebaseStore collection discovery error state', () => {
     it('a provider disposed during a failing initial discovery registers no watcher and wires no retry engine', async () => {
       const { plan, release } = gatedPlan(CALENDAR)
       fakeAccount(plan)
-      const subscribeSpy = vi.spyOn(useEtebaseStore, 'subscribe')
+      const realSubscribe = useEtebaseStore.subscribe
+      const unsubscribes: Array<() => void> = []
+      const subscribeSpy = vi.spyOn(useEtebaseStore, 'subscribe').mockImplementation((listener) => {
+        const unsubscribe = vi.fn(realSubscribe(listener))
+        unsubscribes.push(unsubscribe)
+        return unsubscribe
+      })
       try {
         const { unmount } = render(<SyncProvider><div /></SyncProvider>)
         await vi.waitFor(() => expect(coreMock.restoreSession).toHaveBeenCalled())
+        // Only the sync store's queue-count account watcher may exist while the
+        // provider is alive; the recovery watcher belongs to a failed discovery.
+        const watchersWhileAlive = subscribeSpy.mock.calls.length
+        expect(watchersWhileAlive).toBeLessThanOrEqual(1)
         unmount()
+        expect(unsubscribes).toHaveLength(watchersWhileAlive)
+        for (const unsubscribe of unsubscribes) expect(unsubscribe).toHaveBeenCalledTimes(1)
         release(true)
         await settleProvider()
 
         await useEtebaseStore.getState().reconcileCollections()
 
         expect(engineControl.instances).toHaveLength(1)
-        expect(subscribeSpy).not.toHaveBeenCalled()
+        expect(subscribeSpy).toHaveBeenCalledTimes(watchersWhileAlive)
         expect(engineControl.instances[0].onChange).not.toHaveBeenCalled()
         expect(engineControl.instances[0].onStatusChange).not.toHaveBeenCalled()
       } finally {

@@ -995,4 +995,77 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
       useSyncStore.setState(useSyncStore.getInitialState(), true)
     }
   })
+
+  it('publishes only the new account pending count after an account switch, also while the old account count read is in flight', async () => {
+    const queueDelete = (itemUid: string, fingerprint: string) =>
+      enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid }, queueGuard(fingerprint))
+    await queueDelete('note-1', TEST_FINGERPRINT)
+    await queueDelete('note-2', 'new-account')
+    await queueDelete('note-3', 'new-account')
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    const published: number[] = []
+    const stopRecording = useSyncStore.subscribe((state) => { published.push(state.pendingQueueCount) })
+    const cleanup = useSyncStore.getState().initializeSync()
+    try {
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      setNoteAccount([])
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(2))
+
+      // Back to the first account, then away again before its count read can finish.
+      bumpAccountEpoch()
+      setNoteAccount([])
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+      published.length = 0
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      bumpAccountEpoch()
+      setNoteAccount([])
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(2))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      expect(useSyncStore.getState().pendingQueueCount).toBe(2)
+      expect(published).not.toContain(1)
+      expect((await getAll()).map((entry) => entry.itemUid)).toEqual(['note-1', 'note-2', 'note-3'])
+    } finally {
+      stopRecording()
+      cleanup()
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
+
+  it('does not publish a restored account pending count after sync initialization was cleaned up', async () => {
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, queueGuard())
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    try {
+      // Cleaned up before the account watcher could attach, as in a double-invoked effect.
+      useSyncStore.getState().initializeSync()()
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      setNoteAccount([])
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      // Cleaned up after the watcher attached, with the restored account's count read still in flight.
+      useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+      const cleanup = useSyncStore.getState().initializeSync()
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      setNoteAccount([])
+      cleanup()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      expect(await getPendingCount(queueGuard())).toBe(1)
+    } finally {
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
 })

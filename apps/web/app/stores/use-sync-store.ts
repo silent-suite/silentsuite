@@ -83,12 +83,15 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
 
+    let disposed = false
+
     // Subscribe to queue changes and refresh counts for the active account only.
     const refreshCounts = async () => {
       try {
         const guard = await captureQueueGuard()
         const counts = await readQueueCounts(guard)
         assertCurrentAccountEpoch(guard.accountEpoch)
+        if (disposed) return
         set(counts)
       } catch (err) {
         if (!(err instanceof AccountBoundaryChangedError)) logger.warn('[sync-store] Failed to refresh queue counts', getSafeErrorDetails(err))
@@ -97,6 +100,19 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     const unsubQueue = onCountChange(() => { void refreshCounts() })
 
     void refreshCounts()
+
+    // The restored account does not exist yet when this runs, so the read above
+    // cannot see its queue: read the counts again once an account is published.
+    let unsubAccount: (() => void) | null = null
+    void import('@/app/stores/use-etebase-store').then(({ useEtebaseStore }) => {
+      if (disposed) return
+      unsubAccount = useEtebaseStore.subscribe((state, prev) => {
+        if (state.account && state.accountFingerprint && (state.accountFingerprint !== prev.accountFingerprint || !prev.account)) {
+          void refreshCounts()
+        }
+      })
+      void refreshCounts()
+    }).catch((err) => logger.warn('[sync-store] Failed to watch the account for queue counts', getSafeErrorDetails(err)))
 
     // Set initial state. Mutations queued by a previous session are replayed
     // by SyncProvider once the Etebase session has been restored.
@@ -107,9 +123,11 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
     }
 
     return () => {
+      disposed = true
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
       unsubQueue()
+      unsubAccount?.()
     }
   },
 
