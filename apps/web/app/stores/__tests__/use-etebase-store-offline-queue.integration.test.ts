@@ -8,7 +8,7 @@ import {
   getMeta,
   getItemsByType,
 } from '@/app/lib/data-cache'
-import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { AccountBoundaryChangedError, bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, changeAccountWhenQueuePutRuns, queueGuard, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
 const coreMock = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), deleteItem: vi.fn(), listItems: vi.fn() }))
@@ -21,7 +21,7 @@ vi.mock('@silentsuite/core', async (importOriginal) => ({
 vi.mock('@/app/stores/use-toast-store', () => toastMock)
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({ useLabelSuggestionsStore: { getState: () => ({ recordUsage: vi.fn() }) } }))
 
-import { useEtebaseStore } from '../use-etebase-store'
+import { useEtebaseStore, withoutPendingDeletes } from '../use-etebase-store'
 import { useSyncStore } from '../use-sync-store'
 import { useContactStore } from '../use-contact-store'
 import { useContactListStore } from '../use-contact-list-store'
@@ -1067,5 +1067,59 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     } finally {
       useSyncStore.setState(useSyncStore.getInitialState(), true)
     }
+  })
+
+  it('hides cached notes only for a pending delete of this account and never on a failed or stale queue read', async () => {
+    const record = (itemUid: string) => ({ itemUid, collectionType: 'notes' as const, collectionUid: 'notes-1', content: `CACHED ${itemUid}`, lastModified: 1 })
+    const records = ['pending-delete', 'failed-delete', 'pending-update', 'other-account', 'untouched'].map(record)
+    const visible = async (fingerprint: string | null = TEST_FINGERPRINT) =>
+      (await withoutPendingDeletes('notes', records, getAccountEpoch(), fingerprint)).map((item) => item.itemUid)
+    setNoteAccount([])
+
+    // A delete that exhausted its retries is shown as failed and must not hide the note.
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'failed-delete' }, queueGuard())
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await replay(async () => { throw new Error('rejected by server') }, queueGuard())
+    }
+    expect((await getAll(queueGuard()))[0]).toMatchObject({ itemUid: 'failed-delete', status: 'failed' })
+
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'pending-delete', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'pending-update' }, queueGuard())
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', tempId: 'untouched' }, queueGuard())
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'other-account' }, queueGuard('other-account'))
+    await enqueue({ type: 'move', collectionType: 'notes', collectionUid: 'notes-1', targetCollectionUid: 'notes-2', itemUid: 'untouched' }, queueGuard())
+    const queuedBefore = await getAll()
+    expect(JSON.stringify(queuedBefore)).not.toContain('CACHED')
+
+    expect(await visible()).toEqual(['failed-delete', 'pending-update', 'other-account', 'untouched'])
+    expect(await visible('other-account')).toEqual(['pending-delete', 'failed-delete', 'pending-update', 'untouched'])
+    expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), null)).toBe(records)
+    expect(await withoutPendingDeletes('notes', [], getAccountEpoch(), TEST_FINGERPRINT)).toEqual([])
+    expect((await withoutPendingDeletes('calendar', records, getAccountEpoch(), TEST_FINGERPRINT))).toBe(records)
+
+    // An ordinary queue read failure shows the cache as it is.
+    const readSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(() => { throw new Error('queue read failed') })
+    try {
+      expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), TEST_FINGERPRINT)).toBe(records)
+    } finally {
+      readSpy.mockRestore()
+    }
+
+    // An account boundary during the queue read is never turned into a fallback list.
+    const originalGetAll = IDBObjectStore.prototype.getAll
+    const boundarySpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(function (this: IDBObjectStore, ...args) {
+      bumpAccountEpoch()
+      return originalGetAll.apply(this, args)
+    })
+    const staleEpoch = getAccountEpoch()
+    try {
+      await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+    } finally {
+      boundarySpy.mockRestore()
+    }
+    await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+
+    // Reading for the projection never removes or rewrites queue entries.
+    expect(await getAll()).toEqual(queuedBefore)
   })
 })

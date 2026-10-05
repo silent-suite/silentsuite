@@ -481,6 +481,38 @@ export async function keepPendingCacheRecords(
 }
 
 /**
+ * When painting from the cache, hide records whose delete is still pending in
+ * the offline queue of this account. The cached copy stays for replay; a queue
+ * that cannot be read hides nothing.
+ */
+export async function withoutPendingDeletes(
+  type: CollectionTypeKey,
+  records: CachedItem[],
+  accountEpoch: number,
+  accountFingerprint: string | null,
+): Promise<CachedItem[]> {
+  if (!accountFingerprint || records.length === 0) return records
+  let entries: QueueEntry[]
+  try {
+    entries = await getQueuedMutations({ accountEpoch, accountFingerprint })
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) throw err
+    // A read that failed across an account change belongs to the old account.
+    assertCurrentAccountEpoch(accountEpoch)
+    logger.warn('[etebase-store] Failed to read pending deletes for cache hydration', getSafeErrorDetails(err))
+    return records
+  }
+  assertCurrentAccountEpoch(accountEpoch)
+  const deletedUids = new Set(
+    entries
+      .filter((entry) => entry.type === 'delete' && entry.status === 'pending' && entry.collectionType === type && entry.itemUid)
+      .map((entry) => entry.itemUid as string),
+  )
+  if (deletedUids.size === 0) return records
+  return records.filter((record) => !deletedUids.has(record.itemUid))
+}
+
+/**
  * Queues an update for replay when it cannot be applied now. With
  * `persistEncryptedOfflineContent` the body goes to the encrypted local cache
  * and the queue entry stays content free; otherwise the content rides in the

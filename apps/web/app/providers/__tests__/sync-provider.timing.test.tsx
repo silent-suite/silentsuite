@@ -502,6 +502,83 @@ describe('SyncProvider timing instrumentation', () => {
     }
   })
 
+  it.each([
+    ['completes', false],
+    ['fails with an ordinary error', true],
+  ] as const)('paints no cached notes and stays quiet when the account changes while the pending-delete queue read %s', async (_name, failRead) => {
+    const { useEtebaseStore: realEtebaseStore } = await vi.importActual<typeof import('@/app/stores/use-etebase-store')>('@/app/stores/use-etebase-store')
+    const { logger } = await import('@/app/lib/logger')
+    await resetRealOfflineQueue()
+    realEtebaseStore.setState({ account: {} as never, accountFingerprint: TEST_FINGERPRINT })
+    const originalGetAll = IDBObjectStore.prototype.getAll
+    let getAllSpy: { mockRestore: () => void } | null = null
+    try {
+      await expect(realEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notebook-1' })).resolves.toBe('queued')
+      // Also lets the queue's own listener read finish before the spy is installed.
+      expect((await getAll(queueGuard())).map((entry) => entry.itemUid)).toEqual(['note-1'])
+      vi.mocked(logger.warn).mockClear()
+      vi.mocked(logger.error).mockClear()
+
+      etebaseMock.state.accountFingerprint = TEST_FINGERPRINT
+      cacheMock.isCacheEnabled.mockReturnValue(true)
+      cacheMock.getItemsByType.mockImplementation(async (type: string) => {
+        order.push(`cacheGet:${type}`)
+        if (type !== 'notes') return []
+        return [
+          { itemUid: 'note-1', collectionType: 'notes', collectionUid: 'notebook-1', content: 'NOTE:DELETED-OFFLINE', lastModified: 1 },
+          { itemUid: 'note-2', collectionType: 'notes', collectionUid: 'notebook-1', content: 'NOTE:KEPT', lastModified: 1 },
+        ]
+      })
+      let queueReads = 0
+      getAllSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementation(function (this: IDBObjectStore, ...args) {
+        if (this.name !== 'mutations') return originalGetAll.apply(this, args)
+        queueReads += 1
+        if (queueReads === 1) {
+          // The account changes while the provider's queue read is in flight.
+          bumpAccountEpoch()
+          if (failRead) throw new Error('queue read failed')
+        }
+        return originalGetAll.apply(this, args)
+      })
+      let hydrateOutcome: 'resolved' | 'rejected' | null = null
+      let markHydrateSettled!: () => void
+      const hydrateSettled = new Promise<void>((resolve) => { markHydrateSettled = resolve })
+      etebaseMock.state.initialize.mockImplementation(async (options?: { onCacheHydrate?: OnCacheHydrate }) => {
+        order.push('etebaseInitialize')
+        try {
+          await options?.onCacheHydrate?.()
+          hydrateOutcome = 'resolved'
+        } catch (err) {
+          hydrateOutcome = 'rejected'
+          throw err
+        } finally {
+          markHydrateSettled()
+        }
+      })
+
+      renderProvider()
+      await hydrateSettled
+      // Let the provider's init catch run after the hydrate callback settled.
+      await Promise.resolve()
+      await Promise.resolve()
+
+      expect(queueReads).toBe(1)
+      expect(order).toContain('cacheGet:notes')
+      expect(hydrateOutcome).toBe('rejected')
+      expect(noteStoreMock.syncFromRemote).not.toHaveBeenCalled()
+      expect(syncStoreMock.setLastSynced).not.toHaveBeenCalled()
+      expect(syncStoreMock.setSyncStatus).not.toHaveBeenCalledWith('error')
+      expect(syncStoreMock.setError).not.toHaveBeenCalled()
+      expect(sentryMock.captureException).not.toHaveBeenCalled()
+      expect(logger.warn).not.toHaveBeenCalled()
+      expect(logger.error).not.toHaveBeenCalled()
+    } finally {
+      getAllSpy?.mockRestore()
+      realEtebaseStore.setState(realEtebaseStore.getInitialState(), true)
+      await resetRealOfflineQueue()
+    }
+  })
+
   it('does not let timing helper failures change sync status flow', async () => {
     timingMock.logSyncTiming.mockImplementation(() => {
       throw new Error('timing broke')
