@@ -220,10 +220,25 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
       // First reconcile collection membership so manual sync notices calendars,
       // task lists, or address books deleted or created on another device.
+      const syncEngineBeforeReconcile = etebase.syncEngine
       await etebase.reconcileCollections()
       assertCurrentAccountEpoch(accountEpoch)
       const reconciledEtebase = useEtebaseStore.getState()
       if (reconciledEtebase.accountFingerprint !== accountFingerprint) throw new AccountBoundaryChangedError()
+
+      // Reconcile started the SyncEngine, so initial collection discovery had
+      // failed and earlier replays could not reach their collections (#748).
+      // Replay once now, before the refresh, so the stores show the result.
+      if (!syncEngineBeforeReconcile && reconciledEtebase.syncEngine) {
+        try {
+          await get().replayOfflineQueue()
+        } catch (err) {
+          assertCurrentAccountEpoch(accountEpoch)
+          logger.warn('[sync-store] Offline queue replay after collection recovery failed', getSafeErrorDetails(err))
+        }
+        assertCurrentAccountEpoch(accountEpoch)
+        if (useEtebaseStore.getState().accountFingerprint !== accountFingerprint) throw new AccountBoundaryChangedError()
+      }
 
       // Then run the SyncEngine poll to advance stokens for active collections.
       if (reconciledEtebase.syncEngine) {

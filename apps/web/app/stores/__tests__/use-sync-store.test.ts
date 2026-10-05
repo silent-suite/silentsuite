@@ -278,4 +278,65 @@ describe('useSyncStore', () => {
     expect(etebaseMock.state.replayQueuedMutation).toHaveBeenCalledWith(expect.objectContaining({ type: 'move', itemUid: 'item-old' }), expect.objectContaining({ accountFingerprint: 'test-account' }), undefined)
     expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledWith([{ id: 'item-new', calendarId: 'cal-b' }])
   })
+
+  // #748: a queued change could not be replayed while initial collection
+  // discovery had failed; the cycle that recovers discovery replays it.
+  it('replays the queue once reconcile recovers discovery and starts the SyncEngine, before refreshing', async () => {
+    const syncNow = vi.fn().mockResolvedValue(undefined)
+    etebaseMock.state.reconcileCollections.mockImplementationOnce(async () => {
+      etebaseMock.state.syncEngine = { syncNow }
+    })
+    vi.mocked(replay).mockClear()
+    vi.mocked(getPendingCount).mockResolvedValueOnce(1)
+
+    useSyncStore.getState().simulateSyncCycle()
+    await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+
+    expect(replay).toHaveBeenCalledTimes(1)
+    expect(replay).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ accountFingerprint: 'test-account' }))
+    const replayOrder = vi.mocked(replay).mock.invocationCallOrder[0]!
+    expect(etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!).toBeLessThan(replayOrder)
+    expect(replayOrder).toBeLessThan(syncNow.mock.invocationCallOrder[0]!)
+    expect(replayOrder).toBeLessThan(etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!)
+  })
+
+  it('quietly cancels the recovery cycle when the account epoch changes during its replay', async () => {
+    const syncNow = vi.fn().mockResolvedValue(undefined)
+    etebaseMock.state.reconcileCollections.mockImplementationOnce(async () => {
+      etebaseMock.state.syncEngine = { syncNow }
+    })
+    vi.mocked(replay).mockClear()
+    vi.mocked(getPendingCount).mockResolvedValueOnce(1)
+    vi.mocked(replay).mockImplementationOnce(async () => {
+      bumpAccountEpoch()
+      return []
+    })
+
+    useSyncStore.getState().simulateSyncCycle()
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    expect(replay).toHaveBeenCalledTimes(1)
+    expect(syncNow).not.toHaveBeenCalled()
+    expect(etebaseMock.state.refreshCollection).not.toHaveBeenCalled()
+    expect(preferencesSyncMock.loadFromRemote).not.toHaveBeenCalled()
+    expect(useSyncStore.getState()).toMatchObject({ error: null, lastSyncedAt: null })
+  })
+
+  // Guard: a steady-state cycle (engine already running) does not replay, so a
+  // manual sync never spends retry budget beyond the existing replay callers.
+  it('does not replay the queue from a cycle whose SyncEngine was already running', async () => {
+    etebaseMock.state.syncEngine = { syncNow: vi.fn().mockResolvedValue(undefined) }
+    vi.mocked(replay).mockClear()
+    vi.mocked(getPendingCount).mockResolvedValue(1)
+
+    try {
+      useSyncStore.getState().simulateSyncCycle()
+      await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+      expect(replay).not.toHaveBeenCalled()
+    } finally {
+      vi.mocked(getPendingCount).mockResolvedValue(0)
+    }
+  })
 })
