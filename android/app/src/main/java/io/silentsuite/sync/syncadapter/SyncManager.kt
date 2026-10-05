@@ -166,6 +166,7 @@ constructor(protected val context: Context, protected val account: Account, prot
                 pushItems(chunkPushItems)
             } while (chunkPushItems.size == MAX_PUSH)
 
+            val paging = PagedListingGuard("item", stoken, PagedListingGuard.MAX_ITEM_PAGES)
             do {
                 if (Thread.interrupted())
                     throw InterruptedException()
@@ -188,6 +189,7 @@ constructor(protected val context: Context, protected val account: Account, prot
                         etebaseLocalCache.collectionSaveStoken(cachedCollection.col.uid, stoken)
                     }
                 }
+                paging.pageApplied(stoken, itemList.isDone)
             } while (!itemList!!.isDone)
 
             /* Cleanup and finalize changes */

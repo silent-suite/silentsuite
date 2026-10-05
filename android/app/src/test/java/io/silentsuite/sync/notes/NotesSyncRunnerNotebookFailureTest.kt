@@ -10,6 +10,7 @@ import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
 import io.silentsuite.sync.notes.NotesSyncRunner.NotebookFailure
 import io.silentsuite.sync.notes.NotesSyncRunner.NotebooksOutcome
+import io.silentsuite.sync.syncadapter.PagedListingStalledException
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -41,6 +42,22 @@ class NotesSyncRunnerNotebookFailureTest {
         assertEquals(NotebookFailure.NOTEBOOK_FAILED, NotesSyncRunner.notebookFailure(MsgPackException("bad item")))
         assertEquals(NotebookFailure.NOTEBOOK_FAILED, NotesSyncRunner.notebookFailure(ServerErrorException("500")))
         assertEquals(NotebookFailure.NOTEBOOK_FAILED, NotesSyncRunner.notebookFailure(IllegalStateException("cache")))
+    }
+
+    @Test fun `a notebook whose listing cannot finish fails only that notebook`() {
+        // It is a temporary server error to the adapters, but the server still answers, so the
+        // other notebooks are not skipped the way they are for a 503.
+        val stalled = PagedListingStalledException("The notebook item listing is not done but repeated a cursor")
+        assertTrue(stalled is TemporaryServerErrorException)
+        assertEquals(NotebookFailure.NOTEBOOK_FAILED, NotesSyncRunner.notebookFailure(stalled))
+
+        val fetched = mutableListOf<String>()
+        val outcome = NotesSyncRunner.fetchEachNotebook(listOf("a", "stalled", "c"), { true }) { notebook ->
+            if (notebook == "stalled") throw stalled
+            fetched += notebook
+        }
+        assertEquals(listOf("a", "c"), fetched)
+        assertEquals(NotebooksOutcome.SOME_FAILED, outcome)
     }
 
     @Test fun `one failing notebook does not stop the ones after it, and the run reports the failure`() {
