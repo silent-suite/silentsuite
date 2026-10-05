@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import * as Sentry from '@sentry/nextjs'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { logger } from '@/app/lib/logger'
-import { keepPendingCacheRecords, useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { keepPendingCacheRecords, useEtebaseStore, withoutPendingDeletes } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
@@ -272,10 +272,13 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
         if (noteItems.length > 0) {
           try {
-            const notes = noteItems.map((it) => core.deserializeNote(it.content, it.itemUid, it.collectionUid))
+            const visibleNoteItems = await withoutPendingDeletes('notes', noteItems, accountEpoch, useEtebaseStore.getState().accountFingerprint)
+            assertCurrentAccountEpoch(accountEpoch)
+            const notes = visibleNoteItems.map((it) => core.deserializeNote(it.content, it.itemUid, it.collectionUid))
             useNoteStore.getState().syncFromRemote(notes)
             logger.log(`[sync-provider] Hydrated ${notes.length} notes from cache`)
           } catch (err) {
+            if (err instanceof AccountBoundaryChangedError) throw err
             logger.warn('[sync-provider] Failed to hydrate notes from cache', getSafeErrorDetails(err))
           }
         }
