@@ -11,7 +11,8 @@ import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 
 import { selectScheduleCandidates } from './lib/eligibility.mjs'
-import { activationState, requireManualRehearsal, requireManualSigningRehearsal, requireProtectedSchedule } from './lib/dispatch.mjs'
+import { activationState, requireManualPublish, requireManualRehearsal, requireManualSigningRehearsal, requireProtectedSchedule } from './lib/dispatch.mjs'
+import { MANUAL_REQUEST_FIELDS, parseManualPublishRequest, requireApprovedBinding, selectManualCandidate } from './lib/manual-publish.mjs'
 import { createGitHubClient, hashFromChecksumText } from './lib/github.mjs'
 import { buildBinding, revalidateBinding, verifyApkHashes } from './lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from './lib/apksigner.mjs'
@@ -85,6 +86,16 @@ function walkJson(dir, fileName) {
   return found
 }
 
+// The exact-release revalidation run immediately before signing, shared by the
+// scheduled and manual lanes.
+async function revalidateExactRelease(binding) {
+  await revalidateBinding({ client: client(), binding, gitAncestry: opt('git-ancestry', null) })
+  const apk = opt('apk')
+  const digest = createHash('sha256').update(readFileSync(apk)).digest('hex')
+  if (digest !== binding.assets.apk.sha256 || statSync(apk).size !== binding.assets.apk.size) throw new Error('local APK changed since binding')
+  summary(`Revalidated release ${binding.releaseId} ${binding.tag} immediately before signing`)
+}
+
 function phasesFromEnv(order) {
   return Object.fromEntries(order.map((name) => [name, process.env[`PHASE_${name.toUpperCase()}`] || 'not-run']))
 }
@@ -152,6 +163,57 @@ const commands = {
     output('release_id', requested)
     output('tag', newest.tag)
     summary(`Signing rehearsal bound to release ${requested} ${newest.tag}, the newest eligible release`)
+  },
+
+  // Owner-authorized manual publication. Validates the whole request before
+  // anything else and re-exports it, so later jobs read only validated values.
+  'admit-manual-publish'() {
+    const request = parseManualPublishRequest(process.env, MANUAL_REQUEST_FIELDS)
+    const state = activationState(process.env.ZAPSTORE_AUTOMATION_ENABLED)
+    const { revision } = requireManualPublish({
+      eventName: process.env.GITHUB_EVENT_NAME,
+      ref: process.env.GITHUB_REF,
+      workflowRef: process.env.GITHUB_WORKFLOW_REF,
+      sha: process.env.GITHUB_SHA,
+      workflowSha: process.env.GITHUB_WORKFLOW_SHA,
+      repository: process.env.GITHUB_REPOSITORY,
+    }, request)
+    if (!opt('workspace')) throw new Error('admit-manual-publish requires --workspace')
+    requireCheckout(opt('workspace'), revision)
+    output('active', String(state.active))
+    output('rehearsal', String(Boolean(state.rehearsal)))
+    output('revision', revision)
+    output('release_id', request.releaseId)
+    output('expected_source_sha', request.sourceSha)
+    output('expected_apk_asset_id', request.apkAssetId)
+    output('expected_apk_sha256', request.apkSha256)
+    output('expected_workflow_sha', request.workflowSha)
+    summary(`### Zapstore manual publication: ${state.label}\n\nManually dispatched from protected main at ${revision}; this revision supplied the definition, equals the workflow commit named in the request, and is the only revision any job checks out. Requested release ${request.releaseId} at source ${request.sourceSha}, APK asset ${request.apkAssetId} sha256 ${request.apkSha256}. ${state.active ? 'Only this exact release can be published, only while it is the newest eligible release, only if absent from the relay, and only after environment approval.' : 'No publication can happen in this run.'}`)
+  },
+
+  // Manual enumeration: only the requested release, and only while it is the
+  // single newest eligible release. Nothing is written on refusal.
+  async 'enumerate-manual'() {
+    const { releaseId } = parseManualPublishRequest(process.env, ['releaseId'])
+    const listing = await client().listPublishedReleases()
+    const { candidates, omitted } = selectManualCandidate(selectScheduleCandidates(listing.releases), releaseId)
+    writeJson(opt('out'), { candidates, omitted })
+    output('count', String(candidates.length))
+    output('matrix', JSON.stringify({ include: candidates.map((c) => ({ release_id: String(c.releaseId), tag: c.tag, publishable: String(c.publishable) })) }))
+    summary(['### Manual release selection', '', '| Release id | Tag | Decision |', '|---|---|---|', ...candidates.map((c) => `| ${c.releaseId} | ${c.tag} | requested and newest eligible: may publish if absent (${c.kind}, channel ${c.channel}) |`), ...omitted.map((o) => `| ${o.releaseId ?? '-'} | ${o.tag ?? '-'} | omitted: ${o.reason} |`)].join('\n'))
+  },
+
+  // `bind` for the manual lane: the bound release, tag commit, APK asset and
+  // digest must all equal the approved request before a binding is written.
+  async 'bind-approved'() {
+    const request = parseManualPublishRequest(process.env)
+    if (opt('release-id') !== request.releaseId) throw new Error(`matrix release ${String(opt('release-id'))} is not the approved release ${request.releaseId}; refusing`)
+    const binding = await buildBinding({ client: client(), releaseId: Number(request.releaseId), expectedSourceSha: request.sourceSha, gitAncestry: opt('git-ancestry', null) })
+    requireApprovedBinding(binding, request)
+    writeJson(opt('out'), binding)
+    output('tag', binding.tag)
+    output('source_sha', binding.sourceSha)
+    summary(`Bound approved release ${binding.releaseId} ${binding.tag} at ${binding.sourceSha}; APK asset ${binding.assets.apk.id} sha256 ${binding.assets.apk.sha256}, all equal to the manual request`)
   },
 
   'checkout-guard'() {
@@ -329,12 +391,20 @@ const commands = {
   },
 
   async revalidate() {
+    await revalidateExactRelease(readJson(opt('binding')))
+  },
+
+  // Manual lane: a release published while approval was pending, or before a
+  // failed job is re-run, must stop the run. A fresh listing must still select
+  // the request as the newest eligible release and the binding must still be
+  // the approved one; only then the same revalidation as the scheduled lane.
+  async 'revalidate-manual'() {
+    const request = parseManualPublishRequest(process.env)
     const binding = readJson(opt('binding'))
-    await revalidateBinding({ client: client(), binding, gitAncestry: opt('git-ancestry', null) })
-    const apk = opt('apk')
-    const digest = createHash('sha256').update(readFileSync(apk)).digest('hex')
-    if (digest !== binding.assets.apk.sha256 || statSync(apk).size !== binding.assets.apk.size) throw new Error('local APK changed since binding')
-    summary(`Revalidated release ${binding.releaseId} ${binding.tag} immediately before signing`)
+    const listing = await client().listPublishedReleases()
+    selectManualCandidate(selectScheduleCandidates(listing.releases), request.releaseId)
+    requireApprovedBinding(binding, request)
+    await revalidateExactRelease(binding)
   },
 
   async publish() {

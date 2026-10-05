@@ -8,7 +8,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "test": "node --test test/lane.test.mjs test/protocol.test.mjs test/orchestration.test.mjs test/workflow-boundary.test.mjs test/signing-rehearsal.test.mjs"
+    "test": "node --test test/lane.test.mjs test/protocol.test.mjs test/orchestration.test.mjs test/workflow-boundary.test.mjs test/signing-rehearsal.test.mjs test/manual-publish.test.mjs"
   },
   "dependencies": {
     "@noble/ciphers": "2.0.1",

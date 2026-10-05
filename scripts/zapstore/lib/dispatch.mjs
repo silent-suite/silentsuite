@@ -41,19 +41,32 @@ export function requireProtectedSchedule({ eventName, ref, workflowRef, sha, wor
 // other GITHUB_REF, and the definition must come from protected main.
 export const REHEARSAL_WORKFLOW_PATH = '.github/workflows/zapstore-rehearsal.yml'
 
-function requireManualDispatch(path, { eventName, ref, workflowRef, sha, workflowSha, repository }) {
-  if (eventName !== 'workflow_dispatch') throw new Error(`refusing rehearsal: event ${String(eventName)} is not workflow_dispatch`)
+function requireManualDispatch(path, { eventName, ref, workflowRef, sha, workflowSha, repository }, label = 'rehearsal') {
+  if (eventName !== 'workflow_dispatch') throw new Error(`refusing ${label}: event ${String(eventName)} is not workflow_dispatch`)
   requireProtectedRef(ref)
-  if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error('refusing rehearsal: GITHUB_REPOSITORY is missing or malformed')
+  if (typeof repository !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error(`refusing ${label}: GITHUB_REPOSITORY is missing or malformed`)
   const expected = `${repository}/${path}@${PROTECTED_REF}`
-  if (workflowRef !== expected) throw new Error(`refusing rehearsal: GITHUB_WORKFLOW_REF ${String(workflowRef)} is not ${expected}`)
-  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('refusing rehearsal: GITHUB_SHA is not a 40-hex commit')
-  if (typeof workflowSha !== 'string' || workflowSha !== sha) throw new Error(`refusing rehearsal: GITHUB_WORKFLOW_SHA ${String(workflowSha)} is not the run commit ${sha}`)
+  if (workflowRef !== expected) throw new Error(`refusing ${label}: GITHUB_WORKFLOW_REF ${String(workflowRef)} is not ${expected}`)
+  if (typeof sha !== 'string' || !/^[0-9a-f]{40}$/.test(sha)) throw new Error(`refusing ${label}: GITHUB_SHA is not a 40-hex commit`)
+  if (typeof workflowSha !== 'string' || workflowSha !== sha) throw new Error(`refusing ${label}: GITHUB_WORKFLOW_SHA ${String(workflowSha)} is not the run commit ${sha}`)
   return { revision: sha }
 }
 
 export function requireManualRehearsal(context) {
   return requireManualDispatch(REHEARSAL_WORKFLOW_PATH, context)
+}
+
+// Owner-authorized manual publication
+// (.github/workflows/zapstore-manual-publish.yml). A third admission for a
+// third definition file: main-only like the rehearsals, never an alternative to
+// requireProtectedSchedule, and additionally bound to the workflow commit the
+// owner named when dispatching. Activation is still decided separately.
+export const MANUAL_PUBLISH_WORKFLOW_PATH = '.github/workflows/zapstore-manual-publish.yml'
+
+export function requireManualPublish(context, { workflowSha } = {}) {
+  const { revision } = requireManualDispatch(MANUAL_PUBLISH_WORKFLOW_PATH, context, 'manual publication')
+  if (typeof workflowSha !== 'string' || workflowSha !== revision) throw new Error(`refusing manual publication: input expected_workflow_sha is not the run commit ${revision}`)
+  return { revision }
 }
 
 // Manual, environment-gated signing rehearsal
