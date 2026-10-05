@@ -1,11 +1,12 @@
-// Trust-boundary assertions over the workflow text. These are structural text
-// checks (no YAML parser is available without a dependency); the Python
+// Trust-boundary assertions over the workflow. The publication predicate uses
+// the effective YAML job; existing checks also inspect source text. The Python
 // signing-boundary checker in CI parses the same file structurally.
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { parseDocument } from 'yaml'
 
 const root = resolve(new URL('.', import.meta.url).pathname, '..', '..', '..')
 const workflow = readFileSync(join(root, '.github', 'workflows', 'zapstore-publish.yml'), 'utf8')
@@ -24,6 +25,35 @@ const jobOf = (text, name) => {
 const job = (name) => jobOf(workflow, name)
 const code = (text) => text.replace(/^\s*#.*$/gm, '')
 const JOBS = ['admit', 'enumerate', 'assess', 'plan', 'publish', 'notify']
+
+test('publication survives a historical assessment failure but requires successful admission and planning and an uncancelled run', () => {
+  const document = parseDocument(workflow, { uniqueKeys: true })
+  assert.deepEqual(document.errors, [], 'workflow must parse without duplicate keys')
+  const publish = document.toJS().jobs.publish
+  assert.deepEqual(publish.needs, ['admit', 'plan'])
+  const condition = publish.if.replace(/^\$\{\{\s*|\s*\}\}$/g, '')
+  const hasStatusCheck = /\b(?:always|cancelled|failure|success)\s*\(/.test(condition)
+  assert.ok(hasStatusCheck, 'an explicit status function must override the implicit ancestor success() check')
+  assert.equal(condition, "!cancelled() && needs.admit.result == 'success' && needs.plan.result == 'success' && needs.admit.outputs.active == 'true' && needs.plan.outputs.count != '0'", 'only the reviewed publication predicate is evaluated')
+  const evaluate = new Function('needs', 'cancelled', `return (${condition})`)
+  for (const historicalResult of ['success', 'failure', 'skipped']) {
+    for (const admitResult of ['success', 'failure', 'skipped', 'cancelled']) {
+      for (const planResult of ['success', 'failure', 'skipped', 'cancelled']) {
+        for (const active of ['true', 'false']) {
+          for (const count of ['0', '1']) {
+            for (const cancelled of [false, true]) {
+              const needs = { admit: { result: admitResult, outputs: { active } }, plan: { result: planResult, outputs: { count } } }
+              const implicitSuccess = historicalResult === 'success' && admitResult === 'success' && planResult === 'success'
+              const actual = (hasStatusCheck || implicitSuccess) && evaluate(needs, () => cancelled)
+              const expected = !cancelled && admitResult === 'success' && planResult === 'success' && active === 'true' && count === '1'
+              assert.equal(actual, expected, JSON.stringify({ historicalResult, admitResult, planResult, active, count, cancelled }))
+            }
+          }
+        }
+      }
+    }
+  }
+})
 
 test('the only trigger is schedule; the definition revision is the only checkout', () => {
   const on = workflow.slice(workflow.indexOf('\non:'), workflow.indexOf('\nconcurrency:'))
@@ -64,7 +94,7 @@ test('permissions and environment: nothing by default, one environment-bound job
 
 test('the environment-bound job publishes only what the read-only assessment approved, after preflight, in order', () => {
   assert.match(job('publish'), /needs: \[admit, plan\]/)
-  assert.match(job('publish'), /if: needs\.admit\.outputs\.active == 'true' && needs\.plan\.outputs\.count != '0'/)
+  assert.match(job('publish'), /if: \$\{\{ !cancelled\(\) && needs\.admit\.result == 'success' && needs\.plan\.result == 'success' && needs\.admit\.outputs\.active == 'true' && needs\.plan\.outputs\.count != '0' \}\}/)
   assert.match(job('assess'), /if: needs\.enumerate\.outputs\.count != '0'/)
   assert.match(job('plan'), /needs: \[admit, enumerate, assess\]/)
   assert.match(job('publish'), /name: zapstore-assessment-\$\{\{ matrix\.release_id \}\}\n\s+path:/)

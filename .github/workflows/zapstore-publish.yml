@@ -273,7 +273,9 @@ jobs:
   publish:
     name: Publish ${{ matrix.tag }}
     needs: [admit, plan]
-    if: needs.admit.outputs.active == 'true' && needs.plan.outputs.count != '0'
+    # A failed historical assessment must not suppress an approved newest release.
+    # Explicit status handling retains successful admission/planning and cancellation.
+    if: ${{ !cancelled() && needs.admit.result == 'success' && needs.plan.result == 'success' && needs.admit.outputs.active == 'true' && needs.plan.outputs.count != '0' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: zapstore-production
