@@ -139,5 +139,9 @@ jobs:
         with:
           name: umbrel-development-candidate-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/umbrel-candidate
+          # The archive must carry hidden files: SHA256SUMS covers the package's
+          # .gitkeep placeholders, and a delivery missing any checksummed file is
+          # refused at admission.
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7

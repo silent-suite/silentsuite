@@ -45,7 +45,15 @@ FIXED_MTIME = 0
 
 def build_archive(self_host_dir: Path, tag: str, manifest_bytes: bytes) -> bytes:
     prefix = bundle_prefix(tag)
-    present = sorted(entry.name for entry in self_host_dir.iterdir())
+    # self-host/umbrel is the separately packaged Umbrel app tree, not part of the
+    # flat release bundle. Its one real, non-symlink directory entry may coexist
+    # next to the admitted flat files; every other entry — including a regular
+    # file or any symlink named "umbrel" — must still match the inventory exactly.
+    present = sorted(
+        entry.name
+        for entry in self_host_dir.iterdir()
+        if not (entry.name == "umbrel" and entry.is_dir() and not entry.is_symlink())
+    )
     expected = sorted(BUNDLE_SOURCE_FILES)
     if present != expected:
         raise ContractError(

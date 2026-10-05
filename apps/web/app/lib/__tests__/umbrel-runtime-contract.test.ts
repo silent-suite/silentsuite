@@ -14,6 +14,7 @@ const packageDir = resolve(repoRoot, 'self-host/umbrel/silentsuite')
 const wrapperPath = join(packageDir, 'data/bootstrap/server-start.sh')
 const smokePath = resolve(repoRoot, 'scripts/umbrel-candidate-smoke.sh')
 const probePath = resolve(repoRoot, 'scripts/umbrel-candidate-probe.py')
+const workflowPath = resolve(repoRoot, '.github/workflows/ci-umbrel-candidate.yml')
 
 function readRequired(path: string): string {
   expect(existsSync(path), `missing ${path.slice(repoRoot.length + 1)}`).toBe(true)
@@ -84,5 +85,20 @@ describe('Umbrel candidate smoke and probe failure behavior', () => {
     expect(probe).not.toContain('json.loads(body).get(')
     expect(probe).toMatch(/except ValueError/)
     expect(probe).toContain('NOT COVERED')
+  })
+})
+
+describe('Umbrel candidate archive delivery', () => {
+  it('uploads the development archive with hidden files included and the unchanged scoped path', () => {
+    const workflow = parse(readRequired(workflowPath)) as Record<string, any>
+    const steps = (workflow.jobs?.candidate?.steps ?? []) as Record<string, any>[]
+    const upload = steps.find((step) => String(step.uses ?? '').startsWith('actions/upload-artifact@'))
+    expect(upload, 'upload-artifact step').toBeDefined()
+    const inputs = (upload?.with ?? {}) as Record<string, unknown>
+    expect(inputs['include-hidden-files'], 'hidden files must be delivered').toBe(true)
+    expect(inputs.path, 'upload path stays scoped to the candidate dir').toBe('${{ runner.temp }}/umbrel-candidate')
+    expect(inputs.name).toBe('umbrel-development-candidate-${{ github.event.pull_request.head.sha }}')
+    expect(inputs['if-no-files-found']).toBe('error')
+    expect(inputs['retention-days']).toBe(7)
   })
 })
