@@ -1992,7 +1992,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       })
     }
 
-    const requireItem = async () => {
+    // Resolves null only after a complete listing of the live owning collection
+    // has no live item with this UID; any failed read throws.
+    const findItem = async () => {
       if (!entry.itemUid) throw new ReplayNotConfirmedError('Replay requires an item UID')
       if (!entry.collectionUid) throw new ReplayNotConfirmedError('Replay item collection ownership is unavailable')
       const cached = itemCache.get(entry.itemUid)
@@ -2006,9 +2008,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // outlived the item maps: fetch the item from its owning collection.
       const collection = requireCollection(entry.collectionUid, 'owner')
       const remote = await findRemoteItemByUid(collection, entry.itemUid)
-      if (!remote) throw new ReplayNotConfirmedError('Replay item is unavailable')
+      if (!remote) return null
       publishConfirmedReplayItem(remote, entry.itemUid, collection.uid)
       return remote
+    }
+    const requireItem = async () => {
+      const item = await findItem()
+      if (!item) throw new ReplayNotConfirmedError('Replay item is unavailable')
+      return item
     }
 
     switch (entry.type) {
@@ -2052,8 +2059,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
       case 'delete': {
         const collection = requireCollection(entry.collectionUid, 'owner')
-        const item = await requireItem()
+        const item = await findItem()
         assertOfflineQueueAccountGuard(guard, get())
+        // Already gone on the server (deleted elsewhere, or an earlier delete
+        // whose response was lost): the wanted end state holds.
+        if (!item) return { remoteMutationConfirmed: true }
         await core.deleteItem(account, collection, item)
         assertOfflineQueueAccountGuard(guard, get())
         return { remoteMutationConfirmed: true }
