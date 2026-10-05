@@ -135,6 +135,8 @@ export async function etebaseSignUp(
   }
   await new Promise((r) => setTimeout(r, 50))
   const { signUp, saveSession } = await import('@silentsuite/core')
+  // Cancellation during the delay or import must not start encrypted account creation.
+  if (owner) throwIfAborted(owner.signal)
   const account = registrationToken === undefined
     ? await signUp(endpoint, email, password)
     : await signUp(endpoint, email, password, { registrationToken })
