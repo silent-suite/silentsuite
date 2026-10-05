@@ -682,6 +682,66 @@ class NotesSyncBoundaryRuntimeTest {
         assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-retry-stall") })
     }
 
+    @Test fun aNotebookWhoseNotesListingAnswersNotFoundWhileItStillExistsIsAFailureNotALostNotebook() {
+        val account = newAccount("gen-item-404")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-item-404")
+        val unlistable = uploadNotebook("Notes cannot be listed")
+        val sibling = uploadNotebook("Sibling")
+        uploadNotes(unlistable, "One")
+        uploadNotes(sibling, "Two")
+
+        // 1. The listing of one notebook's notes answers 404, but the notebook is still there: the
+        // collection list still shows it and it can still be fetched by its uid. That is not a lost
+        // notebook. Its sibling still syncs, it stays cached, and the run is not a success.
+        fake.answerItemListNotFound(unlistable, true)
+        NotesSyncCoordinator.request(context, account, "gen-item-404", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("the notes listing was asked for and answered 404", itemRequests(unlistable).isNotEmpty())
+        assertEquals("the sibling's notes were synced", setOf("Two"), cachedNotes(account, sibling))
+        assertEquals("the sibling's cursor was saved", fake.itemStoken(sibling), notebookCursor(account, sibling))
+        assertTrue("the notebook is still cached", unlistable in cachedNotebooks(account))
+        assertNull("no cursor was saved for the notebook whose notes could not be listed", notebookCursor(account, unlistable))
+        status(account, "gen-item-404").let {
+            assertNull("a run that could not list an existing notebook's notes recorded no success: $it", it.lastSuccessAt)
+            assertNotNull("it recorded a failure: $it", it.lastFailureAt)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+
+        // Once the listing answers again, the next run fetches that notebook's notes and succeeds.
+        fake.answerItemListNotFound(unlistable, false)
+        forgetLastListing(account.name)
+        NotesSyncCoordinator.request(context, account, "gen-item-404", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals(setOf("One"), cachedNotes(account, unlistable))
+        assertEquals(fake.itemStoken(unlistable), notebookCursor(account, unlistable))
+        val recovered = status(account, "gen-item-404").lastSuccessAt
+        assertNotNull("the recovered run succeeded", recovered)
+
+        // 2. For comparison, a notebook that really is gone. Its notes changed, and the list answer
+        // that says so is built before the account loses the notebook and arrives after. The notes
+        // listing then answers 404 and so does the notebook itself: it is skipped, the sibling is
+        // unaffected, and the run is a success.
+        uploadNotes(unlistable, "Three")
+        forgetLastListing(account.name)
+        val asked = itemRequests(unlistable).size
+        val listing = fake.hold("POST", LIST, answerFirst = true)
+        NotesSyncCoordinator.request(context, account, "gen-item-404", NotesSyncPolicy.Trigger.MANUAL)
+        try {
+            listing.awaitArrival()
+            fake.removeMembership(unlistable)
+        } finally {
+            listing.release()
+        }
+        awaitSettled(identity)
+        assertTrue("the gone notebook's notes listing was asked for", itemRequests(unlistable).size > asked)
+        assertEquals("nothing new was cached for the gone notebook", setOf("One"), cachedNotes(account, unlistable))
+        assertEquals(setOf("Two"), cachedNotes(account, sibling))
+        status(account, "gen-item-404").let {
+            assertTrue("a run that only skipped a lost notebook succeeded: $it", it.lastSuccessAt!! > recovered!!)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+    }
+
     @Test fun concurrentRefreshesOfOneAccountListOneAtATimeAndNeverMoveTheCursorBack() {
         val account = newAccount("gen-twice")
         val notebook = uploadNotebook("Listed once")
