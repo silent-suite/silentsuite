@@ -1,0 +1,143 @@
+name: CI Umbrel Candidate
+
+# Builds a DEVELOPMENT Umbrel candidate from the exact pull-request head: owner-enabled
+# self-host web and server images, a throwaway effective-stack smoke test, and an
+# archive of the saved images, the resolved package and provenance. Nothing is pushed,
+# published, released or deployed.
+
+on:
+  pull_request:
+    paths:
+      - "self-host/umbrel/**"
+      - "scripts/umbrel-candidate-*"
+      - ".github/workflows/ci-umbrel-candidate.yml"
+      - "Dockerfile.web"
+      - "Dockerfile.server"
+      - "apps/web/**"
+      - "packages/**"
+      - "server/**"
+      - "patches/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: umbrel-candidate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: Umbrel development candidate (amd64)
+    # Same-repository pull requests only; forks never run this job.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      WEB_IMAGE: 127.0.0.1:5000/silentsuite-web:dev-${{ github.event.pull_request.head.sha }}
+      SERVER_IMAGE: 127.0.0.1:5000/silentsuite-server:dev-${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Assert checked-out revision
+        run: test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build owner-enabled self-host web image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.web
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.WEB_IMAGE }}
+          build-args: |
+            VCS_REF=${{ github.event.pull_request.head.sha }}
+            NEXT_PUBLIC_SELF_HOSTED=true
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=
+            NEXT_PUBLIC_OWNER_REGISTRATION=true
+
+      - name: Build server image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: Dockerfile.server
+          platforms: linux/amd64
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.SERVER_IMAGE }}
+          build-args: |
+            VCS_REF=${{ github.event.pull_request.head.sha }}
+
+      - name: Inspect image identities and revisions
+        run: |
+          for image in "$WEB_IMAGE" "$SERVER_IMAGE"; do
+            revision="$(docker image inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$image")"
+            test "$revision" = "$HEAD_SHA"
+            docker image inspect -f '{{.Id}} {{.Architecture}}' "$image"
+          done
+
+      - name: Effective-stack smoke test
+        run: bash scripts/umbrel-candidate-smoke.sh "$WEB_IMAGE" "$SERVER_IMAGE"
+
+      - name: Assemble development package archive
+        run: |
+          out="$RUNNER_TEMP/umbrel-candidate"
+          rm -rf "$out"
+          mkdir -p "$out/images" "$out/package"
+          docker save -o "$out/images/silentsuite-web.tar" "$WEB_IMAGE"
+          docker save -o "$out/images/silentsuite-server.tar" "$SERVER_IMAGE"
+          cp -R self-host/umbrel/silentsuite "$out/package/silentsuite"
+          compose="$out/package/silentsuite/docker-compose.yml"
+          sed -i \
+            -e "s|\${APP_SILENTSUITE_WEB_IMAGE}|$WEB_IMAGE|g" \
+            -e "s|\${APP_SILENTSUITE_SERVER_IMAGE}|$SERVER_IMAGE|g" \
+            "$compose"
+          if grep -q 'APP_SILENTSUITE_[A-Z]*_IMAGE' "$compose"; then
+            echo "unresolved image placeholder" >&2
+            exit 1
+          fi
+          web_id="$(docker image inspect -f '{{.Id}}' "$WEB_IMAGE")"
+          server_id="$(docker image inspect -f '{{.Id}}' "$SERVER_IMAGE")"
+          cat > "$out/provenance.json" <<EOF
+          {
+            "kind": "silentsuite-umbrel-development-candidate",
+            "repository": "${{ github.repository }}",
+            "pull_request": ${{ github.event.pull_request.number }},
+            "revision": "$HEAD_SHA",
+            "platform": "linux/amd64",
+            "web": {
+              "image": "$WEB_IMAGE",
+              "id": "$web_id",
+              "build_args": {
+                "NEXT_PUBLIC_SELF_HOSTED": "true",
+                "NEXT_PUBLIC_ETEBASE_SERVER_URL": "",
+                "NEXT_PUBLIC_OWNER_REGISTRATION": "true"
+              }
+            },
+            "server": { "image": "$SERVER_IMAGE", "id": "$server_id" },
+            "package": "self-host/umbrel/silentsuite",
+            "published": false
+          }
+          EOF
+          (cd "$out" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS)
+          cat "$out/SHA256SUMS"
+
+      - name: Upload development candidate archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: umbrel-development-candidate-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/umbrel-candidate
+          if-no-files-found: error
+          retention-days: 7
