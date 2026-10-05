@@ -772,6 +772,10 @@ class _Envelope:
     def deleted(self):
         return self._read("deleted", self._deleted)
 
+    @property
+    def etag(self):
+        return "etag-" + self._uid
+
 
 def _seed_capped(world, envelope, **fields):
     row = models.DavUnresolvedItem.create(
@@ -1026,6 +1030,37 @@ def test_target_appearing_during_parse(make_world, col_type, suffix, capped):
     assert _quarantined(world) == []
 
 
+@COLLECTION_TYPES
+@pytest.mark.parametrize("capped", [False, True], ids=["below_cap", "at_cap"])
+def test_quarantine_vanishing_during_parse_is_not_recreated(
+    make_world, col_type, suffix, capped
+):
+    """A17: a quarantine removed during the parse causes no write."""
+    world = make_world(col_type)
+    _seed_row(world, "kept-name", "remote-kept", href="kept-name" + suffix)
+    _seed_token(world)
+
+    def remove(row):
+        models.DavUnresolvedItem.delete().where(
+            models.DavUnresolvedItem.id == row.id
+        ).execute()
+
+    row, observed = _seed_parse_race(world, capped, remove)
+    envelope = world.item_mgr.cache_load(row.eb_item)
+    world.item_mgr.cache_load.reset_mock()
+    _serve(world, _page("s1"))
+
+    world.service.pull_collection(COL_UID)
+
+    assert observed["row"] == [], "concurrent removal did not run"
+    assert _row(models.DavUnresolvedItem, row.id) == []
+    assert _quarantined(world) == []
+    assert _snapshot(world) == observed["snapshot"]
+    assert world.item_mgr.cache_save.call_count == observed["saves"]
+    assert world.item_mgr.cache_load.call_count == 1
+    assert envelope.meta_reads_in_transaction == [False]
+
+
 # ---------------------------------------------------------------------------
 # Publication through the real sync thread
 # ---------------------------------------------------------------------------
@@ -1115,3 +1150,31 @@ def test_char_sync_thread_reports_genuine_ambiguity(
     assert states == ["error"]
     assert update_status.call_args.kwargs["error"] == "DavUnresolvedItemsError"
     assert any("DavUnresolvedItemsError" in text for text in diagnostics)
+
+
+@COLLECTION_TYPES
+@pytest.mark.parametrize(
+    "attempts", [3, DAV_UNRESOLVED_RETRY_LIMIT], ids=["below_cap", "exhausted"]
+)
+def test_sync_thread_recovers_persisted_tombstone_quarantine(
+    make_world, caplog, col_type, suffix, attempts
+):
+    """A22 with A12/A13: persisted recovery succeeds without identifiers."""
+    world = make_world(col_type)
+    _seed_row(world, "kept-name", "remote-kept", href="kept-name" + suffix)
+    row = _seed_quarantine(
+        world,
+        "remote-gone",
+        _remote("remote-gone", name="gone-name", deleted=True),
+        attempts=attempts,
+    )
+    _serve(world, _page("s1"))
+
+    thread, status, update_status, _ = _run_sync_thread(world, caplog)
+
+    assert status["state"] == "succeeded"
+    assert thread.last_sync is not None
+    assert _row(models.DavUnresolvedItem, row.id) == []
+    assert _quarantined(world) == []
+    states = [call.args[0] for call in update_status.call_args_list]
+    assert states == ["connected"]
