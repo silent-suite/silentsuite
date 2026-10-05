@@ -12,6 +12,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import secrets
 import time
 import typing as t
@@ -35,6 +36,11 @@ GRANT_PURPOSE = "signup"
 GRANT_SALT = "etebase_server.owner.signup-grant.v1"
 GRANT_KEY_CONTEXT = b"silentsuite-owner-signup-grant-key-v1"
 LOOPBACK_HOSTNAMES = {"localhost", "127.0.0.1", "::1"}
+REGISTRATION_TOKEN_HEADER = "x-silentsuite-registration-token"
+MAX_GRANT_LENGTH = 512
+GRANT_FIELDS = {"v", "p", "u", "h", "iat", "n"}
+DIGEST_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}")
+NONCE_PATTERN = re.compile(r"[A-Za-z0-9_-]{22}")
 
 NO_STORE_HEADERS = {"Cache-Control": "no-store", "Pragma": "no-cache"}
 
@@ -137,6 +143,59 @@ def issue_signup_grant(signing_material: str, username: str, host: str) -> str:
         "n": secrets.token_urlsafe(16),
     }
     return signing.dumps(payload, key=grant_signing_key(signing_material), salt=GRANT_SALT, compress=False)
+
+
+def owner_mode_enabled() -> bool:
+    return bool(_owner_password())
+
+
+def _payload_valid(payload: t.Any, username: str, host: str) -> bool:
+    if not isinstance(payload, dict) or set(payload.keys()) != GRANT_FIELDS:
+        return False
+    version, purpose, user_digest, host_digest = payload["v"], payload["p"], payload["u"], payload["h"]
+    issued_at, nonce = payload["iat"], payload["n"]
+    if type(version) is not int or version != GRANT_VERSION or purpose != GRANT_PURPOSE:
+        return False
+    if not all(isinstance(value, str) for value in (user_digest, host_digest, nonce)):
+        return False
+    if not DIGEST_PATTERN.fullmatch(user_digest) or not DIGEST_PATTERN.fullmatch(host_digest):
+        return False
+    if not NONCE_PATTERN.fullmatch(nonce):
+        return False
+    # Explicit int (not bool) issued-at that is neither in the future nor older than the lifetime.
+    now = int(time.time())
+    if type(issued_at) is not int or issued_at > now or now - issued_at > GRANT_MAX_AGE_SECONDS:
+        return False
+    user_ok = hmac.compare_digest(user_digest, _digest(username.lower()))
+    host_ok = hmac.compare_digest(host_digest, _digest(host))
+    return user_ok and host_ok
+
+
+def signup_grant_valid(request: Request, username: str) -> bool:
+    """Owner mode: admit a signup only with exactly one valid grant for this username and Host.
+
+    Fails closed on invalid owner configuration and never accepts the raw signing material."""
+    owner_password = _owner_password()
+    signing_material = settings.ETEBASE_REGISTRATION_TOKEN
+    if not owner_password or not _configuration_valid(owner_password, signing_material):
+        return False
+    grant = _single_header(request, REGISTRATION_TOKEN_HEADER)
+    host = _single_header(request, "host")
+    if not grant or not host or not grant.isascii() or len(grant) > MAX_GRANT_LENGTH:
+        return False
+    if hmac.compare_digest(grant.encode("ascii"), signing_material.encode("utf-8")):
+        return False
+    try:
+        payload = signing.loads(
+            grant,
+            key=grant_signing_key(signing_material),
+            salt=GRANT_SALT,
+            max_age=GRANT_MAX_AGE_SECONDS,
+            fallback_keys=[],
+        )
+    except (signing.BadSignature, ValueError, TypeError):
+        return False
+    return _payload_valid(payload, username, host)
 
 
 @owner_router.post("/login/")
