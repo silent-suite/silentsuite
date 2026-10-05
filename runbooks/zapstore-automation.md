@@ -78,7 +78,12 @@ retry job would relax those gates, and Python tests cannot be run on this
 machine. Rejected.
 
 **Why not `workflow_dispatch`.** It loads the definition from the selected ref,
-and the owner has ruled it out as a second control plane.
+and the owner has ruled it out as a second control plane for this definition.
+The scheduled workflow still declares and admits `schedule` only. The single
+owner-authorized exception (2026-10-05) is a separate definition file,
+`zapstore-manual-publish.yml`, with its own main-only admission bound to the
+workflow commit and to one exact, owner-approved release; see section 10. It is
+not an arbitrary-release or historical-release trigger.
 
 ### 1.2 Job graph (one protected revision, one secret step)
 
@@ -125,6 +130,7 @@ Sibling paths:
 |------|-----------|
 | Activation variable absent or not `enabled` | `admit` reports `DISABLED`; nothing after it runs except in `rehearsal`. |
 | `release`, `repository_dispatch`, `workflow_dispatch`, `push` | Not declared; admission refuses any event but `schedule`. |
+| `workflow_dispatch` of `zapstore-manual-publish.yml` | A separate definition with its own admission (section 10); the scheduled `admit` refuses it, and it refuses `schedule`. |
 | Schedule with `GITHUB_REF`/`GITHUB_WORKFLOW_REF` not protected main, or `GITHUB_WORKFLOW_SHA != GITHUB_SHA` | Refused. |
 | Job checkout `HEAD` differs from the admitted revision | `checkout-guard` fails the job. |
 | Draft, `-rc`, `-alpha`, nightly, stable with `prerelease=true` | Ineligible, listed as omitted with a reason. |
@@ -250,6 +256,16 @@ lines, and corrupt downloaded bytes.
   artifact names. `lane.test.mjs` and `orchestration.test.mjs` cover
   `requireManualRehearsal` and `admit-rehearsal` refusals.
 
+- `manual-publish.test.mjs` (section 10), through the CLI against a local fake
+  GitHub API and a recording stand-in for the identity helper: manual admission
+  and its refusals, the input grammar including unsafe integers, the
+  `expected_workflow_sha` binding, newest-only selection in the candidate file
+  and matrix, the four-way approved binding, activation states, and the
+  freshness refusal when a newer release appears during approval or before a
+  failed-job re-run. `workflow-boundary.test.mjs` additionally requires the
+  parsed manual definition to equal the parsed scheduled definition after an
+  exact allowlist of differences, with no duplicate keys, anchors or merges.
+
 CI only (cannot run on this machine): the Python signing-boundary checker and
 self-host workflow tests still parse this workflow; real `apksigner`; live
 identity-helper reads.
@@ -289,8 +305,9 @@ six-hourly schedule retries the same exact newest release. GitHub may delay or
 drop scheduled runs; this is not a maximum retry-time guarantee. To retry
 with a code fix, merge the fix to `main` and wait for the next schedule. When
 merging a workflow-condition fix, re-running an older run does not use the fix:
-GitHub retains that run's original workflow revision. Do not add a manual
-publication trigger or bypass the environment/signing gates to expedite it. After
+GitHub retains that run's original workflow revision. Do not add another
+manual publication trigger, widen the reviewed one in section 10, or bypass the
+environment/signing gates to expedite it. After
 any publication attempt whose outcome is `unknown`, do not re-run blindly: wait
 for the next scheduled reconciliation to read the relay first.
 
@@ -481,3 +498,112 @@ the publisher may wait up to 20 minutes for approval. The run shares the
 publication concurrency group, so it waits for (or is queued behind) a
 scheduled run. Do not re-dispatch to "retry" a failed phase without reading the
 verdict first.
+
+## 10. Manual publication of one exact approved release
+
+`.github/workflows/zapstore-manual-publish.yml` lets the owner publish one
+exact, already-published release on demand. It is a separate workflow file with
+its own admission; the scheduled lane's trigger, cron, admission and jobs are
+unchanged, and neither rehearsal is affected.
+
+**New authority, owner-approved 2026-10-05.** A third workflow binds
+`zapstore-production` and can reach the one signing step. It grants no new
+secret, token permission, signing key or environment change. It does not
+rebuild anything: it publishes the APK bytes already attached to the GitHub
+release, and the listing, release notes and media come from the same trusted
+template and bound source commit as the scheduled lane. No input can alter
+them.
+
+### 10.1 Request
+
+Five required string inputs, no defaults, matched exactly with no trimming:
+
+| Input | Grammar |
+|---|---|
+| `release_id` | positive decimal, at most 16 digits, within the safe integer range |
+| `expected_source_sha` | 40 lowercase hex: the release tag's commit |
+| `expected_apk_asset_id` | positive decimal, as `release_id` |
+| `expected_apk_sha256` | 64 lowercase hex: the APK asset digest |
+| `expected_workflow_sha` | 40 lowercase hex: the protected-main commit the run must load and execute |
+
+Inputs are untrusted text. Only the `admit` step reads them, as environment
+data; it validates them and re-exports them as job outputs, and every later job
+reads those outputs through its environment and validates them again. No input
+is interpolated into shell code. Numeric identifiers stay canonical strings and
+are bounded before any numeric conversion.
+
+### 10.2 Checks, in order
+
+1. **Admission** (`admit-manual-publish`, `requireManualPublish`):
+   `workflow_dispatch` of exactly
+   `<repository>/.github/workflows/zapstore-manual-publish.yml@refs/heads/main`,
+   `GITHUB_REF=refs/heads/main`, `GITHUB_WORKFLOW_SHA == GITHUB_SHA`,
+   `expected_workflow_sha == GITHUB_SHA`, checkout bound to it. The activation
+   variable applies as in the scheduled lane: `enabled` may publish,
+   `rehearsal` assesses only, anything else runs nothing.
+2. **Selection** (`enumerate-manual`): a fresh enumeration must mark the
+   requested release as the single newest eligible release. The candidate file
+   and matrix then hold only that release; history is listed as omitted and is
+   neither assessed nor published by this workflow.
+3. **Approved binding** (`bind-approved`, in `assess` and again in `publish`):
+   the bound release id, tag commit, APK asset id and APK digest must all equal
+   the request. A refusal is recorded as the `bind` phase.
+4. Every scheduled-lane check, unchanged: three digests, `apksigner`, prepared
+   expected events, relay reconciliation, plan, drift, environment approval.
+5. **Freshness** (`revalidate-manual`), the step immediately before the signer
+   step: a fresh release listing must still select the request as the newest
+   eligible release and the binding must still be the approved one; then the
+   scheduled lane's revalidation runs as before.
+6. Signing-account preflight, the pinned publisher, read-back and CDN
+   verification, unchanged. Publication is complete only when read-back is
+   `complete-match` (every event id and signature verified) and the CDN bytes
+   verify.
+
+### 10.3 Running it
+
+GitHub offers the dispatch only once the file is on the default branch, after a
+protected-main pull request with CI and independent code review. Then, from
+`main`:
+
+```
+gh workflow run zapstore-manual-publish.yml --ref main \
+  -f release_id=<id> -f expected_source_sha=<sha> \
+  -f expected_apk_asset_id=<id> -f expected_apk_sha256=<sha256> \
+  -f expected_workflow_sha=<main commit>
+```
+
+The values are the ones the owner approved for that release, plus the current
+`main` commit. Approving the `zapstore-production` deployment and the signer
+request remain owner actions; a dispatch alone publishes nothing.
+
+### 10.4 Retry, failure and limits
+
+- **Re-run failed jobs** replays the frozen request. The `publish` job binds
+  and checks freshness against live state again, so a request that is no longer
+  the newest eligible release, or whose release, tag or asset changed, refuses
+  before the signer step. **Re-run all jobs** re-enumerates and refuses at
+  selection in the same case. Either way the scheduled lane's ordinary
+  reconciliation remains the follow-up: after an attempt whose outcome is
+  `unknown`, do not re-dispatch blindly (5.1).
+- **Freshness is not atomic.** The check is the step adjacent to signing, not a
+  server-side selection: a release published after it and before signing is not
+  seen by that run. The next scheduled reconciliation then treats the older
+  version as verify-only or superseded.
+- **Activation is a snapshot.** `ZAPSTORE_AUTOMATION_ENABLED` is shared with
+  the scheduled lane and read once at admission. Changing it stops future
+  scheduled and manual admissions alike and does not stop a run already
+  admitted as active; that needs the run cancelled or the environment approval
+  rejected. Disabling this workflow or reverting it leaves the schedule alone.
+- **Concurrency.** The run shares the single publication concurrency group.
+  GitHub keeps one pending run per group, so a queued scheduled run and a
+  queued manual run can displace one another; re-dispatch if the manual run was
+  dropped. The group serializes running jobs. It is not by itself proof against
+  double publication: that rests on reconciliation immediately before signing,
+  the drift check, revalidation and read-back.
+- **Listing identity.** The pinned publisher emits the app, release and APK
+  events together. The listing content and tags must equal the reviewed
+  template (otherwise `app-drift` refuses), but the app event is signed anew
+  with a new id and timestamp. Signed relay events cannot be withdrawn by this
+  workflow (section 2).
+- A rejected environment approval leaves no result artifact and is reported as
+  `evidence-missing`, exactly as in 1.2.
