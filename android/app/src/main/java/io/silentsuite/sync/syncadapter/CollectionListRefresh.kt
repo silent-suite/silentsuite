@@ -108,6 +108,7 @@ internal object CollectionListRefresh {
                 var stoken = startStoken
                 var done = false
                 var attempts = 0
+                val paging = PagedListingGuard("collection", startStoken, PagedListingGuard.MAX_COLLECTION_PAGES)
                 while (!done) {
                     guard.check()
                     val writesBefore = etebaseLocalCache.collectionWrites()
@@ -143,6 +144,7 @@ internal object CollectionListRefresh {
                     attempts = 0
                     stoken = colList.stoken
                     done = colList.isDone
+                    paging.pageApplied(stoken, done)
                 }
                 return true
             }
