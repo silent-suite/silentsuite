@@ -964,4 +964,35 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     await useEtebaseStore.getState().deleteItem('calendar', 'target-item')
     expect(coreMock.deleteItem).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ uid: 'target' }), target[0])
   })
+
+  it('publishes the pending count of a previous session once the account is restored after sync initialization', async () => {
+    // A previous page load queued a note delete while offline.
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [queued] = await getAll(queueGuard())
+    expect(queued).toMatchObject({ type: 'delete', itemUid: 'note-1', collectionUid: 'notes-1', accountFingerprint: TEST_FINGERPRINT, status: 'pending' })
+    expect(queued!.content).toBeUndefined()
+
+    // Reload: sync initialization runs before the session is restored, in the same account epoch.
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    const cleanup = useSyncStore.getState().initializeSync()
+    try {
+      // Let the count read that started without an account finish before one is published.
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      setNoteAccount([])
+
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+      expect(useSyncStore.getState().failedQueueCount).toBe(0)
+      expect(await getAll(queueGuard())).toEqual([queued!])
+      expect(coreMock.listItems).not.toHaveBeenCalled()
+      expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    } finally {
+      cleanup()
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
 })
