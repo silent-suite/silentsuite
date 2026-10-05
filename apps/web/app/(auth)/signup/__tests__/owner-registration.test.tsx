@@ -190,6 +190,78 @@ describe('opted-in owner registration (self-host build)', () => {
   })
 })
 
+describe('cancelled owner registration', () => {
+  const realSetTimeout = globalThis.setTimeout
+
+  async function until(check: () => boolean) {
+    for (let i = 0; i < 200 && !check(); i += 1) await new Promise((resolve) => realSetTimeout(resolve, 0))
+    if (!check()) throw new Error('fixture: awaited boundary was not reached')
+  }
+
+  it('does not start SDK signup or publish a session when aborted after the grant arrives', async () => {
+    const { useAuthStore } = await load('true')
+    const create = useAuthStore.getState().createEtebaseAccount as unknown as CreateWithOwner
+    // Hold the wrapper's pre-dispatch delay, which runs after the grant has been received.
+    let held: (() => void) | undefined
+    const timers = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      callback: () => void, ms?: number, ...args: unknown[]
+    ) => {
+      if (ms === 50 && !held) {
+        held = callback
+        return 0
+      }
+      return realSetTimeout(callback, ms, ...args)
+    }) as typeof setTimeout)
+    try {
+      const controller = new AbortController()
+      const outcome = create(USERNAME, ACCOUNT_PASSWORD, undefined, {
+        ownerPassword: OWNER_PASSWORD, signal: controller.signal,
+      }).then(() => null, (err: Error) => err)
+
+      await until(() => held !== undefined)
+      expect(ownerFetchCalls()).toHaveLength(1)
+      controller.abort()
+      held!()
+      const error = await outcome
+
+      expect(error?.name).toBe('AbortError')
+      expect(sdk.signup).not.toHaveBeenCalled()
+      expect(sdk.login).not.toHaveBeenCalled()
+      expect(storage.set).not.toHaveBeenCalled()
+      expect(allBrowserState(useAuthStore)).not.toContain(GRANT)
+    } finally {
+      timers.mockRestore()
+    }
+  })
+
+  it('aborts a pending owner request on unmount and ignores its late completion', async () => {
+    let release: ((response: Response) => void) | undefined
+    vi.mocked(fetch).mockImplementation((() => new Promise<Response>((resolve) => { release = resolve })) as never)
+    const { SignupPage, useAuthStore } = await load('true')
+    const view = render(<SignupPage />)
+
+    fillAccountForm(true)
+    fireEvent.click(await screen.findByRole('button', { name: 'Continue' }))
+    await waitFor(() => expect(ownerFetchCalls()).toHaveLength(1))
+    const signal = (ownerFetchCalls()[0][1] as RequestInit).signal as AbortSignal
+    expect(signal.aborted).toBe(false)
+    expect(screen.getByLabelText(/installation password/i)).toHaveValue('')
+
+    view.unmount()
+    expect(signal.aborted).toBe(true)
+    release!(json({ registration_token: GRANT, expires_in: 120 }))
+    await until(() => true)
+    await new Promise((resolve) => realSetTimeout(resolve, 100))
+
+    expect(sdk.signup).not.toHaveBeenCalled()
+    expect(sdk.login).not.toHaveBeenCalled()
+    expect(storage.set).not.toHaveBeenCalled()
+    const state = allBrowserState(useAuthStore)
+    expect(state).not.toContain(GRANT)
+    expect(state).not.toContain(OWNER_PASSWORD)
+  })
+})
+
 describe('owner registration off (default build)', () => {
   it('keeps the existing self-host signup and legacy 409 recovery unchanged', async () => {
     sdk.signup.mockRejectedValueOnce(new Error('Conflict: 409 user already exists'))
