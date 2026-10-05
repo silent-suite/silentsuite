@@ -266,6 +266,10 @@ protocol, not a specific signer product.
 3. `assess` per candidate: binding line, digest line, apksigner line,
    reconciliation outcome and action, CDN line.
 4. `plan`: publish matrix (usually empty; one entry after a new release).
+   A failed historical assessment remains a failure but does not suppress a
+   verified newest release selected by a successful plan. Publication still
+   requires successful admission and planning, active automation, a non-empty
+   matrix and a run that has not been cancelled.
 5. `publish` (approval required): drift check, revalidation, preflight
    `signing account verified`, `zsp` exit, read-back `complete-match`, CDN.
 6. `notify`: `No failure issue required` or the issue numbers.
@@ -283,7 +287,10 @@ replay the release id frozen in that run (see the open limitations in 1.1).
 Publication still waits for environment approval. Without any action, the next
 six-hourly schedule retries the same exact newest release. GitHub may delay or
 drop scheduled runs; this is not a maximum retry-time guarantee. To retry
-with a code fix, merge the fix to `main` and wait for the next schedule. After
+with a code fix, merge the fix to `main` and wait for the next schedule. When
+merging a workflow-condition fix, re-running an older run does not use the fix:
+GitHub retains that run's original workflow revision. Do not add a manual
+publication trigger or bypass the environment/signing gates to expedite it. After
 any publication attempt whose outcome is `unknown`, do not re-run blindly: wait
 for the next scheduled reconciliation to read the relay first.
 
