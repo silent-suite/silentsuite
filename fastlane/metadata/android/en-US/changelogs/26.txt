@@ -1,0 +1,1 @@
+More reliable sync: collection discovery no longer holds up other account data, your edits are kept, and an incomplete listing is retried instead of being reported as complete. Stalled collection or item paging now ends as a temporary error instead of looping, and the next refresh can recover.
