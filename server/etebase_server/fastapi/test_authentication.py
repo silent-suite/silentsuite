@@ -18,6 +18,7 @@ from unittest.mock import patch
 import nacl.signing
 import pytest
 from django.test.utils import override_settings
+from fastapi.testclient import TestClient
 
 from etebase_server.fastapi.conftest import (
     AUTH_PREFIX,
@@ -531,3 +532,84 @@ class TestChangePassword:
         bad = perform_login(auth_client, username="test_user_alice", signing_key=signing_key)
         assert bad.status_code == 401
         assert decode_response(bad)["code"] == "login_bad_signature"
+
+
+# Synthetic, obviously fake per-install values for the opt-in owner login.
+OWNER_PASSWORD = "0123456789abcdef" * 4
+OWNER_SIGNING_MATERIAL = "synthetic-owner-registration-signing-material-" + "s" * 32
+OWNER_HOST = "silentsuite.umbrel.test:8443"
+OWNER_ORIGIN = f"https://{OWNER_HOST}"
+OWNER_LOGIN_PATH = "/api/v1/owner/login/"
+OWNER_USERNAME_MARKER = "owner-reflection-marker-7f3c"
+
+
+@pytest.mark.django_db(transaction=True)
+class TestOwnerLogin:
+    """Opt-in owner login that issues a short-lived signup authorization."""
+
+    @pytest.fixture
+    def make_client(self, settings, tmp_path):
+        settings.DEBUG = False
+        settings.ALLOWED_HOSTS = ["silentsuite.umbrel.test"]
+        settings.STATIC_ROOT = str(tmp_path / "static")
+        (tmp_path / "static").mkdir()
+
+        def _make(owner_enabled):
+            if owner_enabled:
+                settings.ETEBASE_OWNER_PASSWORD = OWNER_PASSWORD
+                settings.ETEBASE_REGISTRATION_TOKEN = OWNER_SIGNING_MATERIAL
+            from etebase_server.fastapi.main import create_application
+
+            # The real ASGI app, created after settings so either wiring style is exercised.
+            return TestClient(create_application(), base_url=OWNER_ORIGIN)
+
+        return _make
+
+    def _login(self, client, password=OWNER_PASSWORD, origin=OWNER_ORIGIN):
+        headers = {"Content-Type": "application/json"}
+        if origin is not None:
+            headers["Origin"] = origin
+        return client.post(
+            OWNER_LOGIN_PATH,
+            json={"password": password, "username": OWNER_USERNAME_MARKER},
+            headers=headers,
+        )
+
+    def _assert_no_secret_or_marker(self, response):
+        body = response.content.decode("utf-8", "replace")
+        assert OWNER_PASSWORD not in body
+        assert OWNER_SIGNING_MATERIAL not in body
+        assert OWNER_USERNAME_MARKER not in body
+        assert "no-store" in response.headers.get("cache-control", "")
+
+    def test_owner_login_issues_short_signup_authorization(self, make_client):
+        response = self._login(make_client(owner_enabled=True))
+
+        assert response.status_code == 200
+        grant = response.json()["registration_token"]
+        assert isinstance(grant, str)
+        assert grant.isascii()
+        assert 0 < len(grant) <= 512
+        self._assert_no_secret_or_marker(response)
+
+    def test_owner_login_rejects_wrong_password(self, make_client):
+        response = self._login(make_client(owner_enabled=True), password="fedcba9876543210" * 4)
+
+        assert response.status_code == 403
+        assert "registration_token" not in response.json()
+        self._assert_no_secret_or_marker(response)
+
+    def test_owner_login_rejects_missing_origin(self, make_client):
+        response = self._login(make_client(owner_enabled=True), origin=None)
+
+        assert response.status_code == 403
+        assert "registration_token" not in response.json()
+        self._assert_no_secret_or_marker(response)
+
+    def test_owner_login_is_unavailable_when_not_configured(self, make_client):
+        response = self._login(make_client(owner_enabled=False))
+        body = response.content.decode("utf-8", "replace")
+
+        assert response.status_code == 404
+        assert OWNER_PASSWORD not in body
+        assert "registration_token" not in body
