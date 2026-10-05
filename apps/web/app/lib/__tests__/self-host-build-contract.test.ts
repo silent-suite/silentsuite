@@ -21,6 +21,14 @@ describe('Dockerfile.web self-host build contract', () => {
     expect(build).toBeGreaterThan(env)
   })
 
+  it('declares default-off NEXT_PUBLIC_OWNER_REGISTRATION before the web build runs', () => {
+    expect(builderStage).toMatch(/^ARG NEXT_PUBLIC_OWNER_REGISTRATION=false$/m)
+    expect(builderStage).toMatch(/^ENV NEXT_PUBLIC_OWNER_REGISTRATION=\$NEXT_PUBLIC_OWNER_REGISTRATION$/m)
+    const env = builderStage.indexOf('ENV NEXT_PUBLIC_OWNER_REGISTRATION=')
+    expect(env).toBeGreaterThan(-1)
+    expect(builderStage.indexOf('pnpm --filter @silentsuite/web build')).toBeGreaterThan(env)
+  })
+
   it('keeps the hosted Etebase URL default for hosted builds', () => {
     expect(builderStage).toMatch(/^ARG NEXT_PUBLIC_ETEBASE_SERVER_URL=https:\/\/server\.silentsuite\.io$/m)
   })
