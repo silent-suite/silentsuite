@@ -17,8 +17,9 @@ synthetic.
 """
 
 import logging
+from contextlib import nullcontext
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from playhouse.sqlite_ext import SqliteExtDatabase
@@ -32,6 +33,8 @@ from silentsuite_bridge.local_cache import (
     models,
     record_dav_change,
 )
+from silentsuite_bridge import local_cache
+from silentsuite_bridge.radicale import storage
 
 COL_UID = "collection-under-test"
 
@@ -734,11 +737,14 @@ def test_capped_tombstone_quarantine_settles_once_identityless_row_is_bound(
 class _Envelope:
     """Synthetic SDK item; records whether metadata was read in a transaction."""
 
-    def __init__(self, *, uid="remote-gone", deleted=True, meta=None, fail=None):
+    def __init__(
+        self, *, uid="remote-gone", deleted=True, meta=None, fail=None, on_meta=None
+    ):
         self._uid = uid
         self._deleted = deleted
         self._meta = {"name": "gone-name"} if meta is None else meta
         self._fail = fail
+        self._on_meta = on_meta
         self.meta_reads_in_transaction = []
 
     def _read(self, name, value):
@@ -751,7 +757,12 @@ class _Envelope:
         self.meta_reads_in_transaction.append(
             db.database_proxy.obj.in_transaction()
         )
-        return self._read("meta", self._meta)
+        value = self._read("meta", self._meta)
+        if self._on_meta is not None:
+            # One-shot concurrent writer while the SDK parse is in progress.
+            callback, self._on_meta = self._on_meta, None
+            callback()
+        return value
 
     @property
     def uid(self):
@@ -869,3 +880,238 @@ def test_capped_settlement_reads_metadata_outside_writer(
     assert envelope.meta_reads_in_transaction == [False]
     assert _quarantined(world) == []
     world.item_mgr.cache_save.assert_not_called()
+
+
+@COLLECTION_TYPES
+def test_settlement_leaves_retained_dav_history_and_state_hash(
+    make_world, col_type, suffix
+):
+    """A3: settling an unrelated tombstone changes no DAV-relevant state."""
+    world = make_world(col_type)
+    _seed_row(world, "kept-name", "remote-kept", href="kept-name" + suffix)
+    _seed_token(world)
+    world.item_mgr.cache_save.reset_mock()
+    before = _snapshot(world)
+    state_hash = dav_collection_state_hash(world.cache_col)
+    assert before[0][4] > 0
+    _serve(world, _page("s1", _remote("remote-gone", name="gone-name", deleted=True)))
+
+    world.service.pull_collection(COL_UID)
+
+    assert _snapshot(world) == before
+    assert dav_collection_state_hash(world.cache_col) == state_hash
+    world.item_mgr.cache_save.assert_not_called()
+    assert _local_stoken(world) == "s1"
+    assert _quarantined(world) == []
+
+
+def _seed_parse_race(world, capped, mutate):
+    """An eligible tombstone quarantine whose metadata read runs ``mutate``."""
+    observed = {}
+
+    def concurrent_writer():
+        mutate(row)
+        observed["row"] = _row(models.DavUnresolvedItem, row.id)
+        observed["snapshot"] = _snapshot(world)
+        observed["saves"] = world.item_mgr.cache_save.call_count
+
+    row = _seed_capped(world, _Envelope(on_meta=concurrent_writer))
+    if not capped:
+        row.attempts = 3
+        row.save(only=[models.DavUnresolvedItem.attempts])
+    return row, observed
+
+
+def _field_update(**values):
+    def mutate(row):
+        models.DavUnresolvedItem.update(**values).where(
+            models.DavUnresolvedItem.id == row.id
+        ).execute()
+
+    return mutate
+
+
+@COLLECTION_TYPES
+@pytest.mark.parametrize("capped", [False, True], ids=["below_cap", "at_cap"])
+@pytest.mark.parametrize(
+    "field",
+    ["remote_uid", "eb_item", "deleted", "attempts", "reason", "local_item_id"],
+)
+def test_snapshot_change_during_parse_is_not_overwritten(
+    make_world, col_type, suffix, capped, field
+):
+    """A17: a quarantine refreshed during the parse is left as refreshed."""
+    world = make_world(col_type)
+    attached = _seed_row(world, "attached-name", "remote-attached-local")
+    values = {
+        "remote_uid": {"remote_uid": "remote-refreshed"},
+        "eb_item": {"eb_item": b"refreshed-envelope"},
+        "deleted": {"deleted": False},
+        "attempts": {"attempts": models.DavUnresolvedItem.attempts + 1},
+        "reason": {"reason": "legacy_duplicate"},
+        "local_item_id": {"local_item": attached.id},
+    }[field]
+    row, observed = _seed_parse_race(world, capped, _field_update(**values))
+    _serve(world, _page("s1"))
+
+    world.service.pull_collection(COL_UID)
+
+    assert observed["row"], "concurrent writer did not run"
+    assert _row(models.DavUnresolvedItem, row.id) == observed["row"]
+    assert _snapshot(world) == observed["snapshot"]
+
+
+@COLLECTION_TYPES
+@pytest.mark.parametrize("capped", [False, True], ids=["below_cap", "at_cap"])
+def test_identityless_row_appearing_during_parse_blocks_settlement(
+    make_world, col_type, suffix, capped
+):
+    """A17: a NULL-identity row inserted during the parse keeps the row."""
+    world = make_world(col_type)
+
+    def insert_identityless(_row_unused):
+        models.ItemEntity.create(
+            collection=world.cache_col,
+            uid="legacy-appeared",
+            remote_uid=None,
+            eb_item=b"legacy-appeared-cache",
+        )
+
+    row, observed = _seed_parse_race(world, capped, insert_identityless)
+    _serve(world, _page("s1"))
+
+    world.service.pull_collection(COL_UID)
+
+    assert _snapshot(world) == observed["snapshot"]
+    assert _quarantined(world) == ["remote-gone"]
+    current = models.DavUnresolvedItem.get_by_id(row.id)
+    if capped:
+        assert _row(models.DavUnresolvedItem, row.id) == observed["row"]
+    else:
+        # Ordinary unsuccessful retry bookkeeping.
+        assert current.attempts == 4
+        assert (current.eb_item, current.reason, current.local_item_id) == (
+            row.eb_item, row.reason, None,
+        )
+
+
+@COLLECTION_TYPES
+@pytest.mark.parametrize("capped", [False, True], ids=["below_cap", "at_cap"])
+def test_target_appearing_during_parse(make_world, col_type, suffix, capped):
+    """A18: below cap the real deletion applies; at cap nothing is applied."""
+    world = make_world(col_type)
+    href = "gone-name" + suffix
+    target = {}
+
+    def insert_target(_row_unused):
+        target["row"] = _seed_row(world, "gone-name", "remote-gone", href=href)
+
+    row, observed = _seed_parse_race(world, capped, insert_target)
+    _serve(world, _page("s1"))
+
+    world.service.pull_collection(COL_UID)
+
+    deleted = models.ItemEntity.get_by_id(target["row"].id)
+    retry_saves = world.item_mgr.cache_save.call_count - observed["saves"]
+    if capped:
+        assert _snapshot(world) == observed["snapshot"]
+        assert _row(models.DavUnresolvedItem, row.id) == observed["row"]
+        assert retry_saves == 0
+        return
+    assert deleted.remote_uid == "remote-gone"
+    assert deleted.deleted is True
+    assert models.HrefMapper.get(models.HrefMapper.content == deleted).href == href
+    assert models.DavChange.get(models.DavChange.href == href).deleted is True
+    assert retry_saves == 1
+    assert _quarantined(world) == []
+
+
+# ---------------------------------------------------------------------------
+# Publication through the real sync thread
+# ---------------------------------------------------------------------------
+
+_PRIVATE_MARKERS = (
+    "remote-live", "live-name", "remote-gone", "gone-name", "legacy-other",
+    "synthetic-content", "tombstone@example.test", COL_UID,
+)
+
+
+def _run_sync_thread(world, caplog):
+    for name in (storage.logger.name, local_cache.logger.name):
+        caplog.set_level(logging.DEBUG, logger=name)
+    with patch.object(
+        storage, "etesync_for_user",
+        return_value=nullcontext((world.service, False)),
+    ), patch.object(storage, "update_status") as update_status, patch.object(
+        storage, "log_sync_event"
+    ) as log_sync_event:
+        thread = storage.SyncThread("tombstone@example.test", daemon=True)
+        thread.interval = 3600
+        generation = thread.force_sync()
+        thread.start()
+        try:
+            assert thread.wait_for_generation(generation, timeout=5)
+            status = thread.generation_status(generation)
+        finally:
+            thread.stop()
+            thread.join(timeout=5)
+        assert not thread.is_alive()
+    diagnostics = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name in (storage.logger.name, local_cache.logger.name)
+    ]
+    diagnostics += [str(call.args) for call in log_sync_event.call_args_list]
+    diagnostics += [
+        str(call.kwargs.get("error")) for call in update_status.call_args_list
+    ]
+    for marker in _PRIVATE_MARKERS:
+        assert not any(marker in text for text in diagnostics), marker
+    return thread, status, update_status, diagnostics
+
+
+@COLLECTION_TYPES
+def test_sync_thread_publishes_success_after_settlement(
+    make_world, caplog, col_type, suffix
+):
+    """A20 and A22: the real worker succeeds and logs no identifiers."""
+    world = make_world(col_type)
+    _serve(
+        world,
+        _page(
+            "s1",
+            _remote("remote-live", name="live-name"),
+            _remote("remote-gone", name="gone-name", deleted=True),
+        ),
+    )
+
+    thread, status, update_status, _ = _run_sync_thread(world, caplog)
+
+    assert status["state"] == "succeeded"
+    assert status["error_code"] is None
+    assert status["completed_at"] is not None
+    assert thread.last_sync is not None
+    states = [call.args[0] for call in update_status.call_args_list]
+    assert states == ["connected"]
+
+
+@COLLECTION_TYPES
+def test_char_sync_thread_reports_genuine_ambiguity(
+    make_world, caplog, col_type, suffix
+):
+    """A21 and A22: genuine ambiguity fails with only the bounded class."""
+    world = make_world(col_type)
+    _seed_row(world, "legacy-other", None)
+    _serve(
+        world, _page("s1", _remote("remote-gone", name="gone-name", deleted=True))
+    )
+
+    thread, status, update_status, diagnostics = _run_sync_thread(world, caplog)
+
+    assert status["state"] == "failed"
+    assert status["error_code"] == "DavUnresolvedItemsError"
+    assert thread.last_sync is None
+    states = [call.args[0] for call in update_status.call_args_list]
+    assert states == ["error"]
+    assert update_status.call_args.kwargs["error"] == "DavUnresolvedItemsError"
+    assert any("DavUnresolvedItemsError" in text for text in diagnostics)
