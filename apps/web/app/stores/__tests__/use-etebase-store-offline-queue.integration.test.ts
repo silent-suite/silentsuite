@@ -8,7 +8,7 @@ import {
   getMeta,
   getItemsByType,
 } from '@/app/lib/data-cache'
-import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { AccountBoundaryChangedError, bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, changeAccountWhenQueuePutRuns, queueGuard, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
 const coreMock = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), deleteItem: vi.fn(), listItems: vi.fn() }))
@@ -21,7 +21,7 @@ vi.mock('@silentsuite/core', async (importOriginal) => ({
 vi.mock('@/app/stores/use-toast-store', () => toastMock)
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({ useLabelSuggestionsStore: { getState: () => ({ recordUsage: vi.fn() }) } }))
 
-import { useEtebaseStore } from '../use-etebase-store'
+import { useEtebaseStore, withoutPendingDeletes } from '../use-etebase-store'
 import { useSyncStore } from '../use-sync-store'
 import { useContactStore } from '../use-contact-store'
 import { useContactListStore } from '../use-contact-list-store'
@@ -963,5 +963,163 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     coreMock.deleteItem.mockResolvedValueOnce(undefined)
     await useEtebaseStore.getState().deleteItem('calendar', 'target-item')
     expect(coreMock.deleteItem).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ uid: 'target' }), target[0])
+  })
+
+  it('publishes the pending count of a previous session once the account is restored after sync initialization', async () => {
+    // A previous page load queued a note delete while offline.
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [queued] = await getAll(queueGuard())
+    expect(queued).toMatchObject({ type: 'delete', itemUid: 'note-1', collectionUid: 'notes-1', accountFingerprint: TEST_FINGERPRINT, status: 'pending' })
+    expect(queued!.content).toBeUndefined()
+
+    // Reload: sync initialization runs before the session is restored, in the same account epoch.
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    const cleanup = useSyncStore.getState().initializeSync()
+    try {
+      // Let the count read that started without an account finish before one is published.
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      setNoteAccount([])
+
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+      expect(useSyncStore.getState().failedQueueCount).toBe(0)
+      expect(await getAll(queueGuard())).toEqual([queued!])
+      expect(coreMock.listItems).not.toHaveBeenCalled()
+      expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    } finally {
+      cleanup()
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
+
+  it('publishes only the new account pending count after an account switch, also while the old account count read is in flight', async () => {
+    const queueDelete = (itemUid: string, fingerprint: string) =>
+      enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid }, queueGuard(fingerprint))
+    await queueDelete('note-1', TEST_FINGERPRINT)
+    await queueDelete('note-2', 'new-account')
+    await queueDelete('note-3', 'new-account')
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    const published: number[] = []
+    const stopRecording = useSyncStore.subscribe((state) => { published.push(state.pendingQueueCount) })
+    const cleanup = useSyncStore.getState().initializeSync()
+    try {
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      setNoteAccount([])
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(2))
+
+      // Back to the first account, then away again before its count read can finish.
+      bumpAccountEpoch()
+      setNoteAccount([])
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+      published.length = 0
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      bumpAccountEpoch()
+      setNoteAccount([])
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(2))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      expect(useSyncStore.getState().pendingQueueCount).toBe(2)
+      expect(published).not.toContain(1)
+      expect((await getAll()).map((entry) => entry.itemUid)).toEqual(['note-1', 'note-2', 'note-3'])
+    } finally {
+      stopRecording()
+      cleanup()
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
+
+  it('does not publish a restored account pending count after sync initialization was cleaned up', async () => {
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, queueGuard())
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    try {
+      // Cleaned up before the account watcher could attach, as in a double-invoked effect.
+      useSyncStore.getState().initializeSync()()
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      setNoteAccount([])
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      // Cleaned up after the watcher attached, with the restored account's count read still in flight.
+      useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+      const cleanup = useSyncStore.getState().initializeSync()
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      setNoteAccount([])
+      cleanup()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      expect(await getPendingCount(queueGuard())).toBe(1)
+    } finally {
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
+
+  it('hides cached notes only for a pending delete of this account and never on a failed or stale queue read', async () => {
+    const record = (itemUid: string) => ({ itemUid, collectionType: 'notes' as const, collectionUid: 'notes-1', content: `CACHED ${itemUid}`, lastModified: 1 })
+    const records = ['pending-delete', 'failed-delete', 'pending-update', 'other-account', 'untouched'].map(record)
+    const visible = async (fingerprint: string | null = TEST_FINGERPRINT) =>
+      (await withoutPendingDeletes('notes', records, getAccountEpoch(), fingerprint)).map((item) => item.itemUid)
+    setNoteAccount([])
+
+    // A delete that exhausted its retries is shown as failed and must not hide the note.
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'failed-delete' }, queueGuard())
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await replay(async () => { throw new Error('rejected by server') }, queueGuard())
+    }
+    expect((await getAll(queueGuard()))[0]).toMatchObject({ itemUid: 'failed-delete', status: 'failed' })
+
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'pending-delete', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'pending-update' }, queueGuard())
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', tempId: 'untouched' }, queueGuard())
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'other-account' }, queueGuard('other-account'))
+    await enqueue({ type: 'move', collectionType: 'notes', collectionUid: 'notes-1', targetCollectionUid: 'notes-2', itemUid: 'untouched' }, queueGuard())
+    const queuedBefore = await getAll()
+    expect(JSON.stringify(queuedBefore)).not.toContain('CACHED')
+
+    expect(await visible()).toEqual(['failed-delete', 'pending-update', 'other-account', 'untouched'])
+    expect(await visible('other-account')).toEqual(['pending-delete', 'failed-delete', 'pending-update', 'untouched'])
+    expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), null)).toBe(records)
+    expect(await withoutPendingDeletes('notes', [], getAccountEpoch(), TEST_FINGERPRINT)).toEqual([])
+    expect((await withoutPendingDeletes('calendar', records, getAccountEpoch(), TEST_FINGERPRINT))).toBe(records)
+
+    // An ordinary queue read failure shows the cache as it is.
+    const readSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(() => { throw new Error('queue read failed') })
+    try {
+      expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), TEST_FINGERPRINT)).toBe(records)
+    } finally {
+      readSpy.mockRestore()
+    }
+
+    // An account boundary during the queue read is never turned into a fallback list.
+    const originalGetAll = IDBObjectStore.prototype.getAll
+    const boundarySpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(function (this: IDBObjectStore, ...args) {
+      bumpAccountEpoch()
+      return originalGetAll.apply(this, args)
+    })
+    const staleEpoch = getAccountEpoch()
+    try {
+      await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+    } finally {
+      boundarySpy.mockRestore()
+    }
+    await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+
+    // Reading for the projection never removes or rewrites queue entries.
+    expect(await getAll()).toEqual(queuedBefore)
   })
 })
