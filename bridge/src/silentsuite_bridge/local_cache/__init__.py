@@ -1287,6 +1287,47 @@ class Etebase:
                 unresolved.attempts >= DAV_UNRESOLVED_RETRY_LIMIT
                 and not preserves_local_intent
             ):
+                # Settlement only: an exhausted row is never applied, and every
+                # non-settling outcome leaves it byte-identical.
+                if (
+                    unresolved.reason != "remote_unresolved"
+                    or unresolved.local_item_id is not None
+                    or unresolved.deleted is not True
+                ):
+                    continue
+                try:
+                    capped_item = item_mgr.cache_load(unresolved.eb_item)
+                    capped_metadata = capped_item.meta
+                    capped_uid = capped_item.uid
+                    capped_deleted = capped_item.deleted
+                except Exception:
+                    continue
+                if (
+                    not isinstance(capped_metadata, dict)
+                    or capped_uid != unresolved.remote_uid
+                    or capped_deleted is not True
+                ):
+                    continue
+                with db.database_proxy.atomic("IMMEDIATE"):
+                    current_unresolved = models.DavUnresolvedItem.get_or_none(
+                        (models.DavUnresolvedItem.id == unresolved.id)
+                        & (models.DavUnresolvedItem.collection == cache_col)
+                    )
+                    if (
+                        current_unresolved is not None
+                        and (
+                            current_unresolved.remote_uid,
+                            current_unresolved.eb_item,
+                            current_unresolved.deleted,
+                            current_unresolved.attempts,
+                            current_unresolved.reason,
+                            current_unresolved.local_item_id,
+                        ) == retry_unresolved_state
+                        and self._is_irrelevant_historical_tombstone(
+                            cache_col, unresolved.remote_uid
+                        )
+                    ):
+                        current_unresolved.delete_instance()
                 continue
             try:
                 item = item_mgr.cache_load(retry_envelope)

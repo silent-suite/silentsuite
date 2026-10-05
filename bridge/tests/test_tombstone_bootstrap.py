@@ -16,6 +16,7 @@ is unchanged by the fix and pass before and after it. All literals are
 synthetic.
 """
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -728,3 +729,143 @@ def test_capped_tombstone_quarantine_settles_once_identityless_row_is_bound(
     assert _local_stoken(world) == "s2"
     assert _quarantined(world) == [], "exhausted tombstone quarantine retained"
     assert outcome == "success"
+
+
+class _Envelope:
+    """Synthetic SDK item; records whether metadata was read in a transaction."""
+
+    def __init__(self, *, uid="remote-gone", deleted=True, meta=None, fail=None):
+        self._uid = uid
+        self._deleted = deleted
+        self._meta = {"name": "gone-name"} if meta is None else meta
+        self._fail = fail
+        self.meta_reads_in_transaction = []
+
+    def _read(self, name, value):
+        if self._fail == name:
+            raise ValueError("synthetic envelope failure")
+        return value
+
+    @property
+    def meta(self):
+        self.meta_reads_in_transaction.append(
+            db.database_proxy.obj.in_transaction()
+        )
+        return self._read("meta", self._meta)
+
+    @property
+    def uid(self):
+        return self._read("uid", self._uid)
+
+    @property
+    def deleted(self):
+        return self._read("deleted", self._deleted)
+
+
+def _seed_capped(world, envelope, **fields):
+    row = models.DavUnresolvedItem.create(
+        collection=world.cache_col,
+        remote_uid="remote-gone",
+        eb_item=world.item_mgr.cache_save(envelope),
+        deleted=True,
+        attempts=DAV_UNRESOLVED_RETRY_LIMIT,
+        **fields,
+    )
+    world.item_mgr.cache_save.reset_mock()
+    return row
+
+
+@COLLECTION_TYPES
+@pytest.mark.parametrize(
+    "kind", ["capped_live", "capped_legacy_duplicate", "capped_attached_no_intent"]
+)
+def test_capped_protected_quarantine_is_not_parsed(
+    make_world, col_type, suffix, kind
+):
+    """A15: protected exhausted rows stay byte-identical and are not loaded."""
+    world = make_world(col_type)
+    if kind == "capped_live":
+        row = _seed_quarantine(
+            world, "remote-gone", _remote("remote-gone"),
+            attempts=DAV_UNRESOLVED_RETRY_LIMIT,
+        )
+    elif kind == "capped_legacy_duplicate":
+        row = _seed_capped(
+            world, _Envelope(), reason="legacy_duplicate"
+        )
+    else:
+        attached = _seed_row(world, "attached-name", "remote-attached-local")
+        row = _seed_capped(world, _Envelope(), local_item=attached)
+    before = _row(models.DavUnresolvedItem, row.id)
+    _serve(world, _page("s1"))
+
+    world.service.pull_collection(COL_UID)
+
+    assert _row(models.DavUnresolvedItem, row.id) == before
+    world.item_mgr.cache_load.assert_not_called()
+
+
+@COLLECTION_TYPES
+@pytest.mark.parametrize(
+    "probe",
+    [
+        "cache_load_raises",
+        {"fail": "meta"},
+        {"fail": "uid"},
+        {"fail": "deleted"},
+        {"meta": "gone-name"},
+        {"meta": []},
+        {"meta": [("name", "gone-name")]},
+        {"uid": "remote-other"},
+        {"deleted": False},
+    ],
+    ids=[
+        "cache_load_raises", "meta_raises", "uid_raises", "deleted_raises",
+        "meta_string", "meta_empty_list", "meta_pair_list",
+        "wrong_uid", "live_envelope",
+    ],
+)
+def test_capped_unusable_envelope_is_left_byte_identical(
+    make_world, caplog, col_type, suffix, probe
+):
+    """A16: no settlement, write, warning or apply across three cycles."""
+    caplog.set_level(logging.WARNING)
+    world = make_world(col_type)
+    envelope = _Envelope(**({} if probe == "cache_load_raises" else probe))
+    row = _seed_capped(world, envelope)
+    if probe == "cache_load_raises":
+        world.item_mgr.cache_load.side_effect = ValueError("synthetic load failure")
+    before = _row(models.DavUnresolvedItem, row.id)
+    _serve(world, _page("s1"), _page("s2"), _page("s3"))
+
+    for _cycle in range(3):
+        world.service.pull_collection(COL_UID)
+        assert _row(models.DavUnresolvedItem, row.id) == before
+
+    assert world.item_mgr.cache_load.call_count == 3
+    assert world.item_mgr.list.call_count == 3
+    world.item_mgr.cache_save.assert_not_called()
+    world.item_mgr.create.assert_not_called()
+    world.item_mgr.batch.assert_not_called()
+    world.item_mgr.upload.assert_not_called()
+    assert models.ItemEntity.select().count() == 0
+    assert models.DavChange.select().count() == 0
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+    assert True not in envelope.meta_reads_in_transaction
+
+
+@COLLECTION_TYPES
+def test_capped_settlement_reads_metadata_outside_writer(
+    make_world, col_type, suffix
+):
+    """A16 boundary: the authenticating metadata read precedes the writer."""
+    world = make_world(col_type)
+    envelope = _Envelope()
+    _seed_capped(world, envelope)
+    _serve(world, _page("s1"))
+
+    world.service.pull_collection(COL_UID)
+
+    assert envelope.meta_reads_in_transaction == [False]
+    assert _quarantined(world) == []
+    world.item_mgr.cache_save.assert_not_called()
