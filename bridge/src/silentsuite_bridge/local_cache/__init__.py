@@ -1077,6 +1077,31 @@ class Etebase:
             .execute()
         )
 
+    def _is_irrelevant_historical_tombstone(self, cache_col, remote_uid):
+        """Return whether a deletion for ``remote_uid`` touches nothing cached.
+
+        Read-only. The caller holds the writer transaction and has
+        authenticated a deleted envelope whose item UID is ``remote_uid``.
+        Any identityless row keeps the deletion ambiguous.
+        """
+        if models.ItemEntity.select().where(
+            (models.ItemEntity.collection == cache_col)
+            & (
+                (models.ItemEntity.remote_uid == remote_uid)
+                | models.ItemEntity.remote_uid.is_null(True)
+                | (models.ItemEntity.uid == remote_uid)
+            )
+        ).exists():
+            return False
+        return not models.DavUnresolvedItem.select().where(
+            (models.DavUnresolvedItem.collection == cache_col)
+            & (models.DavUnresolvedItem.remote_uid == remote_uid)
+            & (
+                models.DavUnresolvedItem.local_item.is_null(False)
+                | (models.DavUnresolvedItem.reason != "remote_unresolved")
+            )
+        ).exists()
+
     @_bounded_integrity("CachePullItemIntegrityError")
     def _apply_pulled_item(
         self,
@@ -1087,8 +1112,15 @@ class Etebase:
         *,
         quarantine=True,
         resolve_unresolved=True,
+        prepared_meta=None,
+        allow_settle=True,
     ):
-        meta = dict(item.meta)
+        if prepared_meta is None:
+            metadata = item.meta
+            meta = dict(metadata)
+        else:
+            # Retry callers pass a dict copied from one authenticated read.
+            metadata = meta = prepared_meta
         with db.database_proxy.atomic("IMMEDIATE"):
             previous_state_hash = dav_collection_state_hash(cache_col)
             cache_item = models.ItemEntity.get_or_none(
@@ -1103,6 +1135,21 @@ class Etebase:
                     & (models.ItemEntity.remote_uid.is_null(True))
                 )
                 if cache_item is None:
+                    if (
+                        allow_settle
+                        and item.deleted is True
+                        and isinstance(metadata, dict)
+                        and self._is_irrelevant_historical_tombstone(
+                            cache_col, item.uid
+                        )
+                    ):
+                        # Deletion of an item this cache never held: no-op.
+                        if resolve_unresolved:
+                            models.DavUnresolvedItem.delete().where(
+                                (models.DavUnresolvedItem.collection == cache_col)
+                                & (models.DavUnresolvedItem.remote_uid == item.uid)
+                            ).execute()
+                        return "settled"
                     identity_bound_collision = models.ItemEntity.get_or_none(
                         (models.ItemEntity.collection == cache_col)
                         & (models.ItemEntity.uid == local_uid)
@@ -1240,6 +1287,47 @@ class Etebase:
                 unresolved.attempts >= DAV_UNRESOLVED_RETRY_LIMIT
                 and not preserves_local_intent
             ):
+                # Settlement only: an exhausted row is never applied, and every
+                # non-settling outcome leaves it byte-identical.
+                if (
+                    unresolved.reason != "remote_unresolved"
+                    or unresolved.local_item_id is not None
+                    or unresolved.deleted is not True
+                ):
+                    continue
+                try:
+                    capped_item = item_mgr.cache_load(unresolved.eb_item)
+                    capped_metadata = capped_item.meta
+                    capped_uid = capped_item.uid
+                    capped_deleted = capped_item.deleted
+                except Exception:
+                    continue
+                if (
+                    not isinstance(capped_metadata, dict)
+                    or capped_uid != unresolved.remote_uid
+                    or capped_deleted is not True
+                ):
+                    continue
+                with db.database_proxy.atomic("IMMEDIATE"):
+                    current_unresolved = models.DavUnresolvedItem.get_or_none(
+                        (models.DavUnresolvedItem.id == unresolved.id)
+                        & (models.DavUnresolvedItem.collection == cache_col)
+                    )
+                    if (
+                        current_unresolved is not None
+                        and (
+                            current_unresolved.remote_uid,
+                            current_unresolved.eb_item,
+                            current_unresolved.deleted,
+                            current_unresolved.attempts,
+                            current_unresolved.reason,
+                            current_unresolved.local_item_id,
+                        ) == retry_unresolved_state
+                        and self._is_irrelevant_historical_tombstone(
+                            cache_col, unresolved.remote_uid
+                        )
+                    ):
+                        current_unresolved.delete_instance()
                 continue
             try:
                 item = item_mgr.cache_load(retry_envelope)
@@ -1407,6 +1495,17 @@ class Etebase:
                         )
                     current_unresolved.delete_instance()
                 continue
+            # Authenticate outside the writer; only a genuine dict may settle.
+            metadata = item.meta
+            retry_uid = item.uid
+            retry_deleted = item.deleted
+            prepared_meta = dict(metadata) if isinstance(metadata, dict) else None
+            consistent = (
+                prepared_meta is not None
+                and retry_uid == unresolved.remote_uid
+                and retry_deleted is True
+                and unresolved.deleted is True
+            )
             with db.database_proxy.atomic("IMMEDIATE"):
                 current_unresolved = models.DavUnresolvedItem.get_or_none(
                     models.DavUnresolvedItem.id == unresolved.id
@@ -1427,6 +1526,8 @@ class Etebase:
                     item,
                     quarantine=False,
                     resolve_unresolved=False,
+                    prepared_meta=prepared_meta,
+                    allow_settle=consistent,
                 )
                 if not applied:
                     current_unresolved.attempts += 1
@@ -1469,6 +1570,9 @@ class Etebase:
                             )
                             if outcome == "preserved":
                                 preserved_local_intent += 1
+                            elif outcome == "settled":
+                                # A never-held deletion applies nothing.
+                                pass
                             elif outcome:
                                 applied += 1
                                 if item.deleted:
