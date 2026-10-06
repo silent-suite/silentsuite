@@ -1,35 +1,63 @@
 'use strict';
 // Proposed synthetic protocol under test. Not application code.
 const P = require('./protocol.cjs');
-const { Reject, req, run, rid, limits, collectionOf, seal, unseal, structural, classify, checkOwner, genKey, openCache } = P;
+const { Reject, req, run, rid, limits, collectionOf, seal, unseal, structural, checkOwner, genKey, openCache } = P;
+const { webcrypto } = require('node:crypto');
+
+const ownerTag = (o) => ({ fingerprint: o.fingerprint, lifecycleGen: o.lifecycleGen, envelopeId: o.envelopeId });
+const sameOwner = (a, b) => Boolean(a && b) && a.fingerprint === b.fingerprint && a.lifecycleGen === b.lifecycleGen && a.envelopeId === b.envelopeId;
+const RECEIPT_FIELDS = ['id', 'tuple', 'workGen', 'revUid', 'payloadId'];
+
+async function nextSeq(s) {
+  const seq = ((await req(s.meta.get('seq'))) || 0) + 1;
+  s.meta.put(seq, 'seq');
+  return seq;
+}
+
+// Common admission policy for every mutator (single, bulk, move endpoints).
+async function policy(s, tuple, value) {
+  if ((await req(s.meta.get('cutover'))) === 'pending') throw new Reject('cutover-pending');
+  const cols = [collectionOf(tuple)];
+  if (value && value.kind === 'move' && value.target) cols.push(value.target);
+  for (const col of cols) if (await req(s.meta.get(`barrier:${col}`))) throw new Reject('collection-barrier');
+}
+
+// Classifies the evidence a replacement would retire. With `pendingLoss` set,
+// enforces the post-state loss limit; null means the caller checked the total.
+async function retireEvidence(s, tuple, old, pendingLoss = 0) {
+  const p = old.payloadId ? await req(s.payload.get(old.payloadId)) : null;
+  const loss = old.kind !== 'delete' && !structural(p);
+  if (loss && pendingLoss !== null && (await req(s.loss.count())) + pendingLoss + 1 > limits.loss) throw new Reject('loss-capacity');
+  const commit = () => {
+    if (loss) s.loss.put({ id: `${tuple}#${old.workGen}`, tuple, lossGen: old.workGen });
+    if (p) s.payload.delete(old.payloadId);
+  };
+  return { loss, commit };
+}
 
 async function admit(ctx, tuple, value, opts = {}) {
   const sealed = value.kind === 'delete' ? null : await seal(ctx.owner.key, value);
-  const row = await run(ctx.db, ['meta', 'work', 'payload', 'loss'], 'readwrite', async (s) => {
+  const row = await run(ctx.db, ['meta', 'work', 'payload', 'loss', 'display'], 'readwrite', async (s) => {
     await checkOwner(s, ctx.owner);
-    if (await req(s.meta.get(`barrier:${collectionOf(tuple)}`))) throw new Reject('collection-barrier');
+    await policy(s, tuple, value);
     const old = await req(s.work.get(tuple));
     if (opts.expectGen !== undefined && (old ? old.workGen : null) !== opts.expectGen) throw new Reject('retry');
+    if (opts.expectDisplaySeq !== undefined) {
+      const d = await req(s.display.get(tuple));
+      if ((d ? d.seq : null) !== opts.expectDisplaySeq) throw new Reject('retry');
+    }
     if (old && old.kind === 'move' && value.kind !== 'move') throw new Reject('move-in-progress');
     if (old && value.kind === 'move') throw new Reject('work-in-progress');
     if (!old && (await req(s.work.count())) + 1 > limits.work) throw new Reject('capacity');
-    if (old) {
-      // Classify the evidence being replaced inside the same transaction.
-      const p = old.payloadId ? await req(s.payload.get(old.payloadId)) : null;
-      if (old.kind !== 'delete' && !structural(p)) {
-        if ((await req(s.loss.count())) + 1 > limits.loss) throw new Reject('loss-capacity');
-        s.loss.put({ id: `${tuple}#${old.workGen}`, tuple, lossGen: old.workGen });
-      }
-      if (p) s.payload.delete(old.payloadId);
-    }
-    const seq = ((await req(s.meta.get('seq'))) || 0) + 1;
-    s.meta.put(seq, 'seq');
+    if (old) (await retireEvidence(s, tuple, old)).commit();
+    const seq = await nextSeq(s);
     let payloadId = null;
     if (sealed) {
       payloadId = rid();
       s.payload.put({ id: payloadId, envelopeId: ctx.owner.envelopeId, ...sealed });
     }
     const next = { id: tuple, collection: collectionOf(tuple), kind: value.kind || 'body', workGen: rid(), seq, payloadId, status: 'pending', attemptId: null };
+    if (value.kind === 'move') next.target = value.target; // collection id: allowlisted metadata
     s.work.put(next);
     return next;
   });
@@ -37,22 +65,38 @@ async function admit(ctx, tuple, value, opts = {}) {
   return row;
 }
 
-async function readIntent(ctx, tuple) {
-  const snap = await run(ctx.db, ['work', 'payload'], 'readonly', async (s) => {
+async function decryptOwned(ctx, rec) {
+  if (!ctx.owner.key || rec.envelopeId !== ctx.owner.envelopeId) throw new Reject('unreadable-evidence');
+  try { return await unseal(ctx.owner.key, rec); } catch { throw new Reject('unreadable-evidence'); }
+}
+
+// The authoritative current body: live work, else the display copy.
+async function authoritative(ctx, tuple) {
+  const snap = await run(ctx.db, ['meta', 'work', 'payload', 'display'], 'readonly', async (s) => {
+    await checkOwner(s, ctx.owner);
     const w = await req(s.work.get(tuple));
-    return { gen: w ? w.workGen : null, p: w && w.payloadId ? await req(s.payload.get(w.payloadId)) : null };
+    if (w) return { gen: w.workGen, kind: w.kind, rec: w.payloadId ? (await req(s.payload.get(w.payloadId))) || null : null };
+    const d = await req(s.display.get(tuple));
+    return { gen: null, displaySeq: d ? d.seq : null, rec: d && !d.tombstone ? d : null };
   });
-  const value = structural(snap.p) ? await unseal(ctx.owner.key, snap.p).catch(() => null) : null;
-  return { gen: snap.gen, value };
+  if (!snap.rec || !structural(snap.rec)) throw new Reject('no-authoritative-body');
+  return { ...snap, value: await decryptOwned(ctx, snap.rec) };
+}
+
+async function resolveAttempt(s, receipt, tuple) {
+  const a = receipt && receipt.id ? await req(s.attempt.get(receipt.id)) : null;
+  if (!a || a.tuple !== tuple || RECEIPT_FIELDS.some((f) => a[f] !== receipt[f])) throw new Reject('receipt-mismatch');
+  return a;
 }
 
 const candidate = {
   admit,
   async admitFavorite(ctx, tuple, favorite) {
     for (let i = 0; i < 3; i++) {
-      const { gen, value } = await readIntent(ctx, tuple);
+      const cur = await authoritative(ctx, tuple);
+      const opts = cur.gen !== null ? { expectGen: cur.gen } : { expectGen: null, expectDisplaySeq: cur.displaySeq };
       try {
-        return await admit(ctx, tuple, { body: value ? value.body : null, favorite }, { expectGen: gen });
+        return await admit(ctx, tuple, { body: cur.value.body, favorite }, opts);
       } catch (err) {
         if (err.code !== 'retry') throw err;
       }
@@ -60,87 +104,104 @@ const candidate = {
     throw new Reject('retry-exhausted');
   },
   async intent(ctx, tuple) {
-    const { value } = await readIntent(ctx, tuple);
-    return value;
+    return (await authoritative(ctx, tuple)).value;
   },
   async beginDispatch(ctx, tuple, expected, revUid, materialized) {
     const sealed = await seal(ctx.owner.key, materialized);
     return run(ctx.db, ['meta', 'work', 'attempt', 'payload'], 'readwrite', async (s) => {
-      await checkOwner(s, ctx.owner);
+      const m = await checkOwner(s, ctx.owner);
+      const f = await req(s.meta.get('fence'));
+      if (!f || f.state !== 'active' || f.server !== ctx.server || f.fingerprint !== m.fingerprint || f.lifecycleGen !== m.lifecycleGen) throw new Reject('not-activated');
       const w = await req(s.work.get(tuple));
       if (!w || w.workGen !== expected.workGen || w.attemptId !== (expected.attemptId ?? null)) throw new Reject('dispatch-cas');
       const payloadId = rid();
       s.payload.put({ id: payloadId, envelopeId: ctx.owner.envelopeId, ...sealed });
-      const attempt = { id: rid(), tuple, workGen: w.workGen, revUid, payloadId };
+      const attempt = { id: rid(), tuple, workGen: w.workGen, revUid, payloadId, owner: ownerTag(ctx.owner), server: ctx.server };
       s.attempt.add(attempt);
       w.attemptId = attempt.id;
       s.work.put(w);
-      return attempt;
+      return { id: attempt.id, tuple, workGen: attempt.workGen, revUid, payloadId };
     });
   },
   async reconcile(ctx, tuple, remote) {
-    const attempts = await run(ctx.db, ['work', 'attempt'], 'readonly', async (s) => {
+    const attempts = await run(ctx.db, ['meta', 'work', 'attempt'], 'readonly', async (s) => {
+      await checkOwner(s, ctx.owner);
       const w = await req(s.work.get(tuple));
       if (!w) return [];
       return (await req(s.attempt.getAll())).filter((a) => a.tuple === tuple && a.workGen === w.workGen);
     });
     return attempts.some((a) => remote.history.includes(a.revUid)) ? 'applied' : 'resend';
   },
-  ack(ctx, attempt) {
-    return run(ctx.db, ['meta', 'work'], 'readwrite', async (s) => {
+  ack(ctx, receipt, tuple) {
+    return run(ctx.db, ['meta', 'work', 'attempt'], 'readwrite', async (s) => {
       await checkOwner(s, ctx.owner);
-      const w = await req(s.work.get(attempt.tuple));
-      if (!w || w.workGen !== attempt.workGen) return 'superseded';
+      const a = await resolveAttempt(s, receipt, tuple || receipt.tuple);
+      if (!sameOwner(a.owner, ctx.owner)) throw new Reject('receipt-mismatch');
+      const w = await req(s.work.get(a.tuple));
+      if (!w || w.workGen !== a.workGen) return 'superseded';
       w.status = 'acked';
-      w.ackedAttempt = attempt.id;
+      w.ackedAttempt = a.id;
       s.work.put(w);
       return 'acked';
     });
   },
-  async publish(ctx, tuple, attempt) {
-    const p = await run(ctx.db, ['payload'], 'readonly', async (s) => req(s.payload.get(attempt.payloadId)));
-    if (!p) throw new Reject('stale-publication');
-    const body = (await unseal(ctx.owner.key, p)).body;
-    const seq = await run(ctx.db, ['meta', 'work', 'display', 'payload'], 'readwrite', async (s) => {
+  async publish(ctx, tuple, receipt) {
+    const pre = await run(ctx.db, ['meta', 'attempt', 'payload'], 'readonly', async (s) => {
       await checkOwner(s, ctx.owner);
+      const a = await resolveAttempt(s, receipt, tuple);
+      return { a, p: (await req(s.payload.get(a.payloadId))) || null };
+    });
+    if (!pre.p || !sameOwner(pre.a.owner, ctx.owner)) throw new Reject('receipt-mismatch');
+    const value = await decryptOwned(ctx, pre.p);
+    const seq = await run(ctx.db, ['meta', 'work', 'display', 'payload', 'attempt'], 'readwrite', async (s) => {
+      await checkOwner(s, ctx.owner);
+      const a = await resolveAttempt(s, receipt, tuple); // revalidate at retirement
       const w = await req(s.work.get(tuple));
-      if (!w || w.status !== 'acked' || w.ackedAttempt !== attempt.id) throw new Reject('stale-publication');
-      const d = await req(s.display.get(tuple));
-      if (d && d.seq > w.seq) throw new Reject('stale-publication');
-      s.display.put({ id: tuple, seq: w.seq, iv: p.iv, ct: p.ct, envelopeId: p.envelopeId });
+      if (!w || w.status !== 'acked' || w.ackedAttempt !== a.id || w.workGen !== a.workGen) throw new Reject('stale-publication');
+      const next = await nextSeq(s); // publication is newer than any earlier refresh capture
+      if (value.tombstone) s.display.put({ id: tuple, seq: next, tombstone: true });
+      else s.display.put({ id: tuple, seq: next, iv: pre.p.iv, ct: pre.p.ct, envelopeId: pre.p.envelopeId });
       s.work.delete(tuple);
       if (w.payloadId) s.payload.delete(w.payloadId);
-      return w.seq;
+      return next;
     });
     const m = ctx.memory.get(tuple);
-    if (!m || m.seq === undefined || m.seq <= seq) ctx.memory.set(tuple, { seq, body });
-    return body;
+    if (!m || m.seq === undefined || m.seq <= seq) ctx.memory.set(tuple, { seq, body: value.body, tombstone: Boolean(value.tombstone) });
+    return value.body;
   },
-  async refreshPublish(ctx, items) {
+  // Authority is captured before any asynchronous enumeration.
+  refreshBegin(ctx) {
+    return run(ctx.db, ['meta'], 'readonly', async (s) => {
+      const m = await checkOwner(s, ctx.owner);
+      return { seq: (await req(s.meta.get('seq'))) || 0, lifecycleGen: m.lifecycleGen };
+    });
+  },
+  async refreshPublish(ctx, items, token) {
+    const capture = token || (await candidate.refreshBegin(ctx));
     const sealed = [];
     for (const [tuple, body] of items) sealed.push([tuple, await seal(ctx.owner.key, { body })]);
     await run(ctx.db, ['meta', 'work', 'display'], 'readwrite', async (s) => {
       await checkOwner(s, ctx.owner);
-      const seq = (await req(s.meta.get('seq'))) || 0;
       for (const [tuple, rec] of sealed) {
         if (await req(s.work.get(tuple))) continue; // live work keeps the overlay
-        s.display.put({ id: tuple, seq, envelopeId: ctx.owner.envelopeId, ...rec });
+        const d = await req(s.display.get(tuple));
+        if (d && d.seq > capture.seq) continue; // newer publication or tombstone wins
+        s.display.put({ id: tuple, seq: capture.seq, envelopeId: ctx.owner.envelopeId, ...rec });
       }
     });
   },
   async hydrate(ctx) {
-    const { display, work, payloads } = await run(ctx.db, ['display', 'work', 'payload'], 'readonly', async (s) => ({
-      display: await req(s.display.getAll()),
-      work: await req(s.work.getAll()),
-      payloads: await req(s.payload.getAll()),
-    }));
+    const { display, work, payloads } = await run(ctx.db, ['meta', 'display', 'work', 'payload'], 'readonly', async (s) => {
+      await checkOwner(s, ctx.owner);
+      return { display: await req(s.display.getAll()), work: await req(s.work.getAll()), payloads: await req(s.payload.getAll()) };
+    });
     const byId = new Map(payloads.map((p) => [p.id, p]));
     const view = new Map();
-    for (const d of display) view.set(d.id, (await unseal(ctx.owner.key, d)).body);
+    for (const d of display) if (!d.tombstone) view.set(d.id, (await decryptOwned(ctx, d)).body);
     for (const w of work) {
       if (w.kind === 'delete') { view.delete(w.id); continue; }
       const p = byId.get(w.payloadId);
-      if (structural(p)) view.set(w.id, (await unseal(ctx.owner.key, p)).body);
+      if (structural(p)) view.set(w.id, (await decryptOwned(ctx, p)).body);
     }
     return view;
   },
@@ -155,12 +216,19 @@ const candidate = {
   collectionDelete(ctx, collection) {
     return run(ctx.db, ['meta', 'work', 'payload', 'loss'], 'readwrite', async (s) => {
       await checkOwner(s, ctx.owner);
-      for (const w of await req(s.work.getAll())) {
+      const all = await req(s.work.getAll());
+      if (all.some((w) => w.kind === 'move' && (w.collection === collection || w.target === collection))) throw new Reject('move-in-progress');
+      const apply = [];
+      let pendingLoss = 0;
+      for (const w of all) {
         if (w.collection !== collection) continue;
-        if (w.kind === 'move' && w.attemptId) throw new Reject('move-in-progress');
         const p = w.payloadId ? await req(s.payload.get(w.payloadId)) : null;
-        if (w.kind !== 'delete' && !structural(p)) s.loss.put({ id: `${w.id}#${w.workGen}`, tuple: w.id, lossGen: w.workGen });
-        if (p) s.payload.delete(w.payloadId);
+        if (w.kind !== 'delete' && !structural(p)) pendingLoss += 1;
+        apply.push(w);
+      }
+      if ((await req(s.loss.count())) + pendingLoss > limits.loss) throw new Reject('loss-capacity');
+      for (const w of apply) {
+        (await retireEvidence(s, w.id, w, null)).commit();
         s.work.delete(w.id);
       }
       s.meta.delete(`barrier:${collection}`);
@@ -170,28 +238,35 @@ const candidate = {
     return run(ctx.db, ['meta', 'work', 'payload', 'loss'], 'readwrite', async (s) => {
       await checkOwner(s, ctx.owner);
       let free = limits.work - (await req(s.work.count()));
+      let pendingLoss = 0;
       const admitted = [];
       const rejected = [];
-      let seq = (await req(s.meta.get('seq'))) || 0;
       for (const tuple of tuples) {
-        const old = await req(s.work.get(tuple));
-        if ((old && old.kind === 'move') || (!old && free <= 0)) { rejected.push(tuple); continue; }
-        if (old) {
-          const p = old.payloadId ? await req(s.payload.get(old.payloadId)) : null;
-          if (old.kind !== 'delete' && !structural(p)) s.loss.put({ id: `${tuple}#${old.workGen}`, tuple, lossGen: old.workGen });
-          if (p) s.payload.delete(old.payloadId);
-        } else {
-          free -= 1;
+        try {
+          await policy(s, tuple, { kind: 'delete' });
+          const old = await req(s.work.get(tuple));
+          if (old && old.kind === 'move') throw new Reject('move-in-progress');
+          if (!old && free <= 0) throw new Reject('capacity');
+          if (old) {
+            const { loss, commit } = await retireEvidence(s, tuple, old, pendingLoss);
+            if (loss) pendingLoss += 1;
+            commit();
+          } else {
+            free -= 1;
+          }
+        } catch (err) {
+          if (!(err instanceof Reject)) throw err;
+          rejected.push(tuple);
+          continue;
         }
-        seq += 1;
+        const seq = await nextSeq(s);
         s.work.put({ id: tuple, collection: collectionOf(tuple), kind: 'delete', workGen: rid(), seq, payloadId: null, status: 'pending', attemptId: null });
         admitted.push(tuple);
       }
-      s.meta.put(seq, 'seq');
       return { admitted, rejected };
     });
   },
-  // Owner, session and key change together, guarded by the lifecycle generation.
+  // Owner, session and key change together; incompatible fence and barrier metadata is cleared.
   async replaceOwner(db, expectedGen, fingerprint) {
     const key = await genKey();
     const envelopeId = rid();
@@ -199,6 +274,7 @@ const candidate = {
       const m = await req(s.meta.get('owner'));
       if ((m ? m.lifecycleGen : 0) !== expectedGen) throw new Reject('stale-owner');
       for (const n of ['work', 'payload', 'attempt', 'display', 'loss', 'legacy']) s[n].clear();
+      for (const k of await req(s.meta.getAllKeys())) if (k === 'fence' || String(k).startsWith('barrier:')) s.meta.delete(k);
       s.meta.put({ fingerprint, lifecycleGen: expectedGen + 1, envelopeId, session: `session-${fingerprint}` }, 'owner');
       s.crypto.put({ key, envelopeId }, 'env');
       return expectedGen + 1;
@@ -213,16 +289,20 @@ const candidate = {
   },
   setFence(ctx, state, server) {
     return run(ctx.db, ['meta'], 'readwrite', async (s) => {
-      await checkOwner(s, ctx.owner);
-      s.meta.put({ state, server }, 'fence');
+      const m = await checkOwner(s, ctx.owner);
+      s.meta.put({ state, server, fingerprint: m.fingerprint, lifecycleGen: m.lifecycleGen }, 'fence');
     });
   },
-  async dispatchAllowed(ctx, server) {
-    const f = await run(ctx.db, ['meta'], 'readonly', async (s) => req(s.meta.get('fence')));
-    return Boolean(f && f.state === 'active' && f.server === server);
+  dispatchAllowed(ctx, server) {
+    return run(ctx.db, ['meta'], 'readonly', async (s) => {
+      const m = await checkOwner(s, ctx.owner);
+      const f = await req(s.meta.get('fence'));
+      return Boolean(f && f.state === 'active' && f.server === server && f.fingerprint === m.fingerprint && f.lifecycleGen === m.lifecycleGen);
+    });
   },
-  // Cache v6 upgrade is blocked by any open old cache connection; once it
-  // completes, old bundles cannot open the cache or the queue at all.
+  // Cache v6 upgrade is blocked by any open old cache connection. Preservation
+  // starts when the upgrade completes; bytes replaced or cleared earlier are
+  // not recoverable and are classified from what remains.
   async migrate(ctx, factory) {
     const cache = await openCache(factory, 6);
     try {
@@ -230,28 +310,68 @@ const candidate = {
       const out = [];
       for (const m of muts) {
         const held = await run(cache, ['hold'], 'readonly', async (s) => (await req(s.hold.get(m.itemUid))) || null);
+        const owned = m.accountFingerprint === ctx.owner.fingerprint
+          && (!held || (held.cacheFingerprint === ctx.owner.fingerprint && held.collectionType === m.collectionType && held.collectionUid === m.collectionUid));
         let status;
-        if (m.type === 'delete') status = 'unverified-delete';
+        if (!owned) status = 'quarantined';
+        else if (m.type === 'delete') status = 'unverified-delete';
         else if (!held) status = 'legacy-unresolved';
-        else status = { intact: 'unverified', locked: 'pending-locked', ambiguous: 'pending-ambiguous', malformed: 'lost' }[await classify(held.cacheKey, held)];
-        const raw = held ? { iv: held.iv, ct: held.ct } : null;
+        else status = await authenticateRaw(held.cacheKey, held);
+        const keep = owned && held;
         const rec = await run(ctx.db, ['meta', 'legacy', 'loss'], 'readwrite', async (s) => {
           await checkOwner(s, ctx.owner);
           const existing = await req(s.legacy.get(m.id));
           if (existing) return existing;
-          const next = { id: m.id, kind: m.type, status, raw, cacheKey: held ? held.cacheKey : null };
+          let st = status;
+          if (st === 'lost' && (await req(s.loss.count())) + 1 > limits.loss) st = 'pending-loss-capacity';
+          const next = { id: m.id, kind: m.type, status: st, raw: keep ? { iv: held.iv, ct: held.ct } : null, cacheKey: keep ? held.cacheKey : null };
           s.legacy.put(next);
-          if (status === 'lost') s.loss.put({ id: `legacy:${m.id}`, tuple: `${m.collectionType}/legacy/${m.itemUid}`, lossGen: m.id });
+          if (st === 'lost') s.loss.put({ id: `legacy:${m.id}`, tuple: `${m.collectionType}/${m.collectionUid}/${m.itemUid}`, lossGen: m.id });
           return next;
         });
-        // Release the held copy only after the queue copy is durable.
-        if (held && rec.raw) await run(cache, ['hold'], 'readwrite', async (s) => { s.hold.delete(m.itemUid); });
+        // Release the held copy only after an owned queue copy is durable.
+        if (keep && rec.raw && rec.status !== 'quarantined') await run(cache, ['hold'], 'readwrite', async (s) => { s.hold.delete(m.itemUid); });
         const { cacheKey, ...pub } = rec;
         out.push(pub);
       }
+      await run(ctx.db, ['meta'], 'readwrite', async (s) => { await checkOwner(s, ctx.owner); s.meta.put('done', 'cutover'); });
       return out;
     } finally { cache.close(); }
   },
+  // A later-available cache key lets locked legacy copies authenticate.
+  async unlockLegacy(ctx, key) {
+    const rows = await run(ctx.db, ['legacy'], 'readonly', async (s) => req(s.legacy.getAll()));
+    const out = [];
+    for (const r of rows) {
+      let next = r;
+      if (r.status === 'pending-locked' && r.raw) {
+        const st = await authenticateRaw(key, r.raw);
+        if (st !== 'pending-locked') {
+          next = { ...r, status: st, cacheKey: key };
+          await run(ctx.db, ['meta', 'legacy'], 'readwrite', async (s) => {
+            await checkOwner(s, ctx.owner);
+            const cur = await req(s.legacy.get(r.id));
+            if (cur && cur.status === 'pending-locked') s.legacy.put(next);
+          });
+        }
+      }
+      const { cacheKey, ...pub } = next;
+      out.push(pub);
+    }
+    return out;
+  },
 };
+
+// AES-GCM authentication of the raw stored bytes only; no plaintext parsing.
+async function authenticateRaw(key, rec) {
+  if (!structural(rec)) return 'lost';
+  if (!key) return 'pending-locked';
+  try {
+    await webcrypto.subtle.decrypt({ name: 'AES-GCM', iv: Uint8Array.from(rec.iv) }, key, Uint8Array.from(rec.ct));
+    return 'unverified';
+  } catch {
+    return 'pending-ambiguous';
+  }
+}
 
 module.exports = candidate;

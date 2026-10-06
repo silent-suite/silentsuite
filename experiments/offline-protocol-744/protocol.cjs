@@ -46,17 +46,24 @@ const V2 = ['meta', 'crypto', 'work', 'payload', 'loss', 'attempt', 'display', '
 function openQueue(factory, version) {
   return new Promise((resolve, reject) => {
     const r = factory.open('synthetic-queue', version);
-    r.onupgradeneeded = () => {
+    r.onupgradeneeded = (ev) => {
       const db = r.result;
       if (!db.objectStoreNames.contains('mutations')) db.createObjectStore('mutations', { keyPath: 'id' });
       if (version >= 2) {
         for (const n of V2) {
           if (!db.objectStoreNames.contains(n)) db.createObjectStore(n, n === 'meta' || n === 'crypto' ? undefined : { keyPath: 'id' });
         }
+        // An upgrade from v1 may carry legacy evidence: admissions wait for cutover.
+        if (ev.oldVersion === 1) r.transaction.objectStore('meta').put('pending', 'cutover');
       }
     };
-    r.onblocked = () => reject(new Reject('upgrade-blocked'));
-    r.onsuccess = () => resolve(r.result);
+    let blocked = false;
+    r.onblocked = () => { blocked = true; reject(new Reject('upgrade-blocked')); };
+    // A rejected-but-live open request still succeeds later: close that connection.
+    r.onsuccess = () => {
+      if (blocked) { stats.lateClosed += 1; r.result.close(); return; }
+      resolve(r.result);
+    };
     r.onerror = () => reject(r.error);
   });
 }
@@ -77,19 +84,26 @@ function openCache(factory, version) {
         const hold = db.createObjectStore('hold', { keyPath: 'itemUid' });
         const t = r.transaction;
         const keyReq = t.objectStore('crypto').get('envelope-key');
-        keyReq.onsuccess = () => {
+        const metaReq = t.objectStore('meta').get('singleton');
+        metaReq.onsuccess = () => {
           const cacheKey = keyReq.result || null;
+          const cacheFingerprint = metaReq.result ? metaReq.result.accountFingerprint : null;
           t.objectStore('items').openCursor().onsuccess = (e) => {
             const cur = e.target.result;
             if (!cur) return;
-            if (cur.value.collectionType === 'notes' || cur.value.collectionType === 'contacts') hold.put({ ...cur.value, cacheKey });
+            if (cur.value.collectionType === 'notes' || cur.value.collectionType === 'contacts') hold.put({ ...cur.value, cacheKey, cacheFingerprint });
             cur.continue();
           };
         };
       }
     };
-    r.onblocked = () => reject(new Reject('upgrade-blocked'));
-    r.onsuccess = () => resolve(r.result);
+    let blocked = false;
+    r.onblocked = () => { blocked = true; reject(new Reject('upgrade-blocked')); };
+    // A rejected-but-live open request still succeeds later: close that connection.
+    r.onsuccess = () => {
+      if (blocked) { stats.lateClosed += 1; r.result.close(); return; }
+      resolve(r.result);
+    };
     r.onerror = () => reject(r.error);
   });
 }
@@ -201,25 +215,44 @@ const durableWrite = (db, value, abortAfter) => run(db, ['meta'], 'readwrite', a
   if (abortAfter) throw new Reject('aborted');
 });
 
+// Raw UTF-8 bytes, as the cache stores content (no JSON wrapping).
+async function sealText(key, text) {
+  const iv = webcrypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv }, key, Buffer.from(text, 'utf8')));
+  return { iv: Array.from(iv), ct: Array.from(ct) };
+}
+
+// Legacy fixture with explicit ownership metadata on every queue row and on
+// the cache. Content is real-shaped: a raw vCard, or the note cache envelope.
 async function seedLegacy(o = {}) {
   const factory = newFactory();
   const key = await genKey();
   const foreign = await genKey();
-  const base = { itemUid: 'item1', collectionType: 'notes', collectionUid: 'nb1' };
-  const original = { ...base, ...(await seal(o.foreignKey ? foreign : key, { body: 'SYNTH-LEGACY-LOCAL' })) };
+  const contacts = o.format === 'vcard';
+  const base = { itemUid: 'item1', collectionType: contacts ? 'contacts' : 'notes', collectionUid: contacts ? 'ab1' : 'nb1' };
+  const localText = contacts
+    ? 'BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic-1\r\nFN:SYNTH Local\r\nEND:VCARD\r\n'
+    : JSON.stringify({ title: 'SYNTH note', content: 'SYNTH-LEGACY-LOCAL', mtime: 1 });
+  const serverText = contacts
+    ? 'BEGIN:VCARD\r\nVERSION:4.0\r\nUID:synthetic-1\r\nFN:SYNTH Server\r\nEND:VCARD\r\n'
+    : JSON.stringify({ title: 'SYNTH note', content: 'SYNTH-SERVER-COPY', mtime: 2 });
+  const original = { ...base, ...(await sealText(o.foreignKey ? foreign : key, localText)) };
   if (o.malformed) original.iv = [1, 2, 3];
-  const serverCopy = { ...base, ...(await seal(key, { body: 'SYNTH-SERVER-COPY' })) };
-  const mutations = o.mutations || [{ id: 'm1', type: 'update', collectionType: 'notes', itemUid: 'item1' }];
+  const serverCopy = { ...base, ...(await sealText(key, serverText)) };
+  const mutations = o.mutations || [{ id: 'm1', type: 'update', itemUid: 'item1' }];
   const items = o.items || [original];
   const q = await openQueue(factory, 1);
   await run(q, ['mutations'], 'readwrite', async (s) => {
-    for (const m of mutations) s.mutations.put({ accountFingerprint: 'acct-A', status: 'pending', collectionType: 'notes', ...m });
+    for (const m of mutations) {
+      s.mutations.put({ accountFingerprint: 'acct-A', status: 'pending', collectionType: base.collectionType, collectionUid: base.collectionUid, ...m });
+    }
   });
   q.close();
   const c = await openCache(factory, 5);
-  await run(c, ['items', 'crypto'], 'readwrite', async (s) => {
+  await run(c, ['items', 'crypto', 'meta'], 'readwrite', async (s) => {
     for (const it of items) s.items.put(it);
     if (o.withKey !== false) s.crypto.put(key, 'envelope-key');
+    s.meta.put({ accountFingerprint: o.cacheFingerprint || 'acct-A', cacheSchemaVersion: 5 }, 'singleton');
   });
   c.close();
   const newContext = async () => {
@@ -227,8 +260,30 @@ async function seedLegacy(o = {}) {
     await initOwner(db, 'acct-A');
     return context(db);
   };
-  return { factory, original, serverCopy, newContext };
+  return { factory, key, original, serverCopy, newContext };
 }
+
+// ---- correction-pass fixture helpers ----
+const stats = { lateClosed: 0 };
+const readSeq = (db) => run(db, ['meta'], 'readonly', async (s) => (await req(s.meta.get('seq'))) || 0);
+const rawPayload = (db, tuple) => run(db, ['work', 'payload'], 'readonly', async (s) => {
+  const w = await req(s.work.get(tuple));
+  return w && w.payloadId ? (await req(s.payload.get(w.payloadId))) || null : null;
+});
+// Replace a live payload with ciphertext under an unrelated envelope.
+async function foreignPayload(db, tuple) {
+  const sealed = await seal(await genKey(), { body: 'SYNTH-FOREIGN' });
+  await run(db, ['work', 'payload'], 'readwrite', async (s) => {
+    const w = await req(s.work.get(tuple));
+    s.payload.put({ id: w.payloadId, envelopeId: 'foreign-envelope', ...sealed });
+  });
+}
+async function holdCount(factory) {
+  const c = await openCache(factory, 6);
+  try { return await run(c, ['hold'], 'readonly', async (s) => req(s.hold.count())); } finally { c.close(); }
+}
+// Old bundle cleanup of the cache (items and key), as an old logout would.
+const oldCacheClear = (cacheDb) => run(cacheDb, ['items', 'crypto'], 'readwrite', async (s) => { s.items.clear(); s.crypto.clear(); });
 
 // ---- control: models the rejected behaviour ----
 async function readPrimaryV5(factory, itemUid) {
@@ -379,5 +434,5 @@ module.exports = {
   openQueue, openCache, openSecure, genKey, seal, unseal, structural, classify,
   initOwner, context, checkOwner, readOwner, readProbe, readSecure, getWork, dropPayload,
   listLoss, rawDump, oldCachePut, dispatchable, visibility, requestSuccessWrite, durableWrite,
-  seedLegacy, control,
+  seedLegacy, control, sealText, stats, readSeq, rawPayload, foreignPayload, holdCount, oldCacheClear,
 };

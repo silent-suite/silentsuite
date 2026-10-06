@@ -15,8 +15,10 @@ REQUIRE_PG = os.environ.get("OFFLINE744_REQUIRE_PG") == "1"
 
 DDL = [
     "CREATE TABLE principal (id TEXT PRIMARY KEY, web_fenced BOOLEAN NOT NULL)",
-    "CREATE TABLE collection (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL)",
-    "CREATE TABLE item (uid TEXT PRIMARY KEY, collection_id TEXT NOT NULL, etag TEXT NOT NULL)",
+    "CREATE TABLE collection (id TEXT PRIMARY KEY, principal_id TEXT NOT NULL REFERENCES principal (id))",
+    # Item identity is collection-scoped, as in the real model (uid, collection unique together).
+    "CREATE TABLE item (uid TEXT NOT NULL, collection_id TEXT NOT NULL REFERENCES collection (id), "
+    "etag TEXT NOT NULL, PRIMARY KEY (collection_id, uid))",
 ]
 SEED = [
     ("INSERT INTO principal (id, web_fenced) VALUES (?, ?)", ("p1", False)),
@@ -84,24 +86,40 @@ def read_fence(conn, principal):
     return conn.x("SELECT web_fenced FROM principal WHERE id = ?", (principal,)).fetchone()[0]
 
 
-def write(conn, principal, collection, uid, expected, new, endpoint, origin, hook=None, pre_read_fence=None):
+def write(conn, principal, collection, uid, expected, new, endpoint, origin, hook=None, pre_read_fence=None,
+          after_mutation=None):
     conn.begin()
     try:
         lock = " FOR UPDATE" if conn.engine.name == "postgresql" else ""
-        conn.x("SELECT id FROM collection WHERE id = ?" + lock, (collection,))
+        owner = conn.x("SELECT principal_id FROM collection WHERE id = ?" + lock, (collection,)).fetchall()
+        if len(owner) != 1 or owner[0][0] != principal:
+            raise Unauthorized()
         fenced = read_fence(conn, principal) if pre_read_fence is None else pre_read_fence
         if hook:
             hook()
         if fenced and endpoint == "batch" and origin:
             raise Fenced()
-        row = conn.x("SELECT etag FROM item WHERE uid = ?", (uid,)).fetchone()
-        current = row[0] if row else None
+        rows = conn.x("SELECT etag FROM item WHERE collection_id = ? AND uid = ?", (collection, uid)).fetchall()
+        if len(rows) > 1:
+            raise AssertionError("compound item identity violated")
+        current = rows[0][0] if rows else None
         if endpoint == "transaction" and current != expected:
             raise Conflict()
-        if row:
-            conn.x("UPDATE item SET etag = ? WHERE uid = ?", (new, uid))
+        if rows:
+            if endpoint == "transaction":
+                changed = conn.x("UPDATE item SET etag = ? WHERE collection_id = ? AND uid = ? AND etag = ?",
+                                 (new, collection, uid, expected)).rowcount
+            else:
+                changed = conn.x("UPDATE item SET etag = ? WHERE collection_id = ? AND uid = ?",
+                                 (new, collection, uid)).rowcount
+            if changed != 1:
+                raise Conflict()
+        elif expected is not None:
+            raise Conflict()  # an addressed update never creates an item
         else:
             conn.x("INSERT INTO item (uid, collection_id, etag) VALUES (?, ?, ?)", (uid, collection, new))
+        if after_mutation:
+            after_mutation()
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -338,6 +356,57 @@ class FenceCases:
         self.assertEqual(self.count_item("i1", "c1b", "k0"), 1,
                          "SEMANTIC: write through c1 changed c1b's same-uid item")
         self.assertEqual(self.count("SELECT COUNT(*) FROM item WHERE uid = ?", ("i1",)), 2)
+
+    def test_absent_conditional_update_never_creates(self):
+        self.seed(OWNERSHIP_SEED)
+        for endpoint in ("transaction", "batch"):
+            with self.subTest(endpoint=endpoint):
+                with self.assertRaises(Conflict):
+                    write(self.conn(), "p1", "c1b", "ghost", "e0", "x", endpoint, origin=False)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM item WHERE uid = ?", ("ghost",)), 0)
+        write(self.conn(), "p1", "c1b", "ghost", None, "g0", "transaction", origin=False)
+        self.assertEqual(self.count_item("ghost", "c1b", "g0"), 1)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM item WHERE uid = ?", ("ghost",)), 1)
+
+    def test_competing_conditional_writers_exactly_one_wins(self):
+        start = threading.Barrier(2, timeout=10)
+        outcomes = {}
+
+        def writer(name):
+            def go():
+                start.wait()
+                try:
+                    write(self.conn(), "p1", "c1", "i1", "e0", "w-" + name, "transaction", origin=False)
+                    outcomes[name] = "committed"
+                except Conflict:
+                    outcomes[name] = "Conflict"
+            return go
+
+        errors, threads = self.run_threads(writer("A"), writer("B"))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(15)
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(outcomes.values()), ["Conflict", "committed"])
+        winner = next(name for name, v in outcomes.items() if v == "committed")
+        self.assertEqual(self.count_item("i1", "c1", "w-" + winner), 1)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM item WHERE uid = ?", ("i1",)), 1)
+
+    def test_rollback_after_partial_mutation(self):
+        c = self.conn()
+        seen = {}
+
+        def boom():
+            seen["inside"] = c.x("SELECT COUNT(*) FROM item WHERE collection_id = ? AND uid = ? AND etag = ?",
+                                 ("c1", "i1", "e9")).fetchone()[0]
+            raise RuntimeError("synthetic abort after mutation")
+
+        with self.assertRaises(RuntimeError):
+            write(c, "p1", "c1", "i1", "e0", "e9", "transaction", origin=True, after_mutation=boom)
+        self.assertEqual(seen["inside"], 1, "the mutation was applied inside the transaction")
+        self.assertEqual(self.count_item("i1", "c1", "e0"), 1)
+        self.assertEqual(self.count_item("i1", "c1", "e9"), 0)
 
 
 def read_fence_once(case):

@@ -105,3 +105,79 @@ test('S3 F11 move legs bind source delete and target rollback to recorded revisi
   assert.equal(calls[2].body.items[0].etag, createdRev);
   assert.equal(calls.length, 3);
 });
+
+// Snapshots persisted in synthetic IndexedDB and reloaded by recreated
+// managers in distinct collections. The server's handling of a re-sent
+// revision is NOT exercised: only what the SDK puts on the wire is shown.
+test('S4 F11 snapshots survive recreated contexts; cross-collection legs re-send recorded revisions', async () => {
+  const { IDBFactory } = createRequire(path.join(ROOT, 'apps/web/package.json'))('fake-indexeddb');
+  const factory = new IDBFactory();
+  const open = () => new Promise((resolve, reject) => {
+    const r = factory.open('synthetic-sdk-snapshots', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('snap');
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+  const put = async (key, value) => {
+    const db = await open();
+    await new Promise((resolve, reject) => {
+      const t = db.transaction('snap', 'readwrite');
+      t.objectStore('snap').put(value, key);
+      t.oncomplete = resolve;
+      t.onabort = () => reject(t.error);
+    });
+    db.close();
+  };
+  const get = async (key) => {
+    const db = await open();
+    const value = await new Promise((resolve, reject) => {
+      const r = db.transaction('snap').objectStore('snap').get(key);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    db.close();
+    return value;
+  };
+  const colA = H.toBase64(new Uint8Array(24).fill(3));
+  const colB = H.toBase64(new Uint8Array(24).fill(5));
+  const managerFor = async (col) => {
+    await E.ready;
+    return new E.ItemManager({ serverUrl: 'https://sdk-boundary.invalid/', authToken: '' }, new M.MinimalCollectionCryptoManager(new Uint8Array(32).fill(7)), col);
+  };
+  calls.length = 0; mode = 'ok';
+  // Context 1: source exists remotely (fixture); target snapshot persisted before dispatch.
+  const m1A = await managerFor(colA);
+  const source = await m1A.create({ type: 'synthetic' }, new Uint8Array([4]));
+  source.encryptedItem.__markSaved();
+  await put('source', m1A.cacheSave(source, { saveContent: true }));
+  await put('sourceRevision', source.etag);
+  const m1B = await managerFor(colB);
+  const target = await m1B.create({ type: 'synthetic' }, new Uint8Array([4]));
+  await put('target', m1B.cacheSave(target, { saveContent: true }));
+  mode = 'network'; // the request was sent; the response never arrived
+  await assert.rejects(m1B.transaction([m1B.cacheLoad(await get('target'))]), (e) => e instanceof E.NetworkError);
+  // Context 2: recreated managers reload only from synthetic IndexedDB.
+  mode = 'ok';
+  const m2B = await managerFor(colB);
+  await m2B.transaction([m2B.cacheLoad(await get('target'))]);
+  const m2A = await managerFor(colA);
+  const del = m2A.cacheLoad(await get('source'));
+  del.delete();
+  await put('sourceDelete', m2A.cacheSave(del, { saveContent: true }));
+  mode = 'network';
+  await assert.rejects(m2A.transaction([m2A.cacheLoad(await get('sourceDelete'))]), (e) => e instanceof E.NetworkError);
+  // Context 3: the source deletion is retried from the persisted snapshot.
+  mode = 'ok';
+  const m3A = await managerFor(colA);
+  await m3A.transaction([m3A.cacheLoad(await get('sourceDelete'))]);
+  const [lostCreate, retryCreate, lostDelete, retryDelete] = calls;
+  for (const c of [lostCreate, retryCreate]) assert.ok(c.path.includes(`/collection/${colB}/item/transaction/`));
+  for (const c of [lostDelete, retryDelete]) assert.ok(c.path.includes(`/collection/${colA}/item/transaction/`));
+  assert.equal(retryCreate.body.items[0].uid, lostCreate.body.items[0].uid);
+  assert.equal(retryCreate.body.items[0].content.uid, lostCreate.body.items[0].content.uid);
+  assert.equal(retryCreate.body.items[0].etag ?? null, null);
+  assert.equal(retryDelete.body.items[0].etag, await get('sourceRevision'));
+  assert.equal(retryDelete.body.items[0].content.uid, lostDelete.body.items[0].content.uid);
+  assert.equal(retryDelete.body.items[0].content.deleted, true);
+  assert.equal(calls.length, 4);
+});

@@ -6,10 +6,24 @@ It does not reconstruct legacy history.
 
 ## 1. Purpose and frontier
 
-The harness tries to *refute* one proposed protocol against thirteen known failure
-schedules. Each schedule runs twice: once against a **control** that reproduces the
-rejected behaviour, and once against the **candidate**. A schedule counts only if the
-control shows the failure and the candidate avoids it, without refusing ordinary work.
+The harness tries to *refute* one proposed protocol against known failure schedules.
+Two kinds of test exist and are listed separately in `RESULTS.md`:
+
+- **Paired schedules** (`protocol.test.cjs` F01–F13 except F01b and F10's candidate part)
+  run against a **control** that reproduces the rejected behaviour and against the
+  **candidate**.
+- **Candidate-only checks** (F01b, the R02–R09 regressions in `correction.test.cjs`, P01,
+  and the SDK and database fixtures) assert the candidate's boundary directly. Their RED
+  was observed against the previous candidate, not against a control.
+
+**Narrowed claims (correction pass):**
+
+- Cache preservation starts when the cache v6 upgrade completes. Bytes an old writer
+  replaces or clears while the upgrade is blocked are not recoverable; the protocol
+  classifies what remains (`unverified` or `legacy-unresolved`) and never marks it lost.
+- Snapshot re-send is shown only at the SDK wire boundary. Whether a server accepts a
+  re-sent revision is not exercised; the rollback conflict in S3 is fixture-injected.
+- The database fence relies on a synthetic `origin` flag and a fixture schema.
 
 | Layer | What this experiment can show | What it cannot show |
 |---|---|---|
@@ -111,7 +125,7 @@ Only `pending` is dispatchable; no legacy status is.
 |---|---|
 | fake-indexeddb transaction, abort, upgrade and blocked behaviour | Library evidence (local run) |
 | Etebase 0.43.1 wire fields and baseline retention | Library evidence (local run) |
-| PostgreSQL/SQLite fence serialization | Fixture evidence, **pending CI** |
+| PostgreSQL/SQLite fence serialization | Fixture evidence, hosted CI only (see `RESULTS.md` for dated runs) |
 | Every candidate operation and record shape | Proposal |
 | Browsers send `Origin` on SDK POSTs (O-1) | Unverified |
 | Native and bridge clients send no `Origin` (A-N) | Unverified; Android STOP unchanged |

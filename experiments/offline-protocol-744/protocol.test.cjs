@@ -9,12 +9,19 @@ const C = P.control;
 
 const T = 'notes/nb1/item1';
 const remote = (...history) => ({ history });
-async function setup(fingerprint = 'acct-A') {
+// Dispatch now requires an owner-bound activation for the context's server,
+// so ordinary schedules activate explicitly unless they test activation.
+async function setup(fingerprint = 'acct-A', { activate = true } = {}) {
   const factory = P.newFactory();
   const q1 = await P.openQueue(factory, 2);
   await P.initOwner(q1, fingerprint);
   const q2 = await P.openQueue(factory, 2);
-  return { factory, a: await P.context(q1), b: await P.context(q2) };
+  const a = await P.context(q1);
+  const b = await P.context(q2);
+  a.server = 'srv-1';
+  b.server = 'srv-1';
+  if (activate) await N.setFence(a, 'active', 'srv-1');
+  return { factory, a, b };
 }
 async function expectReject(promise, safe, code) {
   if (safe) await assert.rejects(promise, { code });
@@ -214,7 +221,7 @@ test('F09 owner and session commit together; stale logins and aborted writes are
 });
 
 test('F10 dispatch requires a confirmed fence bound to the same server', async () => {
-  const { a } = await setup();
+  const { a } = await setup('acct-A', { activate: false });
   assert.equal(await C.dispatchAllowed(a, 'srv-1'), true, 'control: no activation state machine');
   assert.equal(await N.dispatchAllowed(a, 'srv-1'), false);
   await N.setFence(a, 'activating', 'srv-1');
