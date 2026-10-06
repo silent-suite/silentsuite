@@ -481,6 +481,38 @@ export async function keepPendingCacheRecords(
 }
 
 /**
+ * When painting from the cache, hide records whose delete is still pending in
+ * the offline queue of this account. The cached copy stays for replay; a queue
+ * that cannot be read hides nothing.
+ */
+export async function withoutPendingDeletes(
+  type: CollectionTypeKey,
+  records: CachedItem[],
+  accountEpoch: number,
+  accountFingerprint: string | null,
+): Promise<CachedItem[]> {
+  if (!accountFingerprint || records.length === 0) return records
+  let entries: QueueEntry[]
+  try {
+    entries = await getQueuedMutations({ accountEpoch, accountFingerprint })
+  } catch (err) {
+    if (err instanceof AccountBoundaryChangedError) throw err
+    // A read that failed across an account change belongs to the old account.
+    assertCurrentAccountEpoch(accountEpoch)
+    logger.warn('[etebase-store] Failed to read pending deletes for cache hydration', getSafeErrorDetails(err))
+    return records
+  }
+  assertCurrentAccountEpoch(accountEpoch)
+  const deletedUids = new Set(
+    entries
+      .filter((entry) => entry.type === 'delete' && entry.status === 'pending' && entry.collectionType === type && entry.itemUid)
+      .map((entry) => entry.itemUid as string),
+  )
+  if (deletedUids.size === 0) return records
+  return records.filter((record) => !deletedUids.has(record.itemUid))
+}
+
+/**
  * Queues an update for replay when it cannot be applied now. With
  * `persistEncryptedOfflineContent` the body goes to the encrypted local cache
  * and the queue entry stays content free; otherwise the content rides in the
@@ -1992,7 +2024,9 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       })
     }
 
-    const requireItem = async () => {
+    // Resolves null only after a complete listing of the live owning collection
+    // has no live item with this UID; any failed read throws.
+    const findItem = async () => {
       if (!entry.itemUid) throw new ReplayNotConfirmedError('Replay requires an item UID')
       if (!entry.collectionUid) throw new ReplayNotConfirmedError('Replay item collection ownership is unavailable')
       const cached = itemCache.get(entry.itemUid)
@@ -2006,9 +2040,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       // outlived the item maps: fetch the item from its owning collection.
       const collection = requireCollection(entry.collectionUid, 'owner')
       const remote = await findRemoteItemByUid(collection, entry.itemUid)
-      if (!remote) throw new ReplayNotConfirmedError('Replay item is unavailable')
+      if (!remote) return null
       publishConfirmedReplayItem(remote, entry.itemUid, collection.uid)
       return remote
+    }
+    const requireItem = async () => {
+      const item = await findItem()
+      if (!item) throw new ReplayNotConfirmedError('Replay item is unavailable')
+      return item
     }
 
     switch (entry.type) {
@@ -2052,8 +2091,11 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
       case 'delete': {
         const collection = requireCollection(entry.collectionUid, 'owner')
-        const item = await requireItem()
+        const item = await findItem()
         assertOfflineQueueAccountGuard(guard, get())
+        // Already gone on the server (deleted elsewhere, or an earlier delete
+        // whose response was lost): the wanted end state holds.
+        if (!item) return { remoteMutationConfirmed: true }
         await core.deleteItem(account, collection, item)
         assertOfflineQueueAccountGuard(guard, get())
         return { remoteMutationConfirmed: true }

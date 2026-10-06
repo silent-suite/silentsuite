@@ -1,29 +1,49 @@
-name: Zapstore Publication
+name: Zapstore Manual Publication
 
-# Dormant publication lane for the Android app on Zapstore. See
-# runbooks/zapstore-automation.md for the architecture, surface map, retry and
-# rollback procedures.
+# Owner-authorized manual publication of one exact, already-published Android
+# release on Zapstore. See runbooks/zapstore-automation.md section 10.
 #
-# This is not a second GitHub-release control plane. The release controller
-# remains the only `repository_dispatch` workflow. The only trigger here is
-# `schedule`: GitHub loads scheduled workflows from the default branch, so
-# `github.sha` is both the revision that supplied this definition and the only
-# revision any job checks out. `release` events are not used because GitHub
-# loads that workflow from the tagged commit; `workflow_dispatch` is not used
-# because it loads from a selected ref. Exact manual retry is GitHub's native
-# "Re-run failed jobs" on a scheduled run.
+# This is a separate definition file with its own admission, not a mode of
+# zapstore-publish.yml: the scheduled lane, its trigger and its admission are
+# unchanged. The jobs are the scheduled lane's six jobs; the only differences
+# are the admission command, the selection of the single requested release, the
+# approved-binding check in `bind`, and the freshness check in `revalidate`.
+# The workflow boundary tests compare the two parsed definitions.
 #
-# Disabled by default: the repository variable ZAPSTORE_AUTOMATION_ENABLED does
-# not exist. Creating it, the zapstore-production environment, and its two
-# secrets are separate owner actions.
+# `workflow_dispatch` loads the definition from the selected ref, so admission
+# requires protected main, GITHUB_WORKFLOW_SHA == GITHUB_SHA, and the
+# `expected_workflow_sha` input to equal that commit. Inputs are untrusted text:
+# they are read only by the admit step, through its environment, validated
+# there and re-exported as job outputs. Nothing rebuilds the APK or changes the
+# listing, notes or media, and the activation variable, the zapstore-production
+# environment approval and the signer approval all still apply.
 
 on:
-  schedule:
-    - cron: '17 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Exact GitHub release id; must be the single newest eligible release
+        required: true
+        type: string
+      expected_source_sha:
+        description: Owner-approved 40-hex source commit of the release tag
+        required: true
+        type: string
+      expected_apk_asset_id:
+        description: Owner-approved GitHub asset id of the release APK
+        required: true
+        type: string
+      expected_apk_sha256:
+        description: Owner-approved 64-hex SHA-256 of the release APK
+        required: true
+        type: string
+      expected_workflow_sha:
+        description: 40-hex protected-main commit this run must be loaded from and execute
+        required: true
+        type: string
 
-# One group for the whole publisher/app: two runs must never publish
-# concurrently. Never cancels; a pending run GitHub discards is picked up by the
-# next scheduled reconciliation.
+# One group for the whole publisher/app, shared with the scheduled lane and the
+# signing rehearsal: two runs must never publish concurrently. Never cancels.
 concurrency:
   group: zapstore-publish-io-silentsuite-android
   cancel-in-progress: false
@@ -35,7 +55,7 @@ env:
 
 jobs:
   admit:
-    name: Admit the scheduled run
+    name: Admit the manual publication request
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
@@ -43,6 +63,11 @@ jobs:
       active: ${{ steps.admit.outputs.active }}
       rehearsal: ${{ steps.admit.outputs.rehearsal }}
       revision: ${{ steps.admit.outputs.revision }}
+      release_id: ${{ steps.admit.outputs.release_id }}
+      expected_source_sha: ${{ steps.admit.outputs.expected_source_sha }}
+      expected_apk_asset_id: ${{ steps.admit.outputs.expected_apk_asset_id }}
+      expected_apk_sha256: ${{ steps.admit.outputs.expected_apk_sha256 }}
+      expected_workflow_sha: ${{ steps.admit.outputs.expected_workflow_sha }}
     steps:
       - name: Check out the protected revision that supplied this definition
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,11 +78,18 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
+      # The only step that reads the dispatch inputs, and only as environment
+      # data. Every later job reads the validated outputs instead.
       - name: Prove trigger and definition provenance
         id: admit
         env:
           ZAPSTORE_AUTOMATION_ENABLED: ${{ vars.ZAPSTORE_AUTOMATION_ENABLED }}
-        run: node scripts/zapstore/cli.mjs admit --workspace "$GITHUB_WORKSPACE"
+          MANUAL_RELEASE_ID: ${{ inputs.release_id }}
+          MANUAL_EXPECTED_SOURCE_SHA: ${{ inputs.expected_source_sha }}
+          MANUAL_EXPECTED_APK_ASSET_ID: ${{ inputs.expected_apk_asset_id }}
+          MANUAL_EXPECTED_APK_SHA256: ${{ inputs.expected_apk_sha256 }}
+          MANUAL_EXPECTED_WORKFLOW_SHA: ${{ inputs.expected_workflow_sha }}
+        run: node scripts/zapstore/cli.mjs admit-manual-publish --workspace "$GITHUB_WORKSPACE"
 
   enumerate:
     name: Enumerate exact releases
@@ -84,13 +116,15 @@ jobs:
         env:
           REVISION: ${{ needs.admit.outputs.revision }}
         run: node scripts/zapstore/cli.mjs checkout-guard --workspace "$GITHUB_WORKSPACE" --revision "$REVISION"
+      # Only the requested release, and only while it is the newest eligible.
       - name: List and classify published releases by exact id
         id: enumerate
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MANUAL_RELEASE_ID: ${{ needs.admit.outputs.release_id }}
         run: |
           mkdir -p "$RUNNER_TEMP/enumerate"
-          node scripts/zapstore/cli.mjs enumerate --out "$RUNNER_TEMP/enumerate/candidates.json"
+          node scripts/zapstore/cli.mjs enumerate-manual --out "$RUNNER_TEMP/enumerate/candidates.json"
       - name: Upload the candidate list
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -155,7 +189,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ matrix.release_id }}
-        run: node scripts/zapstore/cli.mjs bind --release-id "$RELEASE_ID" --git-ancestry "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/assess/binding.json"
+          MANUAL_RELEASE_ID: ${{ needs.admit.outputs.release_id }}
+          MANUAL_EXPECTED_SOURCE_SHA: ${{ needs.admit.outputs.expected_source_sha }}
+          MANUAL_EXPECTED_APK_ASSET_ID: ${{ needs.admit.outputs.expected_apk_asset_id }}
+          MANUAL_EXPECTED_APK_SHA256: ${{ needs.admit.outputs.expected_apk_sha256 }}
+        run: node scripts/zapstore/cli.mjs bind-approved --release-id "$RELEASE_ID" --git-ancestry "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/assess/binding.json"
       - name: Download the bound APK and check all three digests
         id: apk
         env:
@@ -273,7 +311,6 @@ jobs:
   publish:
     name: Publish ${{ matrix.tag }}
     needs: [admit, plan]
-    # A failed historical assessment must not suppress an approved newest release.
     # Explicit status handling retains successful admission/planning and cancellation.
     if: ${{ !cancelled() && needs.admit.result == 'success' && needs.plan.result == 'success' && needs.admit.outputs.active == 'true' && needs.plan.outputs.count != '0' }}
     runs-on: ubuntu-24.04
@@ -333,7 +370,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ matrix.release_id }}
-        run: node scripts/zapstore/cli.mjs bind --release-id "$RELEASE_ID" --git-ancestry "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/publish/binding.json"
+          MANUAL_RELEASE_ID: ${{ needs.admit.outputs.release_id }}
+          MANUAL_EXPECTED_SOURCE_SHA: ${{ needs.admit.outputs.expected_source_sha }}
+          MANUAL_EXPECTED_APK_ASSET_ID: ${{ needs.admit.outputs.expected_apk_asset_id }}
+          MANUAL_EXPECTED_APK_SHA256: ${{ needs.admit.outputs.expected_apk_sha256 }}
+        run: node scripts/zapstore/cli.mjs bind-approved --release-id "$RELEASE_ID" --git-ancestry "$GITHUB_WORKSPACE" --out "$RUNNER_TEMP/publish/binding.json"
       - name: Download the bound APK and check all three digests
         id: apk
         env:
@@ -369,13 +410,20 @@ jobs:
             --binding "$RUNNER_TEMP/publish/binding.json" \
             --expected "$RUNNER_TEMP/publish/prepare/expected-events.jsonl" \
             --reconcile "$RUNNER_TEMP/publish/reconcile.json" --revision "$REVISION"
+      # Also requires, from a fresh listing, that the requested release is
+      # still the newest eligible one: a release published while approval was
+      # pending, or before a failed job is re-run, stops the run here.
       - name: Revalidate the release identity immediately before signing
         id: revalidate
         if: steps.reconcile.outputs.action == 'publish'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APK_PATH: ${{ steps.apk.outputs.apk_path }}
-        run: node scripts/zapstore/cli.mjs revalidate --binding "$RUNNER_TEMP/publish/binding.json" --apk "$APK_PATH" --git-ancestry "$GITHUB_WORKSPACE"
+          MANUAL_RELEASE_ID: ${{ needs.admit.outputs.release_id }}
+          MANUAL_EXPECTED_SOURCE_SHA: ${{ needs.admit.outputs.expected_source_sha }}
+          MANUAL_EXPECTED_APK_ASSET_ID: ${{ needs.admit.outputs.expected_apk_asset_id }}
+          MANUAL_EXPECTED_APK_SHA256: ${{ needs.admit.outputs.expected_apk_sha256 }}
+        run: node scripts/zapstore/cli.mjs revalidate-manual --binding "$RUNNER_TEMP/publish/binding.json" --apk "$APK_PATH" --git-ancestry "$GITHUB_WORKSPACE"
 
       # The only step that can see signer credentials. It first resolves the
       # signing account with a read-only NIP-46 handshake and refuses unless it

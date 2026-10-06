@@ -9,6 +9,7 @@ import io.silentsuite.sync.log.Logger
 import okhttp3.OkHttpClient
 import java.io.File
 import java.util.*
+import java.util.concurrent.atomic.AtomicLong
 
 class EtebaseLocalCache private constructor(context: Context, username: String) {
     // Issue #119: log the resolved filesDir before the JNI FileSystemCache.create call.
@@ -40,6 +41,28 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
         if (!mayWrite()) return@synchronized false
         write()
         true
+    }
+
+    /**
+     * Moves on around every collection write, whoever makes it. The collection list refresh waits
+     * for its answers without holding this cache, so an answer can be older than an edit, a
+     * deletion or a new collection cached here meanwhile, and the SDK's cache overwrites whatever is
+     * there. The refresh therefore notes this before each request and writes the answer only if it
+     * has not moved since ([collectionWrites]).
+     */
+    private val collectionWrites = AtomicLong()
+
+    /** Changes whenever a collection is written to or removed from this cache, or is being so. */
+    fun collectionWrites(): Long = collectionWrites.get()
+
+    private inline fun writingCollection(write: () -> Unit) {
+        // Counted on both sides, so a reader never sees the same value before and after a write.
+        collectionWrites.incrementAndGet()
+        try {
+            write()
+        } finally {
+            collectionWrites.incrementAndGet()
+        }
     }
 
     private fun clearUserCache() {
@@ -99,11 +122,11 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
         }
     }
 
-    fun collectionSet(colMgr: CollectionManager, collection: Collection) {
+    fun collectionSet(colMgr: CollectionManager, collection: Collection) = writingCollection {
         fsCache.collectionSet(colMgr, collection)
     }
 
-    fun collectionUnset(colMgr: CollectionManager, colUid: String) {
+    fun collectionUnset(colMgr: CollectionManager, colUid: String) = writingCollection {
         try {
             fsCache.collectionUnset(colMgr, colUid)
         } catch (e: UrlParseException) {

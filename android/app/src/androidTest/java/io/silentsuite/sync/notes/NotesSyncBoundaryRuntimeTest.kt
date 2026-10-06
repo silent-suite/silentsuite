@@ -1,8 +1,10 @@
 package io.silentsuite.sync.notes
 
+import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentResolver
+import android.content.SyncResult
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -14,6 +16,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import at.bitfire.ical4android.TaskProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
 import com.etebase.client.Client
 import com.etebase.client.Collection
 import com.etebase.client.Item
@@ -26,9 +29,13 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.resource.LocalCalendar
+import io.silentsuite.sync.syncadapter.CalendarSyncManager
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
+import io.silentsuite.sync.syncadapter.CollectionRefreshIncompleteException
 import io.silentsuite.sync.syncadapter.EXTRA_FORCE_COLLECTION_REFRESH
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
+import io.silentsuite.sync.syncadapter.SyncManager
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
@@ -45,6 +52,7 @@ import io.silentsuite.sync.ui.notes.NotesLoad
 import io.silentsuite.sync.ui.notes.NotesLoader
 import io.silentsuite.sync.ui.notes.notesFixtureOverride
 import io.silentsuite.sync.utils.AndroidCompat
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -53,6 +61,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -70,12 +79,20 @@ import kotlin.concurrent.thread
  * The Notes job, the shared collection refresh and the Notes screens' loader, run for real
  * (coordinator, runner, refresh, loader, Etebase binding, local cache, account store, status store)
  * against an in-process stand-in for the server ([FakeEtebaseServer]) that serves real encrypted
- * notebooks and notes a page at a time and can hold a request in flight. The sync cases hold one
- * request, change something while it is in flight, release it, and check exactly what was written.
- * The loader cases read what a real sync cached, with no fixture in between.
+ * notebooks and notes a page at a time, can hold a request in flight, and can make a listing
+ * never finish. Most sync cases hold one request, change something while it is in flight,
+ * release it, and check exactly what was written. The stall cases make a listing never finish
+ * and check where each paging loop stops and how the next run recovers; one of them runs the
+ * calendar adapter's own sync manager against a local calendar. The loader cases read what a
+ * real sync cached, with no fixture in between.
  */
 @RunWith(AndroidJUnit4::class)
 class NotesSyncBoundaryRuntimeTest {
+    /** For the one case that runs the calendar adapter's own item fetch against a local calendar. */
+    @get:Rule
+    val calendarPermissions: GrantPermissionRule =
+        GrantPermissionRule.grant(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val manager = AccountManager.get(context)
     private val fake = FakeEtebaseServer()
@@ -358,13 +375,347 @@ class NotesSyncBoundaryRuntimeTest {
             status(other, "gen-other").lastSuccessAt != null
         }
         assertEquals(setOf("One"), cachedNotes(other, notebook))
-        // The waiting listing holds its own account's cache, so only the coordinator is asked about it.
+        // The coordinator, not the cache, says whether the first account's run is still going.
         assertTrue("the first account's run is still waiting for its answer", NotesSyncCoordinator.isActive(slowIdentity))
 
         listing.release()
         awaitSettled(slowIdentity)
         assertEquals(setOf("One"), cachedNotes(slow, notebook))
         assertNotNull(status(slow, "gen-slow").lastSuccessAt)
+    }
+
+    @Test fun aForcedRefreshCutShortByForegroundEditsIsStillOwedToTheNextNotesRun() {
+        val account = newAccount("gen-owed")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-owed")
+        val mine = uploadNotebook("Mine")
+        // A first Notes sync saves the list cursor; the discovery key is already the current one.
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        val cursorBefore = listCursor(account)
+        assertNotNull(cursorBefore)
+        val before = status(account, "gen-owed")
+        assertNotNull(before.lastSuccessAt)
+
+        // An invitation is accepted: only a listing from scratch shows the notebook. The forced
+        // sync that follows first lists from the saved cursor, and each of its three answers is
+        // overtaken by an edit this device uploads and caches, so the refresh stops there, before
+        // the listing from scratch.
+        val accepted = uploadNotebook("Accepted")
+        fake.acceptedFromInvitation(accepted)
+        var mark = fake.requests.size
+        val parked = List(3) { fake.hold("POST", LIST, answerFirst = true) }
+        requestSync(context, account, forceCollectionRefresh = true)
+        try {
+            parked.forEachIndexed { index, answer ->
+                answer.awaitArrival()
+                readWhileHeld("this device's edit") { renameAsEditingDoes(account, mine, "Mine, edit ${index + 1}", cacheIt = true) }
+                answer.release()
+            }
+        } finally {
+            parked.forEach { it.release() }
+        }
+        awaitSettled(identity)
+        assertEquals("the forced run asked three times from the saved cursor and never from scratch",
+            listOf(cursorBefore, cursorBefore, cursorBefore), listings(mark).map(::cursorIn))
+        assertFalse("the accepted notebook is not cached yet", accepted in cachedNotebooks(account))
+        assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
+        status(account, "gen-owed").let {
+            assertEquals("a run whose collection listing was cut short recorded no success: $it", before.lastSuccessAt, it.lastSuccessAt)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+
+        // The next ordinary request still owes the listing from scratch, makes it, and completes.
+        mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("the owed listing from scratch was made: ${listings(mark)}", listings(mark).any(::fromScratch))
+        assertTrue("the accepted notebook was cached", accepted in cachedNotebooks(account))
+        assertEquals("the accepted notebook's notes were fetched", fake.itemStoken(accepted), notebookCursor(account, accepted))
+        assertEquals("Mine, edit 3", cachedNotebookName(account, mine))
+        assertFalse("the cursor moved on", listCursor(account) == cursorBefore)
+        status(account, "gen-owed").let {
+            assertTrue("the completed run succeeded: $it", it.lastSuccessAt!! > before.lastSuccessAt!!)
+            assertNull(it.activeAttemptId)
+        }
+
+        // With nothing owed any more, a further ordinary run lists from its cursor again.
+        forgetLastListing(account.name)
+        mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-owed", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("an ordinary listing followed: ${listings(mark)}", listings(mark).isNotEmpty() && listings(mark).none(::fromScratch))
+    }
+
+    @Test fun aHeldCollectionListLeavesItsAccountsCacheOpenToOtherReaders() {
+        val name = "notes-boundary-${System.nanoTime()}@example.invalid"
+        val account = newAccount("gen-open", name)
+        val first = uploadNotebook("Listed first")
+        val second = uploadNotebook("Listed second")
+        fake.collectionPageSize = 1
+
+        // 1. The second page of the collection list hangs, as a slow or stalled connection would
+        // leave it. Everything else that reads this account's cache still gets in, and sees exactly
+        // what the first page published.
+        val listing = fake.hold("POST", LIST, skip = 1)
+        val refresh = BackgroundRefresh(account, "gen-open")
+        try {
+            listing.awaitArrival()
+            assertEquals("the first page's cursor was published before the second page was asked for",
+                cursorOf(listing), readWhileHeld("a read of the list cursor") { listCursor(account) })
+            assertEquals(setOf(first), readWhileHeld("a read of the cached collections") { cachedNotebooks(account) })
+            val shown = readWhileHeld("the Notes screen's load") { NotesLoader.notebooks(context, account, "gen-open") }
+            assertEquals(listOf("Listed first"), (shown as NotesLoad.Loaded).value.map { it.name })
+            assertTrue("the refresh is still waiting for its answer", refresh.thread.isAlive)
+        } finally {
+            listing.release()
+        }
+        assertNull("the refresh finished normally", refresh.await())
+        assertEquals("the held page was written, its generation still being current", setOf(first, second), cachedNotebooks(account))
+        val published = listCursor(account)
+        assertNotNull(published)
+        assertFalse("the cursor moved on past the held page", published == cursorOf(listing))
+        assertTrue("the listing time was recorded for this generation", lastListingKeys(name).any { it.endsWith("gen-open") })
+
+        // 2. A listing is in flight when a same-name account replaces this one. Readers still get in
+        // meanwhile, and the answer that arrives afterwards is not written.
+        val third = uploadNotebook("Added before the swap")
+        forgetLastListing(name)
+        val late = fake.hold("POST", LIST)
+        val stale = BackgroundRefresh(account, "gen-open")
+        try {
+            late.awaitArrival()
+            replaceAccount(account, "gen-next")
+            assertEquals(published, readWhileHeld("a read of the list cursor after the swap") { listCursor(account) })
+        } finally {
+            late.release()
+        }
+        assertTrue("the old refresh stopped as stale: ${stale.await()}", stale.await() is StaleSyncRunException)
+        assertEquals("the list cursor did not move", published, listCursor(account))
+        assertFalse("the late page was not written", third in cachedNotebooks(account))
+        assertNull("the replacement's discovery key was not written", AccountSettings.collectionListTypes(manager, account))
+        assertTrue("no listing time was recorded", lastListingKeys(name).isEmpty())
+
+        // The replacement's own refresh is not affected: it lists and writes normally.
+        assertNull(BackgroundRefresh(account, "gen-next").await())
+        assertEquals(setOf(first, second, third), cachedNotebooks(account))
+        assertEquals(CollectionListRefresh.discoveryTypesKey, AccountSettings.collectionListTypes(manager, account))
+    }
+
+    @Test fun aListAnswerBuiltBeforeAForegroundEditDoesNotReplaceTheEditInTheCache() {
+        val account = newAccount("gen-edit")
+        val notebook = uploadNotebook("First name")
+        assertNull(BackgroundRefresh(account, "gen-edit").await())
+        assertEquals("First name", cachedNotebookName(account, notebook))
+
+        // 1. For comparison, nothing is written here while a list answer is on its way back. Another
+        // device renamed the notebook; the answer carrying that is built, parked, and then arrives.
+        renameAsEditingDoes(account, notebook, "Renamed elsewhere", cacheIt = false)
+        forgetLastListing(account.name)
+        val unopposed = fake.hold("POST", LIST, answerFirst = true)
+        val plain = BackgroundRefresh(account, "gen-edit")
+        try {
+            unopposed.awaitArrival()
+            assertEquals("the answer is built but has not arrived", "First name",
+                readWhileHeld("a read of the cached notebook") { cachedNotebookName(account, notebook) })
+        } finally {
+            unopposed.release()
+        }
+        assertNull(plain.await())
+        assertEquals("the other device's rename was cached", "Renamed elsewhere", cachedNotebookName(account, notebook))
+
+        // 2. The other device renames it again and the answer carrying that revision is built and
+        // parked. Before it arrives, this device edits the notebook the way the edit screen saves:
+        // upload, then cache the uploaded revision under the cache's monitor. The server now holds
+        // this device's revision, so the parked answer is out of date when it gets here.
+        renameAsEditingDoes(account, notebook, "Renamed elsewhere again", cacheIt = false)
+        forgetLastListing(account.name)
+        val mark = fake.requests.size
+        val outdated = fake.hold("POST", LIST, answerFirst = true)
+        val late = BackgroundRefresh(account, "gen-edit")
+        try {
+            outdated.awaitArrival()
+            assertEquals("exactly the parked list request was sent", listOf(outdated.request), listings(mark))
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, notebook, "Renamed here", cacheIt = true) }
+            assertEquals("the edit was cached", "Renamed here", cachedNotebookName(account, notebook))
+        } finally {
+            outdated.release()
+        }
+        assertNull("the refresh finished normally", late.await())
+        assertEquals("the answer built before the edit did not put the older revision back",
+            "Renamed here", cachedNotebookName(account, notebook))
+
+        // The next ordinary refresh agrees with the server, which holds this device's revision.
+        forgetLastListing(account.name)
+        assertNull(BackgroundRefresh(account, "gen-edit").await())
+        assertEquals("Renamed here", cachedNotebookName(account, notebook))
+    }
+
+    @Test fun aListPageOvertakenByForegroundEditsIsAskedForAgainAFewTimesAndThenLeftForTheNextRefresh() {
+        val account = newAccount("gen-again")
+        val kept = uploadNotebook("Kept")
+        val lost = uploadNotebook("Lost elsewhere")
+        assertNull(BackgroundRefresh(account, "gen-again").await())
+        assertEquals(setOf(kept, lost), cachedNotebooks(account))
+
+        // 1. An answer that reports a lost membership is built and parked, and this device edits
+        // another notebook before it arrives. The page is asked for again from the same cursor, and
+        // that answer is applied: the lost notebook goes, the edit stays.
+        fake.removeMembership(lost)
+        forgetLastListing(account.name)
+        var mark = fake.requests.size
+        val removal = fake.hold("POST", LIST, answerFirst = true)
+        val refresh = BackgroundRefresh(account, "gen-again")
+        try {
+            removal.awaitArrival()
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, kept, "Kept, renamed here", cacheIt = true) }
+        } finally {
+            removal.release()
+        }
+        assertNull("the refresh finished normally", refresh.await())
+        assertEquals("the page was asked for once more, from the same cursor",
+            listOf(cursorOf(removal), cursorOf(removal)), listings(mark).map(::cursorIn))
+        assertEquals("the lost notebook was dropped", setOf(kept), cachedNotebooks(account))
+        assertEquals("Kept, renamed here", cachedNotebookName(account, kept))
+        assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-again") })
+
+        // 2. Every answer for a page is overtaken by another edit here. The refresh asks three
+        // times, then reports incompletion, without moving the cursor and without recording a
+        // listing time, so the next refresh lists again.
+        forgetLastListing(account.name)
+        val cursorBefore = listCursor(account)
+        mark = fake.requests.size
+        val parked = List(3) { fake.hold("POST", LIST, answerFirst = true) }
+        val crowded = BackgroundRefresh(account, "gen-again")
+        try {
+            parked.forEachIndexed { index, answer ->
+                answer.awaitArrival()
+                readWhileHeld("this device's edit") { renameAsEditingDoes(account, kept, "Edit ${index + 1}", cacheIt = true) }
+                answer.release()
+            }
+        } finally {
+            parked.forEach { it.release() }
+        }
+        assertTrue("the refresh reports truthful incompletion", crowded.await() is CollectionRefreshIncompleteException)
+        assertEquals("the page was asked for three times, from the same cursor",
+            listOf(cursorBefore, cursorBefore, cursorBefore), listings(mark).map(::cursorIn))
+        assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
+        assertEquals("the last edit is what is cached", "Edit 3", cachedNotebookName(account, kept))
+        assertTrue("no listing time was recorded", lastListingKeys(account.name).isEmpty())
+
+        // The next refresh is not affected: it lists, writes and records its time normally.
+        assertNull(BackgroundRefresh(account, "gen-again").await())
+        assertEquals("Edit 3", cachedNotebookName(account, kept))
+        assertFalse("the cursor moved on", listCursor(account) == cursorBefore)
+        assertTrue(lastListingKeys(account.name).any { it.endsWith("gen-again") })
+    }
+
+    @Test fun aReaskedCollectionPageDoesNotLookLikeAStallButAnAppliedRepeatedCursorDoes() {
+        val account = newAccount("gen-retry-stall")
+        val edited = uploadNotebook("First name")
+        assertNull(BackgroundRefresh(account, "gen-retry-stall").await())
+        val saved = listCursor(account)
+        assertNotNull(saved)
+
+        // 1. A listing of several pages. The answer to its first page is built and parked, and this
+        // device edits a notebook before it arrives, so that page is asked for again from the same
+        // cursor. Asking twice from one cursor is not a listing that fails to move on: the page was
+        // not applied the first time, and the listing goes on to its end.
+        fake.collectionPageSize = 1
+        val added = listOf(uploadNotebook("Added one"), uploadNotebook("Added two"), uploadNotebook("Added three"))
+        forgetLastListing(account.name)
+        var mark = fake.requests.size
+        val overtaken = fake.hold("POST", LIST, answerFirst = true)
+        val paged = BackgroundRefresh(account, "gen-retry-stall")
+        try {
+            overtaken.awaitArrival()
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, edited, "Renamed here", cacheIt = true) }
+        } finally {
+            overtaken.release()
+        }
+        val pagedOutcome = paged.await()
+        assertNull("a page asked for again was not taken for a stalled listing: $pagedOutcome", pagedOutcome)
+        val pagedCursors = listings(mark).map(::cursorIn)
+        assertEquals("the first page was asked for twice, from the saved cursor: $pagedCursors",
+            listOf(saved, saved), pagedCursors.take(2))
+        val laterCursors = pagedCursors.drop(2)
+        assertTrue("further pages followed: $pagedCursors", laterCursors.isNotEmpty())
+        assertTrue("every later page was asked for from a cursor: $pagedCursors", laterCursors.none { it == null })
+        assertEquals("no later page was asked for twice: $pagedCursors", laterCursors.size, laterCursors.toSet().size)
+        assertFalse("no later page went back to the saved cursor: $pagedCursors", saved in laterCursors)
+        assertEquals("every notebook was cached", setOf(edited) + added, cachedNotebooks(account))
+        assertEquals("the edit was kept", "Renamed here", cachedNotebookName(account, edited))
+        assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-retry-stall") })
+
+        // 2. The server now answers every list request "not done" with the cursor it was asked with.
+        // The first answer is overtaken by an edit here and is not applied, so it says nothing yet.
+        // The page is asked for again, that answer is applied, and its cursor is the one the listing
+        // started from: the listing is not moving on, and the refresh ends there.
+        val before = listCursor(account)
+        assertNotNull(before)
+        forgetLastListing(account.name)
+        fake.stalledCollectionList = FakeEtebaseServer.Stall.SAME_CURSOR
+        mark = fake.requests.size
+        val ignored = fake.hold("POST", LIST, answerFirst = true)
+        val stalled = BackgroundRefresh(account, "gen-retry-stall")
+        try {
+            ignored.awaitArrival()
+            readWhileHeld("this device's edit") { renameAsEditingDoes(account, edited, "Renamed again", cacheIt = true) }
+        } finally {
+            ignored.release()
+        }
+        val stalledOutcome = stalled.await()
+        assertTrue("the refresh ended as a stalled listing: $stalledOutcome",
+            stalledOutcome is io.silentsuite.sync.syncadapter.PagedListingStalledException)
+        assertEquals("one answer was overtaken, and the one applied after it ended the listing",
+            listOf(before, before), listings(mark).map(::cursorIn))
+        assertEquals("the list cursor did not move", before, listCursor(account))
+        assertTrue("no listing time was recorded", lastListingKeys(account.name).isEmpty())
+        assertEquals("the edit was kept", "Renamed again", cachedNotebookName(account, edited))
+
+        // Once the server answers properly again, the next refresh lists and completes as usual.
+        fake.stalledCollectionList = null
+        forgetLastListing(account.name)
+        val recovered = BackgroundRefresh(account, "gen-retry-stall").await()
+        assertNull("the next refresh finished normally: $recovered", recovered)
+        assertEquals("Renamed again", cachedNotebookName(account, edited))
+        assertEquals(setOf(edited) + added, cachedNotebooks(account))
+        assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-retry-stall") })
+    }
+
+    @Test fun concurrentRefreshesOfOneAccountListOneAtATimeAndNeverMoveTheCursorBack() {
+        val account = newAccount("gen-twice")
+        val notebook = uploadNotebook("Listed once")
+        assertNull(BackgroundRefresh(account, "gen-twice").await())
+        val saved = listCursor(account)
+        assertNotNull(saved)
+
+        // Two adapters finish together and both ask for the list while the first answer is slow.
+        val added = uploadNotebook("Added since")
+        forgetLastListing(account.name)
+        val mark = fake.requests.size
+        val listing = fake.hold("POST", LIST)
+        val one = BackgroundRefresh(account, "gen-twice")
+        listing.awaitArrival()
+        val two = BackgroundRefresh(account, "gen-twice")
+        try {
+            SystemClock.sleep(1_000)
+            assertEquals("the second refresh sent no list request while the first was in flight", 1, listings(mark).size)
+        } finally {
+            listing.release()
+        }
+        assertNull(one.await())
+        assertNull(two.await())
+
+        val listed = listings(mark)
+        val published = listCursor(account)
+        assertEquals("the first refresh listed from the saved cursor", saved, cursorIn(listed.first()))
+        assertFalse("the first refresh moved the cursor on", published == saved)
+        // The second either shares the first one's listing or lists again from where the first got
+        // to; it never lists again from the cursor the first started with, nor puts that one back.
+        assertTrue("at most one more list request followed: $listed", listed.size <= 2)
+        assertTrue("a second listing continued from the first one's cursor: $listed", listed.drop(1).all { cursorIn(it) == published })
+        assertEquals(setOf(notebook, added), cachedNotebooks(account))
+        assertTrue(lastListingKeys(account.name).any { it.endsWith("gen-twice") })
     }
 
     @Test fun runsForOneAccountNameStayInOrderAcrossItsGenerations() {
@@ -552,6 +903,183 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals(NoteContent(note.uid, "Replacement note", "Replacement body", 2_000L), (theirNote as NotesLoad.Loaded).value)
     }
 
+    @Test fun aNotebookListingThatNeverFinishesFailsAloneAndFinishesOnceTheServerRecovers() {
+        val account = newAccount("gen-stall")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-stall")
+        val stuck = uploadNotebook("Stuck")
+        uploadNotes(stuck, "Kept one", "Kept two")
+        val fine = uploadNotebook("Fine")
+        uploadNotes(fine, "Other")
+
+        // Every answer for the first notebook says "not done" and gives back the cursor it was asked with.
+        fake.stallItemList(stuck, FakeEtebaseServer.Stall.SAME_CURSOR)
+        NotesSyncCoordinator.request(context, account, "gen-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals("one request from scratch and one with the repeated cursor, then no more: ${itemRequests(stuck)}",
+            2, itemRequests(stuck).size)
+        assertEquals("the pages that did arrive are kept", setOf("Kept one", "Kept two"), cachedNotes(account, stuck))
+        assertEquals("the other notebook still synced", setOf("Other"), cachedNotes(account, fine))
+        assertEquals(fake.itemStoken(fine), notebookCursor(account, fine))
+        status(account, "gen-stall").let {
+            assertNull("a run with a notebook that could not finish is not a success: $it", it.lastSuccessAt)
+            assertEquals("$it", SyncStatusStore.FailureCategory.UNKNOWN, it.lastFailureCategory)
+            assertNull("the attempt is closed: $it", it.activeAttemptId)
+        }
+
+        // Now every answer says "not done" and gives no cursor at all. Its one page holds a note
+        // this device has not seen yet, and that note is cached before the listing is given up.
+        uploadNotes(stuck, "Kept three")
+        fake.stallItemList(stuck, FakeEtebaseServer.Stall.NO_CURSOR)
+        NotesSyncCoordinator.request(context, account, "gen-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals("one more request, then no more: ${itemRequests(stuck)}", 3, itemRequests(stuck).size)
+        assertEquals("the page that arrived is applied before the listing is given up",
+            setOf("Kept one", "Kept two", "Kept three"), cachedNotes(account, stuck))
+        assertNull(status(account, "gen-stall").lastSuccessAt)
+
+        // A later run starts from the cursor the stalled run saved. When the server gives that one
+        // back, the first answer is already the repeat.
+        assertEquals("i0", notebookCursor(account, stuck))
+        fake.stallItemList(stuck, FakeEtebaseServer.Stall.SAME_CURSOR)
+        NotesSyncCoordinator.request(context, account, "gen-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals("one request from the saved cursor, then no more: ${itemRequests(stuck)}", 4, itemRequests(stuck).size)
+        assertNull(status(account, "gen-stall").lastSuccessAt)
+
+        // Once the server answers properly again, the next run finishes the notebook.
+        fake.stallItemList(stuck, null)
+        NotesSyncCoordinator.request(context, account, "gen-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals(fake.itemStoken(stuck), notebookCursor(account, stuck))
+        assertEquals(setOf("Kept one", "Kept two", "Kept three"), cachedNotes(account, stuck))
+        assertNotNull(status(account, "gen-stall").lastSuccessAt)
+    }
+
+    @Test fun aCollectionListThatNeverFinishesEndsTheRunAsATemporaryFailureAndTheNextRunRecovers() {
+        val account = newAccount("gen-list-stall")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-list-stall")
+        val notebook = uploadNotebook("Listed")
+        uploadNotes(notebook, "One")
+
+        // Every list answer says "not done" and gives back the cursor it was asked with.
+        fake.stalledCollectionList = FakeEtebaseServer.Stall.SAME_CURSOR
+        var before = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-list-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals("one listing from scratch and one with the repeated cursor, then no more: ${listings(before)}",
+            2, listings(before).size)
+        assertTrue("no notebook is fetched after a listing that could not finish", itemRequests(notebook).isEmpty())
+        status(account, "gen-list-stall").let {
+            assertNull("$it", it.lastSuccessAt)
+            assertEquals("a listing the server cannot finish is its problem, to be retried: $it",
+                SyncStatusStore.FailureCategory.NETWORK, it.lastFailureCategory)
+            assertNull("the attempt is closed: $it", it.activeAttemptId)
+        }
+
+        // Now every list answer says "not done" and gives no cursor at all.
+        fake.stalledCollectionList = FakeEtebaseServer.Stall.NO_CURSOR
+        before = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-list-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals("one listing, then no more: ${listings(before)}", 1, listings(before).size)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, status(account, "gen-list-stall").lastFailureCategory)
+        assertNull(status(account, "gen-list-stall").lastSuccessAt)
+
+        // A later run starts from the cursor the stalled run saved. When the server gives that one
+        // back, the first answer is already the repeat.
+        fake.stalledCollectionList = FakeEtebaseServer.Stall.SAME_CURSOR
+        before = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-list-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals("one listing from the saved cursor, then no more: ${listings(before)}", 1, listings(before).size)
+        assertNull(status(account, "gen-list-stall").lastSuccessAt)
+
+        // Once the server answers properly again, the next run lists and syncs as usual.
+        fake.stalledCollectionList = null
+        NotesSyncCoordinator.request(context, account, "gen-list-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals(setOf("One"), cachedNotes(account, notebook))
+        val succeeded = status(account, "gen-list-stall").lastSuccessAt
+        assertNotNull(succeeded)
+
+        // A forced refresh makes two listings in one run: from the saved cursor, then from scratch.
+        // The first finishes and the second never does. Each listing has its own guard, and the
+        // force stays owed to the next run.
+        val accepted = uploadNotebook("Accepted while the list stalls")
+        fake.acceptedFromInvitation(accepted)
+        val fromScratchListing = fake.hold("POST", LIST, skip = 1)
+        before = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-list-stall", NotesSyncPolicy.Trigger.MANUAL, forceRefresh = true)
+        fromScratchListing.awaitArrival()
+        fake.stalledCollectionList = FakeEtebaseServer.Stall.SAME_CURSOR
+        fromScratchListing.release()
+        awaitSettled(identity)
+        listings(before).let {
+            assertEquals("from the saved cursor, from scratch, then once with the repeated cursor: $it", 3, it.size)
+            assertFalse(fromScratch(it[0]))
+            assertTrue(fromScratch(it[1]))
+            assertTrue(it[2].contains("stoken=f0"))
+        }
+        assertTrue("the page that did arrive is kept", accepted in cachedNotebooks(account))
+        assertTrue("no notebook is fetched after a listing that could not finish", itemRequests(accepted).isEmpty())
+        status(account, "gen-list-stall").let {
+            assertEquals("no new success: $it", succeeded, it.lastSuccessAt)
+            assertEquals("$it", SyncStatusStore.FailureCategory.NETWORK, it.lastFailureCategory)
+            assertNull("the attempt is closed: $it", it.activeAttemptId)
+        }
+
+        // The force is still owed: an ordinary request lists from scratch again.
+        fake.stalledCollectionList = null
+        before = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-list-stall", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("the owed force listed from scratch: ${listings(before)}", listings(before).any(::fromScratch))
+        assertEquals(fake.itemStoken(accepted), notebookCursor(account, accepted))
+    }
+
+    @Test fun anAdapterItemListingThatNeverFinishesEndsAsATemporaryFailureAndTheNextSyncRecovers() {
+        val account = newAccount("gen-adapter-stall")
+        val settings = AccountSettings(context, account)
+        val colMgr = server.collectionManager
+        val remote = colMgr.create(Constants.ETEBASE_TYPE_CALENDAR, ItemMetadata().apply { name = "Stuck calendar" }, "")
+        colMgr.upload(remote)
+        val calendarUid = remote.uid
+        HttpClient.Builder(context, settings).setForeground(false).build().use {
+            CollectionListRefresh.run(context, account, settings, it.okHttpClient, forceRefresh = true, creationId = "gen-adapter-stall")
+        }
+
+        val provider = checkNotNull(context.contentResolver.acquireContentProviderClient(CalendarContract.AUTHORITY))
+        try {
+            val cached = cache(account).let { synchronized(it) { it.collectionGet(colMgr, calendarUid) } }
+            LocalCalendar.create(account, provider, cached)
+            val calendar = checkNotNull(LocalCalendar.findByName(account, provider, LocalCalendar.Factory, calendarUid))
+            // The calendar adapter's own item fetch, as its sync service runs it.
+            fun sync(result: SyncResult) = CalendarSyncManager(context, account, settings, Bundle(), CalendarContract.AUTHORITY, result,
+                calendar, fake.baseUrl.toHttpUrl()).use { it.performSync() }
+
+            // Every answer says "not done" and gives back the cursor it was asked with.
+            fake.stallItemList(calendarUid, FakeEtebaseServer.Stall.SAME_CURSOR)
+            val stalled = SyncResult()
+            assertEquals(SyncManager.ProviderOutcome.FAILURE, sync(stalled))
+            assertEquals("one request from scratch and one with the repeated cursor, then no more: ${itemRequests(calendarUid)}",
+                2, itemRequests(calendarUid).size)
+            // A temporary server error: counted as an I/O error to retry later, not as a broken
+            // answer, and with no error notification.
+            assertEquals(1L, stalled.stats.numIoExceptions)
+            assertEquals(0L, stalled.stats.numParseExceptions)
+            assertEquals(Constants.DEFAULT_RETRY_DELAY, stalled.delayUntil)
+            assertEquals("the page that arrived was applied and its cursor saved", "i0", notebookCursor(account, calendarUid))
+
+            fake.stallItemList(calendarUid, null)
+            val recovered = SyncResult()
+            assertEquals(SyncManager.ProviderOutcome.SUCCESS, sync(recovered))
+            assertEquals(0L, recovered.stats.numIoExceptions)
+            assertEquals(fake.itemStoken(calendarUid), notebookCursor(account, calendarUid))
+        } finally {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) provider.close() else @Suppress("DEPRECATION") provider.release()
+        }
+    }
+
     // ---- helpers ----
 
     private fun newAccount(generation: String, name: String = "notes-boundary-${System.nanoTime()}@example.invalid",
@@ -707,6 +1235,27 @@ class NotesSyncBoundaryRuntimeTest {
         synchronized(cache) { cache.collections(server.collectionManager, type = Constants.ETEBASE_TYPE_NOTES).mapTo(HashSet()) { it.uid } }
     }
 
+    /** The name the cache holds for [notebook], or null when it is not cached. */
+    private fun cachedNotebookName(account: Account, notebook: String): String? = cache(account).let { cache ->
+        synchronized(cache) {
+            cache.collections(server.collectionManager, type = Constants.ETEBASE_TYPE_NOTES).firstOrNull { it.uid == notebook }?.meta?.name
+        }
+    }
+
+    /**
+     * Renames [notebook] the way EditCollectionFragment.uploadCollection saves an edit: starting
+     * from the cached revision, upload it, then (with [cacheIt]) cache the uploaded revision under
+     * the cache's monitor. Without [cacheIt] only the server changes, as when another device edits.
+     */
+    private fun renameAsEditingDoes(account: Account, notebook: String, name: String, cacheIt: Boolean) {
+        val colMgr = server.collectionManager
+        val cache = cache(account)
+        val col = synchronized(cache) { cache.collectionGet(colMgr, notebook).col }
+        col.meta = ItemMetadata().apply { this.name = name }
+        colMgr.upload(col)
+        if (cacheIt) synchronized(cache) { cache.collectionSet(colMgr, col) }
+    }
+
     /** The titles of the notes cached for [notebook]; none when the notebook itself is not cached. */
     private fun cachedNotes(account: Account, notebook: String): Set<String> = cache(account).let { cache ->
         synchronized(cache) {
@@ -724,8 +1273,10 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     /** The cursor a held list or item request asked to continue from. */
-    private fun cursorOf(held: FakeEtebaseServer.Hold): String? =
-        Regex("[?&]stoken=([^&]+)").find(held.request.orEmpty())?.groupValues?.get(1)
+    private fun cursorOf(held: FakeEtebaseServer.Hold): String? = cursorIn(held.request.orEmpty())
+
+    /** The cursor a recorded list or item request asked to continue from. */
+    private fun cursorIn(request: String): String? = Regex("[?&]stoken=([^&]+)").find(request)?.groupValues?.get(1)
 
     private fun itemRequests(notebook: String) = fake.requests.filter { it.startsWith("GET collection/$notebook/item/") }
 
@@ -808,6 +1359,42 @@ class NotesSyncBoundaryRuntimeTest {
             thread.join(30_000)
             return checkNotNull(outcome.get()) { "the load did not finish" }.getOrThrow()
         }
+    }
+
+    /**
+     * One shared collection refresh on its own thread, as a sync adapter runs it. [await] returns
+     * what it threw, or null when it finished normally.
+     */
+    private inner class BackgroundRefresh(account: Account, generation: String) {
+        private val failure = AtomicReference<Throwable?>()
+        val thread = thread(name = "notes-boundary-refresh") {
+            try {
+                val settings = AccountSettings(context, account)
+                HttpClient.Builder(context, settings).setForeground(false).build().use {
+                    CollectionListRefresh.run(context, account, settings, it.okHttpClient, forceRefresh = false, creationId = generation)
+                }
+            } catch (t: Throwable) {
+                failure.set(t)
+            }
+        }
+
+        fun await(): Throwable? {
+            thread.join(30_000)
+            check(!thread.isAlive) { "the refresh did not finish" }
+            return failure.get()
+        }
+    }
+
+    /**
+     * Runs [read] on its own thread, as another user of the account's cache would while a list
+     * request is held, and fails if it is kept waiting instead of getting its answer.
+     */
+    private fun <T> readWhileHeld(what: String, read: () -> T): T {
+        val outcome = AtomicReference<Result<T>?>()
+        val reader = thread(name = "notes-boundary-reader") { outcome.set(runCatching(read)) }
+        reader.join(10_000)
+        val result = outcome.get() ?: throw AssertionError("$what was kept waiting while the collection list was in flight")
+        return result.getOrThrow()
     }
 
     private fun status(account: Account, generation: String): SyncStatusStore.Status = SyncStatusStore(context).let {

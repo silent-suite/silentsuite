@@ -20,6 +20,9 @@ import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
+import io.silentsuite.sync.syncadapter.CollectionRefreshIncompleteException
+import io.silentsuite.sync.syncadapter.PagedListingGuard
+import io.silentsuite.sync.syncadapter.PagedListingStalledException
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import io.silentsuite.sync.syncadapter.SyncRunGuard
 import io.silentsuite.sync.syncadapter.SyncStatusStore
@@ -135,6 +138,11 @@ internal object NotesSyncRunner {
             }
             if (outcome == NotebooksOutcome.STALE || !guard.mayWrite()) { finishWithoutOutcome(); return true }
             if (outcome == NotebooksOutcome.SOME_FAILED) recordFailure(SyncStatusStore.FailureCategory.UNKNOWN) else recordSuccess()
+        } catch (e: CollectionRefreshIncompleteException) {
+            // No item fetch or success follows an unfinished list. Returning false also keeps
+            // this run's forced refresh owed in the coordinator's existing single-flight policy.
+            Logger.log.info("Notes sync deferred: collection refresh is incomplete")
+            finishWithoutOutcome()
         } catch (e: InterruptedException) {
             Logger.log.info("Notes sync cancelled")
             finishWithoutOutcome()
@@ -196,6 +204,8 @@ internal object NotesSyncRunner {
     }
 
     internal fun notebookFailure(e: Exception): NotebookFailure = when (e) {
+        // One notebook's listing could not finish; the server still answers, so the others go on.
+        is PagedListingStalledException -> NotebookFailure.NOTEBOOK_FAILED
         is UnauthorizedException, is PermissionDeniedException, is ConnectionException,
         is TemporaryServerErrorException -> NotebookFailure.ABORT_RUN
         is NotFoundException -> NotebookFailure.LOST_ACCESS
@@ -252,6 +262,7 @@ internal object NotesSyncRunner {
             Logger.log.fine("Notebook unchanged; skipping item fetch")
             return
         }
+        val paging = PagedListingGuard("notebook item", stoken, PagedListingGuard.MAX_ITEM_PAGES)
         do {
             if (Thread.interrupted()) throw InterruptedException()
             guard.check()
@@ -267,6 +278,7 @@ internal object NotesSyncRunner {
                 }
             }
             stoken = itemList.stoken
+            paging.pageApplied(stoken, itemList.isDone)
         } while (!itemList.isDone)
     }
 }

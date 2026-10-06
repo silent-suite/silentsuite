@@ -8,7 +8,7 @@ import {
   getMeta,
   getItemsByType,
 } from '@/app/lib/data-cache'
-import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { AccountBoundaryChangedError, bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, changeAccountWhenQueuePutRuns, queueGuard, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
 const coreMock = vi.hoisted(() => ({ createItem: vi.fn(), updateItem: vi.fn(), deleteItem: vi.fn(), listItems: vi.fn() }))
@@ -21,7 +21,7 @@ vi.mock('@silentsuite/core', async (importOriginal) => ({
 vi.mock('@/app/stores/use-toast-store', () => toastMock)
 vi.mock('@/app/stores/use-label-suggestions-store', () => ({ useLabelSuggestionsStore: { getState: () => ({ recordUsage: vi.fn() }) } }))
 
-import { useEtebaseStore } from '../use-etebase-store'
+import { useEtebaseStore, withoutPendingDeletes } from '../use-etebase-store'
 import { useSyncStore } from '../use-sync-store'
 import { useContactStore } from '../use-contact-store'
 import { useContactListStore } from '../use-contact-list-store'
@@ -282,6 +282,187 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     expect(await getAll(queueGuard())).toEqual([])
   })
 
+  it('resolves a queued delete as done when a complete listing of the owning collection no longer has the note', async () => {
+    const notesCollection = setNoteAccount([])
+
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [queued] = await getAll(queueGuard())
+    expect(queued).toMatchObject({ type: 'delete', itemUid: 'note-1', collectionUid: 'notes-1', accountFingerprint: TEST_FINGERPRINT })
+    expect(queued!.content).toBeUndefined()
+    expect(await getPendingCount(queueGuard())).toBe(1)
+
+    // Deleted on another device meanwhile: the live notebook lists completely and without the note.
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(1)
+
+    expect(coreMock.listItems).toHaveBeenCalledTimes(1)
+    expect(coreMock.listItems).toHaveBeenCalledWith(useEtebaseStore.getState().account, notesCollection, undefined)
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([])
+    expect(await getPendingCount(queueGuard())).toBe(0)
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    expect(useEtebaseStore.getState().itemCache.has('note-1')).toBe(false)
+  })
+
+  it('resolves a queued delete as done when the last page of the listing holds only a deleted tombstone of the note', async () => {
+    const notesCollection = setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+
+    const other = remoteItem('other-note', 'OTHER')
+    coreMock.listItems
+      .mockResolvedValueOnce({ items: [other], stoken: 's1', done: false })
+      .mockResolvedValueOnce({ items: [{ ...cachedItem('note-1'), isDeleted: true }], stoken: null, done: true })
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(1)
+
+    expect(coreMock.listItems).toHaveBeenCalledTimes(2)
+    expect(coreMock.listItems).toHaveBeenNthCalledWith(1, useEtebaseStore.getState().account, notesCollection, undefined)
+    expect(coreMock.listItems).toHaveBeenNthCalledWith(2, useEtebaseStore.getState().account, notesCollection, 's1')
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([])
+    expect(useEtebaseStore.getState().itemCache.size).toBe(0)
+  })
+
+  it('converges a delete whose server response was lost once a reload finds the note gone', async () => {
+    const item = cachedItem('note-1')
+    setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-1', item }])
+    // The server commits the delete but the response never arrives.
+    coreMock.deleteItem.mockRejectedValueOnce(offlineError())
+
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1')).resolves.toBe('queued')
+    expect(await getAll(queueGuard())).toEqual([
+      expect.objectContaining({ type: 'delete', itemUid: 'note-1', collectionUid: 'notes-1', status: 'pending', retryCount: 0 }),
+    ])
+
+    // Reload: the item maps are empty and the notebook no longer lists the note.
+    setNoteAccount([])
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(1)
+
+    expect(coreMock.deleteItem).toHaveBeenCalledTimes(1)
+    expect(await getAll(queueGuard())).toEqual([])
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
+  it('keeps a queued delete pending without spending retries when the listing fails on a temporary network error', async () => {
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [original] = await getAll(queueGuard())
+
+    coreMock.listItems.mockRejectedValueOnce(offlineError())
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+    expect(await getAll(queueGuard())).toEqual([original!])
+
+    // A listing that breaks off after its first page proves nothing about the note either.
+    coreMock.listItems
+      .mockResolvedValueOnce({ items: [], stoken: 's1', done: false })
+      .mockRejectedValueOnce(offlineError())
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+
+    expect(coreMock.listItems).toHaveBeenCalledTimes(3)
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([original!])
+    expect(original).toMatchObject({ status: 'pending', retryCount: 0 })
+  })
+
+  it('does not treat a not-found listing error as the note being gone', async () => {
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [original] = await getAll(queueGuard())
+
+    coreMock.listItems.mockRejectedValueOnce(Object.assign(new Error('Not found'), { name: 'NotFoundError' }))
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([{ ...original!, retryCount: 1, status: 'pending' }])
+  })
+
+  it('keeps a queued delete pending without listing when its notebook is not available', async () => {
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [original] = await getAll(queueGuard())
+    useEtebaseStore.setState({ collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] } })
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+
+    expect(coreMock.listItems).not.toHaveBeenCalled()
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([original!])
+  })
+
+  it('keeps a queued note edit pending when a complete listing no longer has the note', async () => {
+    _setEncryptedQueuePersistenceAvailableForTests(false)
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().updateItem(
+      'notes',
+      'note-1',
+      'EDITED BEFORE REMOTE DELETE',
+      { persistEncryptedOfflineContent: true, meta: { name: 'Cached title', mtime: 555 }, collectionUid: 'notes-1' },
+    )).resolves.toBe('queued')
+    const [original] = await getAll(queueGuard())
+    expect(original).toMatchObject({ type: 'update', itemUid: 'note-1', collectionUid: 'notes-1' })
+    expect(original!.content).toBeUndefined()
+    // The body the replay needs is in the encrypted cache, so the replay gets as far as looking the item up.
+    expect(JSON.parse((await getItemsByType('notes')).find((record) => record.itemUid === 'note-1')!.content))
+      .toMatchObject({ content: 'EDITED BEFORE REMOTE DELETE' })
+    coreMock.listItems.mockResolvedValue({ items: [], stoken: null, done: true })
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+
+    expect(coreMock.listItems).toHaveBeenCalledTimes(1)
+    expect(coreMock.updateItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([original!])
+  })
+
+  it('keeps a queued delete pending when the note in memory belongs to another notebook', async () => {
+    const item = cachedItem('note-1')
+    setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-2', item }])
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, queueGuard())
+    const [original] = await getAll(queueGuard())
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+
+    expect(coreMock.listItems).not.toHaveBeenCalled()
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([original!])
+    expect(useEtebaseStore.getState().itemCache.get('note-1')).toBe(item)
+  })
+
+  it('keeps a queued delete that only carries a temporary id pending', async () => {
+    setNoteAccount([])
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', tempId: 'temp-note-1' }, queueGuard())
+    const [original] = await getAll(queueGuard())
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+
+    expect(coreMock.listItems).not.toHaveBeenCalled()
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll(queueGuard())).toEqual([original!])
+  })
+
+  it('account boundary during the delete listing leaves the old entry queued and the new account untouched', async () => {
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [original] = await getAll(queueGuard())
+    coreMock.listItems.mockImplementationOnce(async () => {
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      return { items: [], stoken: null, done: true }
+    })
+
+    await expect(useSyncStore.getState().replayOfflineQueue()).resolves.toBe(0)
+
+    expect(coreMock.listItems).toHaveBeenCalledTimes(1)
+    expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    expect(await getAll()).toEqual([original!])
+    expect(original!.accountFingerprint).toBe(TEST_FINGERPRINT)
+    expect(await getAll(queueGuard('new-account'))).toEqual([])
+    expectNewAccountStateUntouched()
+    expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+  })
+
   it('drops queued note edits once a newer online update or a delete succeeds', async () => {
     const item = cachedItem('note-1')
     setNoteAccount([{ uid: 'note-1', collectionUid: 'notes-1', item }])
@@ -530,10 +711,13 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     ['update item', { type: 'update', collectionType: 'calendar', collectionUid: 'col-1', content: 'NEW', itemUid: 'missing' }],
     ['delete item', { type: 'delete', collectionType: 'calendar', collectionUid: 'col-1', itemUid: 'missing' }],
     ['move target collection', { type: 'move', collectionType: 'calendar', collectionUid: 'col-1', targetCollectionUid: 'missing', content: 'NEW', itemUid: 'item-1' }],
-  ] as const)('real sync replay retains the original entry when the %s prerequisite is unavailable', async (_name, queued) => {
+  ] as const)('real sync replay retains the original entry when the %s prerequisite is unavailable', async (name, queued) => {
     setAccount({ items: [{ uid: 'item-1', collectionUid: 'col-1', item: cachedItem('item-1') }] })
     await enqueue(queued, queueGuard())
     const [original] = await getAll(queueGuard())
+    // A complete listing without the item confirms a delete; only a listing
+    // that could not be read leaves the delete's item unavailable.
+    if (name === 'delete item') coreMock.listItems.mockRejectedValueOnce(offlineError())
 
     await useSyncStore.getState().replayOfflineQueue()
 
@@ -779,5 +963,163 @@ describe('useEtebaseStore real guarded offline queue integration', () => {
     coreMock.deleteItem.mockResolvedValueOnce(undefined)
     await useEtebaseStore.getState().deleteItem('calendar', 'target-item')
     expect(coreMock.deleteItem).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ uid: 'target' }), target[0])
+  })
+
+  it('publishes the pending count of a previous session once the account is restored after sync initialization', async () => {
+    // A previous page load queued a note delete while offline.
+    setNoteAccount([])
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'note-1', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    const [queued] = await getAll(queueGuard())
+    expect(queued).toMatchObject({ type: 'delete', itemUid: 'note-1', collectionUid: 'notes-1', accountFingerprint: TEST_FINGERPRINT, status: 'pending' })
+    expect(queued!.content).toBeUndefined()
+
+    // Reload: sync initialization runs before the session is restored, in the same account epoch.
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    const cleanup = useSyncStore.getState().initializeSync()
+    try {
+      // Let the count read that started without an account finish before one is published.
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      setNoteAccount([])
+
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+      expect(useSyncStore.getState().failedQueueCount).toBe(0)
+      expect(await getAll(queueGuard())).toEqual([queued!])
+      expect(coreMock.listItems).not.toHaveBeenCalled()
+      expect(coreMock.deleteItem).not.toHaveBeenCalled()
+    } finally {
+      cleanup()
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
+
+  it('publishes only the new account pending count after an account switch, also while the old account count read is in flight', async () => {
+    const queueDelete = (itemUid: string, fingerprint: string) =>
+      enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid }, queueGuard(fingerprint))
+    await queueDelete('note-1', TEST_FINGERPRINT)
+    await queueDelete('note-2', 'new-account')
+    await queueDelete('note-3', 'new-account')
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    const published: number[] = []
+    const stopRecording = useSyncStore.subscribe((state) => { published.push(state.pendingQueueCount) })
+    const cleanup = useSyncStore.getState().initializeSync()
+    try {
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      setNoteAccount([])
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(2))
+
+      // Back to the first account, then away again before its count read can finish.
+      bumpAccountEpoch()
+      setNoteAccount([])
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(1))
+      published.length = 0
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      bumpAccountEpoch()
+      setNoteAccount([])
+      bumpAccountEpoch()
+      switchAccountAtBoundary()
+      await vi.waitFor(() => expect(useSyncStore.getState().pendingQueueCount).toBe(2))
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      expect(useSyncStore.getState().pendingQueueCount).toBe(2)
+      expect(published).not.toContain(1)
+      expect((await getAll()).map((entry) => entry.itemUid)).toEqual(['note-1', 'note-2', 'note-3'])
+    } finally {
+      stopRecording()
+      cleanup()
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
+
+  it('does not publish a restored account pending count after sync initialization was cleaned up', async () => {
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, queueGuard())
+    useSyncStore.setState({ pendingQueueCount: 0, failedQueueCount: 0 })
+    try {
+      // Cleaned up before the account watcher could attach, as in a double-invoked effect.
+      useSyncStore.getState().initializeSync()()
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      setNoteAccount([])
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      // Cleaned up after the watcher attached, with the restored account's count read still in flight.
+      useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+      const cleanup = useSyncStore.getState().initializeSync()
+      await vi.dynamicImportSettled()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      setNoteAccount([])
+      cleanup()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      expect(await getPendingCount(queueGuard())).toBe(1)
+    } finally {
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+    }
+  })
+
+  it('hides cached notes only for a pending delete of this account and never on a failed or stale queue read', async () => {
+    const record = (itemUid: string) => ({ itemUid, collectionType: 'notes' as const, collectionUid: 'notes-1', content: `CACHED ${itemUid}`, lastModified: 1 })
+    const records = ['pending-delete', 'failed-delete', 'pending-update', 'other-account', 'untouched'].map(record)
+    const visible = async (fingerprint: string | null = TEST_FINGERPRINT) =>
+      (await withoutPendingDeletes('notes', records, getAccountEpoch(), fingerprint)).map((item) => item.itemUid)
+    setNoteAccount([])
+
+    // A delete that exhausted its retries is shown as failed and must not hide the note.
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'failed-delete' }, queueGuard())
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await replay(async () => { throw new Error('rejected by server') }, queueGuard())
+    }
+    expect((await getAll(queueGuard()))[0]).toMatchObject({ itemUid: 'failed-delete', status: 'failed' })
+
+    await expect(useEtebaseStore.getState().deleteItem('notes', 'pending-delete', { collectionUid: 'notes-1' })).resolves.toBe('queued')
+    await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'pending-update' }, queueGuard())
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', tempId: 'untouched' }, queueGuard())
+    await enqueue({ type: 'delete', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'other-account' }, queueGuard('other-account'))
+    await enqueue({ type: 'move', collectionType: 'notes', collectionUid: 'notes-1', targetCollectionUid: 'notes-2', itemUid: 'untouched' }, queueGuard())
+    const queuedBefore = await getAll()
+    expect(JSON.stringify(queuedBefore)).not.toContain('CACHED')
+
+    expect(await visible()).toEqual(['failed-delete', 'pending-update', 'other-account', 'untouched'])
+    expect(await visible('other-account')).toEqual(['pending-delete', 'failed-delete', 'pending-update', 'untouched'])
+    expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), null)).toBe(records)
+    expect(await withoutPendingDeletes('notes', [], getAccountEpoch(), TEST_FINGERPRINT)).toEqual([])
+    expect((await withoutPendingDeletes('calendar', records, getAccountEpoch(), TEST_FINGERPRINT))).toBe(records)
+
+    // An ordinary queue read failure shows the cache as it is.
+    const readSpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(() => { throw new Error('queue read failed') })
+    try {
+      expect(await withoutPendingDeletes('notes', records, getAccountEpoch(), TEST_FINGERPRINT)).toBe(records)
+    } finally {
+      readSpy.mockRestore()
+    }
+
+    // An account boundary during the queue read is never turned into a fallback list.
+    const originalGetAll = IDBObjectStore.prototype.getAll
+    const boundarySpy = vi.spyOn(IDBObjectStore.prototype, 'getAll').mockImplementationOnce(function (this: IDBObjectStore, ...args) {
+      bumpAccountEpoch()
+      return originalGetAll.apply(this, args)
+    })
+    const staleEpoch = getAccountEpoch()
+    try {
+      await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+    } finally {
+      boundarySpy.mockRestore()
+    }
+    await expect(withoutPendingDeletes('notes', records, staleEpoch, TEST_FINGERPRINT)).rejects.toBeInstanceOf(AccountBoundaryChangedError)
+
+    // Reading for the projection never removes or rewrites queue entries.
+    expect(await getAll()).toEqual(queuedBefore)
   })
 })
