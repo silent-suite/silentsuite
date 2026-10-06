@@ -300,3 +300,142 @@ test('R13 bulk deletion reaches exactly the loss limit with real IDB counts', as
   assert.equal((await P.listLoss(a.db)).length, 100);
   assert.equal((await P.getWork(a.db, members[2])).kind, 'body', 'rejected member keeps its evidence');
 });
+
+// ---- bounded refresh-token lifetime and recovery ----
+
+// Stated contract: at most TOKEN_CAP issued refresh tokens are outstanding at any
+// time (conservatively below the 100-item work limit). Abandoned tokens are retired
+// by their own caller when possible, and the oldest are expired at issuance.
+const TOKEN_CAP = 8;
+
+// Reads real IDB meta state: no cleanup or reshaping happens here.
+async function metaState(db) {
+  return P.run(db, ['meta'], 'readonly', async (s) => ({
+    keys: (await P.req(s.meta.getAllKeys())).map(String),
+    values: await P.req(s.meta.getAll()),
+  }));
+}
+async function assertTokensBounded(db, max, label) {
+  const { keys, values } = await metaState(db);
+  const tokens = keys.filter((k) => k.startsWith('refresh:'));
+  assert.ok(tokens.length <= max, `${label}: ${tokens.length} outstanding refresh tokens exceed ${max}`);
+  for (const v of values) {
+    if (Array.isArray(v)) assert.ok(v.length <= TOKEN_CAP, `${label}: meta array of ${v.length} entries`);
+    if (v && typeof v === 'object') {
+      for (const inner of Object.values(v)) {
+        if (Array.isArray(inner)) assert.ok(inner.length <= TOKEN_CAP, `${label}: nested meta array of ${inner.length} entries`);
+      }
+    }
+  }
+  return tokens.length;
+}
+// Account, work, loss and display evidence that token handling must never erase.
+async function evidence(db) {
+  return P.run(db, ['meta', 'work', 'loss', 'display'], 'readonly', async (s) => ({
+    owner: await P.req(s.meta.get('owner')),
+    work: (await P.req(s.work.getAllKeys())).map(String).sort(),
+    loss: (await P.req(s.loss.getAllKeys())).map(String).sort(),
+    display: (await P.req(s.display.getAllKeys())).map(String).sort(),
+  }));
+}
+async function seedEvidence(a) {
+  await complete(a, 'notes/nb1/shown', { body: 'SYNTH-SHOWN' });
+  await N.admit(a, 'notes/nb1/pending', { body: 'SYNTH-PENDING' });
+  await N.admit(a, 'notes/nb1/lost', { body: 'SYNTH-LOST' });
+  await P.dropPayload(a.db, 'notes/nb1/lost');
+  await N.admit(a, 'notes/nb1/lost', { body: 'SYNTH-AFTER-LOSS' }); // records one loss
+  assert.equal((await P.listLoss(a.db)).length, 1);
+}
+const offline = async () => { throw new Error('SYNTH-OFFLINE'); };
+
+test('R14 producer failure retires its refresh token; retries stay bounded and evidence is kept', async () => {
+  const { factory, a, b } = await setupA();
+  await seedEvidence(a);
+  const before = await evidence(a.db);
+  for (let i = 0; i < 10; i++) {
+    const ctx = await P.context(a.db); // recreated context for every attempt
+    await assert.rejects(N.refreshWith(ctx, offline), /SYNTH-OFFLINE/);
+  }
+  assert.equal(await assertTokensBounded(a.db, TOKEN_CAP, 'after producer failures'), 0, 'failed producers must retire their tokens');
+  assert.deepEqual(await evidence(a.db), before, 'token handling erased evidence');
+  const fresh = await P.context(a.db);
+  await N.refreshWith(fresh, async () => [[T, 'SYNTH-AFTER-FAILURES']]);
+  assert.equal((await N.hydrate(fresh)).get(T), 'SYNTH-AFTER-FAILURES', 'ordinary refresh progresses after failures');
+  assert.equal(await assertTokensBounded(a.db, TOKEN_CAP, 'after success'), 0);
+  // Cleanup retires only the failing caller's token; another context's stays valid.
+  const other = await N.refreshBegin(b);
+  await assert.rejects(N.refreshWith(a, offline), /SYNTH-OFFLINE/);
+  assert.equal(await assertTokensBounded(a.db, TOKEN_CAP, 'other context'), 1, "another context's token was retired");
+  await N.refreshPublish(b, [[T, 'SYNTH-OTHER']], other);
+  assert.equal((await N.hydrate(b)).get(T), 'SYNTH-OTHER');
+  // A cleanup that cannot run reports both errors, keeps the original, and leaves one bounded token.
+  const q3 = await P.openQueue(factory, 2);
+  const closing = await P.context(q3);
+  const err = await N.refreshWith(closing, async () => { q3.close(); throw new Error('SYNTH-OFFLINE-CLOSED'); })
+    .then(() => null, (e) => e);
+  assert.ok(err, 'failed cleanup must not turn into success');
+  assert.equal(err.code, 'refresh-token-cleanup-failed');
+  assert.equal(err.errors[0].message, 'SYNTH-OFFLINE-CLOSED', 'original producer error is kept');
+  assert.equal(err.cause, err.errors[0]);
+  assert.equal(await assertTokensBounded(a.db, TOKEN_CAP, 'after cleanup failure'), 1);
+  await N.refreshWith(a, async () => [[T, 'SYNTH-AFTER-CLEANUP-FAILURE']]);
+  assert.equal((await N.hydrate(a)).get(T), 'SYNTH-AFTER-CLEANUP-FAILURE', 'a retained token does not block refresh');
+  const after = await evidence(a.db);
+  assert.deepEqual([after.owner, after.work, after.loss], [before.owner, before.work, before.loss]);
+});
+
+test('R15 an aborted publication transaction does not leave its token behind', async () => {
+  const { a } = await setupA();
+  await seedEvidence(a);
+  const before = await evidence(a.db);
+  // An invalid IDB key aborts the real publication transaction after the token checks.
+  await assert.rejects(N.refreshWith(a, async () => [[undefined, 'SYNTH-ABORT']]), { name: 'DataError' });
+  assert.equal((await N.hydrate(a)).has(T), false);
+  assert.equal(await assertTokensBounded(a.db, TOKEN_CAP, 'after aborted publication'), 0, 'aborted publication left its token');
+  assert.deepEqual(await evidence(a.db), before);
+  await N.refreshWith(a, async () => [[T, 'SYNTH-AFTER-ABORT']]);
+  assert.equal((await N.hydrate(a)).get(T), 'SYNTH-AFTER-ABORT');
+});
+
+test('R16 interrupted refreshes across recreated contexts stay within the stated cap; newest tokens remain valid', async () => {
+  const { a } = await setupA();
+  await seedEvidence(a);
+  const before = await evidence(a.db);
+  const issued = [];
+  for (let i = 0; i < 3 * TOKEN_CAP; i++) {
+    const ctx = await P.context(a.db); // the issuing tab is interrupted before publishing
+    issued.push(await N.refreshBegin(ctx));
+    await assertTokensBounded(a.db, TOKEN_CAP, `after issuance ${i + 1}`);
+  }
+  assert.deepEqual(await evidence(a.db), before, 'expiry erased evidence');
+  const ctx = await P.context(a.db);
+  // The oldest token was expired; refusing it is bounded, not universal.
+  await assert.rejects(N.refreshPublish(ctx, [[T, 'SYNTH-OLDEST']], issued[0]), { code: 'stale-refresh-token' });
+  await N.refreshPublish(ctx, [[T, 'SYNTH-NEWEST']], issued[issued.length - 1]);
+  assert.equal((await N.hydrate(ctx)).get(T), 'SYNTH-NEWEST', 'newest outstanding token still publishes');
+  // An older retained token cannot overwrite the newer publication.
+  await N.refreshPublish(ctx, [[T, 'SYNTH-OLDER-RETAINED']], issued[issued.length - 2]);
+  assert.equal((await N.hydrate(ctx)).get(T), 'SYNTH-NEWEST', 'ordering preserved under the cap');
+  await N.refreshWith(ctx, async () => [[T, 'SYNTH-LATER']]);
+  assert.equal((await N.hydrate(ctx)).get(T), 'SYNTH-LATER');
+  assert.deepEqual((await evidence(a.db)).owner, before.owner);
+});
+
+test('R17 concurrent valid refreshes and repeated progression stay bounded; newer wins', async () => {
+  const { a, b } = await setupA();
+  await seedEvidence(a);
+  const older = await N.refreshBegin(a);
+  const newer = await N.refreshBegin(b);
+  await N.refreshPublish(b, [[T, 'SYNTH-NEWER']], newer);
+  await N.refreshPublish(a, [[T, 'SYNTH-OLDER']], older);
+  assert.equal((await N.hydrate(a)).get(T), 'SYNTH-NEWER');
+  assert.equal(await assertTokensBounded(a.db, TOKEN_CAP, 'after concurrent pair'), 0);
+  for (let i = 0; i < 3 * TOKEN_CAP; i++) {
+    if (i % 3 === 0) await assert.rejects(N.refreshWith(a, offline), /SYNTH-OFFLINE/);
+    else await N.refreshWith(i % 2 ? a : b, async () => [[T, `SYNTH-ROUND-${i}`]]);
+    await assertTokensBounded(a.db, TOKEN_CAP, `round ${i}`);
+  }
+  assert.equal((await N.hydrate(a)).get(T), `SYNTH-ROUND-${3 * TOKEN_CAP - 1}`);
+  assert.equal((await P.listLoss(a.db)).length, 1, 'loss evidence retained');
+  assert.ok(await P.getWork(a.db, 'notes/nb1/pending'), 'pending work retained');
+});

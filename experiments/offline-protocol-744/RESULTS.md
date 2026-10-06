@@ -18,7 +18,10 @@ run locally. A skipped PostgreSQL case would count as unverified (the workflow s
 | Correction pass, hosted run 37505634281 | `860b846` | Node + PG + SQLite | Recorded as 28 Node + 17 PG + 17 SQLite passing. A later review found four further defects (display revision, two-argument refresh after delete, collection deletion visibility, bulk loss counting) |
 | Follow-up local RED | pre-commit | Node with R10–R13 against `860b846` | 33 tests: 29 pass, 4 fail; all four are the intended assertions |
 | Follow-up local GREEN | pre-commit | Node | 33/33 pass, 0 skipped. Setup-only changes: R05 and F04b now obtain tokens from `refreshBegin` |
-| Follow-up, hosted | — | — | Not yet run as of this file |
+| Follow-up, hosted run 37527534371 | `0b8b047` | Node + PG + SQLite | Reported by the coordinator as 33 Node + 17 PG + 17 SQLite passing. A later review found that failed or interrupted refreshes left durable tokens with no bound |
+| Token-lifetime local RED | pre-commit | Node with R14–R17 against `0b8b047` | 37 tests: 34 pass, 3 fail. R14 (10 tokens after 10 producer failures), R15 (1 token after an aborted publication) and R16 (9 tokens after the 9th interrupted issuance) are the intended assertions. R17 positive control passes |
+| Token-lifetime local GREEN | pre-commit | Node | 37/37 pass, 0 skipped. Test-only changes after RED: R15 now requires the publication's `DataError`; R14 adds checks for another context's token and for a failed cleanup |
+| Token-lifetime, hosted | — | — | Not yet run as of this file |
 
 ## Inventory by reviewed finding
 
@@ -35,6 +38,11 @@ run locally. A skipped PostgreSQL case would count as unverified (the workflow s
 | 10 SQL ownership and identity | `server_fence_fixture_test.py` | candidate-only, CI-only | not run locally | hosted result; real server authorization |
 | 11 durable SDK snapshots | S0–S4 | library controls | pass | server acceptance of re-sent revisions; S3 conflict is injected |
 | 13 documentation | SPEC.md, this file | — | updated | — |
+| Follow-up: display revision, delete resurrection, collection deletion, bulk loss count | R10, R10b, R11, R12, R13 | candidate-only | pass | app refresh and favourite callers |
+| Second follow-up: refresh-token lifetime | R14, R15, R16, R17 | candidate-only; R17 is a positive control | pass | real browser quota and eviction; real tab interruption; more than 8 refreshes outstanding at once in real use |
+
+Local inventory: 37 Node cases (`correction.test.cjs` 17, `protocol.test.cjs` 15,
+`sdk.test.cjs` 5), as counted by the test runner.
 
 Findings 1 and 12 are operational (a shared docs-preview deployment triggered by a sibling
 workflow, and an identity verification that could not run). They are not runtime defects

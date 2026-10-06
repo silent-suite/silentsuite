@@ -12,9 +12,10 @@ Two kinds of test exist and are listed separately in `RESULTS.md`:
 - **Paired schedules** (`protocol.test.cjs` F01–F13 except F01b and F10's candidate part)
   run against a **control** that reproduces the rejected behaviour and against the
   **candidate**.
-- **Candidate-only checks** (F01b, the R02–R09 regressions in `correction.test.cjs`, P01,
+- **Candidate-only checks** (F01b, the R02–R17 regressions in `correction.test.cjs`, P01,
   and the SDK and database fixtures) assert the candidate's boundary directly. Their RED
-  was observed against the previous candidate, not against a control.
+  was observed against the previous candidate, not against a control. R17 is a positive
+  control and was green before and after the token-lifetime correction.
 
 **Narrowed claims (correction pass):**
 
@@ -41,6 +42,33 @@ Two kinds of test exist and are listed separately in `RESULTS.md`:
   captured before that point skip the collection.
 - Loss limits are checked against the transaction's live count, which already includes
   losses written earlier in the same transaction.
+
+**Refresh-token lifetime (second correction):**
+
+- At most 8 `refresh:<id>` records are outstanding per queue, which is well below the
+  100-item work limit. Each token is a separate meta record `{id, seq, fingerprint,
+  lifecycleGen, envelopeId}`; no list of tokens is stored anywhere.
+- `refreshBegin` expires tokens in its own transaction before issuing. It first deletes
+  every token not bound to the current owner (fingerprint, lifecycle generation and
+  envelope), then deletes the lowest-sequence tokens until the new one makes 8. Expiry
+  touches only `refresh:` keys. Work, payload, attempt, loss, display, owner, fence,
+  barrier and `retired:` records are untouched.
+- `refreshWith` retires its own token if the producer or the publication fails. That
+  includes a publication transaction that aborted and rolled back its token delete. The
+  original error is rethrown unchanged. The cleanup runs in a separate transaction under
+  the owner check and deletes only the exact issued record. A token that was already
+  consumed or expired needs no cleanup.
+- If that cleanup itself fails (for example, the connection has closed), `refreshWith`
+  rejects with `refresh-token-cleanup-failed`, an `AggregateError` whose first entry and
+  `cause` are the original error. That token may stay until a later issuance expires it,
+  so it still counts against the cap.
+- **Tradeoff:** if more than 8 refreshes are interrupted or still enumerating at once, the
+  oldest are refused at publication with `stale-refresh-token` and must restart. This
+  refusal is bounded, not universal: the newest 8 tokens and every fresh refresh still
+  publish. An expired token writes nothing, so it cannot overwrite newer display state
+  or resurrect a delete. Ordering is still decided by sequence, never by token presence.
+- Callers that use `refreshBegin`/`refreshPublish` directly and abandon a token rely on
+  expiry alone; only `refreshWith` cleans up eagerly.
 
 | Layer | What this experiment can show | What it cannot show |
 |---|---|---|
@@ -95,7 +123,9 @@ numbers, status, revision UIDs. Item bodies and favourite values are only ever c
 | `reconcile` | read attempts for the current generation | Any recorded `revUid` in server history → applied; else resend |
 | `ack` | queue tx | Generation must still match; binds `ackedAttempt` |
 | `publish` | queue tx `[meta, work, display, payload]` | Only the exact acked attempt; retire and display in one tx; memory updated only if not newer |
-| `refreshPublish` | queue tx | Owner check; never overwrites a tuple with live work |
+| `refreshBegin` | queue tx `[meta]` | Owner check; expires unbound and oldest tokens to keep at most 8; issues a sequence-ordered token |
+| `refreshPublish` | queue tx | Owner check; requires and consumes an issued token; never overwrites a tuple with live work |
+| `refreshWith` failure cleanup | separate queue tx `[meta]` | Owner check; deletes only the caller's exact issued token; rethrows the original error |
 | `hydrate` | read | Display overlaid by durable work (deletes hide) |
 | `replaceOwner` | queue tx | CAS on `lifecycleGen`; clears account data; writes owner, session, key together |
 | `publishSession` | queue tx | Same-account: CAS on generation, keeps work |
@@ -135,6 +165,7 @@ Only `pending` is dispatchable; no legacy status is.
 | F12 | Collection delete with an unclassified payload; delete vs move precedence; barrier |
 | F13 | Bulk delete beyond capacity; visibility mapping |
 | P01 | Ordinary save/dispatch/ack/publish, favourite, delete, move, full normal capacity |
+| R14–R17 | Candidate-only, no control. Refresh-token lifetime: producer failure, aborted publication, interruption across recreated contexts, concurrent and repeated valid refreshes |
 
 ## 6. Evidence vs proposal vs unverified
 

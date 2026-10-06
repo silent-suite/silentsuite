@@ -7,6 +7,8 @@ const { webcrypto } = require('node:crypto');
 const ownerTag = (o) => ({ fingerprint: o.fingerprint, lifecycleGen: o.lifecycleGen, envelopeId: o.envelopeId });
 const sameOwner = (a, b) => Boolean(a && b) && a.fingerprint === b.fingerprint && a.lifecycleGen === b.lifecycleGen && a.envelopeId === b.envelopeId;
 const RECEIPT_FIELDS = ['id', 'tuple', 'workGen', 'revUid', 'payloadId'];
+// Outstanding refresh tokens per queue; well below the work limit.
+const REFRESH_TOKEN_CAP = 8;
 
 async function nextSeq(s) {
   const seq = ((await req(s.meta.get('seq'))) || 0) + 1;
@@ -173,18 +175,53 @@ const candidate = {
   // Authority is captured before any asynchronous enumeration. Each capture
   // takes a fresh position in the shared order and is recorded durably, bound
   // to the owner and lifecycle generation; publication consumes it once.
+  // Issuance also expires tokens: any not bound to the current owner, then the
+  // lowest sequences, so at most REFRESH_TOKEN_CAP stay outstanding.
   refreshBegin(ctx) {
     return run(ctx.db, ['meta'], 'readwrite', async (s) => {
       const m = await checkOwner(s, ctx.owner);
-      const token = { id: rid(), seq: await nextSeq(s), fingerprint: m.fingerprint, lifecycleGen: m.lifecycleGen };
+      const live = [];
+      for (const k of await req(s.meta.getAllKeys())) {
+        if (!String(k).startsWith('refresh:')) continue;
+        const t = await req(s.meta.get(k));
+        if (t && sameOwner(t, m)) live.push([t.seq, k]);
+        else s.meta.delete(k);
+      }
+      live.sort((x, y) => x[0] - y[0]);
+      for (const [, k] of live.slice(0, Math.max(0, live.length - (REFRESH_TOKEN_CAP - 1)))) s.meta.delete(k);
+      const token = { id: rid(), seq: await nextSeq(s), ...ownerTag(m) };
       s.meta.put(token, `refresh:${token.id}`);
       return token;
     });
   },
-  // Convenience: capture first, then run the asynchronous producer.
+  // Retires only this caller's own issued token, under the same owner check.
+  // An already consumed or expired token needs no cleanup.
+  refreshAbandon(ctx, token) {
+    return run(ctx.db, ['meta'], 'readwrite', async (s) => {
+      const issued = await req(s.meta.get(`refresh:${token.id}`));
+      if (!issued || issued.seq !== token.seq || !sameOwner(issued, token)) return;
+      await checkOwner(s, ctx.owner);
+      s.meta.delete(`refresh:${token.id}`);
+    });
+  },
+  // Convenience: capture first, then run the asynchronous producer. A failed
+  // producer or publication retires its token and rethrows the original error;
+  // if that cleanup also fails, both errors are reported and the token stays
+  // until it is expired by a later issuance.
   async refreshWith(ctx, producer) {
     const token = await candidate.refreshBegin(ctx);
-    return candidate.refreshPublish(ctx, await producer(), token);
+    try {
+      return await candidate.refreshPublish(ctx, await producer(), token);
+    } catch (err) {
+      try {
+        await candidate.refreshAbandon(ctx, token);
+      } catch (cleanupErr) {
+        const both = new AggregateError([err, cleanupErr], 'refresh-token-cleanup-failed', { cause: err });
+        both.code = 'refresh-token-cleanup-failed';
+        throw both;
+      }
+      throw err;
+    }
   },
   async refreshPublish(ctx, items, token) {
     const sealed = [];
@@ -193,8 +230,8 @@ const candidate = {
       const m = await checkOwner(s, ctx.owner);
       if (!token || !token.id) throw new Reject('refresh-token-required');
       const issued = await req(s.meta.get(`refresh:${token.id}`));
-      if (!issued || issued.seq !== token.seq || issued.fingerprint !== m.fingerprint
-        || issued.lifecycleGen !== m.lifecycleGen || token.lifecycleGen !== m.lifecycleGen) throw new Reject('stale-refresh-token');
+      if (!issued || issued.seq !== token.seq || !sameOwner(issued, m)
+        || token.lifecycleGen !== m.lifecycleGen) throw new Reject('stale-refresh-token');
       s.meta.delete(`refresh:${token.id}`);
       for (const [tuple, rec] of sealed) {
         if (await req(s.work.get(tuple))) continue; // live work keeps the overlay
