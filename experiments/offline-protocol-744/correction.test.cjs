@@ -95,11 +95,12 @@ test('R04 favourite after retirement composes from the display body; unreadable 
 
 test('R05 refresh captured earlier cannot overwrite later publication; tombstones persist', async () => {
   const { a, b } = await setupA();
-  const token = { seq: await P.readSeq(a.db) };
+  // Setup only: refresh now requires an issued pre-enumeration token.
+  const token = await N.refreshBegin(a);
   await complete(a, T, { body: 'SYNTH-Y' });
   await N.refreshPublish(a, [[T, 'SYNTH-X']], token);
   assert.equal((await N.hydrate(b)).get(T), 'SYNTH-Y');
-  const token2 = { seq: await P.readSeq(a.db) };
+  const token2 = await N.refreshBegin(a);
   await complete(a, T, { kind: 'delete' });
   const c = await P.context(b.db); // refreshed context: memory empty, durable state only
   assert.equal((await N.hydrate(c)).has(T), false, 'completed delete hidden after restart');
@@ -179,4 +180,123 @@ test('R09 raw UTF-8 cache content authenticates without JSON parsing; unlock pro
   assert.equal((await N.unlockLegacy(c2, s2.key))[0].status, 'unverified');
   const s3 = await P.seedLegacy({ format: 'vcard', foreignKey: true });
   assert.equal((await N.migrate(await s3.newContext(), s3.factory))[0].status, 'pending-ambiguous');
+});
+
+// ---- review follow-up regressions (four reproduced findings) ----
+
+const { webcrypto } = require('node:crypto');
+const readDisplay = (db, tuple) => P.run(db, ['display'], 'readonly', async (s) => P.req(s.display.get(tuple)));
+
+// Pauses the next AES-GCM decryption until released; restores on release.
+function pauseNextDecrypt() {
+  const subtle = webcrypto.subtle;
+  const original = subtle.decrypt;
+  let enter; let release;
+  const entered = new Promise((r) => { enter = r; });
+  const resumed = new Promise((r) => { release = r; });
+  let once = false;
+  subtle.decrypt = function decrypt(...args) {
+    if (once) return original.apply(this, args);
+    once = true;
+    enter();
+    return resumed.then(() => original.apply(this, args));
+  };
+  return { entered, release: () => { subtle.decrypt = original; release(); } };
+}
+
+test('R10 paused favourite cannot compose a body replaced by a valid refresh; refresh order is monotonic', async () => {
+  const { a } = await setupA();
+  await N.refreshPublish(a, [[T, 'SYNTH-X']], await N.refreshBegin(a));
+  assert.equal(await P.getWork(a.db, T), undefined, 'no live work: display is authoritative');
+  const before = await readDisplay(a.db, T);
+  const pause = pauseNextDecrypt();
+  let fav;
+  try {
+    fav = N.admitFavorite(a, T, true);
+    await pause.entered; // favourite has read X and is decrypting it
+    await N.refreshPublish(a, [[T, 'SYNTH-Y']], await N.refreshBegin(a)); // valid pre-enumeration token
+    const after = await readDisplay(a.db, T);
+    assert.notEqual(after.seq, before.seq, 'every display mutation must advance the display revision');
+  } finally {
+    pause.release();
+    if (fav) await fav.catch(() => {});
+  }
+  const intent = await N.intent(a, T).catch((e) => ({ refused: e.code }));
+  assert.notDeepEqual(intent, { body: 'SYNTH-X', favorite: true }, 'favourite must not resurrect the replaced body');
+  // Reverse completion order: a refresh captured earlier finishes last.
+  const { a: r } = await setupA();
+  const early = await N.refreshBegin(r);
+  const late = await N.refreshBegin(r);
+  await N.refreshPublish(r, [[T, 'SYNTH-NEWER']], late);
+  await N.refreshPublish(r, [[T, 'SYNTH-OLDER']], early);
+  assert.equal((await N.hydrate(r)).get(T), 'SYNTH-NEWER', 'an earlier capture cannot overwrite a later one');
+});
+
+test('R10b positive control: an ordinary later refresh replaces the display body', async () => {
+  const { a, b } = await setupA();
+  await complete(a, T, { body: 'SYNTH-SAVED' });
+  await N.refreshPublish(a, [[T, 'SYNTH-SERVER-NEWER']], await N.refreshBegin(a));
+  assert.equal((await N.hydrate(b)).get(T), 'SYNTH-SERVER-NEWER');
+  await N.admitFavorite(a, T, true);
+  assert.deepEqual(await N.intent(a, T), { body: 'SYNTH-SERVER-NEWER', favorite: true });
+});
+
+test('R11 a completed delete is not resurrected by the two-argument refresh; tokens are lifecycle-bound', async () => {
+  const { a } = await setupA();
+  await complete(a, T, { body: 'SYNTH-X' });
+  const enumeratedBeforeDelete = [[T, 'SYNTH-X']];
+  await complete(a, T, { kind: 'delete' });
+  const fresh = await P.context(a.db);
+  assert.equal((await N.hydrate(fresh)).has(T), false);
+  await N.refreshPublish(a, enumeratedBeforeDelete).catch((e) => { if (typeof e.code !== 'string') throw e; });
+  assert.equal((await N.hydrate(fresh)).has(T), false, 'two-argument refresh resurrected a completed delete');
+  // Lifecycle binding: a token captured before same-account replacement is stale.
+  const { a: c } = await setupA();
+  const staleToken = await N.refreshBegin(c);
+  await N.replaceOwner(c.db, c.owner.lifecycleGen, c.owner.fingerprint);
+  const replaced = await P.context(c.db);
+  await assert.rejects(N.refreshPublish(replaced, [[T, 'SYNTH-OLD-LIFECYCLE']], staleToken), (e) => typeof e.code === 'string');
+  assert.equal(await readDisplay(c.db, T), undefined, 'stale-lifecycle refresh wrote display state');
+  // Positive control: a token captured after the delete may publish a newer server body.
+  await N.refreshPublish(a, [[T, 'SYNTH-RECREATED']], await N.refreshBegin(a));
+  assert.equal((await N.hydrate(fresh)).get(T), 'SYNTH-RECREATED');
+});
+
+test('R12 completed collection deletion is durable for recreated contexts and delayed refresh', async () => {
+  const { a, b } = await setupA();
+  await complete(a, T, { body: 'SYNTH-COLLECTION' });
+  await complete(a, 'notes/nb2/keep', { body: 'SYNTH-OTHER' });
+  const delayed = await N.refreshBegin(a);
+  await N.beginCollectionDelete(a, 'nb1');
+  await N.collectionDelete(a, 'nb1');
+  const fresh = await P.context(b.db);
+  assert.equal((await N.hydrate(fresh)).has(T), false, 'deleted collection item visible after recreation');
+  assert.equal((await N.hydrate(fresh)).get('notes/nb2/keep'), 'SYNTH-OTHER', 'other collections unaffected');
+  await N.refreshPublish(a, [[T, 'SYNTH-COLLECTION']], delayed);
+  assert.equal((await N.hydrate(fresh)).has(T), false, 'delayed refresh resurrected a deleted collection item');
+  // Pending replacement work must not expose the older display copy.
+  const { a: c } = await setupA();
+  await complete(c, T, { body: 'SYNTH-OLD' });
+  await N.admit(c, T, { body: 'SYNTH-PENDING' });
+  await N.beginCollectionDelete(c, 'nb1');
+  await N.collectionDelete(c, 'nb1');
+  assert.equal((await N.hydrate(await P.context(c.db))).has(T), false, 'older display copy exposed');
+});
+
+test('R13 bulk deletion reaches exactly the loss limit with real IDB counts', async () => {
+  const { a } = await setupA();
+  assert.equal(P.limits.loss, 100);
+  await P.run(a.db, ['loss'], 'readwrite', async (s) => {
+    for (let i = 0; i < 98; i++) s.loss.put({ id: `SYNTH-LOSS-${i}`, tuple: `notes/nb9/${i}`, lossGen: `SYNTH-GEN-${i}` });
+  });
+  const members = ['notes/nb1/missing1', 'notes/nb1/missing2', 'notes/nb1/missing3'];
+  for (const t of members) {
+    await N.admit(a, t, { body: 'SYNTH-MISSING' });
+    await P.dropPayload(a.db, t);
+  }
+  assert.equal((await P.listLoss(a.db)).length, 98);
+  const out = await N.admitDeletes(a, members);
+  assert.deepEqual(out, { admitted: members.slice(0, 2), rejected: [members[2]] }, 'post-state of exactly 100 losses must be admitted');
+  assert.equal((await P.listLoss(a.db)).length, 100);
+  assert.equal((await P.getWork(a.db, members[2])).kind, 'body', 'rejected member keeps its evidence');
 });

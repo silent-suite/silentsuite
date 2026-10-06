@@ -15,7 +15,10 @@ run locally. A skipped PostgreSQL case would count as unverified (the workflow s
 | Database regression checkpoint, hosted run 37502658393 | `c36282e` | Node + PG + SQLite | Node 19/19 passed. Database: 28 methods (14 PG, 14 SQLite), 9 failures: 7 behavioural (foreign-principal write on both engines; two outside-collection subtests on both engines; PostgreSQL independent lock-domain overwrite) and 2 setup failures (global-uid schema) |
 | Correction pass, local RED | pre-commit | Node with new `correction.test.cjs` against the previous candidate | 27 tests: 19 pass, 8 fail; all 8 are R02–R09 behavioural assertions |
 | Correction pass, local GREEN | pre-commit | Node | 28/28 pass (23 fake-IDB + 5 SDK), 0 skipped |
-| Correction pass, hosted | — | Database fixtures | Not yet run as of this file; results are recorded in the CI run, not here |
+| Correction pass, hosted run 37505634281 | `860b846` | Node + PG + SQLite | Recorded as 28 Node + 17 PG + 17 SQLite passing. A later review found four further defects (display revision, two-argument refresh after delete, collection deletion visibility, bulk loss counting) |
+| Follow-up local RED | pre-commit | Node with R10–R13 against `860b846` | 33 tests: 29 pass, 4 fail; all four are the intended assertions |
+| Follow-up local GREEN | pre-commit | Node | 33/33 pass, 0 skipped. Setup-only changes: R05 and F04b now obtain tokens from `refreshBegin` |
+| Follow-up, hosted | — | — | Not yet run as of this file |
 
 ## Inventory by reviewed finding
 

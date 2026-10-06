@@ -25,6 +25,23 @@ Two kinds of test exist and are listed separately in `RESULTS.md`:
   re-sent revision is not exercised; the rollback conflict in S3 is fixture-injected.
 - The database fence relies on a synthetic `origin` flag and a fixture schema.
 
+**Display and refresh contracts (follow-up correction):**
+
+- Every display mutation (publication, refresh, tombstone) writes a fresh random `rev`.
+  A favourite composed from the display body is admitted only if `rev` is unchanged.
+- `refreshBegin` takes a fresh position in the shared sequence and records the token
+  durably with the owner fingerprint and lifecycle generation. `refreshPublish` requires
+  that issued token, consumes it once, and refuses it after owner replacement. Calling it
+  without a token is refused (`refresh-token-required`); `refreshWith(ctx, producer)`
+  captures the token before running the producer.
+- A refresh never replaces a display record whose sequence is newer than its token, so an
+  earlier capture cannot overwrite a later one, and a later publication or tombstone wins.
+- Completed collection deletion tombstones every displayed or queued item of the
+  collection in the same transaction and records `retired:<collection>`; refreshes
+  captured before that point skip the collection.
+- Loss limits are checked against the transaction's live count, which already includes
+  losses written earlier in the same transaction.
+
 | Layer | What this experiment can show | What it cannot show |
 |---|---|---|
 | fake-indexeddb 6.2.5 + Node 22 WebCrypto | Real IDB transactions, aborts, version upgrades, blocked upgrades, two independent connections, real AES-GCM bytes | Real browser storage, multi-process tabs, eviction, PWA cache staleness |

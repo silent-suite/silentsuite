@@ -99,7 +99,8 @@ test('F04b refresh and restart hydration keep durable intent over the server cop
   for (const [impl, safe] of [[C, false], [N, true]]) {
     const { a, b } = await setup();
     await impl.admit(a, T, { body: 'SYNTH-LOCAL' });
-    await impl.refreshPublish(a, [[T, 'SYNTH-SERVER']]);
+    // Setup only: the candidate requires a pre-enumeration token; the control has none.
+    await impl.refreshPublish(a, [[T, 'SYNTH-SERVER']], impl.refreshBegin ? await impl.refreshBegin(a) : undefined);
     assert.equal((await impl.hydrate(b)).get(T), safe ? 'SYNTH-LOCAL' : 'SYNTH-SERVER');
   }
 });

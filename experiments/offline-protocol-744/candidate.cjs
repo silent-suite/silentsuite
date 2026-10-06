@@ -22,12 +22,13 @@ async function policy(s, tuple, value) {
   for (const col of cols) if (await req(s.meta.get(`barrier:${col}`))) throw new Reject('collection-barrier');
 }
 
-// Classifies the evidence a replacement would retire. With `pendingLoss` set,
-// enforces the post-state loss limit; null means the caller checked the total.
-async function retireEvidence(s, tuple, old, pendingLoss = 0) {
+// Classifies the evidence a replacement would retire. The loss count is read
+// inside the same transaction, so it already includes losses written earlier
+// in it; `checkLimit` is false only when the caller checked the whole post-state.
+async function retireEvidence(s, tuple, old, checkLimit = true) {
   const p = old.payloadId ? await req(s.payload.get(old.payloadId)) : null;
   const loss = old.kind !== 'delete' && !structural(p);
-  if (loss && pendingLoss !== null && (await req(s.loss.count())) + pendingLoss + 1 > limits.loss) throw new Reject('loss-capacity');
+  if (loss && checkLimit && (await req(s.loss.count())) + 1 > limits.loss) throw new Reject('loss-capacity');
   const commit = () => {
     if (loss) s.loss.put({ id: `${tuple}#${old.workGen}`, tuple, lossGen: old.workGen });
     if (p) s.payload.delete(old.payloadId);
@@ -42,9 +43,9 @@ async function admit(ctx, tuple, value, opts = {}) {
     await policy(s, tuple, value);
     const old = await req(s.work.get(tuple));
     if (opts.expectGen !== undefined && (old ? old.workGen : null) !== opts.expectGen) throw new Reject('retry');
-    if (opts.expectDisplaySeq !== undefined) {
+    if (opts.expectDisplayRev !== undefined) {
       const d = await req(s.display.get(tuple));
-      if ((d ? d.seq : null) !== opts.expectDisplaySeq) throw new Reject('retry');
+      if ((d ? d.rev : null) !== opts.expectDisplayRev) throw new Reject('retry');
     }
     if (old && old.kind === 'move' && value.kind !== 'move') throw new Reject('move-in-progress');
     if (old && value.kind === 'move') throw new Reject('work-in-progress');
@@ -77,7 +78,7 @@ async function authoritative(ctx, tuple) {
     const w = await req(s.work.get(tuple));
     if (w) return { gen: w.workGen, kind: w.kind, rec: w.payloadId ? (await req(s.payload.get(w.payloadId))) || null : null };
     const d = await req(s.display.get(tuple));
-    return { gen: null, displaySeq: d ? d.seq : null, rec: d && !d.tombstone ? d : null };
+    return { gen: null, displayRev: d ? d.rev : null, rec: d && !d.tombstone ? d : null };
   });
   if (!snap.rec || !structural(snap.rec)) throw new Reject('no-authoritative-body');
   return { ...snap, value: await decryptOwned(ctx, snap.rec) };
@@ -94,7 +95,7 @@ const candidate = {
   async admitFavorite(ctx, tuple, favorite) {
     for (let i = 0; i < 3; i++) {
       const cur = await authoritative(ctx, tuple);
-      const opts = cur.gen !== null ? { expectGen: cur.gen } : { expectGen: null, expectDisplaySeq: cur.displaySeq };
+      const opts = cur.gen !== null ? { expectGen: cur.gen } : { expectGen: null, expectDisplayRev: cur.displayRev };
       try {
         return await admit(ctx, tuple, { body: cur.value.body, favorite }, opts);
       } catch (err) {
@@ -159,8 +160,8 @@ const candidate = {
       const w = await req(s.work.get(tuple));
       if (!w || w.status !== 'acked' || w.ackedAttempt !== a.id || w.workGen !== a.workGen) throw new Reject('stale-publication');
       const next = await nextSeq(s); // publication is newer than any earlier refresh capture
-      if (value.tombstone) s.display.put({ id: tuple, seq: next, tombstone: true });
-      else s.display.put({ id: tuple, seq: next, iv: pre.p.iv, ct: pre.p.ct, envelopeId: pre.p.envelopeId });
+      if (value.tombstone) s.display.put({ id: tuple, seq: next, rev: rid(), tombstone: true });
+      else s.display.put({ id: tuple, seq: next, rev: rid(), iv: pre.p.iv, ct: pre.p.ct, envelopeId: pre.p.envelopeId });
       s.work.delete(tuple);
       if (w.payloadId) s.payload.delete(w.payloadId);
       return next;
@@ -169,24 +170,39 @@ const candidate = {
     if (!m || m.seq === undefined || m.seq <= seq) ctx.memory.set(tuple, { seq, body: value.body, tombstone: Boolean(value.tombstone) });
     return value.body;
   },
-  // Authority is captured before any asynchronous enumeration.
+  // Authority is captured before any asynchronous enumeration. Each capture
+  // takes a fresh position in the shared order and is recorded durably, bound
+  // to the owner and lifecycle generation; publication consumes it once.
   refreshBegin(ctx) {
-    return run(ctx.db, ['meta'], 'readonly', async (s) => {
+    return run(ctx.db, ['meta'], 'readwrite', async (s) => {
       const m = await checkOwner(s, ctx.owner);
-      return { seq: (await req(s.meta.get('seq'))) || 0, lifecycleGen: m.lifecycleGen };
+      const token = { id: rid(), seq: await nextSeq(s), fingerprint: m.fingerprint, lifecycleGen: m.lifecycleGen };
+      s.meta.put(token, `refresh:${token.id}`);
+      return token;
     });
   },
+  // Convenience: capture first, then run the asynchronous producer.
+  async refreshWith(ctx, producer) {
+    const token = await candidate.refreshBegin(ctx);
+    return candidate.refreshPublish(ctx, await producer(), token);
+  },
   async refreshPublish(ctx, items, token) {
-    const capture = token || (await candidate.refreshBegin(ctx));
     const sealed = [];
     for (const [tuple, body] of items) sealed.push([tuple, await seal(ctx.owner.key, { body })]);
     await run(ctx.db, ['meta', 'work', 'display'], 'readwrite', async (s) => {
-      await checkOwner(s, ctx.owner);
+      const m = await checkOwner(s, ctx.owner);
+      if (!token || !token.id) throw new Reject('refresh-token-required');
+      const issued = await req(s.meta.get(`refresh:${token.id}`));
+      if (!issued || issued.seq !== token.seq || issued.fingerprint !== m.fingerprint
+        || issued.lifecycleGen !== m.lifecycleGen || token.lifecycleGen !== m.lifecycleGen) throw new Reject('stale-refresh-token');
+      s.meta.delete(`refresh:${token.id}`);
       for (const [tuple, rec] of sealed) {
         if (await req(s.work.get(tuple))) continue; // live work keeps the overlay
+        const retired = await req(s.meta.get(`retired:${collectionOf(tuple)}`));
+        if (retired && retired > token.seq) continue; // collection deleted after capture
         const d = await req(s.display.get(tuple));
-        if (d && d.seq > capture.seq) continue; // newer publication or tombstone wins
-        s.display.put({ id: tuple, seq: capture.seq, envelopeId: ctx.owner.envelopeId, ...rec });
+        if (d && d.seq > token.seq) continue; // later capture, publication or tombstone wins
+        s.display.put({ id: tuple, seq: token.seq, rev: rid(), envelopeId: ctx.owner.envelopeId, ...rec });
       }
     });
   },
@@ -214,7 +230,7 @@ const candidate = {
     });
   },
   collectionDelete(ctx, collection) {
-    return run(ctx.db, ['meta', 'work', 'payload', 'loss'], 'readwrite', async (s) => {
+    return run(ctx.db, ['meta', 'work', 'payload', 'loss', 'display'], 'readwrite', async (s) => {
       await checkOwner(s, ctx.owner);
       const all = await req(s.work.getAll());
       if (all.some((w) => w.kind === 'move' && (w.collection === collection || w.target === collection))) throw new Reject('move-in-progress');
@@ -227,10 +243,18 @@ const candidate = {
         apply.push(w);
       }
       if ((await req(s.loss.count())) + pendingLoss > limits.loss) throw new Reject('loss-capacity');
+      const hide = new Set();
       for (const w of apply) {
-        (await retireEvidence(s, w.id, w, null)).commit();
+        (await retireEvidence(s, w.id, w, false)).commit();
         s.work.delete(w.id);
+        hide.add(w.id);
       }
+      // Durable visibility retirement: tombstone every displayed or queued item
+      // of the collection, and record when it was retired for delayed refreshes.
+      for (const d of await req(s.display.getAll())) if (collectionOf(d.id) === collection) hide.add(d.id);
+      const retiredAt = await nextSeq(s);
+      for (const id of hide) s.display.put({ id, seq: retiredAt, rev: rid(), tombstone: true });
+      s.meta.put(retiredAt, `retired:${collection}`);
       s.meta.delete(`barrier:${collection}`);
     });
   },
@@ -238,7 +262,6 @@ const candidate = {
     return run(ctx.db, ['meta', 'work', 'payload', 'loss'], 'readwrite', async (s) => {
       await checkOwner(s, ctx.owner);
       let free = limits.work - (await req(s.work.count()));
-      let pendingLoss = 0;
       const admitted = [];
       const rejected = [];
       for (const tuple of tuples) {
@@ -248,9 +271,7 @@ const candidate = {
           if (old && old.kind === 'move') throw new Reject('move-in-progress');
           if (!old && free <= 0) throw new Reject('capacity');
           if (old) {
-            const { loss, commit } = await retireEvidence(s, tuple, old, pendingLoss);
-            if (loss) pendingLoss += 1;
-            commit();
+            (await retireEvidence(s, tuple, old)).commit();
           } else {
             free -= 1;
           }
@@ -274,7 +295,10 @@ const candidate = {
       const m = await req(s.meta.get('owner'));
       if ((m ? m.lifecycleGen : 0) !== expectedGen) throw new Reject('stale-owner');
       for (const n of ['work', 'payload', 'attempt', 'display', 'loss', 'legacy']) s[n].clear();
-      for (const k of await req(s.meta.getAllKeys())) if (k === 'fence' || String(k).startsWith('barrier:')) s.meta.delete(k);
+      for (const k of await req(s.meta.getAllKeys())) {
+        const key = String(k);
+        if (key === 'fence' || key.startsWith('barrier:') || key.startsWith('refresh:') || key.startsWith('retired:')) s.meta.delete(k);
+      }
       s.meta.put({ fingerprint, lifecycleGen: expectedGen + 1, envelopeId, session: `session-${fingerprint}` }, 'owner');
       s.crypto.put({ key, envelopeId }, 'env');
       return expectedGen + 1;
