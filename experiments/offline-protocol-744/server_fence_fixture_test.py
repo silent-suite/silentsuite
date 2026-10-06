@@ -33,6 +33,20 @@ class Conflict(Exception):
     pass
 
 
+class Unauthorized(Exception):
+    """Test-only expectation: principal/collection/item binding refused."""
+
+
+# Test-only seeding for the ownership regressions (finding 10). The original
+# p1/c1/i1 seed above is unchanged.
+OWNERSHIP_SEED = [
+    ("INSERT INTO principal (id, web_fenced) VALUES (?, ?)", ("p2", False)),
+    ("INSERT INTO collection (id, principal_id) VALUES (?, ?)", ("c2", "p2")),
+    ("INSERT INTO collection (id, principal_id) VALUES (?, ?)", ("c1b", "p1")),
+    ("INSERT INTO item (uid, collection_id, etag) VALUES (?, ?, ?)", ("i2", "c2", "f0")),
+]
+
+
 class Conn:
     def __init__(self, engine):
         self.engine = engine
@@ -204,6 +218,126 @@ class FenceCases:
     def test_activation_requires_existing_principal(self):
         with self.assertRaises(LookupError):
             activate(self.conn(), "missing")
+
+    # ---- finding 10 ownership regressions (test-only helpers) ----
+
+    def seed(self, rows):
+        c = self.conn()
+        c.begin()
+        try:
+            for sql, params in rows:
+                c.x(sql, params)
+            c.commit()
+        except BaseException:
+            c.rollback()
+            raise
+
+    def count(self, sql, params):
+        c = self.conn()
+        value = c.x(sql, params).fetchone()[0]
+        c.rollback()
+        return value
+
+    def count_item(self, uid, collection, etag):
+        return self.count(
+            "SELECT COUNT(*) FROM item WHERE uid = ? AND collection_id = ? AND etag = ?", (uid, collection, etag))
+
+    def count_owned(self, principal, collection, uid):
+        return self.count(
+            "SELECT COUNT(*) FROM item i JOIN collection c ON c.id = i.collection_id "
+            "WHERE i.uid = ? AND c.id = ? AND c.principal_id = ?", (uid, collection, principal))
+
+    def integrity_errors(self):
+        errors = (sqlite3.IntegrityError,)
+        if self.engine.name == "postgresql":
+            errors += (self.engine.pg.IntegrityError,)
+        return errors
+
+    def test_ownership_seed_cardinality(self):
+        self.seed(OWNERSHIP_SEED)
+        self.assertEqual(self.count_owned("p1", "c1", "i1"), 1)
+        self.assertEqual(self.count_owned("p2", "c2", "i2"), 1)
+        self.assertEqual(self.count_owned("p2", "c1", "i1"), 0)
+        self.assertEqual(self.count_owned("p1", "c1b", "i1"), 0)
+
+    def test_principal_cannot_write_through_another_owners_collection(self):
+        self.seed(OWNERSHIP_SEED)
+        activate(self.conn(), "p1")
+        with self.assertRaises(Unauthorized, msg="SEMANTIC: unfenced p2 reached p1's collection c1 and item i1"):
+            write(self.conn(), "p2", "c1", "i1", None, "p2-body", "batch", origin=True)
+        self.assertEqual(self.count_item("i1", "c1", "e0"), 1)
+        self.assertEqual(self.count_owned("p1", "c1", "i1"), 1)
+
+    def test_collection_cannot_reach_item_outside_it(self):
+        self.seed(OWNERSHIP_SEED)
+        for principal, collection in (("p1", "c1b"), ("p2", "c2")):
+            with self.subTest(principal=principal, collection=collection):
+                with self.assertRaises((Unauthorized, Conflict),
+                                       msg="SEMANTIC: write via another collection reached item i1 of c1"):
+                    write(self.conn(), principal, collection, "i1", "e0", "via-" + collection, "batch", origin=False)
+                self.assertEqual(self.count_item("i1", "c1", "e0"), 1)
+
+    def test_foreign_lock_domain_cannot_change_item_while_owner_collection_locked(self):
+        self.seed(OWNERSHIP_SEED)
+        held, release, outcomes = threading.Event(), threading.Event(), {}
+
+        def owner_writer():
+            try:
+                write(self.conn(), "p1", "c1", "i1", "e0", "eA", "transaction", origin=False,
+                      hook=lambda: (held.set(), release.wait(10)))
+                outcomes["A"] = "committed"
+            except (Conflict, Unauthorized) as err:
+                outcomes["A"] = type(err).__name__
+
+        def foreign_writer():
+            try:
+                write(self.conn(), "p1", "c1b", "i1", "e0", "eB", "transaction", origin=False)
+                outcomes["B"] = "committed"
+            except (Conflict, Unauthorized) as err:
+                outcomes["B"] = type(err).__name__
+
+        errors, (ta, tb) = self.run_threads(owner_writer, foreign_writer)
+        ta.start()
+        self.assertTrue(held.wait(10))
+        tb.start()
+        tb.join(1.0)
+        during = self.count_item("i1", "c1", "e0")
+        release.set()
+        ta.join(10)
+        tb.join(10)
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(outcomes), ["A", "B"])
+        self.assertEqual(during, 1,
+                         "SEMANTIC: i1 changed through collection c1b's lock domain while c1 was locked")
+        self.assertLessEqual(sum(1 for v in outcomes.values() if v == "committed"), 1)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM item WHERE uid = ?", ("i1",)), 1)
+
+    def test_same_owner_collection_item_progression(self):
+        self.seed(OWNERSHIP_SEED)
+        c = self.conn()
+        write(c, "p1", "c1", "i1", "e0", "e1", "transaction", origin=False)
+        write(c, "p1", "c1b", "i3", None, "n0", "batch", origin=False)
+        write(c, "p1", "c1b", "i3", "n0", "n1", "transaction", origin=False)
+        write(c, "p2", "c2", "i2", "f0", "f1", "transaction", origin=True)
+        self.assertEqual(self.count_item("i1", "c1", "e1"), 1)
+        self.assertEqual(self.count_item("i3", "c1b", "n1"), 1)
+        self.assertEqual(self.count_item("i2", "c2", "f1"), 1)
+        with self.assertRaises(Conflict):
+            write(c, "p1", "c1", "i1", "e0", "stale", "transaction", origin=False)
+        self.assertEqual(self.count_item("i1", "c1", "e1"), 1)
+
+    def test_compound_uid_distinct_items_per_collection(self):
+        self.seed(OWNERSHIP_SEED)
+        try:
+            self.seed([("INSERT INTO item (uid, collection_id, etag) VALUES (?, ?, ?)", ("i1", "c1b", "k0"))])
+        except self.integrity_errors() as err:
+            self.fail("SETUP-SCHEMA (not the ownership RED): fixture schema cannot represent "
+                      "a collection-scoped uid: " + type(err).__name__)
+        write(self.conn(), "p1", "c1", "i1", "e0", "e1", "transaction", origin=False)
+        self.assertEqual(self.count_item("i1", "c1", "e1"), 1)
+        self.assertEqual(self.count_item("i1", "c1b", "k0"), 1,
+                         "SEMANTIC: write through c1 changed c1b's same-uid item")
+        self.assertEqual(self.count("SELECT COUNT(*) FROM item WHERE uid = ?", ("i1",)), 2)
 
 
 def read_fence_once(case):
