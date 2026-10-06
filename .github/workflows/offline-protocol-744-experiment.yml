@@ -1,0 +1,74 @@
+name: Offline protocol 744 experiment
+
+on:
+  push:
+    branches:
+      - test/web744-isolated-protocol-harness-20261006
+    paths:
+      - 'experiments/offline-protocol-744/**'
+      - '.github/workflows/offline-protocol-744-experiment.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-protocol-744-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  experiment:
+    name: Synthetic protocol harness and DB fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: synthetic
+          POSTGRES_PASSWORD: synthetic-fixture-only
+          POSTGRES_DB: offline744
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U synthetic -d offline744"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install hash-locked server requirements (fixture DB driver)
+        working-directory: server
+        run: |
+          python -m pip install --upgrade pip
+          pip install --require-hashes --only-binary=:all: -r requirements.txt
+
+      - name: Node harness (fake-indexeddb + installed SDK, no network)
+        run: node --test experiments/offline-protocol-744/*.test.cjs
+
+      - name: Synthetic PostgreSQL and SQLite fixtures
+        env:
+          OFFLINE744_PG_DSN: postgresql://synthetic:synthetic-fixture-only@localhost:5432/offline744
+          OFFLINE744_REQUIRE_PG: '1'
+        run: python -m unittest discover -s experiments/offline-protocol-744 -p '*_fixture_test.py' -v
