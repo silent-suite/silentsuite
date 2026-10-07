@@ -25,6 +25,7 @@ import posixpath
 import shutil
 import subprocess
 import sys
+import time
 
 from . import config
 
@@ -334,11 +335,161 @@ def render_launchd_plist(binary_args, log_dir: str) -> bytes:
     return plistlib.dumps(payload, sort_keys=False)
 
 
+# Every launchctl call is bounded and its output captured but never shown:
+# it can carry private paths, arguments and environment.
+_LAUNCHCTL_TIMEOUT = 15.0
+_LAUNCHD_POLL_SECONDS = 0.25
+# Startup is confirmed only when the same PID is still listed after this long.
+_LAUNCHD_STABLE_SECONDS = 1.0
+_LAUNCHD_START_TIMEOUT = 10.0
+_LAUNCHD_TEARDOWN_TIMEOUT = 10.0
+
+_LAUNCHD_STAGE_TEXT = {
+    "query": "could not read the agent state",
+    "teardown": "could not stop the existing agent",
+    "register": "could not register the agent",
+    "start": "could not start the agent",
+    "verify": "the bridge process is not running",
+}
+_LAUNCHCTL_REASON_TEXT = {
+    "missing": "launchctl is not available",
+    "timeout": "launchctl did not respond in time",
+}
+
+
+def _launchd_service_target() -> str:
+    # Same gui/<uid>/<label> target the self-update restart kickstarts.
+    return f"gui/{os.getuid()}/{LAUNCHD_LABEL}"
+
+
+def _launchctl(*args) -> str:
+    """Run launchctl; return "ok", "failed", "missing" or "timeout". Output is discarded."""
+    return _launchctl_output(*args)[0]
+
+
+def _launchctl_output(*args):
+    try:
+        result = subprocess.run(
+            ["launchctl", *args], check=False, capture_output=True, timeout=_LAUNCHCTL_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        return "timeout", None
+    except OSError:
+        return "missing", None
+    if result.returncode != 0:
+        return "failed", None
+    stdout = result.stdout
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode("utf-8", errors="replace")
+    return "ok", stdout or ""
+
+
+def _query_launchd_job():
+    """Return (outcome, registered, pid) for LAUNCHD_LABEL from ``launchctl list``.
+
+    ``launchctl list`` without arguments prints PID / last exit status / label
+    columns; a ``-`` PID means the job is loaded but not running. Absence is
+    concluded only from a successful listing without the exact label, never
+    from an error code. An unparsable PID fails closed as a query failure.
+    """
+    outcome, stdout = _launchctl_output("list")
+    if outcome != "ok":
+        return outcome, False, None
+    for line in stdout.splitlines():
+        fields = line.split(None, 2)
+        if len(fields) != 3 or fields[2].strip() != LAUNCHD_LABEL:
+            continue
+        if fields[0] == "-":
+            return "ok", True, None
+        try:
+            pid = int(fields[0])
+        except ValueError:
+            return "failed", False, None
+        return "ok", True, (pid if pid > 0 else None)
+    return "ok", False, None
+
+
+def _wait_until_launchd_job_absent() -> str:
+    deadline = time.monotonic() + _LAUNCHD_TEARDOWN_TIMEOUT
+    while True:
+        outcome, registered, _ = _query_launchd_job()
+        if outcome != "ok":
+            return outcome
+        if not registered:
+            return "ok"
+        if time.monotonic() >= deadline:
+            return "failed"
+        time.sleep(_LAUNCHD_POLL_SECONDS)
+
+
+def _teardown_launchd_job():
+    """Boot out the registered job and confirm it is gone; return (stage, outcome)."""
+    outcome = _launchctl("bootout", _launchd_service_target())
+    if outcome != "ok":
+        return "teardown", outcome
+    outcome = _wait_until_launchd_job_absent()
+    if outcome == "failed":
+        return "teardown", outcome
+    return "query", outcome
+
+
+def _verify_launchd_child_running():
+    """Wait (bounded) until one PID stays listed for the stability window; return (stage, outcome)."""
+    deadline = time.monotonic() + _LAUNCHD_START_TIMEOUT
+    candidate = None
+    since = 0.0
+    while True:
+        outcome, _, pid = _query_launchd_job()
+        if outcome != "ok":
+            return "query", outcome
+        now = time.monotonic()
+        if pid is None:
+            candidate = None
+        elif pid != candidate:
+            candidate, since = pid, now
+        elif now - since >= _LAUNCHD_STABLE_SECONDS:
+            return "verify", "ok"
+        if now >= deadline:
+            return "verify", "failed"
+        time.sleep(_LAUNCHD_POLL_SECONDS)
+
+
+def _launchd_failure_text(stage: str, outcome: str) -> str:
+    text = _LAUNCHD_STAGE_TEXT[stage]
+    reason = _LAUNCHCTL_REASON_TEXT.get(outcome)
+    return f"{text} ({reason})" if reason else text
+
+
+def _report_launchd_failure(stage: str, outcome: str, detail: str) -> int:
+    logger.warning("launchd %s stage failed (%s)", stage, outcome)
+    print(
+        f"Error: {_launchd_failure_text(stage, outcome)}; the bridge is not confirmed running. {detail}",
+        file=sys.stderr,
+    )
+    print(f"Check status: launchctl print {_launchd_service_target()}", file=sys.stderr)
+    return 1
+
+
 def install_autostart_macos() -> int:
-    """Install launchd agent for auto-start."""
+    """Install the launchd agent and confirm launchd started its process.
+
+    Order: query; if the job is registered, boot it out and confirm it is gone
+    before the agent file is replaced (otherwise the file is kept unchanged);
+    write the file; bootstrap; kickstart; then wait, bounded, for a stable
+    child PID. Success means the process started, not that sync works.
+    """
     binary_args = _get_binary_path()
     plist_path = _launchd_plist_path()
     log_dir = _launchd_log_dir()
+    unchanged = "No agent file was changed."
+
+    outcome, registered, _ = _query_launchd_job()
+    if outcome != "ok":
+        return _report_launchd_failure("query", outcome, unchanged)
+    if registered:
+        stage, outcome = _teardown_launchd_job()
+        if outcome != "ok":
+            return _report_launchd_failure(stage, outcome, "The existing agent file was kept unchanged.")
 
     try:
         os.makedirs(log_dir, exist_ok=True)
@@ -350,24 +501,36 @@ def install_autostart_macos() -> int:
         return 1
 
     logger.info("Installed launchd agent")
-
-    ok = _run_reported(["launchctl", "load", plist_path], "launchctl load")
-
     print(f"Auto-start installed: {plist_path}")
-    if ok:
-        print("Agent loaded; launchd will start the bridge now and at login.")
-    else:
-        print("The agent file is installed, but launchctl load failed; the bridge is not confirmed running.")
-    print(f"Verify: launchctl list {LAUNCHD_LABEL}")
+    kept = "The agent file was kept; retry --install-autostart or run --remove-autostart."
+
+    domain = _launchd_service_target().rsplit("/", 1)[0]
+    outcome = _launchctl("bootstrap", domain, plist_path)
+    if outcome != "ok":
+        return _report_launchd_failure("register", outcome, kept)
+    outcome = _launchctl("kickstart", _launchd_service_target())
+    if outcome != "ok":
+        return _report_launchd_failure("start", outcome, kept)
+    stage, outcome = _verify_launchd_child_running()
+    if outcome != "ok":
+        return _report_launchd_failure(stage, outcome, kept)
+
+    print(
+        "launchd started the bridge process; it will also start at login. "
+        "This confirms the process start only, not CalDAV/CardDAV sync."
+    )
+    print(f"Check status: launchctl print {_launchd_service_target()}")
     print(f"Logs: {log_dir}/")
-    return 0 if ok else 1
+    return 0
 
 
 def remove_autostart_macos() -> int:
     """Remove the launchd agent. The persisted network profile is retained.
 
-    If ``launchctl unload`` is not confirmed the plist is kept so the command
-    can be retried; a non-zero return never claims the agent was removed.
+    If the job's state cannot be read or its bootout is not confirmed, the
+    plist is kept so the command can be retried; a non-zero return never
+    claims the agent was removed. A plist without a registered job (for
+    example after a failed install) is simply deleted.
     """
     plist_path = _launchd_plist_path()
 
@@ -376,11 +539,16 @@ def remove_autostart_macos() -> int:
         print(_PROFILE_RETAINED_NOTE)
         return 0
 
-    if not _run_reported(["launchctl", "unload", plist_path], "launchctl unload"):
+    outcome, registered, _ = _query_launchd_job()
+    stage = "query"
+    if outcome == "ok" and registered:
+        stage, outcome = _teardown_launchd_job()
+    if outcome != "ok":
+        logger.warning("launchd %s stage failed (%s)", stage, outcome)
         print(
-            "Auto-start was not removed: launchctl did not confirm the unload, so the agent file "
+            f"Auto-start was not removed: {_launchd_failure_text(stage, outcome)}, so the agent file "
             "was kept and the bridge may still be running. Retry after checking "
-            f"`launchctl list {LAUNCHD_LABEL}`.",
+            f"`launchctl print {_launchd_service_target()}`.",
             file=sys.stderr,
         )
         return 1

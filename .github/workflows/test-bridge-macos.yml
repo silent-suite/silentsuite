@@ -64,8 +64,8 @@ jobs:
         shell: bash
         run: python -m pytest tests/test_network_profile.py tests/test_autostart_profile.py tests/test_autostart_clean_shell_cli.py tests/test_autostart_macos_lifecycle.py -v --tb=short
 
-      # The installed man page is the command contract for this runner; print
-      # only the documented subcommand entries, never launchctl status output.
+      # The installed man page is the command contract for this runner. Print
+      # the complete documentation only; never launchctl state/status output.
       - name: Record installed launchctl command contract (man page)
         if: ${{ !cancelled() }}
         shell: bash
@@ -78,12 +78,7 @@ jobs:
             echo "::error::launchctl man page is not available on this runner"
             exit 1
           fi
-          for sub in bootstrap bootout kickstart print list enable load unload; do
-            echo "----- launchctl ${sub} -----"
-            grep -E -m 1 -A 14 "^[[:space:]]+([a-z]+ \| )?${sub}( |$)" "$man_text" || echo "(no ${sub} entry found)"
-          done
-          echo "----- output stability notices -----"
-          grep -E -i -m 3 "not API" "$man_text" || echo "(no 'not API' notice found)"
+          cat "$man_text"
 
       - name: Run native launchd lifecycle tests (real launchctl, isolated label)
         if: ${{ !cancelled() }}
