@@ -21,6 +21,7 @@ import pytest
 from silentsuite_bridge import autostart, config
 from silentsuite_bridge.update import restart as update_restart
 from tests.settings_lock_holder import hold_settings_lock
+from tests.test_autostart_macos_lifecycle import install_fake_launchd
 
 BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 NETWORK_ENV = tuple(config.NETWORK_PROFILE_ENV.values())
@@ -102,6 +103,16 @@ def env(tmp_path, monkeypatch):
         manager=manager,
         monkeypatch=monkeypatch,
     )
+
+
+def use_fake_launchd(env):
+    """Switch to macOS with the stateful fake launchd.
+
+    FakeServiceManager reports no job state, so it cannot confirm a running
+    child; macOS install/remove run against the lifecycle model instead.
+    """
+    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    return install_fake_launchd(env.monkeypatch)
 
 
 def set_env(env, **values):
@@ -555,31 +566,33 @@ def test_linux_remove_reports_daemon_reload_failure_after_deleting_unit(env, cap
 
 
 def test_macos_remove_keeps_plist_and_fails_when_unload_not_confirmed(env, capsys):
-    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    launchd = use_fake_launchd(env)
     set_env(env, SILENTSUITE_LISTEN_PORT="45123")
     assert autostart.install_autostart() == 0
     capsys.readouterr()
-    env.manager.failing = {"unload"}
+    launchd.failing = {"teardown": 1}
 
     assert autostart.remove_autostart() == 1
 
     captured = capsys.readouterr()
     assert "Auto-start removed" not in captured.out
     assert "was not removed" in captured.err
-    assert "launchctl list io.silentsuite.bridge" in captured.err
+    assert autostart.LAUNCHD_LABEL in captured.err
     assert env.plist.exists()
+    assert launchd.is_registered()
     assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
 
-    env.manager.failing = set()
+    launchd.failing = {}
     assert autostart.remove_autostart() == 0
     assert not env.plist.exists()
+    assert not launchd.is_registered()
 
 
 def test_macos_remove_reports_missing_launchctl(env, capsys):
-    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    launchd = use_fake_launchd(env)
     assert autostart.install_autostart() == 0
     capsys.readouterr()
-    env.manager.missing = {"launchctl"}
+    launchd.missing = True
 
     assert autostart.remove_autostart() == 1
 
@@ -664,9 +677,9 @@ def test_windows_install_and_remove_round_trip_against_isolated_registry_key(env
 
 
 def test_macos_install_writes_escaped_plist_and_reports_load_failure(env, capsys):
-    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    launchd = use_fake_launchd(env)
     env.monkeypatch.setattr(autostart, "_get_binary_path", lambda: ["/Applications/Silent & Suite/bridge"])
-    env.manager.failing = {"load"}
+    launchd.failing = {"register": 5}
     set_env(env, SILENTSUITE_LISTEN_PORT="45123")
 
     assert autostart.install_autostart() == 1
@@ -675,34 +688,33 @@ def test_macos_install_writes_escaped_plist_and_reports_load_failure(env, capsys
     assert payload["ProgramArguments"] == ["/Applications/Silent & Suite/bridge"]
     assert payload["Label"] == autostart.LAUNCHD_LABEL
     assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
-    out = capsys.readouterr().out
-    assert "launchctl load failed" in out
-    assert "not confirmed running" in out
-    # Compare the plist path as a path: expanduser keeps the literal "/Library/..."
-    # suffix, which differs from the fixture's native separators when this test
-    # runs on Windows.
-    assert [call[:2] + [Path(call[2])] for call in env.manager.calls] == [["launchctl", "load", env.plist]]
+    captured = capsys.readouterr()
+    assert "not confirmed running" in captured.out + captured.err
+    assert not launchd.is_registered()
 
 
 def test_macos_install_success_does_not_claim_the_bridge_is_running(env, capsys):
-    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    launchd = use_fake_launchd(env)
 
     assert autostart.install_autostart() == 0
 
     out = capsys.readouterr().out
-    assert "Agent loaded" in out
-    assert "launchctl list io.silentsuite.bridge" in out
+    # Process start at most: never a running/ready claim for the CalDAV/CardDAV service.
+    assert autostart.LAUNCHD_LABEL in out
     assert "is running" not in out
+    assert "is ready" not in out
+    assert launchd.running_args() == [BINARY]
 
 
 def test_macos_remove_retains_profile(env, capsys):
-    env.monkeypatch.setattr(config, "get_platform", lambda: "macos")
+    launchd = use_fake_launchd(env)
     set_env(env, SILENTSUITE_LISTEN_PORT="45123")
     assert autostart.install_autostart() == 0
 
     assert autostart.remove_autostart() == 0
 
     assert not env.plist.exists()
+    assert not launchd.is_registered()
     assert read_settings(env.settings) == {"network": {"listenPort": 45123}}
     assert "was kept" in capsys.readouterr().out
 
