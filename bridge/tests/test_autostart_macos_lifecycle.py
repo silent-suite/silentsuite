@@ -150,7 +150,23 @@ class FakeLaunchd:
 
     Unknown services answer 113, a second ``bootstrap`` of a registered job
     answers 5; these are properties of this model, not cited launchctl facts.
+
+    Domains: ``bootstrap``/``bootout``/``kickstart``/``print`` address the
+    target ``gui/<uid>`` map (``jobs``). The installed man page says legacy
+    subcommands (``list``/``load``/``unload``/``remove``/``start``/``stop``)
+    select their domain from the caller (system when run as root). By default
+    the caller context is that same GUI domain; ``caller_domain_is_gui =
+    False`` routes legacy subcommands to a distinct ``caller_jobs`` map, which
+    may omit the GUI job or hold a same-label decoy. ``manageruid`` and
+    ``managername`` (stage ``context``) report ``manager_uid`` /
+    ``manager_name``, defaulting to the current UID and ``Aqua``.
+    ``caller_decoy_on_bootstrap`` starts a running same-label decoy in the
+    caller map when the GUI job is bootstrapped.
     """
+
+    MUTATING = (
+        "bootstrap", "bootout", "load", "unload", "remove", "kickstart", "start", "stop", "kill", "enable", "disable",
+    )
 
     STAGES = {
         "bootstrap": "register",
@@ -162,6 +178,8 @@ class FakeLaunchd:
         "start": "start",
         "print": "query",
         "list": "query",
+        "manageruid": "context",
+        "managername": "context",
     }
     COMMANDS = tuple(STAGES) + ("stop", "kill", "enable", "disable")
     NOT_FOUND = 113
@@ -182,9 +200,30 @@ class FakeLaunchd:
         self.repeat_load_returncode = 0
         self.honours_run_at_load = True
         self.child_mode = "runs"
+        self.caller_jobs = {}
+        self.caller_domain_is_gui = True
+        self.caller_decoy_on_bootstrap = False
+        self.manager_uid = TEST_UID
+        self.manager_name = "Aqua"
         self._next_pid = 4100
 
     # -- test-side inspection (never goes through launchctl) --
+
+    def mutations(self):
+        """Recorded launchctl calls that could change any launchd state."""
+        return [call for call in self.calls if len(call) > 1 and call[1] in self.MUTATING]
+
+    def add_caller_decoy(self, label=PRODUCTION_LABEL):
+        """A running same-label job in the caller's (non-target) domain."""
+        job = _Job(label, [f"/private/{RAW_MARKER}/decoy"], f"/Library/{RAW_MARKER}/decoy.plist")
+        self.caller_jobs[label] = job
+        self._next_pid += 1
+        job.pid = self._next_pid
+        return job.pid
+
+    def caller_pid(self, label=PRODUCTION_LABEL):
+        job = self.caller_jobs.get(label)
+        return job.pid if job else None
 
     def is_registered(self, label=PRODUCTION_LABEL):
         return label in self.jobs
@@ -273,11 +312,15 @@ class FakeLaunchd:
             return None, None
         return payload.get("Label"), payload
 
-    def _label_for_path(self, path):
+    def _caller_map(self):
+        """Jobs visible to legacy subcommands: the GUI map unless the caller context is elsewhere."""
+        return self.jobs if self.caller_domain_is_gui else self.caller_jobs
+
+    def _label_for_path(self, path, jobs=None):
         label, _ = self._read_plist(path)
         if label is not None:
             return label
-        for job in self.jobs.values():
+        for job in (self.jobs if jobs is None else jobs).values():
             if job.plist_path == path:
                 return job.label
         return None
@@ -304,14 +347,14 @@ class FakeLaunchd:
         if job.pid:
             job.pid, job.exit_at, job.last_exit = None, None, -15
 
-    def _register(self, label, payload, path):
+    def _register(self, label, payload, path, jobs=None):
         job = _Job(label, payload.get("ProgramArguments") or [payload.get("Program", "")], path)
-        self.jobs[label] = job
+        (self.jobs if jobs is None else jobs)[label] = job
         if self.honours_run_at_load and payload.get("RunAtLoad") and label not in self.disabled:
             self._spawn(job)
 
-    def _unregister(self, label):
-        self._kill(self.jobs.pop(label))
+    def _unregister(self, label, jobs=None):
+        self._kill((self.jobs if jobs is None else jobs).pop(label))
 
     def _cmd_bootstrap(self, argv, kwargs):
         operands = self._operands(argv)
@@ -323,6 +366,8 @@ class FakeLaunchd:
         if label in self.jobs:
             return self._result(argv, kwargs, self.ALREADY_BOOTSTRAPPED, stderr=f"Bootstrap failed: 5 {RAW_NOISE}")
         self._register(label, payload, operands[1])
+        if self.caller_decoy_on_bootstrap and not self.caller_domain_is_gui:
+            self.add_caller_decoy(label)
         return self._ok(argv, kwargs)
 
     def _cmd_load(self, argv, kwargs):
@@ -332,10 +377,11 @@ class FakeLaunchd:
         label, payload = self._read_plist(operands[0])
         if label is None:
             return self._result(argv, kwargs, 1, stderr=f"Load failed: {RAW_NOISE}")
-        if label in self.jobs:
+        jobs = self._caller_map()
+        if label in jobs:
             noise = f"service already loaded {RAW_NOISE}"
             return self._result(argv, kwargs, self.repeat_load_returncode, stderr=noise)
-        self._register(label, payload, operands[0])
+        self._register(label, payload, operands[0], jobs)
         return self._ok(argv, kwargs)
 
     def _cmd_bootout(self, argv, kwargs):
@@ -357,17 +403,19 @@ class FakeLaunchd:
 
     def _cmd_unload(self, argv, kwargs):
         operands = self._operands(argv)
-        label = self._label_for_path(operands[0]) if len(operands) == 1 else None
-        if label not in self.jobs:
+        jobs = self._caller_map()
+        label = self._label_for_path(operands[0], jobs) if len(operands) == 1 else None
+        if label not in jobs:
             return self._not_found(argv, kwargs)
-        self._unregister(label)
+        self._unregister(label, jobs)
         return self._ok(argv, kwargs)
 
     def _cmd_remove(self, argv, kwargs):
         operands = self._operands(argv)
-        if len(operands) != 1 or operands[0] not in self.jobs:
+        jobs = self._caller_map()
+        if len(operands) != 1 or operands[0] not in jobs:
             return self._not_found(argv, kwargs)
-        self._unregister(operands[0])
+        self._unregister(operands[0], jobs)
         return self._ok(argv, kwargs)
 
     def _cmd_kickstart(self, argv, kwargs):
@@ -388,9 +436,10 @@ class FakeLaunchd:
 
     def _cmd_start(self, argv, kwargs):
         operands = self._operands(argv)
-        if len(operands) != 1 or operands[0] not in self.jobs:
+        jobs = self._caller_map()
+        if len(operands) != 1 or operands[0] not in jobs:
             return self._not_found(argv, kwargs)
-        job = self.jobs[operands[0]]
+        job = jobs[operands[0]]
         self._refresh(job)
         if not job.pid:
             self._spawn(job)
@@ -398,10 +447,17 @@ class FakeLaunchd:
 
     def _cmd_stop(self, argv, kwargs):
         operands = self._operands(argv)
-        if len(operands) != 1 or operands[0] not in self.jobs:
+        jobs = self._caller_map()
+        if len(operands) != 1 or operands[0] not in jobs:
             return self._not_found(argv, kwargs)
-        self._kill(self.jobs[operands[0]])
+        self._kill(jobs[operands[0]])
         return self._ok(argv, kwargs)
+
+    def _cmd_manageruid(self, argv, kwargs):
+        return self._result(argv, kwargs, 0, f"{self.manager_uid}\n", RAW_NOISE)
+
+    def _cmd_managername(self, argv, kwargs):
+        return self._result(argv, kwargs, 0, f"{self.manager_name}\n", RAW_NOISE)
 
     def _cmd_kill(self, argv, kwargs):
         operands = self._operands(argv)
@@ -461,13 +517,14 @@ class FakeLaunchd:
 
     def _cmd_list(self, argv, kwargs):
         operands = self._operands(argv)
+        jobs = self._caller_map()
         if not operands:
             rows = ["PID\tStatus\tLabel", f"-\t0\t{RAW_MARKER}.private.agent"]
-            for job in self.jobs.values():
+            for job in jobs.values():
                 self._refresh(job)
                 rows.append(f"{job.pid or '-'}\t{job.last_exit or 0}\t{job.label}")
             return self._ok(argv, kwargs, "\n".join(rows) + "\n")
-        job = self.jobs.get(operands[0])
+        job = jobs.get(operands[0])
         if job is None:
             return self._not_found(argv, kwargs)
         self._refresh(job)
@@ -849,5 +906,126 @@ def test_remove_keeps_agent_file_when_teardown_is_not_confirmed(mac, capsys, cap
         assert STAGE_MESSAGES["timeout"] in captured.out + captured.err
     assert mac.plist.exists()
     assert mac.launchd.is_registered()
+    assert read_settings(mac.settings) == {"network": {"listenPort": 45123}}
+    assert_content_free(mac, capsys, caplog)
+
+
+# --- Caller domain vs target gui/<uid> domain ----------------------------------
+#
+# Legacy subcommands (list/load/unload/...) follow the caller's launchd
+# context, while bootstrap/bootout/kickstart address gui/<uid>. When the caller
+# context is not that GUI domain, a successful legacy listing can omit the
+# registered GUI job or show a same-label decoy, so it proves nothing about the
+# target. Install and remove must refuse before changing the agent file or any
+# launchd state. Contexts are synthetic: a manageruid that is not the target
+# UID, a non-Aqua manager, a root caller whose manageruid/managername still
+# match, and manageruid/managername queries that fail or time out.
+
+CALLER_CONTEXTS = [
+    pytest.param("wrong-uid", id="manager-uid-mismatch"),
+    pytest.param("background", id="non-aqua-manager"),
+    pytest.param("root", id="root-caller-with-matching-metadata"),
+    pytest.param("context-fails", id="context-query-fails"),
+    pytest.param("context-times-out", id="context-query-times-out"),
+]
+CALLER_LISTINGS = [
+    pytest.param(False, id="caller-listing-omits-gui-job"),
+    pytest.param(True, id="caller-listing-shows-decoy"),
+]
+
+
+def detach_caller_domain(bridge, context, decoy=False):
+    launchd = bridge.launchd
+    launchd.caller_domain_is_gui = False
+    if context == "wrong-uid":
+        launchd.manager_uid = TEST_UID + 1
+    elif context == "background":
+        launchd.manager_name = "Background"
+    elif context == "root":
+        # manageruid/managername still match; only the effective UID shows that
+        # legacy subcommands would address the system domain.
+        bridge.monkeypatch.setattr(os, "geteuid", lambda: 0, raising=False)
+    elif context == "context-fails":
+        launchd.failing["context"] = 5
+    else:
+        launchd.timeouts.add("context")
+    return launchd.add_caller_decoy() if decoy else None
+
+
+def assert_target_untouched(bridge, original_plist, gui_pid, unrelated_pid, decoy_pid):
+    launchd = bridge.launchd
+    assert bridge.plist.read_bytes() == original_plist, "the agent file changed before the target state was proven"
+    assert launchd.is_registered(), "the registered GUI job was removed"
+    assert launchd.pid() == gui_pid, "the running GUI child was stopped or replaced"
+    assert launchd.running_args() == FIRST_ARGS
+    assert launchd.mutations() == [], "launchd state was mutated before the caller context was proven"
+    assert launchd.pid(UNRELATED_LABEL) == unrelated_pid
+    assert launchd.caller_pid() == decoy_pid
+    assert launchd.unbounded_calls == []
+    assert read_settings(bridge.settings) == {"network": {"listenPort": 45123}}
+
+
+@pytest.mark.parametrize("decoy", CALLER_LISTINGS)
+@pytest.mark.parametrize("context", CALLER_CONTEXTS)
+def test_reinstall_refuses_before_any_change_when_caller_domain_is_not_target_gui(
+    mac, capsys, caplog, context, decoy
+):
+    persist_port(mac)
+    unrelated_pid = mac.launchd.add_unrelated_job()
+    assert install(mac) == 0
+    original = mac.plist.read_bytes()
+    gui_pid = mac.launchd.pid()
+    decoy_pid = detach_caller_domain(mac, context, decoy)
+    use_binary(mac, SECOND_ARGS)
+    read_output(mac, capsys)
+    mac.launchd.calls.clear()
+
+    assert install(mac) != 0
+
+    captured = read_output(mac, capsys)
+    assert NOT_CONFIRMED in captured.out + captured.err
+    assert STARTED not in captured.out + captured.err
+    assert_target_untouched(mac, original, gui_pid, unrelated_pid, decoy_pid)
+    assert_content_free(mac, capsys, caplog)
+
+
+@pytest.mark.parametrize("decoy", CALLER_LISTINGS)
+@pytest.mark.parametrize("context", CALLER_CONTEXTS)
+def test_remove_refuses_and_keeps_agent_when_caller_domain_is_not_target_gui(mac, capsys, caplog, context, decoy):
+    persist_port(mac)
+    unrelated_pid = mac.launchd.add_unrelated_job()
+    assert install(mac) == 0
+    original = mac.plist.read_bytes()
+    gui_pid = mac.launchd.pid()
+    decoy_pid = detach_caller_domain(mac, context, decoy)
+    read_output(mac, capsys)
+    mac.launchd.calls.clear()
+
+    assert remove(mac) != 0, "a caller-domain listing without the job is not proof the GUI agent is gone"
+
+    captured = read_output(mac, capsys)
+    assert "Auto-start removed" not in captured.out
+    assert "was not removed" in captured.err
+    assert_target_untouched(mac, original, gui_pid, unrelated_pid, decoy_pid)
+    assert_content_free(mac, capsys, caplog)
+
+
+def test_install_does_not_confirm_startup_from_a_wrong_domain_decoy_pid(mac, capsys, caplog):
+    # The GUI child never runs; a same-label job in the caller's (non-GUI)
+    # domain starts alongside the bootstrap and lists a stable PID. That PID
+    # must not be taken as the target child, through the verification path or
+    # otherwise.
+    persist_port(mac)
+    mac.launchd.child_mode = "exits-immediately"
+    mac.launchd.caller_decoy_on_bootstrap = True
+    detach_caller_domain(mac, "background")
+
+    assert install(mac) != 0, "a decoy PID from another domain is not proof the bridge started"
+
+    captured = read_output(mac, capsys)
+    assert STARTED not in captured.out + captured.err
+    assert NOT_CONFIRMED in captured.out + captured.err
+    assert mac.launchd.running_args() is None
+    assert mac.launchd.unbounded_calls == []
     assert read_settings(mac.settings) == {"network": {"listenPort": 45123}}
     assert_content_free(mac, capsys, caplog)

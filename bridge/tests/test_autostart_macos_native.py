@@ -38,7 +38,12 @@ from silentsuite_bridge import autostart, config
 from tests.test_autostart_macos_lifecycle import (
     NOT_CONFIRMED,
     PRODUCTION_LABEL,
+    RAW_MARKER,
+    RAW_NOISE,
     STAGE_MESSAGES,
+    TEST_UID,
+    UnboundedVerificationError,
+    VirtualClock,
     isolated_bridge_env,
     read_settings,
 )
@@ -251,3 +256,113 @@ def test_native_child_that_exits_is_not_reported_as_started(native, capsys):
     assert autostart.remove_autostart() == 0
     assert _wait_until(lambda: not _registered(native.service), 15), "removal left the test job registered"
     assert not native.plist.exists()
+
+
+# --- Cleanup safety with an intercepted subprocess boundary ----------------------
+#
+# Synthetic controls, NOT additional real-launchd acceptance: _REAL_RUN and
+# subprocess.run are replaced by a scripted launchctl, os.kill refuses, and the
+# clock is virtual, so no real launchctl, ps or signal is used. The marker
+# directory is empty and the service is a unique test label. A print that
+# times out or fails is not proof the test job is gone: cleanup must still
+# attempt a bounded bootout of its own service and then fail with a
+# content-free AssertionError unless absence is positively established.
+
+
+class RealSignalAttemptedError(BaseException):
+    """Raised if a synthetic cleanup case tries to signal a real process."""
+
+
+def _refuse_kill(pid, sig):
+    raise RealSignalAttemptedError("synthetic cleanup must not signal real processes")
+
+
+class _ScriptedLaunchctl:
+    """Answer the native helpers' launchctl calls from a script; nothing real runs."""
+
+    MAX_CALLS = 200
+
+    def __init__(self, clock, scenario):
+        self.clock = clock
+        self.scenario = scenario
+        self.calls = []
+        self.kwargs = []
+        self.booted_out = False
+
+    def _answer(self, argv, returncode, stdout=""):
+        return subprocess.CompletedProcess(argv, returncode, stdout=stdout.encode(), stderr=RAW_NOISE.encode())
+
+    def _timeout(self, argv, kwargs):
+        raise subprocess.TimeoutExpired(
+            argv, kwargs.get("timeout") or LAUNCHCTL_TIMEOUT, output=RAW_NOISE.encode(), stderr=RAW_NOISE.encode()
+        )
+
+    def __call__(self, argv, *args, **kwargs):
+        argv = [os.fsdecode(token) for token in argv]
+        self.calls.append(argv)
+        self.kwargs.append(kwargs)
+        if len(self.calls) > self.MAX_CALLS:
+            raise UnboundedVerificationError("cleanup polled launchctl without bound")
+        self.clock.advance(0.01)
+        if argv[0] != "launchctl" or len(argv) < 2:
+            return self._answer(argv, 127)
+        if argv[1] == "bootout":
+            self.booted_out = True
+            return self._answer(argv, 0)
+        if argv[1] != "print":
+            return self._answer(argv, 64)
+        if self.scenario == "print-times-out":
+            self._timeout(argv, kwargs)
+        if self.scenario == "print-unexpected-nonzero":
+            return self._answer(argv, 5, RAW_NOISE)
+        # Registered until the bootout, then every query fails.
+        if not self.booted_out:
+            return self._answer(argv, 0, RAW_NOISE)
+        if self.scenario == "query-times-out-after-bootout":
+            self._timeout(argv, kwargs)
+        return self._answer(argv, 5, RAW_NOISE)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "print-times-out",
+        "print-unexpected-nonzero",
+        "query-fails-after-bootout",
+        "query-times-out-after-bootout",
+    ],
+)
+def test_cleanup_never_treats_a_failed_query_as_absence(tmp_path, monkeypatch, scenario):
+    domain = f"gui/{TEST_UID}"
+    service = f"{domain}/io.silentsuite.autostart-test.{secrets.token_hex(6)}"
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    plist = tmp_path / "home" / "agent.plist"
+    plist.parent.mkdir()
+    plist.write_bytes(b"synthetic agent file")
+    state = SimpleNamespace(service=service, plist=plist, markers=markers, token="3333")
+    clock = VirtualClock()
+    scripted = _ScriptedLaunchctl(clock, scenario)
+    monkeypatch.setattr(time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(time, "sleep", clock.sleep)
+    monkeypatch.setitem(globals(), "_REAL_RUN", scripted)
+    monkeypatch.setattr(subprocess, "run", scripted)
+    monkeypatch.setattr(os, "kill", _refuse_kill)
+
+    with pytest.raises(AssertionError) as failure:
+        _cleanup(state)
+
+    assert RAW_MARKER not in str(failure.value)
+    assert "private-owner" not in str(failure.value)
+    bootouts = [argv for argv in scripted.calls if argv[1:2] == ["bootout"]]
+    assert bootouts, "cleanup must attempt a bootout of its own service while absence is unproven"
+    owned = ([service], [domain, str(plist)], [str(plist)])
+    for argv in scripted.calls:
+        assert argv[0] == "launchctl", "synthetic cleanup ran something other than launchctl"
+        operands = [token for token in argv[2:] if not token.startswith("-")]
+        assert operands in owned, "cleanup addressed something other than its own test service"
+    assert all(kwargs.get("timeout") for kwargs in scripted.kwargs), "every cleanup launchctl call needs a timeout"
+    assert all(
+        kwargs.get("capture_output") or (kwargs.get("stdout") is not None and kwargs.get("stderr") is not None)
+        for kwargs in scripted.kwargs
+    ), "cleanup launchctl output must be captured"
