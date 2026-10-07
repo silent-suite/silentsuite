@@ -489,12 +489,16 @@ test('source-map-js enforces bounded indexed section offsets', () => {
 })
 
 // sharp (GHSA-wq5f-xc86-pv6w / CVE-2026-96889): the prebuilt sharp binaries bundle
-// librsvg inside their @img/sharp-libvips platform packages. sharp <0.35.5 bundles a
-// vulnerable librsvg (2.62.x); 0.35.5 provides librsvg 2.63.2 via libvips 1.3.4. This
-// is a graph/native-boundary regression, not an exploit reproduction: it pins the
-// patched bundled contract through the real Next and root consumers and proves the
-// native SVG rasterization boundary still works end to end (alongside the retained
-// PNG smoke in the Next/libheif test below).
+// librsvg; sharp <0.35.5 bundles a vulnerable librsvg (2.62.x) and 0.35.5 provides
+// librsvg 2.63.2. This is a graph/native-boundary regression, not an exploit
+// reproduction: it pins the patched bundled contract through the real Next and root
+// consumers and proves the native SVG rasterization boundary still works end to end
+// (alongside the retained PNG smoke in the Next/libheif test below).
+// Bundled-native admission now runs through test-local helpers below so the same code
+// path can be exercised with explicit platform, arch and scoped-loader inputs: the
+// Windows wrappers publish their manifest/versions directly from @img/sharp-win32-<arch>
+// and are admitted against their own 0.35.5 floor, while Linux and Darwin keep their
+// @img/sharp-libvips-<platform>-<arch> selection at the 1.3.4 floor.
 function atLeastVersion(actual, expected) {
   const actualParts = String(actual).split('.').map(Number)
   const expectedParts = String(expected).split('.').map(Number)
@@ -506,13 +510,99 @@ function atLeastVersion(actual, expected) {
   return true
 }
 
+// Candidate package family for the bundled native contract: the Windows wrappers
+// publish manifest/versions directly from @img/sharp-win32-<arch>; Linux keeps its
+// glibc and musl libvips candidates; Darwin and other platforms use a separate
+// @img/sharp-libvips-<platform>-<arch> package.
+function bundledNativePackageNames(platform, arch) {
+  if (platform === 'win32') {
+    return [`@img/sharp-win32-${arch}`]
+  }
+  if (platform === 'linux') {
+    return [`@img/sharp-libvips-linux-${arch}`, `@img/sharp-libvips-linuxmusl-${arch}`]
+  }
+  return [`@img/sharp-libvips-${platform}-${arch}`]
+}
+
+// Minimum accepted version of the bundled native package: the Windows wrappers carry
+// their own 0.35.5 floor, while the libvips package family stays at 1.3.4.
+function bundledNativePackageFloor(packageName) {
+  return packageName.startsWith('@img/sharp-win32-') ? '0.35.5' : '1.3.4'
+}
+
+// Resolve and admit one bundled native platform package through the supplied scoped
+// loader. Returns the admitted contract or throws a typed rejection: 'missing-package'
+// when no candidate resolves, 'missing-versions' when a manifest resolves without its
+// versions metadata, 'package-floor' / 'rsvg-floor' when a bundled version is below
+// the accepted floor.
+function admitBundledNativeContract({ label, platform, arch, loader }) {
+  const candidates = bundledNativePackageNames(platform, arch)
+  for (const packageName of candidates) {
+    let manifest
+    try {
+      manifest = loader(`${packageName}/package`)
+    } catch {
+      continue
+    }
+    let versions
+    try {
+      versions = loader(`${packageName}/versions`)
+    } catch {
+      const error = new Error(`${label}: bundled ${packageName} is missing its versions metadata`)
+      error.code = 'missing-versions'
+      throw error
+    }
+    const floor = bundledNativePackageFloor(packageName)
+    if (!atLeastVersion(manifest.version, floor)) {
+      const error = new Error(`${label}: bundled ${packageName} must be at least ${floor} (found ${manifest.version})`)
+      error.code = 'package-floor'
+      throw error
+    }
+    if (!atLeastVersion(versions.rsvg, '2.63.2')) {
+      const error = new Error(`${label}: bundled ${packageName} must bundle librsvg at least 2.63.2 (found ${versions.rsvg})`)
+      error.code = 'rsvg-floor'
+      throw error
+    }
+    return { packageName, manifest, versions }
+  }
+  const error = new Error(`${label}: could not resolve a bundled native platform package (tried ${candidates.join(', ')})`)
+  error.code = 'missing-package'
+  throw error
+}
+
+// Scoped fixture loader: serves only the manifest/versions objects present in the
+// fixture surface, like a consumer-scoped require of the package subpaths. No native
+// code is loaded or executed.
+function fixtureScopedLoader(entries) {
+  return (request) => {
+    const match = /^(@img\/[^/]+)\/(package|versions)$/.exec(request)
+    const entry = match ? entries[match[1]] : undefined
+    if (!entry || !(match[2] in entry)) {
+      const error = new Error(`fixture loader: ${request} is not part of the verified fixture surface`)
+      error.code = 'FIXTURE_MISSING'
+      throw error
+    }
+    return entry[match[2]]
+  }
+}
+
+// Fixture manifest/versions entries mirror the verified receipt
+// (windows-sharp-official-package-layout.json lists @img/sharp-win32-<arch> 0.35.5
+// with ./package and ./versions exports, rsvg 2.63.2 and heif 1.23.5). Negative
+// fixtures are controlled mutations of this surface.
+function bundledPackageFixture(name, { version, rsvg = '2.63.2' } = {}) {
+  return {
+    [name]: {
+      package: { name, version },
+      versions: { rsvg, heif: '1.23.5', vips: '8.18.7' },
+    },
+  }
+}
+
 test('Next and root Sharp resolve the patched bundled native contract and rasterize a deterministic SVG', async () => {
   const web = requireFrom('apps/web/package.json')
   const nextRequire = createRequire(web.resolve('next/package.json'))
   const rootRequire = requireFrom('package.json')
-  const platformPackages = process.platform === 'linux'
-    ? [`@img/sharp-libvips-linux-${process.arch}`, `@img/sharp-libvips-linuxmusl-${process.arch}`]
-    : [`@img/sharp-libvips-${process.platform}-${process.arch}`]
   const svg = Buffer.from(
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#cc0000"/></svg>',
   )
@@ -521,24 +611,7 @@ test('Next and root Sharp resolve the patched bundled native contract and raster
     ['next', nextRequire('sharp'), createRequire(nextRequire.resolve('sharp'))],
     ['root', rootRequire('sharp'), createRequire(rootRequire.resolve('sharp'))],
   ]) {
-    let libvipsManifest = null
-    let libvipsVersions = null
-    for (const platformPackage of platformPackages) {
-      try {
-        libvipsManifest = sharpRequire(`${platformPackage}/package`)
-        libvipsVersions = sharpRequire(`${platformPackage}/versions`)
-        break
-      } catch {}
-    }
-    assert.ok(libvipsManifest, `${label} consumer must resolve its bundled libvips platform package`)
-    assert.ok(
-      atLeastVersion(libvipsManifest.version, '1.3.4'),
-      `${label} bundled libvips platform package must be at least 1.3.4 (found ${libvipsManifest.version})`,
-    )
-    assert.ok(
-      atLeastVersion(libvipsVersions.rsvg, '2.63.2'),
-      `${label} bundled librsvg must be at least 2.63.2 (found ${libvipsVersions.rsvg})`,
-    )
+    admitBundledNativeContract({ label, platform: process.platform, arch: process.arch, loader: sharpRequire })
     assert.equal(sharpModule.versions.sharp, '0.35.5', `${label} consumer must resolve the patched sharp 0.35.5`)
 
     const rendered = await sharpModule(svg).png().toBuffer({ resolveWithObject: true })
@@ -551,6 +624,149 @@ test('Next and root Sharp resolve the patched bundled native contract and raster
     assert.ok(Math.abs(decoded.data[center + 1]) <= 1, `${label} center pixel green channel`)
     assert.ok(Math.abs(decoded.data[center + 2]) <= 1, `${label} center pixel blue channel`)
   }
+})
+
+test('Windows x64 bundled contract admits the published @img/sharp-win32-x64 wrapper fixture', () => {
+  const contract = admitBundledNativeContract({
+    label: 'win32-x64 fixture',
+    platform: 'win32',
+    arch: 'x64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-x64', { version: '0.35.5' })),
+  })
+  assert.equal(contract.packageName, '@img/sharp-win32-x64')
+  assert.equal(contract.manifest.version, '0.35.5')
+  assert.equal(contract.versions.rsvg, '2.63.2')
+  assert.equal(contract.versions.heif, '1.23.5')
+})
+
+test('Windows arm64 bundled contract admits the published @img/sharp-win32-arm64 wrapper fixture', () => {
+  const contract = admitBundledNativeContract({
+    label: 'win32-arm64 fixture',
+    platform: 'win32',
+    arch: 'arm64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-arm64', { version: '0.35.5' })),
+  })
+  assert.equal(contract.packageName, '@img/sharp-win32-arm64')
+  assert.equal(contract.manifest.version, '0.35.5')
+  assert.equal(contract.versions.rsvg, '2.63.2')
+  assert.equal(contract.versions.heif, '1.23.5')
+})
+
+test('Windows sharp wrapper older than 0.35.5 is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-x64 older-wrapper fixture',
+      platform: 'win32',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-x64', { version: '0.35.4' })),
+    }),
+    (error) => error instanceof Error && error.code === 'package-floor',
+    'a Windows wrapper older than 0.35.5 must not be admitted',
+  )
+})
+
+test('Windows sharp wrapper bundling librsvg below 2.63.2 is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-arm64 low-rsvg fixture',
+      platform: 'win32',
+      arch: 'arm64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-arm64', { version: '0.35.5', rsvg: '2.63.1' })),
+    }),
+    (error) => error instanceof Error && error.code === 'rsvg-floor',
+    'a Windows wrapper bundling librsvg 2.63.1 must not be admitted',
+  )
+})
+
+test('Windows sharp wrapper without a package manifest is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-x64 missing-manifest fixture',
+      platform: 'win32',
+      arch: 'x64',
+      loader: fixtureScopedLoader({ '@img/sharp-win32-x64': { versions: { rsvg: '2.63.2', heif: '1.23.5', vips: '8.18.7' } } }),
+    }),
+    (error) => error instanceof Error && error.code === 'missing-package',
+    'a Windows wrapper without its manifest must not be admitted',
+  )
+})
+
+test('Windows sharp wrapper without versions metadata is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-x64 missing-versions fixture',
+      platform: 'win32',
+      arch: 'x64',
+      loader: fixtureScopedLoader({ '@img/sharp-win32-x64': { package: { name: '@img/sharp-win32-x64', version: '0.35.5' } } }),
+    }),
+    (error) => error instanceof Error && error.code === 'missing-versions',
+    'a Windows wrapper without versions metadata must not be admitted',
+  )
+})
+
+test('Linux sharp glibc and musl bundles are selected through the shared helper', () => {
+  const glibc = admitBundledNativeContract({
+    label: 'linux-x64 fixture',
+    platform: 'linux',
+    arch: 'x64',
+    loader: fixtureScopedLoader({
+      ...bundledPackageFixture('@img/sharp-libvips-linux-x64', { version: '1.3.4' }),
+      ...bundledPackageFixture('@img/sharp-libvips-linuxmusl-x64', { version: '1.3.4' }),
+    }),
+  })
+  assert.equal(glibc.packageName, '@img/sharp-libvips-linux-x64')
+
+  const musl = admitBundledNativeContract({
+    label: 'linux-musl-x64 fixture',
+    platform: 'linux',
+    arch: 'x64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-linuxmusl-x64', { version: '1.3.4' })),
+  })
+  assert.equal(musl.packageName, '@img/sharp-libvips-linuxmusl-x64')
+})
+
+test('Linux sharp bundles below the libvips or librsvg floors are rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'linux-x64 old-libvips fixture',
+      platform: 'linux',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-linux-x64', { version: '1.3.3' })),
+    }),
+    (error) => error instanceof Error && error.code === 'package-floor',
+    'libvips 1.3.3 must be rejected',
+  )
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'linux-x64 low-rsvg fixture',
+      platform: 'linux',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-linux-x64', { version: '1.3.4', rsvg: '2.63.1' })),
+    }),
+    (error) => error instanceof Error && error.code === 'rsvg-floor',
+    'librsvg 2.63.1 must be rejected',
+  )
+})
+
+test('Darwin sharp bundles are selected through the shared helper and held to the libvips floor', () => {
+  const admitted = admitBundledNativeContract({
+    label: 'darwin-arm64 fixture',
+    platform: 'darwin',
+    arch: 'arm64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-darwin-arm64', { version: '1.3.4' })),
+  })
+  assert.equal(admitted.packageName, '@img/sharp-libvips-darwin-arm64')
+
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'darwin-x64 old-libvips fixture',
+      platform: 'darwin',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-darwin-x64', { version: '1.3.3' })),
+    }),
+    (error) => error instanceof Error && error.code === 'package-floor',
+    'darwin libvips 1.3.3 must be rejected',
+  )
 })
 
 // @vue/server-renderer (GHSA-g2v6-rqmx-r4w6): ssrRenderAttrs and ssrRenderDynamicAttr
