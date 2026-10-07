@@ -1,6 +1,6 @@
 import { emailOwnershipToken as signedEmailProof, checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import { describe, expect, it, vi } from 'vitest'
-import { BillingResponseError, cancelUnclaimedAnnualSelection, activateAnnualCheckout, activateAuthenticatedAnnualCheckout, buildSameOriginReturnUrl, cancelAnonymousPaymentSessionRecovery, consumeSignupEmailOwnership, fetchAnonymousAnnualOffer, fetchAuthenticatedAnnualOffer, getAnonymousPaymentSessionRecovery, isRenewableAnnualOfferError, reconcileAnonymousPaymentSessionRecovery, requestSignupEmailOwnership, startAuthenticatedAnnualPayment, startSignupAnnualPayment, type BillingV2Fetch } from '../billing-v2'
+import { BillingResponseError, cancelUnclaimedAnnualSelection, activateAnnualCheckout, activateAuthenticatedAnnualCheckout, buildSameOriginReturnUrl, cancelAnonymousPaymentSessionRecovery, consumeSignupEmailOwnership, fetchAnonymousAnnualOffer, fetchAuthenticatedAnnualOffer, getAnonymousPaymentSessionRecovery, isAnnualOfferAuthenticationError, isRenewableAnnualOfferError, reconcileAnonymousPaymentSessionRecovery, requestSignupEmailOwnership, startAuthenticatedAnnualPayment, startSignupAnnualPayment, type BillingV2Fetch } from '../billing-v2'
 
 const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'
 const requestKey = '5fd4d86d-34de-4b82-9a66-9598ddf6e02f'
@@ -156,6 +156,26 @@ describe('billing v2 public authority client', () => {
       'https://api.silentsuite.io/errors/payment-reconciliation-required',
     ))).toBe(false)
     expect(isRenewableAnnualOfferError(new TypeError('Failed to fetch'))).toBe(false)
+    expect(isRenewableAnnualOfferError(new BillingResponseError(
+      'Not signed in',
+      401,
+      'https://api.silentsuite.io/errors/authentication-failed',
+    ))).toBe(false)
+  })
+
+  it('attributes only a Billing 401 to authentication', () => {
+    expect(isAnnualOfferAuthenticationError(new BillingResponseError('auth', 401, 'https://api.silentsuite.io/errors/authentication-failed'))).toBe(true)
+    expect(isAnnualOfferAuthenticationError(new BillingResponseError('auth', 401, null))).toBe(true)
+    for (const error of [
+      new BillingResponseError('refused', 409, 'https://api.silentsuite.io/errors/plan-not-purchasable'),
+      new BillingResponseError('forbidden', 403, null),
+      new BillingResponseError('down', 503, 'https://api.silentsuite.io/errors/offer-unavailable'),
+      new TypeError('Failed to fetch'),
+      new Error('Billing returned an invalid annual offer.'),
+      { billingStatus: 401 },
+    ]) {
+      expect(isAnnualOfferAuthenticationError(error)).toBe(false)
+    }
   })
 
   it('rejects a signup payment response with a different recovery authority', async () => {
