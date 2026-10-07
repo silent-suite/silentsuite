@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -300,9 +301,9 @@ test('Next resolves patched Sharp and transforms image data with patched libheif
   const web = requireFrom('apps/web/package.json')
   const nextRequire = createRequire(web.resolve('next/package.json'))
   const sharp = nextRequire('sharp')
-  assert.equal(sharp.versions.sharp, '0.35.4')
-  assert.equal(sharp.versions.heif, '1.23.2')
-  assert.equal(requireFrom('package.json')('sharp').versions.sharp, '0.35.4')
+  assert.equal(sharp.versions.sharp, '0.35.5')
+  assert.equal(sharp.versions.heif, '1.23.5')
+  assert.equal(requireFrom('package.json')('sharp').versions.sharp, '0.35.5')
   const image = sharp({ create: { width: 4, height: 4, channels: 3, background: '#123456' } })
   const avif = await image.avif().toBuffer()
   const { info } = await sharp(avif).resize(2, 2).png().toBuffer({ resolveWithObject: true })
@@ -354,4 +355,434 @@ test('security overrides remain scoped to compatible vulnerable major lines', ()
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'js-yaml'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'nanoid@<3.3.18'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'browserslist'), false)
+})
+
+// source-map-js (GHSA-68fv-2mgg-jv7q / CVE-2026-93749): a section's offset.line in an
+// indexed source map is untrusted input. The pinned 1.2.1 graph never validates it and
+// SourceNode.fromStringWithSourceMap pads generated lines one at a time up to the
+// mapping's line, so one tiny section with a huge offset.line becomes attacker-sized
+// synchronous work. PostCSS (web tooling) and @vue/compiler-sfc (docs tooling) resolve
+// the same locked copy.
+const sourceMapJsFromPostcss = createRequire(requireFrom('apps/web/package.json').resolve('postcss'))
+const sourceMapJsFromVue = createRequire(
+  createRequire(requireFrom('apps/docs/package.json').resolve('vue')).resolve('@vue/compiler-sfc'),
+)
+const sourceMapJs = sourceMapJsFromPostcss('source-map-js')
+
+test('source-map-js resolves one locked copy through PostCSS and Vue compiler consumers and round-trips valid indexed maps', () => {
+  const fromPostcss = sourceMapJsFromPostcss('source-map-js/package.json')
+  const fromVue = sourceMapJsFromVue('source-map-js/package.json')
+  assert.equal(fromPostcss.name, 'source-map-js')
+  assert.equal(fromPostcss.version, fromVue.version, 'the web and docs toolchains must share one source-map-js version')
+
+  const validMap = {
+    version: 3,
+    file: 'min.js',
+    sections: [
+      { offset: { line: 0, column: 0 }, map: { version: 3, sources: ['one.js'], sourcesContent: ['one'], names: [], mappings: 'AAAA' } },
+      { offset: { line: 2, column: 0 }, map: { version: 3, sources: ['two.js'], sourcesContent: ['two'], names: [], mappings: 'AAAA' } },
+    ],
+  }
+  const consumer = new sourceMapJs.SourceMapConsumer(validMap)
+  assert.equal(consumer.originalPositionFor({ line: 1, column: 1 }).source, 'one.js')
+  assert.equal(consumer.originalPositionFor({ line: 3, column: 1 }).source, 'two.js')
+
+  const code = 'a\nb\nc\nd\n'
+  const node = sourceMapJs.SourceNode.fromStringWithSourceMap(code, new sourceMapJs.SourceMapConsumer(validMap))
+  assert.equal(node.toString(), code)
+})
+
+test('source-map-js rejects an overwhelming indexed section offset instead of blocking SourceNode.fromStringWithSourceMap', () => {
+  // The adversarial operation below can synchronously block inside the pinned graph, so
+  // it runs in a child bounded to a 128 MB heap and a hard 3 s SIGKILL. The child reports
+  // "ready" through stdout only after resolving the real consumer chain, proving it
+  // reached the vulnerable operation before any timeout or crash is judged.
+  const childScript = [
+    "const fs = require('node:fs');",
+    "const { createRequire } = require('node:module');",
+    `const webRequire = createRequire(${JSON.stringify(resolve(import.meta.dirname, '..', 'apps/web/package.json'))});`,
+    "const postcssRequire = createRequire(webRequire.resolve('postcss'));",
+    "const lib = postcssRequire('source-map-js');",
+    "const version = postcssRequire('source-map-js/package.json').version;",
+    "fs.writeSync(1, '#SMOKE#' + JSON.stringify({ stage: 'ready', version }) + '#SMOKE#');",
+    'try {',
+    "  const map = { version: 3, sections: [{ offset: { line: 1000000000, column: 0 }, map: { version: 3, sources: ['a.js'], sourcesContent: ['a'], names: [], mappings: 'AAAA' } }] };",
+    '  const consumer = new lib.SourceMapConsumer(map);',
+    "  const node = lib.SourceNode.fromStringWithSourceMap('var x;', consumer);",
+    "  fs.writeSync(1, '#SMOKE#' + JSON.stringify({ stage: 'completed', length: node.toString().length }) + '#SMOKE#');",
+    '} catch (error) {',
+    "  fs.writeSync(1, '#SMOKE#' + JSON.stringify({ stage: 'rejected', name: error.name, message: error.message }) + '#SMOKE#');",
+    '}',
+  ].join('')
+
+  const startedAt = Date.now()
+  const result = spawnSync(process.execPath, ['--max-old-space-size=128', '-e', childScript], {
+    timeout: 3000,
+    killSignal: 'SIGKILL',
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+  })
+  const waitedMs = Date.now() - startedAt
+
+  const messages = (result.stdout ?? '')
+    .split('#SMOKE#')
+    .filter((segment, index) => index % 2 === 1)
+    .map((segment) => {
+      try {
+        return JSON.parse(segment)
+      } catch {
+        return { stage: 'unparsed', segment: segment.slice(0, 120) }
+      }
+    })
+
+  const ready = messages.find((message) => message.stage === 'ready')
+  assert.ok(
+    ready,
+    [
+      'the bounded source-map-js child never reached the vulnerable operation',
+      `exit=${result.status}, signal=${result.signal}, error=${result.error?.code ?? 'none'}`,
+      `stdout=${JSON.stringify((result.stdout ?? '').slice(0, 200))}`,
+      `stderr=${JSON.stringify((result.stderr ?? '').slice(-200))}`,
+    ].join('; '),
+  )
+
+  const settled = messages.find((message) => message.stage === 'completed' || message.stage === 'rejected')
+  assert.ok(
+    settled,
+    [
+      `a one-section indexed map with offset.line=1000000000 never settled under the bounded child after ${waitedMs} ms`,
+      `exit=${result.status}, signal=${result.signal}, error=${result.error?.code ?? 'none'}`,
+      `stderr=${JSON.stringify((result.stderr ?? '').slice(-200))}`,
+      `the pinned source-map-js ${ready.version} ran attacker-sized synchronous work instead of rejecting the offset`,
+    ].join('; '),
+  )
+
+  assert.equal(settled.stage, 'rejected', `the overwhelming indexed map must be rejected before any mapping work: ${JSON.stringify(settled)}`)
+  assert.match(settled.message, /must not exceed/)
+  assert.equal(result.status, 0, `the rejected map must exit cleanly: exit=${result.status}, signal=${result.signal}`)
+  assert.equal(result.signal, null, `the rejected map must not be signalled: ${result.signal}`)
+  assert.equal(result.error, undefined, `the rejected map must not surface a subprocess error: ${result.error?.code ?? 'none'}`)
+})
+
+test('source-map-js enforces bounded indexed section offsets', () => {
+  const indexedMap = (offset) => ({
+    version: 3,
+    sections: [{ offset, map: { version: 3, sources: ['a.js'], sourcesContent: ['a'], names: [], mappings: 'AAAA' } }],
+  })
+
+  for (const invalidLine of [-1, 1.5, NaN, Infinity, '1']) {
+    assert.throws(
+      () => new sourceMapJs.SourceMapConsumer(indexedMap({ line: invalidLine, column: 0 })),
+      /non-negative integers/,
+      `offset.line=${String(invalidLine)} must be rejected as a non-negative integer`,
+    )
+  }
+
+  assert.throws(
+    () => new sourceMapJs.SourceMapConsumer(indexedMap({ line: 10000001, column: 0 })),
+    /must not exceed/,
+    'offset.line above the 1e7 bound must be rejected',
+  )
+
+  const consumer = new sourceMapJs.SourceMapConsumer(indexedMap({ line: 10000000, column: 0 }))
+  assert.equal(consumer.originalPositionFor({ line: 10000001, column: 1 }).source, 'a.js')
+})
+
+// sharp (GHSA-wq5f-xc86-pv6w / CVE-2026-96889): the prebuilt sharp binaries bundle
+// librsvg; sharp <0.35.5 bundles a vulnerable librsvg (2.62.x) and 0.35.5 provides
+// librsvg 2.63.2. This is a graph/native-boundary regression, not an exploit
+// reproduction: it pins the patched bundled contract through the real Next and root
+// consumers and proves the native SVG rasterization boundary still works end to end
+// (alongside the retained PNG smoke in the Next/libheif test below).
+// Bundled-native admission now runs through test-local helpers below so the same code
+// path can be exercised with explicit platform, arch and scoped-loader inputs: the
+// Windows wrappers publish their manifest/versions directly from @img/sharp-win32-<arch>
+// and are admitted against their own 0.35.5 floor, while Linux and Darwin keep their
+// @img/sharp-libvips-<platform>-<arch> selection at the 1.3.4 floor.
+function atLeastVersion(actual, expected) {
+  const actualParts = String(actual).split('.').map(Number)
+  const expectedParts = String(expected).split('.').map(Number)
+  for (let index = 0; index < Math.max(actualParts.length, expectedParts.length); index++) {
+    const left = actualParts[index] ?? 0
+    const right = expectedParts[index] ?? 0
+    if (left !== right) return left > right
+  }
+  return true
+}
+
+// Candidate package family for the bundled native contract: the Windows wrappers
+// publish manifest/versions directly from @img/sharp-win32-<arch>; Linux keeps its
+// glibc and musl libvips candidates; Darwin and other platforms use a separate
+// @img/sharp-libvips-<platform>-<arch> package.
+function bundledNativePackageNames(platform, arch) {
+  if (platform === 'win32') {
+    return [`@img/sharp-win32-${arch}`]
+  }
+  if (platform === 'linux') {
+    return [`@img/sharp-libvips-linux-${arch}`, `@img/sharp-libvips-linuxmusl-${arch}`]
+  }
+  return [`@img/sharp-libvips-${platform}-${arch}`]
+}
+
+// Minimum accepted version of the bundled native package: the Windows wrappers carry
+// their own 0.35.5 floor, while the libvips package family stays at 1.3.4.
+function bundledNativePackageFloor(packageName) {
+  return packageName.startsWith('@img/sharp-win32-') ? '0.35.5' : '1.3.4'
+}
+
+// Resolve and admit one bundled native platform package through the supplied scoped
+// loader. Returns the admitted contract or throws a typed rejection: 'missing-package'
+// when no candidate resolves, 'missing-versions' when a manifest resolves without its
+// versions metadata, 'package-floor' / 'rsvg-floor' when a bundled version is below
+// the accepted floor.
+function admitBundledNativeContract({ label, platform, arch, loader }) {
+  const candidates = bundledNativePackageNames(platform, arch)
+  for (const packageName of candidates) {
+    let manifest
+    try {
+      manifest = loader(`${packageName}/package`)
+    } catch {
+      continue
+    }
+    let versions
+    try {
+      versions = loader(`${packageName}/versions`)
+    } catch {
+      const error = new Error(`${label}: bundled ${packageName} is missing its versions metadata`)
+      error.code = 'missing-versions'
+      throw error
+    }
+    const floor = bundledNativePackageFloor(packageName)
+    if (!atLeastVersion(manifest.version, floor)) {
+      const error = new Error(`${label}: bundled ${packageName} must be at least ${floor} (found ${manifest.version})`)
+      error.code = 'package-floor'
+      throw error
+    }
+    if (!atLeastVersion(versions.rsvg, '2.63.2')) {
+      const error = new Error(`${label}: bundled ${packageName} must bundle librsvg at least 2.63.2 (found ${versions.rsvg})`)
+      error.code = 'rsvg-floor'
+      throw error
+    }
+    return { packageName, manifest, versions }
+  }
+  const error = new Error(`${label}: could not resolve a bundled native platform package (tried ${candidates.join(', ')})`)
+  error.code = 'missing-package'
+  throw error
+}
+
+// Scoped fixture loader: serves only the manifest/versions objects present in the
+// fixture surface, like a consumer-scoped require of the package subpaths. No native
+// code is loaded or executed.
+function fixtureScopedLoader(entries) {
+  return (request) => {
+    const match = /^(@img\/[^/]+)\/(package|versions)$/.exec(request)
+    const entry = match ? entries[match[1]] : undefined
+    if (!entry || !(match[2] in entry)) {
+      const error = new Error(`fixture loader: ${request} is not part of the verified fixture surface`)
+      error.code = 'FIXTURE_MISSING'
+      throw error
+    }
+    return entry[match[2]]
+  }
+}
+
+// Fixture manifest/versions entries mirror the verified receipt
+// (windows-sharp-official-package-layout.json lists @img/sharp-win32-<arch> 0.35.5
+// with ./package and ./versions exports, rsvg 2.63.2 and heif 1.23.5). Negative
+// fixtures are controlled mutations of this surface.
+function bundledPackageFixture(name, { version, rsvg = '2.63.2' } = {}) {
+  return {
+    [name]: {
+      package: { name, version },
+      versions: { rsvg, heif: '1.23.5', vips: '8.18.7' },
+    },
+  }
+}
+
+test('Next and root Sharp resolve the patched bundled native contract and rasterize a deterministic SVG', async () => {
+  const web = requireFrom('apps/web/package.json')
+  const nextRequire = createRequire(web.resolve('next/package.json'))
+  const rootRequire = requireFrom('package.json')
+  const svg = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#cc0000"/></svg>',
+  )
+
+  for (const [label, sharpModule, sharpRequire] of [
+    ['next', nextRequire('sharp'), createRequire(nextRequire.resolve('sharp'))],
+    ['root', rootRequire('sharp'), createRequire(rootRequire.resolve('sharp'))],
+  ]) {
+    admitBundledNativeContract({ label, platform: process.platform, arch: process.arch, loader: sharpRequire })
+    assert.equal(sharpModule.versions.sharp, '0.35.5', `${label} consumer must resolve the patched sharp 0.35.5`)
+
+    const rendered = await sharpModule(svg).png().toBuffer({ resolveWithObject: true })
+    assert.equal(rendered.info.width, 16, `${label} SVG rasterization must keep its width`)
+    assert.equal(rendered.info.height, 16, `${label} SVG rasterization must keep its height`)
+    const decoded = await sharpModule(rendered.data).raw().toBuffer({ resolveWithObject: true })
+    const center = (Math.floor(decoded.info.height / 2) * decoded.info.width + Math.floor(decoded.info.width / 2)) * decoded.info.channels
+    assert.ok(decoded.info.channels >= 3, `${label} decoded PNG must expose RGB channels`)
+    assert.ok(Math.abs(decoded.data[center] - 0xcc) <= 1, `${label} center pixel red channel`)
+    assert.ok(Math.abs(decoded.data[center + 1]) <= 1, `${label} center pixel green channel`)
+    assert.ok(Math.abs(decoded.data[center + 2]) <= 1, `${label} center pixel blue channel`)
+  }
+})
+
+test('Windows x64 bundled contract admits the published @img/sharp-win32-x64 wrapper fixture', () => {
+  const contract = admitBundledNativeContract({
+    label: 'win32-x64 fixture',
+    platform: 'win32',
+    arch: 'x64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-x64', { version: '0.35.5' })),
+  })
+  assert.equal(contract.packageName, '@img/sharp-win32-x64')
+  assert.equal(contract.manifest.version, '0.35.5')
+  assert.equal(contract.versions.rsvg, '2.63.2')
+  assert.equal(contract.versions.heif, '1.23.5')
+})
+
+test('Windows arm64 bundled contract admits the published @img/sharp-win32-arm64 wrapper fixture', () => {
+  const contract = admitBundledNativeContract({
+    label: 'win32-arm64 fixture',
+    platform: 'win32',
+    arch: 'arm64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-arm64', { version: '0.35.5' })),
+  })
+  assert.equal(contract.packageName, '@img/sharp-win32-arm64')
+  assert.equal(contract.manifest.version, '0.35.5')
+  assert.equal(contract.versions.rsvg, '2.63.2')
+  assert.equal(contract.versions.heif, '1.23.5')
+})
+
+test('Windows sharp wrapper older than 0.35.5 is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-x64 older-wrapper fixture',
+      platform: 'win32',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-x64', { version: '0.35.4' })),
+    }),
+    (error) => error instanceof Error && error.code === 'package-floor',
+    'a Windows wrapper older than 0.35.5 must not be admitted',
+  )
+})
+
+test('Windows sharp wrapper bundling librsvg below 2.63.2 is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-arm64 low-rsvg fixture',
+      platform: 'win32',
+      arch: 'arm64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-win32-arm64', { version: '0.35.5', rsvg: '2.63.1' })),
+    }),
+    (error) => error instanceof Error && error.code === 'rsvg-floor',
+    'a Windows wrapper bundling librsvg 2.63.1 must not be admitted',
+  )
+})
+
+test('Windows sharp wrapper without a package manifest is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-x64 missing-manifest fixture',
+      platform: 'win32',
+      arch: 'x64',
+      loader: fixtureScopedLoader({ '@img/sharp-win32-x64': { versions: { rsvg: '2.63.2', heif: '1.23.5', vips: '8.18.7' } } }),
+    }),
+    (error) => error instanceof Error && error.code === 'missing-package',
+    'a Windows wrapper without its manifest must not be admitted',
+  )
+})
+
+test('Windows sharp wrapper without versions metadata is rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'win32-x64 missing-versions fixture',
+      platform: 'win32',
+      arch: 'x64',
+      loader: fixtureScopedLoader({ '@img/sharp-win32-x64': { package: { name: '@img/sharp-win32-x64', version: '0.35.5' } } }),
+    }),
+    (error) => error instanceof Error && error.code === 'missing-versions',
+    'a Windows wrapper without versions metadata must not be admitted',
+  )
+})
+
+test('Linux sharp glibc and musl bundles are selected through the shared helper', () => {
+  const glibc = admitBundledNativeContract({
+    label: 'linux-x64 fixture',
+    platform: 'linux',
+    arch: 'x64',
+    loader: fixtureScopedLoader({
+      ...bundledPackageFixture('@img/sharp-libvips-linux-x64', { version: '1.3.4' }),
+      ...bundledPackageFixture('@img/sharp-libvips-linuxmusl-x64', { version: '1.3.4' }),
+    }),
+  })
+  assert.equal(glibc.packageName, '@img/sharp-libvips-linux-x64')
+
+  const musl = admitBundledNativeContract({
+    label: 'linux-musl-x64 fixture',
+    platform: 'linux',
+    arch: 'x64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-linuxmusl-x64', { version: '1.3.4' })),
+  })
+  assert.equal(musl.packageName, '@img/sharp-libvips-linuxmusl-x64')
+})
+
+test('Linux sharp bundles below the libvips or librsvg floors are rejected through the shared helper', () => {
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'linux-x64 old-libvips fixture',
+      platform: 'linux',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-linux-x64', { version: '1.3.3' })),
+    }),
+    (error) => error instanceof Error && error.code === 'package-floor',
+    'libvips 1.3.3 must be rejected',
+  )
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'linux-x64 low-rsvg fixture',
+      platform: 'linux',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-linux-x64', { version: '1.3.4', rsvg: '2.63.1' })),
+    }),
+    (error) => error instanceof Error && error.code === 'rsvg-floor',
+    'librsvg 2.63.1 must be rejected',
+  )
+})
+
+test('Darwin sharp bundles are selected through the shared helper and held to the libvips floor', () => {
+  const admitted = admitBundledNativeContract({
+    label: 'darwin-arm64 fixture',
+    platform: 'darwin',
+    arch: 'arm64',
+    loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-darwin-arm64', { version: '1.3.4' })),
+  })
+  assert.equal(admitted.packageName, '@img/sharp-libvips-darwin-arm64')
+
+  assert.throws(
+    () => admitBundledNativeContract({
+      label: 'darwin-x64 old-libvips fixture',
+      platform: 'darwin',
+      arch: 'x64',
+      loader: fixtureScopedLoader(bundledPackageFixture('@img/sharp-libvips-darwin-x64', { version: '1.3.3' })),
+    }),
+    (error) => error instanceof Error && error.code === 'package-floor',
+    'darwin libvips 1.3.3 must be rejected',
+  )
+})
+
+// @vue/server-renderer (GHSA-g2v6-rqmx-r4w6): ssrRenderAttrs and ssrRenderDynamicAttr
+// screen attribute names against a character blacklist before splicing them into the SSR
+// response. The 3.5.30 blacklist misses carriage return (U+000D), so a bound attribute
+// name can smuggle CR into the emitted HTML; the fixed blacklist rejects the name and
+// skips the attribute instead.
+const vueFromDocs = createRequire(requireFrom('apps/docs/package.json').resolve('vue'))
+const vueServerRenderer = vueFromDocs('@vue/server-renderer')
+
+test('@vue/server-renderer bound attributes keep escaping valid names and values', () => {
+  assert.equal(vueServerRenderer.ssrRenderAttrs({ id: 'safe', title: 'a"b<c' }), ' id="safe" title="a&quot;b&lt;c"')
+  assert.equal(vueServerRenderer.ssrRenderDynamicAttr('title', 'a"b<c'), ' title="a&quot;b&lt;c"')
+})
+
+test('@vue/server-renderer rejects carriage-return attribute names', () => {
+  assert.equal(vueServerRenderer.ssrRenderAttrs({ id: 'safe', ['x\rautofocus\ronfocus']: 'alert(1)' }), ' id="safe"')
+  assert.equal(vueServerRenderer.ssrRenderDynamicAttr('x\rautofocus\ronfocus', 'alert(1)'), '')
 })
