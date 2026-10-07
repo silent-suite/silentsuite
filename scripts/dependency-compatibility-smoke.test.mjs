@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -300,9 +301,9 @@ test('Next resolves patched Sharp and transforms image data with patched libheif
   const web = requireFrom('apps/web/package.json')
   const nextRequire = createRequire(web.resolve('next/package.json'))
   const sharp = nextRequire('sharp')
-  assert.equal(sharp.versions.sharp, '0.35.4')
-  assert.equal(sharp.versions.heif, '1.23.2')
-  assert.equal(requireFrom('package.json')('sharp').versions.sharp, '0.35.4')
+  assert.equal(sharp.versions.sharp, '0.35.5')
+  assert.equal(sharp.versions.heif, '1.23.5')
+  assert.equal(requireFrom('package.json')('sharp').versions.sharp, '0.35.5')
   const image = sharp({ create: { width: 4, height: 4, channels: 3, background: '#123456' } })
   const avif = await image.avif().toBuffer()
   const { info } = await sharp(avif).resize(2, 2).png().toBuffer({ resolveWithObject: true })
@@ -354,4 +355,218 @@ test('security overrides remain scoped to compatible vulnerable major lines', ()
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'js-yaml'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'nanoid@<3.3.18'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'browserslist'), false)
+})
+
+// source-map-js (GHSA-68fv-2mgg-jv7q / CVE-2026-93749): a section's offset.line in an
+// indexed source map is untrusted input. The pinned 1.2.1 graph never validates it and
+// SourceNode.fromStringWithSourceMap pads generated lines one at a time up to the
+// mapping's line, so one tiny section with a huge offset.line becomes attacker-sized
+// synchronous work. PostCSS (web tooling) and @vue/compiler-sfc (docs tooling) resolve
+// the same locked copy.
+const sourceMapJsFromPostcss = createRequire(requireFrom('apps/web/package.json').resolve('postcss'))
+const sourceMapJsFromVue = createRequire(
+  createRequire(requireFrom('apps/docs/package.json').resolve('vue')).resolve('@vue/compiler-sfc'),
+)
+const sourceMapJs = sourceMapJsFromPostcss('source-map-js')
+
+test('source-map-js resolves one locked copy through PostCSS and Vue compiler consumers and round-trips valid indexed maps', () => {
+  const fromPostcss = sourceMapJsFromPostcss('source-map-js/package.json')
+  const fromVue = sourceMapJsFromVue('source-map-js/package.json')
+  assert.equal(fromPostcss.name, 'source-map-js')
+  assert.equal(fromPostcss.version, fromVue.version, 'the web and docs toolchains must share one source-map-js version')
+
+  const validMap = {
+    version: 3,
+    file: 'min.js',
+    sections: [
+      { offset: { line: 0, column: 0 }, map: { version: 3, sources: ['one.js'], sourcesContent: ['one'], names: [], mappings: 'AAAA' } },
+      { offset: { line: 2, column: 0 }, map: { version: 3, sources: ['two.js'], sourcesContent: ['two'], names: [], mappings: 'AAAA' } },
+    ],
+  }
+  const consumer = new sourceMapJs.SourceMapConsumer(validMap)
+  assert.equal(consumer.originalPositionFor({ line: 1, column: 1 }).source, 'one.js')
+  assert.equal(consumer.originalPositionFor({ line: 3, column: 1 }).source, 'two.js')
+
+  const code = 'a\nb\nc\nd\n'
+  const node = sourceMapJs.SourceNode.fromStringWithSourceMap(code, new sourceMapJs.SourceMapConsumer(validMap))
+  assert.equal(node.toString(), code)
+})
+
+test('source-map-js rejects an overwhelming indexed section offset instead of blocking SourceNode.fromStringWithSourceMap', () => {
+  // The adversarial operation below can synchronously block inside the pinned graph, so
+  // it runs in a child bounded to a 128 MB heap and a hard 3 s SIGKILL. The child reports
+  // "ready" through stdout only after resolving the real consumer chain, proving it
+  // reached the vulnerable operation before any timeout or crash is judged.
+  const childScript = [
+    "const fs = require('node:fs');",
+    "const { createRequire } = require('node:module');",
+    `const webRequire = createRequire(${JSON.stringify(resolve(import.meta.dirname, '..', 'apps/web/package.json'))});`,
+    "const postcssRequire = createRequire(webRequire.resolve('postcss'));",
+    "const lib = postcssRequire('source-map-js');",
+    "const version = postcssRequire('source-map-js/package.json').version;",
+    "fs.writeSync(1, '#SMOKE#' + JSON.stringify({ stage: 'ready', version }) + '#SMOKE#');",
+    'try {',
+    "  const map = { version: 3, sections: [{ offset: { line: 1000000000, column: 0 }, map: { version: 3, sources: ['a.js'], sourcesContent: ['a'], names: [], mappings: 'AAAA' } }] };",
+    '  const consumer = new lib.SourceMapConsumer(map);',
+    "  const node = lib.SourceNode.fromStringWithSourceMap('var x;', consumer);",
+    "  fs.writeSync(1, '#SMOKE#' + JSON.stringify({ stage: 'completed', length: node.toString().length }) + '#SMOKE#');",
+    '} catch (error) {',
+    "  fs.writeSync(1, '#SMOKE#' + JSON.stringify({ stage: 'rejected', name: error.name, message: error.message }) + '#SMOKE#');",
+    '}',
+  ].join('')
+
+  const startedAt = Date.now()
+  const result = spawnSync(process.execPath, ['--max-old-space-size=128', '-e', childScript], {
+    timeout: 3000,
+    killSignal: 'SIGKILL',
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+  })
+  const waitedMs = Date.now() - startedAt
+
+  const messages = (result.stdout ?? '')
+    .split('#SMOKE#')
+    .filter((segment, index) => index % 2 === 1)
+    .map((segment) => {
+      try {
+        return JSON.parse(segment)
+      } catch {
+        return { stage: 'unparsed', segment: segment.slice(0, 120) }
+      }
+    })
+
+  const ready = messages.find((message) => message.stage === 'ready')
+  assert.ok(
+    ready,
+    [
+      'the bounded source-map-js child never reached the vulnerable operation',
+      `exit=${result.status}, signal=${result.signal}, error=${result.error?.code ?? 'none'}`,
+      `stdout=${JSON.stringify((result.stdout ?? '').slice(0, 200))}`,
+      `stderr=${JSON.stringify((result.stderr ?? '').slice(-200))}`,
+    ].join('; '),
+  )
+
+  const settled = messages.find((message) => message.stage === 'completed' || message.stage === 'rejected')
+  assert.ok(
+    settled,
+    [
+      `a one-section indexed map with offset.line=1000000000 never settled under the bounded child after ${waitedMs} ms`,
+      `exit=${result.status}, signal=${result.signal}, error=${result.error?.code ?? 'none'}`,
+      `stderr=${JSON.stringify((result.stderr ?? '').slice(-200))}`,
+      `the pinned source-map-js ${ready.version} ran attacker-sized synchronous work instead of rejecting the offset`,
+    ].join('; '),
+  )
+
+  assert.equal(settled.stage, 'rejected', `the overwhelming indexed map must be rejected before any mapping work: ${JSON.stringify(settled)}`)
+  assert.match(settled.message, /must not exceed/)
+  assert.equal(result.status, 0, `the rejected map must exit cleanly: exit=${result.status}, signal=${result.signal}`)
+  assert.equal(result.signal, null, `the rejected map must not be signalled: ${result.signal}`)
+  assert.equal(result.error, undefined, `the rejected map must not surface a subprocess error: ${result.error?.code ?? 'none'}`)
+})
+
+test('source-map-js enforces bounded indexed section offsets', () => {
+  const indexedMap = (offset) => ({
+    version: 3,
+    sections: [{ offset, map: { version: 3, sources: ['a.js'], sourcesContent: ['a'], names: [], mappings: 'AAAA' } }],
+  })
+
+  for (const invalidLine of [-1, 1.5, NaN, Infinity, '1']) {
+    assert.throws(
+      () => new sourceMapJs.SourceMapConsumer(indexedMap({ line: invalidLine, column: 0 })),
+      /non-negative integers/,
+      `offset.line=${String(invalidLine)} must be rejected as a non-negative integer`,
+    )
+  }
+
+  assert.throws(
+    () => new sourceMapJs.SourceMapConsumer(indexedMap({ line: 10000001, column: 0 })),
+    /must not exceed/,
+    'offset.line above the 1e7 bound must be rejected',
+  )
+
+  const consumer = new sourceMapJs.SourceMapConsumer(indexedMap({ line: 10000000, column: 0 }))
+  assert.equal(consumer.originalPositionFor({ line: 10000001, column: 1 }).source, 'a.js')
+})
+
+// sharp (GHSA-wq5f-xc86-pv6w / CVE-2026-96889): the prebuilt sharp binaries bundle
+// librsvg inside their @img/sharp-libvips platform packages. sharp <0.35.5 bundles a
+// vulnerable librsvg (2.62.x); 0.35.5 provides librsvg 2.63.2 via libvips 1.3.4. This
+// is a graph/native-boundary regression, not an exploit reproduction: it pins the
+// patched bundled contract through the real Next and root consumers and proves the
+// native SVG rasterization boundary still works end to end (alongside the retained
+// PNG smoke in the Next/libheif test below).
+function atLeastVersion(actual, expected) {
+  const actualParts = String(actual).split('.').map(Number)
+  const expectedParts = String(expected).split('.').map(Number)
+  for (let index = 0; index < Math.max(actualParts.length, expectedParts.length); index++) {
+    const left = actualParts[index] ?? 0
+    const right = expectedParts[index] ?? 0
+    if (left !== right) return left > right
+  }
+  return true
+}
+
+test('Next and root Sharp resolve the patched bundled native contract and rasterize a deterministic SVG', async () => {
+  const web = requireFrom('apps/web/package.json')
+  const nextRequire = createRequire(web.resolve('next/package.json'))
+  const rootRequire = requireFrom('package.json')
+  const platformPackages = process.platform === 'linux'
+    ? [`@img/sharp-libvips-linux-${process.arch}`, `@img/sharp-libvips-linuxmusl-${process.arch}`]
+    : [`@img/sharp-libvips-${process.platform}-${process.arch}`]
+  const svg = Buffer.from(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><rect width="16" height="16" fill="#cc0000"/></svg>',
+  )
+
+  for (const [label, sharpModule, sharpRequire] of [
+    ['next', nextRequire('sharp'), createRequire(nextRequire.resolve('sharp'))],
+    ['root', rootRequire('sharp'), createRequire(rootRequire.resolve('sharp'))],
+  ]) {
+    let libvipsManifest = null
+    let libvipsVersions = null
+    for (const platformPackage of platformPackages) {
+      try {
+        libvipsManifest = sharpRequire(`${platformPackage}/package`)
+        libvipsVersions = sharpRequire(`${platformPackage}/versions`)
+        break
+      } catch {}
+    }
+    assert.ok(libvipsManifest, `${label} consumer must resolve its bundled libvips platform package`)
+    assert.ok(
+      atLeastVersion(libvipsManifest.version, '1.3.4'),
+      `${label} bundled libvips platform package must be at least 1.3.4 (found ${libvipsManifest.version})`,
+    )
+    assert.ok(
+      atLeastVersion(libvipsVersions.rsvg, '2.63.2'),
+      `${label} bundled librsvg must be at least 2.63.2 (found ${libvipsVersions.rsvg})`,
+    )
+    assert.equal(sharpModule.versions.sharp, '0.35.5', `${label} consumer must resolve the patched sharp 0.35.5`)
+
+    const rendered = await sharpModule(svg).png().toBuffer({ resolveWithObject: true })
+    assert.equal(rendered.info.width, 16, `${label} SVG rasterization must keep its width`)
+    assert.equal(rendered.info.height, 16, `${label} SVG rasterization must keep its height`)
+    const decoded = await sharpModule(rendered.data).raw().toBuffer({ resolveWithObject: true })
+    const center = (Math.floor(decoded.info.height / 2) * decoded.info.width + Math.floor(decoded.info.width / 2)) * decoded.info.channels
+    assert.ok(decoded.info.channels >= 3, `${label} decoded PNG must expose RGB channels`)
+    assert.ok(Math.abs(decoded.data[center] - 0xcc) <= 1, `${label} center pixel red channel`)
+    assert.ok(Math.abs(decoded.data[center + 1]) <= 1, `${label} center pixel green channel`)
+    assert.ok(Math.abs(decoded.data[center + 2]) <= 1, `${label} center pixel blue channel`)
+  }
+})
+
+// @vue/server-renderer (GHSA-g2v6-rqmx-r4w6): ssrRenderAttrs and ssrRenderDynamicAttr
+// screen attribute names against a character blacklist before splicing them into the SSR
+// response. The 3.5.30 blacklist misses carriage return (U+000D), so a bound attribute
+// name can smuggle CR into the emitted HTML; the fixed blacklist rejects the name and
+// skips the attribute instead.
+const vueFromDocs = createRequire(requireFrom('apps/docs/package.json').resolve('vue'))
+const vueServerRenderer = vueFromDocs('@vue/server-renderer')
+
+test('@vue/server-renderer bound attributes keep escaping valid names and values', () => {
+  assert.equal(vueServerRenderer.ssrRenderAttrs({ id: 'safe', title: 'a"b<c' }), ' id="safe" title="a&quot;b&lt;c"')
+  assert.equal(vueServerRenderer.ssrRenderDynamicAttr('title', 'a"b<c'), ' title="a&quot;b&lt;c"')
+})
+
+test('@vue/server-renderer rejects carriage-return attribute names', () => {
+  assert.equal(vueServerRenderer.ssrRenderAttrs({ id: 'safe', ['x\rautofocus\ronfocus']: 'alert(1)' }), ' id="safe"')
+  assert.equal(vueServerRenderer.ssrRenderDynamicAttr('x\rautofocus\ronfocus', 'alert(1)'), '')
 })
