@@ -94,8 +94,29 @@ def _launchctl(*args):
     return result.returncode
 
 
+# Exit status of ``launchctl print`` for a service that is not loaded. Only this
+# specific status counts as positive absence; the fixture requires it for each
+# fresh unique label, so the real runner validates it before any lifecycle step.
+# Output is never parsed (the installed man page says print output is not API).
+SERVICE_ABSENT_STATUS = 113
+
+
+def _service_state(service):
+    """Return "present", "absent" or "unknown" (timeout or any other non-zero status)."""
+    status = _launchctl("print", service)
+    if status == 0:
+        return "present"
+    if status == SERVICE_ABSENT_STATUS:
+        return "absent"
+    return "unknown"
+
+
 def _registered(service):
-    return _launchctl("print", service) == 0
+    """True when present, False only when positively absent; an unknown state fails the test."""
+    state = _service_state(service)
+    if state == "unknown":
+        raise AssertionError("launchctl could not confirm whether the isolated test service is registered")
+    return state == "present"
 
 
 def _alive(pid):
@@ -140,16 +161,18 @@ def _is_own_child(pid, token):
 
 
 def _cleanup(native):
-    if _registered(native.service):
+    # Unless absence is positively established, boot out (bounded) only the
+    # unique owned test service, even when the state query itself failed.
+    if _service_state(native.service) != "absent":
         _launchctl("bootout", native.service)
-        _wait_until(lambda: not _registered(native.service), 10)
-    if _registered(native.service) and native.plist.exists():
-        _launchctl("unload", str(native.plist))
+        _wait_until(lambda: _service_state(native.service) == "absent", 10)
+    # Killing a recorded harmless child is hygiene, not proof of unregistration.
     for marker in native.markers.glob("*.pid"):
         recorded = _read_marker(native.markers, marker.stem)
         if recorded and _is_own_child(recorded[0], native.token):
             os.kill(recorded[0], signal.SIGKILL)
-    assert not _registered(native.service), "the isolated test agent is still registered after cleanup"
+    final_state = _service_state(native.service)
+    assert final_state == "absent", "the isolated test agent was not confirmed absent after cleanup"
 
 
 @pytest.fixture
@@ -164,8 +187,9 @@ def native(tmp_path, monkeypatch):
     label = f"io.silentsuite.autostart-test.{secrets.token_hex(6)}"
     service = f"{domain}/{label}"
     assert PRODUCTION_LABEL not in label
-    if _registered(service):
-        pytest.fail("the unique test label is already registered; refusing to continue", pytrace=False)
+    if _service_state(service) != "absent":
+        pytest.fail("the unique test label was not confirmed absent before the test; refusing to continue",
+                    pytrace=False)
 
     monkeypatch.setattr(autostart, "LAUNCHD_LABEL", label)
     bridge = isolated_bridge_env(tmp_path, monkeypatch)

@@ -354,6 +354,7 @@ _LAUNCHD_STAGE_TEXT = {
 _LAUNCHCTL_REASON_TEXT = {
     "missing": "launchctl is not available",
     "timeout": "launchctl did not respond in time",
+    "context": "launchctl is not running in this user's GUI login session; run it without sudo as the logged-in user",
 }
 
 
@@ -384,14 +385,44 @@ def _launchctl_output(*args):
     return "ok", stdout or ""
 
 
+def _confirm_launchd_gui_context() -> str:
+    """Prove legacy subcommands address the same gui/<uid> domain the mutations target.
+
+    Legacy subcommands such as ``list`` select their domain from the caller
+    (the system domain when run as root), whereas bootstrap/bootout/kickstart
+    name ``gui/<uid>`` explicitly. Only a non-root caller whose documented
+    ``launchctl manageruid`` is the target UID and ``launchctl managername`` is
+    ``Aqua`` is accepted. Returns "ok", "context" for a different session, or
+    the launchctl outcome when a context query fails.
+    """
+    if os.geteuid() == 0:
+        return "context"
+    outcome, stdout = _launchctl_output("manageruid")
+    if outcome != "ok":
+        return outcome
+    if stdout.strip() != str(os.getuid()):
+        return "context"
+    outcome, stdout = _launchctl_output("managername")
+    if outcome != "ok":
+        return outcome
+    if stdout.strip() != "Aqua":
+        return "context"
+    return "ok"
+
+
 def _query_launchd_job():
     """Return (outcome, registered, pid) for LAUNCHD_LABEL from ``launchctl list``.
 
     ``launchctl list`` without arguments prints PID / last exit status / label
-    columns; a ``-`` PID means the job is loaded but not running. Absence is
-    concluded only from a successful listing without the exact label, never
-    from an error code. An unparsable PID fails closed as a query failure.
+    columns; a ``-`` PID means the job is loaded but not running. The caller
+    context is confirmed to be the target GUI domain before every listing.
+    Absence is concluded only from a successful listing without the exact
+    label, never from an error code. An unparsable PID fails closed as a
+    query failure.
     """
+    outcome = _confirm_launchd_gui_context()
+    if outcome != "ok":
+        return outcome, False, None
     outcome, stdout = _launchctl_output("list")
     if outcome != "ok":
         return outcome, False, None

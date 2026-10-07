@@ -133,7 +133,9 @@ FAKE_LAUNCHCTL = """\
 # real three-column format (PID, last status, label) and reports the job with
 # a fixed positive fake PID (4242) once registered, so the installer's
 # stability window can settle. `load`/`unload` are the legacy spellings of
-# bootstrap/bootout and share the same registration state.
+# bootstrap/bootout and share the same registration state. `manageruid` and
+# `managername` report the installing user's GUI (Aqua) context; the UID is
+# substituted by _clean_shell_env, so no external command is needed.
 state="${HOME:?}/.fake-launchctl-state"
 registered() {
     [ -f "$state" ] || return 1
@@ -142,6 +144,12 @@ registered() {
     [ "$current" = "registered" ]
 }
 case "$1" in
+    manageruid)
+        echo "@MANAGER_UID@"
+        ;;
+    managername)
+        echo "Aqua"
+        ;;
     list)
         echo "PID\tStatus\tLabel"
         if registered; then
@@ -172,7 +180,8 @@ def _clean_shell_env(tmp_path):
     # launchctl is stateful (see FAKE_LAUNCHCTL); its state lives under this
     # HOME, so parameter rows and subprocess invocations stay isolated.
     launchctl = fake_bin / "launchctl"
-    launchctl.write_text(FAKE_LAUNCHCTL, encoding="utf-8")
+    manager_uid = str(os.getuid()) if hasattr(os, "getuid") else "0"
+    launchctl.write_text(FAKE_LAUNCHCTL.replace("@MANAGER_UID@", manager_uid), encoding="utf-8")
     launchctl.chmod(0o755)
     home = tmp_path / "home"
     home.mkdir()
