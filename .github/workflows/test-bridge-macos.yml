@@ -1,10 +1,12 @@
 name: Test Bridge (macOS, network profile / autostart)
 
 # Focused native macOS execution of the #658 durable network profile tests:
-# launchd plist rendering, install/remove semantics against a stubbed
+# launchd plist rendering, install/remove semantics against a stateful fake
 # launchctl, settings durability, and the --install-autostart -> clean-shell
-# CLI journey. Nothing here loads a real launchd agent; real launchd restart
-# acceptance remains a separate manual step.
+# CLI journey. test_autostart_macos_native.py additionally drives the REAL
+# launchctl with a unique throwaway label, temporary paths and a harmless
+# child; it never addresses io.silentsuite.bridge. Real bridge startup and
+# CalDAV/CardDAV readiness remain separate manual acceptance steps.
 
 on:
   workflow_dispatch:
@@ -15,6 +17,8 @@ on:
       - 'bridge/tests/test_network_profile.py'
       - 'bridge/tests/test_autostart_profile.py'
       - 'bridge/tests/test_autostart_clean_shell_cli.py'
+      - 'bridge/tests/test_autostart_macos_lifecycle.py'
+      - 'bridge/tests/test_autostart_macos_native.py'
       - '.github/workflows/test-bridge-macos.yml'
 
 permissions:
@@ -58,4 +62,27 @@ jobs:
       - name: Run network profile / autostart tests natively (#658)
         working-directory: bridge
         shell: bash
-        run: python -m pytest tests/test_network_profile.py tests/test_autostart_profile.py tests/test_autostart_clean_shell_cli.py -v --tb=short
+        run: python -m pytest tests/test_network_profile.py tests/test_autostart_profile.py tests/test_autostart_clean_shell_cli.py tests/test_autostart_macos_lifecycle.py -v --tb=short
+
+      # The installed man page is the command contract for this runner. Print
+      # the complete documentation only; never launchctl state/status output.
+      - name: Record installed launchctl command contract (man page)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "macOS $(sw_vers -productVersion)"
+          man_text="$RUNNER_TEMP/launchctl-man.txt"
+          man launchctl 2>/dev/null | col -bx > "$man_text" || true
+          if [ ! -s "$man_text" ]; then
+            echo "::error::launchctl man page is not available on this runner"
+            exit 1
+          fi
+          cat "$man_text"
+
+      - name: Run native launchd lifecycle tests (real launchctl, isolated label)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        working-directory: bridge
+        shell: bash
+        run: python -m pytest tests/test_autostart_macos_native.py -v --tb=short

@@ -206,7 +206,32 @@ jobs:
           echo "Smoke test passed."
 
       # -----------------------------------------------------------------------
-      # 8. QEMU arm64 container build (Linux arm64 only)
+      # 8. Packaged autostart acceptance (macOS native lanes)
+      # -----------------------------------------------------------------------
+      # Drives the just-built frozen binary through its real
+      # --install-autostart / --remove-autostart lifecycle on a fresh hosted
+      # runner, before the binary is renamed below. Only the two native macOS
+      # lanes run it; Linux, QEMU and Windows lanes are untouched.
+      - name: Packaged autostart acceptance (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 15
+        working-directory: bridge
+        shell: bash
+        env:
+          SILENTSUITE_PACKAGED_BINARY: ${{ github.workspace }}/bridge/dist/silentsuite-bridge
+          SILENTSUITE_PACKAGED_ARCH: ${{ matrix.os-label == 'macos-arm64' && 'arm64' || 'x86_64' }}
+        run: |
+          # The dev extra normally provides pytest; a tray-only fallback must
+          # fail closed here instead of silently skipping the packaged case.
+          if ! python -m pytest --version >/dev/null 2>&1; then
+            echo "ERROR: pytest is not available in this build environment; packaged autostart acceptance cannot run." >&2
+            exit 1
+          fi
+          export SILENTSUITE_PACKAGED_VERSION="${SILENTSUITE_BRIDGE_VERSION#v}"
+          python -m pytest tests/test_autostart_macos_packaged.py -v --tb=short
+
+      # -----------------------------------------------------------------------
+      # 9. QEMU arm64 container build (Linux arm64 only)
       # -----------------------------------------------------------------------
       - name: Build + smoke test (QEMU arm64)
         if: matrix.qemu
@@ -256,7 +281,7 @@ jobs:
             echo "Smoke test passed."
 
       # -----------------------------------------------------------------------
-      # 9. Rename artifact to final asset name (skip for QEMU — done inside container)
+      # 10. Rename artifact to final asset name (skip for QEMU — done inside container)
       # -----------------------------------------------------------------------
       - name: Rename binary
         if: "!matrix.qemu"
@@ -268,7 +293,7 @@ jobs:
           echo "Renamed: $SRC → $DST"
 
       # -----------------------------------------------------------------------
-      # 10. Compute SHA256
+      # 11. Compute SHA256
       # -----------------------------------------------------------------------
       - name: Compute SHA256
         if: "!matrix.qemu"
@@ -285,7 +310,7 @@ jobs:
           cat "${ASSET}.sha256"
 
       # -----------------------------------------------------------------------
-      # 11. Upload artifact
+      # 12. Upload artifact
       # -----------------------------------------------------------------------
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
