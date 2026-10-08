@@ -105,7 +105,9 @@ LAUNCHCTL_FAILURE_PHRASES = (
     "the bridge process is not running",
 )
 
-pytestmark = pytest.mark.skipif(
+# Scoped to the real packaged lifecycle only: the intercepted safety controls
+# at the end of this module run in ordinary source CI as well.
+packaged_only = pytest.mark.skipif(
     os.environ.get(BINARY_ENV) is None,
     reason=(
         "packaged autostart acceptance runs only when a just-built frozen binary is supplied "
@@ -489,6 +491,7 @@ def packaged():
         _cleanup(state)
 
 
+@packaged_only
 def test_packaged_macos_autostart_lifecycle(packaged):
     """Ordered journey: install -> registered-stopped stale recovery -> removal with retained state."""
     # --- Stage 1: initial install of the first owned copy --------------------
@@ -554,3 +557,380 @@ def test_packaged_macos_autostart_lifecycle(packaged):
     listed = _run_binary(packaged.stage_b, ["--list-accounts"], packaged.base_env)
     _expect_success(listed, "--list-accounts")
     _expect_text(listed, NO_ACCOUNTS)
+
+
+# --- Intercepted safety controls (synthetic; NOT packaged acceptance) ------------
+#
+# These drive the real ``packaged`` fixture admission and the real ``_cleanup``
+# with every external boundary intercepted: subprocess.run (launchctl, ps,
+# lipo, the binary), os.kill, the default HOME/data paths and the clock. No
+# launchd job, real process, production label state or default directory is
+# touched, the synthetic "binary" is never executed, and any signal in the
+# admission controls aborts immediately.
+
+_THIS = sys.modules[__name__]
+
+posix_controls = pytest.mark.skipif(
+    sys.platform == "win32", reason="intercepted controls model POSIX symlinks, UIDs and signals"
+)
+
+FRESHNESS_TARGETS = [
+    pytest.param("plist", "agent file", id="agent-file"),
+    pytest.param("data_dir", "default Bridge data directory", id="data-dir"),
+    pytest.param("logs_dir", "default Bridge log directory", id="log-dir"),
+]
+FRESHNESS_EXISTS = "the {what} already exists on this runner; refusing to claim a non-fresh fixture"
+FRESHNESS_UNINSPECTABLE = "the {what} could not be inspected on this runner; refusing to claim a non-fresh fixture"
+ARCH_MISMATCH = "the packaged binary architecture does not match the declared packaging lane"
+CHILD_UNCONFIRMED = "an owned packaged child was not confirmed stopped after cleanup"
+SYNTHETIC_BINARY = b"#!/bin/sh\n# synthetic stand-in; the intercepted controls never execute it\nexit 97\n"
+MAX_CLEANUP_SIGNALS = 3
+
+
+class UnexpectedSignalError(BaseException):
+    """Raised if an admission control would signal any process."""
+
+
+class UnboundedWaitError(BaseException):
+    """Raised if intercepted cleanup waits beyond a generous virtual bound."""
+
+
+class _VirtualTime:
+    LIMIT_SECONDS = 600.0
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += max(float(seconds), 0.001)
+        if self.now > self.LIMIT_SECONDS:
+            raise UnboundedWaitError("intercepted cleanup waited without a bound")
+
+
+def _refuse_signal(pid, sig):
+    raise UnexpectedSignalError("an intercepted admission control attempted to signal a process")
+
+
+def _failure_text(exc):
+    return getattr(exc, "msg", None) or str(exc)
+
+
+def _packaged_fixture_function():
+    """The undecorated ``packaged`` generator function across pytest fixture wrappers."""
+    unwrap = getattr(packaged, "_get_wrapped_function", None)
+    return unwrap() if unwrap is not None else packaged.__wrapped__
+
+
+def _drive_admission():
+    """Run the real fixture admission up to its yield: ("refused", message), ("admitted", None) or ("raised", type)."""
+    generator = _packaged_fixture_function()()
+    try:
+        next(generator)
+    except pytest.fail.Exception as exc:
+        return "refused", _failure_text(exc)
+    except Exception as exc:
+        return "raised", type(exc).__name__
+    generator.close()
+    return "admitted", None
+
+
+def _admission_world(tmp_path, monkeypatch):
+    """A synthetic admitted hosted-Mac runner whose every external boundary is intercepted."""
+    home = tmp_path / "home"
+    home.mkdir()
+    runner_temp = tmp_path / "runner-temp"
+    runner_temp.mkdir()
+    binary = tmp_path / "artifact" / "silentsuite-bridge"
+    binary.parent.mkdir()
+    binary.write_bytes(SYNTHETIC_BINARY)
+    binary.chmod(0o755)
+    world = SimpleNamespace(
+        tmp_path=tmp_path,
+        runner_temp=runner_temp,
+        binary=binary,
+        plist=home / "Library" / "LaunchAgents" / f"{SERVICE_LABEL}.plist",
+        data_dir=home / "Library" / "Application Support" / "silentsuite-bridge",
+        logs_dir=home / "Library" / "Logs" / "SilentSuiteBridge",
+        launchctl=[],
+        external=[],
+        copies=[],
+        chmods=[],
+    )
+    for name, value in (
+        ("HOME", str(home)),
+        ("GITHUB_ACTIONS", "true"),
+        ("RUNNER_ENVIRONMENT", "github-hosted"),
+        ("RUNNER_OS", "macOS"),
+        ("RUNNER_TEMP", str(runner_temp)),
+        (ARCH_ENV, "arm64"),
+        (VERSION_ENV, ""),
+        (BINARY_ENV, str(binary)),
+    ):
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(_THIS, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(_THIS, "platform", SimpleNamespace(machine=lambda: "arm64"))
+    monkeypatch.setattr(_THIS, "user_data_dir", lambda *args, **kwargs: str(world.data_dir))
+    uid = os.getuid()
+
+    def run(argv, *args, **kwargs):
+        argv = [os.fsdecode(token) for token in argv]
+        if argv[0] == "launchctl" and len(argv) > 1:
+            world.launchctl.append(argv[1])
+            answers = {
+                "manageruid": (0, f"{uid}\n"),
+                "managername": (0, "Aqua\n"),
+                "print": (SERVICE_ABSENT_STATUS, ""),
+                "list": (0, "PID\tStatus\tLabel\n"),
+            }
+            if argv[1] in answers:
+                status, stdout = answers[argv[1]]
+                return subprocess.CompletedProcess(argv, status, stdout=stdout, stderr="")
+        # Never executed: lipo, ps, the synthetic binary or anything else.
+        world.external.append(os.path.basename(argv[0]))
+        return subprocess.CompletedProcess(argv, 97, stdout="", stderr="")
+
+    real_copyfile = shutil.copyfile
+    real_chmod = os.chmod
+
+    def copyfile(src, dst, *args, **kwargs):
+        world.copies.append(str(dst))
+        return real_copyfile(src, dst, *args, **kwargs)
+
+    def chmod(path, mode, *args, **kwargs):
+        world.chmods.append(os.fspath(path))
+        return real_chmod(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(shutil, "copyfile", copyfile)
+    monkeypatch.setattr(os, "chmod", chmod)
+    monkeypatch.setattr(os, "kill", _refuse_signal)
+    return world
+
+
+def _assert_nothing_followed_refusal(world):
+    assert world.external == [], "a binary, lipo or ps invocation followed a freshness refusal"
+    assert world.copies == [], "owned binary copies were staged after a freshness refusal"
+    assert world.chmods == [], "a permission change followed a freshness refusal"
+    assert sorted(path.name for path in world.runner_temp.iterdir()) == [], "staging followed a freshness refusal"
+    assert world.binary.read_bytes() == SYNTHETIC_BINARY
+
+
+@posix_controls
+@pytest.mark.parametrize(("attribute", "what"), FRESHNESS_TARGETS)
+def test_packaged_admission_refuses_preexisting_dangling_symlink(tmp_path, monkeypatch, attribute, what):
+    world = _admission_world(tmp_path, monkeypatch)
+    target = getattr(world, attribute)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.symlink(tmp_path / "missing-symlink-target", target)
+
+    outcome = _drive_admission()
+
+    assert outcome == ("refused", FRESHNESS_EXISTS.format(what=what)), "a dangling symlink passed freshness"
+    _assert_nothing_followed_refusal(world)
+    assert os.path.islink(target) and not os.path.exists(target), "the preexisting entry was altered"
+    assert not (tmp_path / "missing-symlink-target").exists()
+
+
+@posix_controls
+@pytest.mark.parametrize(("attribute", "what"), FRESHNESS_TARGETS)
+def test_packaged_admission_refuses_uninspectable_freshness_path(tmp_path, monkeypatch, attribute, what):
+    world = _admission_world(tmp_path, monkeypatch)
+    target = os.fspath(getattr(world, attribute))
+
+    def denied(path):
+        return not isinstance(path, int) and os.fspath(path) == target
+
+    def guard_path(original):
+        def inspect(self, *args, **kwargs):
+            if denied(self):
+                raise PermissionError(13, "Permission denied")
+            return original(self, *args, **kwargs)
+
+        return inspect
+
+    def guard_os(original):
+        def inspect(path, *args, **kwargs):
+            if denied(path):
+                raise PermissionError(13, "Permission denied")
+            return original(path, *args, **kwargs)
+
+        return inspect
+
+    monkeypatch.setattr(Path, "stat", guard_path(Path.stat))
+    monkeypatch.setattr(Path, "lstat", guard_path(Path.lstat))
+    monkeypatch.setattr(os, "stat", guard_os(os.stat))
+    monkeypatch.setattr(os, "lstat", guard_os(os.lstat))
+
+    outcome = _drive_admission()
+
+    assert outcome == ("refused", FRESHNESS_UNINSPECTABLE.format(what=what)), (
+        "an inspection error must be a fixed freshness refusal, not absence or a raw exception"
+    )
+    _assert_nothing_followed_refusal(world)
+
+
+@posix_controls
+@pytest.mark.parametrize(("attribute", "what"), FRESHNESS_TARGETS)
+def test_packaged_admission_refuses_existing_ordinary_entry(tmp_path, monkeypatch, attribute, what):
+    # Positive safety control: an ordinary existing entry is refused today and must stay refused.
+    world = _admission_world(tmp_path, monkeypatch)
+    target = getattr(world, attribute)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if attribute == "plist":
+        target.write_bytes(b"preexisting agent file")
+    else:
+        target.mkdir()
+
+    outcome = _drive_admission()
+
+    assert outcome == ("refused", FRESHNESS_EXISTS.format(what=what))
+    _assert_nothing_followed_refusal(world)
+
+
+@posix_controls
+def test_packaged_admission_reaches_staging_only_after_positive_freshness(tmp_path, monkeypatch):
+    # Interception control: with every freshness path positively absent the real
+    # fixture proceeds to owned staging and stops at the intercepted lipo check,
+    # without executing the synthetic binary or signalling anything.
+    world = _admission_world(tmp_path, monkeypatch)
+
+    outcome = _drive_admission()
+
+    assert outcome == ("refused", ARCH_MISMATCH)
+    assert len(world.copies) == 2
+    assert world.external == ["lipo"]
+    assert set(world.launchctl) <= {"manageruid", "managername", "print", "list"}
+    assert world.binary.read_bytes() == SYNTHETIC_BINARY
+
+
+class _CleanupBoundary:
+    """Intercepted launchctl/ps/os.kill for one recorded owned child; no real process exists.
+
+    ``child`` is ``"exited"`` (gone before cleanup), ``"exits-on-kill"``,
+    ``"survives-kill"``; ``identity`` is ``"matched"`` or ``"unknown"`` (ps
+    times out). The service is always positively absent.
+    """
+
+    def __init__(self, pid, path, child, identity):
+        self.pid = pid
+        self.path = path
+        self.child = child
+        self.identity = identity
+        self.killed = False
+        self.probes = 0
+        self.signals = []
+        self.foreign = []
+        self.calls = []
+        self.unexpected = []
+
+    def alive(self):
+        if self.child == "exited":
+            return False
+        if self.child == "exits-on-kill":
+            return not self.killed
+        return True
+
+    def kill(self, pid, sig):
+        if pid != self.pid:
+            self.foreign.append(sig)
+            raise ProcessLookupError(3, "No such process")
+        if sig == 0:
+            self.probes += 1
+            if self.alive():
+                return None
+            raise ProcessLookupError(3, "No such process")
+        self.signals.append(sig)
+        self.killed = True
+        return None
+
+    def run(self, argv, *args, **kwargs):
+        argv = [os.fsdecode(token) for token in argv]
+        self.calls.append(argv)
+        if argv[:2] == ["launchctl", "print"]:
+            return subprocess.CompletedProcess(argv, SERVICE_ABSENT_STATUS, stdout="", stderr="")
+        if argv[0] == "ps":
+            if self.identity == "unknown":
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout") or 10)
+            if not self.alive():
+                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
+            return subprocess.CompletedProcess(argv, 0, stdout=f"    1 {self.path}\n", stderr="")
+        self.unexpected.append(os.path.basename(argv[0]))
+        return subprocess.CompletedProcess(argv, 97, stdout="", stderr="")
+
+
+def _drive_cleanup(tmp_path, monkeypatch, *, child, identity, owned=True):
+    path = tmp_path / "b" / "silentsuite-bridge"
+    pid = 987654
+    boundary = _CleanupBoundary(pid, path, child, identity)
+    clock = _VirtualTime()
+    monkeypatch.setattr(subprocess, "run", boundary.run)
+    monkeypatch.setattr(os, "kill", boundary.kill)
+    monkeypatch.setattr(_THIS, "time", clock)
+    state = SimpleNamespace(
+        owned=owned,
+        service=f"gui/{os.getuid()}/{SERVICE_LABEL}",
+        verified_children=[(pid, path)],
+    )
+    try:
+        _cleanup(state)
+    except pytest.fail.Exception as exc:
+        return ("refused", _failure_text(exc)), boundary
+    except Exception as exc:
+        return ("raised", type(exc).__name__), boundary
+    return ("ok", None), boundary
+
+
+@posix_controls
+def test_packaged_cleanup_fails_when_live_owned_child_identity_is_unknown(tmp_path, monkeypatch):
+    outcome, boundary = _drive_cleanup(tmp_path, monkeypatch, child="survives-kill", identity="unknown")
+
+    assert outcome == ("refused", CHILD_UNCONFIRMED), (
+        "cleanup succeeded while a recorded child was live and unverified"
+    )
+    assert boundary.signals == [], "an unverified pid was signalled"
+    assert boundary.foreign == []
+    assert boundary.unexpected == []
+
+
+@posix_controls
+def test_packaged_cleanup_fails_when_verified_child_survives_the_kill(tmp_path, monkeypatch):
+    outcome, boundary = _drive_cleanup(tmp_path, monkeypatch, child="survives-kill", identity="matched")
+
+    assert outcome == ("refused", CHILD_UNCONFIRMED), "cleanup succeeded without confirming the child exited"
+    assert boundary.signals, "a verified owned child was never signalled"
+    assert set(boundary.signals) <= {signal.SIGTERM, signal.SIGKILL}
+    assert len(boundary.signals) <= MAX_CLEANUP_SIGNALS
+    assert boundary.foreign == []
+    assert boundary.unexpected == []
+
+
+@posix_controls
+def test_packaged_cleanup_succeeds_when_verified_child_exits_after_signal(tmp_path, monkeypatch):
+    outcome, boundary = _drive_cleanup(tmp_path, monkeypatch, child="exits-on-kill", identity="matched")
+
+    assert outcome == ("ok", None)
+    assert boundary.signals and set(boundary.signals) <= {signal.SIGTERM, signal.SIGKILL}
+    assert len(boundary.signals) <= MAX_CLEANUP_SIGNALS
+    assert boundary.foreign == []
+
+
+@posix_controls
+def test_packaged_cleanup_succeeds_without_signal_when_child_already_exited(tmp_path, monkeypatch):
+    outcome, boundary = _drive_cleanup(tmp_path, monkeypatch, child="exited", identity="matched")
+
+    assert outcome == ("ok", None)
+    assert boundary.signals == []
+    assert boundary.foreign == []
+
+
+@posix_controls
+def test_packaged_cleanup_is_a_no_op_for_unowned_state(tmp_path, monkeypatch):
+    outcome, boundary = _drive_cleanup(tmp_path, monkeypatch, child="survives-kill", identity="matched", owned=False)
+
+    assert outcome == ("ok", None)
+    assert boundary.calls == []
+    assert boundary.probes == 0
+    assert boundary.signals == []
