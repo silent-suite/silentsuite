@@ -23,9 +23,20 @@ data paths, as one explicitly ordered lifecycle:
    registered, stopped job with stale arguments; a second copy with
    identical bytes at a differently named owned path then runs
    ``--install-autostart`` and must replace that stale entry;
-5. removal - ``--remove-autostart`` unregisters the agent and stops the
-   recovered child while the exact synthetic network profile bytes and the
-   zero-account state stay preserved.
+5. running replacement - with the recovered child independently confirmed
+   running and owned (it is not stopped), a third identical-hash copy at
+   another owned path runs ``--install-autostart``; the agent file must point
+   at it, a distinct owned child must run from it, the previous child must
+   exit, and the listener, settings bytes and zero-account state must hold;
+6. removal - the third copy's ``--remove-autostart`` unregisters the agent
+   and stops its child while the exact synthetic network profile bytes and
+   the zero-account state stay preserved.
+
+Freshness and other "must be absent" filesystem checks use ``lstat``: any
+existing entry, a dangling symlink included, is present, and an inspection
+error is uncertainty that refuses. Cleanup requires bounded positive exit
+confirmation for every recorded owned child; only a pid re-verified as that
+exact launchd child is ever signalled.
 
 Isolation: the subject is the runner user's own default, disposable state.
 No launchd environment is set, no other service is read or booted out, only
@@ -81,6 +92,9 @@ BINARY_TIMEOUT = 180.0
 STATE_WAIT_SECONDS = 60.0
 LISTENER_WAIT_SECONDS = 120.0
 TEARDOWN_WAIT_SECONDS = 45.0
+# Cleanup waits this long for a recorded child to exit on its own before the
+# re-verified owned pid may be signalled.
+CHILD_GRACE_SECONDS = 10.0
 POLL_SECONDS = 0.5
 
 # Fixed, content-free messages the frozen binary prints on the paths under
@@ -354,25 +368,81 @@ def _parsed_settings(state):
         _fail("the persisted settings.json is not readable JSON")
 
 
+def _entry_state(path):
+    """\"absent\" only when ``lstat`` reports a missing entry; any entry, a dangling symlink included, is \"present\".
+
+    Every other inspection error is \"unknown\" so freshness fails closed.
+    """
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+    return "present"
+
+
+def _liveness(pid):
+    """\"live\", \"exited\" or \"unknown\" from a signal-0 probe; only ESRCH proves exit."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return "exited"
+    except PermissionError:
+        return "live"
+    except OSError:
+        return "unknown"
+    return "live"
+
+
+def _confirm_owned_child_exit(pid, path):
+    """True only after bounded, positive exit confirmation of one recorded owned child.
+
+    A child that exits within the grace window is never signalled. Otherwise
+    only a pid re-confirmed immediately before the signal as the exact
+    recorded launchd child of ``path`` receives one SIGKILL, and its exit must
+    then be observed. An unknown or different identity is never signalled and
+    can only succeed by exiting on its own within the bound.
+    """
+    if pid <= 1 or pid == os.getpid():
+        return False
+
+    def exited():
+        return _liveness(pid) == "exited"
+
+    if _wait_until(exited, CHILD_GRACE_SECONDS):
+        return True
+    if _process_identity(pid) != ("1", str(path)):
+        return _wait_until(exited, TEARDOWN_WAIT_SECONDS)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # raced with its exit; the bounded probe below must still confirm it
+    except OSError:
+        return False
+    return _wait_until(exited, TEARDOWN_WAIT_SECONDS)
+
+
 def _cleanup(state):
     """Boot out only the positively claimed production-label service, then verify absence.
 
     Even when a state query failed, only the owned service is booted out and
     absence is retried; a query that never positively proves absence is a
-    cleanup failure, never claimed as success. Only recorded, verified owned
-    child PIDs may be signalled, and never broadly.
+    cleanup failure, never claimed as success. Every recorded owned child must
+    be positively confirmed exited within a bound; only a re-verified owned
+    child PID may be signalled, and never broadly.
     """
     if not state.owned:
         return
     if _service_state(state.service) != "absent":
         _launchctl("bootout", state.service)
         _wait_until(lambda: _service_state(state.service) == "absent", TEARDOWN_WAIT_SECONDS)
-    for pid, path in state.verified_children:
-        if pid > 1 and pid != os.getpid() and _alive(pid) and _process_identity(pid) == ("1", str(path)):
-            os.kill(pid, signal.SIGKILL)
+    unconfirmed = [pid for pid, path in state.verified_children if not _confirm_owned_child_exit(pid, path)]
     final_state = _service_state(state.service)
     if final_state != "absent":
         _fail("the packaged agent was not confirmed absent after cleanup")
+    if unconfirmed:
+        _fail("an owned packaged child was not confirmed stopped after cleanup")
 
 
 @pytest.fixture
@@ -424,7 +494,10 @@ def packaged():
         (data_dir, "default Bridge data directory"),
         (logs_dir, "default Bridge log directory"),
     ):
-        if path.exists():
+        entry = _entry_state(path)
+        if entry == "unknown":
+            _fail(f"the {what} could not be inspected on this runner; refusing to claim a non-fresh fixture")
+        if entry != "absent":
             _fail(f"the {what} already exists on this runner; refusing to claim a non-fresh fixture")
     fresh_state, _ = _snapshot(service)
     if fresh_state == "unknown":
@@ -435,11 +508,12 @@ def packaged():
     staging = Path(tempfile.mkdtemp(prefix="ss-packaged-autostart-", dir=runner_temp))
     stage_a = staging / "a" / "silentsuite-bridge"
     stage_b = staging / "b" / "silentsuite-bridge"
-    for stage in (stage_a, stage_b):
+    stage_c = staging / "c" / "silentsuite-bridge"
+    for stage in (stage_a, stage_b, stage_c):
         stage.parent.mkdir(parents=True)
         shutil.copyfile(binary, stage)
         os.chmod(stage, 0o755)
-    if len({_sha256(path) for path in (binary, stage_a, stage_b)}) != 1:
+    if len({_sha256(path) for path in (binary, stage_a, stage_b, stage_c)}) != 1:
         _fail("the owned binary copies are not identical to the just-built frozen binary")
 
     try:
@@ -474,6 +548,7 @@ def packaged():
         port=port,
         stage_a=stage_a,
         stage_b=stage_b,
+        stage_c=stage_c,
         retired_a=stage_a.with_name(stage_a.name + ".retired"),
         plist=plist,
         logs_dir=logs_dir,
@@ -493,7 +568,7 @@ def packaged():
 
 @packaged_only
 def test_packaged_macos_autostart_lifecycle(packaged):
-    """Ordered journey: install -> registered-stopped stale recovery -> removal with retained state."""
+    """Ordered journey: install -> registered-stopped stale recovery -> running replacement -> removal."""
     # --- Stage 1: initial install of the first owned copy --------------------
     install_a = _run_binary(packaged.stage_a, ["--install-autostart"], packaged.install_env)
     _expect_success(install_a, "--install-autostart (first copy)")
@@ -540,21 +615,47 @@ def test_packaged_macos_autostart_lifecycle(packaged):
     if not _wait_until(lambda: _listener_up(packaged.port), LISTENER_WAIT_SECONDS):
         _fail("the recovered bridge did not accept a loopback connection on the synthetic port")
 
-    # --- Stage 4: removal keeps the synthetic network settings and zero accounts
-    remove_b = _run_binary(packaged.stage_b, ["--remove-autostart"], packaged.base_env)
-    _expect_success(remove_b, "--remove-autostart")
-    _expect_text(remove_b, REMOVE_CONFIRMED)
-    _expect_text(remove_b, PROFILE_RETAINED)
+    # --- Stage 4: running replacement by a third identical-hash copy ----------
+    # The recovered child is NOT stopped here: it must be independently
+    # confirmed running and owned, and copy C's installer must replace it.
+    running_state, running_pid = _snapshot(packaged.service)
+    if running_state != "registered-running" or running_pid != pid_b:
+        _fail("the recovered child was not confirmed running before the running replacement")
+    _assert_owned_child(pid_b, packaged.stage_b)
+    install_c = _run_binary(packaged.stage_c, ["--install-autostart"], packaged.install_env)
+    _expect_success(install_c, "--install-autostart (third copy, running replacement)")
+    _expect_text(install_c, INSTALL_CONFIRMED)
+    _expect_text(install_c, PROCESS_ONLY_NOTE)
+    pid_c = _wait_state(packaged.service, "registered-running", STATE_WAIT_SECONDS)
+    if pid_c in (pid_a, pid_b):
+        _fail("the running replacement did not start a new child process")
+    _assert_owned_child(pid_c, packaged.stage_c)
+    packaged.verified_children.append((pid_c, packaged.stage_c))
+    _assert_plist_arguments(packaged, packaged.stage_c)
+    if not _wait_until(lambda: _liveness(pid_b) == "exited", TEARDOWN_WAIT_SECONDS):
+        _fail("the running replacement did not stop the previous child")
+    if not _wait_until(lambda: _listener_up(packaged.port), LISTENER_WAIT_SECONDS):
+        _fail("the replacement bridge did not accept a loopback connection on the synthetic port")
+    if _settings_bytes(packaged) != settings_bytes:
+        _fail("the running replacement changed the synthetic persisted network profile")
+    if _entry_state(packaged.credentials) != "absent":
+        _fail("the running replacement created account state that must remain absent")
+
+    # --- Stage 5: removal keeps the synthetic network settings and zero accounts
+    remove_c = _run_binary(packaged.stage_c, ["--remove-autostart"], packaged.base_env)
+    _expect_success(remove_c, "--remove-autostart")
+    _expect_text(remove_c, REMOVE_CONFIRMED)
+    _expect_text(remove_c, PROFILE_RETAINED)
     _wait_state(packaged.service, "absent", STATE_WAIT_SECONDS)
-    if packaged.plist.exists():
+    if _entry_state(packaged.plist) != "absent":
         _fail("removal left the agent file installed")
-    if not _wait_until(lambda: not _alive(pid_b), TEARDOWN_WAIT_SECONDS):
-        _fail("removal did not stop the recovered child")
+    if not _wait_until(lambda: _liveness(pid_c) == "exited", TEARDOWN_WAIT_SECONDS):
+        _fail("removal did not stop the replacement child")
     if _settings_bytes(packaged) != settings_bytes:
         _fail("removal did not preserve exactly the synthetic persisted network profile")
-    if packaged.credentials.exists():
+    if _entry_state(packaged.credentials) != "absent":
         _fail("the packaged lifecycle created account state that must remain absent")
-    listed = _run_binary(packaged.stage_b, ["--list-accounts"], packaged.base_env)
+    listed = _run_binary(packaged.stage_c, ["--list-accounts"], packaged.base_env)
     _expect_success(listed, "--list-accounts")
     _expect_text(listed, NO_ACCOUNTS)
 
@@ -800,7 +901,7 @@ def test_packaged_admission_reaches_staging_only_after_positive_freshness(tmp_pa
     outcome = _drive_admission()
 
     assert outcome == ("refused", ARCH_MISMATCH)
-    assert len(world.copies) == 2
+    assert len(world.copies) == 3
     assert world.external == ["lipo"]
     assert set(world.launchctl) <= {"manageruid", "managername", "print", "list"}
     assert world.binary.read_bytes() == SYNTHETIC_BINARY
@@ -810,8 +911,9 @@ class _CleanupBoundary:
     """Intercepted launchctl/ps/os.kill for one recorded owned child; no real process exists.
 
     ``child`` is ``"exited"`` (gone before cleanup), ``"exits-on-kill"``,
-    ``"survives-kill"``; ``identity`` is ``"matched"`` or ``"unknown"`` (ps
-    times out). The service is always positively absent.
+    ``"survives-kill"``; ``identity`` is ``"matched"``, ``"foreign"`` (a live
+    process at another executable path) or ``"unknown"`` (ps times out). The
+    service is always positively absent.
     """
 
     def __init__(self, pid, path, child, identity):
@@ -856,7 +958,8 @@ class _CleanupBoundary:
                 raise subprocess.TimeoutExpired(argv, kwargs.get("timeout") or 10)
             if not self.alive():
                 return subprocess.CompletedProcess(argv, 1, stdout="", stderr="")
-            return subprocess.CompletedProcess(argv, 0, stdout=f"    1 {self.path}\n", stderr="")
+            command = "/Applications/Unrelated/agent" if self.identity == "foreign" else str(self.path)
+            return subprocess.CompletedProcess(argv, 0, stdout=f"    1 {command}\n", stderr="")
         self.unexpected.append(os.path.basename(argv[0]))
         return subprocess.CompletedProcess(argv, 97, stdout="", stderr="")
 
@@ -891,6 +994,18 @@ def test_packaged_cleanup_fails_when_live_owned_child_identity_is_unknown(tmp_pa
         "cleanup succeeded while a recorded child was live and unverified"
     )
     assert boundary.signals == [], "an unverified pid was signalled"
+    assert boundary.foreign == []
+    assert boundary.unexpected == []
+
+
+@posix_controls
+def test_packaged_cleanup_never_signals_a_live_pid_with_a_different_identity(tmp_path, monkeypatch):
+    outcome, boundary = _drive_cleanup(tmp_path, monkeypatch, child="survives-kill", identity="foreign")
+
+    assert outcome == ("refused", CHILD_UNCONFIRMED), (
+        "cleanup succeeded while a recorded pid was live as another program"
+    )
+    assert boundary.signals == [], "a pid whose identity no longer matched was signalled"
     assert boundary.foreign == []
     assert boundary.unexpected == []
 
