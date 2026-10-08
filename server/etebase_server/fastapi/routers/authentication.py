@@ -27,6 +27,7 @@ from ..dependencies import AuthData, get_auth_data, get_authenticated_user
 from ..exceptions import AuthenticationFailed, HttpError, transform_validation_error
 from ..msgpack import MsgpackResponse, MsgpackRoute
 from ..utils import BaseModel, get_user_username_email_kwargs, msgpack_decode, msgpack_encode, permission_responses
+from .owner import owner_mode_enabled, signup_grant_valid
 
 User = get_typed_user_model()
 authentication_router = APIRouter(route_class=MsgpackRoute)
@@ -232,8 +233,36 @@ def dashboard_url(request: Request, user: UserType = Depends(get_authenticated_u
     return MsgpackResponse(ret)
 
 
+REGISTRATION_TOKEN_HEADER = "x-silentsuite-registration-token"
+
+
+def check_registration_token(request: Request, username: str):
+    """Require the owner registration token header for every signup when configured.
+
+    Only the request header is accepted: never a query parameter, forwarded identity,
+    or the bootstrap token. The supplied value is never logged or echoed. In owner mode
+    only a valid signed owner grant for this username and Host is accepted."""
+    if owner_mode_enabled():
+        valid = signup_grant_valid(request, username)
+    else:
+        registration_token = settings.ETEBASE_REGISTRATION_TOKEN
+        if not registration_token:
+            return
+        supplied = request.headers.getlist(REGISTRATION_TOKEN_HEADER)
+        supplied_token = supplied[0] if len(supplied) == 1 else ""
+        matches = hmac.compare_digest(registration_token.encode("utf-8"), supplied_token.encode("utf-8"))
+        valid = bool(supplied_token) and matches
+    if not valid:
+        raise HttpError(
+            "registration_token_required",
+            "A valid registration token is required to create an account on this server.",
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
 def signup_save(data: SignupIn, request: Request) -> UserType:
     user_data = data.user
+    check_registration_token(request, user_data.username)
     with transaction.atomic():
         bootstrap_token = settings.ETEBASE_BOOTSTRAP_ADMIN_TOKEN
         if bootstrap_token and not models.UserInfo.objects.exists():

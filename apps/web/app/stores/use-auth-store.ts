@@ -13,6 +13,7 @@ import { createLoginSessionPersistenceDiagnostics } from '@/app/lib/sync-restore
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { BillingResponseError, startSignupAnnualPayment, type AnnualOffer } from '@/app/lib/billing-v2'
+import type { OwnerSignupOptions } from '@/app/lib/etebase-auth'
 
 export interface User {
   isAdmin?: boolean
@@ -103,7 +104,7 @@ interface AuthState {
   isReadOnly: () => boolean
   canWrite: () => boolean
   prepareSignupDraft: (email: string, wantsProductUpdates?: boolean, rememberDevice?: boolean) => void
-  createEtebaseAccount: (email: string, password: string, serverUrl?: string) => Promise<void>
+  createEtebaseAccount: (email: string, password: string, serverUrl?: string, owner?: OwnerSignupOptions) => Promise<void>
   /** Historical signature retained for callers; fresh hosted v1 creation rejects. */
   signup: (planId: string, trialPath: string) => Promise<SignupResult>
   provisionAnnualNoCard: (checkoutIntentToken: string) => Promise<void>
@@ -982,6 +983,12 @@ async function deleteHostedServerSession(context: string) {
 const SIGNUP_SESSION_ERROR = 'Your account is set up, but we could not confirm the Billing session. Retry to finish signing in; your account and payment are retained.'
 
 /** Publish the promise before entering async work so duplicate clicks share it. */
+/** Typed owner-authorization failure or a cancelled owner operation. */
+function isOwnerOperationFailure(err: unknown): err is Error {
+  const name = (err as { name?: unknown } | null)?.name
+  return name === 'OwnerAuthError' || name === 'AbortError'
+}
+
 function signupSingleFlight<A extends unknown[], R>(operation: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
   let active: { args: A; promise: Promise<R> } | undefined
   return (...args) => {
@@ -1091,7 +1098,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     })
   },
 
-  createEtebaseAccount: signupSingleFlight(async (email: string, password: string, serverUrl?: string) => {
+  createEtebaseAccount: signupSingleFlight(async (email: string, password: string, serverUrl?: string, owner?: OwnerSignupOptions) => {
     const existing = get().pendingSignup
     if ((existing?.provisionedUser || existing?.etebaseAccountReady) && (existing.email !== email || existing.serverUrl !== serverUrl)) {
       throw new Error('Your account is already set up. Sign in with its original account details.')
@@ -1103,8 +1110,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       try {
         authResult = existing?.provisionedUser || existing?.etebaseAccountReady
           ? await etebaseLogIn(email, password, serverUrl)
-          : await etebaseSignUp(email, password, serverUrl)
+          : owner
+            ? await etebaseSignUp(email, password, serverUrl, owner)
+            : await etebaseSignUp(email, password, serverUrl)
       } catch (signupErr) {
+        // Owner-authorization failures and cancellations never fall back to login.
+        if (isOwnerOperationFailure(signupErr)) throw signupErr
         const raw = signupErr instanceof Error ? signupErr.message.toLowerCase() : ''
         if (!raw.includes('conflict') && !raw.includes('409') && !raw.includes('already')) {
           throw signupErr
@@ -1113,6 +1124,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         authResult = await etebaseLogIn(email, password, serverUrl)
       }
       const { savedSession } = authResult
+      if (owner?.signal.aborted) throw new DOMException('Signup was cancelled.', 'AbortError')
       if (get().pendingSignup !== existing) throw new Error('Signup was superseded.')
       if (!isSelfHosted && !isCustomServer(serverUrl)) clearHostedValidationMarkers()
       await secureSet('etebase_session', savedSession)
@@ -1136,6 +1148,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         isLoading: false,
       })
     } catch (err) {
+      if (isOwnerOperationFailure(err)) {
+        // Keep the typed error and its fixed message; never remap it as an account conflict.
+        if (get().pendingSignup === existing) set({ error: err.message, isLoading: false })
+        throw err
+      }
       let message = 'Failed to create account'
       if (err instanceof Error) {
         const raw = err.message.toLowerCase()
