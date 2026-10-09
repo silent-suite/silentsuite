@@ -961,8 +961,9 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * The entry's header alone, from the first bytes of a format 2 file; null when the file is format 1
-     * or anything about it does not check out, so the caller reads it whole and reports it properly.
+     * The entry's header alone, from the first bytes of the file; null when the file is not in the
+     * current format or anything about it does not check out, so the caller reads it whole and reports
+     * it properly.
      */
     private fun readHeader(file: File): EntryHeader? = try {
         DataInputStream(FileInputStream(file)).use { input ->
@@ -973,7 +974,6 @@ internal class PendingNotesStore private constructor(
             val head = prefix.copyOf(end)
             input.readFully(head, prefix.size, end - prefix.size)
             (PendingCodec.decodeEntryHeader(head) as? PendingCodec.Decoded.Ok)?.value
-                ?.let { it as? PendingCodec.HeaderRead.Header }?.header
         }
     } catch (e: IOException) {
         null

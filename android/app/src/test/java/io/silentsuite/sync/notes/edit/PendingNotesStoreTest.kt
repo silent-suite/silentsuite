@@ -1296,13 +1296,22 @@ class PendingNotesStoreTest {
             store.snapshot { true }.unreadable.map { it.copy(reason = "bad checksum") })
     }
 
-    @Test fun `a snapshot still reads format 1 entry files, whole`() {
+    @Test fun `a format 1 entry file is reported as unreadable and kept, committed or not`() {
+        // The layout of the unreleased branch, before entries had a header section.
         val v1Upsert = "53534e500100066e6f74652d310006626f6f6b2d3101000000000000000300057265762d33010000000100057265762d3200000000ffffffffffffffff0000000000000003010203f0a8313a"
+        val bytes = ByteArray(v1Upsert.length / 2) { v1Upsert.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
         dir.mkdirs()
-        File(dir, "note-1.note").writeBytes(ByteArray(v1Upsert.length / 2) { v1Upsert.substring(it * 2, it * 2 + 2).toInt(16).toByte() })
+        File(dir, "note-1.note").writeBytes(bytes)
+        File(dir, "note-2.note.new").writeBytes(bytes) // a first write that never got its rename
         val snapshot = store.snapshot { false }
-        assertEquals(PendingNotesStore.EntryHeader("note-1", "book-1", PendingEntry.State.UPSERT, 3), snapshot.headers.single())
-        assertTrue(snapshot.unreadable.isEmpty())
+        assertTrue(snapshot.headers.isEmpty())
+        assertEquals(listOf(Read.Unreadable("note-1.note", "format version 1"), Read.Unreadable("note-2.note", "format version 1")),
+            snapshot.unreadable)
+        assertEquals(SaveOutcome.Blocked, store.saveLocal("note-1", "book-1", "rev-4", blob("typed over it"), isCreate = false))
+        restarted().scan()
+        assertArrayEquals(bytes, File(dir, "note-1.note").readBytes())
+        assertArrayEquals(bytes, File(dir, "note-2.note").readBytes())
+        assertFalse(File(dir, "note-2.note.new").exists())
     }
 
     @Test fun `observing a note reads its entry and the sequence together, also when there is no entry`() {

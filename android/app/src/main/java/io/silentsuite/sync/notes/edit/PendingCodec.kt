@@ -11,23 +11,23 @@ import java.util.zip.CRC32
 /**
  * On-disk format of the pending store: a magic number, a format version, the fields, and a CRC32
  * over everything before it. A file that fails any check decodes to [Decoded.Bad] and is kept,
- * never guessed at. A newer format version is also [Decoded.Bad], so a downgrade cannot misread it.
+ * never guessed at. Any other format version is also [Decoded.Bad], so neither a downgrade nor an
+ * old file can be misread.
  *
  * Entry files (format 2) put every field except the blob in a header with its own length and CRC32
  * ahead of the blob, so a screen that only counts entries reads a few hundred bytes per file instead
- * of every blob. Format 1 entry files (no header section) are still read, and rewritten as format 2
- * on their next change.
+ * of every blob. An earlier layout (format 1, no header section) existed only on an unreleased branch
+ * and is not read: a file in it is [Decoded.Bad] like one in a newer format, and the number 1 is not
+ * used again.
  *
  * The last header field of format 2 is the mark of a note made from a conflict
  * ([PendingEntry.fromConflict]). It was added to format 2 in place, while that format existed only on
- * an unreleased branch, so a format 2 file without it does not read. Format 1 has no such field and
- * reads as unmarked. Once a build has written format 2 files on a user's device, a new field needs a
- * new format version.
+ * an unreleased branch, so a format 2 file without it does not read. Once a build has written format 2
+ * files on a user's device, a new field needs a new format version.
  */
 internal object PendingCodec {
     const val ENTRY_FORMAT_VERSION = 2
     const val RECORD_FORMAT_VERSION = 1
-    private const val ENTRY_FORMAT_V1 = 1
     private const val ENTRY_MAGIC = 0x53534E50 // "SSNP"
     private const val RECORD_MAGIC = 0x53534E52 // "SSNR"
     private const val KIND_LANDED = 1
@@ -45,12 +45,6 @@ internal object PendingCodec {
         data class Bad(val reason: String) : Decoded<Nothing>()
     }
 
-    /** What [decodeEntryHeader] found: the header, or that the file is format 1 and needs a full read. */
-    sealed class HeaderRead {
-        data class Header(val header: PendingNotesStore.EntryHeader) : HeaderRead()
-        object NeedsFullRead : HeaderRead()
-    }
-
     fun encodeEntry(e: PendingEntry): ByteArray {
         val header = ByteArrayOutputStream().also { buffer -> DataOutputStream(buffer).use { writeEntryFields(it, e) } }.toByteArray()
         return withChecksum { out ->
@@ -63,43 +57,34 @@ internal object PendingCodec {
         }
     }
 
-    fun decodeEntry(bytes: ByteArray): Decoded<PendingEntry> = openEntry(bytes) { format, input ->
-        if (format == ENTRY_FORMAT_V1) {
-            // Format 1 has the blob right after the fields, so it is read once they are.
-            readEntryFields(input, hasMark = false) { readBlob(input) }
-        } else {
-            val header = readHeaderSection(input)
-            val blob = readBlob(input)
-            DataInputStream(ByteArrayInputStream(header)).use { fields ->
-                val entry = readEntryFields(fields, hasMark = true) { blob }
-                if (fields.available() != 0) throw IOException("trailing header bytes")
-                entry
-            }
+    fun decodeEntry(bytes: ByteArray): Decoded<PendingEntry> = openEntry(bytes) { input ->
+        val header = readHeaderSection(input)
+        val blob = readBlob(input)
+        DataInputStream(ByteArrayInputStream(header)).use { fields ->
+            val entry = readEntryFields(fields, blob)
+            if (fields.available() != 0) throw IOException("trailing header bytes")
+            entry
         }
     }
 
     /**
-     * Reads only the header of a format 2 entry from [prefix], the first bytes of the file: at least
+     * Reads only the header of an entry from [prefix], the first bytes of the file: at least
      * [ENTRY_PREFIX] plus the header length and 4. The header's own CRC is checked; the blob and the
      * file CRC are not, so a damaged blob is found only by a full read.
      */
-    fun decodeEntryHeader(prefix: ByteArray): Decoded<HeaderRead> {
+    fun decodeEntryHeader(prefix: ByteArray): Decoded<PendingNotesStore.EntryHeader> {
         if (prefix.size < ENTRY_PREFIX) return Decoded.Bad("too short")
         return try {
             DataInputStream(ByteArrayInputStream(prefix)).use { input ->
                 if (input.readInt() != ENTRY_MAGIC) return Decoded.Bad("wrong magic")
-                when (val format = input.readUnsignedByte()) {
-                    ENTRY_FORMAT_V1 -> Decoded.Ok(HeaderRead.NeedsFullRead)
-                    ENTRY_FORMAT_VERSION -> {
-                        val header = readHeaderSection(input)
-                        DataInputStream(ByteArrayInputStream(header)).use { fields ->
-                            val e = readEntryFields(fields, hasMark = true) { ByteArray(0) }
-                            // As in the full read, so the two never disagree about a header of another layout.
-                            if (fields.available() != 0) throw IOException("trailing header bytes")
-                            Decoded.Ok(HeaderRead.Header(PendingNotesStore.EntryHeader.of(e)))
-                        }
-                    }
-                    else -> Decoded.Bad("format version $format")
+                val format = input.readUnsignedByte()
+                if (format != ENTRY_FORMAT_VERSION) return Decoded.Bad("format version $format")
+                val header = readHeaderSection(input)
+                DataInputStream(ByteArrayInputStream(header)).use { fields ->
+                    val e = readEntryFields(fields, ByteArray(0))
+                    // As in the full read, so the two never disagree about a header of another layout.
+                    if (fields.available() != 0) throw IOException("trailing header bytes")
+                    Decoded.Ok(PendingNotesStore.EntryHeader.of(e))
                 }
             }
         } catch (e: EOFException) {
@@ -144,11 +129,8 @@ internal object PendingCodec {
         out.writeBoolean(e.fromConflict)
     }
 
-    /**
-     * Reads every field but the blob, then takes the blob from [blob]. [hasMark] is false for format 1,
-     * which ends before the conflict mark.
-     */
-    private fun readEntryFields(input: DataInputStream, hasMark: Boolean, blob: () -> ByteArray): PendingEntry {
+    /** Reads every header field and joins them with [blob]. */
+    private fun readEntryFields(input: DataInputStream, blob: ByteArray): PendingEntry {
         val noteUid = input.readUTF()
         val notebookUid = input.readUTF()
         val state = stateOf(input.readUnsignedByte())
@@ -168,11 +150,10 @@ internal object PendingCodec {
             val reason = HeldReason.values().firstOrNull { it.name == reasonName } ?: throw IOException("held reason $reasonName")
             PendingEntry.Held(reason, input.readLong())
         } else null
-        val fromConflict = hasMark && input.readBoolean()
-        val bytes = blob()
+        val fromConflict = input.readBoolean()
         return try {
             PendingEntry(noteUid, notebookUid, state, version, revision, isCreate, sent, failureCount,
-                lastFailureAt, lastFailureCategory, origin, held, fromConflict, bytes)
+                lastFailureAt, lastFailureCategory, origin, held, fromConflict, blob)
         } catch (e: IllegalArgumentException) {
             throw IOException(e.message)
         }
@@ -270,10 +251,10 @@ internal object PendingCodec {
             parse(input)
         }
 
-    private fun <T> openEntry(bytes: ByteArray, parse: (Int, DataInputStream) -> T): Decoded<T> =
+    private fun <T> openEntry(bytes: ByteArray, parse: (DataInputStream) -> T): Decoded<T> =
         checked(bytes, ENTRY_MAGIC) { format, input ->
-            if (format != ENTRY_FORMAT_V1 && format != ENTRY_FORMAT_VERSION) throw IOException("format version $format")
-            parse(format, input)
+            if (format != ENTRY_FORMAT_VERSION) throw IOException("format version $format")
+            parse(input)
         }
 
     /**
