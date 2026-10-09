@@ -7,6 +7,34 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+private fun int(v: Int) = byteArrayOf((v ushr 24).toByte(), (v ushr 16).toByte(), (v ushr 8).toByte(), v.toByte())
+
+private fun crc(b: ByteArray) = java.util.zip.CRC32().apply { update(b) }.value.toInt()
+
+/** [file], an encoded entry, with its header section replaced by [edit] of it, and both checksums correct for the result. */
+internal fun withEntryHeader(file: ByteArray, edit: (ByteArray) -> ByteArray): ByteArray {
+    val end = PendingCodec.entryHeaderEnd(file)!!
+    val header = edit(file.copyOfRange(PendingCodec.ENTRY_PREFIX, end - 4))
+    val body = file.copyOf(5) + int(header.size) + header + int(crc(header)) + file.copyOfRange(end, file.size - 4)
+    return body + int(crc(body))
+}
+
+/** [file] with its format version byte set to [format] and the file checksum correct for the result. Entries and records both keep the version at byte 4. */
+internal fun withFormatVersion(file: ByteArray, format: Int): ByteArray {
+    val body = file.copyOfRange(0, file.size - 4).also { it[4] = format.toByte() }
+    return body + int(crc(body))
+}
+
+/**
+ * [file], an entry held for READ_ONLY, with that reason renamed to READ_ONLZ, which no build knows. The entry
+ * must have no failure category and no uid that contains the reason's name, or the wrong bytes are changed.
+ */
+internal fun withUnknownHeldReason(file: ByteArray): ByteArray = withEntryHeader(file) { header ->
+    val at = String(header, Charsets.ISO_8859_1).indexOf("READ_ONLY")
+    check(at >= 0) { "the entry is not held for READ_ONLY" }
+    header.copyOf().also { it[at + 8] = (it[at + 8] + 1).toByte() }
+}
+
 class PendingCodecTest {
     private val full = PendingEntry(
         noteUid = "note_A-1", notebookUid = "book-1", state = PendingEntry.State.HELD, version = 7,
@@ -37,6 +65,34 @@ class PendingCodecTest {
         // The names are what entry files hold, so none may change once a build has written one.
         assertEquals(listOf("READ_ONLY", "LOST_ACCESS", "NOTEBOOK_DELETED", "REJECTED", "REPEATED_CONFLICT",
             "UNREADABLE_METADATA", "READ_BACK_FAILED", "NOT_BUILT"), HeldReason.values().map { it.name })
+    }
+
+    @Test fun `a held reason this build does not know makes the entry unreadable, for the full read and for the header read`() {
+        // As a newer build would write it: a reason added later, in the current format, with both checksums
+        // right. So a new reason needs no new format version, and an older build keeps and reports the file.
+        val file = withUnknownHeldReason(PendingCodec.encodeEntry(full.copy(lastFailureCategory = null)))
+        assertEquals("held reason READ_ONLZ", bad(file))
+        assertEquals("held reason READ_ONLZ", (header(file) as PendingCodec.Decoded.Bad).reason)
+    }
+
+    @Test fun `a state this build does not know makes the entry unreadable, for the full read and for the header read`() {
+        // The state code follows the two uids, each written with its two-byte length.
+        val at = 2 + full.noteUid.length + 2 + full.notebookUid.length
+        val file = withEntryHeader(PendingCodec.encodeEntry(full)) { header -> header.copyOf().also { it[at] = 4 } }
+        assertEquals("state 4", bad(file))
+        assertEquals("state 4", (header(file) as PendingCodec.Decoded.Bad).reason)
+    }
+
+    @Test fun `a file is intact when its checksum matches, whether or not this build can read it`() {
+        val bytes = PendingCodec.encodeEntry(full)
+        assertTrue(PendingCodec.isIntact(bytes))
+        assertTrue("a newer format", PendingCodec.isIntact(withFormatVersion(bytes, 3)))
+        assertTrue("a reason added later", PendingCodec.isIntact(withUnknownHeldReason(PendingCodec.encodeEntry(full.copy(lastFailureCategory = null)))))
+        for (hex in listOf(v2UpsertBeforeMark, v1Upsert, v1Landed, v1Notebook, v1Sequence)) assertTrue(hex, PendingCodec.isIntact(unhex(hex)))
+        for (length in 0 until bytes.size) assertFalse("cut to $length", PendingCodec.isIntact(bytes.copyOf(length)))
+        for (i in bytes.indices) {
+            assertFalse("byte $i", PendingCodec.isIntact(bytes.copyOf().also { it[i] = (it[i].toInt() xor 0x40).toByte() }))
+        }
     }
 
     @Test fun `the conflict mark is read back as it was written, set or not`() {
@@ -70,10 +126,7 @@ class PendingCodecTest {
     }
 
     @Test fun `a newer format version is refused so a downgrade cannot misread it`() {
-        val bytes = PendingCodec.encodeEntry(full)
-        val body = bytes.copyOfRange(0, bytes.size - 4).also { it[4] = 3 }
-        val crc = java.util.zip.CRC32().apply { update(body) }.value.toInt()
-        val reencoded = body + byteArrayOf((crc ushr 24).toByte(), (crc ushr 16).toByte(), (crc ushr 8).toByte(), crc.toByte())
+        val reencoded = withFormatVersion(PendingCodec.encodeEntry(full), 3)
         assertEquals("format version 3", bad(reencoded))
         assertEquals("format version 3", (PendingCodec.decodeEntryHeader(reencoded) as PendingCodec.Decoded.Bad).reason)
     }
@@ -169,8 +222,8 @@ class PendingCodecTest {
     @Test fun `a format 2 file from before the conflict mark is reported as unreadable, not read as unmarked`() {
         // Such files exist only where a build of the prototype branch ran. A committed one is kept and
         // reported like any file that cannot be read, and the header-only view refuses it the same way.
-        // One left as an uncommitted first write (a ".new" with no committed file) does not read back
-        // complete, so recovery drops it like any write that never finished.
+        // One left as an uncommitted first write (a ".new" with no committed file) is whole, so recovery
+        // commits it under its own name, and it is reported the same way.
         for (hex in listOf(v2UpsertBeforeMark, v2DeletedBeforeMark, v2HeldBeforeMark)) {
             val bytes = unhex(hex)
             assertEquals("truncated", bad(bytes))
@@ -179,14 +232,8 @@ class PendingCodecTest {
     }
 
     @Test fun `a format 2 header with a byte after its last field is refused by the full read and by the header read`() {
-        fun int(v: Int) = byteArrayOf((v ushr 24).toByte(), (v ushr 16).toByte(), (v ushr 8).toByte(), v.toByte())
-        fun crc(b: ByteArray) = java.util.zip.CRC32().apply { update(b) }.value.toInt()
-        val bytes = PendingCodec.encodeEntry(full)
-        val end = PendingCodec.entryHeaderEnd(bytes)!!
         // The same entry with one more header byte, and both checksums correct for it.
-        val header = bytes.copyOfRange(PendingCodec.ENTRY_PREFIX, end - 4) + 0.toByte()
-        val body = bytes.copyOf(5) + int(header.size) + header + int(crc(header)) + bytes.copyOfRange(end, bytes.size - 4)
-        val file = body + int(crc(body))
+        val file = withEntryHeader(PendingCodec.encodeEntry(full)) { it + 0.toByte() }
         assertEquals("trailing header bytes", bad(file))
         assertEquals("trailing header bytes",
             (PendingCodec.decodeEntryHeader(file.copyOf(PendingCodec.entryHeaderEnd(file)!!)) as PendingCodec.Decoded.Bad).reason)

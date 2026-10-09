@@ -78,7 +78,11 @@ internal data class PendingEntry(
     }
 }
 
-/** Why text is in the holding area. Entry files store the name, so a constant is never renamed. */
+/**
+ * Why text is in the holding area. Entry files store the name, so a constant is never renamed. A build
+ * that does not know a name cannot read that entry: it keeps the file and reports it, so a reason can
+ * be added without a new format version.
+ */
 internal enum class HeldReason {
     READ_ONLY,
     LOST_ACCESS,

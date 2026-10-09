@@ -1130,6 +1130,26 @@ class PendingNotesStoreTest {
         assertEquals(10L, file.length())
     }
 
+    @Test fun `an entry held for a reason this build does not know is reported, never overwritten and never deleted`() {
+        val held = PendingEntry("n1", "b1", PendingEntry.State.HELD, 4, "r4", false,
+            held = PendingEntry.Held(HeldReason.READ_ONLY, 5), blob = blob("held by a newer build"))
+        val bytes = withUnknownHeldReason(PendingCodec.encodeEntry(held))
+        dir.mkdirs()
+        val file = File(dir, "n1.note").also { it.writeBytes(bytes) }
+        val reported = listOf(Read.Unreadable("n1.note", "held reason READ_ONLZ"))
+        assertEquals(reported, store.scan().unreadable)
+        val snapshot = store.snapshot { false }
+        assertTrue(snapshot.headers.isEmpty())
+        assertEquals("the header read refuses it as well, so its notebook is not known", reported, snapshot.unreadable)
+        assertEquals(SaveOutcome.Blocked, store.saveLocal("n1", "b1", "r5", blob("typed over it"), isCreate = false))
+        assertEquals(DeleteOutcome.Blocked, store.markDeleted("n1", "b1", "d", blob("x")))
+        assertEquals(PendingNotesStore.SendStart.Refused(PendingNotesStore.Refusal.UNREADABLE), store.startSend("n1"))
+        assertFalse(store.release("n1"))
+        assertEquals(PendingNotesStore.HoldOutcome.NOT_APPLIED, store.hold("n1", HeldReason.READ_ONLY, now = 6))
+        restarted().scan()
+        assertArrayEquals("byte for byte as the newer build wrote it", bytes, file.readBytes())
+    }
+
     @Test fun `a leftover new file beside a committed one is dropped and the committed one wins`() {
         store.saveLocal("n1", "b1", "r1", blob("committed"), isCreate = false)
         File(dir, "n1.note.new").writeBytes(byteArrayOf(1, 2, 3))
@@ -1146,6 +1166,85 @@ class PendingNotesStoreTest {
         assertEquals(listOf(complete), scan.entries)
         assertTrue(scan.unreadable.isEmpty())
         assertFalse(File(dir, "n2.note.new").exists())
+    }
+
+    @Test fun `a first write that fails its checksum is dropped at full length too`() {
+        val complete = PendingEntry("n3", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("synced before the crash"))
+        dir.mkdirs()
+        File(dir, "n3.note.new").writeBytes(PendingCodec.encodeEntry(complete).also { it[12] = (it[12].toInt() xor 0x40).toByte() })
+        val scan = store.scan()
+        assertTrue(scan.entries.isEmpty())
+        assertTrue(scan.unreadable.isEmpty())
+        assertFalse(File(dir, "n3.note.new").exists())
+        assertFalse(File(dir, "n3.note").exists())
+    }
+
+    @Test fun `an intact first write in a layout this build cannot read is committed under its own name, kept and reported`() {
+        // As after a downgrade: a newer build wrote these in full, and its rename never happened.
+        val newerFormat = withFormatVersion(PendingCodec.encodeEntry(
+            PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("written by a newer build"))), 3)
+        val newerReason = withUnknownHeldReason(PendingCodec.encodeEntry(PendingEntry("n2", "b1", PendingEntry.State.HELD, 5, "r5", false,
+            held = PendingEntry.Held(HeldReason.READ_ONLY, 6), blob = blob("held by a newer build"))))
+        dir.mkdirs()
+        File(dir, "n1.note.new").writeBytes(newerFormat)
+        File(dir, "n2.note.new").writeBytes(newerReason)
+        val reported = listOf(Read.Unreadable("n1.note", "format version 3"), Read.Unreadable("n2.note", "held reason READ_ONLZ"))
+        val scan = store.scan()
+        assertTrue(scan.entries.isEmpty())
+        assertEquals("each once, under its own name", reported, scan.unreadable)
+        assertFalse(File(dir, "n1.note.new").exists())
+        assertFalse(File(dir, "n2.note.new").exists())
+        assertEquals(SaveOutcome.Blocked, store.saveLocal("n1", "b1", "r5", blob("typed over it"), isCreate = false))
+        // Committed, so the store does not come back to it: nothing is left for recovery to do, and a
+        // new process finds an ordinary committed file it cannot read.
+        assertEquals(reported, store.snapshot { false }.unreadable)
+        assertEquals(reported, restarted().scan().unreadable)
+        assertArrayEquals("byte for byte as the newer build wrote it", newerFormat, File(dir, "n1.note").readBytes())
+        assertArrayEquals(newerReason, File(dir, "n2.note").readBytes())
+    }
+
+    @Test fun `an intact first write this build cannot read is never dropped while its commit keeps failing`() {
+        var refuse = true
+        val d = tmp.newFolder("stranded-newer")
+        val newer = withFormatVersion(PendingCodec.encodeEntry(
+            PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("the only copy"))), 3)
+        File(d, "n1.note.new").writeBytes(newer)
+        val s = refusingRenames(d, "n1.note") { refuse }
+        assertEquals(listOf("n1.note.new"), s.scan().unreadable.map { it.file })
+        assertEquals(SaveOutcome.Blocked, s.saveLocal("n1", "b1", "r5", blob("typed over it"), isCreate = false))
+        assertArrayEquals(newer, File(d, "n1.note.new").readBytes())
+        refuse = false
+        assertEquals(listOf(Read.Unreadable("n1.note", "format version 3")), s.scan().unreadable)
+        assertArrayEquals(newer, File(d, "n1.note").readBytes())
+    }
+
+    @Test fun `an uncommitted write beside a committed file is dropped whatever its layout`() {
+        store.saveLocal("n1", "b1", "r1", blob("committed"), isCreate = false)
+        File(dir, "n1.note.new").writeBytes(withFormatVersion(PendingCodec.encodeEntry(entry("n1").copy(revision = "r-newer")), 3))
+        val scan = restarted().scan()
+        assertEquals("the last content a save reported", "r1", scan.entries.single().revision)
+        assertTrue(scan.unreadable.isEmpty())
+        assertFalse(File(dir, "n1.note.new").exists())
+    }
+
+    @Test fun `an intact first write of another kind that this build cannot read is kept for the build that can, and reported by nobody`() {
+        // A notebook copy may be the only way to decrypt held text, so it is not thrown away either.
+        val copy = withFormatVersion(PendingCodec.encodeNotebook("b1", blob("key b1")), 2)
+        val counter = withFormatVersion(PendingCodec.encodeSequence(41), 2)
+        dir.mkdirs()
+        File(dir, "b1.notebook.new").writeBytes(copy)
+        File(dir, "sequence.new").writeBytes(counter)
+        File(dir, "cut.notebook.new").writeBytes(PendingCodec.encodeNotebook("cut", blob("key")).copyOf(12))
+        val scan = store.scan()
+        assertTrue(scan.entries.isEmpty())
+        assertTrue("only entry files are reported", scan.unreadable.isEmpty())
+        assertArrayEquals(copy, File(dir, "b1.notebook").readBytes())
+        assertNull("this build cannot use it", store.notebook("b1"))
+        assertFalse(File(dir, "b1.notebook.new").exists())
+        assertFalse("one that was cut short goes, as before", File(dir, "cut.notebook.new").exists() || File(dir, "cut.notebook").exists())
+        // A counter this build cannot read restarts above every version on disk, and is written anew.
+        assertArrayEquals(counter, File(dir, "sequence").readBytes())
+        assertEquals(1L, saved(store.saveLocal("n1", "b1", "r1", blob("first"), isCreate = true)))
     }
 
     @Test fun `removing an entry also removes a stale new file so a later recovery cannot bring it back`() {

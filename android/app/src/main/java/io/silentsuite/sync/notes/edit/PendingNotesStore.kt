@@ -845,12 +845,20 @@ internal class PendingNotesStore private constructor(
     private fun recoverLocked(): List<Read.Unreadable> {
         val problems = mutableListOf<Read.Unreadable>()
         val unfinished = HashSet<String>()
-        // 1. A leftover "<name>.new" was never committed while "<name>" exists. Without a committed
-        // file it is the first write of that file, stopped before its rename; it is kept if complete.
+        // 1. A leftover "<name>.new" was never committed. While "<name>" exists that write never reported
+        // success, so it goes, unread. Without a committed file it is the first write of that file,
+        // stopped before its rename. One that is cut short or fails its checksum goes as well. Any other
+        // is committed under its own name, whether or not this build can read its layout (a newer format
+        // after a downgrade, a held reason added later), so nothing a build wrote in full is thrown away
+        // (design 3.1). An entry file this build cannot read is then reported like every committed entry
+        // that cannot be read. The other kinds are kept for a build that can read them but not reported,
+        // and not for long: a landed record goes in step 2 unless an editor is open, a notebook copy
+        // lasts until a run prunes or rewrites it, and a counter that cannot be read restarts above
+        // every version on disk.
         for (tmp in dir.listFiles()?.filter { it.name.endsWith(NEW) }.orEmpty()) {
             try {
                 val target = File(dir, tmp.name.removeSuffix(NEW))
-                if (target.exists() || !isComplete(tmp.readBytes(), target.name)) {
+                if (target.exists() || !PendingCodec.isIntact(tmp.readBytes())) {
                     if (!tmp.delete()) throw IOException("could not remove ${tmp.name}")
                 } else {
                     rename(tmp, target)
@@ -903,14 +911,6 @@ internal class PendingNotesStore private constructor(
         }
         unfinishedOriginals = unfinished
         return problems
-    }
-
-    private fun isComplete(bytes: ByteArray, name: String): Boolean = when {
-        name.endsWith(NOTE) -> PendingCodec.decodeEntry(bytes) is PendingCodec.Decoded.Ok
-        name.endsWith(LANDED) -> PendingCodec.decodeLanded(bytes) is PendingCodec.Decoded.Ok
-        name.endsWith(NOTEBOOK) -> PendingCodec.decodeNotebook(bytes) is PendingCodec.Decoded.Ok
-        name == SEQUENCE -> PendingCodec.decodeSequence(bytes) is PendingCodec.Decoded.Ok
-        else -> false
     }
 
     private fun files(suffix: String): List<File> =

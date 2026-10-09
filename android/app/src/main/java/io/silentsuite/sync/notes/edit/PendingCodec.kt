@@ -276,13 +276,24 @@ internal object PendingCodec {
             parse(format, input)
         }
 
-    /** Checks the CRC and magic, parses, and requires the parse to use every byte. Reads [bytes] in place, without copying. */
-    private fun <T> checked(bytes: ByteArray, magic: Int, parse: (Int, DataInputStream) -> T): Decoded<T> {
-        if (bytes.size < 9) return Decoded.Bad("too short")
+    /**
+     * Whether [bytes] are a whole file as some build wrote it: long enough for a magic number, a format
+     * version and a checksum, with the CRC32 at the end matching everything before it. It says nothing
+     * about whether this build can read the layout. A write that was cut short does not pass.
+     */
+    fun isIntact(bytes: ByteArray): Boolean {
+        if (bytes.size < 9) return false
         val bodyLength = bytes.size - 4
         val stored = ((bytes[bodyLength].toInt() and 0xff) shl 24) or ((bytes[bodyLength + 1].toInt() and 0xff) shl 16) or
             ((bytes[bodyLength + 2].toInt() and 0xff) shl 8) or (bytes[bodyLength + 3].toInt() and 0xff)
-        if (crc(bytes, bodyLength) != stored) return Decoded.Bad("checksum mismatch")
+        return crc(bytes, bodyLength) == stored
+    }
+
+    /** Checks the CRC and magic, parses, and requires the parse to use every byte. Reads [bytes] in place, without copying. */
+    private fun <T> checked(bytes: ByteArray, magic: Int, parse: (Int, DataInputStream) -> T): Decoded<T> {
+        if (bytes.size < 9) return Decoded.Bad("too short")
+        if (!isIntact(bytes)) return Decoded.Bad("checksum mismatch")
+        val bodyLength = bytes.size - 4
         return try {
             DataInputStream(ByteArrayInputStream(bytes, 0, bodyLength)).use { input ->
                 if (input.readInt() != magic) return Decoded.Bad("wrong magic")
