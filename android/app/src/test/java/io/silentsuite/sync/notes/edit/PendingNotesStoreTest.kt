@@ -1382,4 +1382,85 @@ class PendingNotesStoreTest {
         assertEquals(a, PendingNotesStore.identityDir(root, "io.silentsuite", "alice", "gen-1"))
         assertEquals(File(root, "notes-pending"), a.parentFile)
     }
+
+    // ---- on disk: the three requirements on the store from #709, as far as the JVM can show them (design 3.1) ----
+
+    /** Bytes that are no text in any encoding, as a blob from the binding is. The other tests use readable stand-ins. */
+    private fun opaque(size: Int, seed: Long) = ByteArray(size).also { java.util.Random(seed).nextBytes(it) }
+
+    @Test fun `the directory holds an entry, a landed record, a notebook copy and the counter, each as encoded and nothing more`() {
+        // The store is never handed a title or a text: a save gives it uids, a revision uid and one blob,
+        // which the binding has already encrypted. So the JVM can show that the store adds nothing of its
+        // own, and that each file is the codec's output for what the store reports. Which fields the
+        // codec writes in the clear is frozen by the byte fixtures in PendingCodecTest, not here. That a
+        // blob holds no plain text is shown on a device, through the real binding.
+        val noteBlob = opaque(4096, 1)
+        val copyBlob = opaque(512, 2)
+        val landedBlob = opaque(4096, 3)
+        val editor = store.editorOpened("n1")
+        val v1 = saved(store.saveLocal(editor, "n1", "b1", "rev-1", noteBlob, isCreate = false, notebookCopy = copyBlob))
+        val sent = store.beginSend("n1")!!
+        // Saved again during the upload, so the entry stays next to the landed record the open editor keeps.
+        val v2 = saved(store.saveLocal(editor, "n1", "b1", "rev-2", noteBlob, isCreate = false))
+        store.completeSend("n1", sent.version, "rev-1", landedBlob)
+        assertTrue(store.recordFailure("n1", v2, "TRANSIENT", now = 1_758_800_000_000))
+
+        assertEquals(setOf("n1.note", "n1.landed", "b1.notebook", "sequence"), dir.list()!!.toSet())
+        val expected = PendingEntry("n1", "b1", PendingEntry.State.UPSERT, v2, "rev-2", isCreate = false, sent = listOf("rev-1"),
+            failureCount = 1, lastFailureAt = 1_758_800_000_000, lastFailureCategory = "TRANSIENT", blob = noteBlob)
+        assertEquals(expected, entry("n1"))
+        val bytes = File(dir, "n1.note").readBytes()
+        assertArrayEquals("no byte that is not a field, a blob or a checksum", PendingCodec.encodeEntry(expected), bytes)
+        // The blob sits whole behind the header, and the plain part of the file ends where it starts.
+        val headerEnd = PendingCodec.entryHeaderEnd(bytes)!!
+        assertEquals(headerEnd + 4 + noteBlob.size + 4, bytes.size)
+        assertArrayEquals(noteBlob, bytes.copyOfRange(headerEnd + 4, headerEnd + 4 + noteBlob.size))
+        assertArrayEquals(PendingCodec.encodeLanded(LandedRecord("n1", "rev-1", v1, landedBlob)), File(dir, "n1.landed").readBytes())
+        assertArrayEquals(PendingCodec.encodeNotebook("b1", copyBlob), File(dir, "b1.notebook").readBytes())
+        assertArrayEquals(PendingCodec.encodeSequence(v2), File(dir, "sequence").readBytes())
+    }
+
+    @Test fun `the directory is named by a digest, whatever the account name holds`() {
+        // The Etebase cache lives under filesDir/<account name>, so a name decides that path. It never
+        // decides this one: no name can point the store into another directory, a cache directory
+        // included, and no name shows in the path.
+        val root = tmp.newFolder("no_backup")
+        val names = listOf("alice@example.invalid", "..", "../cache", "../files/alice@example.invalid", "notes-pending", "a/b", "")
+        val dirs = names.map { PendingNotesStore.identityDir(root, "io.silentsuite", it, "gen-1") }
+        for (d in dirs) {
+            assertEquals(File(root, "notes-pending"), d.parentFile)
+            assertTrue(d.name, Regex("[0-9a-f]{64}").matches(d.name))
+        }
+        assertEquals("one directory per name", names.size, dirs.toSet().size)
+    }
+
+    @Test fun `a same-name account with another creation id finds nothing of the first and leaves its files alone`() {
+        val root = tmp.newFolder("no_backup")
+        val old = open(PendingNotesStore.identityDir(root, "io.silentsuite", "alice@example.invalid", "gen-1"))
+        val replacement = open(PendingNotesStore.identityDir(root, "io.silentsuite", "alice@example.invalid", "gen-2"))
+        assertNotSame(old, replacement)
+        old.saveLocal("n1", "b1", "r1", blob("old draft"), isCreate = false, notebookCopy = blob("old notebook"))
+        fun oldFiles() = old.dir.listFiles()!!.associate { it.name to it.readBytes().toList() }
+        val before = oldFiles()
+
+        // Nothing is inherited: no entry, no notebook copy, nothing to send, and a counter that starts over.
+        assertEquals(PendingNotesStore.Observed(Read.Missing, 0), replacement.observe("n1"))
+        assertEquals(PendingNotesStore.Scan(emptyList(), emptyList()), replacement.scan())
+        assertTrue(replacement.snapshot { true }.let { it.headers.isEmpty() && it.entries.isEmpty() && it.unreadable.isEmpty() })
+        assertNull(replacement.notebook("b1"))
+        assertNull(replacement.landed("n1"))
+        assertNull(replacement.beginSend("n1"))
+
+        // Nothing is overwritten: its own save of the same note goes to its own directory.
+        replacement.saveLocal("n1", "b1", "r9", blob("new draft"), isCreate = false, notebookCopy = blob("new notebook"))
+        assertArrayEquals(blob("new draft"), replacement.entry("n1").blob)
+        assertArrayEquals(blob("old draft"), old.entry("n1").blob)
+        assertEquals(before, oldFiles())
+
+        // Clearing the replacement, as its sign-out will, removes its directory only.
+        replacement.clearAll()
+        assertFalse(replacement.dir.exists())
+        assertEquals(before, oldFiles())
+        assertEquals(listOf(old.dir.name), File(root, "notes-pending").list()!!.toList())
+    }
 }
