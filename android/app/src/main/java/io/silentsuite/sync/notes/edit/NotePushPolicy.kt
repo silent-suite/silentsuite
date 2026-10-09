@@ -85,7 +85,10 @@ internal object NotePushPolicy {
         READ_ONLY,
         /** 404: the user can no longer see the notebook; the text goes to the holding area. */
         LOST_ACCESS,
-        /** 401: renew the session once for the whole run, then retry. */
+        /**
+         * 401: the session is no longer accepted. Not about one entry: no failure is recorded on it,
+         * and the run ends with the authentication failure.
+         */
         AUTHENTICATION,
         /** Network trouble or a server error: back off and retry. */
         TRANSIENT,

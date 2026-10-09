@@ -235,7 +235,8 @@ class NotePushPolicyTest {
         assertFalse(NotePushPolicy.endsPushStep(NotFoundException("Got a redirect - should never happen")))
         assertFalse(NotePushPolicy.endsPushStep(ConflictException("wrong_etag")))
         assertFalse(NotePushPolicy.endsPushStep(IOException("no space left on device")))
-        // A 403 or a 401 on a push is settled by the step: the notebook confirmation, and the renewal.
+        // A 403 or a 401 on a push is settled by the step itself: the notebook confirmation, and the
+        // end of the run with the authentication failure.
         assertFalse(NotePushPolicy.endsPushStep(PermissionDeniedException("no_write_access")))
         assertFalse(NotePushPolicy.endsPushStep(UnauthorizedException("Invalid token.")))
     }

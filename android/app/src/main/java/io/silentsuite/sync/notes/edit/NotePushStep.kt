@@ -19,28 +19,23 @@ import java.io.IOException
  * It is one step for the whole run, across all notebooks, between the collection refresh and the fetch.
  *
  * Whatever the step repeats because of a server answer has a bound here:
- * - an entry is rebased at most once per run, so one pass pushes it and fetches its server copy at
- *   most twice. A request answered 401 recorded nothing, and the pass after the renewal starts that
- *   entry again from its upload: a 401 on an upload repeats that upload, and a 401 on fetch(uid) or
- *   on the notebook fetch repeats the upload before it as well. A run therefore makes at most three
- *   uploads and three fetches for one entry;
+ * - an entry is rebased at most once per run, so a run uploads it and fetches its server copy at
+ *   most twice;
  * - a conflict whose server copy cannot be fetched is the entry's failure, with backoff;
  * - a note made from a conflict is pushed in the run that makes it, and its mark turns another
  *   conflict into a hold instead of one more note;
  * - a rebase or a new note that cannot be built (metadata that cannot be written into, a result that
  *   does not read back as written) holds the text with that reason instead of being tried again;
- * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused (a
- *   confirming fetch answered 401 stored no result and is made once more after the renewal);
+ * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused;
  * - a connection error, a temporary server error, or a 403 on the confirming fetch ends the step, so a
  *   run waits out at most one timeout here.
  *
- * No Etebase type appears: the network and the cryptography sit behind [Remote], so every rule is
- * unit-tested with a stand-in. The instance holds the state of one run. A second [pass] is the retry
- * after a token renewal: what the first pass settled is not sent again, an entry that used its rebase
- * gets no second one, and a notebook answer the first pass stored is reused.
+ * No Etebase item or manager appears: the network and the cryptography sit behind [Remote], so every
+ * rule is unit-tested with a stand-in. The instance holds the state of one run, and [pass] is called
+ * once on it. A 401 on any request ends the step with no failure, backoff or hold recorded on any
+ * entry: the runner ends the run with the authentication failure, and the text stays (design 3.3).
  *
- * Not here: the token renewal itself and its gate, the follow-up rule (NotesSyncPolicy), notifications,
- * and the fetch that follows the step.
+ * Not here: the follow-up rule (NotesSyncPolicy), notifications, and the fetch that follows the step.
  */
 internal class NotePushStep(
     private val store: PendingNotesStore,
@@ -126,18 +121,22 @@ internal class NotePushStep(
         COMPLETED,
         /** An error that is not about one entry ended the step; the entries not yet tried recorded nothing. */
         STOPPED,
-        /** A request was answered 401 and recorded nothing: after one renewal the runner calls [pass] again. */
+        /**
+         * A request was answered 401. That is about the session, not about one entry: no failure was
+         * recorded on any entry, and the runner ends the run with the authentication failure (design 3.3).
+         */
         NEEDS_AUTHENTICATION,
     }
 
     /**
-     * The step so far, over every pass of the run.
+     * What the step did in its run.
      * @property pushed notes that landed, or were found to have landed.
      * @property held texts moved to the holding area.
      * @property droppedDeletes pending deletes that were dropped instead of held, so the server's copy shows again.
      * @property conflicts per notebook uid, the conflicts settled with a new note or by giving a note back.
      * @property failure the run's own failure: the error that ended the step, else the first entry failure.
      * An entry's failure in this run stays the run's failure even when a later notebook answer holds that entry.
+     * A 401 is not recorded here; it is [Ended.NEEDS_AUTHENTICATION].
      * @property carriedFailure the last failure category of the most recently failed entry that was skipped
      * in backoff and is still waiting, so an automatic run does not record success over an entry that is stuck.
      */
@@ -157,7 +156,10 @@ internal class NotePushStep(
     /** Ends the pass from wherever it is. Caught in [pass]; it never leaves this class. */
     private class EndPass(val ended: Ended) : RuntimeException()
 
-    /** Pushed, resolved, held, or recorded as failed in this run: not sent again, in this pass or the next. */
+    /**
+     * Pushed, resolved, held, or recorded as failed in this run. An entry a notebook answer settled
+     * before its turn is not sent, and a skipped entry that was settled afterwards is not carried.
+     */
     private val settled = HashSet<String>()
     private val rebased = HashSet<String>()
     private val notebookChecks = HashMap<String, NotebookCheck>()
@@ -169,15 +171,19 @@ internal class NotePushStep(
     private var held = 0
     private var droppedDeletes = 0
     private var failure: FailureKind? = null
+    private var ran = false
 
     /**
-     * Runs the step once. A failure of one entry, a failed store write included, is recorded and the
+     * Runs the step. It is called once per instance; a second call is a programming error
+     * (IllegalStateException). A failure of one entry, a failed store write included, is recorded and the
      * step goes on. Thrown instead: cancellation (InterruptedException, InterruptedIOException) and a
      * run that may no longer write (StaleSyncRunException), with nothing more recorded, and a failure
      * to read the store or a notebook's cached state at the start of the pass, before the pass has
      * written anything, which fails the run as a whole.
      */
     fun pass(): Result {
+        check(!ran) { "one NotePushStep is one run" }
+        ran = true
         val ended = try {
             pushWaiting()
             // A step that ran to its end has nothing to remember.
@@ -195,19 +201,17 @@ internal class NotePushStep(
         // A file that cannot be read is kept and reported, and the run never records success over it.
         if (snapshot.unreadable.isNotEmpty()) noteFailure(FailureKind.LOCAL)
         // Design 3.3 step 1: a notebook that takes no pushes gets none. The server would accept writes
-        // into a deleted notebook that no client shows. A confirming fetch made earlier in this run
-        // is a newer answer than the cache. Every notebook is looked up before anything is held, so a
-        // cache that cannot be read fails the pass before it has written anything.
-        val waiting = snapshot.headers.filter { it.state != PendingEntry.State.HELD && it.noteUid !in settled }
+        // into a deleted notebook that no client shows. Every notebook is looked up before anything is
+        // held, so a cache that cannot be read fails the pass before it has written anything.
+        val waiting = snapshot.headers.filter { it.state != PendingEntry.State.HELD }
         val refusals = HashMap<String, HeldReason?>()
         for (notebookUid in waiting.map { it.notebookUid }.distinct()) {
-            refusals[notebookUid] = notebookChecks[notebookUid]?.let { NotePushPolicy.heldReasonFor(FailureKind.READ_ONLY, it) }
-                ?: when (remote.notebook(notebookUid)) {
-                    Notebook.WRITABLE -> null
-                    Notebook.READ_ONLY -> HeldReason.READ_ONLY
-                    Notebook.DELETED -> HeldReason.NOTEBOOK_DELETED
-                    Notebook.MISSING -> HeldReason.LOST_ACCESS
-                }
+            refusals[notebookUid] = when (remote.notebook(notebookUid)) {
+                Notebook.WRITABLE -> null
+                Notebook.READ_ONLY -> HeldReason.READ_ONLY
+                Notebook.DELETED -> HeldReason.NOTEBOOK_DELETED
+                Notebook.MISSING -> HeldReason.LOST_ACCESS
+            }
         }
         val sendable = ArrayList<PendingNotesStore.EntryHeader>()
         for (header in waiting) {
@@ -325,7 +329,7 @@ internal class NotePushStep(
         val kind = classified(error)
         when (kind) {
             FailureKind.CONFLICT -> conflict(snapshot)
-            // Nothing is recorded for the entry, so the pass after the renewal sends it again.
+            // A 401 is about the session, not this entry: no failure is recorded for it, and the step ends (design 3.3).
             FailureKind.AUTHENTICATION -> throw EndPass(Ended.NEEDS_AUTHENTICATION)
             FailureKind.READ_ONLY, FailureKind.LOST_ACCESS -> notebookRefused(snapshot, kind)
             FailureKind.REJECTED -> rejected(snapshot)
@@ -604,9 +608,9 @@ internal class NotePushStep(
     }
 
     /**
-     * The failure to carry: of the entries skipped in backoff that nothing settled afterwards (a later
-     * pass may push one whose backoff ran out, and a notebook confirmation may hold one), the most
-     * recent. A recorded failure stays on record only until the entry is pushed, resolved or held.
+     * The failure to carry: of the entries skipped in backoff that nothing settled afterwards (a
+     * notebook confirmation later in the run may hold one), the most recent. A recorded failure stays
+     * on record only until the entry is pushed, resolved or held.
      */
     private fun carriedFailure(): String? =
         skipped.filterKeys { it !in settled }.values.maxByOrNull { it.first }?.second

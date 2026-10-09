@@ -149,8 +149,8 @@ internal object NotesSyncRunner {
                     unreadableStore()
                 }
                 if (push?.ended == NotePushStep.Ended.NEEDS_AUTHENTICATION) {
-                    // The session is not renewed yet (question 3 on #709), so a 401 on a push ends the
-                    // run as a 401 on any other request does.
+                    // There is no session renewal (answer 3 on #709): a 401 on a push ends the run with
+                    // the authentication failure, as a 401 on any other request does (design 3.3).
                     if (cancelled() || !guard.mayWrite()) finishWithoutOutcome()
                     else recordFailure(SyncStatusStore.FailureCategory.AUTHENTICATION)
                     return true
