@@ -9,9 +9,14 @@ against base source: the ``remote-with-persisted-permission`` case fails
 there with an assertion mismatch (observed bind is loopback, expected the
 explicit remote bind) and passes with the fix.
 
-Service managers are stubbed with no-op shell scripts on PATH; nothing real
-is written outside ``tmp_path``. Windows is skipped because the real registry
-would be written; Windows semantics are covered by unit tests.
+Service managers are stubbed on PATH: systemctl/loginctl/sudo stay no-op
+scripts, while launchctl is a small stateful ``/bin/sh`` stub whose only
+persistent state lives under ``tmp_path``/HOME. It models registration, a
+stable fake PID in ``list`` output and teardown, and never calls the real
+launchctl or starts any process; real launchd startup behavior is covered by
+the native macOS regressions, not by this journey. Windows is skipped because
+the real registry would be written; Windows semantics are covered by unit
+tests.
 """
 
 import json
@@ -118,13 +123,66 @@ DECOY_ENV = {
 }
 
 
+# Stateful fake launchctl for the macOS arm of this journey, state confined to
+# $HOME (= ``tmp_path``/home below). It invokes no external commands, never
+# calls the real launchctl and never starts a process; the native macOS
+# regressions, not this stub, are the proof of real launchd startup behavior.
+FAKE_LAUNCHCTL = """\
+#!/bin/sh
+# Fake launchctl: records registration under $HOME only. `list` prints the
+# real three-column format (PID, last status, label) and reports the job with
+# a fixed positive fake PID (4242) once registered, so the installer's
+# stability window can settle. `load`/`unload` are the legacy spellings of
+# bootstrap/bootout and share the same registration state. `manageruid` and
+# `managername` report the installing user's GUI (Aqua) context; the UID is
+# substituted by _clean_shell_env, so no external command is needed.
+state="${HOME:?}/.fake-launchctl-state"
+registered() {
+    [ -f "$state" ] || return 1
+    current=""
+    IFS= read -r current < "$state" || true
+    [ "$current" = "registered" ]
+}
+case "$1" in
+    manageruid)
+        echo "@MANAGER_UID@"
+        ;;
+    managername)
+        echo "Aqua"
+        ;;
+    list)
+        echo "PID\tStatus\tLabel"
+        if registered; then
+            echo "4242\t0\tio.silentsuite.bridge"
+        fi
+        ;;
+    kickstart)
+        registered || exit 1
+        ;;
+    bootstrap|load)
+        echo registered > "$state"
+        ;;
+    bootout|unload)
+        echo absent > "$state"
+        ;;
+esac
+exit 0
+"""
+
+
 def _clean_shell_env(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    for name in ("systemctl", "loginctl", "launchctl", "sudo"):
+    for name in ("systemctl", "loginctl", "sudo"):
         tool = fake_bin / name
         tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         tool.chmod(0o755)
+    # launchctl is stateful (see FAKE_LAUNCHCTL); its state lives under this
+    # HOME, so parameter rows and subprocess invocations stay isolated.
+    launchctl = fake_bin / "launchctl"
+    manager_uid = str(os.getuid()) if hasattr(os, "getuid") else "0"
+    launchctl.write_text(FAKE_LAUNCHCTL.replace("@MANAGER_UID@", manager_uid), encoding="utf-8")
+    launchctl.chmod(0o755)
     home = tmp_path / "home"
     home.mkdir()
     pythonpath = str(BRIDGE_ROOT / "src")

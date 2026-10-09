@@ -10,8 +10,8 @@ import json
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
-CURRENT_RELEASE_VERSION = "0.5.12-beta"
-CURRENT_ANDROID_VERSION_CODE = 26
+CURRENT_RELEASE_VERSION = "0.5.13-beta"
+CURRENT_ANDROID_VERSION_CODE = 27
 
 PACKAGE_JSON_PATHS = [
     "package.json",
