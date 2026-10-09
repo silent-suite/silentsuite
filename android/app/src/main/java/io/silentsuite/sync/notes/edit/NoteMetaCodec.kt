@@ -32,7 +32,11 @@ internal object NoteMetaCodec {
         /** Which value is current cannot be known, so the save is refused rather than guessed. */
         data class Refused(val key: String, val why: Why) : Merge()
 
-        /** Not exactly one well-formed map. The caller falls back to typed metadata and logs it. */
+        /**
+         * Not exactly one well-formed map. Over nonempty input the caller writes nothing and holds the
+         * text, since typed metadata in its place would drop whatever another client meant by it; where
+         * there is no metadata at all it writes a fresh map.
+         */
         data class NotAMap(val reason: String) : Merge()
     }
 
@@ -92,7 +96,8 @@ internal object NoteMetaCodec {
 
     /**
      * Metadata for a note this app creates from a conflict: a map of `name` and `mtime` only, as the
-     * web's move writes for the note it creates (design 3.4).
+     * web's move writes for the note it creates (design 3.4). It is also what is written onto a copy
+     * that has no metadata at all.
      */
     fun fresh(name: String, mtime: Long): Merge.Merged = merge(EMPTY_MAP, name, mtime) as Merge.Merged
 

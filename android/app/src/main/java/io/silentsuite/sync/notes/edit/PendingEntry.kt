@@ -86,6 +86,16 @@ internal enum class HeldReason {
     REJECTED,
     /** A note made from a conflict was refused again with a server copy that is not ours (design 3.8). */
     REPEATED_CONFLICT,
+    /**
+     * The copy the change has to go onto carries metadata this app cannot write into without losing or
+     * changing what another client put there: it is not one map, or it gives the title or the time more
+     * than once or under a key another client reads as that field. Nothing is written over such metadata.
+     */
+    UNREADABLE_METADATA,
+    /** The note built for the upload did not read back as it was written, so it was not sent. */
+    READ_BACK_FAILED,
+    /** The text could not be made into a note to upload (a conflict copy, or the change on the server's copy) for another reason. */
+    NOT_BUILT,
 }
 
 /**

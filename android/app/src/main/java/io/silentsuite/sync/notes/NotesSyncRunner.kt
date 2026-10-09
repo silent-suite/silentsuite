@@ -310,7 +310,8 @@ internal object NotesSyncRunner {
     internal fun pushFailureCategory(kind: String): SyncStatusStore.FailureCategory = when (kind) {
         NotePushPolicy.FailureKind.TRANSIENT.name -> SyncStatusStore.FailureCategory.NETWORK
         NotePushPolicy.FailureKind.AUTHENTICATION.name -> SyncStatusStore.FailureCategory.AUTHENTICATION
-        // The pending store, or a change this device could not build or read.
+        // The pending store or the Etebase cache, or a pending change this device could not read. A
+        // change that cannot be built for its upload is held, not failed.
         NotePushPolicy.FailureKind.LOCAL.name -> SyncStatusStore.FailureCategory.STORAGE
         else -> SyncStatusStore.FailureCategory.UNKNOWN
     }

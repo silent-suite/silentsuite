@@ -119,7 +119,7 @@ internal class PendingNotesStore private constructor(
 
     sealed class SaveOutcome {
         data class Saved(val version: Long) : SaveOutcome()
-        /** The text is held (read-only, lost access, rejected, a repeated conflict): kept there, never pushed. The editor becomes a viewer. */
+        /** The text is held (read-only, lost access, rejected, a repeated conflict, a note that could not be built): kept there, never pushed. The editor becomes a viewer. */
         data class SavedToHolding(val version: Long) : SaveOutcome()
         /**
          * A conflict gave the editor's text a new note, [noteUid], after the editor built this save for
@@ -541,9 +541,10 @@ internal class PendingNotesStore private constructor(
 
     /**
      * Moves the entry's text to the holding area: kept, readable, never pushed. [sentVersion] is given
-     * when the reason is about the content (a rejection, a repeated conflict), so a newer change is not
-     * held with it; a reason about the notebook (read-only, lost access, deleted) holds whatever is
-     * there. The mark of a note made from a conflict stays through a hold.
+     * when the reason is about the content (a rejection, a repeated conflict, a note that could not be
+     * built for its upload), so a newer change is not held with it; a reason about the notebook
+     * (read-only, lost access, deleted) holds whatever is there. The mark of a note made from a
+     * conflict stays through a hold.
      *
      * A pending delete has no text worth keeping (its blob is the item with the body dropped), and the
      * server copy stays, which is the right result when the delete cannot be pushed. So a delete is

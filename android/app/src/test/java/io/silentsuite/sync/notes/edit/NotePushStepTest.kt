@@ -167,6 +167,9 @@ class NotePushStepTest {
     private var rebaseError: Exception? = null
     private var newNoteError: Exception? = null
 
+    /** Runs when a rebase or a new note starts, for a save that lands while the note is being built. */
+    private var duringBuild: () -> Unit = {}
+
     /** A notebook whose cached state cannot be read. */
     private var notebookLookupError: (String) -> Exception? = { null }
 
@@ -202,11 +205,13 @@ class NotePushStepTest {
         }
 
         override fun rebase(entry: PendingEntry, onto: NotePushStep.ServerItem): NotePushStep.Built {
+            duringBuild()
             rebaseError?.let { throw it }
             return item(entry.blob).copy(base = onto.revision, revision = revision()).let { NotePushStep.Built(it.revision, it.blob()) }
         }
 
         override fun newNote(entry: PendingEntry, conflictedCopy: Boolean): PendingEntry {
+            duringBuild()
             newNoteError?.let { throw it }
             val note = Item("copy-${built.size + 1}", null, revision(), false, item(entry.blob).text)
             built += note.uid
@@ -1692,29 +1697,215 @@ class NotePushStepTest {
         assertTrue(waiting().isEmpty())
     }
 
-    // ---- work on an item that fails on this device ----
+    // ---- a note that cannot be built for the upload ----
 
-    @Test fun `a rebase or a new note that cannot be built is the entry's failure, and its text stays as it was`() {
+    @Test fun `a conflict copy that does not read back holds the text with that reason, and is not tried again`() {
+        editedElsewhere()
+        newNoteError = NotePushStep.NotBuilt(HeldReason.READ_BACK_FAILED, "did not read back as written")
+        val result = run()
+        assertEquals("the text is held, and the run has no failure of its own",
+            NotePushStep.Result(Ended.COMPLETED, pushed = 0, held = 1, conflicts = emptyMap(), failure = null, carriedFailure = null), result)
+        val held = entry("n1")
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.READ_BACK_FAILED, held.held!!.reason)
+        assertEquals("the text survives", "mine", item(held.blob).text)
+        assertEquals("nothing is counted against it as a failure", 0, held.failureCount)
+        assertNull("and no storage error is on record for it", held.lastFailureCategory)
+        assertTrue("no copy was made", built.isEmpty())
+        assertEquals("the server's version stays", "web-1", server.items.getValue("n1").revision)
+        assertEquals("and it is what the note's row falls back to, so it was written into the cache before the hold",
+            listOf("n1=web-1"), cached)
+        assertEquals("the text was still waiting at that moment", true, entryThereAtCacheWrite["n1"])
+
+        // Held text is not pushed: the next runs send nothing for it, however often they come.
+        server.uploads.clear()
+        repeat(3) { assertTrue(run(userInitiated = it == 0).succeeded) }
+        assertTrue(server.uploads.isEmpty())
+        assertEquals("mine", item(entry("n1").blob).text)
+
+        // Try again by hand, once the copy can be made: the text gets its note.
+        assertTrue(store.release("n1"))
+        newNoteError = null
+        val retried = run()
+        assertTrue(retried.succeeded)
+        assertEquals(listOf("copy-1"), built)
+        assertEquals("mine", server.items.getValue("copy-1").text)
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a conflict copy that cannot be made for another reason holds the text as not built`() {
+        editedElsewhere()
+        newNoteError = IllegalStateException("could not encrypt")
+        val result = run()
+        assertEquals(1, result.held)
+        assertNull("not a storage failure", result.failure)
+        val held = entry("n1")
+        assertEquals(HeldReason.NOT_BUILT, held.held!!.reason)
+        assertEquals("mine", item(held.blob).text)
+        assertEquals(0, held.failureCount)
+        assertTrue(result.conflicts.isEmpty())
+    }
+
+    @Test fun `a change that cannot go onto metadata it cannot write into is held with its text, and nothing more is sent`() {
+        landedWithoutAnswerThenSaved()
+        server.uploads.clear()
+        rebaseError = NotePushStep.NotBuilt(HeldReason.UNREADABLE_METADATA, "not one map")
+        val result = run()
+        assertEquals(1, result.held)
+        assertNull(result.failure)
+        assertEquals("only the push that met the conflict", listOf("n1"), uploaded())
+        val held = entry("n1")
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.UNREADABLE_METADATA, held.held!!.reason)
+        assertEquals("one, two", item(held.blob).text)
+        assertEquals("the server keeps the upload that landed", "one", server.items.getValue("n1").text)
+        assertEquals("and that upload, which the cache never got, is in it before the hold",
+            listOf("n1=${server.items.getValue("n1").revision}"), cached)
+
+        server.uploads.clear()
+        assertTrue(run().succeeded)
+        assertTrue("held text is not sent again", server.uploads.isEmpty())
+    }
+
+    @Test fun `a rebase that fails for another reason is held as not built too`() {
         landedWithoutAnswerThenSaved()
         rebaseError = IllegalStateException("could not decrypt")
+        val result = run()
+        assertEquals(1, result.held)
+        assertNull(result.failure)
+        assertEquals(HeldReason.NOT_BUILT, entry("n1").held!!.reason)
+        assertEquals("one, two", item(entry("n1").blob).text)
+    }
+
+    @Test fun `a storage error while a note is being built stays the entry's storage failure, with backoff`() {
+        landedWithoutAnswerThenSaved()
+        rebaseError = IOException("the notebook copy could not be read")
         val failedRebase = run()
         assertEquals(FailureKind.LOCAL, failedRebase.failure)
-        assertEquals("one, two", item(entry("n1").blob).text)
+        assertEquals(0, failedRebase.held)
+        assertEquals(PendingEntry.State.UPSERT, entry("n1").state)
         assertEquals(1, entry("n1").failureCount)
+        assertEquals("one, two", item(entry("n1").blob).text)
         rebaseError = null
         assertTrue(run().succeeded)
 
         server.writeElsewhere("m", "web-1")
         save("m", "mine", seen = "srv-0")
-        newNoteError = IllegalStateException("could not encrypt")
+        newNoteError = IOException("the notebook copy could not be read")
         val failedCopy = run()
         assertEquals(FailureKind.LOCAL, failedCopy.failure)
+        assertEquals(0, failedCopy.held)
         assertTrue(failedCopy.conflicts.isEmpty())
         assertEquals(listOf("m"), waiting())
         assertEquals("mine", item(entry("m").blob).text)
         newNoteError = null
         assertTrue(run().succeeded)
         assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a change saved while the note was being built is not held with it`() {
+        editedElsewhere()
+        newNoteError = NotePushStep.NotBuilt(HeldReason.READ_BACK_FAILED, "did not read back as written")
+        duringBuild = {
+            duringBuild = {}
+            save("n1", "mine, and more")
+        }
+        val result = run()
+        assertEquals("the hold was for the text that was built from, and that is no longer the entry", 0, result.held)
+        assertEquals(PendingEntry.State.UPSERT, entry("n1").state)
+        assertEquals("mine, and more", item(entry("n1").blob).text)
+
+        // The newer text gets its own run, and is held then if it cannot be built either.
+        val next = run()
+        assertEquals(1, next.held)
+        assertEquals(HeldReason.READ_BACK_FAILED, entry("n1").held!!.reason)
+        assertEquals("mine, and more", item(entry("n1").blob).text)
+    }
+
+    @Test fun `a run cancelled while a note is being built holds nothing and records nothing`() {
+        editedElsewhere()
+        newNoteError = InterruptedException()
+        assertThrows(InterruptedException::class.java) { run() }
+        assertEquals(PendingEntry.State.UPSERT, entry("n1").state)
+        assertEquals(0, entry("n1").failureCount)
+        assertEquals("mine", item(entry("n1").blob).text)
+    }
+
+    @Test fun `a pending delete that cannot be rebased is dropped, and the server's copy shows again`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        val first = save("n1", "one", seen = "srv-0")
+        loseAnswer = { true }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        delete("n1", seen = "srv-0")
+        rebaseError = IllegalStateException("could not decrypt")
+        val result = run()
+        assertEquals("a delete has no text to hold", 0, result.held)
+        assertEquals(1, result.droppedDeletes)
+        assertNull(result.failure)
+        assertTrue(waiting().isEmpty())
+        assertEquals("the upload that landed is still the server's copy", first.revision, server.items.getValue("n1").revision)
+        assertEquals("and it was written into the cache before the delete went, so the note does not fall back to older text",
+            listOf("n1=${first.revision}"), cached)
+        assertEquals("the delete was still there at that moment", true, entryThereAtCacheWrite["n1"])
+    }
+
+    @Test fun `a pending delete whose server copy cannot be cached first is kept, with a storage failure`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        save("n1", "one", seen = "srv-0")
+        loseAnswer = { true }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        delete("n1", seen = "srv-0")
+        rebaseError = IllegalStateException("could not decrypt")
+        cacheError = IllegalStateException("the cache could not be written")
+        val result = run()
+        assertEquals(0, result.droppedDeletes)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(PendingEntry.State.DELETE, entry("n1").state)
+    }
+
+    @Test fun `text whose server copy cannot be cached first is not held, and waits with a storage failure`() {
+        editedElsewhere()
+        newNoteError = NotePushStep.NotBuilt(HeldReason.READ_BACK_FAILED, "did not read back as written")
+        cacheError = IllegalStateException("the cache could not be written")
+        val result = run()
+        assertEquals(0, result.held)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(PendingEntry.State.UPSERT, entry("n1").state)
+        assertEquals(1, entry("n1").failureCount)
+        assertEquals("mine", item(entry("n1").blob).text)
+        // Once the cache takes the write, the same run of events ends in the hold.
+        cacheError = null
+        assertEquals(1, run().held)
+        assertEquals(HeldReason.READ_BACK_FAILED, entry("n1").held!!.reason)
+        assertEquals(listOf("n1=web-1"), cached)
+    }
+
+    @Test fun `a note that cannot be built leaves one line in the log, with the reason and no text`() {
+        val lines = mutableListOf<String>()
+        val handler = object : java.util.logging.Handler() {
+            override fun publish(record: java.util.logging.LogRecord) { lines += record.message }
+            override fun flush() = Unit
+            override fun close() = Unit
+        }
+        io.silentsuite.sync.log.Logger.log.addHandler(handler)
+        try {
+            editedElsewhere()
+            newNoteError = NotePushStep.NotBuilt(HeldReason.READ_BACK_FAILED, "note metadata did not read back as written")
+            run()
+            server.writeElsewhere("m", "web-1")
+            save("m", "a text nobody should find in a log", seen = "srv-0")
+            newNoteError = IllegalStateException("a message that may quote the note: a text nobody should find in a log")
+            run()
+        } finally {
+            io.silentsuite.sync.log.Logger.log.removeHandler(handler)
+        }
+        val notBuilt = lines.filter { it.contains("could not be built for upload") }
+        assertEquals(2, notBuilt.size)
+        assertEquals("A Notes change could not be built for upload (READ_BACK_FAILED): note metadata did not read back as written", notBuilt[0])
+        assertEquals("A Notes change could not be built for upload (NOT_BUILT): IllegalStateException", notBuilt[1])
+        assertTrue("another error's message is not logged, nor any text", lines.none { it.contains("nobody should find") || it.contains("mine") })
     }
 
     @Test fun `if the newer change cannot be rebased onto the item that landed the push still counts, and the next run rebases it`() {

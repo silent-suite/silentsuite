@@ -1,6 +1,7 @@
 package io.silentsuite.sync.notes.edit
 
 import com.etebase.client.exceptions.PermissionDeniedException
+import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.notes.edit.NotePushPolicy.ConflictOutcome
 import io.silentsuite.sync.notes.edit.NotePushPolicy.FailureKind
 import io.silentsuite.sync.notes.edit.NotePushPolicy.NotebookCheck
@@ -26,6 +27,8 @@ import java.io.IOException
  * - a conflict whose server copy cannot be fetched is the entry's failure, with backoff;
  * - a note made from a conflict is pushed in the run that makes it, and its mark turns another
  *   conflict into a hold instead of one more note;
+ * - a rebase or a new note that cannot be built (metadata that cannot be written into, a result that
+ *   does not read back as written) holds the text with that reason instead of being tried again;
  * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused (a
  *   confirming fetch answered 401 stored no result and is made once more after the renewal);
  * - a connection error, a temporary server error, or a 403 on the confirming fetch ends the step, so a
@@ -59,6 +62,14 @@ internal class NotePushStep(
     class Built(val revision: String, val blob: ByteArray)
 
     /**
+     * Thrown by [Remote.rebase] and [Remote.newNote] when the note to upload cannot be built from what is
+     * there, with the reason the text is held for. Nothing about it changes by itself before the next
+     * run, so the entry is held instead of being tried again (design 3.8). The message goes to the log,
+     * so it never holds a title, a notebook name or text.
+     */
+    class NotBuilt(val reason: HeldReason, message: String) : Exception(message)
+
+    /**
      * The network, the cryptography and the Etebase cache. Every request makes SyncRunGuard.check first,
      * and every cache write goes through SyncRunGuard.write under the cache monitor; the pending lock is
      * never held during a call. Failures are thrown as the binding throws them.
@@ -81,13 +92,17 @@ internal class NotePushStep(
         /** Removes a notebook this account can no longer see from the Etebase cache. */
         fun unsetNotebook(notebookUid: String)
 
-        /** The entry's change (its text and title, or its deletion) applied onto [onto]. */
+        /**
+         * The entry's change (its text and title, or its deletion) applied onto [onto]. Throws [NotBuilt]
+         * when [onto]'s metadata cannot be written into, or the result does not read back as written.
+         */
         fun rebase(entry: PendingEntry, onto: ServerItem): Built
 
         /**
          * A new note in the same notebook that carries the entry's text, with its own uid and fresh
          * metadata, as a pending create. [conflictedCopy] titles it as a conflicted copy; otherwise it
-         * keeps the entry's own title (the note was deleted elsewhere).
+         * keeps the entry's own title (the note was deleted elsewhere). Throws [NotBuilt] when the note
+         * does not read back as written.
          */
         fun newNote(entry: PendingEntry, conflictedCopy: Boolean): PendingEntry
     }
@@ -293,7 +308,7 @@ internal class NotePushStep(
         } catch (e: Exception) {
             if (cancelled(e)) throw e
             // The entry stays on its old base. Its next push gets a 409 whose server copy is ours,
-            // and it is rebased then.
+            // and it is rebased then, or held then if it still cannot be built.
             return
         }
         try {
@@ -441,8 +456,7 @@ internal class NotePushStep(
         val built = try {
             remote.rebase(latest, server)
         } catch (e: Exception) {
-            classified(e)
-            fail(latest, FailureKind.LOCAL)
+            notBuilt(latest, server, e)
             return
         }
         if (store.rebase(uid, latest.version, onto = server.revision, revision = built.revision, blob = built.blob)) {
@@ -464,8 +478,7 @@ internal class NotePushStep(
         val note = try {
             remote.newNote(latest, conflictedCopy)
         } catch (e: Exception) {
-            classified(e)
-            fail(latest, FailureKind.LOCAL)
+            notBuilt(latest, server, e)
             return
         }
         if (!cacheFirst(latest, server)) return
@@ -484,6 +497,33 @@ internal class NotePushStep(
         if (!replaced) return
         countConflict(latest.notebookUid)
         push(note.noteUid)
+    }
+
+    /**
+     * A rebase or a new note that could not be built. The same inputs give the same result in the next
+     * run, so the text is not tried again and again under a storage error: it is held with the reason,
+     * where it stays readable and can be tried again by hand. It is held at the version the build
+     * started from, so a change saved meanwhile is not held with it. A failure to read or write storage
+     * is the one thing left as before: the entry's failure, with backoff, and so is a server copy that
+     * cannot be written into the cache first. One line goes to the log, since a hold is not a failure
+     * of the run and would otherwise leave no trace of its cause.
+     */
+    private fun notBuilt(entry: PendingEntry, server: ServerItem, error: Exception) {
+        classified(error)
+        if (error is IOException) {
+            fail(entry, FailureKind.LOCAL)
+            return
+        }
+        // Held text leaves the note's row to the server's version, and a pending delete, which has no
+        // text to hold, is dropped: either way the note falls back to the cache, so the server's copy
+        // goes in there first (design 3.3).
+        if (!cacheFirst(entry, server)) return
+        val reason = (error as? NotBuilt)?.reason ?: HeldReason.NOT_BUILT
+        // The reason and the kind of error, never a title, a notebook name or text: a NotBuilt's message
+        // is written for the log, and another error's message is not used.
+        Logger.log.warning("A Notes change could not be built for upload ($reason): " +
+            if (error is NotBuilt) error.message else error.javaClass.simpleName)
+        hold(entry.noteUid, reason, sentVersion = entry.version)
     }
 
     /**

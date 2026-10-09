@@ -26,6 +26,19 @@ class PendingCodecTest {
         assertEquals(minimal, ok(PendingCodec.encodeEntry(minimal)))
     }
 
+    @Test fun `every reason text can be held for is stored by its name and read back`() {
+        for (reason in HeldReason.values()) {
+            // No failure category, which is stored by name too and could stand in for a reason of the same name.
+            val entry = full.copy(lastFailureCategory = null, held = PendingEntry.Held(reason, 1_758_800_000_500))
+            val bytes = PendingCodec.encodeEntry(entry)
+            assertEquals(reason, ok(bytes).held!!.reason)
+            assertTrue("$reason is in the file by name", String(bytes, Charsets.ISO_8859_1).contains(reason.name))
+        }
+        // The names are what entry files hold, so none may change once a build has written one.
+        assertEquals(listOf("READ_ONLY", "LOST_ACCESS", "NOTEBOOK_DELETED", "REJECTED", "REPEATED_CONFLICT",
+            "UNREADABLE_METADATA", "READ_BACK_FAILED", "NOT_BUILT"), HeldReason.values().map { it.name })
+    }
+
     @Test fun `the conflict mark is read back as it was written, set or not`() {
         for (marked in listOf(true, false)) {
             val entry = full.copy(fromConflict = marked)

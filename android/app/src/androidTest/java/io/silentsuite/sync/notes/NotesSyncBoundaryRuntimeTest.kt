@@ -61,6 +61,7 @@ import io.silentsuite.sync.utils.AndroidCompat
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -1465,6 +1466,114 @@ class NotesSyncBoundaryRuntimeTest {
         assertSucceeded(status(account, "gen-swapnb"))
     }
 
+    @Test fun aChangeThatCannotGoOntoMetadataThatIsNotOneMapIsHeldAndNothingIsWrittenOverIt() {
+        val account = newAccount("gen-notamap")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-notamap")
+        // An upload of this device lands with metadata that is well-formed msgpack but not one map, and
+        // its answer is lost. No save of the app writes such metadata; it stands for a copy of ours on
+        // the server that this app cannot write into.
+        editLocally(account, "gen-notamap", notebook, note.uid, "Plan", "First phone edit", mtime = 2_000L, metaRaw = NOT_ONE_MAP)
+        fake.loseAnswer("POST", TRANSACTION)
+        syncNow(account, "gen-notamap")
+        val landed = itemManager(notebook).fetch(note.uid)
+        assertEquals("the upload landed", "First phone edit", landed.contentString)
+        assertArrayEquals(NOT_ONE_MAP, landed.metaRaw)
+
+        // The user saves again. Its push conflicts with our own upload, so the new text would be rebased
+        // onto that copy, name and time merged into its metadata.
+        editLocally(account, "gen-notamap", notebook, note.uid, "Plan", "Second phone edit", mtime = 3_000L,
+            metaRaw = NoteMetaCodec.fresh("Plan", 3_000L).bytes)
+        val since = fake.requests.size
+        syncNow(account, "gen-notamap")
+        assertEquals("the push that met the conflict, and nothing after it", listOf(transactionOf(notebook)), uploads(since))
+        val onServer = itemManager(notebook).fetch(note.uid)
+        assertEquals("First phone edit", onServer.contentString)
+        assertArrayEquals("nothing was written over the metadata, typed or otherwise", NOT_ONE_MAP, onServer.metaRaw)
+        assertEquals("and no conflicted copy was made", setOf(note.uid), fake.itemUids(notebook))
+        val held = (pending(account, "gen-notamap").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.UNREADABLE_METADATA, held.held!!.reason)
+        assertEquals("the text is kept", "Second phone edit", itemManager(notebook).cacheLoad(held.blob).contentString)
+        assertEquals("no failure is counted against it", 0, held.failureCount)
+        assertSucceeded(status(account, "gen-notamap"))
+
+        // Trying again by hand changes nothing while that copy is what it is: one refused push, held again.
+        assertTrue(pending(account, "gen-notamap").release(note.uid))
+        val again = fake.requests.size
+        syncNow(account, "gen-notamap")
+        assertEquals(listOf(transactionOf(notebook)), uploads(again))
+        val heldAgain = (pending(account, "gen-notamap").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, heldAgain.state)
+        assertEquals(HeldReason.UNREADABLE_METADATA, heldAgain.held!!.reason)
+        assertEquals("Second phone edit", itemManager(notebook).cacheLoad(heldAgain.blob).contentString)
+        assertArrayEquals(NOT_ONE_MAP, itemManager(notebook).fetch(note.uid).metaRaw)
+    }
+
+    @Test fun aConflictCopyThatCannotBeMadeHoldsTheTextAndNoCopyIsUploaded() {
+        val account = newAccount("gen-nocopy")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-nocopy")
+        // The local edit carries metadata no decoder reads (a map cut short), so no title can be taken
+        // from it for a copy. No save of the app writes such metadata; it stands for a copy that
+        // cannot be made.
+        editLocally(account, "gen-nocopy", notebook, note.uid, "Plan", "Edited on the phone", mtime = 2_000L, metaRaw = CUT_SHORT_MAP)
+        editOnAnotherDevice(notebook, note.uid, "Edited on the web")
+
+        val since = fake.requests.size
+        syncNow(account, "gen-nocopy")
+        assertEquals("the refused push, and no copy after it", listOf(transactionOf(notebook)), uploads(since))
+        assertEquals("no second note on the server", setOf(note.uid), fake.itemUids(notebook))
+        assertEquals("Edited on the web", itemManager(notebook).fetch(note.uid).contentString)
+        val held = (pending(account, "gen-nocopy").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.NOT_BUILT, held.held!!.reason)
+        assertEquals("the text is kept", "Edited on the phone", itemManager(notebook).cacheLoad(held.blob).contentString)
+        assertEquals("no failure is counted against it", 0, held.failureCount)
+        assertNull("and no storage error is on record for it", held.lastFailureCategory)
+        assertSucceeded(status(account, "gen-nocopy"))
+
+        // Held text is not pushed: the next run sends nothing.
+        val again = fake.requests.size
+        syncNow(account, "gen-nocopy")
+        assertEquals(emptyList<String>(), uploads(again))
+        assertEquals(PendingEntry.State.HELD, (pending(account, "gen-nocopy").read(note.uid) as PendingNotesStore.Read.Present).entry.state)
+    }
+
+    @Test fun aRebasedNoteThatDoesNotReadBackIsHeldAndIsNotUploaded() {
+        val account = newAccount("gen-readback")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-readback")
+        // An upload of this device lands with metadata that is one well-formed map, which the raw merge
+        // can write into, but with a field the typed decoder every client reads with rejects (a
+        // description that is a number). Its answer is lost. No save of the app writes such a field.
+        val oddField = TestMsgPack.encode(linkedMapOf("description" to 7L))
+        editLocally(account, "gen-readback", notebook, note.uid, "Plan", "First phone edit", mtime = 2_000L, metaRaw = oddField)
+        fake.loseAnswer("POST", TRANSACTION)
+        syncNow(account, "gen-readback")
+        assertArrayEquals("the upload landed", oddField, itemManager(notebook).fetch(note.uid).metaRaw)
+
+        // The next save is rebased onto that copy: name and time merge into the map, and the result is
+        // read back through the typed decoder before anything is sent.
+        editLocally(account, "gen-readback", notebook, note.uid, "Plan", "Second phone edit", mtime = 3_000L,
+            metaRaw = NoteMetaCodec.fresh("Plan", 3_000L).bytes)
+        val since = fake.requests.size
+        syncNow(account, "gen-readback")
+        assertEquals("the push that met the conflict, and nothing after it", listOf(transactionOf(notebook)), uploads(since))
+        val onServer = itemManager(notebook).fetch(note.uid)
+        assertEquals("First phone edit", onServer.contentString)
+        assertArrayEquals("the copy on the server is as it was", oddField, onServer.metaRaw)
+        val held = (pending(account, "gen-readback").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.READ_BACK_FAILED, held.held!!.reason)
+        assertEquals("the text is kept", "Second phone edit", itemManager(notebook).cacheLoad(held.blob).contentString)
+        assertEquals("no failure is counted against it", 0, held.failureCount)
+        assertSucceeded(status(account, "gen-readback"))
+    }
+
     // ---- helpers ----
 
     private fun newAccount(generation: String, name: String = "notes-boundary-${System.nanoTime()}@example.invalid",
@@ -1637,14 +1746,15 @@ class NotesSyncBoundaryRuntimeTest {
      * A save by note uid with no editor open, on the base design 3.2 gives a save: the new title and text
      * go onto the note's pending entry when there is one, else onto the copy this account's cache holds,
      * and the result is saved into the pending store with a copy of the notebook. With no editor open, no
-     * landed record is kept.
+     * landed record is kept. With [metaRaw], the item gets exactly those bytes as its metadata in place
+     * of the merge, for metadata no save of the app would write.
      */
     private fun editLocally(account: Account, generation: String, notebook: String, note: String, title: String, body: String, mtime: Long,
-                            withNotebookCopy: Boolean = true) {
+                            withNotebookCopy: Boolean = true, metaRaw: ByteArray? = null) {
         val store = pending(account, generation)
         val (itemMgr, item, copy) = editable(account, store, notebook, note)
         item.setContent(body)
-        item.setMetaRaw((NoteMetaCodec.merge(item.metaRaw, title, mtime) as NoteMetaCodec.Merge.Merged).bytes)
+        item.setMetaRaw(metaRaw ?: (NoteMetaCodec.merge(item.metaRaw, title, mtime) as NoteMetaCodec.Merge.Merged).bytes)
         val saved = store.saveLocal(note, notebook, item.etag, itemMgr.cacheSaveWithContent(item), isCreate = false,
             notebookCopy = copy.takeIf { withNotebookCopy })
         assertTrue("the edit was saved: $saved", saved is PendingNotesStore.SaveOutcome.Saved)
@@ -1903,6 +2013,12 @@ class NotesSyncBoundaryRuntimeTest {
         private val TRANSACTION = Regex("collection/[^/]+/item/transaction/")
         private val UPLOAD = Regex("POST collection/[^/]+/item/(transaction|batch)/")
         private const val QUIET_MILLIS = 300L
+
+        /** Well-formed msgpack that is not a map: an array holding the string "x". */
+        private val NOT_ONE_MAP = byteArrayOf(0x91.toByte(), 0xa1.toByte(), 0x78)
+
+        /** The header of a map with one entry, and nothing after it. */
+        private val CUT_SHORT_MAP = byteArrayOf(0x81.toByte())
 
         /**
          * One Etebase signup for the whole class: its key derivation takes seconds, and the session

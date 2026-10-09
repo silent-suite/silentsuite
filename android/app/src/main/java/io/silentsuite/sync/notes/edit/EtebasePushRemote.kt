@@ -12,6 +12,7 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.notes.edit.NotePushPolicy.NotebookCheck
 import io.silentsuite.sync.notes.edit.NotePushStep.Built
+import io.silentsuite.sync.notes.edit.NotePushStep.NotBuilt
 import io.silentsuite.sync.notes.edit.NotePushStep.Notebook
 import io.silentsuite.sync.notes.edit.NotePushStep.ServerItem
 import io.silentsuite.sync.syncadapter.SyncRunGuard
@@ -165,42 +166,53 @@ internal class EtebasePushRemote(
         return typed.name.orEmpty() to (typed.mtime ?: now())
     }
 
-    /**
-     * Merges [name] and [mtime] into [item]'s metadata (design 3.2). A map another client wrote with a
-     * repeated or aliased key is refused rather than guessed, which fails this entry and keeps its text;
-     * metadata that is not one map is replaced by typed metadata with the fields the typed decoder read.
-     */
+    /** Merges [name] and [mtime] into [item]'s metadata (design 3.2), or holds the text: see [metadataToWrite]. */
     private fun writeNameAndMtime(item: Item, name: String, mtime: Long) {
-        when (val merged = NoteMetaCodec.merge(item.metaRaw, name, mtime)) {
-            is NoteMetaCodec.Merge.Merged -> {
-                item.setMetaRaw(merged.bytes)
-                checkReadsBack(item, merged.name, mtime)
+        val merged = metadataToWrite(item.metaRaw, name, mtime)
+        item.setMetaRaw(merged.bytes)
+        checkReadsBack(item, merged.name, mtime)
+    }
+
+    /** What every client's typed decoder reads back must be what was written, or nothing is uploaded and the text is held. */
+    private fun checkReadsBack(item: Item, name: String, mtime: Long) =
+        requireReadBack(name, mtime) { item.meta.let { it.name to it.mtime } }
+
+    companion object {
+        private const val UNTITLED = "Untitled"
+        private const val CONFLICTED_COPY = "(conflicted copy)"
+
+        /**
+         * The metadata to write when [name] and [mtime] go onto a copy whose metadata is [raw]: the raw
+         * merge, which keeps every other field byte for byte. Metadata this app cannot write into without
+         * losing or changing what is there is left alone, and the text is held ([NotBuilt]): a map with a
+         * repeated or aliased key, where the current value cannot be known, and anything else that is
+         * not one map. Typed metadata is never written in its place, because it keeps only the fields
+         * the typed decoder knows. Only where there is no metadata at all is there nothing to keep, and
+         * the result is a fresh map.
+         */
+        fun metadataToWrite(raw: ByteArray?, name: String, mtime: Long): NoteMetaCodec.Merge.Merged =
+            when (val merge = NoteMetaCodec.merge(raw, name, mtime)) {
+                is NoteMetaCodec.Merge.Merged -> merge
+                is NoteMetaCodec.Merge.Refused ->
+                    throw NotBuilt(HeldReason.UNREADABLE_METADATA, "note metadata names ${merge.key} ambiguously (${merge.why})")
+                is NoteMetaCodec.Merge.NotAMap ->
+                    if (raw == null || raw.isEmpty()) NoteMetaCodec.fresh(name, mtime)
+                    else throw NotBuilt(HeldReason.UNREADABLE_METADATA, "note metadata is not one map (${merge.reason})")
             }
-            is NoteMetaCodec.Merge.Refused -> throw IllegalStateException("note metadata names ${merged.key} ambiguously (${merged.why})")
-            is NoteMetaCodec.Merge.NotAMap -> {
-                Logger.log.warning("Note metadata was not one map; writing typed metadata instead")
-                val old = try { item.meta } catch (e: EtebaseException) { null }
-                val written = NoteMetaCodec.wellFormed(name)
-                item.meta = ItemMetadata().apply {
-                    old?.itemType?.let { itemType = it }
-                    old?.description?.let { description = it }
-                    old?.color?.let { color = it }
-                    this.name = written
-                    this.mtime = mtime
-                }
-                checkReadsBack(item, written, mtime)
+
+        /**
+         * [NotBuilt] unless [read], the typed decoder's view of what was just written, gives back exactly
+         * [name] and [mtime]. A typed read that fails counts as not read back.
+         */
+        fun requireReadBack(name: String, mtime: Long, read: () -> Pair<String?, Long?>) {
+            val (readName, readMtime) = try {
+                read()
+            } catch (e: EtebaseException) {
+                throw NotBuilt(HeldReason.READ_BACK_FAILED, "note metadata could not be read back (${e.javaClass.simpleName})")
+            }
+            if (readName != name || readMtime != mtime) {
+                throw NotBuilt(HeldReason.READ_BACK_FAILED, "note metadata did not read back as written")
             }
         }
-    }
-
-    /** What every client's typed decoder reads back must be what was written, or nothing is uploaded. */
-    private fun checkReadsBack(item: Item, name: String, mtime: Long) {
-        val meta = item.meta
-        check(meta.name == name && meta.mtime == mtime) { "note metadata did not read back as written" }
-    }
-
-    private companion object {
-        const val UNTITLED = "Untitled"
-        const val CONFLICTED_COPY = "(conflicted copy)"
     }
 }
