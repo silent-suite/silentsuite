@@ -36,6 +36,17 @@ const annualOffer = {
 const REFUSED = 'Payment options are not available for this account state.'
 const TRANSIENT = 'The current annual offer could not be loaded. Retry to review current terms before continuing.'
 const LOADING = 'Loading the server-owned annual offer before payment options are shown.'
+const AUTHENTICATION = 'Billing could not confirm your sign-in. Sign in again to review payment options.'
+const RENEWAL_TRANSIENT = 'The annual terms changed, but the current offer could not be loaded. Retry to review current terms before continuing.'
+
+/** The three offer-message slots of the choice view, read by position, not by copy. */
+function panelMessages() {
+  return {
+    description: screen.getByText('Pay now + 14 bonus days').nextElementSibling?.textContent ?? null,
+    action: document.querySelector('p.rounded-lg')?.textContent?.trim() ?? null,
+    error: document.querySelector('p.text-red-600')?.textContent ?? null,
+  }
+}
 
 function response(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers(), json: async () => body } as Response
@@ -81,6 +92,8 @@ describe('PaymentChoicePanel initial offer failures', () => {
     serve([() => problem(409, 'plan-not-purchasable')])
     render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
     expect((await screen.findAllByText(REFUSED)).length).toBeGreaterThan(0)
+    expect(panelMessages()).toEqual({ description: REFUSED, action: REFUSED, error: null })
+    expect(screen.queryByText(AUTHENTICATION)).toBeNull()
     expect(screen.queryByText(LOADING)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Continue to card payment/ })).toBeNull()
@@ -89,7 +102,9 @@ describe('PaymentChoicePanel initial offer failures', () => {
   it('retries a transient failure and shows payment controls only after a valid offer', async () => {
     const calls = serve([() => { throw new TypeError('Failed to fetch') }, () => response(annualOffer)])
     render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
-    expect(await screen.findByText(TRANSIENT)).toBeTruthy()
+    await waitFor(() => expect(panelMessages().action).toBe(TRANSIENT))
+    expect(panelMessages()).toEqual({ description: TRANSIENT, action: TRANSIENT, error: null })
+    expect(screen.queryByText(REFUSED)).toBeNull()
     expect(screen.queryByRole('button', { name: /Continue to card payment/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Retry current annual offer' }))
     await waitFor(() => expect(calls()).toBe(2))
@@ -100,20 +115,35 @@ describe('PaymentChoicePanel initial offer failures', () => {
   it('moves from temporary unavailability to a completed refusal on retry', async () => {
     serve([() => problem(503, 'offer-unavailable'), () => problem(409, 'plan-not-purchasable')])
     render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
-    expect(await screen.findByText(TRANSIENT)).toBeTruthy()
+    await waitFor(() => expect(panelMessages().action).toBe(TRANSIENT))
+    expect(panelMessages()).toEqual({ description: TRANSIENT, action: TRANSIENT, error: null })
     fireEvent.click(screen.getByRole('button', { name: 'Retry current annual offer' }))
-    expect((await screen.findAllByText(REFUSED)).length).toBeGreaterThan(0)
+    await waitFor(() => expect(panelMessages().action).toBe(REFUSED))
+    expect(panelMessages()).toEqual({ description: REFUSED, action: REFUSED, error: null })
+    expect(screen.queryByText(AUTHENTICATION)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
   })
 
-  it('treats a missing session as a non-retry refusal', async () => {
-    serve([() => problem(401, 'authentication-failed')])
+  it('attributes a missing session to sign-in without retry, payment or navigation', async () => {
+    const calls = serve([() => problem(401, 'authentication-failed')])
     render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
-    expect((await screen.findAllByText(REFUSED)).length).toBeGreaterThan(0)
+    await waitFor(() => expect(panelMessages().action).toBe(AUTHENTICATION))
+    expect(panelMessages()).toEqual({ description: AUTHENTICATION, action: AUTHENTICATION, error: null })
+    expect(screen.queryByText(REFUSED)).toBeNull()
+    expect(screen.queryByText(LOADING)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Continue to card payment/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Bitcoin/ })).toBeNull()
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByRole('button', { name: /^Cancel/ })).toHaveProperty('disabled', false)
+    expect(calls()).toBe(1)
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url)).every(url => /\/subscription\/(offers\/v2|payment-flows\/current)$/.test(url))).toBe(true)
   })
 
-  it('keeps a newer successful retry when an older retry later refuses', async () => {
+  it.each([
+    [409, 'plan-not-purchasable'],
+    [401, 'authentication-failed'],
+  ] as const)('keeps a newer successful retry when an older retry later fails with %s', async (status, code) => {
     let releaseFirst: (value: Response) => void = () => {}
     const first = new Promise<Response>(resolve => { releaseFirst = resolve })
     let offerCalls = 0
@@ -130,9 +160,10 @@ describe('PaymentChoicePanel initial offer failures', () => {
     await waitFor(() => expect(offerCalls).toBe(2))
     fireEvent.click(screen.getByRole('button', { name: 'Retry current annual offer' }))
     expect(await screen.findByRole('button', { name: /Continue to card payment/ })).toBeTruthy()
-    await act(async () => { releaseFirst(problem(409, 'plan-not-purchasable')); await first })
+    await act(async () => { releaseFirst(problem(status, code)); await first })
     await waitFor(() => expect(offerCalls).toBe(3))
     expect(screen.queryAllByText(REFUSED)).toHaveLength(0)
+    expect(screen.queryByText(AUTHENTICATION)).toBeNull()
     expect(screen.getByRole('button', { name: /Continue to card payment/ })).toBeTruthy()
   })
 
@@ -151,6 +182,8 @@ describe('PaymentChoicePanel initial offer failures', () => {
     ['renewal success', 'older refusal', 'success', 'refusal'],
     ['renewal refusal', 'older success', 'refusal', 'success'],
     ['renewal refusal', 'older refusal', 'refusal', 'refusal'],
+    ['renewal success', 'older 401', 'success', 'auth'],
+    ['renewal refusal', 'older 401', 'refusal', 'auth'],
   ] as const)('keeps the newest %s when a pending initial retry resolves last with an %s', async (_newest, _older, newest, older) => {
     let releaseOlder: (value: Response) => void = () => {}
     const olderRetry = new Promise<Response>(resolve => { releaseOlder = resolve })
@@ -191,7 +224,11 @@ describe('PaymentChoicePanel initial offer failures', () => {
     else expect((await screen.findAllByText(REFUSED)).length).toBeGreaterThan(0)
 
     // The obsolete initial retry A resolves last.
-    await act(async () => { releaseOlder(older === 'success' ? response(annualOffer) : problem(409, 'plan-not-purchasable')); await olderRetry })
+    await act(async () => {
+      releaseOlder(older === 'success' ? response(annualOffer) : older === 'auth' ? problem(401, 'authentication-failed') : problem(409, 'plan-not-purchasable'))
+      await olderRetry
+    })
+    expect(screen.queryByText(AUTHENTICATION)).toBeNull()
 
     if (newest === 'success') {
       expect(screen.getByText(/€48\.00\/year/)).toBeTruthy()
@@ -212,7 +249,8 @@ describe('PaymentChoicePanel initial offer failures', () => {
   it('treats a malformed successful payload as transient and retryable', async () => {
     serve([() => response({ ...annualOffer, requestId: 'invalid-uuid' })])
     render(<PaymentChoicePanel onSuccess={vi.fn()} />)
-    expect(await screen.findByText(TRANSIENT)).toBeTruthy()
+    await waitFor(() => expect(panelMessages().action).toBe(TRANSIENT))
+    expect(panelMessages()).toEqual({ description: TRANSIENT, action: TRANSIENT, error: null })
     expect(screen.getByRole('button', { name: 'Retry current annual offer' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Continue to card payment/ })).toBeNull()
   })
@@ -232,15 +270,72 @@ describe('PaymentChoicePanel initial offer failures', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull())
     expect(screen.queryByText(LOADING)).toBeNull()
     expect(screen.queryAllByText(REFUSED).length).toBeGreaterThan(0)
+    expect(panelMessages()).toEqual({ description: REFUSED, action: REFUSED, error: REFUSED })
+    expect(screen.queryByText(AUTHENTICATION)).toBeNull()
   })
 
-  it('keeps current-flow recovery available when the annual offer is refused', async () => {
+  it('attributes a renewed-offer 401 to sign-in without retry, consent or payment', async () => {
+    let offers = 0
+    let activations = 0
+    let payments = 0
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.endsWith('/subscription/payment-flows/current')) return response({ flow: null })
+      if (url.endsWith('/subscription/offers/v2')) return ++offers === 1 ? response(annualOffer) : problem(401, 'authentication-failed')
+      if (url.endsWith('/subscription/offers/v2/activate')) { activations++; return problem(409, 'plan-not-purchasable') }
+      if (url.endsWith('/subscription/payment-flows/v2')) { payments++; return problem(409, 'plan-not-purchasable') }
+      throw new Error(`unexpected request ${url}`)
+    })
+    render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Continue to card payment/ }))
+    await waitFor(() => expect(panelMessages().error).toBe(AUTHENTICATION))
+    expect(panelMessages()).toEqual({ description: AUTHENTICATION, action: AUTHENTICATION, error: AUTHENTICATION })
+    expect(screen.queryByText(REFUSED)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Continue to card payment/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Confirm annual terms and continue/ })).toBeNull()
+    expect(screen.queryByTestId('stripe-payment-form')).toBeNull()
+    expect(screen.queryByText(/€36\.00\/year/)).toBeNull()
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByRole('button', { name: /^Cancel/ })).toHaveProperty('disabled', false)
+    expect({ offers, activations, payments }).toEqual({ offers: 2, activations: 1, payments: 0 })
+  })
+
+  it('keeps a renewed-offer 503 retryable with load-failure copy, then requires fresh consent', async () => {
+    let offers = 0
+    let activations = 0
+    vi.mocked(fetch).mockImplementation(async input => {
+      const url = String(input)
+      if (url.endsWith('/subscription/payment-flows/current')) return response({ flow: null })
+      if (url.endsWith('/subscription/offers/v2')) return ++offers === 2 ? problem(503, 'offer-unavailable') : response(annualOffer)
+      if (url.endsWith('/subscription/offers/v2/activate')) { activations++; return problem(409, 'plan-not-purchasable') }
+      throw new Error(`unexpected request ${url}`)
+    })
+    render(<PaymentChoicePanel onSuccess={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Continue to card payment/ }))
+    await waitFor(() => expect(panelMessages().error).toBe(RENEWAL_TRANSIENT))
+    expect(panelMessages()).toEqual({ description: TRANSIENT, action: TRANSIENT, error: RENEWAL_TRANSIENT })
+    expect(screen.queryByText(REFUSED)).toBeNull()
+    expect(screen.queryByText(AUTHENTICATION)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Continue to card payment/ })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry current annual offer' }))
+    expect(await screen.findByRole('button', { name: /Continue to card payment/ })).toBeTruthy()
+    expect(panelMessages().error).toBe('The annual terms changed. Review the updated offer and choose a payment method again.')
+    expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
+    expect({ offers, activations }).toEqual({ offers: 3, activations: 1 })
+  })
+
+  it.each([
+    [409, 'plan-not-purchasable'],
+    [401, 'authentication-failed'],
+  ] as const)('keeps current-flow recovery available when the annual offer fails with %s', async (status, code) => {
     vi.mocked(fetch).mockImplementation(async input => String(input).endsWith('/subscription/payment-flows/current')
       ? response({ flow: { flowKind: 'stripe_pay_now', createdAt: '2026-08-10T12:00:00Z', cancellable: true, checkoutUrl: null } })
-      : problem(409, 'plan-not-purchasable'))
+      : problem(status, code))
     render(<PaymentChoicePanel onSuccess={vi.fn()} />)
-    expect(await screen.findByRole('button', { name: 'Cancel card payment' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Cancel card payment' })).toHaveProperty('disabled', false)
     expect(screen.queryByRole('button', { name: /Continue to card payment/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
   })
 
   it('does not render a delayed offer after unmount', async () => {

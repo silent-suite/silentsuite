@@ -9,6 +9,7 @@ import {
   activateAuthenticatedAnnualCheckout,
   classifyAnnualOfferLoadFailure,
   fetchAuthenticatedAnnualOffer,
+  isAnnualOfferAuthenticationError,
   isRenewableAnnualOfferError,
   startAuthenticatedAnnualPayment,
   type AnnualCheckoutActivation,
@@ -49,6 +50,10 @@ type PaymentOption = {
   provider: 'stripe' | 'btcpay'
   enabled: boolean
 }
+
+const OFFER_REFUSED_MESSAGE = 'Payment options are not available for this account state.'
+const OFFER_LOAD_FAILED_MESSAGE = 'The current annual offer could not be loaded. Retry to review current terms before continuing.'
+const OFFER_AUTHENTICATION_MESSAGE = 'Billing could not confirm your sign-in. Sign in again to review payment options.'
 
 const CURRENT_FLOW_KINDS = ['stripe_pay_now', 'btcpay_annual'] as const
 
@@ -221,6 +226,8 @@ export default function PaymentChoicePanel({
   const [currentFlowLoadFailed, setCurrentFlowLoadFailed] = useState(false)
   const [offerRefreshFailed, setOfferRefreshFailed] = useState(false)
   const [initialOfferFailed, setInitialOfferFailed] = useState(false)
+  // Billing rejected the offer request's authentication, not the account.
+  const [offerAuthFailed, setOfferAuthFailed] = useState(false)
   const offerRequestSequence = useRef(0)
   const offerMounted = useRef(false)
   useEffect(() => {
@@ -249,6 +256,7 @@ export default function PaymentChoicePanel({
     setOptionsLoaded(false)
     setAnnualOffer(null)
     setOptions([])
+    setOfferAuthFailed(false)
     try {
       const offer = await fetchAuthenticatedAnnualOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL })
       if (current()) {
@@ -261,6 +269,7 @@ export default function PaymentChoicePanel({
         setAnnualOffer(null)
         setOptions([])
         setInitialOfferFailed(classifyAnnualOfferLoadFailure(error) === 'transient')
+        setOfferAuthFailed(isAnnualOfferAuthenticationError(error))
       }
     } finally {
       if (current()) setOptionsLoaded(true)
@@ -285,6 +294,7 @@ export default function PaymentChoicePanel({
     setOptions([])
     setAnnualOffer(null)
     setOfferRefreshFailed(false)
+    setOfferAuthFailed(false)
     try {
       const offer = await fetchAuthenticatedAnnualOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL })
       if (!current()) return
@@ -297,14 +307,23 @@ export default function PaymentChoicePanel({
       setOptions([])
       setAnnualOffer(null)
       const transient = classifyAnnualOfferLoadFailure(error) === 'transient'
+      const authFailed = isAnnualOfferAuthenticationError(error)
       setOfferRefreshFailed(transient)
       setInitialOfferFailed(false)
-      setError(transient ? 'The annual terms changed, but the current offer could not be loaded. Retry to review current terms before continuing.' : 'Payment options are not available for this account state.')
+      setOfferAuthFailed(authFailed)
+      setError(authFailed ? OFFER_AUTHENTICATION_MESSAGE
+        : transient ? 'The annual terms changed, but the current offer could not be loaded. Retry to review current terms before continuing.'
+        : OFFER_REFUSED_MESSAGE)
     } finally {
       if (current()) setOptionsLoaded(true)
     }
   }
 
+  // One message for the description and the action slot, so neither can
+  // report a refused account while the other reports sign-in or a retry.
+  const offerUnavailableMessage = offerAuthFailed ? OFFER_AUTHENTICATION_MESSAGE
+    : initialOfferFailed || offerRefreshFailed ? OFFER_LOAD_FAILED_MESSAGE
+    : OFFER_REFUSED_MESSAGE
   const stripeOption = useMemo(() => options.find(option => option.id === 'stripe_pay_now' && option.enabled), [options])
   const btcpayAnnualOption = useMemo(() => options.find(option => option.id === 'btcpay_annual' && option.enabled), [options])
   const currentFlowCheckoutUrl = useMemo(() => resolveBtcpayUrl(currentFlow?.checkoutUrl), [currentFlow?.checkoutUrl])
@@ -699,8 +718,7 @@ export default function PaymentChoicePanel({
               {annualOffer
                 ? `Choose a server-authorized payment method for ${annualOfferPlanLabel(annualOffer.offer)}.`
                 : !optionsLoaded ? 'Loading the server-owned annual offer before payment options are shown.'
-                : initialOfferFailed ? 'The current annual offer could not be loaded. Retry to review current terms before continuing.'
-                : 'Payment options are not available for this account state.'}
+                : offerUnavailableMessage}
             </p>
           </div>
         </div>
@@ -759,7 +777,7 @@ export default function PaymentChoicePanel({
         </Button>
       ) : (
         <p className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 text-sm text-[rgb(var(--muted))]">
-          Payment options are not available for this account state.
+          {offerUnavailableMessage}
         </p>
       )}
 

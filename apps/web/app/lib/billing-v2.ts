@@ -118,6 +118,15 @@ export function isRenewableAnnualOfferError(error: unknown): error is BillingRes
     && error.billingProblemType === RENEWABLE_ANNUAL_OFFER_PROBLEM_TYPE
 }
 
+/**
+ * Billing answers 401 for any failed authentication, so this attributes an
+ * offer failure to sign-in without implying a specific cause. It only selects
+ * copy; refusal and retry decisions stay with the classifier above.
+ */
+export function isAnnualOfferAuthenticationError(error: unknown): error is BillingResponseError {
+  return error instanceof BillingResponseError && error.billingStatus === 401
+}
+
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
