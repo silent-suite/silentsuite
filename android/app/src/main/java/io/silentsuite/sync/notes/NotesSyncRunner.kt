@@ -19,6 +19,10 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.edit.EtebasePushRemote
+import io.silentsuite.sync.notes.edit.NotePushPolicy
+import io.silentsuite.sync.notes.edit.NotePushStep
+import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
 import io.silentsuite.sync.syncadapter.CollectionRefreshIncompleteException
 import io.silentsuite.sync.syncadapter.PagedListingGuard
@@ -28,18 +32,25 @@ import io.silentsuite.sync.syncadapter.SyncRunGuard
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.syncConditionsAllow
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
+import java.io.IOException
+import java.io.InterruptedIOException
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.logging.Level
 
 /**
- * One Notes sync run: refresh the account-wide collection list, then pull every notebook's items
- * into the local cache. Read-only in this slice (no push), so a read-only notebook needs no
- * special handling here. Every private read is guarded by the exact account generation, and the
- * outcome is recorded into [SyncStatusStore] under the NOTES service exactly like an adapter would.
+ * One Notes sync run: refresh the account-wide collection list, push the changes waiting in the
+ * account's pending store ([NotePushStep]), then pull every notebook's items into the local cache.
+ * Every private read is guarded by the exact account generation, and the outcome is recorded into
+ * [SyncStatusStore] under the NOTES service exactly like an adapter would.
  */
 internal object NotesSyncRunner {
+    /** Per exact account identity, what the push step remembers between runs (in memory only). */
+    private val pushMemory = ConcurrentHashMap<String, NotePushStep.Memory>()
+
     /**
-     * @property manual user-initiated runs ignore the Wi-Fi-only restriction, like manual adapter syncs.
+     * @property manual user-initiated runs ignore the Wi-Fi-only restriction, like manual adapter syncs,
+     * and try every pending change, whatever its backoff.
      * @property forceRefresh list the collections from scratch, not from the saved cursor (after an
      * invitation is accepted), so a newly shared notebook is seen whatever ran before.
      * @property stillScheduled false once the coordinator cancelled this run (sign-out, Notes turned
@@ -98,6 +109,7 @@ internal object NotesSyncRunner {
         fun stillWanted() = !cancelled() && AccountSettings.notesEnabled(manager, account)
         val guard = SyncRunGuard(appContext, account, creationId, ::stillWanted)
         var listedCollections = false
+        var push: NotePushStep.Result? = null
         try {
             if (!AccountSettings.notesEnabled(manager, account)) {
                 Logger.log.info("Notes sync skipped: Notes is off for this account")
@@ -126,6 +138,23 @@ internal object NotesSyncRunner {
                 val cache = EtebaseLocalCache.getInstance(appContext, account.name)
                 val etebase = EtebaseLocalCache.getEtebase(appContext, httpClient.okHttpClient, settings)
                 val colMgr = etebase.collectionManager
+                // Pushed before the fetch, as the adapters push before they fetch (design 3.3).
+                push = try {
+                    pushPending(appContext, account, creationId, request, cache, colMgr, guard)
+                } catch (e: IOException) {
+                    // The store could not be read at the start of the step: a storage failure, and the
+                    // fetch still runs (design 3.3). A cancelled call is no failure.
+                    if (e is InterruptedIOException || cancelled()) throw e
+                    Logger.log.warning("The pending notes store could not be read: ${e.javaClass.name}")
+                    unreadableStore()
+                }
+                if (push?.ended == NotePushStep.Ended.NEEDS_AUTHENTICATION) {
+                    // There is no session renewal (answer 3 on #709): a 401 on a push ends the run with
+                    // the authentication failure, as a 401 on any other request does (design 3.3).
+                    if (cancelled() || !guard.mayWrite()) finishWithoutOutcome()
+                    else recordFailure(SyncStatusStore.FailureCategory.AUTHENTICATION)
+                    return true
+                }
                 // The fetch needs only each notebook's uid and cursor, so notebook metadata is never
                 // decoded here: one notebook another app wrote in a shape this client cannot decode
                 // must not stop the others from syncing.
@@ -137,9 +166,9 @@ internal object NotesSyncRunner {
                 }
             }
             if (outcome == NotebooksOutcome.STALE || !guard.mayWrite()) { finishWithoutOutcome(); return true }
-            if (outcome == NotebooksOutcome.SOME_FAILED) recordFailure(SyncStatusStore.FailureCategory.UNKNOWN) else recordSuccess()
+            runFailure(push, outcome)?.let { recordFailure(it) } ?: recordSuccess()
         } catch (e: CollectionRefreshIncompleteException) {
-            // No item fetch or success follows an unfinished list. Returning false also keeps
+            // No push, item fetch or success follows an unfinished list. Returning false also keeps
             // this run's forced refresh owed in the coordinator's existing single-flight policy.
             Logger.log.info("Notes sync deferred: collection refresh is incomplete")
             finishWithoutOutcome()
@@ -185,6 +214,106 @@ internal object NotesSyncRunner {
             recordFailure(SyncStatusStore.FailureCategory.UNKNOWN)
         }
         return listedCollections
+    }
+
+    /**
+     * The push step (design 3.3): the changes waiting in the account's pending store are sent, one note
+     * per request, before the fetch. Null when the store holds no entry and nothing unreadable, in which
+     * case no request is made.
+     */
+    private fun pushPending(
+        context: Context,
+        account: Account,
+        creationId: String,
+        request: Request,
+        cache: EtebaseLocalCache,
+        colMgr: CollectionManager,
+        guard: SyncRunGuard,
+    ): NotePushStep.Result? {
+        val store = PendingNotesStore.forIdentity(context, account.type, account.name, creationId)
+        val waiting = store.snapshot { false }
+        if (waiting.headers.isEmpty() && waiting.unreadable.isEmpty()) {
+            // A copy whose last entry went outside a run (a note never sent and then deleted, held text
+            // discarded), or whose removal failed before, goes here. Nothing is written when there is none.
+            pruneNotebookCopies(store)
+            return null
+        }
+        refreshNotebookCopies(store, cache, colMgr, guard, waiting.headers.mapTo(HashSet()) { it.notebookUid })
+        val memory = pushMemory.getOrPut(listOf(account.type, account.name, creationId).joinToString("\u0000")) { NotePushStep.Memory() }
+        val result = NotePushStep(store, EtebasePushRemote(cache, colMgr, store, guard), memory,
+            userInitiated = request.manual, mayWrite = guard::mayWrite).pass()
+        pruneNotebookCopies(store)
+        // Counts only: no title, notebook name or text is ever logged.
+        Logger.log.info("Notes push ${result.ended}: pushed ${result.pushed}, held ${result.held}, " +
+            "deletes dropped ${result.droppedDeletes}, conflicts ${result.conflicts.values.sum()}, " +
+            "failure ${result.failure}, carried ${result.carriedFailure}")
+        return result
+    }
+
+    private fun pruneNotebookCopies(store: PendingNotesStore) {
+        try {
+            store.pruneNotebooks()
+        } catch (e: IOException) {
+            Logger.log.warning("Notebook copies no pending note needs could not be removed: ${e.javaClass.name}")
+        }
+    }
+
+    /** What a run records when the pending store cannot be read at the start of its push step. */
+    internal fun unreadableStore() = NotePushStep.Result(NotePushStep.Ended.STOPPED, pushed = 0, held = 0,
+        conflicts = emptyMap(), failure = NotePushPolicy.FailureKind.LOCAL, carriedFailure = null)
+
+    /**
+     * Design 3.1: each pending note is decrypted through a copy of its notebook that the store keeps,
+     * so its text stays readable after the Etebase cache drops the notebook. The copy is refreshed here,
+     * after the collection refresh and never inside it, from the notebook as this run cached it, and
+     * never from a notebook seen as deleted. A copy that cannot be written stays as it was.
+     */
+    private fun refreshNotebookCopies(
+        store: PendingNotesStore,
+        cache: EtebaseLocalCache,
+        colMgr: CollectionManager,
+        guard: SyncRunGuard,
+        notebookUids: Set<String>,
+    ) {
+        // Read under the cache monitor and written under the pending lock, never both at once.
+        val copies = synchronized(cache) {
+            cache.collections(colMgr, type = Constants.ETEBASE_TYPE_NOTES)
+                .filter { it.uid in notebookUids }
+                .map { it.uid to colMgr.cacheSave(it) }
+        }
+        for ((uid, copy) in copies) {
+            guard.check()
+            try {
+                store.putNotebook(uid, copy)
+            } catch (e: IOException) {
+                Logger.log.warning("A notebook copy for pending notes could not be refreshed: ${e.javaClass.name}")
+            }
+        }
+    }
+
+    /**
+     * The failure a run records, or null for success (design 3.3 and 3.8): the push step's own failure
+     * first, then a notebook that could not be fetched, then a failure carried from an entry that was
+     * skipped in backoff, so a run never records success over an entry that is stuck.
+     */
+    internal fun runFailure(push: NotePushStep.Result?, fetched: NotebooksOutcome): SyncStatusStore.FailureCategory? {
+        push?.failure?.let { return pushFailureCategory(it.name) }
+        if (fetched == NotebooksOutcome.SOME_FAILED) return SyncStatusStore.FailureCategory.UNKNOWN
+        return push?.carriedFailure?.let(::pushFailureCategory)
+    }
+
+    /**
+     * A push failure as a status category, from the [NotePushPolicy.FailureKind] name entries record.
+     * A 403 or 404 the notebook fetch did not confirm, a rejection, and a name this build does not know
+     * are UNKNOWN, never PERMISSION, which means an Android permission the dashboard offers to grant.
+     */
+    internal fun pushFailureCategory(kind: String): SyncStatusStore.FailureCategory = when (kind) {
+        NotePushPolicy.FailureKind.TRANSIENT.name -> SyncStatusStore.FailureCategory.NETWORK
+        NotePushPolicy.FailureKind.AUTHENTICATION.name -> SyncStatusStore.FailureCategory.AUTHENTICATION
+        // The pending store or the Etebase cache, or a pending change this device could not read. A
+        // change that cannot be built for its upload is held, not failed.
+        NotePushPolicy.FailureKind.LOCAL.name -> SyncStatusStore.FailureCategory.STORAGE
+        else -> SyncStatusStore.FailureCategory.UNKNOWN
     }
 
     /** What one notebook's failed fetch means for the rest of the run. */

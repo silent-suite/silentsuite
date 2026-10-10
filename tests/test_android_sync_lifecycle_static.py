@@ -507,7 +507,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
     ledger_size = sum(len(methods) for methods in ledger["classes"].values())
-    assert len(canonical) == len(runtime_methods) == ledger_size == 113
+    assert len(canonical) == len(runtime_methods) == ledger_size == 131
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
@@ -526,8 +526,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 111, 113)
-    assert tuple(len(api36[key]) for key in api36) == (29, 19, 65)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 129, 131)
+    assert tuple(len(api36[key]) for key in api36) == (29, 19, 83)
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())
@@ -588,8 +588,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':112,'35:all':113,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':65}" in assertion
-    assert '"21:remaining": 111' in script
+    assert "expected_sizes={'21:mixed':1,'21:remaining':130,'35:all':131,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':83}" in assertion
+    assert '"21:remaining": 129' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper
