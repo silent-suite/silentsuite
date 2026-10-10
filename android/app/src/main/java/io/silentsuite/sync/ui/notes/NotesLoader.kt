@@ -305,7 +305,8 @@ internal object NotesLoader {
             // fence (the pending lock is never held together with either). This order is safe only
             // because of a rule on the runner: before any store change that lets a note fall back to the
             // cache (dropping an entry after a push, the conflict drops, removing an original for a
-            // conflict copy), it writes the server item it holds, deleted ones included, into the cache
+            // conflict copy, holding text when the server's copy was fetched), it writes the server item
+            // it holds, deleted ones included, into the cache
             // under the cache monitor and, inside it, through the run's SyncRunGuard.write (which takes
             // the write fence), without holding the pending lock, and keeps the entry if that write
             // fails or is refused because the run is no longer current. A load then sees either the

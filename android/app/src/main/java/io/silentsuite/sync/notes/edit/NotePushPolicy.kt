@@ -57,8 +57,8 @@ internal object NotePushPolicy {
      * server that answers every push with a 409 and a copy that is not ours would get a new note, a
      * notification and another push in every run; with it, the run that makes the note also holds it
      * (design 3.8). A copy of ours is handled as for any entry. So is a pending delete, marked or not:
-     * the delete rows make no note, and the holding area would drop the delete without the cache write
-     * those rows need.
+     * the delete rows make no note, so there is nothing to bound, and they report what happened to the
+     * delete (a note given back counts as a conflict), where the holding area would only drop it.
      */
     fun decide(entry: PendingEntry, landedRevision: String?, server: ServerCopy?): ConflictOutcome {
         require(entry.state != PendingEntry.State.HELD) { "held text is never pushed" }

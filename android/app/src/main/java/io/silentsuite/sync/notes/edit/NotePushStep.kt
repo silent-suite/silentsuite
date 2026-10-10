@@ -435,8 +435,13 @@ internal class NotePushStep(
             ConflictOutcome.REBASE -> rebaseOnce(latest, server)
             ConflictOutcome.KEEP_BOTH -> replaceWithNewNote(latest, server, conflictedCopy = true)
             ConflictOutcome.RECREATE_AS_NEW_NOTE -> replaceWithNewNote(latest, server, conflictedCopy = false)
-            // Held with the version that was sent, so a change made during the upload is not held with it.
-            ConflictOutcome.HOLD_REPEATED_CONFLICT -> hold(uid, HeldReason.REPEATED_CONFLICT, sentVersion = snapshot.version)
+            // Held with the version that was sent, so a change made during the upload is not held with it:
+            // that entry stays as it is, and nothing is written for it. Text that is held leaves the note's
+            // row to the server's version, so the server's copy goes into the cache first (design 3.3).
+            ConflictOutcome.HOLD_REPEATED_CONFLICT ->
+                if (latest.version != snapshot.version || cacheFirst(latest, server)) {
+                    hold(uid, HeldReason.REPEATED_CONFLICT, sentVersion = snapshot.version)
+                }
             ConflictOutcome.RESTORE_SERVER_NOTE, ConflictOutcome.ALREADY_DELETED -> if (cacheFirst(latest, server)) {
                 store.dropDelete(uid, latest.version)
                 if (decision == ConflictOutcome.RESTORE_SERVER_NOTE) countConflict(latest.notebookUid)

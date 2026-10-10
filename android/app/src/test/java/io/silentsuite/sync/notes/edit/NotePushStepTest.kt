@@ -144,6 +144,9 @@ class NotePushStepTest {
     /** Every cache write, as "uid=revision" (" deleted" for a deleted item), and whether the entry was still there. */
     private val cached = mutableListOf<String>()
     private val entryThereAtCacheWrite = HashMap<String, Boolean>()
+
+    /** At each cache write, the state the entry was in (null when it was gone). A held entry is still there, so its presence alone cannot show the order. */
+    private val stateAtCacheWrite = HashMap<String, PendingEntry.State?>()
     private var cacheError: Exception? = null
     private val unset = mutableListOf<String>()
 
@@ -197,7 +200,9 @@ class NotePushStepTest {
         override fun cache(entry: PendingEntry, item: NotePushStep.ServerItem) {
             cacheError?.let { throw it }
             cached += "${entry.noteUid}=${item.revision}${if (item.deleted) " deleted" else ""}"
-            entryThereAtCacheWrite[entry.noteUid] = store.read(entry.noteUid) is Read.Present
+            val there = store.read(entry.noteUid) as? Read.Present
+            entryThereAtCacheWrite[entry.noteUid] = there != null
+            stateAtCacheWrite[entry.noteUid] = there?.entry?.state
         }
 
         override fun unsetNotebook(notebookUid: String) {
@@ -1029,6 +1034,8 @@ class NotePushStepTest {
         assertTrue(held.fromConflict)
         assertEquals("the text is kept", "mine", item(held.blob).text)
         assertEquals("the server's copy of the original was cached before the original was removed", true, entryThereAtCacheWrite["n1"])
+        assertEquals("and the copy's server copy too", listOf("n1=srv-invented-1", "copy-1=srv-invented-2"), cached)
+        assertEquals("while the copy was still waiting, so before it was held", PendingEntry.State.UPSERT, stateAtCacheWrite["copy-1"])
     }
 
     @Test fun `try again on text held for a repeated conflict makes exactly one more note and holds it again`() {
@@ -1663,6 +1670,96 @@ class NotePushStepTest {
         server.answerConflictAfterLanding = false
         assertTrue(run().succeeded)
         assertTrue(waiting().isEmpty())
+    }
+
+    /**
+     * The copy of n1 was uploaded and landed, its answer was lost, and another client then wrote to the
+     * copy: the copy's next push meets a conflict that is not ours while it still carries its mark.
+     */
+    private fun copyLandedWithoutAnswerThenWrittenElsewhere(deleted: Boolean = false) {
+        editedElsewhere()
+        loseAnswer = { it.uid == "copy-1" }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        assertTrue("still marked: the device never saw the upload land", entry("copy-1").fromConflict)
+        server.writeElsewhere("copy-1", "web-2", deleted)
+        cached.clear()
+        stateAtCacheWrite.clear()
+    }
+
+    @Test fun `text held for a repeated conflict falls back to the server's copy, which is in the cache before the hold`() {
+        copyLandedWithoutAnswerThenWrittenElsewhere()
+        val result = run()
+        assertEquals("the text is held, and the run has no failure of its own",
+            NotePushStep.Result(Ended.COMPLETED, pushed = 0, held = 1, conflicts = emptyMap(), failure = null, carriedFailure = null), result)
+        val held = entry("copy-1")
+        assertEquals(HeldReason.REPEATED_CONFLICT, held.held?.reason)
+        assertEquals("the text survives", "mine", item(held.blob).text)
+        assertEquals("the other client's version is what the note's row falls back to, so it was written into the cache",
+            listOf("copy-1=web-2"), cached)
+        assertEquals("and before the hold: the text was still waiting at that moment", PendingEntry.State.UPSERT, stateAtCacheWrite["copy-1"])
+        assertEquals("no second note", listOf("copy-1"), built)
+    }
+
+    @Test fun `a repeated conflict with a copy deleted elsewhere puts the deletion into the cache before the hold`() {
+        copyLandedWithoutAnswerThenWrittenElsewhere(deleted = true)
+        assertEquals(1, run().held)
+        assertEquals(HeldReason.REPEATED_CONFLICT, entry("copy-1").held?.reason)
+        assertEquals("so a note deleted elsewhere does not stay in the list under the held text",
+            listOf("copy-1=web-2 deleted"), cached)
+        assertEquals(PendingEntry.State.UPSERT, stateAtCacheWrite["copy-1"])
+    }
+
+    @Test fun `text whose repeated conflict cannot be cached first is not held, and waits with a storage failure`() {
+        copyLandedWithoutAnswerThenWrittenElsewhere()
+        cacheError = IllegalStateException("the cache could not be written")
+        val result = run()
+        assertEquals(0, result.held)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        val waiting = entry("copy-1")
+        assertEquals(PendingEntry.State.UPSERT, waiting.state)
+        assertTrue("still marked, so the next run holds it and makes no second note", waiting.fromConflict)
+        assertEquals(FailureKind.LOCAL.name, waiting.lastFailureCategory)
+        assertEquals("the lost answer, and now the cache", 2, waiting.failureCount)
+        assertEquals("mine", item(waiting.blob).text)
+        // Once the cache takes the write, the same run of events ends in the hold.
+        cacheError = null
+        assertEquals(1, run().held)
+        assertEquals(HeldReason.REPEATED_CONFLICT, entry("copy-1").held?.reason)
+        assertEquals(listOf("copy-1=web-2"), cached)
+        assertEquals("and no second note was made on the way", listOf("copy-1"), built)
+    }
+
+    @Test fun `a refused marked note that moved on during the upload gets no cache write, so a cache that cannot be written is not its failure`() {
+        save("n1", "mine", seen = "srv-0")
+        server.refuseEveryPush = true
+        server.inventCopies = true
+        duringUpload = { uid ->
+            if (uid == "copy-1") {
+                duringUpload = {}
+                save("copy-1", "mine, and more")
+                // From here on the cache takes no write. Nothing about this entry needs one: no hold follows.
+                cacheError = IllegalStateException("the cache could not be written")
+            }
+        }
+        val result = run()
+        assertEquals(0, result.held)
+        assertNull("no hold follows, so no cache write was owed", result.failure)
+        assertEquals("only the original's server copy, written before the original was replaced", listOf("n1=srv-invented-1"), cached)
+        val pending = entry("copy-1")
+        assertEquals(PendingEntry.State.UPSERT, pending.state)
+        assertEquals(0, pending.failureCount)
+        assertEquals("mine, and more", item(pending.blob).text)
+    }
+
+    @Test fun `a run that is no longer current at the cache write holds nothing for a repeated conflict and records nothing`() {
+        copyLandedWithoutAnswerThenWrittenElsewhere()
+        cacheError = StaleSyncRunException()
+        assertThrows(StaleSyncRunException::class.java) { run() }
+        val waiting = entry("copy-1")
+        assertEquals(PendingEntry.State.UPSERT, waiting.state)
+        assertEquals("only the lost answer", 1, waiting.failureCount)
+        assertTrue(waiting.fromConflict)
     }
 
     // ---- a note that cannot be built for the upload ----
