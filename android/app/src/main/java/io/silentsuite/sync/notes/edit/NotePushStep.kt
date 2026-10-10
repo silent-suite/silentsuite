@@ -24,8 +24,9 @@ import java.io.IOException
  * - a conflict whose server copy cannot be fetched is the entry's failure, with backoff;
  * - a note made from a conflict is pushed in the run that makes it, and its mark turns another
  *   conflict into a hold instead of one more note;
- * - a rebase or a new note that cannot be built (metadata that cannot be written into, a result that
- *   does not read back as written) holds the text with that reason instead of being tried again;
+ * - a rebase or a new note that cannot be built (a pending change with no readable title, metadata
+ *   that cannot be written into, a result that does not read back as written) holds the text with
+ *   that reason instead of being tried again;
  * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused;
  * - a connection error, a temporary server error, or a 403 on the confirming fetch ends the step, so a
  *   run waits out at most one timeout here.
@@ -89,15 +90,16 @@ internal class NotePushStep(
 
         /**
          * The entry's change (its text and title, or its deletion) applied onto [onto]. Throws [NotBuilt]
-         * when [onto]'s metadata cannot be written into, or the result does not read back as written.
+         * when the entry's own metadata gives no readable title, when [onto]'s metadata cannot be written
+         * into, or when the result does not read back as written.
          */
         fun rebase(entry: PendingEntry, onto: ServerItem): Built
 
         /**
          * A new note in the same notebook that carries the entry's text, with its own uid and fresh
          * metadata, as a pending create. [conflictedCopy] titles it as a conflicted copy; otherwise it
-         * keeps the entry's own title (the note was deleted elsewhere). Throws [NotBuilt] when the note
-         * does not read back as written.
+         * keeps the entry's own title (the note was deleted elsewhere). Throws [NotBuilt] when the
+         * entry's own metadata gives no readable title, or the note does not read back as written.
          */
         fun newNote(entry: PendingEntry, conflictedCopy: Boolean): PendingEntry
     }

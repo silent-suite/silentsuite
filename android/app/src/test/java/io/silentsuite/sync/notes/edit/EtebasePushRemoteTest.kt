@@ -10,9 +10,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The two decisions [EtebasePushRemote] makes before anything is uploaded, which need no item of the
- * binding: what is written over a copy's metadata, and whether what was written reads back. Where the
- * answer is no, the text is held with the reason ([NotBuilt]); typed metadata is never the fallback.
+ * The decisions [EtebasePushRemote] makes before anything is uploaded, which need no item of the
+ * binding: whether a pending change gives a title of its own, what is written over a copy's metadata,
+ * and whether what was written reads back. Where the answer is no, the text is held with the reason
+ * ([NotBuilt]); neither typed metadata nor the typed decoder is the fallback.
  */
 class EtebasePushRemoteTest {
     private fun hex(s: String) = s.replace(" ", "").chunked(2).map { it.toInt(16).toByte() }.toByteArray()
@@ -72,8 +73,61 @@ class EtebasePushRemoteTest {
         assertEquals(HeldReason.UNREADABLE_METADATA, notBuilt(hex("00")).reason)
     }
 
-    @Test fun `what was written passes when the typed decoder reads back exactly that`() {
+    @Test fun `what was written passes when it reads back exactly that`() {
         EtebasePushRemote.requireReadBack("Plan", 3_000L) { "Plan" to 3_000L }
+    }
+
+    @Test fun `the read-back takes the name from the raw bytes and the time from the typed decoder`() {
+        // A character above U+FFFF: the title never passes through a typed string, on any Android version.
+        val title = "Plan \uD83D\uDED2"
+        val raw = NoteMetaCodec.fresh(title, 3_000L).bytes
+        // The bytes say 3_000 and the typed decoder's stand-in says 4_000: the time is the typed one.
+        assertEquals(title to 4_000L, EtebasePushRemote.readBack(raw) { 4_000L })
+        EtebasePushRemote.requireReadBack(title, 4_000L) { EtebasePushRemote.readBack(raw) { 4_000L } }
+    }
+
+    @Test fun `bytes that give no name do not read back`() {
+        val notOneMap = hex("91 a1 78")
+        assertEquals(null to 3_000L, EtebasePushRemote.readBack(notOneMap) { 3_000L })
+        val refused = assertThrows(NotBuilt::class.java) {
+            EtebasePushRemote.requireReadBack("Plan", 3_000L) { EtebasePushRemote.readBack(notOneMap) { 3_000L } }
+        }
+        assertEquals(HeldReason.READ_BACK_FAILED, refused.reason)
+    }
+
+    @Test fun `a typed decoder that rejects the map fails the read-back`() {
+        val raw = NoteMetaCodec.fresh("Plan", 3_000L).bytes
+        val refused = assertThrows(NotBuilt::class.java) {
+            EtebasePushRemote.requireReadBack("Plan", 3_000L) { EtebasePushRemote.readBack(raw) { throw MsgPackException("x") } }
+        }
+        assertEquals(HeldReason.READ_BACK_FAILED, refused.reason)
+    }
+
+    @Test fun `a pending change gives its name and time from its raw metadata`() {
+        assertEquals("Plan" to 5L, EtebasePushRemote.pendingNameAndMtime(NoteMetaCodec.fresh("Plan", 5L).bytes) { 9_000L })
+        assertEquals("with no time of its own, the time of the run", "Plan" to 9_000L,
+            EtebasePushRemote.pendingNameAndMtime(map(str("name") to str("Plan"))) { 9_000L })
+        assertEquals("an empty title is a title", "" to 5L, EtebasePushRemote.pendingNameAndMtime(NoteMetaCodec.fresh("", 5L).bytes) { 9_000L })
+    }
+
+    @Test fun `a pending change with no readable name is held, never read through the typed decoder`() {
+        val cases = mapOf(
+            "no metadata" to null,
+            "empty metadata" to ByteArray(0),
+            "an array" to hex("91 78"),
+            "a map cut short" to hex("81"),
+            "an empty map" to hex("80"),
+            "a name that is a number" to map(str("name") to byteArrayOf(5), str("mtime") to byteArrayOf(1)),
+            "a repeated name" to map(str("name") to str("A secret title"), str("name") to str("Another secret title")),
+            "a name only under another client's key" to map(hex("01") to str("A secret title"), str("mtime") to byteArrayOf(5)),
+            "a name beside one under another client's key" to map(str("name") to str("A secret title"), hex("01") to str("Another secret title")),
+            "a name that is not UTF-8" to map(str("name") to hex("a2 c3 28")),
+        )
+        for ((what, raw) in cases) {
+            val refused = assertThrows(what, NotBuilt::class.java) { EtebasePushRemote.pendingNameAndMtime(raw) { 9_000L } }
+            assertEquals(what, HeldReason.NOT_BUILT, refused.reason)
+            assertEquals(what, "the pending change's metadata gives no readable name", refused.message)
+        }
     }
 
     @Test fun `a note that reads back differently is not sent, and says why`() {

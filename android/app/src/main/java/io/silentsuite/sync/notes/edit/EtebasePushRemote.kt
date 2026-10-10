@@ -158,13 +158,11 @@ internal class EtebasePushRemote(
         colMgr.getItemManager(col)
     }
 
-    /** The name and mtime of a pending edit, read the way the merge reads them, else through the typed decoder. */
-    private fun nameAndMtime(item: Item): Pair<String, Long> {
-        val peek = NoteMetaCodec.peek(item.metaRaw)
-        peek?.name?.let { return it to (peek.mtime ?: now()) }
-        val typed = item.meta
-        return typed.name.orEmpty() to (typed.mtime ?: now())
-    }
+    /**
+     * The name and mtime of a pending edit, from its own raw metadata and never through the typed decoder
+     * (design decision 5). Without a usable time of its own it gets the time of the run.
+     */
+    private fun nameAndMtime(item: Item): Pair<String, Long> = pendingNameAndMtime(item.metaRaw, now)
 
     /** Merges [name] and [mtime] into [item]'s metadata (design 3.2), or holds the text: see [metadataToWrite]. */
     private fun writeNameAndMtime(item: Item, name: String, mtime: Long) {
@@ -173,9 +171,15 @@ internal class EtebasePushRemote(
         checkReadsBack(item, merged.name, mtime)
     }
 
-    /** What every client's typed decoder reads back must be what was written, or nothing is uploaded and the text is held. */
+    /**
+     * What was written must read back, or nothing is uploaded and the text is held. The name is compared
+     * from the raw bytes, never through a typed string: by the platform source Android 5.0 and 5.1 do not
+     * decode characters above U+FFFF there, and a debuggable build on 5.0 aborted (design 3.2, decision
+     * 5). The time is the typed decoder's, which also shows that the binding's typed decoder still
+     * accepts the map.
+     */
     private fun checkReadsBack(item: Item, name: String, mtime: Long) =
-        requireReadBack(name, mtime) { item.meta.let { it.name to it.mtime } }
+        requireReadBack(name, mtime) { readBack(item.metaRaw) { item.meta.mtime } }
 
     companion object {
         private const val UNTITLED = "Untitled"
@@ -200,9 +204,28 @@ internal class EtebasePushRemote(
                     else throw NotBuilt(HeldReason.UNREADABLE_METADATA, "note metadata is not one map (${merge.reason})")
             }
 
+        /** The name as the raw bytes hold it, and the time [typedMtime] gives. A typed read that fails is thrown on. */
+        fun readBack(raw: ByteArray?, typedMtime: () -> Long?): Pair<String?, Long?> {
+            val name = NoteMetaCodec.peek(raw)?.name
+            return name to typedMtime()
+        }
+
         /**
-         * [NotBuilt] unless [read], the typed decoder's view of what was just written, gives back exactly
-         * [name] and [mtime]. A typed read that fails counts as not read back.
+         * The name and time of a pending change, from its own raw metadata. Metadata that gives no readable
+         * name (not one map, or the name missing, repeated, aliased, not a string or not UTF-8) is not
+         * guessed at and not read through the typed decoder: the text is held. No save of the app writes it.
+         * A time that is missing or unusable becomes [now].
+         */
+        fun pendingNameAndMtime(raw: ByteArray?, now: () -> Long): Pair<String, Long> {
+            val peek = NoteMetaCodec.peek(raw)
+            val name = peek?.name
+                ?: throw NotBuilt(HeldReason.NOT_BUILT, "the pending change's metadata gives no readable name")
+            return name to (peek.mtime ?: now())
+        }
+
+        /**
+         * [NotBuilt] unless [read], what was just written as it reads back (see [readBack]), gives exactly
+         * [name] and [mtime]. A read that fails in the binding counts as not read back.
          */
         fun requireReadBack(name: String, mtime: Long, read: () -> Pair<String?, Long?>) {
             val (readName, readMtime) = try {

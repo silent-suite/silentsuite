@@ -21,8 +21,8 @@ internal object NoteMetaCodec {
     sealed class Merge {
         /**
          * The merged map: one map, no trailing bytes, header at the smallest width for its count.
-         * [name] is the name as written (an unpaired surrogate becomes U+FFFD), which is what a typed
-         * read of the result returns. The web reads it the same, with one exception: it decodes a
+         * [name] is the name as written (an unpaired surrogate becomes U+FFFD), which is what [peek]
+         * reads from the result. The web reads it the same, with one exception: it decodes a
          * string over 200 bytes with TextDecoder, which drops a leading U+FEFF, so such a title
          * starting with that invisible character reads there without it. The title is written as
          * typed, as the web writes its own, and the web reads its own such titles without it too.
@@ -118,8 +118,8 @@ internal object NoteMetaCodec {
     }
 
     /**
-     * Replaces each unpaired surrogate with U+FFFD, so the UTF-8 written is exactly the string a
-     * typed read returns. `String.toByteArray` would write `?` instead, silently.
+     * Replaces each unpaired surrogate with U+FFFD, so the UTF-8 written is exactly the string read
+     * back from it. `String.toByteArray` would write `?` instead, silently.
      */
     internal fun wellFormed(s: String): String {
         var sb: StringBuilder? = null

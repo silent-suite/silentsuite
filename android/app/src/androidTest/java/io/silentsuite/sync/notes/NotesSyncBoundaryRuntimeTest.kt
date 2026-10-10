@@ -1259,7 +1259,9 @@ class NotesSyncBoundaryRuntimeTest {
 
         // The user saves again before the next run: the new text is still based on the copy from
         // before the upload whose answer was lost.
-        editLocally(account, "gen-lost", notebook, note.uid, "Plan", "Second phone edit", mtime = 3_000L)
+        // Its title has a character above U+FFFF, so the rebase and its read-back carry one on every lane.
+        val cart = "Plan \uD83D\uDED2"
+        editLocally(account, "gen-lost", notebook, note.uid, cart, "Second phone edit", mtime = 3_000L)
         val store = pending(account, "gen-lost")
         val saved = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
         val since = fake.requests.size
@@ -1276,7 +1278,10 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("a conflict with our own upload, then the rebased push",
             listOf(transactionOf(notebook), transactionOf(notebook)), uploads(since))
         assertEquals("no conflicted copy", setOf(note.uid), fake.itemUids(notebook))
-        assertEquals("Second phone edit", itemManager(notebook).fetch(note.uid).contentString)
+        val landed = itemManager(notebook).fetch(note.uid)
+        assertEquals("Second phone edit", landed.contentString)
+        assertEquals("the title went through the rebase and its read-back, read here from the raw bytes", cart,
+            NoteMetaCodec.peek(landed.metaRaw)?.name)
         assertTrue("nothing is left waiting", pendingHeaders(account, "gen-lost").isEmpty())
         assertSucceeded(status(account, "gen-lost"))
     }
