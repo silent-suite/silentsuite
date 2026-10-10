@@ -7,7 +7,6 @@ import com.etebase.client.Collection
 import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.CollectionManager
 import com.etebase.client.ItemManager
-import com.etebase.client.ItemMetadata
 import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
@@ -16,6 +15,7 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.edit.NoteMetaCodec
 import io.silentsuite.sync.notes.edit.NotePushPolicy
 import io.silentsuite.sync.notes.edit.PendingEntry
 import io.silentsuite.sync.notes.edit.PendingNotesStore
@@ -148,7 +148,17 @@ internal object NotesLoader {
                 unreadable += uid
             }
                 .filter { isMarkdownNote(it.meta.itemType) }
-                .map { NoteRow(it.item.uid, titleOf(it.meta), previewOf(it.content), it.meta.mtime) }
+                .mapNotNull { cached ->
+                    // The title comes from the raw bytes. Like any other read of one item, a failure is that item's alone.
+                    val title = try {
+                        titleOf(cached.item.metaRaw)
+                    } catch (e: EtebaseException) {
+                        Logger.log.warning("Skipping a note whose metadata could not be read: ${e.javaClass.name}")
+                        unreadable += cached.item.uid
+                        return@mapNotNull null
+                    }
+                    NoteRow(cached.item.uid, title, previewOf(cached.content), cached.meta.mtime)
+                }
             val source by lazy { notebookSource(colMgr, pending.notebookCopy, collection.col, notebookUid) }
             NotesOverlay.notebook(row, notes, unreadable, pending.snapshot.headers,
                 NotesOverlay.unreadableEntries(pending.snapshot.unreadable, pending.snapshot.headers)) { header ->
@@ -174,7 +184,7 @@ internal object NotesLoader {
             val cached = try {
                 cache.itemGet(itemMgr, notebookUid, noteUid)
                     ?.takeIf { !it.item.isDeleted && isMarkdownNote(it.meta.itemType) }
-                    ?.let { NoteContent(it.item.uid, titleOf(it.meta), it.content, it.meta.mtime) }
+                    ?.let { NoteContent(it.item.uid, titleOf(it.item.metaRaw), it.content, it.meta.mtime) }
             } catch (e: EtebaseException) {
                 Logger.log.warning("Skipping a note that could not be decoded: ${e.javaClass.name}")
                 null
@@ -231,7 +241,7 @@ internal object NotesLoader {
         val item = itemMgr.cacheLoad(entry.blob)
         val meta = item.meta
         val content = item.contentString
-        NotesOverlay.Decrypted(titleOf(meta), previewOf(content), if (keepBody) content else null, meta.mtime)
+        NotesOverlay.Decrypted(titleOf(item.metaRaw), previewOf(content), if (keepBody) content else null, meta.mtime)
     } catch (e: EtebaseException) {
         Logger.log.warning("A pending note could not be read: ${e.javaClass.name}")
         null
@@ -243,7 +253,14 @@ internal object NotesLoader {
      */
     internal fun isMarkdownNote(itemType: String?): Boolean = itemType.isNullOrEmpty()
 
-    internal fun titleOf(meta: ItemMetadata): String = meta.name?.trim().orEmpty()
+    /**
+     * A note's title from its raw metadata bytes, never through the binding's typed string: by the
+     * platform source Android 5.0 and 5.1 do not decode characters above U+FFFF there, and a debuggable
+     * build on 5.0 aborted (design decision 5). Blank, which the screens show as "Untitled", when the
+     * bytes are not one map or give no name this app can trust (missing, nil, repeated, under a key
+     * another client reads as the name, not a string, or not UTF-8).
+     */
+    internal fun titleOf(metaRaw: ByteArray?): String = NoteMetaCodec.peek(metaRaw)?.name?.trim().orEmpty()
 
     /** First meaningful line of the Markdown body, without list or heading markers. */
     internal fun previewOf(body: String): String {
@@ -305,8 +322,8 @@ internal object NotesLoader {
             // fence (the pending lock is never held together with either). This order is safe only
             // because of a rule on the runner: before any store change that lets a note fall back to the
             // cache (dropping an entry after a push, the conflict drops, removing an original for a
-            // conflict copy, holding text when the server's copy was fetched), it writes the server item
-            // it holds, deleted ones included, into the cache
+            // conflict copy, holding text for a repeated conflict or because the note could not be built),
+            // it writes the server item it holds, deleted ones included, into the cache
             // under the cache monitor and, inside it, through the run's SyncRunGuard.write (which takes
             // the write fence), without holding the pending lock, and keeps the entry if that write
             // fails or is refused because the run is no longer current. A load then sees either the

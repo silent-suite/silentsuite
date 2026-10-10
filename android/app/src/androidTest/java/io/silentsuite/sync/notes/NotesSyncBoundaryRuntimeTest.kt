@@ -885,6 +885,11 @@ class NotesSyncBoundaryRuntimeTest {
         val agendaBody = "# Monday\n- budget\n- hiring"
         uploadNote(work, "Old plan", "First line of the old plan", mtime = 1_000L)
         val agenda = uploadNote(work, "Agenda", agendaBody, mtime = 2_000L)
+        // A title with a character above U+FFFF, uploaded as the bytes another client writes for it: the
+        // map of name ("Shopping " and U+1F6D2 in its four-byte UTF-8 form) and mtime 500. The list
+        // shows it from the raw metadata, never through a typed string (design decision 5).
+        val cart = "Shopping \uD83D\uDED2"
+        uploadRawNote(work, hex("82 a4 6e616d65 ad 53686f7070696e6720 f09f9b92 a5 6d74696d65 cd01f4"), "eggs")
         // Neither of these is a note to show: an item of another type, and a deleted note.
         uploadNote(work, "Attachment", "not Markdown", mtime = 3_000L, type = "application/octet-stream")
         val deleted = uploadNote(work, "Thrown away", "gone", mtime = 4_000L)
@@ -901,8 +906,8 @@ class NotesSyncBoundaryRuntimeTest {
                 val list = activity.findViewById<ListView>(R.id.notebooks_list)
                 list.performItemClick(list.adapter.getView(1, null, list), 1, 1)
             }
-            waitUntil("the cached notes to show") { noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan") }
-            assertEquals(listOf("Monday", "First line of the old plan"), noteList(scenario)!!.renderedNotes.map { it.preview })
+            waitUntil("the cached notes to show") { noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan", cart) }
+            assertEquals(listOf("Monday", "First line of the old plan", "eggs"), noteList(scenario)!!.renderedNotes.map { it.preview })
             scenario.onActivity { activity ->
                 assertEquals("Work", activity.title.toString())
                 val list = activity.findViewById<ListView>(R.id.notes_list)
@@ -1873,6 +1878,16 @@ class NotesSyncBoundaryRuntimeTest {
             this.mtime = mtime
             type?.let { itemType = it }
         }, body)
+        itemMgr.batch(arrayOf(note))
+        return note
+    }
+
+    private fun hex(s: String): ByteArray = s.replace(" ", "").chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+    /** A note with exactly these metadata bytes, as another client could upload it; nothing passes through a typed string. */
+    private fun uploadRawNote(notebook: String, metaRaw: ByteArray, body: String): Item {
+        val itemMgr = itemManager(notebook)
+        val note = itemMgr.create_raw(metaRaw, body.toByteArray(Charsets.UTF_8))
         itemMgr.batch(arrayOf(note))
         return note
     }
