@@ -14,7 +14,7 @@ export const bracesException = Object.freeze({
   severity: 'high',
   vulnerableVersions: '<=3.0.3',
   version: '3.0.3',
-  expiresAt: '2026-10-10T00:00:00Z',
+  expiresAt: '2026-10-14T00:00:00Z',
   paths: new Set([
     'apps/web > @ducanh2912/next-pwa@10.2.9 > fast-glob@3.3.2 > micromatch@4.0.8 > braces@3.0.3',
     'apps/web > eslint-config-next@15.5.24 > @next/eslint-plugin-next@15.5.24 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3',

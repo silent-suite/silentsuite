@@ -6,8 +6,23 @@
 - Package: `braces@3.0.3` only (latest npm release; integrity
   `sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==`).
   The older GHSA-grv7-fg5c-xmjg (`<3.0.3`) rules out any downgrade and is not excepted.
-- Expiry: `2026-10-10T00:00:00Z`. At or after that instant the gate fails again.
+- Expiry: `2026-10-14T00:00:00Z`. At or after that instant the gate fails again.
 - Scope: owner-approved, conditional on tooling-only exposure and independent review.
+
+## Renewal (2026-10-11)
+
+The original expiry `2026-10-10T00:00:00Z` lapsed with no patched braces release. A GitHub
+advisory API readback on 2026-10-11 still reports `<= 3.0.3` vulnerable, no first patched
+version, record updated 2026-10-02, not withdrawn. The owner explicitly approved renewing this
+existing exception, as a separately reviewed change, to exactly `2026-10-14T00:00:00Z`. Only the
+expiry changed: the advisory, module, severity, range, version, the eight reviewed paths, count
+reconciliation and every malformed-report, unknown high/critical and unreachable-registry control
+below are unchanged, and no dependency or lock changed.
+
+The exposure evidence below is historical (candidate `596b3533`). Fresh exposure verification
+(`verify-braces-tooling-exposure.mjs`, with `--runtime-smoke`) and a live `pnpm run
+audit:security` on the committed renewal candidate are pending; they have not been run for this
+renewal, and the renewal relies on them passing before merge.
 
 ## Exception contract
 
@@ -160,7 +175,7 @@ inventory and traces show neither it nor fast-glob/micromatch/braces in the runt
 
 ## Expiry remediation
 
-Before `2026-10-10T00:00:00Z`:
+Before `2026-10-14T00:00:00Z`:
 
 1. Check for a patched braces release: `npm view braces versions --json` and the GHSA record.
 2. If a patched `3.x` exists, add an exact override such as

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import test from 'node:test'
-import { runAudit } from './audit-high-critical.mjs'
+import { bracesException, runAudit } from './audit-high-critical.mjs'
 
 const fixtures = resolve(import.meta.dirname, 'test-fixtures/audit-high-critical')
 const quiet = { log: () => {}, error: () => {} }
@@ -50,7 +50,9 @@ test('fails closed for unknown high and critical advisories', () => {
   assert.equal(runAudit({ spawn: fakeResult({ status: 1, stdout: report('unknown-critical.json') }), ...quiet }), 1)
 })
 
-const bracesExpiry = Date.parse('2026-10-10T00:00:00Z')
+// Owner-approved renewal (2026-10-11) of the unchanged exception contract; the former deadline
+// was 2026-10-10T00:00:00Z.
+const bracesExpiry = Date.parse('2026-10-14T00:00:00Z')
 
 function bracesReport(mutate = () => {}) {
   const parsed = JSON.parse(report('braces-excepted.json'))
@@ -64,6 +66,13 @@ function auditBraces(stdout, now = bracesExpiry - 1) {
 
 test('accepts only the exact braces 3.0.3 tooling advisory before its expiry', () => {
   assert.equal(auditBraces(bracesReport()), 0)
+})
+
+test('renews only the braces expiry to the exact owner-approved deadline', () => {
+  assert.equal(bracesException.expiresAt, '2026-10-14T00:00:00Z')
+  assert.equal(bracesException.paths.size, 8)
+  assert.equal(auditBraces(bracesReport(), Date.parse('2026-10-10T00:00:00Z')), 0)
+  assert.equal(auditBraces(bracesReport(), Date.parse('2026-10-11T09:46:33Z')), 0)
 })
 
 test('fails closed unless the braces finding reports exactly the reviewed tooling path set', () => {
