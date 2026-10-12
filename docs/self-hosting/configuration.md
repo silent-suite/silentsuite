@@ -16,11 +16,13 @@ Compose and container runtime settings are environment variables in the `.env` f
 | `ETEBASE_DISABLE_DJANGO_ADMIN` | No | `true` | Hides the Django `/admin/` panel. Set to `false` to enable it; see [Admin Panel](./admin-dashboard.md) before exposing it. |
 | `TRUSTED_PROXY_IPS` | No | `127.0.0.1` | Comma-separated exact reverse proxy IPs allowed to set `X-Forwarded-*` headers. CIDR ranges are not supported. |
 
-After changing `.env`, recreate the server container:
+After changing a server runtime setting in `.env` (`SUPER_USER`, `SUPER_PASS`, `ETEBASE_DISABLE_SIGNUP`, `ETEBASE_BOOTSTRAP_ADMIN_TOKEN`, `ETEBASE_DISABLE_DJANGO_ADMIN`, `TRUSTED_PROXY_IPS`, `SERVER_PORT`), recreate the server container:
 
 ```bash
 docker compose up -d --force-recreate server
 ```
+
+The PostgreSQL values (`DATABASE_NAME`, `DATABASE_USER`, `DATABASE_PASSWORD`) are different. They initialize a fresh database the first time the PostgreSQL volume is created; an existing database keeps its stored name, user, and password regardless of what `.env` or `etebase-server.ini` later say. Changing them on an existing installation requires making the corresponding change inside PostgreSQL first, then updating `.env` and the `[database]` section of the ini to match. Recreating containers alone does not apply such a change, and the server will fail to start on a mismatched password. Never delete the database volume to apply a configuration change; that destroys every account and sync row.
 
 ## Advanced Variables
 
