@@ -36,7 +36,7 @@ export const BITCOIN_CANCELLATION_WARNING =
 export const PAYMENT_FLOW_CANCELLATION_MESSAGES: Record<PaymentFlowCancellationFailure, string> = {
   'bitcoin-acknowledgement-required': 'Confirm that you have not sent cryptocurrency before cancelling this cryptocurrency payment.',
   'invalid-cancellation-request': 'This payment could not be cancelled. Reload the page and try again.',
-  'payment-reconciliation-required': 'This payment is still being reconciled and cannot be cancelled yet. Wait for the provider update or contact support.',
+  'payment-reconciliation-required': 'This payment could not be cancelled. Contact support if cancellation remains blocked.',
   'provider-cancellation-failed': 'The payment provider would not cancel this payment. It may already have been paid. Wait for the provider update or contact support.',
   unavailable: 'Could not cancel the pending payment flow.',
 }

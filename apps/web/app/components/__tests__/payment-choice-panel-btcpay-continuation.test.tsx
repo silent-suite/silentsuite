@@ -217,6 +217,27 @@ describe('PaymentChoicePanel non-cancellable flow statement', () => {
     expect(calls.filter(call => call.method !== 'GET')).toEqual([])
   })
 
+  // Held, non-cancellable, not confirmed: the copy states the payment is
+  // incomplete and recovery is blocked, points to the existing safe recovery
+  // and to support on persistent failure, and promises no automatic checking,
+  // confirmation or later cancellation. The no-crypto-sent acknowledgement is
+  // shown only where cancellation is actually possible.
+  it.each([['provider_creation_pending'], ['provider_creation_reconciling']])('states a blocked incomplete recovery without promises for a held %s authority', async status => {
+    mockHeldFlow(status)
+
+    expect(await screen.findByText(/payment already in progress/i)).toBeInTheDocument()
+    const statement = screen.getByText(/incomplete/i)
+    expect(statement.textContent).toMatch(/contact support/i)
+    expect(statement.textContent).not.toMatch(/being checked|is checked|being confirmed|automatic|cannot be cancelled yet|will be cancelled/i)
+    expect(screen.queryByText(/I have not sent cryptocurrency for this payment/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps the no-crypto-sent acknowledgement for a cancellable Bitcoin authority', async () => {
+    mockAuthorityFlow({ ...bitcoinFlow('https://btcpay.test/i/abc123'), status: 'provider_creation_reconciling', cancellable: true, authorityId: AUTHORITY_ID, disclosure: bitcoinTerms })
+
+    expect(await screen.findByText(/I have not sent cryptocurrency for this payment/i)).toBeInTheDocument()
+  })
+
   it('keeps the confirmation statement for a provider-confirmed flow', async () => {
     mockHeldFlow('provider_confirmed')
 

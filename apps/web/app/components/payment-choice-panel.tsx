@@ -791,7 +791,7 @@ export default function PaymentChoicePanel({
           <p className="text-xs text-[rgb(var(--muted))]">
             {currentFlow.status === 'provider_confirmed'
               ? 'This payment is already being confirmed. Please wait for the provider update or contact support.'
-              : 'This payment is held while its provider outcome is checked, so it cannot be cancelled yet. Please retry later or contact support.'}
+              : 'This payment is incomplete and its recovery is currently blocked. Retry this same payment later, and contact support if it keeps failing.'}
           </p>
         )}
       </div>
