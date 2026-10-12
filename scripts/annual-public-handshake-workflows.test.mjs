@@ -211,6 +211,11 @@ test('reusable cutover callers map only declared secrets and every App token can
   }
 })
 test('preview and CI never contain a public-served key or artifact path', () => { for (const workflow of ['.github/workflows/preview-web.yml', '.github/workflows/preview-docs.yml', '.github/workflows/ci.yml']) assert.doesNotMatch(source(workflow), /ANNUAL_PUBLIC_SERVED_HMAC_KEY|annual-only-public-served-attestation/) })
+test('standalone Docs deploy never contains a public-served key, artifact path, or annual admission material', () => {
+  const text = source('.github/workflows/deploy-docs-standalone.yml')
+  assert.doesNotMatch(text, /ANNUAL_PUBLIC_SERVED_HMAC_KEY|annual-only-public-served-attestation/)
+  assert.doesNotMatch(text, /ANNUAL_|annual-only|verify-annual-pre-public-admission|create-github-app-token|private_admission/)
+})
 test('Stage B signs before upload, uses the exact pinned official artifact action, and exposes finalized outputs', () => {
   const workflow = source('.github/workflows/annual-only-public-cutover.yml')
   const sign = workflow.indexOf('run: node scripts/build-annual-public-served-attestation.mjs'); const upload = workflow.indexOf('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'); const finalize = workflow.indexOf('Verify the finalized Stage B artifact record binds this exact run and head'); assert.ok(sign >= 0 && sign < upload && upload < finalize)

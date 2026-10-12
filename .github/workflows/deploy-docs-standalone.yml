@@ -1,0 +1,243 @@
+name: Deploy Docs standalone (production, no annual Stage A)
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed live main commit to build and deploy
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-docs-production
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      DOCS_STANDALONE_DEPLOY_APPROVED_SHA: ${{ vars.DOCS_STANDALONE_DEPLOY_APPROVED_SHA }}
+    steps:
+      - name: Refuse an unarmed or mismatched standalone docs dispatch with an explicit diagnostic per condition
+        shell: bash
+        run: |
+          set -uo pipefail
+          GITHUB_REF="${GITHUB_REF:-}"
+          GITHUB_SHA="${GITHUB_SHA:-}"
+          EXPECTED_SHA="${EXPECTED_SHA:-}"
+          DOCS_STANDALONE_DEPLOY_APPROVED_SHA="${DOCS_STANDALONE_DEPLOY_APPROVED_SHA:-}"
+          refused=0
+          fail() { echo "::error::$1"; refused=1; }
+          if [ "$GITHUB_REF" != 'refs/heads/main' ]; then
+            fail "standalone docs deploy runs only from refs/heads/main"
+          fi
+          if [ "${#EXPECTED_SHA}" -ne 40 ] || ! printf '%s' "$EXPECTED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            fail "expected_sha must be exactly 40 lowercase hexadecimal characters"
+          fi
+          if [ "$GITHUB_SHA" != "$EXPECTED_SHA" ]; then
+            fail "the dispatched head is not the reviewed expected_sha"
+          fi
+          if [ -z "$DOCS_STANDALONE_DEPLOY_APPROVED_SHA" ]; then
+            fail "repository variable DOCS_STANDALONE_DEPLOY_APPROVED_SHA is not armed; arm it to the exact expected_sha for this one dispatch, then clear it after the run"
+          elif [ "$DOCS_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            fail "repository variable DOCS_STANDALONE_DEPLOY_APPROVED_SHA is armed for a different SHA than expected_sha"
+          fi
+          if [ "$refused" -ne 0 ]; then
+            echo "Refusing standalone docs deploy: the owner-approved exact-SHA admission is incomplete, so no job may run."
+            exit 1
+          fi
+          echo "Admission complete: the standalone docs approval is armed for the exact dispatched live main head."
+
+  build:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.DOCS_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha
+    needs: admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: docs-production
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    env:
+      DOCS_STANDALONE_DEPLOY_APPROVED_SHA: ${{ vars.DOCS_STANDALONE_DEPLOY_APPROVED_SHA }}
+
+    steps:
+      - name: Checkout exact approved commit for build
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact owner-approved live main commit for build
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DOCS_STANDALONE_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$DOCS_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing docs build: commit is not the exact owner-approved live main head"
+            exit 1
+          fi
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify public analytics and relay contract before build
+        run: pnpm run check:public-analytics
+
+      - name: Enforce annual billing copy
+        run: pnpm run check:billing-copy
+
+      - name: Test Android distribution documentation
+        run: pnpm --filter @silentsuite/docs test:android-distribution
+
+      - name: Embed exact immutable public SHA for post-deploy served-content verification
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          printf '{"publicSha":"%s"}\n' "$EXPECTED_SHA" > apps/docs/public/deployment-identity.json
+
+      - name: Build docs
+        run: pnpm --filter @silentsuite/docs exec vitepress build
+        env:
+          SILENTSUITE_HOSTED_DOCS_ANALYTICS: '1'
+
+      - name: Verify admitted docs artifact before upload
+        run: node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist --mode enabled
+
+      - name: Upload admitted docs artifact
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docs-standalone-production-${{ inputs.expected_sha }}
+          path: apps/docs/.vitepress/dist
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 1
+
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.DOCS_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: docs-production
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DOCS_STANDALONE_DEPLOY_APPROVED_SHA: ${{ vars.DOCS_STANDALONE_DEPLOY_APPROVED_SHA }}
+
+    steps:
+      - name: Checkout exact approved commit for deployment
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.expected_sha }}
+          fetch-depth: 0
+
+      - name: Setup pnpm for final source and topology verification
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js for final source and topology verification
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies for final source and topology verification
+        run: pnpm install --frozen-lockfile
+
+      - name: Download and verify admitted docs artifact
+        shell: bash
+        env:
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact-id }}
+          EXPECTED_ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact-digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$ARTIFACT_ID" =~ ^[0-9]+$ ]]
+          [[ "$EXPECTED_ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          ARTIFACT_ZIP=$(mktemp "$RUNNER_TEMP/docs-production.XXXXXX.zip")
+          trap 'rm -f "$ARTIFACT_ZIP"' EXIT
+          curl --fail --location --silent --show-error \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID/zip" \
+            --output "$ARTIFACT_ZIP"
+          ACTUAL_ARTIFACT_DIGEST=$(sha256sum "$ARTIFACT_ZIP" | cut -d' ' -f1)
+          test "$ACTUAL_ARTIFACT_DIGEST" = "$EXPECTED_ARTIFACT_DIGEST"
+          rm -rf apps/docs/.vitepress/dist
+          mkdir -p apps/docs/.vitepress/dist
+          unzip -q "$ARTIFACT_ZIP" -d apps/docs/.vitepress/dist
+          node scripts/verify-docs-analytics-build.mjs --dir apps/docs/.vitepress/dist --mode enabled
+
+      - name: Re-verify public analytics and relay topology immediately before deployment
+        run: pnpm run check:public-analytics
+
+      - name: Re-assert owner approval immediately before deployment
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$DOCS_STANDALONE_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$DOCS_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing docs deploy: commit is no longer the exact owner-approved live main head"
+            exit 1
+          fi
+
+      - name: Deploy to production Worker
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/docs
+          wranglerVersion: '4'
+          command: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Post-deploy health and served exact-SHA content check
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS https://docs.silentsuite.io/ >/dev/null && \
+              curl -fsS https://docs.silentsuite.io/deployment-identity.json | jq -e --arg sha '${{ inputs.expected_sha }}' '.publicSha == $sha' >/dev/null; then
+              echo "Docs health and exact SHA check passed on attempt $i"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+          echo "Docs health and exact SHA check failed"
+          exit 1
