@@ -44,7 +44,7 @@ The repository is a pnpm monorepo managed by Turborepo:
 
 | Component | Technology |
 |---|---|
-| **Frontend** | Next.js 16, React, Tailwind CSS |
+| **Frontend** | Next.js 15, React, Tailwind CSS |
 | **Server** | Etebase protocol (Django 5.2), Docker |
 | **Billing API** | Fastify, Stripe |
 | **Bridge** | Python (CalDAV/CardDAV to Etebase translation) |

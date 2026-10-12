@@ -12,8 +12,8 @@ How to submit changes to SilentSuite.
 ### 1. Fork and Clone
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/silentsuite.io.git
-cd silentsuite.io
+git clone https://github.com/YOUR-USERNAME/silentsuite.git
+cd silentsuite
 pnpm install
 ```
 

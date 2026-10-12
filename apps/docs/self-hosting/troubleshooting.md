@@ -54,16 +54,18 @@ The most common cause is a misconfigured `.env` file (missing or incorrect passw
 
 **Symptom:** Requests to your domain return `400 Bad Request` or "Invalid HTTP_HOST header".
 
-**Fix:** Your domain is not in `ALLOWED_HOSTS`. Edit `.env` and add it:
+**Fix:** Your domain is not in the `[allowed_hosts]` section of `etebase-server.ini` in your install directory. There is no `ALLOWED_HOSTS` variable in `.env`; setting one has no effect. Edit the ini file and add your domain:
 
-```bash
-ALLOWED_HOSTS=sync.example.com,localhost
+```ini
+[allowed_hosts]
+allowed_host1 = sync.example.com
+allowed_host2 = localhost
 ```
 
-Then recreate the server container:
+Then restart the server container so it re-reads the mounted file:
 
 ```bash
-docker compose up -d --force-recreate server
+docker compose restart server
 ```
 
 ### TLS / Certificate Errors

@@ -7,7 +7,8 @@ Before you begin, make sure you have the following.
 | Requirement | Details |
 |---|---|
 | **Operating system** | Linux -- Ubuntu 22.04+, Debian 12+, or equivalent. Any system that runs Docker will work. |
-| **Docker** | Docker Engine 24+ with Docker Compose v2 (the `docker compose` plugin, not the legacy `docker-compose` binary). |
+| **Docker** | Docker Engine 24+ with Docker Compose v2 (the `docker compose` plugin). This is the supported Compose interface. If the plugin is missing, `install.sh` falls back to a `docker-compose` binary when one exists, but the legacy v1 binary is not a supported or tested configuration. |
+| **Installer tools** | `curl`, `tar`, `sha256sum` (or `shasum`), and `openssl`. `install.sh` checks for these before it starts; `openssl` generates the database password, admin password, and bootstrap token. |
 | **Domain name** | A domain you control (e.g., `sync.example.com`), with the ability to create DNS A records. |
 | **Server resources** | Minimum 1 GB RAM, 10 GB disk. More is better if you expect multiple users. |
 | **Reverse proxy** | Caddy, nginx, Traefik, Cloudflare Tunnel, or similar -- for TLS termination. |

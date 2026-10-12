@@ -49,9 +49,11 @@ docker compose up -d
 
 | Variable | What to set |
 |---|---|
-| `ALLOWED_HOSTS` | Your domain, e.g., `sync.example.com,localhost` |
 | `TRUSTED_PROXY_IPS` | Your reverse proxy's exact IP, if it runs in Docker |
+| `ETEBASE_DISABLE_DJANGO_ADMIN` | `false` only if you need the Django admin panel; it is hidden by default |
 | `SILENTSUITE_SERVER_IMAGE` | **Leave alone** -- the verified image digest the installer wrote |
+
+Your domain is not a `.env` variable. The installer writes it into the `[allowed_hosts]` section of `etebase-server.ini`; edit that file and run `docker compose restart server` to change it.
 
 See the [Configuration Reference](./configuration.md) for all available options.
 

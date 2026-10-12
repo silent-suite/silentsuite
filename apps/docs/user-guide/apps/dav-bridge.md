@@ -295,7 +295,10 @@ still take precedence over the persisted values whenever they are set.
 SILENTSUITE_LISTEN_ADDRESS=::1 SILENTSUITE_LISTEN_PORT=45123 silentsuite-bridge --install-autostart
 ```
 
-- With nothing exported, no `"network"` object is written and the bridge keeps `127.0.0.1:37358`.
+- With nothing exported, no new values are written. If `settings.json` holds no retained
+  `"network"` profile, none is created and the bridge keeps the loopback default
+  `127.0.0.1:37358`. If a profile was retained by an earlier `--install-autostart`, it stays
+  in effect; a bare rerun does not reset it to the defaults.
 - A non-loopback address without `SILENTSUITE_ALLOW_REMOTE=1` is refused before anything is
   written. The permission is persisted together with the bind. The dashboard is served
   only on bound loopback listeners; a remote-only profile has no dashboard, while a mixed
@@ -514,7 +517,7 @@ If HTTPS is not enabled for this bridge profile, use the `http://` URL shown by 
 
 ### The sign-in page and dashboard show different ports
 
-This is expected during browser sign-in. `silentsuite-bridge --login` opens a temporary local sign-in page on a random port such as `65486`. The actual CalDAV/CardDAV bridge always uses `http://127.0.0.1:37358/` unless you changed `SILENTSUITE_LISTEN_PORT`.
+This is expected during browser sign-in. `silentsuite-bridge --login` opens a temporary local sign-in page on a random port such as `65486`. The actual CalDAV/CardDAV bridge uses `http://127.0.0.1:37358/` by default. If you changed `SILENTSUITE_LISTEN_ADDRESS`, `SILENTSUITE_LISTEN_PORT`, or `SILENTSUITE_SERVER_HOSTS`, or enabled bridge HTTPS, the effective scheme, host, or port differs: use the DAV URL the dashboard shows for a bound listener. On a remote-only profile there is no dashboard, so use the configured remote address and scheme instead (see Remote DAV Access).
 
 Use the CalDAV/CardDAV URL shown on the success page or dashboard, for example:
 

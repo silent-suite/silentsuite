@@ -18,7 +18,7 @@ macOS Apple Internet Accounts is stricter than many DAV clients: use **Advanced*
 5. Restart the bridge and open the dashboard at `https://localhost:37358/` or `https://127.0.0.1:37358/`.
 
 ::: warning HTTPS affects the whole local bridge
-After SSL setup, this bridge profile serves its single DAV listener over HTTPS. Existing clients configured with `http://localhost:37358/` must be updated to the `https://` URL shown in the dashboard and may need to trust the same localhost certificate.
+After SSL setup, this bridge profile serves every configured DAV listener (loopback and remote) over HTTPS. Existing clients configured with `http://localhost:37358/` must be updated to the `https://` URL shown in the dashboard and may need to trust the same localhost certificate.
 :::
 
 ## Add Calendar Account
@@ -84,7 +84,7 @@ Make sure the SilentSuite Bridge is running. Open the dashboard URL shown by the
 
 ### `SSL: WRONG_VERSION_NUMBER`
 
-A client connected using HTTP while bridge HTTPS is enabled. Enable SSL in the DAV client and use an `https://` URL. The bridge has one listener, so it cannot redirect plaintext HTTP after HTTPS is enabled.
+A client connected using HTTP while bridge HTTPS is enabled. Enable SSL in the DAV client and use an `https://` URL. TLS fails before the request reaches the Bridge application, so an HTTPS listener cannot redirect that plaintext HTTP request; all configured listeners of one bridge profile use the same scheme.
 
 An initial anonymous `401 Unauthorized` followed by a successful authenticated request is the normal Basic authentication challenge. An explicit `Invalid password for configured user` message is a separate credentials failure.
 

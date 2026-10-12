@@ -47,6 +47,24 @@ docker compose logs postgres
 docker compose logs server
 ```
 
+### Server Returns 400 Bad Request
+
+**Symptom:** Requests to your domain return `400 Bad Request` or "Invalid HTTP_HOST header".
+
+**Fix:** Your domain is not in the `[allowed_hosts]` section of `etebase-server.ini` in your install directory. There is no `ALLOWED_HOSTS` variable in `.env`; setting one has no effect. Edit the ini file and add your domain:
+
+```ini
+[allowed_hosts]
+allowed_host1 = sync.example.com
+allowed_host2 = localhost
+```
+
+Then restart the server container so it re-reads the mounted file:
+
+```bash
+docker compose restart server
+```
+
 ### SSL Certificate Errors
 
 **Symptom:** Browser shows certificate warnings, or your reverse proxy logs ACME errors.

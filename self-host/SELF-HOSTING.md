@@ -39,6 +39,7 @@ You provide your own reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel) to
 - A reverse proxy for TLS termination
 - A domain name (e.g., `sync.example.com`) with DNS pointing to your server
 - `curl`, `tar`, and `sha256sum` (or `shasum`) for the installer's download verification
+- `openssl` for the installer's password and token generation (not needed for `--stage-only`)
 
 ### Supported architectures
 
@@ -107,7 +108,7 @@ curl -fsSL https://raw.githubusercontent.com/silent-suite/silentsuite/main/self-
 ```
 
 The installer will:
-1. Check that Docker, Docker Compose, and the download-verification tools are installed
+1. Check that Docker, Docker Compose, `openssl`, and the download-verification tools are installed
 2. Refuse to continue if `silentsuite-server/` exists at all — as a directory, an empty directory, a file, or a symlink — and require its parent to be a directory you own that other local users cannot write
 3. Detect your architecture and resolve the newest published release that ships verified self-host assets
 4. Require that release to be published rather than a draft, and to carry exactly the tag that was requested
