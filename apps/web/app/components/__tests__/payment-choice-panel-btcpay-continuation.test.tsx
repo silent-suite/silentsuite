@@ -1,6 +1,6 @@
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import PaymentChoicePanel from '../payment-choice-panel'
 
 vi.hoisted(() => {
@@ -115,5 +115,78 @@ describe('PaymentChoicePanel BTCPay continuation link', () => {
     expect(await screen.findByText(/payment already in progress/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
+  })
+})
+
+// A held authority whose provider outcome is still being reconciled is not a
+// confirmed payment: the panel must not claim confirmation from mere
+// non-cancellability. A genuinely provider-confirmed flow keeps that statement.
+describe('PaymentChoicePanel non-cancellable flow statement', () => {
+  function mockHeldFlow(status: string) {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input))
+      if (url.pathname === '/subscription/payment-flows/current') return response({ flow: { ...bitcoinFlow(null), status, cancellable: false } })
+      if (url.pathname === '/subscription/offers/v2') return response(url.searchParams.get('preview') === '1' ? previewOffer : annualOffer)
+      return response({}, false)
+    })
+    render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+  }
+
+  it.each([
+    ['provider_creation_pending'],
+    ['provider_creation_reconciling'],
+    ['provider_creation_conflict'],
+  ])('does not claim a %s authority is already being confirmed', async status => {
+    mockHeldFlow(status)
+
+    expect(await screen.findByText(/payment already in progress/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeDisabled()
+    expect(screen.queryByText(/already being confirmed/i)).not.toBeInTheDocument()
+  })
+
+  // No invoice continuation is proven for an incomplete, non-cancellable
+  // Bitcoin authority: the action is a status check through the existing
+  // current-authority read, never a claimed payment resumption.
+  const AUTHORITY_ID = '3f2a1b4c-5d6e-4f70-8a91-b2c3d4e5f607'
+  const bitcoinTerms = previewOffer.accountDisclosures.btcpay
+
+  function mockAuthorityFlow(flow: Record<string, unknown>) {
+    const calls: Array<{ path: string; method: string }> = []
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input))
+      calls.push({ path: url.pathname, method: (init?.method ?? 'GET').toUpperCase() })
+      if (url.pathname === '/subscription/payment-flows/current') return response({ flow })
+      if (url.pathname === '/subscription/offers/v2') return response(url.searchParams.get('preview') === '1' ? previewOffer : annualOffer)
+      return response({}, false)
+    })
+    render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    return calls
+  }
+
+  it('offers only a status check for an incomplete, non-cancellable Bitcoin authority without a proven invoice', async () => {
+    const calls = mockAuthorityFlow({ ...bitcoinFlow(null), status: 'provider_creation_reconciling', cancellable: false, authorityId: AUTHORITY_ID, disclosure: bitcoinTerms })
+
+    const check = await screen.findByRole('button', { name: /check payment status/i })
+    expect(screen.queryByRole('button', { name: /resume cryptocurrency payment/i })).not.toBeInTheDocument()
+    const reads = calls.filter(call => call.path === '/subscription/payment-flows/current').length
+    fireEvent.click(check)
+
+    await waitFor(() => expect(calls.filter(call => call.path === '/subscription/payment-flows/current').length).toBe(reads + 1))
+    expect(calls.filter(call => call.method !== 'GET')).toEqual([])
+    expect(calls.some(call => /resume|activate|payment-flows\/v2$/.test(call.path))).toBe(false)
+  })
+
+  it('keeps resumption for a cancellable Bitcoin authority with a proven invoice continuation', async () => {
+    mockAuthorityFlow({ ...bitcoinFlow('https://btcpay.test/i/abc123'), status: 'provider_creation_reconciling', cancellable: true, authorityId: AUTHORITY_ID, disclosure: bitcoinTerms })
+
+    expect(await screen.findByRole('button', { name: /resume cryptocurrency payment/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /check payment status/i })).not.toBeInTheDocument()
+  })
+
+  it('keeps the confirmation statement for a provider-confirmed flow', async () => {
+    mockHeldFlow('provider_confirmed')
+
+    expect(await screen.findByText(/already being confirmed/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeDisabled()
   })
 })

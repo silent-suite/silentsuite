@@ -70,6 +70,8 @@ type CurrentPaymentFlow = {
   createdAt: string
   cancellable: boolean
   checkoutUrl: string | null
+  /** The server's own flow status; only `provider_confirmed` evidences confirmation. */
+  status: string | null
   /** Present only when Billing names the authority; binds cancellation to it. */
   authorityId: string | null
   /** The flow's own frozen signed terms; never the latest offer. */
@@ -152,6 +154,7 @@ function readCurrentPaymentFlow(data: unknown): CurrentPaymentFlow | null {
     createdAt: flow.createdAt,
     cancellable: flow.cancellable,
     checkoutUrl: typeof flow.checkoutUrl === 'string' ? flow.checkoutUrl : null,
+    status: typeof flow.status === 'string' ? flow.status : null,
     authorityId: typeof flow.authorityId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(flow.authorityId) ? flow.authorityId : null,
     disclosure: readFrozenAnnualDisclosure(flow.disclosure),
   }
@@ -698,6 +701,10 @@ export default function PaymentChoicePanel({
     // the global crypto switch (and the BTCPay origin check) still applies.
     const recoverBitcoin = currentFlow.flowKind === 'btcpay_annual' && CRYPTO_CHECKOUT_ENABLED
     const recoverStripe = currentFlow.flowKind === 'stripe_pay_now'
+    // An incomplete, non-cancellable Bitcoin authority with no trusted invoice
+    // continuation proves nothing payable: only its current status is re-read.
+    const unprovenBitcoin = recoverBitcoin && !currentFlow.cancellable && !currentFlowCheckoutUrl
+      && currentFlow.status !== 'provider_confirmed'
     return (
       <div className="space-y-5">
         <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Payment already in progress</h2>
@@ -722,7 +729,11 @@ export default function PaymentChoicePanel({
             <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
           </div>
         )}
-        {currentFlow.authorityId && currentFlow.disclosure && (recoverStripe || recoverBitcoin) && (
+        {unprovenBitcoin ? (
+          <Button onClick={() => { void loadCurrentFlow() }} disabled={loading !== null} className="w-full">
+            Check payment status
+          </Button>
+        ) : currentFlow.authorityId && currentFlow.disclosure && (recoverStripe || recoverBitcoin) && (
           <Button onClick={() => { void resumeCurrentFlow() }} disabled={loading !== null} className="w-full">
             {loading === 'resume' ? 'Resuming payment...' : recoverStripe ? 'Resume card payment' : 'Resume cryptocurrency payment'}
           </Button>
@@ -738,7 +749,11 @@ export default function PaymentChoicePanel({
           {loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         </Button>
         {!currentFlow.cancellable && (
-          <p className="text-xs text-[rgb(var(--muted))]">This payment is already being confirmed. Please wait for the provider update or contact support.</p>
+          <p className="text-xs text-[rgb(var(--muted))]">
+            {currentFlow.status === 'provider_confirmed'
+              ? 'This payment is already being confirmed. Please wait for the provider update or contact support.'
+              : 'This payment is held while its provider outcome is checked, so it cannot be cancelled yet. Please retry later or contact support.'}
+          </p>
         )}
       </div>
     )
