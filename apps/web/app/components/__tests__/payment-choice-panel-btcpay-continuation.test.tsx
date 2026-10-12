@@ -17,6 +17,8 @@ vi.mock('@silentsuite/ui', () => ({
 }))
 
 vi.mock('lucide-react', () => ({
+  ArrowLeft: () => <svg />,
+  ExternalLink: () => <svg />,
   Crown: () => <svg />,
   Lock: () => <svg />,
   Zap: () => <svg />,
@@ -24,6 +26,7 @@ vi.mock('lucide-react', () => ({
 
 vi.mock('@/app/lib/config', () => ({
   BILLING_API_URL: 'https://billing.example.test',
+  ETEBASE_SERVER_URL: 'https://server.example.test',
 }))
 
 const annualOffer = {
@@ -95,9 +98,28 @@ afterEach(() => {
 
 describe('PaymentChoicePanel BTCPay continuation link', () => {
   it('links to a checkout URL on the configured BTCPay origin', async () => {
-    mockPanel('https://btcpay.test/i/abc123')
-
-    const link = await screen.findByRole('link', { name: /continue in btcpay/i })
+    const authorityId = '3f2a1b4c-5d6e-4f70-8a91-b2c3d4e5f607'
+    let resumed = false
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      if (url.pathname === '/subscription/payment-flows/current') return response({ flow: { ...bitcoinFlow('https://btcpay.test/i/abc123'),
+        authorityId, disclosure: previewOffer.accountDisclosures.btcpay } })
+      if (url.pathname === '/subscription/offers/v2') return response(previewOffer)
+      if (url.pathname === '/subscription/payment-flows/v2/resume') {
+        expect(JSON.parse(String(init?.body))).toEqual({ contractVersion: 2, authorityId })
+        resumed = true
+        return response({ contractVersion: 2, kind: 'btcpay', authorityId, checkoutUrl: 'https://btcpay.test/i/abc123',
+          invoiceId: 'invoice-1', invoiceLookupToken: 'retained-lookup-token', disclosure: previewOffer.accountDisclosures.btcpay })
+      }
+      if (url.pathname.endsWith('/payment-methods')) return response({ paymentMethods: [{ id: 'BTC-CHAIN', label: 'Bitcoin',
+        qrValue: 'bitcoin:synthetic-test-address', address: 'synthetic-test-address', amountDue: '0.001', cryptoCode: 'BTC' }] })
+      if (url.pathname.endsWith('/status')) return response({ status: 'New' })
+      return response({}, false)
+    })
+    render(<PaymentChoicePanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /resume cryptocurrency payment/i }))
+    const link = await screen.findByRole('link', { name: /open in btcpay instead/i })
+    expect(resumed).toBe(true)
     expect(link).toHaveAttribute('href', 'https://btcpay.test/i/abc123')
   })
 
@@ -183,10 +205,131 @@ describe('PaymentChoicePanel non-cancellable flow statement', () => {
     expect(screen.queryByRole('button', { name: /check payment status/i })).not.toBeInTheDocument()
   })
 
+  // A confirmed or conflicted authority is held; even
+  // with a sealed disclosure and a valid retained BTCPay URL it offers neither
+  // payment resumption nor the direct invoice link, only its status.
+  it.each([['provider_confirmed'], ['provider_creation_conflict']])('offers no payment continuation for a held %s authority', async status => {
+    const calls = mockAuthorityFlow({ ...bitcoinFlow('https://btcpay.test/i/abc123'), status, cancellable: false, authorityId: AUTHORITY_ID, disclosure: bitcoinTerms })
+
+    expect(await screen.findByRole('button', { name: /check payment status/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /resume cryptocurrency payment/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
+    expect(calls.filter(call => call.method !== 'GET')).toEqual([])
+  })
+
   it('keeps the confirmation statement for a provider-confirmed flow', async () => {
     mockHeldFlow('provider_confirmed')
 
     expect(await screen.findByText(/already being confirmed/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeDisabled()
+  })
+
+  // Requested: "Misleading Resume/confirmation controls and an unusable
+  // cancellation acknowledgement." A retained URL is not live payability.
+  it.each(['provider_creation_pending', 'provider_creation_reconciling', 'provider_confirmed', 'provider_creation_conflict'])('shows usable lifecycle controls without a disabled acknowledgement or stored-URL shortcut for held BTCPay %s', async status => {
+    const calls = mockAuthorityFlow({ ...bitcoinFlow('https://btcpay.test/i/stored'), status, cancellable: false,
+      authorityId: AUTHORITY_ID, disclosure: bitcoinTerms })
+    expect(await screen.findByText('Payment already in progress')).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /I have not sent cryptocurrency/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /resume cryptocurrency/i })).not.toBeInTheDocument()
+    const check = screen.getByRole('button', { name: /check payment status/i })
+    expect(check).toBeEnabled()
+    expect(Boolean(screen.queryByText(/already being confirmed/i))).toBe(status === 'provider_confirmed')
+    fireEvent.click(check)
+    await waitFor(() => expect(calls.filter(call => call.path === '/subscription/payment-flows/current')).toHaveLength(2))
+    expect(calls.filter(call => call.method !== 'GET')).toEqual([])
+  })
+
+  it.each(['provider_confirmed', 'provider_creation_conflict'])('keeps Stripe %s status-only with no payment continuation', async status => {
+    const calls = mockAuthorityFlow({ flowKind: 'stripe_pay_now', provider: 'stripe', createdAt: '2026-08-10T12:00:00Z',
+      status, cancellable: false, authorityId: AUTHORITY_ID, disclosure: cardTerms })
+    expect(await screen.findByRole('button', { name: /check payment status/i })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /resume card payment/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(Boolean(screen.queryByText(/already being confirmed/i))).toBe(status === 'provider_confirmed')
+    expect(calls.filter(call => call.method !== 'GET')).toEqual([])
+  })
+
+  it('requires validated resume rather than a current-flow stored URL for a cancellable BTCPay authority', async () => {
+    mockAuthorityFlow({ ...bitcoinFlow('https://btcpay.test/i/stored'), status: 'provider_creation_reconciling', cancellable: true,
+      authorityId: AUTHORITY_ID, disclosure: bitcoinTerms })
+    expect(await screen.findByRole('button', { name: /resume cryptocurrency/i })).toBeEnabled()
+    expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
+  })
+
+  it.each(['provider_creation_pending', 'provider_creation_reconciling'])('does not infer payability for unknown %s from a retained BTCPay URL', async status => {
+    const calls = mockAuthorityFlow({ ...bitcoinFlow('https://btcpay.test/i/stored'), status, cancellable: false,
+      authorityId: AUTHORITY_ID, disclosure: bitcoinTerms })
+    expect(await screen.findByText('Payment already in progress')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /resume cryptocurrency payment/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /check payment status/i })).toBeEnabled()
+    expect(calls.filter(call => call.method !== 'GET')).toEqual([])
+  })
+
+  it('requires a fresh authority-bound acknowledgement and successful cancel/current recheck before fresh choices', async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> | null }> = []
+    let currentReads = 0
+    let cancelSent!: () => void
+    const cancelled = new Promise<void>(resolve => { cancelSent = resolve })
+    let releaseCurrent!: () => void
+    const currentGate = new Promise<void>(resolve => { releaseCurrent = resolve })
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const url = new URL(String(input))
+      calls.push({ path: url.pathname, body: typeof init?.body === 'string' ? JSON.parse(init.body) : null })
+      if (url.pathname === '/subscription/offers/v2') return response(previewOffer)
+      if (url.pathname === '/subscription/payment-flows/current') {
+        currentReads++
+        if (currentReads === 1) return response({ flow: { ...bitcoinFlow('https://btcpay.test/i/stored'),
+          authorityId: AUTHORITY_ID, disclosure: bitcoinTerms } })
+        await currentGate
+        return response({ flow: null })
+      }
+      if (url.pathname === '/subscription/payment-flows/cancel') {
+        cancelSent()
+        return response({ cancelled: true, flowKind: 'btcpay_annual' })
+      }
+      return response({}, false)
+    })
+    render(<PaymentChoicePanel onSuccess={vi.fn()} />)
+    const ack = await screen.findByRole('checkbox', { name: /I have not sent cryptocurrency/i })
+    const cancel = screen.getByRole('button', { name: /cancel cryptocurrency payment/i })
+    expect(ack).toBeEnabled()
+    expect(ack).not.toBeChecked()
+    expect(cancel).toBeDisabled()
+    expect(calls.some(call => call.path.endsWith('/cancel'))).toBe(false)
+    fireEvent.click(ack)
+    expect(cancel).toBeEnabled()
+    fireEvent.click(cancel)
+    try {
+      await cancelled
+      await waitFor(() => expect(currentReads).toBe(2))
+      expect(calls.find(call => call.path.endsWith('/cancel'))?.body).toEqual({ confirmNoBitcoinSent: true, expectedAuthorityId: AUTHORITY_ID })
+      expect(screen.queryByRole('button', { name: /continue to card payment/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
+    } finally { releaseCurrent() }
+    expect(await screen.findByRole('button', { name: /continue to card payment/i })).toBeEnabled()
+    expect(calls.filter(call => call.path.endsWith('/cancel'))).toHaveLength(1)
+    expect(calls.some(call => /activate$|payment-flows\/v2$/.test(call.path))).toBe(false)
+  })
+
+  it('recovers a retained no-dispatch Bitcoin authority through exact resume without a fresh activation', async () => {
+    const mutations: Array<{ path: string; body: unknown }> = []
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      const path = new URL(String(input)).pathname
+      if (init?.method === 'POST') mutations.push({ path, body: JSON.parse(String(init.body)) })
+      if (path === '/subscription/offers/v2') return response(previewOffer)
+      if (path === '/subscription/payment-flows/current') return response({ flow: { ...bitcoinFlow(null),
+        status: 'provider_creation_pending', cancellable: false, authorityId: AUTHORITY_ID, disclosure: bitcoinTerms } })
+      if (path.endsWith('/resume')) return response({ contractVersion: 2, kind: 'btcpay', authorityId: AUTHORITY_ID,
+        checkoutUrl: 'https://btcpay.test/i/recovered', invoiceId: 'recovered', invoiceLookupToken: 'retained-lookup', disclosure: bitcoinTerms })
+      if (path.endsWith('/payment-methods')) return response({ paymentMethods: [] })
+      return response({}, false)
+    })
+    render(<PaymentChoicePanel onSuccess={vi.fn()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /recover existing payment/i }))
+    expect(await screen.findByRole('link', { name: /open in btcpay instead/i })).toHaveAttribute('href', 'https://btcpay.test/i/recovered')
+    expect(mutations).toEqual([{ path: '/subscription/payment-flows/v2/resume', body: { contractVersion: 2, authorityId: AUTHORITY_ID } }])
   })
 })

@@ -69,6 +69,21 @@ If an in-progress Web or Server replacement fails, its workflow restores the cap
 
 Never place approval values, credentials, Cloudflare tokens, SSH material, or production logs in issues, PR bodies, BMAD artifacts, or chat.
 
+## Standalone Docs admission (no annual Stage A)
+
+`Deploy Docs standalone (production, no annual Stage A)` (`.github/workflows/deploy-docs-standalone.yml`) publishes a Docs component change when no Billing or Web admission is in flight. It does not read, create, or require Stage A, a private App token, or any private HMAC key, and it does not touch Billing. It reuses the `docs-production` protected environment, the Cloudflare credentials, and the `deploy-docs-production` concurrency group, so it serializes with the annual Docs deployment. Its repository approval variable is `DOCS_STANDALONE_DEPLOY_APPROVED_SHA`, separate from `DOCS_DEPLOY_APPROVED_SHA`; arming one never authorizes the other path, and the annual public cutover cannot call this workflow.
+
+A standalone Docs deployment is a component deployment, not an annual cutover; it produces no Stage A, Stage B, or final manifest and must never be cited as annual proof. It runs the same build-side guards as the annual Docs path: frozen-lockfile install, public analytics and relay checks, the billing copy guard, the Android distribution documentation test, and enabled-mode analytics verification of both the built and the downloaded bytes. A change that touches only Markdown can still alter the built bundle through the lockfile, so it is never treated as content-only.
+
+1. Confirm the reviewed commit is still the live head of `main` and required checks, including the dependency audit, are green at that exact SHA.
+2. Re-verify the `docs-production` environment and its `main`-only deployment branch policy as in the one-time environment prerequisite above.
+3. Set the repository variable `DOCS_STANDALONE_DEPLOY_APPROVED_SHA` to the exact 40-character live `main` SHA. Do not configure a same-named environment variable.
+4. Dispatch the workflow from `main` with `expected_sha` equal to the same SHA. Its secretless `admission` job reports one explicit diagnostic per unmet condition (not on `main`, malformed `expected_sha`, dispatched head mismatch, variable unarmed or armed for another SHA) and fails before any protected environment, secret, or build starts.
+5. The build job builds once and uploads `docs-standalone-production-<sha>`. The deployment job downloads that exact archive through the GitHub API, verifies its digest and analytics bytes without rebuilding, re-asserts the exact owner-approved live `main` head as the step immediately before the Wrangler deployment, and then verifies that `https://docs.silentsuite.io/deployment-identity.json` serves the exact SHA.
+6. Clear `DOCS_STANDALONE_DEPLOY_APPROVED_SHA` after the run reaches a terminal state; clearing affects only future runs.
+
+The variable is snapshotted when the workflow run is queued, so clearing it does not revoke a queued run. To withdraw approval before mutation, cancel the run before the deployment job reaches `Deploy to production Worker`; once that step has started, do not cancel it as a substitute for rollback. Docs has no automatic rollback: restore earlier content through a reviewed revert PR to `main` and a fresh standalone authorization of the resulting live `main` SHA, as described under Rollback.
+
 ## Annual-only private/public handshake
 
 The annual-only production path is deliberately a three-stage sequence. The public repository owns Stage B only; it never creates the final cutover manifest.

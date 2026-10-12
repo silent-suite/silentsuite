@@ -45,15 +45,14 @@ vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.example.t
 
 vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'dark' }) }))
 
-vi.mock('@/app/stores/use-auth-store', () => ({
-  useAuthStore: {
-    getState: () => ({
+vi.mock('@/app/stores/use-auth-store', () => {
+  const state = {
       pendingSignup: null,
       user: { email: 'person@example.test' },
       saveSignupStateForRedirect: vi.fn(),
-    }),
-  },
-}))
+  }
+  return { useAuthStore: Object.assign((selector: (value: typeof state) => unknown) => selector(state), { getState: () => state }) }
+})
 
 vi.mock('@stripe/stripe-js/pure', () => ({
   loadStripe: async () => ({ confirmPayment: stripeMocks.confirmPayment, confirmSetup: stripeMocks.confirmSetup }),

@@ -23,6 +23,11 @@ test('Web and Docs preview/deploy workflows enforce the root guard and preview f
   }
 })
 
+test('the standalone Docs production workflow enforces the root guard', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/deploy-docs-standalone.yml', import.meta.url), 'utf8')
+  assert.match(workflow, /pnpm run check:billing-copy/, 'deploy-docs-standalone.yml must run the root copy guard')
+})
+
 test('public CI workflows trigger only from main while protected release and manual paths remain available', () => {
   const root = new URL('../', import.meta.url)
   const workflows = new Map(

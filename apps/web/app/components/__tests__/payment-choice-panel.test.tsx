@@ -23,6 +23,7 @@ vi.mock('lucide-react', () => ({
 
 vi.mock('@/app/lib/config', () => ({
   BILLING_API_URL: 'https://billing.example.test',
+  ETEBASE_SERVER_URL: 'https://server.example.test',
 }))
 
 const annualOffer = {
@@ -56,7 +57,7 @@ const activeFlow = {
   cancellable: true,
 }
 
-// Owner-QA plan B2/B3: the account panel reads the opt-in preview, which
+// The account panel reads the opt-in preview, which
 // carries the exact signed terms per provider before any choice is made.
 const PROFILE = 'account_confirmation_rules_v1'
 function cardDisclosure(annualAmountMinor = 3600, monthlyEquivalentMinor = 300) {
@@ -229,7 +230,7 @@ describe('PaymentChoicePanel direct progression with terms before choice', () =>
     expect(screen.queryByTestId('stripe-payment-form')).not.toBeInTheDocument()
   })
 
-  // Owner line 3: after a failed start the same owned authority must be resumable,
+  // After a failed start the same owned authority must be resumable,
   // and switching provider must stay reachable through its cancellation.
   const ownedFlow = { ...activeFlow, status: 'provider_creation_reconciling', authorityId: serverFlowId, disclosure: cardDisclosure() }
   function resumeMock(firstFlow: unknown) {
@@ -392,7 +393,8 @@ describe('PaymentChoicePanel owned-flow recovery without a fresh offer', () => {
       return response({}, false)
     })
     render(<BitcoinPanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
-    expect(await screen.findByRole('link', { name: 'Continue in BTCPay' })).toHaveAttribute('href', 'https://btcpay.test/i/abc123')
+    await screen.findByText('Payment already in progress')
+    expect(screen.queryByRole('link', { name: 'Continue in BTCPay' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /resume cryptocurrency payment/i }))
     expect(await screen.findByText(/pay €36\.00\/year annual with bitcoin, lightning and monero/i)).toBeInTheDocument()
     expect(called('/subscription/offers/v2/activate')).toHaveLength(0)
