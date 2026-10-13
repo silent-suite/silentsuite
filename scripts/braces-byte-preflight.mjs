@@ -13,7 +13,7 @@ import { dirname, join, resolve } from 'node:path'
 export const defaultRoot = resolve(import.meta.dirname, '..')
 export const patchPath = 'patches/braces@3.0.3.patch'
 // sha256 of the patch with CRLF normalized to LF, the rule pnpm 10.6.5 uses for its lock hash.
-export const patchDigest = 'cb8d5e3db316963edaa7f807bf26172252796cb50ea7abbcb3bfae84fc615cb0'
+export const patchDigest = '00379a6565da333c7a8a7d701771eb7bfbfecd1627bcab191ced1b94fc3e3ea6'
 export const canonicalIntegrity = 'sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA=='
 // Every path in the canonical braces@3.0.3 tarball with its sha256 after the reviewed patch.
 export const expectedFiles = Object.freeze({
@@ -22,9 +22,9 @@ export const expectedFiles = Object.freeze({
   'index.js': '332ea07c7b006361aad12aa994ca75dc1db8e8382b884909e2f38f10b85c88a4',
   'lib/compile.js': 'f0ec2cf18f9455e7104345c0e18c8e76342009b9cf2c9b0c8ddba0862ea4451d',
   'lib/constants.js': 'f9fb688959232eee3e6ad7906a5b0e3234815db49ee857ef86983d65b917dc7c',
-  'lib/expand.js': 'f1a61735450033131e19d091906fccc93866473ffe2658e615479eb25094c7fc',
+  'lib/expand.js': 'e7184fa82f52ab315d10d43771311b5e06eca8f58d4de9a94ae6a810c21422c3',
   'lib/parse.js': 'd2284c63fa7364433d771b1531f4dca1a9ebaeec2cf98197e880aed57a7af276',
-  'lib/stringify.js': 'd9486d68d86c226d08aa6dee9cbfedb72ed8cb75b242d75fbb183d96a9435966',
+  'lib/stringify.js': '8461f118bc1b7c18f053a1293ed1feecf48dadb8d8967baf1526421606fa9746',
   'lib/utils.js': 'b5a7596aa67730412b3c029ef09e84e6b67b8e445cffd35d1d295549c89066c7',
   'package.json': '56f08b888a4f30dc7cf8a7dbb36ffe92b737912ba36abe9d069d32167c957ac7',
 })
@@ -206,6 +206,11 @@ const ast = (depth) => {
   }
   return { type: 'root', nodes: [node] }
 }
+const marked = (depth, marker) => {
+  const tree = ast(depth)
+  tree.nodes[0][marker] = true
+  return tree
+}
 const rejects = (call, name) => {
   try { call() } catch (error) { return error.name === name && /exceeds max depth/.test(error.message) }
   return false
@@ -218,6 +223,8 @@ const checks = [nest(101, '{', '}', 'a,b'), nest(101, '(', ')', 'a'), nest(4998,
   rejects(() => braces.compile(ast(101)), 'RangeError'),
   rejects(() => braces.expand(ast(101)), 'RangeError'),
   rejects(() => braces.stringify(ast(101)), 'RangeError'),
+  rejects(() => braces.expand(marked(101, 'dollar')), 'RangeError'),
+  rejects(() => braces.expand(marked(101, 'invalid')), 'RangeError'),
   braces.compile(ast(100)) === nest(100, '{', '}', 'a'),
   JSON.stringify(braces(nest(100, '{', '}', 'a,b'))) === JSON.stringify([nest(99, '{', '}', '(a|b)')]),
 ])

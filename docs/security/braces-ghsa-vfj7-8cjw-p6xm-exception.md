@@ -11,12 +11,14 @@
   GHSA-grv7-fg5c-xmjg (`<3.0.3`) rules out any downgrade.
 - Disposition: owner-approved and verification-bound, with no expiry. It replaces the former
   time-boxed exception for unpatched code (last expiry `2026-10-14T00:00:00Z`); nothing was renewed.
-- Status: the patch, the byte preflight and the disposition are implemented with tests and were
-  verified locally at commit `20a97d028b9588b12ccdb14cbfb59144fbdb6874`, using Node 22.23.3 and
-  pnpm 10.6.5. That covered a frozen install, the live `pnpm run audit:security`, lint, type-check,
-  tests, the `core`, `ui` and `web` builds, and the exposure check below. Hosted CI on the pull
-  request (including the Docker build) and independent code review are still pending; this record
-  does not claim them.
+- Status: the patch, the byte preflight and the disposition are implemented with tests.
+  - An earlier local verification ran at commit `20a97d028b9588b12ccdb14cbfb59144fbdb6874`, using
+    Node 22.23.3 and pnpm 10.6.5. It covered a frozen install, the live `pnpm run audit:security`,
+    lint, type-check, tests, the `core`, `ui` and `web` builds, and the exposure check below. That
+    run is historical: it predates the fallback correction described under "The patch".
+  - The corrected candidate's local checks are recorded with the pull request evidence.
+  - Hosted CI on the corrected head (including the Docker build) and independent code review of it
+    are pending; this record does not claim them.
 
 ## The patch
 
@@ -30,6 +32,10 @@
   throw `RangeError: AST depth exceeds max depth (100)` for a node with `nodes` deeper than 100. This
   also covers ASTs passed straight to `braces.compile`, `braces.expand` and `braces.stringify`, which
   never go through `parse`.
+- `expand` hands some nodes to `stringify`: `dollar` or `invalid` nodes, and ranges that
+  `fill-range` cannot expand. It passes its current depth along, so the limit stays measured from the
+  AST root. `stringify`'s internal start depth honours only positive integers, so it can tighten the
+  limit but never loosen it.
 - There is no option to raise or disable the limit. `maxLength`, `rangeLimit` and every other option
   behave as before.
 
@@ -83,8 +89,8 @@ untrusted inputs that are only read.
 - every package-internal `require` resolves, under Node's own rules, to the hashed file.
 
 The behavior probe runs in a bounded child (15 s, exact output) only after the preflight has passed.
-It checks rejection at depth 101 and at 4998 through all five APIs, direct-AST rejection at depth 101,
-and exact depth-100 output. It corroborates behavior and does not replace the byte check.
+It checks rejection at depth 101 and at 4998 through all five APIs, direct-AST rejection at depth 101
+(also through `expand`'s `dollar`/`invalid` fallback), and exact depth-100 output. It corroborates behavior and does not replace the byte check.
 
 `pnpm run audit:security` is
 `node scripts/braces-byte-preflight.mjs && pnpm run test:dependency-security && node scripts/audit-high-critical.mjs`.
@@ -124,7 +130,7 @@ paths. It treats `patches/` as a production input. It fails if a standalone file
 `next/dist/compiled/@vercel/nft/index.js` file with its pinned hash. `--runtime-smoke` samples a few
 routes and does not prove that no other path loads the chain.
 
-Local result at `20a97d02`, after local builds:
+Local result from the earlier `20a97d02` run (historical, before the fallback correction):
 
 - The only locked braces is the patched `braces@3.0.3`, on exactly the eight paths.
 - No standalone file (3534 entries) or `.nft.json` trace (34 traces) names a consumer package.

@@ -40,7 +40,7 @@ index 2bb3b8840382c56700869b3a9e1f958fcce01efd..c23709951666ff6bb0d726084d89e629
  
    // Digits
 diff --git a/lib/expand.js b/lib/expand.js
-index 35b2c41d6afdb8f0197959e26079f266e48370d3..d9cd450b1af6028435ad8a371297254a180b446b 100644
+index 35b2c41d6afdb8f0197959e26079f266e48370d3..45bbbe393989832f08e303cf64283feb917621dd 100644
 --- a/lib/expand.js
 +++ b/lib/expand.js
 @@ -3,6 +3,7 @@
@@ -64,6 +64,24 @@ index 35b2c41d6afdb8f0197959e26079f266e48370d3..d9cd450b1af6028435ad8a371297254a
      node.queue = [];
  
      let p = parent;
+@@ -45,7 +50,7 @@ const expand = (ast, options = {}) => {
+     }
+ 
+     if (node.invalid || node.dollar) {
+-      q.push(append(q.pop(), stringify(node, options)));
++      q.push(append(q.pop(), stringify(node, options, depth)));
+       return;
+     }
+ 
+@@ -63,7 +68,7 @@ const expand = (ast, options = {}) => {
+ 
+       let range = fill(...args, options);
+       if (range.length === 0) {
+-        range = stringify(node, options);
++        range = stringify(node, options, depth);
+       }
+ 
+       q.push(append(q.pop(), range));
 @@ -100,7 +105,7 @@ const expand = (ast, options = {}) => {
        }
  
@@ -108,26 +126,30 @@ index 3a6988e629f52aee6609dc5ec290a5e9ff47cecb..ac7b4bd551b148814ee1de786c333e74
  
        const dollar = prev.value && prev.value.slice(-1) === '$' || block.dollar === true;
 diff --git a/lib/stringify.js b/lib/stringify.js
-index 8bcf872c31894f81a8c64d9202fd607e4fd7ea2b..c2cf093cc4e838595bc9c4081675a631208673a5 100644
+index 8bcf872c31894f81a8c64d9202fd607e4fd7ea2b..1ffe71022bfdb370761537c613d8113b7e811d61 100644
 --- a/lib/stringify.js
 +++ b/lib/stringify.js
-@@ -1,9 +1,14 @@
+@@ -1,9 +1,17 @@
  'use strict';
  
  const utils = require('./utils');
 +const { MAX_DEPTH } = require('./constants');
- 
- module.exports = (ast, options = {}) => {
--  const stringify = (node, parent = {}) => {
++
++module.exports = (ast, options = {}, depth = 0) => {
++  // expand continues its own walk here; the start can only tighten the limit, never loosen it.
++  const start = Number.isInteger(depth) && depth > 0 ? depth : 0;
++
 +  const stringify = (node, parent = {}, depth = 0) => {
 +    if (node.nodes && depth > MAX_DEPTH) {
 +      throw new RangeError(`AST depth exceeds max depth (${MAX_DEPTH})`);
 +    }
-+
+ 
+-module.exports = (ast, options = {}) => {
+-  const stringify = (node, parent = {}) => {
      const invalidBlock = options.escapeInvalid && utils.isInvalidBrace(parent);
      const invalidNode = node.invalid === true && options.escapeInvalid === true;
      let output = '';
-@@ -21,7 +26,7 @@ module.exports = (ast, options = {}) => {
+@@ -21,12 +29,12 @@ module.exports = (ast, options = {}) => {
  
      if (node.nodes) {
        for (const child of node.nodes) {
@@ -136,3 +158,9 @@ index 8bcf872c31894f81a8c64d9202fd607e4fd7ea2b..c2cf093cc4e838595bc9c4081675a631
        }
      }
      return output;
+   };
+ 
+-  return stringify(ast);
++  return stringify(ast, undefined, start);
+ };
+ 

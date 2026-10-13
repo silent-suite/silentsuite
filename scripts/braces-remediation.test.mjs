@@ -263,3 +263,89 @@ for (const [api, body] of Object.entries(astWalkers)) {
     assertDepthRejected(runChild(body, [101]), 'RangeError')
   })
 }
+
+// expand hands a dollar or invalid node to stringify; the depth limit stays root-relative across
+// that handoff. Same ordinary AST as above, with one brace level (1 = outermost) marked.
+const fallbackExpand = `
+  const [depth, markedLevel, marker] = args
+  let node = { type: 'text', value: 'a' }
+  for (let level = depth; level >= 1; level--) {
+    node = { type: 'brace', nodes: [{ type: 'open', value: '{' }, node, { type: 'close', value: '}' }] }
+    if (level === markedLevel) node[marker] = true
+  }
+  return mod.expand({ type: 'root', nodes: [node] })
+`
+
+for (const marker of ['dollar', 'invalid']) {
+  test(`preserves braces.expand stringify fallback output for a depth-100 direct AST with ${marker} at levels 1, 50 and 100`, () => {
+    for (const level of [1, 50, 100]) {
+      assertValue(runChild(fallbackExpand, [100, level, marker]), [`${'{'.repeat(100)}a${'}'.repeat(100)}`])
+    }
+  })
+
+  for (const level of [1, 50, 100]) {
+    test(`rejects a depth-101 direct AST through the braces.expand stringify fallback with ${marker} at level ${level}`, () => {
+      assertDepthRejected(runChild(fallbackExpand, [101, level, marker]), 'RangeError')
+    })
+  }
+}
+
+// expand also hands a ranged brace to stringify when fill-range yields nothing. 'ab'..'cd' has
+// multi-character endpoints, which the package's own fill-range cannot expand; the fixture checks
+// that precondition first. The 'ab..cd' text in the output only appears through that stringify path.
+const rangeFallbackExpand = `
+  const [depth, rangedLevel, entry] = args
+  const fill = process.getBuiltinModule('node:module').createRequire(entry)('fill-range')
+  if (fill('ab', 'cd', {}).length !== 0) throw new Error('fixture precondition: fill-range expanded ab..cd')
+  let node = { type: 'text', value: 'a' }
+  for (let level = depth; level >= 1; level--) {
+    const ranged = level === rangedLevel
+    node = {
+      type: 'brace',
+      ...(ranged ? { ranges: 1 } : {}),
+      nodes: ranged
+        ? [{ type: 'open', value: '{' }, { type: 'text', value: 'ab' }, { type: 'range', value: '..' },
+          { type: 'text', value: 'cd' }, node, { type: 'close', value: '}' }]
+        : [{ type: 'open', value: '{' }, node, { type: 'close', value: '}' }],
+    }
+  }
+  return mod.expand({ type: 'root', nodes: [node] })
+`
+
+test('preserves braces.expand empty-range stringify fallback output for a depth-100 direct AST with the range at levels 1, 50 and 99', () => {
+  for (const level of [1, 50, 99]) {
+    assertValue(runChild(rangeFallbackExpand, [100, level, bracesEntry]),
+      [`${'{'.repeat(level)}ab..cd${'{'.repeat(100 - level)}a${'}'.repeat(100)}`])
+  }
+})
+
+for (const level of [1, 50, 100]) {
+  test(`rejects a depth-101 direct AST through the braces.expand empty-range stringify fallback with the range at level ${level}`, () => {
+    assertDepthRejected(runChild(rangeFallbackExpand, [101, level, bracesEntry]), 'RangeError')
+  })
+}
+
+// lib/stringify's optional start depth exists only so expand can continue its walk. Values that are
+// not positive integers count as 0, so a caller can make the limit stricter but never looser.
+const stringifyFromStart = `
+  const [depth, start, entry] = args
+  const stringify = process.getBuiltinModule('node:module').createRequire(entry)('./lib/stringify')
+  let node = { type: 'text', value: 'a' }
+  for (let level = 0; level < depth; level++) {
+    node = { type: 'brace', nodes: [{ type: 'open', value: '{' }, node, { type: 'close', value: '}' }] }
+  }
+  const value = { NaN, Infinity, '-Infinity': -Infinity }[start] ?? start
+  return stringify({ type: 'root', nodes: [node] }, {}, value)
+`
+
+test('fallback start depth from internal callers cannot raise or disable the limit', () => {
+  for (const start of [-1000, -1, 0, 0.5, '50', 'NaN', 'Infinity', '-Infinity', null]) {
+    assertDepthRejected(runChild(stringifyFromStart, [101, start, bracesEntry]), 'RangeError')
+  }
+  assertValue(runChild(stringifyFromStart, [100, -1000, bracesEntry]), `${'{'.repeat(100)}a${'}'.repeat(100)}`)
+})
+
+test('fallback start depth from internal callers only tightens the limit', () => {
+  assertDepthRejected(runChild(stringifyFromStart, [100, 1, bracesEntry]), 'RangeError')
+  assertValue(runChild(stringifyFromStart, [99, 1, bracesEntry]), `${'{'.repeat(99)}a${'}'.repeat(99)}`)
+})
