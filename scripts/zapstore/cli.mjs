@@ -10,7 +10,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 
-import { selectScheduleCandidates } from './lib/eligibility.mjs'
+import { retiredHistoricalReason, selectScheduleCandidates } from './lib/eligibility.mjs'
 import { activationState, requireManualPublish, requireManualRehearsal, requireManualSigningRehearsal, requireProtectedSchedule } from './lib/dispatch.mjs'
 import { MANUAL_REQUEST_FIELDS, parseManualPublishRequest, requireApprovedBinding, selectManualCandidate } from './lib/manual-publish.mjs'
 import { createGitHubClient, hashFromChecksumText } from './lib/github.mjs'
@@ -540,7 +540,21 @@ const commands = {
     const assessments = walkJson(opt('assessments-dir'), 'assessment.json')
     const results = walkJson(opt('results-dir'), 'result.json')
     const jobs = { enumerate: process.env.JOB_ENUMERATE, assess: process.env.JOB_ASSESS, plan: process.env.JOB_PLAN, publish: process.env.JOB_PUBLISH }
-    const failures = collectFailures({ candidates, plan, assessments, results, jobs })
+    const collected = collectFailures({ candidates, plan, assessments, results, jobs })
+    // Retired historical failures (see lib/eligibility.mjs) never get an issue,
+    // even from stale or frozen evidence, because a closed issue is not
+    // deduplicated and would be recreated. Suppression mirrors candidate
+    // selection: the exact id+tag pair only, never the publishable/newest
+    // candidate, and never a lane-level failure.
+    const publishableIds = new Set(candidates.filter((c) => c.publishable === true).map((c) => String(c.releaseId)))
+    const failures = []
+    const retired = []
+    for (const failure of collected) {
+      const reason = retiredHistoricalReason(failure.releaseId, failure.tag)
+      if (!reason || publishableIds.has(String(failure.releaseId))) failures.push(failure)
+      else retired.push({ releaseId: failure.releaseId, tag: failure.tag, reason })
+    }
+    if (retired.length) summary(`No issue for retired historical failure evidence (closed as not planned): ${retired.map((r) => `${r.tag} (release ${r.releaseId})`).join(', ')}.`)
     if (candidates.length === 0 && jobs.enumerate === 'success' && failures.length === 0) summary('No eligible candidates and no failures.')
     const created = []
     for (const failure of failures) {

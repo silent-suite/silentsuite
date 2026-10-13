@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { classifyRelease, compareTags, markPublishable, selectScheduleCandidates } from '../lib/eligibility.mjs'
+import { classifyRelease, compareTags, markPublishable, RETIRED_HISTORICAL_FAILURES, retiredHistoricalReason, selectScheduleCandidates } from '../lib/eligibility.mjs'
 import { activationState, admitTrigger, requireManualRehearsal, requireProtectedRef, requireProtectedSchedule, requireProtectedWorkflow } from '../lib/dispatch.mjs'
 import { bindReleaseAssets, createGitHubClient, EnumerationIncomplete, hashFromChecksumText } from '../lib/github.mjs'
 import { buildBinding, revalidateBinding, verifyApkHashes } from '../lib/binding.mjs'
@@ -85,6 +85,56 @@ test('schedule candidates are bounded to the window, every omission carries a re
   assert.ok(compareTags('v0.10.0-beta', 'v0.9.9') > 0, 'numeric, not lexical')
   assert.throws(() => markPublishable([{ releaseId: 1, tag: 'v1.0.0' }, { releaseId: 2, tag: 'v1.0.0' }]), /share tag/)
   assert.deepEqual(markPublishable([]), [])
+})
+
+test('retired historical failures are omitted by exact id and tag with an auditable reason, and never change which release is publishable', () => {
+  const now = Date.parse('2026-10-01T00:00:00Z')
+  const current = release({ id: 407577541, tag_name: 'v0.5.13-beta', published_at: '2026-10-05T00:00:00Z' })
+  const { candidates, omitted } = selectScheduleCandidates([
+    release({ id: 375729540, tag_name: 'v0.5.2-beta', published_at: '2025-05-20T00:00:00Z' }),
+    release({ id: 376457006, tag_name: 'v0.5.3-beta', published_at: '2025-05-28T00:00:00Z' }),
+    release({ id: 399999999, tag_name: 'v0.5.12-beta', published_at: '2026-09-25T00:00:00Z' }),
+    release({ id: 403051319, tag_name: 'v0.5.11-beta', published_at: '2026-09-30T00:00:00Z' }),
+    current,
+  ], { now })
+  assert.deepEqual(candidates.map((c) => [c.releaseId, c.tag, c.publishable]), [[399999999, 'v0.5.12-beta', false], [407577541, 'v0.5.13-beta', true]])
+  for (const retiredId of [375729540, 376457006, 403051319]) {
+    const entry = omitted.find((o) => o.releaseId === retiredId)
+    assert.ok(entry, `release ${retiredId} is omitted`)
+    assert.match(entry.reason, /retired historical failure/, `release ${retiredId} carries the retirement reason`)
+  }
+  // Even inside the 45-day window a retired release is omitted for retirement,
+  // not for age (v0.5.11-beta above is recent and still omitted).
+  // The newest candidate is fixed by the full listing before retirement applies:
+  // a retired id that is the newest eligible release is never omitted and no
+  // older release is promoted to publishable in its place.
+  const promoted = selectScheduleCandidates([
+    release({ id: 403051319, tag_name: 'v0.5.11-beta', published_at: '2026-09-30T00:00:00Z' }),
+    release({ id: 383603104, tag_name: 'v0.5.6-beta', published_at: '2026-09-25T00:00:00Z' }),
+  ], { now })
+  assert.deepEqual(promoted.candidates.map((c) => [c.releaseId, c.publishable]), [[383603104, false], [403051319, true]])
+  assert.deepEqual(promoted.omitted, [])
+  // Exact pair only: a retired id carrying a different tag is a different
+  // release and is judged by the normal rules.
+  const mismatched = selectScheduleCandidates([
+    release({ id: 376457006, tag_name: 'v0.5.4-beta', published_at: '2026-09-28T00:00:00Z' }),
+    current,
+  ], { now })
+  assert.deepEqual(mismatched.candidates.map((c) => [c.releaseId, c.tag, c.publishable]), [[376457006, 'v0.5.4-beta', false], [407577541, 'v0.5.13-beta', true]])
+  assert.deepEqual(mismatched.omitted, [])
+  assert.deepEqual(RETIRED_HISTORICAL_FAILURES.map((entry) => [entry.releaseId, entry.tag]), [
+    [375729540, 'v0.5.2-beta'],
+    [376457006, 'v0.5.3-beta'],
+    [403051319, 'v0.5.11-beta'],
+  ])
+  assert.match(retiredHistoricalReason(376457006, 'v0.5.3-beta'), /retired historical failure/)
+  assert.match(retiredHistoricalReason('403051319', 'v0.5.11-beta'), /retired historical failure/, 'the canonical decimal string form used in CLI and matrix output matches')
+  assert.equal(retiredHistoricalReason(376457006, 'v0.5.4-beta'), null, 'the exact tag is required')
+  assert.equal(retiredHistoricalReason(999999, 'v0.5.3-beta'), null, 'the exact id is required')
+  assert.equal(retiredHistoricalReason('0376457006', 'v0.5.3-beta'), null, 'a leading zero is not the canonical id')
+  for (const malformed of [' 376457006', '376457006 ', '+376457006', '376457006.0', 376457006.5, -376457006, null, undefined, {}, ['376457006']]) {
+    assert.equal(retiredHistoricalReason(malformed, 'v0.5.3-beta'), null, `malformed id ${JSON.stringify(malformed)} is not the retired release`)
+  }
 })
 
 test('admission: only a protected-main schedule bound to its own definition revision; release and dispatch events are refused', () => {
