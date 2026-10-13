@@ -11,9 +11,12 @@
   GHSA-grv7-fg5c-xmjg (`<3.0.3`) rules out any downgrade.
 - Disposition: owner-approved and verification-bound, with no expiry. It replaces the former
   time-boxed exception for unpatched code (last expiry `2026-10-14T00:00:00Z`); nothing was renewed.
-- Status: the patch, the byte preflight and the disposition are implemented with tests. Fresh build,
-  live-audit and packaged-exposure evidence, hosted CI on the pull request, and independent code
-  review are still pending; this record does not claim them.
+- Status: the patch, the byte preflight and the disposition are implemented with tests and were
+  verified locally at commit `20a97d028b9588b12ccdb14cbfb59144fbdb6874`, using Node 22.23.3 and
+  pnpm 10.6.5. That covered a frozen install, the live `pnpm run audit:security`, lint, type-check,
+  tests, the `core`, `ui` and `web` builds, and the exposure check below. Hosted CI on the pull
+  request (including the Docker build) and independent code review are still pending; this record
+  does not claim them.
 
 ## The patch
 
@@ -119,8 +122,20 @@ It requires the lock's only braces snapshot to be the patched `braces@3.0.3`, wi
 paths. It treats `patches/` as a production input. It fails if a standalone file, symlink or
 `.nft.json` trace names a consumer package. braces source signatures may appear only in the pinned
 `next/dist/compiled/@vercel/nft/index.js` file with its pinned hash. `--runtime-smoke` samples a few
-routes and does not prove that no other path loads the chain. Exposure evidence for the patched tree
-has not been recorded yet.
+routes and does not prove that no other path loads the chain.
+
+Local result at `20a97d02`, after local builds:
+
+- The only locked braces is the patched `braces@3.0.3`, on exactly the eight paths.
+- No standalone file (3534 entries) or `.nft.json` trace (34 traces) names a consumer package.
+- Both signatures occur only in the pinned nft file, whose hash is unchanged.
+- The runtime smoke returned 200 for the five pages, 503 for deployment identity (no deploy env)
+  and 404 for an unknown route. No consumer or build-only module was loaded, and there were no
+  outbound attempts.
+
+The web build rewrites a tracked PWA fallback file in `apps/web/public`. That file was restored to
+its committed bytes before the check, so the committed version was scanned, not the freshly
+generated one. This ran on local Node over glibc, not the CI `node:22-alpine` image.
 
 `next@15.5.24` vendors its own unversioned braces copy inside the nft bundle, used for build-time
 output tracing. It is not `braces@3.0.3`, is outside this remediation, and is evaluated only for
@@ -135,5 +150,6 @@ fails. Then:
 2. Remove `patches/braces@3.0.3.patch`, its declaration, the preflight and this disposition.
 3. Regenerate the lock with pnpm 10.6.5 and have the change reviewed.
 
-Rollback is a reviewed revert. It restores the old exception, which has expired, so the audit fails
-closed; no production action is involved.
+Rollback is a reviewed revert. It restores the old time-boxed exception, which accepts the
+unpatched finding only before `2026-10-14T00:00:00Z`; at or after that instant the audit fails
+closed. No production action is involved.
