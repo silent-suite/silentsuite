@@ -10,7 +10,9 @@ import test from 'node:test'
 const webRequire = createRequire(resolve(import.meta.dirname, '..', 'apps/web/package.json'))
 const tailwindEntry = webRequire.resolve('tailwindcss')
 const micromatchEntry = createRequire(tailwindEntry).resolve('micromatch')
-const bracesEntry = createRequire(micromatchEntry).resolve('braces')
+// Walker-guard mutation runs point this at a temporary package copy; unset, the tests exercise
+// the consumer-resolved install.
+const bracesEntry = process.env.BRACES_REMEDIATION_MUTANT_ENTRY ?? createRequire(micromatchEntry).resolve('braces')
 
 const childTimeoutMs = 15000
 const marker = '@@braces-remediation-result@@'

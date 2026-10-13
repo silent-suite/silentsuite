@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
-import { bracesException, runAudit } from './audit-high-critical.mjs'
+import { bracesRemediation, runAudit } from './audit-high-critical.mjs'
 
 const fixtures = resolve(import.meta.dirname, 'test-fixtures/audit-high-critical')
 const quiet = { log: () => {}, error: () => {} }
+// A root with no patch, lock or install: the braces remediation cannot be verified there. The
+// default root is this repository, whose verified patched install the other cases rely on.
+const unverifiedRoot = mkdtempSync(join(tmpdir(), 'braces-unverified-root-'))
+test.after(() => rmSync(unverifiedRoot, { recursive: true, force: true }))
 
 function report(name) {
   return readFileSync(resolve(fixtures, name), 'utf8')
@@ -50,9 +55,7 @@ test('fails closed for unknown high and critical advisories', () => {
   assert.equal(runAudit({ spawn: fakeResult({ status: 1, stdout: report('unknown-critical.json') }), ...quiet }), 1)
 })
 
-// Owner-approved renewal (2026-10-11) of the unchanged exception contract; the former deadline
-// was 2026-10-10T00:00:00Z.
-const bracesExpiry = Date.parse('2026-10-14T00:00:00Z')
+const oldExpiry = Date.parse('2026-10-14T00:00:00Z')
 
 function bracesReport(mutate = () => {}) {
   const parsed = JSON.parse(report('braces-excepted.json'))
@@ -60,19 +63,41 @@ function bracesReport(mutate = () => {}) {
   return JSON.stringify(parsed)
 }
 
-function auditBraces(stdout, now = bracesExpiry - 1) {
-  return runAudit({ spawn: fakeResult({ status: 1, stdout }), now: () => now, ...quiet })
+function auditBraces(stdout, root) {
+  return runAudit({ spawn: fakeResult({ status: 1, stdout }), root, ...quiet })
 }
 
-test('accepts only the exact braces 3.0.3 tooling advisory before its expiry', () => {
+test('accepts the exact braces 3.0.3 tooling advisory only with verified patched code', () => {
   assert.equal(auditBraces(bracesReport()), 0)
+  assert.equal(auditBraces(bracesReport(), unverifiedRoot), 1)
 })
 
-test('renews only the braces expiry to the exact owner-approved deadline', () => {
-  assert.equal(bracesException.expiresAt, '2026-10-14T00:00:00Z')
-  assert.equal(bracesException.paths.size, 8)
-  assert.equal(auditBraces(bracesReport(), Date.parse('2026-10-10T00:00:00Z')), 0)
-  assert.equal(auditBraces(bracesReport(), Date.parse('2026-10-11T09:46:33Z')), 0)
+test('binds the disposition to the no-patched-release marker and the eight reviewed paths, without an expiry', () => {
+  assert.equal(bracesRemediation.patchedVersions, '<0.0.0')
+  assert.equal(bracesRemediation.paths.size, 8)
+  assert.equal(Object.hasOwn(bracesRemediation, 'expiresAt'), false)
+})
+
+test('decides by verification, not the clock, before, at and after the old expiry', (t) => {
+  for (const instant of [oldExpiry - 1, oldExpiry, oldExpiry + 1]) {
+    t.mock.timers.enable({ apis: ['Date'], now: instant })
+    assert.equal(Date.now(), instant)
+    assert.equal(auditBraces(bracesReport()), 0, `verified at ${instant}`)
+    assert.equal(auditBraces(bracesReport(), unverifiedRoot), 1, `unverified at ${instant}`)
+    t.mock.timers.reset()
+  }
+})
+
+test('prints the raw high count and names the verified local remediation', () => {
+  const lines = []
+  const exitCode = runAudit({ spawn: fakeResult({ status: 1, stdout: bracesReport() }), log: (line) => lines.push(line), error: () => {} })
+  assert.equal(exitCode, 0)
+  assert.equal(lines[0], 'Dependency audit summary: 0 critical, 1 high, 0 moderate, 0 low.')
+  assert.match(lines[1], /^Raw finding locally remediated by the verified patch \(still counted above\): high: braces@3\.0\.3 — GHSA-vfj7-8cjw-p6xm$/)
+})
+
+test('fails closed when the remediation cannot be verified, even for a clean report', () => {
+  assert.equal(runAudit({ spawn: fakeResult({ stdout: report('clean.json') }), root: unverifiedRoot, ...quiet }), 1)
 })
 
 test('fails closed unless the braces finding reports exactly the reviewed tooling path set', () => {
@@ -91,7 +116,7 @@ test('fails closed unless the braces finding reports exactly the reviewed toolin
   }
 })
 
-test('reconciles pnpm 10.6.5 policy-severity counts with advisory findings before excepting braces', () => {
+test('reconciles pnpm 10.6.5 policy-severity counts with advisory findings before remediating braces', () => {
   for (const [name, mutate] of [
     ['excess high count', (parsed) => { parsed.metadata.vulnerabilities.high = 2 }],
     ['excess critical count', (parsed) => { parsed.metadata.vulnerabilities.critical = 1 }],
@@ -116,13 +141,7 @@ test('reconciles pnpm 10.6.5 policy-severity counts with advisory findings befor
   assert.equal(auditBraces(bracesReport((parsed) => { parsed.metadata.vulnerabilities.moderate = 3 })), 0)
 })
 
-test('fails closed for the braces exception at and after its expiry boundary', () => {
-  assert.equal(auditBraces(bracesReport(), bracesExpiry), 1)
-  assert.equal(auditBraces(bracesReport(), bracesExpiry + 1), 1)
-  assert.equal(auditBraces(bracesReport(), Number.NaN), 1)
-})
-
-test('does not except other braces advisories, versions, packages, severities, or ranges', () => {
+test('does not remediate other braces advisories, versions, packages, severities, ranges or patched-version markers', () => {
   for (const [name, mutate] of [
     ['older braces advisory', (parsed, advisory) => {
       advisory.github_advisory_id = 'GHSA-grv7-fg5c-xmjg'
@@ -141,6 +160,9 @@ test('does not except other braces advisories, versions, packages, severities, o
       parsed.metadata.vulnerabilities = { critical: 1, high: 0, moderate: 0, low: 0 }
     }],
     ['widened range', (parsed, advisory) => { advisory.vulnerable_versions = '<=3.0.4' }],
+    ['malformed marker', (parsed, advisory) => { advisory.patched_versions = '<0.0.0>' }],
+    ['published fix', (parsed, advisory) => { advisory.patched_versions = '>=3.0.4' }],
+    ['missing marker', (parsed, advisory) => { delete advisory.patched_versions }],
     ['missing findings', (parsed, advisory) => { delete advisory.findings }],
     ['empty findings', (parsed, advisory) => { advisory.findings = [] }],
     ['empty paths', (parsed, advisory) => { advisory.findings[0].paths = [] }],
@@ -161,7 +183,7 @@ test('fails closed when braces 3.0.3 gains a dependency edge outside the reviewe
   }
 })
 
-test('keeps blocking unknown high/critical advisories and malformed reports beside the braces exception', () => {
+test('keeps blocking unknown high/critical advisories and malformed reports beside the verified braces finding', () => {
   assert.equal(auditBraces(bracesReport((parsed) => {
     parsed.advisories['2'] = JSON.parse(report('unknown-high.json')).advisories['1']
   })), 1)
@@ -171,7 +193,7 @@ test('keeps blocking unknown high/critical advisories and malformed reports besi
   })), 1)
   assert.equal(auditBraces(bracesReport((parsed) => { parsed.metadata.vulnerabilities.high = 0 })), 1)
   assert.equal(auditBraces(bracesReport((parsed) => { parsed.error = { code: 'ENOTFOUND' } })), 1)
-  assert.equal(runAudit({ spawn: fakeResult({ status: 2, stdout: bracesReport() }), now: () => bracesExpiry - 1, ...quiet }), 1)
+  assert.equal(runAudit({ spawn: fakeResult({ status: 2, stdout: bracesReport() }), ...quiet }), 1)
 })
 
 test('fails closed for spawn errors, signals, and unexpected statuses', () => {

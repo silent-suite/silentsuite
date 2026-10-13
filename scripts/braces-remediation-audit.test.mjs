@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import test from 'node:test'
 import { runAudit } from './audit-high-critical.mjs'
 
@@ -35,13 +36,30 @@ test('uses the exact braces advisory fixture with the no-patched-release marker 
   assert.deepEqual(report.metadata.vulnerabilities, { critical: 0, high: 1, moderate: 0, low: 0 })
 })
 
-test('rejects the exact braces advisory before the old expiry unless a verified remediation backs it', () => {
+test('rejects the exact braces advisory before the old expiry unless a verified remediation backs it', (t) => {
+  // This repository's install is patched, so the unverified case runs against an isolated root that
+  // has no patch, lock or install to verify.
+  const unverifiedRoot = mkdtempSync(join(tmpdir(), 'braces-unverified-root-'))
+  t.after(() => rmSync(unverifiedRoot, { recursive: true, force: true }))
+  t.mock.timers.enable({ apis: ['Date'], now: beforeOldExpiry })
   const calls = []
   const spawn = (command, args) => {
     calls.push([command, args])
     return { status: 1, stdout: fixture, stderr: '', signal: null }
   }
-  const exitCode = runAudit({ spawn, now: () => beforeOldExpiry, ...quiet })
+  const exitCode = runAudit({ spawn, root: unverifiedRoot, ...quiet })
   assert.deepEqual(calls, [['pnpm', ['audit', '--audit-level=high', '--json']]])
   assert.equal(exitCode, 1, 'runAudit accepted the braces advisory without verifying the installed code')
+})
+
+test('accepts the same exact advisory once the patched install in this repository is verified', () => {
+  const spawn = () => ({ status: 1, stdout: fixture, stderr: '', signal: null })
+  assert.equal(runAudit({ spawn, ...quiet }), 0)
+})
+
+test('rejects the malformed marker <0.0.0> even with a verified install', () => {
+  const report = JSON.parse(fixture)
+  report.advisories['1240992'].patched_versions = '<0.0.0>'
+  const spawn = () => ({ status: 1, stdout: JSON.stringify(report), stderr: '', signal: null })
+  assert.equal(runAudit({ spawn, ...quiet }), 1)
 })
