@@ -57,9 +57,9 @@ their issues were closed as not planned (`v0.5.2-beta` 375729540, `v0.5.3-beta`
 **and** tag: they are omitted from the candidate list with that reason, never
 assessed, and frozen failure evidence for them never opens an issue again —
 including from an older candidate list or an expired artifact. Retirement is
-not a repair: those relay/CDN objects stay as they are, no old release is
-published, and the rule never removes the newest publishable candidate or
-changes which release can be published.
+not a repair: those relay/CDN objects stay as they are and no old release is
+published. Candidate selection still fixes the newest eligible release before
+retirement applies, so retirement never promotes an alternate.
 
 **Accepted first-version scope.** The owner has accepted two reduced-scope
 limitations for this first version. Acceptance of scope is not proof of
@@ -105,7 +105,7 @@ not an arbitrary-release or historical-release trigger.
 | `assess` (matrix, `max-parallel: 1`, `fail-fast: false`) | `contents: read`, no environment, no secrets | Per candidate: bind exact release/tag commit/assets, identity helper, download APK and check three digests, `apksigner`, unsigned offline `zsp` expected events, relay reconciliation, CDN verification when the relay set is complete. Records `assessment.json` and uploads `zapstore-assessment-<id>`. |
 | `plan` | `{}` | Downloads all assessments, requires one per enumerated candidate, emits the publish matrix (candidates whose action is `publish`; at most the newest). |
 | `publish` (matrix over the plan) | `contents: read`, environment `zapstore-production` | Fresh runner: repeats bind, digests, `apksigner`, prepare and reconciliation, checks nothing drifted from the assessment, revalidates identity, then one secret step: NIP-46 read-only account preflight, then `zsp` live. Read-back and CDN verification follow every attempt. Records `result.json`, uploads `zapstore-result-<id>`. |
-| `notify` | `issues: write` | Downloads candidates, assessments and results; opens one issue per candidate whose recorded status is a failure or whose evidence is missing. Successes are never reported. Retired historical evidence (exact id+tag, never the publishable candidate) is reported in the summary but opens no issue, so a closed historical failure is not recreated. |
+| `notify` | `issues: write` | Downloads candidates, assessments and results; opens one issue per candidate whose recorded status is a failure or whose evidence is missing. Successes are never reported. Retired historical evidence (exact id+tag, even when stale evidence still marks it publishable) is reported in the summary but opens no issue, so a closed historical failure is not recreated. |
 
 Only the `publish` job binds the environment, so the owner is asked to approve
 only when a publication is actually pending, never for a verification pass.
@@ -259,8 +259,9 @@ lines, and corrupt downloaded bytes.
   evidence; `notify` end to end against a local fake GitHub API: a successful
   sibling opens nothing, a CDN failure on an already-complete candidate opens an
   issue, missing evidence opens an issue, open issues are deduplicated, retired
-  historical evidence opens no issue, while a mismatched id+tag pair, the
-  newest/publishable candidate and a lane-level failure still notify.
+  historical evidence opens no issue even when stale evidence marks it
+  publishable, while a mismatched id+tag pair, the current release and a
+  lane-level failure still notify.
 - `workflow-boundary.test.mjs`: schedule-only trigger, every checkout is
   `${{ github.sha }}`, no `refs/heads/main` or tag checkout, exactly one secret
   step in the environment-bound job, assess job carries no environment or
