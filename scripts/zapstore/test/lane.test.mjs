@@ -105,15 +105,27 @@ test('retired historical failures are omitted by exact id and tag with an audita
   }
   // Even inside the 45-day window a retired release is omitted for retirement,
   // not for age (v0.5.11-beta above is recent and still omitted).
-  // The newest candidate is fixed by the full listing before retirement applies:
-  // a retired id that is the newest eligible release is never omitted and no
-  // older release is promoted to publishable in its place.
-  const promoted = selectScheduleCandidates([
+  // Retirement is unconditional: a retired tuple is omitted even when the full
+  // listing fixes it as the newest eligible release — the older non-retired
+  // release stays verify-only and no alternate publishable candidate is chosen.
+  const retiredNewest = selectScheduleCandidates([
     release({ id: 403051319, tag_name: 'v0.5.11-beta', published_at: '2026-09-30T00:00:00Z' }),
     release({ id: 383603104, tag_name: 'v0.5.6-beta', published_at: '2026-09-25T00:00:00Z' }),
   ], { now })
-  assert.deepEqual(promoted.candidates.map((c) => [c.releaseId, c.publishable]), [[383603104, false], [403051319, true]])
-  assert.deepEqual(promoted.omitted, [])
+  assert.deepEqual(retiredNewest.candidates.map((c) => [c.releaseId, c.publishable]), [[383603104, false]])
+  const retiredNewestEntry = retiredNewest.omitted.find((o) => o.releaseId === 403051319)
+  assert.ok(retiredNewestEntry, 'the retired newest tuple is omitted')
+  assert.match(retiredNewestEntry.reason, /retired historical failure/)
+  assert.equal(retiredNewest.candidates.some((c) => c.publishable === true), false, 'no replacement publishable candidate is chosen')
+  // An all-retired listing leaves no candidates at all.
+  const allRetired = selectScheduleCandidates([
+    release({ id: 375729540, tag_name: 'v0.5.2-beta', published_at: '2026-09-20T00:00:00Z' }),
+    release({ id: 376457006, tag_name: 'v0.5.3-beta', published_at: '2026-09-21T00:00:00Z' }),
+    release({ id: 403051319, tag_name: 'v0.5.11-beta', published_at: '2026-09-30T00:00:00Z' }),
+  ], { now })
+  assert.deepEqual(allRetired.candidates, [])
+  assert.deepEqual(allRetired.omitted.map((o) => o.releaseId).sort((a, b) => a - b), [375729540, 376457006, 403051319])
+  assert.ok(allRetired.omitted.every((o) => /retired historical failure/.test(o.reason)))
   // Exact pair only: a retired id carrying a different tag is a different
   // release and is judged by the normal rules.
   const mismatched = selectScheduleCandidates([

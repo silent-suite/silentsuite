@@ -45,9 +45,10 @@ function refuse(reason, release) {
 // superseded history and their issues were closed as not planned, so neither
 // reconciliation nor failure notification may bring them up again.
 // Retirement binds the exact numeric release id AND tag together — either
-// alone is a different release, judged by the normal rules — and never removes
-// the newest/publishable candidate or repairs, republishes or re-verifies
-// anything.
+// alone is a different release, judged by the normal rules — and it applies
+// unconditionally, including to a tuple the listing marks as the newest
+// eligible release: it never marks an alternate publishable, and it never
+// repairs, republishes or re-verifies anything.
 export const RETIRED_HISTORICAL_FAILURES = [
   { releaseId: 375729540, tag: 'v0.5.2-beta' },
   { releaseId: 376457006, tag: 'v0.5.3-beta' },
@@ -77,7 +78,8 @@ export function retiredHistoricalReason(releaseId, tag) {
 // relay holds it. The `windowDays` bound applies only to verify-only history;
 // older releases are listed as omitted with a reason so the report never
 // silently drops anything. Owner-retired historical failures (above) are
-// omitted the same way and are never reconciled again.
+// omitted unconditionally and are never reconciled again; if that leaves no
+// publishable candidate, none is chosen.
 export function selectScheduleCandidates(releases, { now = Date.now(), windowDays = 45 } = {}) {
   const cutoff = now - windowDays * 24 * 60 * 60 * 1000
   const eligible = []
@@ -91,9 +93,11 @@ export function selectScheduleCandidates(releases, { now = Date.now(), windowDay
   const candidates = []
   for (const verdict of marked) {
     // Publishability is fixed by the full listing above, before retirement
-    // applies, so omitting retired history can never promote an older release.
-    // Retirement itself never removes the newest/publishable candidate.
-    const retired = verdict.publishable ? null : retiredHistoricalReason(verdict.releaseId, verdict.tag)
+    // applies, so omitting retired history never promotes an alternate. The
+    // retirement decision is unconditional: it covers a tuple the listing
+    // marked as the newest eligible release, which then leaves no publishable
+    // candidate.
+    const retired = retiredHistoricalReason(verdict.releaseId, verdict.tag)
     if (retired) {
       omitted.push({ releaseId: verdict.releaseId, tag: verdict.tag, reason: retired })
       continue

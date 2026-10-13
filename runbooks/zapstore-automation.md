@@ -58,8 +58,9 @@ their issues were closed as not planned (`v0.5.2-beta` 375729540, `v0.5.3-beta`
 assessed, and frozen failure evidence for them never opens an issue again —
 including from an older candidate list or an expired artifact. Retirement is
 not a repair: those relay/CDN objects stay as they are and no old release is
-published. Candidate selection still fixes the newest eligible release before
-retirement applies, so retirement never promotes an alternate.
+published. Retirement is unconditional: a retired tuple is omitted even when
+the listing marks it the newest eligible release, which then leaves no
+publishable candidate — no alternate is ever promoted.
 
 **Accepted first-version scope.** The owner has accepted two reduced-scope
 limitations for this first version. Acceptance of scope is not proof of
@@ -101,7 +102,7 @@ not an arbitrary-release or historical-release trigger.
 | Job | Permissions / environment | What it does |
 |-----|---------------------------|--------------|
 | `admit` | `{}` | Proves trigger and definition provenance (1.1); exports `active`, `rehearsal`, `revision`. |
-| `enumerate` | `contents: read` | Lists published releases by exact id (bounded pages), classifies eligibility, always keeps the **single newest** eligible tag as the one `publishable` candidate, keeps verify-only history inside the 45-day window, omits owner-retired historical releases by exact id+tag with that reason; uploads `candidates.json`. |
+| `enumerate` | `contents: read` | Lists published releases by exact id (bounded pages), classifies eligibility, always keeps the **single newest** eligible tag as the one `publishable` candidate, keeps verify-only history inside the 45-day window, omits owner-retired historical releases by exact id+tag with that reason even when that is the newest eligible tag (then no publishable candidate is chosen); uploads `candidates.json`. |
 | `assess` (matrix, `max-parallel: 1`, `fail-fast: false`) | `contents: read`, no environment, no secrets | Per candidate: bind exact release/tag commit/assets, identity helper, download APK and check three digests, `apksigner`, unsigned offline `zsp` expected events, relay reconciliation, CDN verification when the relay set is complete. Records `assessment.json` and uploads `zapstore-assessment-<id>`. |
 | `plan` | `{}` | Downloads all assessments, requires one per enumerated candidate, emits the publish matrix (candidates whose action is `publish`; at most the newest). |
 | `publish` (matrix over the plan) | `contents: read`, environment `zapstore-production` | Fresh runner: repeats bind, digests, `apksigner`, prepare and reconciliation, checks nothing drifted from the assessment, revalidates identity, then one secret step: NIP-46 read-only account preflight, then `zsp` live. Read-back and CDN verification follow every attempt. Records `result.json`, uploads `zapstore-result-<id>`. |
@@ -208,7 +209,8 @@ channel comparison.
 5. The identity private key never enters CI; only a `bunker://` URL and a
    NIP-46 client key do.
 6. Successes are silent; every failure and every missing piece of evidence is an
-   issue with the exact phase.
+   issue with the exact phase — except the owner-retired historical tuples
+   (1.1), which are reported as suppressed and never open an issue.
 
 ## 2. Rollback
 
