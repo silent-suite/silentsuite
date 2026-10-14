@@ -1,10 +1,30 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { patchDigest } from './braces-byte-preflight.mjs'
 import {
   forbiddenRuntimeModules,
+  lockedBracesFailure,
+  productionInputs,
   toleratedSignatureFiles,
   unexplainedSignatureHits,
 } from './verify-braces-tooling-exposure.mjs'
+
+test('accepts only the single braces snapshot bound to the reviewed patch', () => {
+  assert.equal(lockedBracesFailure([`braces@3.0.3(patch_hash=${patchDigest})`]), undefined)
+  for (const locked of [
+    ['braces@3.0.3'],
+    [`braces@3.0.3(patch_hash=${'0'.repeat(64)})`],
+    [`braces@3.0.3(patch_hash=${patchDigest})`, 'braces@3.0.3'],
+    [`braces@3.0.3(patch_hash=${patchDigest})`, 'braces@3.0.2'],
+    [],
+  ]) {
+    assert.match(lockedBracesFailure(locked), /locked braces versions/, locked.join(', '))
+  }
+})
+
+test('treats the committed patch as a production input', () => {
+  assert.ok(productionInputs.includes('patches'))
+})
 
 const [nft] = toleratedSignatureFiles
 const compiled = nft.file.replace(/compiled\/@vercel\/nft\/index\.js$/, 'compiled/')

@@ -50,6 +50,18 @@ revision and the same environment gate. It needs repository write access and
 cannot select a ref. There is no `repository_dispatch`, `workflow_dispatch`,
 `release` or tag-PATCH retry.
 
+**Owner-retired historical failures.** Three release-specific CDN/publication
+failures were retired by the owner on 2026-10-13 as superseded history and
+their issues were closed as not planned (`v0.5.2-beta` 375729540, `v0.5.3-beta`
+376457006, `v0.5.11-beta` 403051319). Retirement binds the exact release id
+**and** tag: they are omitted from the candidate list with that reason, never
+assessed, and frozen failure evidence for them never opens an issue again —
+including from an older candidate list or an expired artifact. Retirement is
+not a repair: those relay/CDN objects stay as they are and no old release is
+published. Retirement is unconditional: a retired tuple is omitted even when
+the listing marks it the newest eligible release, which then leaves no
+publishable candidate — no alternate is ever promoted.
+
 **Accepted first-version scope.** The owner has accepted two reduced-scope
 limitations for this first version. Acceptance of scope is not proof of
 behaviour and replaces no review, CI or commissioning step.
@@ -90,11 +102,11 @@ not an arbitrary-release or historical-release trigger.
 | Job | Permissions / environment | What it does |
 |-----|---------------------------|--------------|
 | `admit` | `{}` | Proves trigger and definition provenance (1.1); exports `active`, `rehearsal`, `revision`. |
-| `enumerate` | `contents: read` | Lists published releases by exact id (bounded pages), classifies eligibility, always keeps the **single newest** eligible tag as the one `publishable` candidate, keeps verify-only history inside the 45-day window; uploads `candidates.json`. |
+| `enumerate` | `contents: read` | Lists published releases by exact id (bounded pages), classifies eligibility, always keeps the **single newest** eligible tag as the one `publishable` candidate, keeps verify-only history inside the 45-day window, omits owner-retired historical releases by exact id+tag with that reason even when that is the newest eligible tag (then no publishable candidate is chosen); uploads `candidates.json`. |
 | `assess` (matrix, `max-parallel: 1`, `fail-fast: false`) | `contents: read`, no environment, no secrets | Per candidate: bind exact release/tag commit/assets, identity helper, download APK and check three digests, `apksigner`, unsigned offline `zsp` expected events, relay reconciliation, CDN verification when the relay set is complete. Records `assessment.json` and uploads `zapstore-assessment-<id>`. |
 | `plan` | `{}` | Downloads all assessments, requires one per enumerated candidate, emits the publish matrix (candidates whose action is `publish`; at most the newest). |
 | `publish` (matrix over the plan) | `contents: read`, environment `zapstore-production` | Fresh runner: repeats bind, digests, `apksigner`, prepare and reconciliation, checks nothing drifted from the assessment, revalidates identity, then one secret step: NIP-46 read-only account preflight, then `zsp` live. Read-back and CDN verification follow every attempt. Records `result.json`, uploads `zapstore-result-<id>`. |
-| `notify` | `issues: write` | Downloads candidates, assessments and results; opens one issue per candidate whose recorded status is a failure or whose evidence is missing. Successes are never reported. |
+| `notify` | `issues: write` | Downloads candidates, assessments and results; opens one issue per candidate whose recorded status is a failure or whose evidence is missing. Successes are never reported. Retired historical evidence (exact id+tag, even when stale evidence still marks it publishable) is reported in the summary but opens no issue, so a closed historical failure is not recreated. |
 
 Only the `publish` job binds the environment, so the owner is asked to approve
 only when a publication is actually pending, never for a verification pass.
@@ -197,7 +209,8 @@ channel comparison.
 5. The identity private key never enters CI; only a `bunker://` URL and a
    NIP-46 client key do.
 6. Successes are silent; every failure and every missing piece of evidence is an
-   issue with the exact phase.
+   issue with the exact phase — except the owner-retired historical tuples
+   (1.1), which are reported as suppressed and never open an issue.
 
 ## 2. Rollback
 
@@ -231,7 +244,9 @@ lines, and corrupt downloaded bytes.
   `conflict` and `app-drift`),
   recoverable `partial` (stranded release, no APK event) through to an exact
   read-back and its guards, unrecoverable `partial` fail-closed, the newest
-  release staying an exact candidate outside the window, conflicts on `h`, APK content,
+  release staying an exact candidate outside the window, owner-retired
+  historical releases omitted by exact id+tag in preference to the window and
+  without promoting an alternate, conflicts on `h`, APK content,
   `min_allowed_version_code`, e-link relay hint, superseded, incomplete;
   platform `f` tag order: every rotation matches (app, release, APK, recorded
   relay history, `drift`), while a replaced, removed, added or relocated `f`
@@ -245,7 +260,10 @@ lines, and corrupt downloaded bytes.
   `record-result` status/phase derivation; `plan` selection and missing
   evidence; `notify` end to end against a local fake GitHub API: a successful
   sibling opens nothing, a CDN failure on an already-complete candidate opens an
-  issue, missing evidence opens an issue, open issues are deduplicated.
+  issue, missing evidence opens an issue, open issues are deduplicated, retired
+  historical evidence opens no issue even when stale evidence marks it
+  publishable, while a mismatched id+tag pair, the current release and a
+  lane-level failure still notify.
 - `workflow-boundary.test.mjs`: schedule-only trigger, every checkout is
   `${{ github.sha }}`, no `refs/heads/main` or tag checkout, exactly one secret
   step in the environment-bound job, assess job carries no environment or
@@ -278,7 +296,8 @@ protocol, not a specific signer product.
 
 1. `admit` summary states `ENABLED` and the protected revision.
 2. `enumerate` table: every release in the window with candidate/omitted and the
-   one `publishable` tag.
+   one `publishable` tag. Retired historical releases appear as omitted with
+   their retirement reason.
 3. `assess` per candidate: binding line, digest line, apksigner line,
    reconciliation outcome and action, CDN line.
 4. `plan`: publish matrix (usually empty; one entry after a new release).
@@ -288,7 +307,8 @@ protocol, not a specific signer product.
    matrix and a run that has not been cancelled.
 5. `publish` (approval required): drift check, revalidation, preflight
    `signing account verified`, `zsp` exit, read-back `complete-match`, CDN.
-6. `notify`: `No failure issue required` or the issue numbers.
+6. `notify`: `No failure issue required` or the issue numbers. Retired
+   historical evidence is named in the summary without opening an issue.
 
 ## 5. Manual retry and recovery
 

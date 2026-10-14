@@ -379,10 +379,10 @@ function fakeGitHub() {
   return new Promise((resolvePromise) => server.listen(0, '127.0.0.1', () => resolvePromise({ server, issues, requests, apiBase: `http://127.0.0.1:${server.address().port}` })))
 }
 
-function evidenceDir({ assessments = [], results = [], plan = null }) {
+function evidenceDir({ assessments = [], results = [], plan = null, candidateList = candidates }) {
   const dir = mkdtempSync(join(tmpdir(), 'zapstore-evidence-'))
   mkdirSync(join(dir, 'zapstore-candidates'))
-  writeFileSync(join(dir, 'zapstore-candidates', 'candidates.json'), JSON.stringify({ candidates, omitted: [] }))
+  writeFileSync(join(dir, 'zapstore-candidates', 'candidates.json'), JSON.stringify({ candidates: candidateList, omitted: [] }))
   for (const a of assessments) { mkdirSync(join(dir, `zapstore-assessment-${a.releaseId}`)); writeFileSync(join(dir, `zapstore-assessment-${a.releaseId}`, 'assessment.json'), JSON.stringify(a)) }
   for (const r of results) { mkdirSync(join(dir, `zapstore-result-${r.releaseId}`)); writeFileSync(join(dir, `zapstore-result-${r.releaseId}`, 'result.json'), JSON.stringify(r)) }
   if (plan) { mkdirSync(join(dir, 'zapstore-plan')); writeFileSync(join(dir, 'zapstore-plan', 'plan.json'), JSON.stringify(plan)) }
@@ -455,6 +455,61 @@ test('cli plan and notify: successful siblings are silent; CDN failure on an alr
     const enumerateDown = await runAsync('notify', ['--candidates', '/nonexistent/candidates.json', '--assessments-dir', '/nonexistent', '--results-dir', '/nonexistent'], { ...env, JOB_ENUMERATE: 'failure', JOB_ASSESS: 'skipped', JOB_PLAN: 'skipped', JOB_PUBLISH: 'skipped' })
     assert.equal(enumerateDown.status, 0, enumerateDown.stderr)
     assert.equal(gh.issues.at(-1).title, 'Zapstore lane failed: enumerate')
+  } finally {
+    gh.server.close()
+  }
+})
+
+test('cli notify: retired historical failure evidence opens no issue even in stale evidence, while mismatched pairs, the current release and lane failures still notify', async () => {
+  const gh = await fakeGitHub()
+  try {
+    const env = { GITHUB_API_URL: gh.apiBase, GITHUB_TOKEN: 't', RUN_URL: runUrl, JOB_ENUMERATE: 'success', JOB_ASSESS: 'success', JOB_PLAN: 'success', JOB_PUBLISH: 'success' }
+    const posts = () => gh.requests.filter((request) => request.method === 'POST').length
+    const assessFailed = (id, tag) => recordResult({ job: 'assess', phases: { checkout: 'success', bind: 'success', apk: 'success', apksigner: 'success', prepare: 'success', reconcile: 'success', cdn: 'failure' }, binding: binding(id, tag), reconcile: reconcileSkip, cdn: { status: 'failure', detail: `CDN bytes for ${tag} hash to y` } })
+
+    // Evidence frozen while these releases were still enumerated: each one would
+    // open an issue, because a closed issue is not deduplicated, and the stale
+    // list still marks the then-newest v0.5.11-beta publishable. A stale flag
+    // cannot make a permanently owner-retired identity current again.
+    const retired = [assessFailed(375729540, 'v0.5.2-beta'), assessFailed(376457006, 'v0.5.3-beta'), assessFailed(403051319, 'v0.5.11-beta')]
+    const staleList = [
+      { releaseId: 375729540, tag: 'v0.5.2-beta', publishable: false },
+      { releaseId: 376457006, tag: 'v0.5.3-beta', publishable: false },
+      { releaseId: 403051319, tag: 'v0.5.11-beta', publishable: true },
+    ]
+    const quiet = await runAsync('notify', notifyArgs(evidenceDir({ assessments: retired, candidateList: staleList })), { ...env, JOB_ASSESS: 'failure' })
+    assert.equal(quiet.status, 0, quiet.stderr)
+    assert.equal(posts(), 0, 'no issue POST for retired historical evidence, even when stale evidence marks it publishable')
+    assert.match(quiet.summary, /No issue for retired historical failure evidence/)
+    assert.match(quiet.summary, /v0\.5\.3-beta \(release 376457006\)/)
+    assert.match(quiet.summary, /retired historical failure\(s\) suppressed/)
+    assert.doesNotMatch(quiet.summary, /no failures and no missing evidence/, 'the summary must not claim there were no failures')
+
+    // No assessment or result artifacts at all: collectFailures records
+    // evidence-missing for each retired candidate, which is suppressed too, and
+    // the summary must not claim there was no missing evidence.
+    const expired = await runAsync('notify', notifyArgs(evidenceDir({ candidateList: staleList })), env)
+    assert.equal(expired.status, 0, expired.stderr)
+    assert.equal(posts(), 0, 'retired evidence-missing failures open no issue')
+    assert.match(expired.summary, /retired historical failure\(s\) suppressed/)
+    assert.doesNotMatch(expired.summary, /no missing evidence/)
+
+    // The guard is the exact retired id+tag pairs: a mismatched pair and the
+    // actual current release still notify.
+    const mismatched = await runAsync('notify', notifyArgs(evidenceDir({ assessments: [assessFailed(376457006, 'v0.5.4-beta')], candidateList: [{ releaseId: 376457006, tag: 'v0.5.4-beta', publishable: false }] })), { ...env, JOB_ASSESS: 'failure' })
+    assert.equal(mismatched.status, 0, mismatched.stderr)
+    assert.equal(gh.issues.length, 1)
+    assert.equal(gh.issues[0].title, 'Zapstore publication failed: v0.5.4-beta (release 376457006)')
+
+    const current = await runAsync('notify', notifyArgs(evidenceDir({ assessments: [assessFailed(407577541, 'v0.5.13-beta')], candidateList: [{ releaseId: 407577541, tag: 'v0.5.13-beta', publishable: true }] })), { ...env, JOB_ASSESS: 'failure' })
+    assert.equal(current.status, 0, current.stderr)
+    assert.equal(gh.issues.length, 2)
+    assert.equal(gh.issues[1].title, 'Zapstore publication failed: v0.5.13-beta (release 407577541)')
+
+    const enumerateDown = await runAsync('notify', ['--candidates', '/nonexistent/candidates.json', '--assessments-dir', '/nonexistent', '--results-dir', '/nonexistent'], { ...env, JOB_ENUMERATE: 'failure', JOB_ASSESS: 'skipped', JOB_PLAN: 'skipped', JOB_PUBLISH: 'skipped' })
+    assert.equal(enumerateDown.status, 0, enumerateDown.stderr)
+    assert.equal(gh.issues.length, 3)
+    assert.equal(gh.issues[2].title, 'Zapstore lane failed: enumerate')
   } finally {
     gh.server.close()
   }

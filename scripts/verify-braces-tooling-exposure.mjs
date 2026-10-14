@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Read-only, bounded evidence collector for the temporary braces GHSA-vfj7-8cjw-p6xm exception.
+// Read-only, bounded evidence collector for the verified braces GHSA-vfj7-8cjw-p6xm remediation.
 // Usage: node scripts/verify-braces-tooling-exposure.mjs <out-dir> [compare-ref] [--runtime-smoke]
 // Run after a frozen install and the Dockerfile.web build steps (core, ui, web). Exits 1 unless
 // every check below holds; writes summary.json and standalone-inventory.tsv to <out-dir>.
@@ -11,7 +11,8 @@ import {
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
-import { bracesException } from './audit-high-critical.mjs'
+import { bracesRemediation } from './audit-high-critical.mjs'
+import { patchDigest } from './braces-byte-preflight.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const nextDir = join(root, 'apps/web/.next')
@@ -33,8 +34,8 @@ export const toleratedSignatureFiles = Object.freeze([Object.freeze({
 // bundler modules that reach them.
 const buildOnlyModules = /(^|\/)next\/dist\/(compiled\/@vercel\/nft\/|build\/webpack\/plugins\/next-trace-entrypoints-plugin\.js|build\/webpack-config\.js|build\/create-compiler-aliases\.js|build\/handle-externals\.js|build\/webpack\/config\/blocks\/images\/index\.js|server\/lib\/router-utils\/setup-dev-bundler\.js|server\/dev\/hot-reloader-(webpack|turbopack)\.js)/
 const smokeRoutes = ['/', '/login', '/offline', '/calendar', '/settings', '/api/deployment-identity', '/braces-smoke-not-found']
-const productionInputs = ['Dockerfile.web', '.dockerignore', '.npmrc', 'package.json', 'pnpm-lock.yaml',
-  'pnpm-workspace.yaml', 'turbo.json', 'apps/web', 'packages']
+export const productionInputs = Object.freeze(['Dockerfile.web', '.dockerignore', '.npmrc', 'package.json',
+  'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'turbo.json', 'patches', 'apps/web', 'packages'])
 const maxFiles = 100000
 const maxScanBytes = 64 * 1024 * 1024
 const smokeTimeoutMs = 60000
@@ -100,6 +101,12 @@ function configs() {
   }))
 }
 
+// The lock may hold exactly one braces snapshot: 3.0.3 bound to the reviewed patch.
+export function lockedBracesFailure(lockedBraces) {
+  const expected = [`braces@${bracesRemediation.version}(patch_hash=${patchDigest})`]
+  return JSON.stringify(lockedBraces) === JSON.stringify(expected) ? undefined : `locked braces versions: ${lockedBraces.join(', ')}`
+}
+
 function stripPeers(id) {
   return id.replace(/\(.*$/, '')
 }
@@ -143,10 +150,9 @@ function lockClosure(failures) {
   }
   for (const id of lockedBraces) walk(id, [stripPeers(id)], new Set([id]))
   const unique = [...new Set(paths)].sort()
-  const expected = [...bracesException.paths].sort()
-  if (JSON.stringify(lockedBraces) !== JSON.stringify([`braces@${bracesException.version}`])) {
-    failures.push(`locked braces versions: ${lockedBraces.join(', ')}`)
-  }
+  const expected = [...bracesRemediation.paths].sort()
+  const lockedFailure = lockedBracesFailure(lockedBraces)
+  if (lockedFailure) failures.push(lockedFailure)
   if (JSON.stringify(unique) !== JSON.stringify(expected)) failures.push('lock closure differs from reviewed paths')
   return { edgeCount: edges.length, lockedBraces, importerEntryPoints: [...importerKinds].sort(), paths: unique }
 }
@@ -358,7 +364,7 @@ async function main() {
   const outDir = resolve(outArg)
   mkdirSync(outDir, { recursive: true })
   const summary = {
-    advisory: bracesException.githubAdvisoryId,
+    advisory: bracesRemediation.githubAdvisoryId,
     identity: identity(compareRef, failures),
     sourceImports: sourceImports(failures),
     lockClosure: lockClosure(failures),

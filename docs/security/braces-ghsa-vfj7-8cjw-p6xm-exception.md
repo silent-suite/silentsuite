@@ -1,52 +1,105 @@
-# Temporary audit exception: braces GHSA-vfj7-8cjw-p6xm
+# Verified local remediation: braces GHSA-vfj7-8cjw-p6xm
 
 - Advisory: [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm) / CVE-2026-93687,
   "braces vulnerable to stack-exhaustion denial of service through deeply nested patterns",
-  high (CVSS 7.5, CWE-674). Vulnerable `<=3.0.3`; no patched version (`first_patched_version: null`).
-- Package: `braces@3.0.3` only (latest npm release; integrity
-  `sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==`).
-  The older GHSA-grv7-fg5c-xmjg (`<3.0.3`) rules out any downgrade and is not excepted.
-- Expiry: `2026-10-14T00:00:00Z`. At or after that instant the gate fails again.
-- Scope: owner-approved, conditional on tooling-only exposure and independent review.
+  high (CVSS 7.5, CWE-674). Vulnerable `<=3.0.3`; no patched release (`first_patched_version: null`;
+  the registry audit reports `patched_versions: "<0.0.0"`).
+- Package: `braces@3.0.3` (canonical registry tarball, integrity
+  `sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA==`),
+  patched in this repository through pnpm `patchedDependencies` with `patches/braces@3.0.3.patch`. The
+  version stays `3.0.3`; the upstream MIT license and copyright are unchanged. The older
+  GHSA-grv7-fg5c-xmjg (`<3.0.3`) rules out any downgrade.
+- Disposition: owner-approved and verification-bound, with no expiry. It replaces the former
+  time-boxed exception for unpatched code (last expiry `2026-10-14T00:00:00Z`); nothing was renewed.
+- Status: the patch, the byte preflight and the disposition are implemented with tests.
+  - An earlier local verification ran at commit `20a97d028b9588b12ccdb14cbfb59144fbdb6874`, using
+    Node 22.23.3 and pnpm 10.6.5. It covered a frozen install, the live `pnpm run audit:security`,
+    lint, type-check, tests, the `core`, `ui` and `web` builds, and the exposure check below. That
+    run is historical: it predates the fallback correction described under "The patch".
+  - The corrected candidate's local checks are recorded with the pull request evidence.
+  - Hosted CI on the corrected head (including the Docker build) and independent code review of it
+    are pending; this record does not claim them.
 
-## Renewal (2026-10-11)
+## The patch
 
-The original expiry `2026-10-10T00:00:00Z` lapsed with no patched braces release. A GitHub
-advisory API readback on 2026-10-11 still reports `<= 3.0.3` vulnerable, no first patched
-version, record updated 2026-10-02, not withdrawn. The owner explicitly approved renewing this
-existing exception, as a separately reviewed change, to exactly `2026-10-14T00:00:00Z`. Only the
-expiry changed: the advisory, module, severity, range, version, the eight reviewed paths, count
-reconciliation and every malformed-report, unknown high/critical and unreachable-registry control
-below are unchanged, and no dependency or lock changed.
+`patches/braces@3.0.3.patch` changes only `lib/constants.js`, `lib/parse.js`, `lib/compile.js`,
+`lib/expand.js` and `lib/stringify.js`:
 
-The exposure evidence below is historical (candidate `596b3533`). Fresh exposure verification
-(`verify-braces-tooling-exposure.mjs`, with `--runtime-smoke`) and a live `pnpm run
-audit:security` on the committed renewal candidate are pending; they have not been run for this
-renewal, and the renewal relies on them passing before merge.
+- `MAX_DEPTH = 100`. `parse` rejects the 101st open brace or parenthesis block with
+  `SyntaxError: Input nesting exceeds max depth (100)`. Escaped characters, bracket classes and quoted
+  runs are text and do not count.
+- `compile`, `expand` and `stringify` take a depth that starts at 0 for the object passed in and
+  throw `RangeError: AST depth exceeds max depth (100)` for a node with `nodes` deeper than 100. This
+  also covers ASTs passed straight to `braces.compile`, `braces.expand` and `braces.stringify`, which
+  never go through `parse`.
+- `expand` hands some nodes to `stringify`: `dollar` or `invalid` nodes, and ranges that
+  `fill-range` cannot expand. It passes its current depth along, so the limit stays measured from the
+  AST root. `stringify`'s internal start depth honours only positive integers, so it can tighten the
+  limit but never loosen it.
+- There is no option to raise or disable the limit. `maxLength`, `rangeLimit` and every other option
+  behave as before.
 
-## Exception contract
+Intentional behavior change: more than 100 unclosed openers are now rejected instead of being
+treated as text. No reviewed consumer pattern nests more than two levels. A controlled `SyntaxError`
+or `RangeError` still fails a caller that does not catch it, as `maxLength` errors always have; the
+patch removes the unbounded recursion, not the need to handle errors.
 
-`scripts/audit-high-critical.mjs` skips an advisory only when all of these hold: the clock is
-before expiry; `github_advisory_id` and `url` name GHSA-vfj7-8cjw-p6xm; `module_name` is
-`braces`; severity is `high`; `vulnerable_versions` is `<=3.0.3`; every finding is version
-`3.0.3`; the single finding reports exactly the eight reviewed paths below (no subset,
-duplicate or extra path). Report validation, malformed/unreachable-registry handling and every
-other advisory are unchanged. A new dependency edge to braces, a removed edge, another braces
-version or advisory, or a widened range fails the gate.
+Not covered: hand-built queues or other caller-constructed structures, parent-pointer cycles in
+caller-supplied ASTs, and the output volume of large comma expansions.
 
-Count reconciliation: pnpm 10.6.5 (`dist/pnpm.cjs`, `audit()`) POSTs the lockfile audit tree to
-the registry's `/-/npm/v1/security/audits`, returns the registry JSON, and only rewrites finding
-paths from the lockfile (`extendWithDependencyPaths`); it never recomputes
-`metadata.vulnerabilities` (`ignoreGhsas`/`ignoreCves` drop advisories without touching it, and
-this repo configures neither). The live report counts one vulnerability per (advisory, installed
-version) finding: moderate is 8 for 5 advisories with 8 findings (41 paths), high is 1 for 1
-finding (8 paths), low is 4 for 4. Whenever the braces advisory is present, the wrapper therefore
-requires the high and critical counts to equal their well-formed, version-unique findings before
-anything is excepted; any excess, deficit or malformed finding fails the gate.
+## What the audit reports
 
-## Dependency closure (pnpm 10.6.5 frozen lock, unchanged from ba79f64b)
+The registry still matches `braces@3.0.3` against `<=3.0.3`, so the raw finding stays in the report and
+in the printed counts (`1 high`). `scripts/audit-high-critical.mjs` prints one extra line saying that
+this raw finding is locally remediated by the verified patch. It never reports the finding as absent.
 
-The only importer is `apps/web`. Live `pnpm audit --json` paths:
+The finding counts as remediated only when all of these hold:
+
+- the advisory is exactly GHSA-vfj7-8cjw-p6xm (id and URL), module `braces`, severity `high`,
+  `vulnerable_versions` `<=3.0.3`, and `patched_versions` exactly `<0.0.0` (`<0.0.0>` and any real
+  version range fail);
+- there is exactly one finding, version `3.0.3`, with exactly the eight paths below (no subset,
+  duplicate or extra path);
+- the high and critical counts reconcile with well-formed findings; malformed reports, registry
+  errors, unexpected exit statuses and spawn failures fail as before;
+- the byte preflight and then the behavior probe pass for the installed package.
+
+Every other high or critical advisory fails the gate, and so does a failed verification, even when
+the report is clean.
+
+## Trust roots and order
+
+Trusted: Node, the reviewed `scripts/braces-byte-preflight.mjs`, and the expected values it contains.
+Those values (the normalized patch sha256 and the sha256 of each of the ten tarball files after the
+patch) were derived offline from the SHA512-verified tarball plus the reviewed patch. They are never
+recomputed from the installed tree. The patch file, the lock, the declaration and `node_modules` are
+untrusted inputs that are only read.
+
+`scripts/braces-byte-preflight.mjs` loads no package code. It checks:
+
+- `package.json` declares exactly `braces@3.0.3 → patches/braces@3.0.3.patch`;
+- the patch matches the reviewed digest, using pnpm's rule (CRLF → LF, sha256). A patch and lock that
+  agree with each other but not with the reviewed digest fail;
+- the lock binds that digest and path, keeps the canonical integrity, and holds one patched braces
+  snapshot referenced only by `chokidar@3.6.0` and `micromatch@4.0.8`;
+- each of the eight consumer chains resolves hop by hop from the parent's entry, with the expected
+  versions, to one braces directory;
+- that directory holds exactly the ten tarball files as regular files with the reviewed bytes, and
+  nothing else (no symlink, no extra name such as an extensionless `lib/compile`, `.json` or `.node`);
+- every package-internal `require` resolves, under Node's own rules, to the hashed file.
+
+The behavior probe runs in a bounded child (15 s, exact output) only after the preflight has passed.
+It checks rejection at depth 101 and at 4998 through all five APIs, direct-AST rejection at depth 101
+(also through `expand`'s `dollar`/`invalid` fallback), and exact depth-100 output. It corroborates behavior and does not replace the byte check.
+
+`pnpm run audit:security` is
+`node scripts/braces-byte-preflight.mjs && pnpm run test:dependency-security && node scripts/audit-high-critical.mjs`.
+The preflight runs before any test loads braces, and the audit script runs the preflight and probe
+again before it reads the registry report.
+
+## Dependency closure
+
+The only importer is `apps/web`. Reviewed paths:
 
 | Path | Consumer role |
 | --- | --- |
@@ -57,132 +110,52 @@ The only importer is `apps/web`. Live `pnpm audit --json` paths:
 | `apps/web > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3` | Tailwind content scanning at CSS build |
 | `apps/web > tailwindcss-animate@1.0.7 > tailwindcss@3.4.19 > …` (3 paths) | Same tailwind instance via plugin peer |
 
-No repository source imports braces, micromatch, fast-glob or chokidar directly; only
-`apps/web/next.config.js` (next-pwa) and `apps/web/tailwind.config.ts` (tailwind types and the
-animate plugin) reference these consumers.
+The patterns these tools pass to braces are repository-controlled configuration: the static
+`content` globs in `apps/web/tailwind.config.ts`, the next-pwa/workbox defaults and options in
+`apps/web/next.config.js`, and eslint-plugin-next settings. `Dockerfile.web` copies `patches/` into
+its dependency stage so the frozen install applies the patch there too.
 
-## Inputs reaching braces
+## Runtime boundary
 
-braces expands glob *patterns*. In every path above the patterns are repository-controlled
-configuration: the static `content` globs in `apps/web/tailwind.config.ts`, next-pwa/workbox
-defaults plus the static options in `apps/web/next.config.js`, and eslint-plugin-next settings.
-Matched subjects are repository and build-output file paths. Someone able to change these
-values already controls the build, so the advisory adds no capability for them.
-
-## Runtime boundary (reproducible check)
-
-Production web runs `node apps/web/server.js` from `.next/standalone` (`Dockerfile.web`,
-`output: 'standalone'`) with `.next/static` and `public` copied beside it. Reproduce with a
-frozen install, the Dockerfile build steps (`core`, `ui`, `web`), then:
+Production web runs `node apps/web/server.js` from `.next/standalone`. After a frozen install and the
+Dockerfile build steps (`core`, `ui`, `web`), run:
 
 ```sh
-node scripts/verify-braces-tooling-exposure.mjs <out-dir> [compare-ref]
+node scripts/verify-braces-tooling-exposure.mjs <out-dir> 3e1a0fb1965fc17c8b7d552d8336f3c9d05285ef --runtime-smoke
 ```
 
-The script is read-only and bounded (100k entries per walk, 64 MiB per scanned file; larger files
-fail the check). It exits 1 unless all of these hold, and writes `summary.json` plus
-`standalone-inventory.tsv` (every standalone file with size and sha256, every symlink target):
+It requires the lock's only braces snapshot to be the patched `braces@3.0.3`, with exactly the eight
+paths. It treats `patches/` as a production input. It fails if a standalone file, symlink or
+`.nft.json` trace names a consumer package. braces source signatures may appear only in the pinned
+`next/dist/compiled/@vercel/nft/index.js` file with its pinned hash. `--runtime-smoke` samples a few
+routes and does not prove that no other path loads the chain.
 
-- production inputs (`Dockerfile.web`, root manifests/lock, `apps/web`, `packages`) are clean at
-  HEAD; HEAD, tree, a digest of their index entries, and the Node/pnpm versions are recorded;
-- repository imports/requires of any consumer package occur only in `apps/web/next.config.js`,
-  `apps/web/tailwind.config.ts` and `scripts/`;
-- the reverse closure of every locked braces snapshot, parsed from `pnpm-lock.yaml` independently
-  of the registry, is exactly `braces@3.0.3` and exactly the eight reviewed paths, and records each
-  importer entry point with its dependency type;
-- no standalone file path or symlink target, and no entry of any `.next/**/*.nft.json` trace,
-  names braces, micromatch, fast-glob, chokidar, tailwindcss(-animate), next-pwa,
-  eslint-config-next or eslint-plugin-next;
-- braces source string literals (`exceeds max characters (`, `rangeLimit`) occur in no standalone,
-  `.next/static` or `public` file except the single pinned file
-  `node_modules/.pnpm/next@15.5.24_…645be988d9e529a02f3844286daf8410/node_modules/next/dist/compiled/@vercel/nft/index.js`
-  with sha256 `19e4e6ea76d56deed0da625b0d9cbe5f5a761cf87a1c502bbb09c9406a70527e`; a changed bundle,
-  another `next/dist/compiled` file or any app chunk fails (`scripts/verify-braces-tooling-exposure.test.mjs`,
-  run by `pnpm run audit:security`);
-- with `--runtime-smoke`, see below.
+Local result from the earlier `20a97d02` run (historical, before the fallback correction):
 
-The name checks cover what the server can `require` from disk. The signature check covers code
-inlined into bundles by webpack, which carries no package name; it relies on minifiers preserving
-string literals and default property names, which is true for the build's Terser/SWC settings but
-would not detect deliberately obfuscated copies.
+- The only locked braces is the patched `braces@3.0.3`, on exactly the eight paths.
+- No standalone file (3534 entries) or `.nft.json` trace (34 traces) names a consumer package.
+- Both signatures occur only in the pinned nft file, whose hash is unchanged.
+- The runtime smoke returned 200 for the five pages, 503 for deployment identity (no deploy env)
+  and 404 for an unknown route. No consumer or build-only module was loaded, and there were no
+  outbound attempts.
 
-Recorded result for the merged candidate (HEAD `596b3533`, tree `58ebbee1`, production input
-digest `e27be868…5db8`, local Node 26.7.0 / pnpm 10.6.5): 3534 standalone entries (inventory
-sha256 `86633134…394b`), 34 traces with 8758 entries, no consumer paths or trace hits; both
-signature hits are the pinned nft file and hash. Evidence directory:
-`~/.hermes/cache/scratch/braces-evidence-596b3533-final/` (`summary.json`,
-`standalone-inventory.tsv`, `runtime-smoke/`). The only recorded failure is the uncommitted
-`package.json` test-wiring line, a production input; re-run on the committed candidate.
+The web build rewrites a tracked PWA fallback file in `apps/web/public`. That file was restored to
+its committed bytes before the check, so the committed version was scanned, not the freshly
+generated one. This ran on local Node over glibc, not the CI `node:22-alpine` image.
 
-## Vendored braces copy inside Next (outside this exception)
+`next@15.5.24` vendors its own unversioned braces copy inside the nft bundle, used for build-time
+output tracing. It is not `braces@3.0.3`, is outside this remediation, and is evaluated only for
+reachability from the production server.
 
-`next@15.5.24` ships `next/dist/compiled/@vercel/nft/index.js` (pinned above), which bundles a
-braces copy as an internal webpack module. Its constants use `MAX_LENGTH: 1024 * 64`, whereas
-`braces@3.0.3` `lib/constants.js` uses `10000`, so it is not 3.0.3 source; its version cannot be
-determined (the vendored `package.json` carries no version). It is outside the pnpm audit graph
-and this exception; no claim is made here about which advisories apply to it. Source-level load
-chain in the standalone tree (`S` = `node_modules/.pnpm/next@15.5.24_…/node_modules/next/dist`):
+## Migration and rollback
 
-1. `apps/web/server.js` sets `NODE_ENV=production` and calls `startServer({ isDev: false, … })`.
-2. `S/server/lib/start-server.js:180` destructures `isDev`; `:366-374` passes it to
-   `getRequestHandlers` (`:164`), which calls `initialize({ …, dev: isDev })` (`:170`).
-3. `S/server/lib/router-server.js:100` `initialize(opts)`; the only require of
-   `./router-utils/setup-dev-bundler` is inside `if (opts.dev)` (`:122`, `:129`).
-4. `setup-dev-bundler` → `server/dev/hot-reloader-webpack` → `build/webpack-config`, which lazily
-   requires `build/webpack/plugins/next-trace-entrypoints-plugin` only when building a production
-   node server (`isNodeServer && !dev`, `:1641`); that plugin is the only requirer of the nft bundle
-   (`:29`). A quote-insensitive search of `S` for `webpack-config`, `next-trace-entrypoints-plugin`
-   and `@vercel/nft` finds only build/dev files (`create-compiler-aliases`, `handle-externals`,
-   `webpack-config`, `blocks/images`, the plugin, `hot-reloader-webpack`, nft's own `package.json`).
-5. Inside the bundle, braces (module 8333) is required once, by its micromatch module; nft calls
-   micromatch only via `isMatch` when `ignore` is an array, and Next passes an `ignore` function
-   built with `next/dist/compiled/picomatch`.
+When the registry reports a patched release (any `patched_versions` other than `<0.0.0`), the gate
+fails. Then:
 
-### Runtime smoke (corroboration only)
+1. Pin an exact override to the patched release.
+2. Remove `patches/braces@3.0.3.patch`, its declaration, the preflight and this disposition.
+3. Regenerate the lock with pnpm 10.6.5 and have the change reviewed.
 
-`--runtime-smoke` starts the standalone `server.js` with a sanitized environment (PATH, a temporary
-HOME, `NODE_ENV=production`, loopback host, free port, telemetry off; no `.env` files exist in the
-standalone app), preloads a recorder that logs every resolved module and refuses non-loopback
-sockets/fetches, requests `/`, `/login`, `/offline`, `/calendar`, `/settings`,
-`/api/deployment-identity` and an unknown route with a 10 s timeout each, then SIGTERMs (SIGKILL
-after 10 s) and removes the temporary HOME. Only status codes and module paths are stored.
-Result: 200 for the five pages, 503 for deployment identity (no deploy env), 404 for the unknown
-route; no outbound attempts; no module from the chain above (or any consumer package) was loaded.
-This samples a few routes and does not prove that no other path loads the chain; the
-source-level chain above is the proof.
-
-The only importer entry point declared as a production dependency is
-`@ducanh2912/next-pwa`. It is required by `next.config.js`, a build-time wrapper; the standalone
-inventory and traces show neither it nor fast-glob/micromatch/braces in the runtime output.
-
-## Proof limits
-
-- Exposure was proved for the lock at the candidate above. The exact path-set match makes the
-  gate fail if the graph changes in either direction, and a new consumer needs a fresh review.
-- The artifact check and runtime smoke ran on a local Linux build (Node 26), not the CI
-  `node:22-alpine` Docker image. The gating above is plain JavaScript in `next@15.5.24`, pinned by
-  lock integrity and identical in both, and `Dockerfile.web` runs the same `server.js`. The Alpine
-  image's standalone inventory has not been inspected: preview run 37103603984 (job 111147749712)
-  built it at `b797bab4` without listing contents. Between `b797bab4` and this candidate only
-  `apps/web` billing/settings source and tests changed.
-- The source chain was read for the static requires listed; computed requires are not provable by
-  search. The runtime smoke corroborates but samples only the listed routes.
-- The vendored nft braces copy is outside this exception; its version and advisory status are
-  unknown, and it is evaluated here only for reachability from the production server.
-- Malicious repository changes (a crafted tailwind/next-pwa glob) can crash a build. That is
-  build-time availability under the control of whoever already controls the build, not a
-  production exposure.
-
-## Expiry remediation
-
-Before `2026-10-14T00:00:00Z`:
-
-1. Check for a patched braces release: `npm view braces versions --json` and the GHSA record.
-2. If a patched `3.x` exists, add an exact override such as
-   `"braces@<=3.0.3": "<patched>"` in root `package.json` `pnpm.overrides`, regenerate the
-   lock with pnpm 10.6.5, frozen-install, then remove `bracesException`, `isExcepted`, the
-   braces fixture/tests and this document, keeping the consumer smoke test with the new version.
-3. If no patch exists, do **not** extend the date silently. Re-run this exposure analysis and
-   get fresh owner approval and independent review for a new expiry, or remove the consumers
-   (for example tailwind/next-pwa/eslint-config-next upgrades that drop micromatch/braces) as a
-   separately approved change.
+Rollback is a reviewed revert. It restores the old time-boxed exception, which accepts the
+unpatched finding only before `2026-10-14T00:00:00Z`; at or after that instant the audit fails
+closed. No production action is involved.
