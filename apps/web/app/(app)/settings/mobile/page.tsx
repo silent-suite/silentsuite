@@ -7,6 +7,7 @@ import { QRCodeSVG } from 'qrcode.react'
 
 const INSTALL_DOCS_URL = 'https://docs.silentsuite.io/user-guide/apps/android'
 const GOOGLE_PLAY_URL = 'https://play.google.com/store/apps/details?id=io.silentsuite.android'
+const FDROID_URL = 'https://f-droid.org/packages/io.silentsuite.android'
 const ZAPSTORE_URL = 'https://zapstore.dev/apps/io.silentsuite.android'
 const RELEASES_URL = 'https://github.com/silent-suite/silentsuite/releases/latest'
 
@@ -28,6 +29,12 @@ const activeChannels = [
     detail: 'Receive updates from GitHub Releases',
     href: INSTALL_DOCS_URL,
     logo: '/channel-icons/obtainium.svg',
+  },
+  {
+    name: 'F-Droid',
+    detail: 'Official F-Droid repository',
+    href: FDROID_URL,
+    logo: '/channel-icons/fdroid.png',
   },
 ]
 
@@ -77,33 +84,6 @@ export default function MobileSettingsPage() {
             <ExternalLink className="h-4 w-4 shrink-0 text-[rgb(var(--muted))] group-hover:text-emerald-700 dark:group-hover:text-emerald-300" aria-hidden="true" />
           </a>
         ))}
-
-        <div
-          data-android-channel="F-Droid"
-          role="group"
-          aria-disabled="true"
-          aria-label="F-Droid, on the roadmap. Pending official inclusion"
-          className={channelCardClass}
-        >
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-2 opacity-75">
-            <Image
-              src="/channel-icons/fdroid.png"
-              alt=""
-              aria-hidden="true"
-              width={28}
-              height={28}
-              unoptimized
-              className="h-7 w-7 object-contain"
-            />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-[rgb(var(--muted))]">F-Droid</span>
-              <span className="rounded-full bg-[rgb(var(--border))] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--foreground))]">Soon</span>
-            </span>
-            <span className="mt-1 block text-xs leading-relaxed text-[rgb(var(--muted))]">Pending official inclusion</span>
-          </span>
-        </div>
 
         <div
           data-android-download-qr

@@ -2,7 +2,7 @@ export type DocsOutboundEvent =
   | { event: 'Hosted App Click'; props: { surface: 'docs'; route_class: 'app_home' | 'signup' } }
   | {
       event: 'Android Download Click'
-      props: { surface: 'docs_android'; channel: 'google_play' | 'zapstore' | 'obtainium' | 'github_release' }
+      props: { surface: 'docs_android'; channel: 'google_play' | 'zapstore' | 'obtainium' | 'fdroid' | 'github_release' }
     }
   | { event: 'GitHub Click'; props: { surface: 'docs_android'; channel: 'repository' } }
 
@@ -162,6 +162,10 @@ const ANDROID_DESTINATIONS: Readonly<Record<string, DocsOutboundEvent>> = {
   'https://zapstore.dev/apps/io.silentsuite.android': {
     event: 'Android Download Click',
     props: { surface: 'docs_android', channel: 'zapstore' },
+  },
+  'https://f-droid.org/packages/io.silentsuite.android': {
+    event: 'Android Download Click',
+    props: { surface: 'docs_android', channel: 'fdroid' },
   },
   'obtainium://add/https://github.com/silent-suite/silentsuite': {
     event: 'Android Download Click',

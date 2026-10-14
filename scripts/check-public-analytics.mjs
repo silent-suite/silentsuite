@@ -49,7 +49,7 @@ async function walk(directory) {
 await walk(appsRoot)
 
 const requiredContracts = new Map([
-  ['apps/docs/.vitepress/theme/public-analytics.mts', ['Hosted App Click', 'Android Download Click', 'github_release', 'repository']],
+  ['apps/docs/.vitepress/theme/public-analytics.mts', ['Hosted App Click', 'Android Download Click', 'github_release', 'fdroid', 'repository']],
   ['apps/docs/.vitepress/theme/index.mts', ['__SILENTSUITE_DOCS_ANALYTICS_ENDPOINT__', 'window.location.hostname', 'classifyDocsOutboundEvent']],
   ['apps/web/next.config.js', ['Content-Security-Policy', 'signupConnectSources', 'subscriptionConnectSources', "source: '/settings/subscription'", 'hostedConnectSources']],
   // Baseline signup pageviews: origin/route gate only, property-free builder, beacon

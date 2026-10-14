@@ -24,7 +24,7 @@ vi.mock('next/image', () => ({
 }))
 
 describe('MobileSettingsPage Android download choices', () => {
-  it('offers active channels, a pending F-Droid state, and direct APK access', () => {
+  it('offers active channels, the official F-Droid package, and direct APK access', () => {
     render(<MobileSettingsPage />)
 
     expect(screen.getByRole('link', { name: /Google Play/i })).toHaveAttribute(
@@ -39,14 +39,14 @@ describe('MobileSettingsPage Android download choices', () => {
       'href',
       'https://zapstore.dev/apps/io.silentsuite.android',
     )
+    expect(screen.getByRole('link', { name: /F-Droid/i })).toHaveAttribute(
+      'href',
+      'https://f-droid.org/packages/io.silentsuite.android',
+    )
     expect(screen.getByText(/release timing may differ by channel/i)).toBeInTheDocument()
     expect(screen.queryByText(/work the same across every channel/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /F-Droid/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('group', {
-      name: 'F-Droid, on the roadmap. Pending official inclusion',
-    })).toBeInTheDocument()
-    expect(screen.getByText('Soon')).toBeInTheDocument()
-    expect(screen.getByText(/Pending official inclusion/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Pending official inclusion/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Soon$/)).not.toBeInTheDocument()
     const directApk = screen.getByRole('link', { name: /Direct APK/i })
     expect(directApk).toHaveAttribute(
       'href',
@@ -122,15 +122,11 @@ describe('MobileSettingsPage Android download choices', () => {
   it('keeps active channels keyboard-visible and safe when opening external destinations', () => {
     render(<MobileSettingsPage />)
 
-    for (const name of ['Google Play', 'Zapstore', 'Obtainium']) {
+    for (const name of ['Google Play', 'Zapstore', 'Obtainium', 'F-Droid']) {
       const link = screen.getByRole('link', { name: new RegExp(name, 'i') })
       expect(link).toHaveAttribute('target', '_blank')
       expect(link).toHaveAttribute('rel', 'noopener noreferrer')
       expect(link).toHaveClass('focus-visible:ring-2')
     }
-
-    expect(screen.getByRole('group', {
-      name: 'F-Droid, on the roadmap. Pending official inclusion',
-    })).toHaveAttribute('aria-disabled', 'true')
   })
 })

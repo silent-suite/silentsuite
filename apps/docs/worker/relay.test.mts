@@ -127,6 +127,7 @@ test('classifies every registered outbound route and href server-side', async ()
     ['/user-guide/apps', 'https://app.silentsuite.io/signup', { name: 'Hosted App Click', props: { surface: 'docs', route_class: 'signup' } }],
     ['/user-guide/apps/android', 'https://play.google.com/store/apps/details?id=io.silentsuite.android', { name: 'Android Download Click', props: { surface: 'docs_android', channel: 'google_play' } }],
     ['/user-guide/apps/android', 'https://zapstore.dev/apps/io.silentsuite.android', { name: 'Android Download Click', props: { surface: 'docs_android', channel: 'zapstore' } }],
+    ['/user-guide/apps/android', 'https://f-droid.org/packages/io.silentsuite.android', { name: 'Android Download Click', props: { surface: 'docs_android', channel: 'fdroid' } }],
     ['/user-guide/apps/android', 'obtainium://add/https://github.com/silent-suite/silentsuite', { name: 'Android Download Click', props: { surface: 'docs_android', channel: 'obtainium' } }],
     ['/user-guide/apps/android', 'https://github.com/silent-suite/silentsuite/releases/latest', { name: 'Android Download Click', props: { surface: 'docs_android', channel: 'github_release' } }],
     ['/user-guide/apps/android', 'https://github.com/silent-suite/silentsuite/tree/main/android', { name: 'GitHub Click', props: { surface: 'docs_android', channel: 'repository' } }],
