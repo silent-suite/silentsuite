@@ -129,6 +129,23 @@ describe('cancelPaymentFlow failure mapping', () => {
     expect(JSON.stringify(result)).not.toContain('cus_')
   })
 
+  // The recognized 409 can surface after a stale cancellable display. Its fixed
+  // copy must not assert ongoing reconciliation or promise later cancellation;
+  // asserted literally, never against the exported constant itself.
+  it('maps the recognized 409 refusal to truthful fixed copy', async () => {
+    const fetcher = fetcherReturning(problem(409, 'https://api.silentsuite.io/errors/payment_reconciliation_required', SENSITIVE))
+
+    const result = await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'btcpay', confirmNoBitcoinSent: true })
+
+    expect(result).toEqual({
+      cancelled: false,
+      failure: 'payment-reconciliation-required',
+      message: 'This payment could not be cancelled. Contact support if cancellation remains blocked.',
+    })
+    expect(JSON.stringify(result)).not.toContain('secret')
+    expect(requestOf(fetcher).init.body).toBe('{"confirmNoBitcoinSent":true}')
+  })
+
   it('accepts bare problem slugs as well as absolute problem type URLs', async () => {
     const fetcher = fetcherReturning(problem(409, 'payment_reconciliation_required', SENSITIVE))
 

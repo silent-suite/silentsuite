@@ -35,7 +35,7 @@ vi.mock('lucide-react', () => ({
   Zap: ({ className }: { className?: string }) => <svg data-testid="zap-icon" className={className} />,
 }))
 
-vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
+vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test', ETEBASE_SERVER_URL: 'https://server.example.test' }))
 vi.mock('@/app/lib/date', () => ({
   formatDate: (date: Date) => date.toISOString().slice(0, 10),
 }))

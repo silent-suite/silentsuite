@@ -28,6 +28,7 @@ vi.mock('lucide-react', () => ({
 
 vi.mock('@/app/lib/config', () => ({
   BILLING_API_URL: 'https://billing.example.test',
+  ETEBASE_SERVER_URL: 'https://server.example.test',
 }))
 
 const earlyOffer = {
@@ -184,12 +185,12 @@ describe('explicit provider-switch consequence labels', () => {
     expect(screen.queryByText(BITCOIN_CANCELLATION_WARNING)).not.toBeInTheDocument()
   })
 
-  it('labels the resumed Bitcoin flow with the card switch and preserves the validated BTCPay continuation link', async () => {
+  it('labels the retained Bitcoin flow with the card switch without treating its stored URL as a validated continuation', async () => {
     mockBilling({ currentFlow: async () => response({ flow: bitcoinFlow }) })
     renderPanel()
 
     expect(await screen.findByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /continue in btcpay/i })).toHaveAttribute('href', 'https://btcpay.test/i/abc123')
+    expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
   })
 
   it('does not promise a provider the current server offer does not expose', async () => {

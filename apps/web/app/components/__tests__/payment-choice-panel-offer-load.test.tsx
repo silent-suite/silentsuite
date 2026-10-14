@@ -21,6 +21,7 @@ vi.mock('lucide-react', () => ({
 
 vi.mock('@/app/lib/config', () => ({
   BILLING_API_URL: 'https://billing.example.test',
+  ETEBASE_SERVER_URL: 'https://server.example.test',
 }))
 
 // The account panel reads the opt-in preview: the unchanged signed offer plus
