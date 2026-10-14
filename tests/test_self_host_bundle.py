@@ -48,26 +48,32 @@ ARM64_DIGEST = "sha256:" + "3" * 64
 IDENTITY = ReleaseIdentity(TAG, COMMIT, INDEX_DIGEST, AMD64_DIGEST, ARM64_DIGEST)
 
 
-def build(directory: Path, tag: str = TAG) -> Path:
+def builder_command(directory: Path, tag: str, self_host_dir: Path) -> list[str]:
+    return [
+        sys.executable,
+        str(BUILDER),
+        "--tag",
+        tag,
+        "--source-commit",
+        COMMIT,
+        "--index-digest",
+        INDEX_DIGEST,
+        "--amd64-digest",
+        AMD64_DIGEST,
+        "--arm64-digest",
+        ARM64_DIGEST,
+        "--self-host-dir",
+        str(self_host_dir),
+        "--output-dir",
+        str(directory),
+    ]
+
+
+def build(directory: Path, tag: str = TAG, self_host_dir: Path | None = None) -> Path:
     subprocess.run(
-        [
-            sys.executable,
-            str(BUILDER),
-            "--tag",
-            tag,
-            "--source-commit",
-            COMMIT,
-            "--index-digest",
-            INDEX_DIGEST,
-            "--amd64-digest",
-            AMD64_DIGEST,
-            "--arm64-digest",
-            ARM64_DIGEST,
-            "--self-host-dir",
-            str(ROOT / "self-host"),
-            "--output-dir",
-            str(directory),
-        ],
+        builder_command(
+            directory, tag, self_host_dir if self_host_dir is not None else ROOT / "self-host"
+        ),
         check=True,
         capture_output=True,
         cwd=ROOT,
@@ -320,6 +326,87 @@ def test_verification_fails_when_an_artefact_is_missing(tmp_path):
     result = verify(tmp_path)
     assert result.returncode != 0
     assert "missing release artefact" in result.stderr
+
+
+# ── Coexistence with the separately packaged Umbrel app tree ──────────
+
+
+def stage_flat_self_host(directory: Path) -> Path:
+    """A self-host directory with only the admitted flat release files."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    for name in BUNDLE_SOURCE_FILES:
+        (directory / name).write_bytes((ROOT / "self-host" / name).read_bytes())
+    return directory
+
+
+def build_refusal(self_host_dir: Path, directory: Path) -> subprocess.CompletedProcess:
+    result = subprocess.run(
+        builder_command(directory, TAG, self_host_dir),
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    assert result.returncode != 0, "builder accepted an inventory the contract must refuse"
+    return result
+
+
+def test_the_separately_packaged_umbrel_tree_coexists_with_the_flat_bundle(tmp_path):
+    umbrel_tree = ROOT / "self-host" / "umbrel"
+    assert umbrel_tree.is_dir() and not umbrel_tree.is_symlink(), (
+        "coexistence control needs the real self-host/umbrel directory"
+    )
+
+    with_umbrel = build(tmp_path / "with-umbrel")
+    baseline = build(
+        tmp_path / "baseline", self_host_dir=stage_flat_self_host(tmp_path / "flat")
+    )
+
+    # The one admitted real directory changes nothing: the same member inventory
+    # and the same bytes as a build from the flat release files alone.
+    assert with_umbrel.read_bytes() == baseline.read_bytes()
+    names = assert_archive_members_safe(with_umbrel, TAG)
+    assert_bundle_inventory(names, TAG)
+    assert verify(tmp_path / "with-umbrel").returncode == 0
+
+
+@pytest.mark.parametrize(
+    "case,reason",
+    [
+        ("file", "a regular file named umbrel"),
+        ("directory-symlink", "a symlink named umbrel pointing at a real directory"),
+        ("dangling-symlink", "a dangling symlink named umbrel"),
+        ("other-directory", "an unexpected directory"),
+        ("other-file", "an unexpected file"),
+        ("missing-flat-file", "a missing flat file while the umbrel tree exists"),
+        ("extra-flat-file", "an extra flat file while the umbrel tree exists"),
+    ],
+)
+def test_umbrel_coexistence_never_relaxes_the_flat_inventory(tmp_path, case, reason):
+    flat = stage_flat_self_host(tmp_path / "flat")
+    if case == "file":
+        (flat / "umbrel").write_bytes(b"not the app tree\n")
+    elif case == "directory-symlink":
+        target = tmp_path / "elsewhere"
+        target.mkdir()
+        (flat / "umbrel").symlink_to(target)
+    elif case == "dangling-symlink":
+        (flat / "umbrel").symlink_to(tmp_path / "missing-target")
+    elif case == "other-directory":
+        (flat / "vendor").mkdir()
+    elif case == "other-file":
+        (flat / "extra.sh").write_bytes(b"#!/bin/sh\n")
+    elif case == "missing-flat-file":
+        (flat / "umbrel").mkdir()
+        (flat / "backup.sh").unlink()
+    elif case == "extra-flat-file":
+        (flat / "umbrel").mkdir()
+        (flat / "extra.sh").write_bytes(b"#!/bin/sh\n")
+    else:
+        raise AssertionError(f"unknown case {case!r}")
+
+    result = build_refusal(flat, tmp_path / "out")
+    assert "inventory drifted" in result.stderr
 
 
 # ── Archive safety ────────────────────────────────────────────────────

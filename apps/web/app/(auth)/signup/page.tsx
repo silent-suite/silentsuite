@@ -165,6 +165,12 @@ function stripEmailVerificationTokenFromUrl() {
   window.history.replaceState({}, '', `${cleaned.pathname}${cleaned.search}${cleaned.hash}`)
 }
 
+/**
+ * Installation-owner registration (default off). Only a self-host build that also sets
+ * NEXT_PUBLIC_OWNER_REGISTRATION=true asks for the installation password at signup.
+ */
+const OWNER_REGISTRATION_ENABLED = isSelfHosted && process.env.NEXT_PUBLIC_OWNER_REGISTRATION === 'true'
+
 const StripePaymentForm = dynamic(() => import('@/app/components/stripe-payment-form'), {
   loading: () => (
     <div className="flex flex-col items-center justify-center py-8">
@@ -299,7 +305,7 @@ function StepCreateAccount({
   rememberDevice,
   onRememberDeviceChange,
 }: {
-  onNext: (data: SignupFormData) => Promise<void>
+  onNext: (data: SignupFormData, ownerPassword?: string) => Promise<void>
   serverUrl: string
   setServerUrl: (url: string) => void
   initialData?: SignupFormData | null
@@ -312,6 +318,9 @@ function StepCreateAccount({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const submittingRef = useRef(false)
   const needsPassword = isSelfHosted || isCustomServer(serverUrl.trim() ? normalizeServerUrl(serverUrl) : undefined)
+  // Operation-only installation password: kept out of the form data and cleared after each attempt.
+  const [ownerPassword, setOwnerPassword] = useState('')
+  useEffect(() => { setOwnerPassword('') }, [serverUrl])
 
   const {
     register,
@@ -346,9 +355,12 @@ function StepCreateAccount({
         submittingRef.current = true
         setSubmitError(null)
         setIsSubmitting(true)
+        const owner = OWNER_REGISTRATION_ENABLED ? ownerPassword : undefined
+        setOwnerPassword('')
         try {
-          await onNext(needsPassword ? data : { email: data.email, confirmEmail: data.email, password: '', confirmPassword: '' })
+          await onNext(needsPassword ? data : { email: data.email, confirmEmail: data.email, password: '', confirmPassword: '' }, owner)
         } catch (err: unknown) {
+          if ((err as { name?: unknown } | null)?.name === 'AbortError') return
           const message = err instanceof Error ? err.message : 'Account creation failed. Please try again.'
           setSubmitError(message)
         } finally {
@@ -445,6 +457,27 @@ function StepCreateAccount({
           )}
         </div>
 
+        {OWNER_REGISTRATION_ENABLED && <div className="space-y-2">
+          <label
+            htmlFor="ownerPassword"
+            className="block text-sm font-medium text-[rgb(var(--foreground))]/80"
+          >
+            Installation password
+          </label>
+          <Input
+            id="ownerPassword"
+            type="password"
+            autoComplete="off"
+            aria-describedby="signup-owner-password-hint"
+            value={ownerPassword}
+            onChange={(e) => setOwnerPassword(e.target.value)}
+            className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
+          />
+          <p id="signup-owner-password-hint" className="text-xs text-[rgb(var(--muted))]">
+            The password for this SilentSuite installation. It is separate from your account password.
+          </p>
+        </div>}
+
         </>}
 
         {/* Product updates opt-in */}
@@ -503,7 +536,7 @@ function StepCreateAccount({
           </div>
         )}
 
-        <Button type="submit" disabled={!isValid || isSubmitting} className="w-full">
+        <Button type="submit" disabled={!isValid || isSubmitting || (OWNER_REGISTRATION_ENABLED && !ownerPassword)} className="w-full">
           {isSubmitting ? (
             <span className="flex items-center justify-center gap-2">
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
@@ -1502,6 +1535,10 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const [requestingEmailProof, setRequestingEmailProof] = useState(false)
   const resendBusyRef = useRef(false)
   const mountedRef = useRef(false)
+  const ownerAbortRef = useRef<AbortController | null>(null)
+  // Navigation away or an endpoint change cancels a pending installation-owner request.
+  useEffect(() => () => { ownerAbortRef.current?.abort() }, [])
+  useEffect(() => { ownerAbortRef.current?.abort() }, [serverUrl])
   const [emailProofAttempt, setEmailProofAttempt] = useState(0)
   const emailContinuationRef = useRef<{
     context: EmailProofContext
@@ -1678,7 +1715,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     }
   }, [])
 
-  const handleAccountComplete = useCallback(async (data: SignupFormData) => {
+  const handleAccountComplete = useCallback(async (data: SignupFormData, ownerPassword?: string) => {
     emailContinuationRef.current = null
     setEmailProofError(null)
     setEmailOwnershipToken(null)
@@ -1695,7 +1732,19 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     const selfHosted = isSelfHosted || isCustomServer(normalizedUrl)
 
     if (selfHosted) {
-      await createEtebaseAccount(identifier, data.password, normalizedUrl)
+      // A fresh attempt supersedes any pending installation-owner request.
+      ownerAbortRef.current?.abort()
+      const controller = ownerPassword === undefined ? null : new AbortController()
+      ownerAbortRef.current = controller
+      try {
+        if (controller && ownerPassword !== undefined) {
+          await createEtebaseAccount(identifier, data.password, normalizedUrl, { ownerPassword, signal: controller.signal })
+        } else {
+          await createEtebaseAccount(identifier, data.password, normalizedUrl)
+        }
+      } finally {
+        if (ownerAbortRef.current === controller) ownerAbortRef.current = null
+      }
 
       const pending = useAuthStore.getState().pendingSignup
       if (!pending) console.error('pendingSignup not set after createEtebaseAccount')

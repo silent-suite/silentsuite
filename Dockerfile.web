@@ -6,6 +6,8 @@ RUN corepack enable && corepack prepare pnpm@10.6.5 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
+# pnpm patchedDependencies (e.g. the etebase SDK patch) must exist before a frozen install
+COPY patches/ patches/
 
 # Copy all package.json files so pnpm workspace resolution works
 COPY apps/web/package.json apps/web/
@@ -31,6 +33,13 @@ ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
 # Durable encrypted local caching. Default-off: every build that does not pass
 # this argument explicitly, production included, ships with the flag disabled.
 ARG NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
+# Self-host build mode. With NEXT_PUBLIC_ETEBASE_SERVER_URL set empty, the web app
+# talks to the Etebase server on the browser's own origin.
+ARG NEXT_PUBLIC_SELF_HOSTED=false
+ENV NEXT_PUBLIC_SELF_HOSTED=$NEXT_PUBLIC_SELF_HOSTED
+# Installation-owner registration (self-host builds only). Default off.
+ARG NEXT_PUBLIC_OWNER_REGISTRATION=false
+ENV NEXT_PUBLIC_OWNER_REGISTRATION=$NEXT_PUBLIC_OWNER_REGISTRATION
 ENV NEXT_PUBLIC_BILLING_API_URL=$NEXT_PUBLIC_BILLING_API_URL
 ENV NEXT_PUBLIC_ETEBASE_SERVER_URL=$NEXT_PUBLIC_ETEBASE_SERVER_URL
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
