@@ -4,12 +4,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
-import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useEtebaseStore, type SealedEditingBase } from '@/app/stores/use-etebase-store'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { ArrowLeft, Eye, Folder, Plus, Search, StickyNote, Trash2, WifiOff } from 'lucide-react'
 import { useLocale, useTranslations } from 'next-intl'
 import type { DateFormat, Note, TimeFormat } from '@silentsuite/core'
-import { useNoteStore } from '@/app/stores/use-note-store'
+import {
+  getNoteObligation,
+  observeNoteCustody,
+  proveNoteBase,
+  registerNoteEditor,
+  releaseNoteObligation,
+  useNoteStore,
+  type StoredNote,
+} from '@/app/stores/use-note-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore, type Notebook } from '@/app/stores/use-notebook-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
@@ -186,7 +194,8 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
  * so each note gets its own draft.
  */
 function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelete, onMove }: {
-  note: Note
+  /** With the revision its text was read at; edits save only through that base (#744). */
+  note: StoredNote
   canWrite: boolean
   /** Choices for the notebook picker: the note's own plus every shown, writable notebook. */
   notebooks: Notebook[]
@@ -211,6 +220,14 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
   // differ the draft is unsaved and a refresh of this note must not clobber it.
   const draftRef = useRef<Draft>({ title: note.title, content: note.content })
   const savedRef = useRef<Draft>({ title: note.title, content: note.content })
+  // The editing lineage (#744): the text drafts are typed on, with the revision it
+  // was read at. Only this lineage's own accepted saves advance it; adopting a
+  // refreshed note starts a new lineage.
+  const lineageRef = useRef<{ base: SealedEditingBase }>({
+    base: { title: note.title, content: note.content, revision: note.revision },
+  })
+  // Moves on whenever the editor enters or leaves a clean period, and on adoption.
+  const periodGenRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveChainRef = useRef<Promise<void>>(Promise.resolve())
   const inFlightRef = useRef(0)
@@ -227,6 +244,9 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
     if (!isCurrentAccountEpoch(accountEpoch)) return
     const draft = draftRef.current
     if (draft.title === savedRef.current.title && draft.content === savedRef.current.content) return
+    // Captured now, before the chain: the text, the lineage it was typed on and any obligation.
+    const lineage = lineageRef.current
+    const obligation = getNoteObligation(note.id)
     inFlightRef.current += 1
     setSaveState('saving')
     const settle = (saved: boolean) => {
@@ -236,31 +256,72 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
     }
     // Serialize saves so two flushes never race on the same Etebase item.
     saveChainRef.current = saveChainRef.current
-      .then(() => isCurrentAccountEpoch(accountEpoch) ? updateNote(note.id, draft) : false)
-      .then((saved) => {
-        if (saved) savedRef.current = draft
-        settle(saved)
+      .then(async () => {
+        if (!isCurrentAccountEpoch(accountEpoch)) return false
+        let savedRevision: string | null = null
+        const saved = await updateNote(note.id, draft, {
+          base: lineage.base,
+          obligation,
+          onSaved: (etag) => { savedRevision = etag },
+        })
+        if (saved && isCurrentAccountEpoch(accountEpoch)) {
+          // An accepted save advances only its own lineage; a queued one has no known revision.
+          lineage.base = { ...draft, revision: savedRevision }
+          if (lineageRef.current === lineage) savedRef.current = draft
+        }
+        return saved
       })
+      .then(settle)
       .catch(() => settle(false))
   }, [accountEpoch, note.id, updateNote])
 
   const schedule = useCallback((patch: Partial<Draft>) => {
+    const wasDirty = isDirty()
     draftRef.current = { ...draftRef.current, ...patch }
+    if (wasDirty !== isDirty()) {
+      periodGenRef.current += 1
+      // T2: a note leaving its clean period reads its custody afresh.
+      if (!wasDirty) void observeNoteCustody(note.id)
+    }
     setMoveFailed(false)
     if (inFlightRef.current === 0) setSaveState('pending')
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(flush, SAVE_DEBOUNCE_MS)
-  }, [flush])
+  }, [flush, note.id])
+
+  // Releases the note's obligation only with the chain idle, a fresh live proof of
+  // this lineage's base, and the same clean period and obligation throughout.
+  const releaseIfProved = useCallback(async () => {
+    const obligation = getNoteObligation(note.id)
+    if (!obligation) return
+    await saveChainRef.current
+    const periodGen = periodGenRef.current
+    const lineage = lineageRef.current
+    if (inFlightRef.current > 0 || isDirty()) return
+    if (!await proveNoteBase(note.id, lineage.base) || !isCurrentAccountEpoch(accountEpoch)) return
+    if (periodGenRef.current !== periodGen || lineageRef.current !== lineage || inFlightRef.current > 0 || isDirty()) return
+    releaseNoteObligation(note.id, obligation)
+  }, [accountEpoch, note.id])
 
   // Adopt refreshed store values (sync from another device) unless a draft is unsaved.
+  // A different revision is a different base even when the text is the same.
   useEffect(() => {
-    const draft = draftRef.current
-    if (draft.title !== savedRef.current.title || draft.content !== savedRef.current.content) return
+    if (isDirty()) return
+    const base = lineageRef.current.base
+    if (base.title === note.title && base.content === note.content && base.revision === note.revision) return
+    lineageRef.current = { base: { title: note.title, content: note.content, revision: note.revision } }
+    periodGenRef.current += 1
     setTitle(note.title)
     setContent(note.content)
     draftRef.current = { title: note.title, content: note.content }
     savedRef.current = draftRef.current
-  }, [note.title, note.content])
+    void releaseIfProved()
+  }, [note.title, note.content, note.revision, releaseIfProved])
+
+  // T2: a note opened while custody is outstanding is obliged.
+  useEffect(() => {
+    void observeNoteCustody(note.id)
+  }, [note.id])
 
   useEffect(() => {
     const onVisibilityChange = () => {
@@ -272,6 +333,19 @@ function NoteEditor({ note, canWrite, notebooks, autoFocusTitle = false, onDelet
       flush()
     }
   }, [flush])
+
+  // Declared after the flush effect, so an unmount captures and flushes its draft
+  // before this registration goes; it removes only its own registration.
+  useEffect(() => registerNoteEditor(note.id, {
+    periodGen: () => periodGenRef.current,
+    isClean: () => !isDirty(),
+    chainIdle: () => inFlightRef.current === 0,
+    base: () => lineageRef.current.base,
+    flushAndWait: async () => {
+      flush()
+      await saveChainRef.current
+    },
+  }), [flush, note.id])
 
   // A new note arrives with a default title; select it so typing replaces it.
   useEffect(() => {

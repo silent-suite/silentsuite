@@ -284,7 +284,8 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
 
       const contacts = contactItems.map((item) => {
         const contact = core.deserializeContact(item.content)
-        return { ...contact, id: item.uid, listId: item.collectionUid }
+        // Content and revision are paired from the same SDK item (#744).
+        return { ...contact, id: item.uid, listId: item.collectionUid, revision: item.revision }
       })
       if (domainLoadState.contacts === 'loaded') {
         assertCurrentAccountEpoch(accountEpoch)
@@ -304,7 +305,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         partialDomainCount += 1
       }
 
-      const notes = noteItems.map((item) => core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid))
+      const notes = noteItems.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
       if (domainLoadState.notes === 'loaded') {
         assertCurrentAccountEpoch(accountEpoch)
         useNoteStore.getState().syncFromRemote(notes)

@@ -1,16 +1,18 @@
 // Logout / invalid-session cleanup with the real auth store, the real Etebase
 // store destroy(), real account epochs and real secure-storage, offline-queue
-// and data-cache on fake-indexeddb. Only billing /auth/ fetches and the toast
-// module are stubbed; persistence clear functions are wrapped to observe or
-// inject account switches after the real clear completes. All data is synthetic.
+// and data-cache on fake-indexeddb. Only billing /auth/ and /subscription
+// fetches and the toast module are stubbed; persistence functions are wrapped
+// to observe or inject account switches after the real call completes. All
+// data is synthetic.
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Each hook runs while the real clear it is attached to is still pending.
+// Each hook runs while the real call it is attached to is still pending.
 const hooks = vi.hoisted(() => ({
   duringCacheClear: null as null | (() => Promise<void>),
   duringQueueClear: null as null | (() => Promise<void>),
   duringSecureClear: null as null | (() => Promise<void>),
+  duringMigration: null as null | (() => Promise<void>),
 }))
 
 vi.mock('@/app/stores/use-toast-store', () => ({ showErrorToast: vi.fn() }))
@@ -24,12 +26,21 @@ vi.mock('@/app/lib/offline-queue', async (importOriginal) => {
 })
 vi.mock('@/app/lib/secure-storage', async (importOriginal) => {
   const real = await importOriginal<typeof import('@/app/lib/secure-storage')>()
-  return { ...real, secureClear: async () => { const pending = real.secureClear(); await hooks.duringSecureClear?.(); await pending } }
+  return {
+    ...real,
+    secureClear: async () => { const pending = real.secureClear(); await hooks.duringSecureClear?.(); await pending },
+    migrateFromLocalStorage: async (...args: Parameters<typeof real.migrateFromLocalStorage>) => {
+      const pending = real.migrateFromLocalStorage(...args)
+      await hooks.duringMigration?.()
+      await pending
+    },
+  }
 })
 
 import { useAuthStore } from '../use-auth-store'
 import { EtebaseTeardownError, useEtebaseStore } from '../use-etebase-store'
-import { useNoteStore } from '../use-note-store'
+import { getMountedNoteEditor, getNoteObligation, markNoteObligation, registerNoteEditor, resetNoteLifecycle, useNoteStore } from '../use-note-store'
+import { getContactOwner, hasContactFieldDraft, registerContactOwner, resetContactLifecycle, setContactFieldDraft } from '../use-contact-store'
 import { useCalendarStore } from '../use-calendar-store'
 import { usePreferencesStore } from '../use-preferences-store'
 import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
@@ -48,9 +59,11 @@ const userB = { ...userA, id: 'synthetic-user-B', email: 'b@synthetic.invalid' }
 
 const fetchMock = vi.fn()
 const realFetch = globalThis.fetch
-// Only billing /auth/ calls are stubbed; module/WASM loading keeps the real loader.
-vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) =>
-  String(input instanceof Request ? input.url : input).includes('/auth/') ? fetchMock(input, init) : realFetch(input, init))
+// Only billing /auth/ and /subscription calls are stubbed; module/WASM loading keeps the real loader.
+vi.stubGlobal('fetch', (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input instanceof Request ? input.url : input)
+  return url.includes('/auth/') || url.endsWith('/subscription') ? fetchMock(input, init) : realFetch(input, init)
+})
 vi.stubGlobal('BroadcastChannel', undefined)
 
 async function seed(session: string, fingerprint: string, itemUid: string) {
@@ -91,7 +104,10 @@ beforeEach(async () => {
   hooks.duringCacheClear = null
   hooks.duringQueueClear = null
   hooks.duringSecureClear = null
+  hooks.duringMigration = null
   vi.restoreAllMocks()
+  resetNoteLifecycle()
+  resetContactLifecycle()
   localStorage.clear()
   sessionStorage.clear()
   await resetQueue()
@@ -460,8 +476,250 @@ describe('teardown token contract', () => {
   })
 })
 
-describe('unguarded callers keep their behaviour', () => {
-  it('restoreSession hosted 401 still clears through the unguarded path', async () => {
+const USER_C = { ...userA, id: 'synthetic-user-C', email: 'c@synthetic.invalid' }
+const CALLERS = ['restoreSession', 'retryBillingConnection'] as const
+type Caller = typeof CALLERS[number]
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
+
+/** restoreSession starts signed out at page load; retry starts as degraded account A. */
+function startCaller(caller: Caller) {
+  if (caller === 'retryBillingConnection') {
+    signInA()
+    useAuthStore.setState({ subscriptionStatus: 'billing_unavailable' })
+  }
+  return useAuthStore.getState()[caller]()
+}
+
+/** Routes this caller's billing requests; anything else is an unexpected request. */
+function routeBilling(refresh: () => Response | Promise<Response>, remove: () => Response | Promise<Response> = () => new Response(null, { status: 204 })) {
+  fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input)
+    if (url.endsWith('/auth/refresh')) return refresh()
+    if (url.endsWith('/subscription')) return new Response(JSON.stringify({ status: 'active' }))
+    if (url.endsWith('/auth/session') && init?.method === 'DELETE') return remove()
+    throw new Error(`synthetic unexpected billing request ${url}`)
+  })
+}
+
+const REFRESH = {
+  rejected: () => new Response(null, { status: 401 }),
+  unremembered: () => new Response(JSON.stringify({ id: userA.id, email: userA.email, rememberDevice: false })),
+  'different-user': () => new Response(JSON.stringify({ id: USER_C.id, email: USER_C.email, rememberDevice: true })),
+}
+
+/** Account B's private #744 state, made synchronously in B's epoch. */
+function registerBPrivateState() {
+  const notes = [{ id: 'synthetic-note-b' }] as never
+  useNoteStore.setState({ notes })
+  useEtebaseStore.setState({ accountFingerprint: FP_B })
+  const editor = { periodGen: () => 1, isClean: () => false, chainIdle: () => true, base: () => ({}) as never, flushAndWait: async () => {} }
+  registerNoteEditor('note-b', editor)
+  const obligation = markNoteObligation('note-b')
+  const contactOwner = registerContactOwner('contact-b')
+  setContactFieldDraft('contact-b', contactOwner, true)
+  return { epoch: getAccountEpoch(), notes, editor, obligation, contactOwner }
+}
+
+async function establishBWithPrivateState() {
+  await establishB()
+  return registerBPrivateState()
+}
+
+function expectBPrivateStateIntact(b: ReturnType<typeof registerBPrivateState>) {
+  expect(useAuthStore.getState().user?.id).toBe(userB.id)
+  expect(useAuthStore.getState().isAuthenticated).toBe(true)
+  expect(getAccountEpoch()).toBe(b.epoch)
+  expect(useEtebaseStore.getState().accountFingerprint).toBe(FP_B)
+  expect(useNoteStore.getState().notes).toBe(b.notes)
+  expect(getMountedNoteEditor('note-b')).toBe(b.editor)
+  expect(getNoteObligation('note-b')).toBe(b.obligation)
+  expect(getContactOwner('contact-b')).toBe(b.contactOwner)
+  expect(hasContactFieldDraft('contact-b')).toBe(true)
+}
+
+describe('restoreSession and retryBillingConnection never clear a newly established account', () => {
+  it.each(CALLERS.flatMap((caller) => (['rejected', 'unremembered'] as const).map((kind) => [caller, kind] as const)))(
+    '%s: account B established while the %s session DELETE is pending keeps its user, private state and persistence',
+    async (caller, kind) => {
+      const deleting = deferred<void>()
+      const remove = deferred<Response>()
+      routeBilling(REFRESH[kind], () => { deleting.resolve(); return remove.promise })
+
+      const run = startCaller(caller)
+      await deleting.promise
+      const b = await establishBWithPrivateState()
+      remove.resolve(new Response(null, { status: 204 }))
+      await run
+
+      expectBPrivateStateIntact(b)
+      expect(await persisted()).toEqual(B_PERSISTED)
+      expect(localStorage.getItem(INVALIDATED)).toBeNull()
+    },
+  )
+
+  it.each(CALLERS.flatMap((caller) => (['rejected', 'different-user'] as const).map((kind) => [caller, kind] as const)))(
+    '%s: a late %s refresh response after account B was established changes nothing of B',
+    async (caller, kind) => {
+      const refreshing = deferred<void>()
+      const response = deferred<Response>()
+      routeBilling(() => { refreshing.resolve(); return response.promise })
+
+      const run = startCaller(caller)
+      await refreshing.promise
+      const b = await establishBWithPrivateState()
+      response.resolve(REFRESH[kind]())
+      await run
+
+      expectBPrivateStateIntact(b)
+      expect(await persisted()).toEqual(B_PERSISTED)
+      expect(localStorage.getItem(INVALIDATED)).toBeNull()
+    },
+  )
+
+  it.each(CALLERS)('%s: late refresh JSON for another user after account B was established changes nothing of B', async (caller) => {
+    const reading = deferred<void>()
+    const body = deferred<unknown>()
+    routeBilling(() => ({ ok: true, status: 200, json: () => { reading.resolve(); return body.promise } }) as unknown as Response)
+
+    const run = startCaller(caller)
+    await reading.promise
+    const b = await establishBWithPrivateState()
+    body.resolve({ id: USER_C.id, email: USER_C.email, rememberDevice: true })
+    await run
+
+    expectBPrivateStateIntact(b)
+    expect(await persisted()).toEqual(B_PERSISTED)
+  })
+
+  it.each(CALLERS)('%s: a store subscriber that establishes account B inside the caller\'s own reset stops every later reset and publication', async (caller) => {
+    routeBilling(REFRESH['different-user'])
+    let b: ReturnType<typeof registerBPrivateState> | undefined
+    const unsubscribe = useCalendarStore.subscribe(() => {
+      unsubscribe()
+      bumpAccountEpoch()
+      useAuthStore.setState({ user: userB, isAuthenticated: true })
+      b = registerBPrivateState()
+    })
+
+    await startCaller(caller)
+
+    expect(b).toBeDefined() // the re-entry really ran
+    expectBPrivateStateIntact(b!)
+  })
+
+  it('restoreSession: account B established during the local-storage migration keeps everything when the refresh is rejected', async () => {
+    routeBilling(REFRESH.rejected)
+    let b: ReturnType<typeof registerBPrivateState> | undefined
+    hooks.duringMigration = async () => {
+      hooks.duringMigration = null
+      b = await establishBWithPrivateState()
+    }
+
+    await useAuthStore.getState().restoreSession()
+
+    expect(b).toBeDefined() // the injection really ran
+    expectBPrivateStateIntact(b!)
+    expect(await persisted()).toEqual(B_PERSISTED)
+    expect(localStorage.getItem(INVALIDATED)).toBeNull()
+  })
+})
+
+const REMEMBERED_MARKER = 'silentsuite-hosted-validation-remembered'
+
+/** The remembered-device marker exactly as markHostedValidation writes it. */
+function markRememberedA() {
+  localStorage.setItem(REMEMBERED_MARKER, JSON.stringify({ userId: userA.id, rememberDevice: true, validatedAt: Date.now() }))
+}
+
+/** Routes billing with a refresh that rejects as a network failure when `fail` is called. */
+function routeFailingRefresh(remove?: () => Promise<Response>) {
+  const refreshing = deferred<void>()
+  let fail!: () => void
+  const reply = new Promise<Response>((_, reject) => { fail = () => reject(new TypeError('synthetic Failed to fetch')) })
+  routeBilling(() => { refreshing.resolve(); return reply }, remove)
+  return { refreshing: refreshing.promise, fail: () => fail() }
+}
+
+describe('restoreSession network fallback acts only for its own boundary', () => {
+  it('restoreSession: a network rejection while logout awaits its DELETE does not undo the logout', async () => {
+    signInA()
+    markRememberedA()
+    const deleting = deferred<void>()
+    const remove = deferred<Response>()
+    const refresh = routeFailingRefresh(() => { deleting.resolve(); return remove.promise })
+
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    const logout = useAuthStore.getState().logout()
+    await deleting.promise
+    refresh.fail()
+    await restore
+    remove.resolve(new Response(null, { status: 204 }))
+    await logout
+
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useEtebaseStore.getState().accountFingerprint).toBeNull()
+    expect(await persisted()).toEqual(CLEARED)
+    expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+  })
+
+  it('restoreSession: account B established by the markerless fallback\'s signed-out publication suffers no later invalidation or cleanup', async () => {
+    const refresh = routeFailingRefresh()
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    // The fallback's signed-out publication is the next Auth notification.
+    let b: ReturnType<typeof registerBPrivateState> | undefined
+    const unsubscribe = useAuthStore.subscribe(() => {
+      unsubscribe()
+      bumpAccountEpoch()
+      useAuthStore.setState({ user: userB, isAuthenticated: true })
+      b = registerBPrivateState()
+    })
+    refresh.fail()
+    await restore
+
+    expect(b).toBeDefined() // the re-entry really ran
+    expectBPrivateStateIntact(b!)
+    expect(await persisted()).toEqual(RETAINED_A)
+    expect(localStorage.getItem(INVALIDATED)).toBeNull()
+  })
+
+  it('restoreSession: a network rejection with a retained session and marker still enters its own degraded mode', async () => {
+    markRememberedA()
+    const refresh = routeFailingRefresh()
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    refresh.fail()
+    await restore
+
+    expect(useAuthStore.getState().user?.id).toBe(userA.id)
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().subscriptionStatus).toBe('billing_unavailable')
+    expect(await persisted()).toEqual(RETAINED_A)
+  })
+
+  it('restoreSession: a markerless network fallback without a takeover still clears its own material', async () => {
+    const refresh = routeFailingRefresh()
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    refresh.fail()
+    await restore
+
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(await persisted()).toEqual(CLEARED)
+    expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+  })
+})
+
+describe('restoreSession and retryBillingConnection keep their own cleanup and publication', () => {
+  it('restoreSession hosted 401 still clears its own material', async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }))
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     await useAuthStore.getState().restoreSession()
@@ -469,10 +727,36 @@ describe('unguarded callers keep their behaviour', () => {
     expect(await persisted()).toEqual(CLEARED)
   })
 
-  it('restoreSession publishes a hosted user after an unguarded reset', async () => {
+  it('restoreSession publishes a hosted user after its own reset', async () => {
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ id: userA.id, email: userA.email, rememberDevice: true })))
     await useAuthStore.getState().restoreSession()
     expect(useAuthStore.getState().user?.id).toBe(userA.id)
+    expect(await persisted()).toEqual(RETAINED_A)
+  })
+
+  it.each(CALLERS.flatMap((caller) => (['rejected', 'unremembered'] as const).map((kind) => [caller, kind] as const)))(
+    '%s: a %s session without a takeover clears its own material and invalidates hosted auth',
+    async (caller, kind) => {
+      routeBilling(REFRESH[kind])
+
+      await startCaller(caller)
+
+      expect(useAuthStore.getState().user).toBeNull()
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(useEtebaseStore.getState().accountFingerprint).toBeNull()
+      expect(await persisted()).toEqual(CLEARED)
+      expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+    },
+  )
+
+  it('retryBillingConnection resets departing account A and publishes a different hosted user', async () => {
+    routeBilling(REFRESH['different-user'])
+
+    expect(await startCaller('retryBillingConnection')).toBe(true)
+
+    expect(useAuthStore.getState().user?.id).toBe(USER_C.id)
+    expect(useAuthStore.getState().subscriptionStatus).toBe('active')
+    expect(useEtebaseStore.getState().accountFingerprint).toBeNull()
     expect(await persisted()).toEqual(RETAINED_A)
   })
 })

@@ -27,6 +27,8 @@ const storeMock = vi.hoisted(() => ({
     deleteContact: vi.fn(),
     setContactFavorite: vi.fn(),
     canWriteContact: vi.fn(() => true),
+    // No unsettled drafts here; the #744 save states have their own rendered test.
+    contactSaveStates: {} as Record<string, string>,
   },
   contactListState: {
     lists: [] as ContactList[],
@@ -43,6 +45,12 @@ const storeMock = vi.hoisted(() => ({
 vi.mock('@/app/stores/use-contact-store', () => ({
   useContactStore: (selector: (state: typeof storeMock.contactState) => unknown) => selector(storeMock.contactState),
   getFilteredContacts: (contacts: unknown[]) => contacts,
+  // Detail ownership is exercised by the #744 rendered contact test.
+  registerContactOwner: () => ({}),
+  releaseContactOwnerWhenSettled: () => {},
+  beginContactPhoto: () => false,
+  endContactPhoto: () => {},
+  setContactFieldDraft: () => {},
 }))
 
 vi.mock('@/app/stores/use-contact-list-store', () => ({

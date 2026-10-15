@@ -161,26 +161,51 @@ async function getStoredEnvelopeKey(): Promise<CryptoKey | null> {
     return key ?? null
   } catch (err) {
     logger.warn('[data-cache] encrypted envelope key read failed', err)
-    return null
+    throw err
   }
 }
 
-async function putStoredEnvelopeKey(key: CryptoKey, accountEpoch?: number): Promise<void> {
+async function putStoredEnvelopeKey(key: CryptoKey, accountEpoch?: number): Promise<CryptoKey> {
   if (accountEpoch === undefined) {
-    await withStore<IDBValidKey>(STORE_CRYPTO, 'readwrite', (store) => store.put(key, ENVELOPE_KEY))
-    return
+    const db = await openDB()
+    return new Promise<CryptoKey>((resolve, reject) => {
+      const tx = db.transaction(STORE_CRYPTO, 'readwrite')
+      const store = tx.objectStore(STORE_CRYPTO)
+      const getReq = store.get(ENVELOPE_KEY)
+      let adopted = key
+      let settled = false
+      const fail = (error: unknown) => {
+        if (settled) return
+        settled = true
+        reject(error)
+      }
+      getReq.onsuccess = () => {
+        const existing = getReq.result as CryptoKey | undefined
+        if (existing) adopted = existing
+        else store.put(key, ENVELOPE_KEY)
+      }
+      getReq.onerror = () => fail(getReq.error)
+      tx.oncomplete = () => {
+        if (settled) return
+        settled = true
+        resolve(adopted)
+      }
+      tx.onerror = () => fail(tx.error)
+      tx.onabort = () => fail(tx.error ?? new DOMException('Transaction aborted', 'AbortError'))
+    })
   }
   const expectedFingerprint = (await getMeta())?.accountFingerprint
   assertCurrentAccountEpoch(accountEpoch)
   if (!expectedFingerprint) throw new AccountBoundaryChangedError()
   const db = await openDB()
   assertCurrentAccountEpoch(accountEpoch)
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<CryptoKey>((resolve, reject) => {
     const tx = db.transaction([STORE_CRYPTO, STORE_META], 'readwrite')
     const cryptoStore = tx.objectStore(STORE_CRYPTO)
     const metaStore = tx.objectStore(STORE_META)
     const metaReq = metaStore.get(META_KEY)
     let settled = false
+    let adopted = key
     const fail = (error: unknown) => {
       if (settled) return
       settled = true
@@ -195,18 +220,24 @@ async function putStoredEnvelopeKey(key: CryptoKey, accountEpoch?: number): Prom
         abortForBoundary()
         return
       }
-      cryptoStore.put(key, ENVELOPE_KEY)
-      const commitGuard = metaStore.get(META_KEY)
-      commitGuard.onsuccess = () => {
-        try { assertCurrentAccountEpoch(accountEpoch) } catch { abortForBoundary() }
+      const existingReq = cryptoStore.get(ENVELOPE_KEY)
+      existingReq.onsuccess = () => {
+        const existing = existingReq.result as CryptoKey | undefined
+        if (existing) adopted = existing
+        else cryptoStore.put(key, ENVELOPE_KEY)
+        const commitGuard = metaStore.get(META_KEY)
+        commitGuard.onsuccess = () => {
+          try { assertCurrentAccountEpoch(accountEpoch) } catch { abortForBoundary() }
+        }
+        commitGuard.onerror = () => fail(commitGuard.error)
       }
-      commitGuard.onerror = () => fail(commitGuard.error)
+      existingReq.onerror = () => fail(existingReq.error)
     }
     metaReq.onerror = () => fail(metaReq.error)
     tx.oncomplete = () => {
       if (settled) return
       settled = true
-      resolve()
+      resolve(adopted)
     }
     tx.onerror = () => fail(tx.error)
     tx.onabort = () => fail(tx.error ?? new DOMException('Transaction aborted', 'AbortError'))
@@ -242,9 +273,9 @@ export async function ensureEncryptedEnvelope(accountEpoch?: number): Promise<bo
       ['encrypt', 'decrypt'],
     )
     if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-    await putStoredEnvelopeKey(generated, accountEpoch)
+    const adopted = await putStoredEnvelopeKey(generated, accountEpoch)
     if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
-    envelopeKey = generated
+    envelopeKey = adopted
     envelopeReady = true
     return true
   } catch (err) {
@@ -269,6 +300,95 @@ async function encryptContent(content: string): Promise<{ iv: number[]; ct: numb
     iv: Array.from(iv),
     ct: Array.from(new Uint8Array(encrypted)),
   }
+}
+
+/**
+ * Seal offline-queue custody (#744 K4) under the freshly re-read stored
+ * envelope key, with the record identity as AES-GCM associated data. Returns
+ * null when no stored key exists; a key-read error throws to the caller.
+ */
+export async function sealQueuePayload(
+  plaintext: string,
+  associatedData: string,
+  accountEpoch?: number,
+): Promise<{ iv: number[]; ct: number[] } | null> {
+  if (!hasWebCrypto()) return null
+  const key = await getStoredEnvelopeKey()
+  if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+  if (!key) return null
+  const iv = new Uint8Array(12)
+  globalThis.crypto.getRandomValues(iv)
+  const encrypted = await globalThis.crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: encoder.encode(associatedData) },
+    key,
+    encoder.encode(plaintext),
+  )
+  if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+  return { iv: Array.from(iv), ct: Array.from(new Uint8Array(encrypted)) }
+}
+
+export type OpenedQueuePayload =
+  | { kind: 'opened'; plaintext: string; resealed: { iv: number[]; ct: number[] } | null }
+  | { kind: 'not-ready' }
+  | { kind: 'unreadable' }
+
+async function tryOpen(key: CryptoKey, iv: number[], ct: number[], associatedData: string): Promise<string | null> {
+  try {
+    const plain = await globalThis.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: Uint8Array.from(iv), additionalData: encoder.encode(associatedData) },
+      key,
+      Uint8Array.from(ct),
+    )
+    return decoder.decode(plain)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Open offline-queue custody (#744 K3) with a freshly re-read stored key and
+ * the in-memory key. When only an old in-memory key opens it, the identical
+ * plaintext is re-sealed under the stored key for the caller to CAS back.
+ * No usable key is `not-ready` (keep pending); keys that all fail are
+ * `unreadable` (hold the ciphertext, never drop it).
+ */
+export async function openQueuePayload(
+  sealed: { iv: unknown; ct: unknown } | undefined,
+  associatedData: string,
+  accountEpoch?: number,
+): Promise<OpenedQueuePayload> {
+  if (!hasWebCrypto()) return { kind: 'not-ready' }
+  if (!sealed || !Array.isArray(sealed.iv) || !Array.isArray(sealed.ct)) return { kind: 'unreadable' }
+  const iv = sealed.iv as number[]
+  const ct = sealed.ct as number[]
+  const inMemory = envelopeKey
+  let stored: CryptoKey | null
+  try {
+    stored = await getStoredEnvelopeKey()
+  } catch {
+    return { kind: 'not-ready' }
+  }
+  if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+  if (!inMemory && !stored) return { kind: 'not-ready' }
+  if (stored) {
+    const plaintext = await tryOpen(stored, iv, ct, associatedData)
+    if (plaintext !== null) return { kind: 'opened', plaintext, resealed: null }
+  }
+  if (inMemory) {
+    const plaintext = await tryOpen(inMemory, iv, ct, associatedData)
+    if (plaintext !== null) {
+      if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
+      const resealed = stored ? await sealQueuePayload(plaintext, associatedData, accountEpoch) : null
+      return { kind: 'opened', plaintext, resealed }
+    }
+  }
+  return { kind: 'unreadable' }
+}
+
+/** Lowercase-hex SHA-256 of a JSON canonical form. Only ever stored inside sealed payloads. */
+export async function sealedPayloadDigest(parts: readonly unknown[]): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', encoder.encode(JSON.stringify(parts)))
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
 async function decryptStoredItem(item: StoredItem): Promise<CachedItem> {
@@ -708,13 +828,14 @@ export async function ensureFingerprint(accountFingerprint: string, accountEpoch
   const db = await openDB()
   if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
 
-  const result = await new Promise<{ survived: boolean; invalidated: boolean }>((resolve, reject) => {
+  const result = await new Promise<{ survived: boolean; invalidated: boolean; eraseEnvelope: boolean }>((resolve, reject) => {
     const tx = db.transaction([STORE_ITEMS, STORE_COLLECTIONS, STORE_META, STORE_CRYPTO], 'readwrite')
     const metaStore = tx.objectStore(STORE_META)
     const metaReq = metaStore.get(META_KEY)
     let settled = false
     let survived = true
     let invalidated = false
+    let eraseEnvelope = false
     const fail = (error: unknown) => {
       if (settled) return
       settled = true
@@ -736,6 +857,7 @@ export async function ensureFingerprint(accountFingerprint: string, accountEpoch
       const fingerprintMismatch = Boolean(meta?.accountFingerprint && meta.accountFingerprint !== accountFingerprint)
       const schemaMismatch = Boolean(meta && meta.cacheSchemaVersion !== CACHE_SCHEMA_VERSION)
       invalidated = fingerprintMismatch || schemaMismatch
+      eraseEnvelope = fingerprintMismatch
       survived = !invalidated
       const current: CacheMeta = {
         accountFingerprint,
@@ -747,7 +869,7 @@ export async function ensureFingerprint(accountFingerprint: string, accountEpoch
         tx.objectStore(STORE_ITEMS).clear()
         tx.objectStore(STORE_COLLECTIONS).clear()
         metaStore.clear()
-        tx.objectStore(STORE_CRYPTO).clear()
+        if (eraseEnvelope) tx.objectStore(STORE_CRYPTO).clear()
       }
       if (!meta || invalidated || meta.accountFingerprint === null) metaStore.put(current, META_KEY)
 
@@ -765,15 +887,17 @@ export async function ensureFingerprint(accountFingerprint: string, accountEpoch
     tx.oncomplete = () => {
       if (settled) return
       settled = true
-      resolve({ survived, invalidated })
+      resolve({ survived, invalidated, eraseEnvelope })
     }
     tx.onerror = () => fail(tx.error)
     tx.onabort = () => fail(tx.error ?? new DOMException('Transaction aborted', 'AbortError'))
   })
 
-  if (result.invalidated) {
+  if (result.eraseEnvelope) {
     envelopeKey = null
     envelopeReady = false
+  }
+  if (result.invalidated) {
     logger.warn('[data-cache] fingerprint or schema mismatch, clearing cache')
   }
   return result.survived

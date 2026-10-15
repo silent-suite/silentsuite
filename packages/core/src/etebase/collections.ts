@@ -205,6 +205,124 @@ export async function updateItem(
 }
 
 /**
+ * The server revision an SDK item was saved at, or null when it is unknown or
+ * the object has local, unsaved changes.
+ */
+export function savedRevisionOf(item: Etebase.Item | null | undefined): string | null {
+  if (!item) return null;
+  const lastEtag = (item as any).encryptedItem?.lastEtag;
+  if (typeof lastEtag !== 'string' || lastEtag.length === 0) return null;
+  return lastEtag === item.etag ? lastEtag : null;
+}
+
+/**
+ * Fetch one item fresh from the server. A NotFoundError resolves null;
+ * everything else is rethrown. Callers never read null as proof of absence.
+ */
+export async function fetchItemFresh(
+  account: Etebase.Account,
+  collection: Etebase.Collection,
+  itemUid: string,
+): Promise<Etebase.Item | null> {
+  try {
+    return await account.getCollectionManager().getItemManager(collection).fetch(itemUid);
+  } catch (err) {
+    if (err instanceof Etebase.NotFoundError || (err instanceof Error && err.name === 'NotFoundError')) return null;
+    throw err;
+  }
+}
+
+export type ConditionalUpdateResult =
+  | { kind: 'saved'; item: Etebase.Item; etag: string }
+  | { kind: 'conflict' };
+
+function isConflictError(err: unknown): boolean {
+  return err instanceof Etebase.ConflictError || (err instanceof Error && err.name === 'ConflictError');
+}
+
+/**
+ * Write `content` only if the server still holds the given revision. The
+ * write goes through a clone, so the source item is never mutated. `deps` are
+ * sent as transaction dependencies at their own saved revisions. A 409 is
+ * reported as a conflict; every other error is rethrown.
+ */
+export async function updateItemIfUnchanged(
+  account: Etebase.Account,
+  collection: Etebase.Collection,
+  item: Etebase.Item,
+  content: string,
+  meta: ItemMeta | undefined,
+  options: { etagOverride?: string; deps?: Etebase.Item[]; beforeDispatch?: () => void } = {},
+): Promise<ConditionalUpdateResult> {
+  const itemManager = account.getCollectionManager().getItemManager(collection);
+  const clone = (item as any)._clone() as Etebase.Item;
+  (clone as any).encryptedItem.lastEtag = options.etagOverride ?? (item as any).encryptedItem.lastEtag;
+  if (meta) {
+    const currentMeta: ItemMeta = clone.getMeta?.() ?? {};
+    await clone.setMeta(toEtebaseItemMeta({ ...currentMeta, ...meta }));
+  }
+  await clone.setContent(content);
+  options.beforeDispatch?.();
+  try {
+    await itemManager.transaction([clone], options.deps);
+  } catch (err) {
+    if (isConflictError(err)) return { kind: 'conflict' };
+    throw err;
+  }
+  return { kind: 'saved', item: clone, etag: (clone as any).encryptedItem.lastEtag };
+}
+
+export type ConditionalDeleteResult = { kind: 'deleted' } | { kind: 'conflict' };
+
+/**
+ * Delete an item only if the server still holds the given revision. The
+ * tombstone goes through a clone, so the source item is never mutated. A 409
+ * is reported as a conflict; every other error is rethrown.
+ */
+export async function deleteItemIfUnchanged(
+  account: Etebase.Account,
+  collection: Etebase.Collection,
+  item: Etebase.Item,
+  options: { etagOverride?: string; deps?: Etebase.Item[]; beforeDispatch?: () => void } = {},
+): Promise<ConditionalDeleteResult> {
+  const itemManager = account.getCollectionManager().getItemManager(collection);
+  const clone = (item as any)._clone() as Etebase.Item;
+  (clone as any).encryptedItem.lastEtag = options.etagOverride ?? (item as any).encryptedItem.lastEtag;
+  clone.delete();
+  options.beforeDispatch?.();
+  try {
+    await itemManager.transaction([clone], options.deps);
+  } catch (err) {
+    if (isConflictError(err)) return { kind: 'conflict' };
+    throw err;
+  }
+  return { kind: 'deleted' };
+}
+
+/**
+ * Tombstone a collection only if its main item is still at the revision it was
+ * fetched at and nothing in the collection changed since `stoken`. Pass a
+ * freshly fetched collection: it is marked deleted. A 409 is reported as a
+ * conflict; every other error is rethrown.
+ */
+export async function deleteCollectionIfUnchanged(
+  account: Etebase.Account,
+  collection: Etebase.Collection,
+  stoken: string,
+  options: { beforeDispatch?: () => void } = {},
+): Promise<ConditionalDeleteResult> {
+  (collection as any).delete();
+  options.beforeDispatch?.();
+  try {
+    await account.getCollectionManager().transaction(collection, { stoken });
+  } catch (err) {
+    if (isConflictError(err)) return { kind: 'conflict' };
+    throw err;
+  }
+  return { kind: 'deleted' };
+}
+
+/**
  * Mark an item as deleted and upload the change.
  */
 export async function deleteItem(
