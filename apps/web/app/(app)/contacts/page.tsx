@@ -7,7 +7,15 @@ import {
   StickyNote, User, WifiOff, Plus, Trash2, X, Pencil, Camera, BookUser, List, Folder, Tag, Star,
 } from 'lucide-react'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
-import { useContactStore, getFilteredContacts } from '@/app/stores/use-contact-store'
+import {
+  beginContactPhoto,
+  endContactPhoto,
+  getFilteredContacts,
+  registerContactOwner,
+  releaseContactOwnerWhenSettled,
+  setContactFieldDraft,
+  useContactStore,
+} from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
@@ -16,6 +24,7 @@ import { ConfirmDialog } from '@/app/components/confirm-dialog'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
+import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import type { Contact } from '@silentsuite/core'
 
 // ── Helpers ──
@@ -313,7 +322,10 @@ function ContactForm({
     async (e: React.FormEvent) => {
       e.preventDefault()
       const displayName = [given, family].filter(Boolean).join(' ') || 'Unnamed Contact'
-      const contact = await createContact({
+      let contact
+      try {
+        // Published only once its item is committed, in the account it was created in.
+        contact = await createContact({
         displayName,
         name: { prefix, given, family, suffix },
         phones: phones.filter((p) => p.value.trim()),
@@ -326,7 +338,11 @@ function ContactForm({
         photoUrl,
         categories,
         listId: selectedListId,
-      })
+        })
+      } catch {
+        // Nothing was published; the store already reported the failure.
+        return
+      }
       onSaved(contact.id)
     },
     [given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, categories, selectedListId, createContact, onSaved],
@@ -648,28 +664,65 @@ function ContactDetail({
 }: {
   contact: Contact
   onBack: () => void
-  onDeleted: () => void
+  /** Called with the deleted contact's id, only once the server accepted the delete. */
+  onDeleted: (id: string) => void
 }) {
   const updateContact = useContactStore((s) => s.updateContact)
   const deleteContact = useContactStore((s) => s.deleteContact)
   const setContactFavorite = useContactStore((s) => s.setContactFavorite)
   const canFavorite = useContactStore((s) => s.canWriteContact(contact))
+  // A refused draft stays visible here, marked Not saved (#744 §10).
+  const saveState = useContactStore((s) => s.contactSaveStates[contact.id])
   const canWrite = useAuthStore((s) => s.canWrite())
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const t = useTranslations('Labels')
+  // This detail owns its late results only while it is mounted for this contact.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
+  // This detail owns the contact until its photos and saves settle; a reopened
+  // detail takes over, so this one's cleanup can never release the newer owner.
+  const ownerRef = useRef<object | null>(null)
+  useEffect(() => {
+    const token = registerContactOwner(contact.id)
+    ownerRef.current = token
+    return () => {
+      setContactFieldDraft(contact.id, token, false)
+      releaseContactOwnerWhenSettled(contact.id, token)
+    }
+  }, [contact.id])
+  // Typing a field holds until its blur hands it to a save; until then it still belongs to this detail (#744 §10).
+  const handleFieldTyping = useCallback((event: React.FormEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLInputElement
+    if (target.type === 'file' || !ownerRef.current) return
+    setContactFieldDraft(contact.id, ownerRef.current, true)
+  }, [contact.id])
+  const handleFieldSettled = useCallback(() => {
+    if (ownerRef.current) setContactFieldDraft(contact.id, ownerRef.current, false)
+  }, [contact.id])
 
   const handlePhotoChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+    const input = e.target
+    const file = input.files?.[0]
     if (!file) return
+    // The origin account and the owning detail are captured before the photo is processed.
+    const accountEpoch = getAccountEpoch()
+    const owner = ownerRef.current
+    const counted = owner ? beginContactPhoto(contact.id, owner) : false
     try {
       const dataUrl = await processContactPhoto(file)
-      updateContact(contact.id, { photoUrl: dataUrl })
+      // Completion goes through the ordinary record-base save.
+      if (isCurrentAccountEpoch(accountEpoch)) void updateContact(contact.id, { photoUrl: dataUrl })
     } catch (err) {
       console.error('[contacts] Failed to process photo', getSafeErrorDetails(err))
+    } finally {
+      if (counted && owner) endContactPhoto(contact.id, owner)
+      input.value = ''
     }
-    e.target.value = ''
   }, [contact.id, updateContact])
 
   const handleFieldUpdate = useCallback(
@@ -688,11 +741,23 @@ function ContactDetail({
     [contact.id, contact.name, updateContact],
   )
 
-  const handleDeleteConfirmed = useCallback(() => {
-    deleteContact(contact.id)
+  // Not optimistic: the detail stays until the server accepts the delete.
+  const handleDeleteConfirmed = useCallback(async () => {
     setConfirmDelete(false)
-    onDeleted()
+    let deleted = false
+    try {
+      deleted = await deleteContact(contact.id)
+    } catch (err) {
+      console.error('[contacts] Failed to delete contact', getSafeErrorDetails(err))
+    }
+    // A draft begun while the delete was in flight keeps its contact, so this detail stays open on it (#744).
+    const kept = useContactStore.getState().contacts.some((entry) => entry.id === contact.id)
+    if (deleted && mountedRef.current && !kept) onDeleted(contact.id)
   }, [contact.id, deleteContact, onDeleted])
+
+  const saveNotice = saveState === 'refused'
+    ? <span role="status" className="px-1 text-xs text-amber-500">Not saved</span>
+    : null
 
   const handlePhoneUpdate = useCallback(
     (index: number, field: 'type' | 'value', val: string) => {
@@ -780,6 +845,7 @@ function ContactDetail({
             Back
           </button>
           <div className="flex items-center gap-1">
+            {saveNotice}
             <button
               type="button"
               onClick={() => setContactFavorite(contact.id, !contact.favorite)}
@@ -912,7 +978,7 @@ function ContactDetail({
 
   // ── Edit view (auto-save on blur) ──
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
+    <div className="flex h-full flex-col overflow-y-auto" onChange={handleFieldTyping} onBlur={handleFieldSettled}>
       <div className="flex items-center justify-between md:justify-end">
         <button
           type="button"
@@ -923,6 +989,7 @@ function ContactDetail({
           Back
         </button>
         <div className="flex items-center gap-1">
+          {saveNotice}
           <button
             type="button"
             onClick={() => setEditing(false)}
@@ -1134,9 +1201,10 @@ export default function ContactsPage() {
     [contacts, selectedId],
   )
 
-  const isEmpty = contactView === 'all' && listFilteredContacts.length === 0 && !isLoading
-  const isEmptySearch = filtered.length === 0 && searchQuery.trim() !== '' && !isLoading
-  const isEmptyFavorites = contactView === 'favorites' && viewFilteredContacts.length === 0 && !searchQuery.trim() && !isLoading
+  // An empty list never replaces the selected detail: its draft and save state stay visible (#744).
+  const isEmpty = contactView === 'all' && listFilteredContacts.length === 0 && !isLoading && !selectedContact
+  const isEmptySearch = filtered.length === 0 && searchQuery.trim() !== '' && !isLoading && !selectedContact
+  const isEmptyFavorites = contactView === 'favorites' && viewFilteredContacts.length === 0 && !searchQuery.trim() && !isLoading && !selectedContact
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -1240,9 +1308,11 @@ export default function ContactsPage() {
           {selectedContact ? (
             <div className="flex-1 overflow-y-auto md:pl-2">
               <ContactDetail
+                key={selectedContact.id}
                 contact={selectedContact}
                 onBack={() => setSelectedId(null)}
-                onDeleted={() => setSelectedId(null)}
+                // A late delete closes the detail only if that contact is still the selected one.
+                onDeleted={(id) => setSelectedId((current) => (current === id ? null : current))}
               />
             </div>
           ) : (

@@ -848,11 +848,11 @@ async function resetInMemoryAccountState(
     const [
       { useCalendarStore },
       { useTaskStore },
-      { useContactStore },
+      { useContactStore, resetContactLifecycle },
       { useCalendarListStore },
       { useTaskListStore },
       { useContactListStore },
-      { useNoteStore },
+      { useNoteStore, resetNoteLifecycle },
       { useNotebookStore },
       { useLabelSuggestionsStore },
       { useLabelColorStore },
@@ -888,8 +888,12 @@ async function resetInMemoryAccountState(
         searchQuery: '',
       }),
       () => useTaskStore.setState({ tasks: [], isLoading: false, syncStatus: 'synced' }),
-      () => useContactStore.setState({ contacts: [], isLoading: false, syncStatus: 'synced', searchQuery: '' }),
+      () => useContactStore.setState({ contacts: [], isLoading: false, syncStatus: 'synced', searchQuery: '', contactSaveStates: {} }),
+      // Contact draft ledgers and save chains hold draft vCards (#744).
+      () => resetContactLifecycle(),
       () => useNoteStore.setState({ notes: [], isLoading: false, syncStatus: 'synced' }),
+      // Note obligations and editor registrations hold callbacks over draft text (#744).
+      () => resetNoteLifecycle(),
       () => useCalendarListStore.setState({
         calendars: [{ id: 'default', name: 'Personal', color: '#10b981', visible: true }],
         defaultCalendarId: 'default',

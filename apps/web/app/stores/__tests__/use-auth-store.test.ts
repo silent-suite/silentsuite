@@ -18,6 +18,8 @@ const {
   taskSetState,
   contactSetState,
   noteSetState,
+  noteLifecycleReset,
+  contactLifecycleReset,
   calendarListSetState,
   taskListSetState,
   contactListSetState,
@@ -33,6 +35,8 @@ const {
   taskSetState: vi.fn(),
   contactSetState: vi.fn(),
   noteSetState: vi.fn(),
+  noteLifecycleReset: vi.fn(),
+  contactLifecycleReset: vi.fn(),
   calendarListSetState: vi.fn(),
   taskListSetState: vi.fn(),
   contactListSetState: vi.fn(),
@@ -94,8 +98,8 @@ vi.mock('@/app/stores/use-etebase-store', async () => {
 
 vi.mock('@/app/stores/use-calendar-store', () => ({ useCalendarStore: { setState: calendarSetState } }))
 vi.mock('@/app/stores/use-task-store', () => ({ useTaskStore: { setState: taskSetState } }))
-vi.mock('@/app/stores/use-contact-store', () => ({ useContactStore: { setState: contactSetState } }))
-vi.mock('@/app/stores/use-note-store', () => ({ useNoteStore: { setState: noteSetState } }))
+vi.mock('@/app/stores/use-contact-store', () => ({ useContactStore: { setState: contactSetState }, resetContactLifecycle: contactLifecycleReset }))
+vi.mock('@/app/stores/use-note-store', () => ({ useNoteStore: { setState: noteSetState }, resetNoteLifecycle: noteLifecycleReset }))
 vi.mock('@/app/stores/use-calendar-list-store', () => ({ useCalendarListStore: { setState: calendarListSetState } }))
 vi.mock('@/app/stores/use-task-list-store', () => ({ useTaskListStore: { setState: taskListSetState } }))
 vi.mock('@/app/stores/use-contact-list-store', () => ({ useContactListStore: { setState: contactListSetState } }))

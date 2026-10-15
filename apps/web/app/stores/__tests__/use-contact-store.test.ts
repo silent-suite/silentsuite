@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { useContactStore, getFilteredContacts } from '../use-contact-store'
+import { useContactStore, getFilteredContacts, resetContactLifecycle } from '../use-contact-store'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useContactListStore } from '../use-contact-list-store'
 import type { Contact } from '@silentsuite/core'
 import { getAll } from '@/app/lib/offline-queue'
-import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
+import { AccountBoundaryChangedError } from '@/app/lib/account-epoch'
+import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
 const toastMock = vi.hoisted(() => ({ showErrorToast: vi.fn() }))
 vi.mock('@/app/stores/use-toast-store', () => toastMock)
@@ -20,12 +21,13 @@ vi.mock('@/app/stores/use-sync-store', () => ({
 }))
 
 function resetStore() {
+  resetContactLifecycle()
   useContactStore.setState({
     contacts: [],
     isLoading: false,
     syncStatus: 'synced',
     searchQuery: '',
-    pendingChanges: [],
+    contactSaveStates: {},
   })
   useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
   useContactListStore.setState({ lists: [{ id: 'contacts-1', name: 'Contacts', color: '#fff', visible: true, accessLevel: 2 }], activeListId: 'contacts-1' })
@@ -33,6 +35,25 @@ function resetStore() {
 
 function offlineAccount() {
   useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map(), createItem: vi.fn((type, content, tempId, collectionUid) => enqueueCreateFromStore(type, collectionUid, content, tempId!)) } as any)
+}
+
+/** The lower store's real protocol: commits report their item, accepted saves report their etag. */
+function onlineAccount() {
+  let sequence = 0
+  const createItem = vi.fn(async (_type: string, _content: string, _tempId?: string, _collectionUid?: string, _meta?: unknown, onCommitted?: (item: any) => void) => {
+    const uid = `remote-${++sequence}`
+    useEtebaseStore.setState({ itemCache: new Map([...useEtebaseStore.getState().itemCache, [uid, {}]]) } as any)
+    // A committed SDK item reports its own saved revision (#744).
+    onCommitted?.({ etag: `rev-${uid}`, encryptedItem: { lastEtag: `rev-${uid}` } })
+    return uid
+  })
+  const updateItem = vi.fn(async (_type: string, _id: string, _content: string, options?: { onSaved?: (etag: string) => void }) => {
+    options?.onSaved?.(`etag-${++sequence}`)
+    return 'remote'
+  })
+  const deleteItem = vi.fn(async () => 'remote')
+  useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map(), createItem, updateItem, deleteItem } as any)
+  return { createItem, updateItem, deleteItem }
 }
 
 function queuedContact(id = 'temp-contact'): Contact {
@@ -59,6 +80,7 @@ describe('useContactStore', () => {
   })
 
   it('updateContact modifies a contact', async () => {
+    onlineAccount()
     const { createContact } = useContactStore.getState()
     const contact = await createContact({ displayName: 'Original Name' })
 
@@ -70,6 +92,7 @@ describe('useContactStore', () => {
   })
 
   it('deleteContact removes a contact', async () => {
+    onlineAccount()
     const { createContact } = useContactStore.getState()
     const contact = await createContact({ displayName: 'To Delete' })
 
@@ -82,9 +105,13 @@ describe('useContactStore', () => {
 
   it('keeps the vCard UID stable after replacing the local id with the Etebase item id', async () => {
     const createItem = vi.fn(async () => 'remote-contact-item')
-    const updateItem = vi.fn(async () => {})
+    const updateItem = vi.fn(async (_type: string, _id: string, _content: string, options?: { onSaved?: (etag: string) => void }) => {
+      options?.onSaved?.('etag-1')
+      return 'remote'
+    })
     useEtebaseStore.setState({
       account: {},
+      accountFingerprint: TEST_FINGERPRINT,
       createItem,
       updateItem,
     } as any)
@@ -93,7 +120,7 @@ describe('useContactStore', () => {
 
     expect(contact.id).toBe('remote-contact-item')
     expect(contact.uid).not.toBe('remote-contact-item')
-    expect(createItem.mock.calls[0]![1]).toContain(`UID:${contact.uid}`)
+    expect((createItem.mock.calls[0] as unknown[])[1]).toContain(`UID:${contact.uid}`)
 
     useEtebaseStore.setState({
       itemCache: new Map([['remote-contact-item', {}]]),
@@ -214,34 +241,39 @@ describe('useContactStore', () => {
   })
 
   describe('guarded offline queue integration', () => {
-    // Enqueue surface map: create -> Etebase createItem; uncached update/delete ->
-    // the direct guarded branches below; cached update/delete enqueue in Etebase store.
+    // Enqueue surface map: create -> Etebase createItem. Ordinary contact edits and
+    // deletes of a temporary identity are refused (#744): they never reach a queue.
     beforeEach(async () => { await resetRealOfflineQueue(); resetStore(); offlineAccount(); toastMock.showErrorToast.mockReset() })
 
     it.each([
       ['create', async () => { await useContactStore.getState().createContact({ displayName: 'Create', listId: 'contacts-1' }) }],
-      ['update', async () => { useContactStore.setState({ contacts: [queuedContact()] }); await useContactStore.getState().updateContact('temp-contact', { displayName: 'Update' }) }],
-      ['delete', async () => { useContactStore.setState({ contacts: [queuedContact()] }); await useContactStore.getState().deleteContact('temp-contact') }],
     ] as const)('persists, exposes, and replays an owned offline %s', async (type, mutate) => {
       await mutate()
       await replayOwnedEntry(await expectOwnedQueueEntry(type, 'contacts'))
     })
 
-    it('isolates equal contact IDs across account fingerprints', async () => {
+    it('refuses an ordinary update of a temporary identity without any queue write and keeps the draft visible', async () => {
       useContactStore.setState({ contacts: [queuedContact()] })
-      await useContactStore.getState().updateContact('temp-contact', { displayName: 'Owned' })
+      await expect(useContactStore.getState().updateContact('temp-contact', { displayName: 'Update' })).resolves.toBe(false)
+      expect(await getAll(queueGuard())).toEqual([])
+      expect(useContactStore.getState().contacts.map((contact) => contact.displayName)).toEqual(['Update'])
+      expect(useContactStore.getState().contactSaveStates['temp-contact']).toBe('refused')
+    })
+
+    it('isolates equal contact IDs across account fingerprints', async () => {
+      await useContactStore.getState().createContact({ displayName: 'Owned', listId: 'contacts-1' })
       expect(await getAll(queueGuard('other-account'))).toEqual([])
       expect(await getAll(queueGuard(TEST_FINGERPRINT))).toHaveLength(1)
     })
 
     it('quietly cancels at the actual IndexedDB commit boundary', async () => {
-      useContactStore.setState({ contacts: [queuedContact()] })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const putSpy = bumpEpochWhenQueuePutRuns(() => {
         useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any)
         useContactStore.setState({ contacts: [] })
       })
-      await expect(useContactStore.getState().updateContact('temp-contact', { displayName: 'Stale' })).resolves.toBeUndefined()
+      // The create never publishes into the account that replaced its origin.
+      await expect(useContactStore.getState().createContact({ displayName: 'Stale', listId: 'contacts-1' })).rejects.toBeInstanceOf(AccountBoundaryChangedError)
       putSpy.mockRestore()
       expect(useContactStore.getState().contacts).toEqual([])
       expect(await getAll()).toEqual([])
@@ -251,14 +283,15 @@ describe('useContactStore', () => {
       errorSpy.mockRestore()
     })
 
-    it('quietly cancels its distinct uncached delete branch at the actual IndexedDB commit boundary', async () => {
+    it('quietly refuses its distinct temporary-identity delete without any queue write', async () => {
       useContactStore.setState({ contacts: [queuedContact()] })
-      await expectQuietQueueCommitCancellation(
-        () => useContactStore.getState().deleteContact('temp-contact'),
-        () => { useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any); useContactStore.setState({ contacts: [] }) },
-        () => expect(useContactStore.getState().contacts).toEqual([]),
-        toastMock,
-      )
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      await expect(useContactStore.getState().deleteContact('temp-contact')).resolves.toBe(false)
+      expect(useContactStore.getState().contacts.map((contact) => contact.id)).toEqual(['temp-contact'])
+      expect(await getAll()).toEqual([])
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+      errorSpy.mockRestore()
     })
   })
 
@@ -268,13 +301,24 @@ describe('useContactStore', () => {
       useContactStore.setState({ contacts: [queuedContact('remote-contact')] })
     })
 
+    /** An accepted remote save reports its own etag, as the real lower store does. */
+    const savedRemote = (etag: string) => async (_type: string, _id: string, _content: string, options?: { onSaved?: (etag: string) => void }) => {
+      options?.onSaved?.(etag)
+      return 'remote'
+    }
+
     it('persists an authorized favorite as canonical encrypted item content', async () => {
-      const updateItem = vi.fn().mockResolvedValue('remote')
+      const updateItem = vi.fn(savedRemote('etag-1'))
       useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
       await useContactStore.getState().setContactFavorite('remote-contact', true)
       expect(useContactStore.getState().contacts[0]!.favorite).toBe(true)
       expect(updateItem.mock.calls[0]![2]).toContain('X-SILENTSUITE-FAVORITE:1')
-      expect(updateItem.mock.calls[0]![3]).toEqual({ suppressErrorToast: true, persistEncryptedOfflineContent: true })
+      // A favorite is the only contact edit that may be sealed, through its captured record base.
+      expect(updateItem.mock.calls[0]![3]).toMatchObject({
+        suppressErrorToast: true,
+        sealIntent: 'favorite',
+        contactBase: { witness: expect.not.stringContaining('X-SILENTSUITE-FAVORITE:1') },
+      })
     })
 
     it('rolls back an online failure with static feedback', async () => {
@@ -330,7 +374,7 @@ describe('useContactStore', () => {
       const first = new Promise<never>((_resolve, reject) => { rejectFirst = reject })
       const updateItem = vi.fn()
         .mockReturnValueOnce(first)
-        .mockResolvedValueOnce('remote')
+        .mockImplementationOnce(savedRemote('etag-2'))
       useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
 
       const older = useContactStore.getState().setContactFavorite('remote-contact', true)
@@ -346,7 +390,10 @@ describe('useContactStore', () => {
       let resolveSecond!: (value: 'remote') => void
       const first = new Promise<'remote'>((resolve) => { resolveFirst = resolve })
       const second = new Promise<'remote'>((resolve) => { resolveSecond = resolve })
-      const updateItem = vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second)
+      const reportingSaved = (pending: Promise<'remote'>, etag: string) => (_type: string, _id: string, _content: string, options?: { onSaved?: (etag: string) => void }) => (
+        pending.then((value) => { options?.onSaved?.(etag); return value })
+      )
+      const updateItem = vi.fn().mockImplementationOnce(reportingSaved(first, 'etag-1')).mockImplementationOnce(reportingSaved(second, 'etag-2'))
       useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['remote-contact', {}]]), updateItem } as any)
 
       const favorite = useContactStore.getState().setContactFavorite('remote-contact', true)

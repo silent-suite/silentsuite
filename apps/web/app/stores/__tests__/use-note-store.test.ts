@@ -99,8 +99,10 @@ describe('useNoteStore', () => {
         undefined,
         'notes-1',
         { name: 'Titled', mtime: created.updated_at.getTime() },
+        // Receives the committed SDK item so the note publishes its paired saved revision (#744).
+        expect.any(Function),
       )
-      expect(created).toMatchObject({ id: 'remote-note', uid: 'remote-note', title: 'Titled', content: '# Hi', notebookId: 'notes-1' })
+      expect(created).toMatchObject({ id: 'remote-note', uid: 'remote-note', title: 'Titled', content: '# Hi', notebookId: 'notes-1', revision: null })
       expect(useNoteStore.getState().notes).toEqual([created])
     })
 
@@ -251,30 +253,33 @@ describe('useNoteStore', () => {
   })
 
   describe('deleteNote', () => {
+    // A shown note carries the revision its text was read at; deletes are conditional on it (#744 §9).
+    const shown = (base: Note) => ({ ...base, revision: 'rev-1' }) as Note
+
     it('removes the note locally and remotely', async () => {
       const deleteItem = vi.fn(async () => 'remote' as const)
       etebase({ deleteItem, itemCache: new Map([['note-1', {}]]) })
-      useNoteStore.setState({ notes: [note('note-1')] })
+      useNoteStore.setState({ notes: [shown(note('note-1'))] })
 
       await expect(useNoteStore.getState().deleteNote('note-1')).resolves.toBe(true)
 
-      expect(deleteItem).toHaveBeenCalledWith('notes', 'note-1', { collectionUid: 'notes-1' })
+      expect(deleteItem).toHaveBeenCalledWith('notes', 'note-1', expect.objectContaining({ collectionUid: 'notes-1', conditional: true, expectedRevision: 'rev-1' }))
       expect(useNoteStore.getState().notes).toEqual([])
     })
 
     it('hands a delete to the store when no Etebase item is in memory and keeps the note removed once queued', async () => {
       const deleteItem = vi.fn(async () => 'queued' as const)
       etebase({ deleteItem, itemCache: new Map() })
-      useNoteStore.setState({ notes: [note('cached-1')] })
+      useNoteStore.setState({ notes: [shown(note('cached-1'))] })
 
       await expect(useNoteStore.getState().deleteNote('cached-1')).resolves.toBe(true)
 
-      expect(deleteItem).toHaveBeenCalledWith('notes', 'cached-1', { collectionUid: 'notes-1' })
+      expect(deleteItem).toHaveBeenCalledWith('notes', 'cached-1', expect.objectContaining({ collectionUid: 'notes-1', conditional: true, expectedRevision: 'rev-1' }))
       expect(useNoteStore.getState().notes).toEqual([])
     })
 
     it('restores the note when the remote delete fails', async () => {
-      const original = note('note-1')
+      const original = shown(note('note-1'))
       etebase({ deleteItem: vi.fn(async () => false as const), itemCache: new Map([['note-1', {}]]) })
       useNoteStore.setState({ notes: [original] })
 
@@ -307,20 +312,22 @@ describe('useNoteStore', () => {
       const moveItem = vi.fn(async () => 'note-moved')
       etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
       useNotebookStore.setState({ lists: notebooks })
-      const original = note('note-1', { title: 'Keep me', content: 'body' })
+      // A move deletes the source only at the revision the note was shown at (#744 §9).
+      const original = note('note-1', { title: 'Keep me', content: 'body', revision: 'rev-1' } as Partial<Note>)
       useNoteStore.setState({ notes: [original] })
 
       await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBe('note-moved')
 
-      expect(moveItem).toHaveBeenCalledWith('notes', 'note-1', 'body', 'notes-2', 'notes-1', { name: 'Keep me', mtime: original.updated_at.getTime() })
-      expect(useNoteStore.getState().notes).toEqual([{ ...original, id: 'note-moved', uid: 'note-moved', notebookId: 'notes-2' }])
+      expect(moveItem).toHaveBeenCalledWith('notes', 'note-1', 'body', 'notes-2', 'notes-1', { name: 'Keep me', mtime: original.updated_at.getTime() }, { sourceRevision: 'rev-1', offlineAllowed: true })
+      // The moved note is a new item: its revision is unknown until a paired read (#744).
+      expect(useNoteStore.getState().notes).toEqual([{ ...original, id: 'note-moved', uid: 'note-moved', notebookId: 'notes-2', revision: null }])
     })
 
     it('leaves the note in place when the move does not happen', async () => {
       const moveItem = vi.fn(async () => null)
       etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
       useNotebookStore.setState({ lists: notebooks })
-      const original = note('note-1')
+      const original = note('note-1', { revision: 'rev-1' } as Partial<Note>)
       useNoteStore.setState({ notes: [original] })
 
       await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBeNull()
@@ -351,11 +358,13 @@ describe('useNoteStore', () => {
   describe('account boundary while an action is in flight', () => {
     it.each(staleCases)('delete never republishes the note after %s (%s)', async (boundary, completion) => {
       const pending = deferred<'remote' | false>()
-      etebase({ deleteItem: vi.fn(() => pending.promise), itemCache: new Map([['note-1', {}]]) })
-      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body' })] })
+      const deleteItem = vi.fn(() => pending.promise)
+      etebase({ deleteItem, itemCache: new Map([['note-1', {}]]) })
+      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body', revision: 'rev-1' } as Partial<Note>)] })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       const result = useNoteStore.getState().deleteNote('note-1')
+      await vi.waitFor(() => expect(deleteItem).toHaveBeenCalled())
       boundaries[boundary].cross()
       settle(pending, completion, 'remote', false)
 
@@ -394,7 +403,7 @@ describe('useNoteStore', () => {
           { id: 'notes-2', name: 'Work', color: '#00f', visible: true, accessLevel: 2 },
         ],
       })
-      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body' })] })
+      useNoteStore.setState({ notes: [note('note-1', { content: 'Account A body', revision: 'rev-1' } as Partial<Note>)] })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       const result = useNoteStore.getState().moveNote('note-1', 'notes-2')
@@ -481,15 +490,18 @@ describe('useNoteStore', () => {
       expect(toastMock.showErrorToast).not.toHaveBeenCalled()
     })
 
-    it('still restores a note and reports the failure when the same account\'s delete throws', async () => {
-      const original = note('note-1')
+    it('keeps a note shown and reports the failure when the same account\'s delete throws', async () => {
+      const original = note('note-1', { revision: 'rev-1' } as Partial<Note>)
       const pending = deferred<'remote' | false>()
-      etebase({ deleteItem: vi.fn(() => pending.promise), itemCache: new Map([['note-1', {}]]) })
+      const deleteItem = vi.fn(() => pending.promise)
+      etebase({ deleteItem, itemCache: new Map([['note-1', {}]]) })
       useNoteStore.setState({ notes: [original] })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
       const result = useNoteStore.getState().deleteNote('note-1')
-      expect(useNoteStore.getState().notes).toEqual([])
+      await vi.waitFor(() => expect(deleteItem).toHaveBeenCalled())
+      // Conditional deletes are not optimistic: the note stays until the server accepts (#744 §9).
+      expect(useNoteStore.getState().notes).toEqual([original])
       pending.reject(new Error('boom'))
 
       await expect(result).resolves.toBe(false)

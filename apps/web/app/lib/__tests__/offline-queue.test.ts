@@ -434,7 +434,8 @@ describe('offline-queue', () => {
 
     it('removes all pending and failed mutations for a superseded item', async () => {
       const guard = testGuard()
-      await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1' }, guard)
+      // An update carrying its body is ordinary work; a content-free one would be a legacy entry (#744).
+      await enqueue({ type: 'update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1', content: 'note body' }, guard)
       const fail = vi.fn(async () => { throw new Error('permanent failure') })
       await replay(fail, guard)
       await replay(fail, guard)
