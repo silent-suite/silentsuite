@@ -66,6 +66,16 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         if (how == null) stalledItemLists.remove(uid) else stalledItemLists[uid] = how
     }
 
+    private val unlistableItemLists: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * While [notFound], the item listing of [uid] answers 404 although the collection is still
+     * there: it is still listed and can still be fetched by its uid.
+     */
+    fun answerItemListNotFound(uid: String, notFound: Boolean) {
+        if (notFound) unlistableItemLists += uid else unlistableItemLists -= uid
+    }
+
     private class StoredItem(val body: Map<String, Any?>, val changedAt: Long)
 
     private class StoredCollection(
@@ -260,12 +270,28 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         }
         method == "GET" && ITEM_LIST.matches(path) -> {
             val stored = collections[ITEM_LIST.find(path)!!.groupValues[1]]
-            if (stored == null || stored.removedAt != null) {
+            if (stored == null || stored.removedAt != null || stored.uid in unlistableItemLists) {
                 noCollection()
             } else {
                 val stoken = url.queryParameter("stoken")
                 val page = listItems(stored, stoken)
                 stalledItemLists[stored.uid]?.let { stalled("items ${stored.uid}", it, page, stoken ?: "i0") } ?: (200 to TestMsgPack.encode(page))
+            }
+        }
+        method == "GET" && COLLECTION.matches(path) -> {
+            // One collection by its uid, in the shape a listing gives it.
+            val stored = collections[COLLECTION.find(path)!!.groupValues[1]]
+            if (stored == null || stored.removedAt != null) {
+                noCollection()
+            } else {
+                val item = (stored.body["item"] as Map<String, Any?>).filterKeys { it != "etag" }
+                200 to TestMsgPack.encode(linkedMapOf(
+                    "collectionType" to stored.body["collectionType"],
+                    "collectionKey" to stored.body["collectionKey"],
+                    "accessLevel" to 1L,
+                    "stoken" to stored.itemStoken,
+                    "item" to item,
+                ))
             }
         }
         else -> 404 to TestMsgPack.encode(linkedMapOf("code" to "not_found", "detail" to "$method $path"))
@@ -350,6 +376,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
     }
 
     private companion object {
+        val COLLECTION = Regex("collection/([^/]+)/")
         val ITEM_LIST = Regex("collection/([^/]+)/item/")
         val ITEM_UPLOAD = Regex("collection/([^/]+)/item/(?:batch|transaction)/")
         const val STALL_LIMIT = 20
