@@ -40,6 +40,7 @@ class PendingNotesStoreTest {
         PendingNotesStore.beforeRenameForTesting = null
         PendingNotesStore.beforeRemoveForTesting = null
         PendingNotesStore.beforeClearForTesting = null
+        PendingNotesStore.listFilesForTesting = null
         PendingNotesStore.resetForTesting()
     }
 
@@ -933,6 +934,61 @@ class PendingNotesStoreTest {
         assertFalse("the complete but uncommitted write was dropped", File(dir, "n1.note.new").exists())
     }
 
+    // Linux errno values, as fsync(2) answers them.
+    private val eio = 5
+    private val einval = 22
+
+    @Test fun `an unexpected directory sync failure is thrown, never reported as saved or removed`() {
+        var errno = 0
+        val s = PendingNotesStore.open(dir, PendingNotesStore.directorySync({ errno }) { it == einval }, atomicMove)
+        s.saveLocal("n1", "b1", "r1", blob("first"), isCreate = false)
+        errno = eio
+        assertThrows(java.io.IOException::class.java) { s.saveLocal("n1", "b1", "r2", blob("second"), isCreate = false) }
+        assertThrows(java.io.IOException::class.java) { s.discard("n1") }
+    }
+
+    @Test fun `a filesystem that cannot sync a directory at all still saves`() {
+        val s = PendingNotesStore.open(dir, PendingNotesStore.directorySync({ einval }) { it == einval }, atomicMove)
+        assertTrue(s.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false) is SaveOutcome.Saved)
+    }
+
+    @Test fun `a new store directory is synced into each parent before the first file is committed in it`() {
+        val base = tmp.newFolder("base").canonicalFile
+        fun name(f: File) = f.canonicalFile.relativeTo(base).invariantSeparatorsPath.ifEmpty { "." }
+        val events = mutableListOf<String>()
+        val s = PendingNotesStore.open(File(base, "a/b/store"), syncDirectory = { events += "sync ${name(it)}" },
+            rename = { from, to -> events += "rename ${name(to)}"; atomicMove(from, to) })
+        s.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        assertEquals(listOf("sync .", "sync a", "sync a/b", "rename a/b/store/sequence", "sync a/b/store"), events.take(5))
+    }
+
+    @Test fun `a failed sync of a new directory is tried again by the next write`() {
+        val base = tmp.newFolder("base").canonicalFile
+        var fail = true
+        val synced = mutableListOf<File>()
+        val s = PendingNotesStore.open(File(base, "a/store"), syncDirectory = {
+            if (fail && it.canonicalFile == base) throw java.io.IOException("sync failed")
+            synced += it.canonicalFile
+        }, rename = atomicMove)
+        assertThrows(java.io.IOException::class.java) { s.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false) }
+        fail = false
+        assertTrue(s.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false) is SaveOutcome.Saved)
+        assertEquals(listOf(base, File(base, "a")), synced.take(2))
+    }
+
+    @Test fun `recovery commits an interrupted first write the way a write commits it`() {
+        PendingNotesStore.beforeRenameForTesting = { if (it.name == "n1.note") throw IllegalStateException("process died") }
+        assertThrows(IllegalStateException::class.java) { store.saveLocal("n1", "b1", "r1", blob("first write"), isCreate = false) }
+        PendingNotesStore.beforeRenameForTesting = null
+        assertFalse(File(dir, "n1.note").exists())
+        PendingNotesStore.resetForTesting()
+        val events = mutableListOf<String>()
+        val after = PendingNotesStore.open(dir, syncDirectory = { events += "sync ${it.name}" },
+            rename = { from, to -> events += "rename ${to.name}"; atomicMove(from, to) })
+        assertEquals("r1", after.entry("n1").revision)
+        assertEquals(listOf("rename n1.note", "sync store"), events)
+    }
+
     /** A store whose rename of "<target>" fails while [refuse] says so, as rename(2) can (EBUSY, EIO). */
     private fun refusingRenames(d: File, target: String, refuse: () -> Boolean) = PendingNotesStore.open(d, rename = { from, to ->
         if (refuse() && to.name == target) throw java.io.IOException("rename refused") else atomicMove(from, to)
@@ -1229,6 +1285,24 @@ class PendingNotesStoreTest {
         File(dir, "n1.note").writeBytes(byteArrayOf(0))
         assertTrue(store.pruneNotebooks().isEmpty())
         assertArrayEquals(blob("key"), store.notebook("b9"))
+    }
+
+    @Test fun `a failed entry listing prunes nothing, even when the notebook listing after it works`() {
+        store.putNotebook("b9", blob("key b9"))
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
+        var listings = 0
+        PendingNotesStore.listFilesForTesting = { d -> if (listings++ == 0) null else d.listFiles() }
+        assertThrows(java.io.IOException::class.java) { store.pruneNotebooks() }
+        PendingNotesStore.listFilesForTesting = null
+        assertArrayEquals(blob("key b1"), store.notebook("b1"))
+        assertArrayEquals(blob("key b9"), store.notebook("b9"))
+        assertEquals(listOf("b9"), store.pruneNotebooks())
+    }
+
+    @Test fun `a store whose directory was never created prunes nothing and stays uncreated`() {
+        val never = File(tmp.root, "never")
+        assertTrue(open(never).pruneNotebooks().isEmpty())
+        assertFalse(never.exists())
     }
 
     @Test fun `uids that could escape the directory are refused for every kind of file`() {

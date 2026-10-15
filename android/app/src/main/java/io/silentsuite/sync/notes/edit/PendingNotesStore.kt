@@ -37,6 +37,12 @@ internal class PendingNotesStore private constructor(
     private var recovered = false
     private var recoveryProblems: List<Read.Unreadable> = emptyList()
 
+    /**
+     * New directory levels whose entry in their parent is not synced yet. A level stays here until that
+     * sync succeeds, so a failed one is tried again by the next write.
+     */
+    private val unsyncedLevels = ArrayList<File>()
+
     /** The open editors. A note's landed record exists only while one of them is on that note (design 3.1). */
     private val editors = ArrayList<EditorHandle>()
 
@@ -144,10 +150,12 @@ internal class PendingNotesStore private constructor(
     fun read(noteUid: String): Read = locked { readEntry(noteUid) }
 
     /** Lists every entry. A committed file that cannot be read is reported in [Scan.unreadable], never deleted. */
-    fun scan(): Scan = locked {
+    fun scan(): Scan = locked { scanOf(files(NOTE)) }
+
+    private fun scanOf(noteFiles: List<File>): Scan {
         val entries = mutableListOf<PendingEntry>()
         val unreadable = mutableListOf<Read.Unreadable>()
-        for (file in files(NOTE)) {
+        for (file in noteFiles) {
             when (val read = decodeFile(file)) {
                 is Read.Present -> entries += read.entry
                 is Read.Unreadable -> unreadable += read
@@ -155,7 +163,7 @@ internal class PendingNotesStore private constructor(
             }
         }
         unreadable += currentRecoveryProblems(entries.mapTo(HashSet()) { it.noteUid })
-        Scan(entries.sortedBy { it.noteUid }, unreadable.sortedBy { it.file })
+        return Scan(entries.sortedBy { it.noteUid }, unreadable.sortedBy { it.file })
     }
 
     /**
@@ -609,13 +617,14 @@ internal class PendingNotesStore private constructor(
 
     /**
      * Removes notebook copies no entry references. Skipped entirely while anything is unreadable,
-     * since its notebook is unknown and its copy may be the only way to decrypt it.
+     * since its notebook is unknown and its copy may be the only way to decrypt it. A listing that
+     * fails throws and removes nothing: read as an empty store, it would leave every copy unreferenced.
      */
     fun pruneNotebooks(): List<String> = locked {
-        val scan = scan()
+        val scan = scanOf(listedFiles(NOTE))
         if (scan.unreadable.isNotEmpty()) return@locked emptyList()
         val referenced = scan.entries.map { it.notebookUid }.toSet()
-        files(NOTEBOOK).map { it.name.removeSuffix(NOTEBOOK) }
+        listedFiles(NOTEBOOK).map { it.name.removeSuffix(NOTEBOOK) }
             .filter { it !in referenced }
             .onEach { remove(notebookFile(it)) }
     }
@@ -732,20 +741,23 @@ internal class PendingNotesStore private constructor(
         // 1. A leftover "<name>.new" was never committed. While "<name>" exists that write never reported
         // success, so it goes, unread. Without a committed file it is the first write of that file,
         // stopped before its rename. One that is cut short or fails its checksum goes as well. Any other
-        // is committed under its own name, whether or not this build can read its layout (a newer format
+        // is committed under its own name, in the order a write commits (content synced, renamed in one
+        // step, the rename synced), whether or not this build can read its layout (a newer format
         // after a downgrade, a held reason added later), so nothing a build wrote in full is thrown away
         // (design 3.1). An entry file this build cannot read is then reported like every committed entry
         // that cannot be read. The other kinds are kept for a build that can read them but not reported,
         // and not for long: a landed record goes in step 2 unless an editor is open, a notebook copy
         // lasts until a run prunes or rewrites it, and a counter that cannot be read restarts above
         // every version on disk.
-        for (tmp in dir.listFiles()?.filter { it.name.endsWith(NEW) }.orEmpty()) {
+        for (tmp in listDirectory()?.filter { it.name.endsWith(NEW) }.orEmpty()) {
             try {
                 val target = File(dir, tmp.name.removeSuffix(NEW))
                 if (target.exists() || !PendingCodec.isIntact(tmp.readBytes())) {
                     if (!tmp.delete()) throw IOException("could not remove ${tmp.name}")
                 } else {
+                    FileOutputStream(tmp, true).use { it.fd.sync() }
                     rename(tmp, target)
+                    syncDirectory(dir)
                 }
             } catch (e: IOException) {
                 problems += Read.Unreadable(tmp.name, e.message ?: "unreadable")
@@ -797,8 +809,19 @@ internal class PendingNotesStore private constructor(
         return problems
     }
 
-    private fun files(suffix: String): List<File> =
-        dir.listFiles()?.filter { it.isFile && it.name.endsWith(suffix) }?.sortedBy { it.name }.orEmpty()
+    private fun files(suffix: String): List<File> = withSuffix(listDirectory().orEmpty(), suffix)
+
+    /** [files], except that a listing that fails throws. Only a directory that was never created lists as empty. */
+    private fun listedFiles(suffix: String): List<File> {
+        val listed = listDirectory() ?: if (dir.exists()) throw IOException("could not list the pending store") else emptyArray()
+        return withSuffix(listed, suffix)
+    }
+
+    private fun withSuffix(listed: Array<out File>, suffix: String): List<File> =
+        listed.filter { it.isFile && it.name.endsWith(suffix) }.sortedBy { it.name }
+
+    /** The directory's files, or null when the listing fails, as File.listFiles answers. */
+    private fun listDirectory(): Array<File>? = listFilesForTesting.let { if (it != null) it(dir) else dir.listFiles() }
 
     private fun noteFile(uid: String) = File(dir, checkedUid(uid) + NOTE)
     private fun landedFile(uid: String) = File(dir, checkedUid(uid) + LANDED)
@@ -807,10 +830,11 @@ internal class PendingNotesStore private constructor(
     /**
      * Writes to "<name>.new", syncs it, renames it over "<name>" in one step ([rename]), and syncs the
      * directory so the rename itself survives a power loss. The committed file is never deleted first,
-     * so at every moment either the old or the new content is there under its own name.
+     * so at every moment either the old or the new content is there under its own name. A directory
+     * created on the way is synced into its parent first ([createDirectory]).
      */
     private fun writeAtomically(target: File, bytes: ByteArray) {
-        if (!dir.exists() && !dir.mkdirs()) throw IOException("could not create the pending store")
+        createDirectory()
         val tmp = File(dir, target.name + NEW)
         try {
             FileOutputStream(tmp).use { out ->
@@ -824,6 +848,24 @@ internal class PendingNotesStore private constructor(
             // Anything left half done is sorted out by recovery before the next operation.
             recovered = false
             throw e
+        }
+    }
+
+    /**
+     * Creates the store's directory and any missing parent, one level at a time, and syncs the parent of
+     * each new level, so a file committed in it cannot outlive, after a power loss, the entries that
+     * lead to it.
+     */
+    private fun createDirectory() {
+        if (!dir.exists()) {
+            for (level in generateSequence(dir) { it.parentFile }.takeWhile { !it.exists() }.toList().asReversed()) {
+                if (!level.mkdir() && !level.isDirectory) throw IOException("could not create the pending store")
+                unsyncedLevels += level
+            }
+        }
+        while (unsyncedLevels.isNotEmpty()) {
+            syncDirectory(unsyncedLevels.first().parentFile)
+            unsyncedLevels.removeAt(0)
         }
     }
 
@@ -872,11 +914,12 @@ internal class PendingNotesStore private constructor(
         private val UID = Regex("^[A-Za-z0-9_-]{1,128}$")
         private val registry = ConcurrentHashMap<String, PendingNotesStore>()
 
-        /** Test seams: crash points inside the write, conflict, and sign-out sequences. */
+        /** Test seams: crash points inside the write, conflict, and sign-out sequences, and the directory listing. */
         @Volatile internal var beforeOriginalRemovedForTesting: (() -> Unit)? = null
         @Volatile internal var beforeRenameForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeRemoveForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeClearForTesting: (() -> Unit)? = null
+        @Volatile internal var listFilesForTesting: ((File) -> Array<File>?)? = null
 
         /** rename(2) through File.renameTo: on Android and Linux it replaces the target in one step. */
         private val renameTo: (File, File) -> Unit = { from, to ->
@@ -915,19 +958,37 @@ internal class PendingNotesStore private constructor(
             return File(File(root, "notes-pending"), digest.joinToString("") { "%02x".format(it) })
         }
 
-        /** Makes a rename or removal in [dir] durable; a filesystem without directory sync is logged, not fatal. */
-        private val androidDirectorySync: (File) -> Unit = { dir ->
+        /**
+         * Makes a rename, removal or new directory durable through [fsync], which syncs one directory and
+         * answers 0 or the errno it failed with. Only a filesystem that cannot sync a directory at all
+         * ([cannotSync]) is logged and passed over. Any other failure is thrown, so a write is never
+         * reported saved without its sync.
+         */
+        internal fun directorySync(fsync: (String) -> Int, cannotSync: (Int) -> Boolean): (File) -> Unit = { dir ->
+            val errno = fsync(dir.path)
+            if (errno != 0) {
+                if (!cannotSync(errno)) throw IOException("could not sync a pending store directory: errno $errno")
+                Logger.log.warning("Pending notes directory sync not available: ${OsConstants.errnoName(errno)}")
+            }
+        }
+
+        /** fsync(2) on a directory: 0, or the errno of the step that failed. */
+        private val fsyncDirectory: (String) -> Int = { path ->
             try {
-                val fd = Os.open(dir.path, OsConstants.O_RDONLY, 0)
+                val fd = Os.open(path, OsConstants.O_RDONLY, 0)
                 try {
                     Os.fsync(fd)
                 } finally {
                     Os.close(fd)
                 }
+                0
             } catch (e: ErrnoException) {
-                Logger.log.warning("Pending notes directory sync not available: ${OsConstants.errnoName(e.errno)}")
+                e.errno
             }
         }
+
+        /** EINVAL and ENOTSUP are what a filesystem that cannot sync a directory answers. */
+        private val androidDirectorySync = directorySync(fsyncDirectory) { it == OsConstants.EINVAL || it == OsConstants.ENOTSUP }
 
         /** Outside backup and device transfer, and outside the Etebase cache's per-username directories. */
         fun forIdentity(context: Context, accountType: String, accountName: String, creationId: String) =
