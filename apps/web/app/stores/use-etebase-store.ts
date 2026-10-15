@@ -2712,30 +2712,32 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
   destroy: () => {
     const epoch = bumpAccountEpoch()
-    const { syncEngine } = get()
-    if (syncEngine) {
-      try {
+    // Any failure after the bump, including a nested teardown's typed error,
+    // is stamped with this invocation's token so callers never adopt another.
+    try {
+      const { syncEngine } = get()
+      if (syncEngine) {
         syncEngine.stop()
-      } catch (err) {
-        throw new EtebaseTeardownError(epoch, err)
       }
+      // A synchronously re-entrant account boundary now owns this store.
+      if (!isCurrentAccountEpoch(epoch)) return epoch
+      set({
+        account: null,
+        accountFingerprint: null,
+        collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] },
+        itemCache: new Map(),
+        itemTypeMap: new Map(),
+        itemCollectionMap: new Map(),
+        isInitialized: false,
+        restoreBlocked: false,
+        domainLoadState: unknownDomainLoadState(),
+        syncEngine: null,
+      })
+      logger.debug('[etebase-store] Destroyed')
+      return epoch
+    } catch (err) {
+      throw new EtebaseTeardownError(epoch, err)
     }
-    // A synchronously re-entrant account boundary now owns this store.
-    if (!isCurrentAccountEpoch(epoch)) return epoch
-    set({
-      account: null,
-      accountFingerprint: null,
-      collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] },
-      itemCache: new Map(),
-      itemTypeMap: new Map(),
-      itemCollectionMap: new Map(),
-      isInitialized: false,
-      restoreBlocked: false,
-      domainLoadState: unknownDomainLoadState(),
-      syncEngine: null,
-    })
-    logger.debug('[etebase-store] Destroyed')
-    return epoch
   },
 
   onSyncChange: (handler) => {

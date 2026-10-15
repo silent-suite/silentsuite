@@ -377,6 +377,66 @@ describe('teardown token contract', () => {
     expect(await persisted()).toEqual(CLEARED)
   })
 
+  it('a teardown subscriber that throws without a new account boundary does not stop logout cleanup', async () => {
+    signInA()
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    let throws = 0
+    const unsubscribe = useEtebaseStore.subscribe(() => {
+      throws += 1
+      throw new Error('synthetic subscriber failure')
+    })
+    try {
+      await useAuthStore.getState().logout()
+      expect(throws).toBeGreaterThan(0)
+      expect(await persisted()).toEqual(CLEARED)
+      expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+
+      const before = getAccountEpoch()
+      let thrown: unknown
+      try { useEtebaseStore.getState().destroy() } catch (err) { thrown = err }
+      expect(thrown).toBeInstanceOf(EtebaseTeardownError)
+      expect((thrown as EtebaseTeardownError).epoch).toBe(before + 1)
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('a teardown subscriber that establishes another account and then throws stops the departing cleanup', async () => {
+    signInA()
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    const userC = { ...userA, id: 'synthetic-user-C', email: 'c@synthetic.invalid' }
+    const unsubscribe = useEtebaseStore.subscribe(() => {
+      unsubscribe()
+      bumpAccountEpoch()
+      useAuthStore.setState({ user: userC, isAuthenticated: true })
+      throw new Error('synthetic subscriber failure after account switch')
+    })
+
+    await useAuthStore.getState().logout()
+
+    expect(useAuthStore.getState().user?.id).toBe(userC.id)
+    expect(await persisted()).toEqual(RETAINED_A)
+    expect(localStorage.getItem(INVALIDATED)).toBeNull()
+  })
+
+  it('a nested typed teardown failure inside a subscriber is stamped with the outer token, not adopted', async () => {
+    signInA()
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    // Logout gives up its user before teardown, so the epoch token is the only ownership signal here.
+    const unsubscribe = useEtebaseStore.subscribe(() => {
+      unsubscribe()
+      useEtebaseStore.setState({ syncEngine: { stop: () => { throw new Error('synthetic nested stop failure') } } as never })
+      useEtebaseStore.getState().destroy()
+    })
+    const before = getAccountEpoch()
+    let thrown: unknown
+    try { useEtebaseStore.getState().destroy() } catch (err) { thrown = err }
+    expect(thrown).toBeInstanceOf(EtebaseTeardownError)
+    expect((thrown as EtebaseTeardownError).epoch).toBe(before + 1)
+    expect(getAccountEpoch()).toBe(before + 2)
+    useEtebaseStore.setState({ syncEngine: null })
+  })
+
   it.each([0, 1, 2])('cleanup and different-user publication hold when teardown bumps %i time(s)', async (bumps) => {
     const realDestroy = useEtebaseStore.getState().destroy
     useEtebaseStore.setState({ destroy: () => {
