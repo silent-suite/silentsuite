@@ -1,5 +1,7 @@
 package io.silentsuite.sync.ui.settings
 
+import io.silentsuite.sync.notes.NotesNetworkPolicy
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -57,7 +59,36 @@ class SettingsRoutingContractTest {
             assertTrue(keyAt >= 0)
             assertTrue(syncXml.substring(keyAt, minOf(syncXml.length, keyAt + 220)).contains("android:persistent=\"false\""))
         }
+        val accountXml = File(resourceRoot, "settings_account.xml").readText()
+        listOf("notes_automatic_network", "notes_sync_now_network").forEach { key ->
+            val keyAt = accountXml.indexOf("android:key=\"$key\"")
+            assertTrue(keyAt >= 0)
+            val row = accountXml.substring(keyAt, minOf(accountXml.length, keyAt + 220))
+            assertTrue(row.contains("android:persistent=\"false\""))
+            assertTrue(row.contains("android:dependency=\"notes_enabled\""))
+        }
         val activity = File(sourceRoot, "ui/AppSettingsActivity.kt").readText()
         assertTrue(activity.contains("AccountSettings(requireContext(), account)"))
+
+        // The values the two rows offer are the names their listener accepts, and each has a label.
+        val strings = File("src/main/res/values/strings.xml").readText()
+        fun items(array: String): List<String> {
+            val open = "<string-array name=\"$array\""
+            assertEquals("$array is declared once", 1, strings.split(open).size - 1)
+            return Regex("<item>([^<]*)</item>").findAll(strings.substringAfter(open).substringBefore("</string-array>"))
+                .map { it.groupValues[1] }.toList()
+        }
+        assertEquals("the values offered are the names of NotesNetworkPolicy.Allowed, in its order",
+            NotesNetworkPolicy.Allowed.values().map { it.name }, items("settings_notes_network_values"))
+        assertEquals("one label for each value", NotesNetworkPolicy.Allowed.values().size, items("settings_notes_network_names").size)
+
+        // The write of each row is revalidated against the exact account and goes to that account.
+        val helperStart = "private fun notesNetworkPreference("
+        assertEquals(1, activity.split(helperStart).size - 1)
+        val helper = activity.substringAfter(helperStart).substringBefore(" fun ")
+        assertEquals("a Notes network row takes the exact selected account or refuses the change", 1,
+            helper.split("val exact = exactSelectedAccount() ?: return@setOnPreferenceChangeListener false").size - 1)
+        assertEquals("a Notes network row writes through the exact account", 1,
+            helper.split("write(AccountManager.get(requireContext().applicationContext), exact, chosen)").size - 1)
     }
 }

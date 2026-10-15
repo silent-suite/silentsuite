@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.CalendarContract
+import android.system.Os
 import android.widget.ListView
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
@@ -20,6 +21,7 @@ import androidx.test.rule.GrantPermissionRule
 import com.etebase.client.Client
 import com.etebase.client.Collection
 import com.etebase.client.Item
+import com.etebase.client.ItemManager
 import com.etebase.client.ItemMetadata
 import com.etebase.client.User
 import io.silentsuite.sync.AccountSettings
@@ -29,6 +31,13 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.edit.HeldReason
+import io.silentsuite.sync.notes.edit.NoteMetaCodec
+import io.silentsuite.sync.notes.edit.NoteMetaLibraryEvaluation
+import io.silentsuite.sync.notes.edit.NotePushPolicy
+import io.silentsuite.sync.notes.edit.PendingCodec
+import io.silentsuite.sync.notes.edit.PendingEntry
+import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.CalendarSyncManager
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
@@ -39,14 +48,17 @@ import io.silentsuite.sync.syncadapter.SyncManager
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
+import io.silentsuite.sync.syncadapter.syncConditionsAllow
 import io.silentsuite.sync.ui.AndroidCurrentAccountSignOut
 import io.silentsuite.sync.ui.CurrentAccountSignOutCoordinator
 import io.silentsuite.sync.ui.CurrentAccountSignOutState
 import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteListFragment
+import io.silentsuite.sync.ui.notes.NoteSync
 import io.silentsuite.sync.ui.notes.NoteViewFragment
 import io.silentsuite.sync.ui.notes.NotebookListFragment
+import io.silentsuite.sync.ui.notes.NotebookOverview
 import io.silentsuite.sync.ui.notes.NotesActivity
 import io.silentsuite.sync.ui.notes.NotesLoad
 import io.silentsuite.sync.ui.notes.NotesLoader
@@ -55,6 +67,7 @@ import io.silentsuite.sync.utils.AndroidCompat
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -79,12 +92,30 @@ import kotlin.concurrent.thread
  * The Notes job, the shared collection refresh and the Notes screens' loader, run for real
  * (coordinator, runner, refresh, loader, Etebase binding, local cache, account store, status store)
  * against an in-process stand-in for the server ([FakeEtebaseServer]) that serves real encrypted
- * notebooks and notes a page at a time, can hold a request in flight, and can make a listing
- * never finish. Most sync cases hold one request, change something while it is in flight,
- * release it, and check exactly what was written. The stall cases make a listing never finish
- * and check where each paging loop stops and how the next run recovers; one of them runs the
- * calendar adapter's own sync manager against a local calendar. The loader cases read what a
- * real sync cached, with no fixture in between.
+ * notebooks and notes a page at a time, can hold a request in flight, can make a listing never
+ * finish, and checks etags on upload as the project's server does. Most sync cases hold one request,
+ * change something while it is in flight, release it, and check exactly what was written. The stall
+ * cases make a listing never finish and check where each paging loop stops and how the next run
+ * recovers; one of them runs the calendar adapter's own sync manager against a local calendar. The
+ * loader cases read what a real sync cached, with no fixture in between. The push cases save into
+ * the pending store by note uid, with no editor open, then check what a real run sent, what the
+ * server and the cache hold afterwards, and what the run recorded, against a server that behaves
+ * and one that misbehaves in a given way. One of them opens an editor handle before its run, so
+ * that the push leaves a landed record to look at. Three of them hold the upload in flight and
+ * cancel the run, switch Notes off, sign out or replace the account before its answer arrives.
+ * Two cases pin what the device's network reads as, run by run, and check which runs the two Notes
+ * network settings and the account's own Wi-Fi rule admit. The second ends with two steps that
+ * take the pin off and read the device's own network; both are written to pass on any network.
+ * Every other case runs with the reading pinned to Wi-Fi, so none of its assertions depends on
+ * the network of the device.
+ * Some cases also read the pending store's files from disk: none holds a title, a text or a
+ * notebook name in plain form, and they are still there, byte for byte, after a cache clear and
+ * after a same-name account replaced the one that saved them. One case sends nothing: it compares
+ * the raw metadata codec with the binding's typed encoder and decoder
+ * ([NoteMetaBindingComparison]), on a notebook that is never uploaded. One more sends nothing and
+ * belongs to the msgpack-core evaluation only: it runs the form of the metadata merge that is
+ * written on that library, in this minified build, over the same table, and holds every result to
+ * the codec's ([NoteMetaLibraryComparison]).
  */
 @RunWith(AndroidJUnit4::class)
 class NotesSyncBoundaryRuntimeTest {
@@ -102,6 +133,12 @@ class NotesSyncBoundaryRuntimeTest {
 
     /** The notebooks this test uploaded, as the server side holds them, by uid. */
     private val uploaded = HashMap<String, Collection>()
+
+    /** The pending stores this test opened, cleared when it ends. */
+    private val stores = CopyOnWriteArrayList<PendingNotesStore>()
+
+    /** The NOTES status of the account the last manual run was started for, as it was right before that run. */
+    private var statusBeforeRun: SyncStatusStore.Status? = null
 
     /**
      * Android 5 and 6 handle an account change on system_server's main thread by walking
@@ -129,6 +166,11 @@ class NotesSyncBoundaryRuntimeTest {
         ContentResolver.setMasterSyncAutomatically(false)
         HttpClient.testInterceptor = fake
         requestSyncDispatchOverride = { _, _, extras -> dispatched += Bundle(extras) }
+        // Every case starts with the network reading pinned to Wi-Fi, so its runs do not decide on
+        // the device's own network. A case may pin another reading, and one case takes the pin off
+        // for its last two steps.
+        check(NotesNetwork.readingOverride == null) { "another test left the network reading pinned" }
+        NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(NotesNetworkPolicy.Connection.WIFI) }
     }
 
     @After fun tearDown() {
@@ -139,6 +181,8 @@ class NotesSyncBoundaryRuntimeTest {
         // the other classes that run in the same instrumentation process.
         val problems = mutableListOf<Throwable>()
         try {
+            // Sign-out does not clear the pending store yet (the lifecycle work of slice 2).
+            for (store in stores) runCatching { store.clearAll() }.exceptionOrNull()?.let(problems::add)
             for (name in names) {
                 runCatching { removeAccount(Account(name, App.accountType)) }.exceptionOrNull()?.let(problems::add)
                 runCatching {
@@ -151,6 +195,7 @@ class NotesSyncBoundaryRuntimeTest {
         } finally {
             HttpClient.testInterceptor = null
             requestSyncDispatchOverride = null
+            NotesNetwork.readingOverride = null
             ContentResolver.setMasterSyncAutomatically(previousMasterSync)
         }
         assertTrue("the Notes thread finished", drained)
@@ -223,6 +268,9 @@ class NotesSyncBoundaryRuntimeTest {
     @Test fun aSameNameAccountThatReplacedTheOldOneGetsNothingFromTheOldRunsInFlightRequests() {
         val name = "notes-boundary-${System.nanoTime()}@example.invalid"
         val account = newAccount("gen-1", name, discoveryKey = false)
+        // Both Notes network settings are moved off their defaults for the account that will be replaced.
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
         val notebook = uploadNotebook("Shared before the swap")
         // Three pages of notes.
         uploadNotes(notebook, "One", "Two", "Three", "Four", "Five")
@@ -233,6 +281,8 @@ class NotesSyncBoundaryRuntimeTest {
         NotesSyncCoordinator.request(context, account, "gen-1", NotesSyncPolicy.Trigger.MANUAL)
         listing.awaitArrival()
         replaceAccount(account, "gen-2")
+        assertEquals("the replacement starts from the default network settings",
+            NotesNetworkPolicy.Settings.DEFAULT, AccountSettings.notesNetworkSettings(manager, account))
         listing.release()
         assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
         assertNull("no list cursor was saved", listCursor(account))
@@ -277,6 +327,56 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("the list cursor did not move", cursorBefore, listCursor(account))
         assertNull(AccountSettings.collectionListTypes(manager, account))
         assertTrue(lastListingKeys(name).none { it.endsWith("gen-4") || it.endsWith("gen-3") })
+
+        // 4. Unsynced text (#709: a new account with the same name must not overwrite old drafts or
+        // inherit them). The account saves an edit and is then replaced as in steps 1 to 3: removed
+        // and added again under the same name. Neither the old store nor the cache is cleared by that.
+        val draft = uploadNote(notebook, "Kept on the server", "Server text", mtime = 9_000L)
+        syncNow(account, "gen-4")
+        assertTrue("the run fetched the pages that were left and the new note", "Kept on the server" in cachedNotes(account, notebook))
+        editLocally(account, "gen-4", notebook, draft.uid, OLD_DRAFT_TITLE, OLD_DRAFT_BODY, mtime = 10_000L)
+        val oldStore = pending(account, "gen-4")
+        val seenByOwner = (NotesLoader.note(context, account, "gen-4", notebook, draft.uid) as NotesLoad.Loaded).value
+        assertEquals("the old account sees its draft", listOf(OLD_DRAFT_TITLE, OLD_DRAFT_BODY, NoteSync.WAITING),
+            listOf(seenByOwner.title, seenByOwner.body, seenByOwner.sync))
+        val oldFiles = filesOnDisk(oldStore)
+        assertEquals(setOf("${draft.uid}.note", "$notebook.notebook", "sequence"), oldFiles.keys)
+
+        replaceAccount(account, "gen-5")
+        val newStore = pending(account, "gen-5")
+        assertFalse("a directory of its own", newStore.dir.canonicalPath == oldStore.dir.canonicalPath)
+        assertEquals("next to the old one", oldStore.dir.parentFile, newStore.dir.parentFile)
+        // Not inherited: by the store, by the loader the screens use, or by a sync run.
+        assertEquals(PendingNotesStore.Observed(PendingNotesStore.Read.Missing, 0), newStore.observe(draft.uid))
+        assertTrue(newStore.snapshot { true }.let { it.headers.isEmpty() && it.entries.isEmpty() && it.unreadable.isEmpty() })
+        assertNull(newStore.notebook(notebook))
+        assertEquals(NotesLoad.Stale, NotesLoader.note(context, account, "gen-4", notebook, draft.uid))
+        val overview = (NotesLoader.notebooks(context, account, "gen-5") as NotesLoad.Loaded).value
+        assertEquals("no unsynced text", 0, overview.unsyncedText)
+        assertTrue("no waiting change on any notebook", overview.notebooks.all { it.waiting == 0 })
+        assertEquals("the server's copy, with no local change over it",
+            NoteContent(draft.uid, "Kept on the server", "Server text", 9_000L),
+            (NotesLoader.note(context, account, "gen-5", notebook, draft.uid) as NotesLoad.Loaded).value)
+        val beforeRun = fake.requests.size
+        syncNow(account, "gen-5")
+        assertEquals("the replacement's run uploads nothing", emptyList<String>(), uploads(beforeRun))
+        assertEquals("Server text", itemManager(notebook).fetch(draft.uid).contentString)
+
+        // Not overwritten: the replacement saves the same note, and the old account's files are as they were.
+        editLocally(account, "gen-5", notebook, draft.uid, "Replacement title", "Replacement text", mtime = 11_000L)
+        assertSameFiles("the old account's store", oldFiles, filesOnDisk(oldStore))
+        val theirs = (newStore.read(draft.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals("Replacement text", decryptThroughStoredCopy(newStore, theirs).contentString)
+        // Nor when the replacement pushes that save.
+        val beforePush = fake.requests.size
+        syncNow(account, "gen-5")
+        assertEquals("the replacement's push", listOf(transactionOf(notebook)), uploads(beforePush))
+        assertEquals("Replacement text", itemManager(notebook).fetch(draft.uid).contentString)
+        assertSameFiles("the old account's store after the replacement's push", oldFiles, filesOnDisk(oldStore))
+        // Both accounts of this class use one Etebase session, so the old draft would decrypt for the
+        // replacement. The directory per creation id is the only thing that keeps it out of reach.
+        val old = (oldStore.read(draft.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(OLD_DRAFT_BODY, decryptThroughStoredCopy(oldStore, old).contentString)
     }
 
     @Test fun aCancelledOrSwitchedOffRunWritesNothingAfterItsInFlightRequest() {
@@ -464,7 +564,7 @@ class NotesSyncBoundaryRuntimeTest {
                 cursorOf(listing), readWhileHeld("a read of the list cursor") { listCursor(account) })
             assertEquals(setOf(first), readWhileHeld("a read of the cached collections") { cachedNotebooks(account) })
             val shown = readWhileHeld("the Notes screen's load") { NotesLoader.notebooks(context, account, "gen-open") }
-            assertEquals(listOf("Listed first"), (shown as NotesLoad.Loaded).value.map { it.name })
+            assertEquals(listOf("Listed first"), (shown as NotesLoad.Loaded).value.notebooks.map { it.name })
             assertTrue("the refresh is still waiting for its answer", refresh.thread.isAlive)
         } finally {
             listing.release()
@@ -810,6 +910,11 @@ class NotesSyncBoundaryRuntimeTest {
         val agendaBody = "# Monday\n- budget\n- hiring"
         uploadNote(work, "Old plan", "First line of the old plan", mtime = 1_000L)
         val agenda = uploadNote(work, "Agenda", agendaBody, mtime = 2_000L)
+        // A title with a character above U+FFFF, uploaded as the bytes another client writes for it: the
+        // map of name ("Shopping " and U+1F6D2 in its four-byte UTF-8 form) and mtime 500. The list
+        // shows it from the raw metadata, never through a typed string (design decision 5).
+        val cart = "Shopping \uD83D\uDED2"
+        uploadRawNote(work, hex("82 a4 6e616d65 ad 53686f7070696e6720 f09f9b92 a5 6d74696d65 cd01f4"), "eggs")
         // Neither of these is a note to show: an item of another type, and a deleted note.
         uploadNote(work, "Attachment", "not Markdown", mtime = 3_000L, type = "application/octet-stream")
         val deleted = uploadNote(work, "Thrown away", "gone", mtime = 4_000L)
@@ -826,8 +931,8 @@ class NotesSyncBoundaryRuntimeTest {
                 val list = activity.findViewById<ListView>(R.id.notebooks_list)
                 list.performItemClick(list.adapter.getView(1, null, list), 1, 1)
             }
-            waitUntil("the cached notes to show") { noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan") }
-            assertEquals(listOf("Monday", "First line of the old plan"), noteList(scenario)!!.renderedNotes.map { it.preview })
+            waitUntil("the cached notes to show") { noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan", cart) }
+            assertEquals(listOf("Monday", "First line of the old plan", "eggs"), noteList(scenario)!!.renderedNotes.map { it.preview })
             scenario.onActivity { activity ->
                 assertEquals("Work", activity.title.toString())
                 val list = activity.findViewById<ListView>(R.id.notes_list)
@@ -898,7 +1003,7 @@ class NotesSyncBoundaryRuntimeTest {
 
         // The replacement's notes were in the cache all along, readable by the same loader.
         val theirNotebooks = NotesLoader.notebooks(context, account, "gen-new")
-        assertEquals(listOf("Replacement notebook"), (theirNotebooks as NotesLoad.Loaded).value.map { it.name })
+        assertEquals(listOf("Replacement notebook"), (theirNotebooks as NotesLoad.Loaded).value.notebooks.map { it.name })
         val theirNote = NotesLoader.note(context, account, "gen-new", notebook, note.uid)
         assertEquals(NoteContent(note.uid, "Replacement note", "Replacement body", 2_000L), (theirNote as NotesLoad.Loaded).value)
     }
@@ -1080,6 +1185,1169 @@ class NotesSyncBoundaryRuntimeTest {
         }
     }
 
+    // ---- the push step: pending changes sent by a real run (design 3.3, 3.4 and 3.8) ----
+
+    @Test fun aSavedEditIsPushedOneNotePerTransactionAndLandsInTheCache() {
+        val account = newAccount("gen-push")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        val list = uploadNote(notebook, "List", "Milk", mtime = 1_500L)
+        syncNow(account, "gen-push")
+        editLocally(account, "gen-push", notebook, note.uid, "Plan v2", "Second draft", mtime = 2_000L)
+        editLocally(account, "gen-push", notebook, list.uid, "List", "Milk and eggs", mtime = 2_500L)
+        // An editor is open on the first note, so its push leaves a landed record: the other kind of file that holds a note.
+        val editor = pending(account, "gen-push").editorOpened(note.uid)
+        assertNothingPlainOnDisk(pending(account, "gen-push"), listOf("Plan v2", "Second draft", "Milk and eggs"))
+
+        val since = fake.requests.size
+        val sizes = fake.uploadSizes.size
+        syncNow(account, "gen-push")
+        // The request lines keep their query, so a sync token on a push would show here, and the
+        // stand-in server answers a stale one with 409 as the project's server does.
+        assertEquals("each with the etag check and no sync token", listOf(transactionOf(notebook), transactionOf(notebook)), uploads(since))
+        assertEquals("one note per request", listOf(1, 1), fake.uploadSizes.drop(sizes))
+        assertEquals("no conflicted copy", setOf(note.uid, list.uid), fake.itemUids(notebook))
+        val onServer = itemManager(notebook).fetch(note.uid)
+        assertEquals("Second draft", onServer.contentString)
+        assertEquals("Plan v2", onServer.meta.name)
+        assertEquals("Milk and eggs", itemManager(notebook).fetch(list.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-push").isEmpty())
+        assertEquals(setOf("Plan v2", "List"), cachedNotes(account, notebook))
+        assertSucceeded(status(account, "gen-push"))
+
+        // The landed record is the uploaded note as the app itself saved it, and it goes with its editor.
+        val afterPush = pending(account, "gen-push")
+        assertEquals(setOf("${note.uid}.landed", "sequence"), filesOnDisk(afterPush).keys)
+        assertNothingPlainOnDisk(afterPush, listOf("Plan v2", "Second draft"))
+        val landed = itemManager(notebook).cacheLoad(checkNotNull(afterPush.landed(note.uid)).blob)
+        assertEquals(listOf("Plan v2", "Second draft"), listOf(landed.meta.name, landed.contentString))
+        afterPush.editorClosed(editor)
+        assertEquals("the record goes with its editor", setOf("sequence"), filesOnDisk(afterPush).keys)
+
+        // A notebook copy no entry needs goes, in a run with something to push and in one without.
+        val store = pending(account, "gen-push")
+        assertNull(store.notebook(notebook))
+        store.putNotebook(notebook, server.collectionManager.cacheSave(uploaded.getValue(notebook)))
+        syncNow(account, "gen-push")
+        assertNull(store.notebook(notebook))
+    }
+
+    @Test fun anEditMadeOnAnOlderCopyBecomesAConflictedCopyAndBothReachTheServer() {
+        val account = newAccount("gen-conflict")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-conflict")
+        editLocally(account, "gen-conflict", notebook, note.uid, "Plan", "Edited on the phone", mtime = 2_000L)
+        editOnAnotherDevice(notebook, note.uid, "Edited on the web")
+
+        val since = fake.requests.size
+        val copyUpload = fake.hold("POST", TRANSACTION, skip = 1)
+        startManualRun(account, "gen-conflict")
+        copyUpload.awaitArrival()
+        // The conflicted copy is in the store, made by the app itself, while its upload is in flight.
+        val copyOnDisk = assertNothingPlainOnDisk(pending(account, "gen-conflict"),
+            listOf("Plan (conflicted copy)", "conflicted copy", "Edited on the phone")).values.single()
+        assertTrue("it is the copy, marked as made from a conflict: $copyOnDisk",
+            copyOnDisk.fromConflict && copyOnDisk.isCreate && copyOnDisk.origin == null && copyOnDisk.noteUid != note.uid)
+        val copyItem = decryptThroughStoredCopy(pending(account, "gen-conflict"), copyOnDisk)
+        assertEquals(listOf("Plan (conflicted copy)", "Edited on the phone"), listOf(copyItem.meta.name, copyItem.contentString))
+        copyUpload.release()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, "gen-conflict"))
+        // The refused push, the server copy, and the new note, pushed in the run that made it.
+        assertEquals(listOf(transactionOf(notebook), transactionOf(notebook)), uploads(since))
+        assertEquals("the server copy was fetched once", 1,
+            fake.requests.drop(since).count { it.substringBefore('?') == "GET collection/$notebook/item/${note.uid}/" })
+        val onServer = fake.itemUids(notebook)
+        assertEquals("the server version stays, and the phone's text has a note of its own", 2, onServer.size)
+        assertEquals("Edited on the web", itemManager(notebook).fetch(note.uid).contentString)
+        val copy = itemManager(notebook).fetch((onServer - note.uid).single())
+        assertEquals("Plan (conflicted copy)", copy.meta.name)
+        assertEquals("Edited on the phone", copy.contentString)
+        @Suppress("UNCHECKED_CAST")
+        assertEquals("fresh metadata, as the web's move writes", setOf("name", "mtime"), (TestMsgPack.decode(copy.metaRaw) as Map<String, Any?>).keys)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-conflict").isEmpty())
+        assertEquals(setOf("Plan", "Plan (conflicted copy)"), cachedNotes(account, notebook))
+        assertSucceeded(status(account, "gen-conflict"))
+    }
+
+    @Test fun aLostAnswerFollowedByAnotherSaveIsRebasedNotCopied() {
+        val account = newAccount("gen-lost")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-lost")
+        editLocally(account, "gen-lost", notebook, note.uid, "Plan", "First phone edit", mtime = 2_000L)
+        fake.loseAnswer("POST", TRANSACTION)
+        syncNow(account, "gen-lost")
+        assertEquals("the upload landed", "First phone edit", itemManager(notebook).fetch(note.uid).contentString)
+        assertEquals("a dropped connection is a network failure", SyncStatusStore.FailureCategory.NETWORK,
+            status(account, "gen-lost").lastFailureCategory)
+
+        // The user saves again before the next run: the new text is still based on the copy from
+        // before the upload whose answer was lost.
+        // Its title has a character above U+FFFF, so the rebase and its read-back carry one on every lane.
+        val cart = "Plan \uD83D\uDED2"
+        editLocally(account, "gen-lost", notebook, note.uid, cart, "Second phone edit", mtime = 3_000L)
+        val store = pending(account, "gen-lost")
+        val saved = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+        val since = fake.requests.size
+        val rebasedPush = fake.hold("POST", TRANSACTION, skip = 1)
+        startManualRun(account, "gen-lost")
+        rebasedPush.awaitArrival()
+        // The rebased entry is in the store, built by the app itself, while its upload is in flight.
+        val rebased = assertNothingPlainOnDisk(store, listOf("Second phone edit")).getValue(note.uid)
+        assertTrue("it is the rebase result, not the entry the save wrote: $rebased",
+            rebased.version > saved.version && rebased.revision != saved.revision && saved.revision in rebased.sent)
+        assertEquals("Second phone edit", decryptThroughStoredCopy(store, rebased).contentString)
+        rebasedPush.release()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, "gen-lost"))
+        assertEquals("a conflict with our own upload, then the rebased push",
+            listOf(transactionOf(notebook), transactionOf(notebook)), uploads(since))
+        assertEquals("no conflicted copy", setOf(note.uid), fake.itemUids(notebook))
+        val landed = itemManager(notebook).fetch(note.uid)
+        assertEquals("Second phone edit", landed.contentString)
+        assertEquals("the title went through the rebase and its read-back, read here from the raw bytes", cart,
+            NoteMetaCodec.peek(landed.metaRaw)?.name)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-lost").isEmpty())
+        assertSucceeded(status(account, "gen-lost"))
+    }
+
+    @Test fun anEditOfANoteDeletedElsewhereBecomesANewNoteWithItsOwnTitleAndTheDeletionStays() {
+        val account = newAccount("gen-gone")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        val keep = uploadNote(notebook, "Keep", "Stays", mtime = 1_500L)
+        syncNow(account, "gen-gone")
+        editLocally(account, "gen-gone", notebook, note.uid, "Plan v2", "Edited on the phone", mtime = 2_000L)
+        // Deleted on another device: the server's copy is a deleted item, and this account's cache does not know it yet.
+        note.delete()
+        itemManager(notebook).batch(arrayOf(note))
+        val deletion = note.etag
+        assertEquals(setOf("Plan", "Keep"), cachedNotes(account, notebook))
+
+        val since = fake.requests.size
+        val newUpload = fake.hold("POST", TRANSACTION, skip = 1)
+        startManualRun(account, "gen-gone")
+        newUpload.awaitArrival()
+        // The deleted note has left the cached list already, through the push step's own cache write and
+        // not the fetch, which comes after it. The new note is in the store, made by the app itself,
+        // while its upload is in flight.
+        assertTrue("the fetch has not run yet",
+            fake.requests.drop(since).none { it.substringBefore('?') == "GET collection/$notebook/item/" })
+        assertEquals("the deleted note is no longer listed", setOf("Keep"), cachedNotes(account, notebook))
+        val newOnDisk = assertNothingPlainOnDisk(pending(account, "gen-gone"), listOf("Plan v2", "Edited on the phone")).values.single()
+        assertTrue("it is the new note, marked as made from a conflict: $newOnDisk",
+            newOnDisk.fromConflict && newOnDisk.isCreate && newOnDisk.origin == null && newOnDisk.noteUid != note.uid)
+        val newItem = decryptThroughStoredCopy(pending(account, "gen-gone"), newOnDisk)
+        assertEquals(listOf("Plan v2", "Edited on the phone"), listOf(newItem.meta.name, newItem.contentString))
+        newUpload.release()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, "gen-gone"))
+        // The refused push, the server copy, and the new note, pushed in the run that made it.
+        val serverCopy = "GET collection/$notebook/item/${note.uid}/"
+        assertEquals(listOf(transactionOf(notebook), serverCopy, transactionOf(notebook)),
+            fake.requests.drop(since).filter { it.substringBefore('?') == serverCopy || UPLOAD.matches(it.substringBefore('?')) })
+        val onServer = fake.itemUids(notebook)
+        assertEquals("the deleted note, the other note, and the phone's text as a note of its own", 3, onServer.size)
+        val gone = itemManager(notebook).fetch(note.uid)
+        assertTrue("the note deleted elsewhere stays deleted", gone.isDeleted)
+        assertEquals("at the revision the other device left: nothing was uploaded over it", deletion, gone.etag)
+        val created = itemManager(notebook).fetch((onServer - note.uid - keep.uid).single())
+        assertEquals("its own title, not a conflicted copy's", "Plan v2", created.meta.name)
+        assertEquals("Edited on the phone", created.contentString)
+        @Suppress("UNCHECKED_CAST")
+        assertEquals("fresh metadata, as the web's move writes", setOf("name", "mtime"), (TestMsgPack.decode(created.metaRaw) as Map<String, Any?>).keys)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-gone").isEmpty())
+        assertEquals(setOf("Keep", "Plan v2"), cachedNotes(account, notebook))
+        assertSucceeded(status(account, "gen-gone"))
+    }
+
+    @Test fun aChangeInANotebookNowReadOnlyIsHeldWithoutAnUpload() {
+        val account = newAccount("gen-readonly")
+        val notebook = uploadNotebook("Shared")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-readonly")
+        // Saved without a copy of its notebook, as if writing that copy had failed: the run writes one.
+        editLocally(account, "gen-readonly", notebook, note.uid, "Plan", "Edited before access changed", mtime = 2_000L,
+            withNotebookCopy = false)
+        assertNull(pending(account, "gen-readonly").notebook(notebook))
+        fake.setAccessLevel(notebook, 0L)
+
+        val since = fake.requests.size
+        syncNow(account, "gen-readonly")
+        assertEquals("nothing was uploaded", emptyList<String>(), uploads(since))
+        val held = pending(account, "gen-readonly").read(note.uid) as PendingNotesStore.Read.Present
+        assertEquals(PendingEntry.State.HELD, held.entry.state)
+        assertEquals(HeldReason.READ_ONLY, held.entry.held!!.reason)
+        assertNotNull("the run kept a copy of the notebook, so the held text can still be decrypted",
+            pending(account, "gen-readonly").notebook(notebook))
+        assertEquals("First draft", itemManager(notebook).fetch(note.uid).contentString)
+        assertSucceeded(status(account, "gen-readonly"))
+
+        // Separate from the fetched cache (#709). The Etebase cache is cleared and seen to be empty, a
+        // file put into each of Android's cache directories is seen to go, and the held text stays,
+        // byte for byte, with the copy of its notebook, and still decrypts.
+        val store = pending(account, "gen-readonly")
+        assertStoreOutsideEveryCache(store, account.name)
+        val before = filesOnDisk(store)
+        clearEveryCache(account)
+        assertTrue("nothing is cached any more", cachedNotebooks(account).isEmpty())
+        assertSameFiles("the store after the cache clear", before, filesOnDisk(store))
+        val kept = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals("Edited before access changed", decryptThroughStoredCopy(store, kept).contentString)
+        assertEquals("the way to the text stays on screen with no notebook cached",
+            NotesLoad.Loaded(NotebookOverview(emptyList(), unsyncedText = 1)), NotesLoader.notebooks(context, account, "gen-readonly"))
+
+        // A cache refresh from nothing: the next run fetches the server's copy again and writes nothing over the draft.
+        syncNow(account, "gen-readonly")
+        assertEquals(setOf("Plan"), cachedNotes(account, notebook))
+        assertArrayEquals("the entry file is as it was", before.getValue("${note.uid}.note"), filesOnDisk(store).getValue("${note.uid}.note"))
+        assertEquals("Edited before access changed", decryptThroughStoredCopy(store, kept).contentString)
+        assertSucceeded(status(account, "gen-readonly"))
+    }
+
+    @Test fun aSingle403OnAPushIsConfirmedAndHoldsNothing() {
+        val account = newAccount("gen-403")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-403")
+        editLocally(account, "gen-403", notebook, note.uid, "Plan", "Phone edit", mtime = 2_000L)
+        fake.answer("POST", TRANSACTION, 403)
+
+        val since = fake.requests.size
+        syncNow(account, "gen-403")
+        assertEquals("one confirming fetch of the notebook", 1, notebookFetches(since, notebook))
+        val entry = (pending(account, "gen-403").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals("still writable, so nothing is held", PendingEntry.State.UPSERT, entry.state)
+        assertEquals(1, entry.failureCount)
+        assertEquals(SyncStatusStore.FailureCategory.UNKNOWN, status(account, "gen-403").lastFailureCategory)
+
+        // A server that behaves takes the same change on the next run.
+        syncNow(account, "gen-403")
+        assertEquals("Phone edit", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-403").isEmpty())
+        assertSucceeded(status(account, "gen-403"))
+    }
+
+    @Test fun aDroppedConnectionEndsThePushStepAndTheFetchStillRuns() {
+        val account = newAccount("gen-drop")
+        val first = uploadNotebook("First")
+        val second = uploadNotebook("Second")
+        val a = uploadNote(first, "A", "a", mtime = 1_000L)
+        val b = uploadNote(second, "B", "b", mtime = 1_000L)
+        syncNow(account, "gen-drop")
+        editLocally(account, "gen-drop", first, a.uid, "A", "a edited", mtime = 2_000L)
+        editLocally(account, "gen-drop", second, b.uid, "B", "b edited", mtime = 2_000L)
+        uploadNote(first, "From the web", "new", mtime = 3_000L)
+        fake.answer("POST", TRANSACTION, code = null)
+
+        val since = fake.requests.size
+        syncNow(account, "gen-drop")
+        assertEquals("the oldest change went first, and the dropped connection ended the step",
+            listOf(transactionOf(first)), uploads(since))
+        assertTrue("the fetch still ran", "From the web" in cachedNotes(account, first))
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, status(account, "gen-drop").lastFailureCategory)
+        val store = pending(account, "gen-drop")
+        assertEquals(1, (store.read(a.uid) as PendingNotesStore.Read.Present).entry.failureCount)
+        assertEquals("never tried, so nothing recorded", 0, (store.read(b.uid) as PendingNotesStore.Read.Present).entry.failureCount)
+
+        // Both are saved again, which resets every failure count and leaves A the older change. The
+        // note whose request ended the step still goes last in the next run.
+        editLocally(account, "gen-drop", first, a.uid, "A", "a edited again", mtime = 4_000L)
+        editLocally(account, "gen-drop", second, b.uid, "B", "b edited again", mtime = 4_000L)
+        val again = fake.requests.size
+        syncNow(account, "gen-drop")
+        assertEquals(listOf(transactionOf(second), transactionOf(first)), uploads(again))
+        assertEquals("a edited again", itemManager(first).fetch(a.uid).contentString)
+        assertEquals("b edited again", itemManager(second).fetch(b.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-drop").isEmpty())
+        assertSucceeded(status(account, "gen-drop"))
+    }
+
+    @Test fun aConflictWhoseServerCopyCannotBeFetchedMakesNoCopyUntilItCan() {
+        val account = newAccount("gen-nofetch")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-nofetch")
+        editLocally(account, "gen-nofetch", notebook, note.uid, "Plan", "Edited on the phone", mtime = 2_000L)
+        editOnAnotherDevice(notebook, note.uid, "Edited on the web")
+        fake.answer("GET", Regex("collection/$notebook/item/${note.uid}/"), 500)
+
+        syncNow(account, "gen-nofetch")
+        assertEquals("never resolved without the server copy", setOf(note.uid), fake.itemUids(notebook))
+        val entry = (pending(account, "gen-nofetch").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(1, entry.failureCount)
+        assertEquals(NotePushPolicy.FailureKind.TRANSIENT.name, entry.lastFailureCategory)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, status(account, "gen-nofetch").lastFailureCategory)
+        // A cache refresh does not overwrite a draft (#709): this run's fetch put the web's text into
+        // the cache, and the phone's text is still in the store.
+        assertEquals("Edited on the web", cachedBody(account, notebook, note.uid))
+        assertEquals("Edited on the phone", itemManager(notebook).cacheLoad(entry.blob).contentString)
+
+        syncNow(account, "gen-nofetch")
+        assertEquals("resolved once the copy could be fetched", 2, fake.itemUids(notebook).size)
+        assertEquals("Edited on the web", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-nofetch").isEmpty())
+        assertSucceeded(status(account, "gen-nofetch"))
+    }
+
+    @Test fun aPushRefusedAfterItsNotebookTurnedReadOnlyIsConfirmedAndHeld() {
+        val account = newAccount("gen-403-ro")
+        val notebook = uploadNotebook(STORE_CHECK_NOTEBOOK)
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-403-ro")
+        editLocally(account, "gen-403-ro", notebook, note.uid, STORE_CHECK_TITLE, STORE_CHECK_BODY, mtime = 2_000L)
+
+        // The pending store on disk while the change waits (#709: keep the pending store encrypted).
+        val store = pending(account, "gen-403-ro")
+        val texts = listOf(STORE_CHECK_TITLE, STORE_CHECK_BODY, STORE_CHECK_NOTEBOOK)
+        val waiting = assertNothingPlainOnDisk(store, texts).getValue(note.uid)
+        assertEquals(setOf("${note.uid}.note", "$notebook.notebook", "sequence"), filesOnDisk(store).keys)
+        // What is readable is the header of design 3.1 and nothing a user typed: uids, the state, the
+        // version counter and the revision. Every other header field is at its default.
+        val plain = PendingEntry(note.uid, notebook, PendingEntry.State.UPSERT, waiting.version, waiting.revision, isCreate = false, blob = waiting.blob)
+        assertEquals(plain, waiting)
+        // The scan reports what is plain: the note's uid, which is in the header, and a text in either UTF-16 form.
+        val reported = runCatching { assertNothingPlainOnDisk(store, listOf(note.uid)) }.exceptionOrNull()
+        assertTrue("the scan reports what is plain: $reported",
+            reported is AssertionError && reported.message.orEmpty().contains("${note.uid}.note holds '${note.uid}' in plain text"))
+        for (utf16 in listOf(Charsets.UTF_16LE, Charsets.UTF_16BE)) {
+            val asBlob = PendingCodec.encodeEntry(waiting.copy(blob = STORE_CHECK_BODY.toByteArray(utf16)))
+            assertTrue("the forms looked for include $utf16", plainForms(STORE_CHECK_BODY).any { asBlob.holds(it) })
+        }
+        val decrypted = decryptThroughStoredCopy(store, waiting)
+        assertEquals("the title is in the file, encrypted", STORE_CHECK_TITLE, decrypted.meta.name)
+        assertEquals("and so is the text", STORE_CHECK_BODY, decrypted.contentString)
+        // Encrypted, not only encoded: with another notebook's key the same blob does not read.
+        val otherNotebook = server.collectionManager.create(Constants.ETEBASE_TYPE_NOTES, ItemMetadata().apply { name = "Other" }, "")
+        val withOtherKey = runCatching { server.collectionManager.getItemManager(otherNotebook).cacheLoad(waiting.blob).contentString }
+        assertTrue("the text does not read with another notebook's key: $withOtherKey", withOtherKey.isFailure)
+
+        // Made read-only after this run's listing: only the push and the notebook fetch can see it.
+        val since = fake.requests.size
+        val push = fake.hold("POST", TRANSACTION)
+        startManualRun(account, "gen-403-ro")
+        push.awaitArrival()
+        // While the upload is in flight the header also names the revision that was sent, and nothing else changed.
+        assertEquals(plain.copy(sent = listOf(waiting.revision)), assertNothingPlainOnDisk(store, texts).getValue(note.uid))
+        fake.setAccessLevel(notebook, 0L)
+        push.release()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, "gen-403-ro"))
+        assertEquals(listOf(transactionOf(notebook)), uploads(since))
+        assertEquals("one confirming fetch of the notebook", 1, notebookFetches(since, notebook))
+        val held = (pending(account, "gen-403-ro").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.READ_ONLY, held.held!!.reason)
+        val heldOnDisk = assertNothingPlainOnDisk(store, texts).getValue(note.uid)
+        assertEquals("held text has the same plain header, plus the reason by name and the time",
+            plain.copy(state = PendingEntry.State.HELD, sent = listOf(waiting.revision),
+                held = PendingEntry.Held(HeldReason.READ_ONLY, heldOnDisk.held!!.at)),
+            heldOnDisk)
+        assertTrue("the reason is readable in the file", filesOnDisk(store).getValue("${note.uid}.note").holds("READ_ONLY".toByteArray()))
+        assertEquals(STORE_CHECK_BODY, decryptThroughStoredCopy(store, heldOnDisk).contentString)
+        assertEquals("the notebook's name is in the copy the run wrote, and reads through the binding", STORE_CHECK_NOTEBOOK,
+            server.collectionManager.cacheLoad(checkNotNull(store.notebook(notebook))).meta.name)
+        assertEquals("First draft", itemManager(notebook).fetch(note.uid).contentString)
+        assertSucceeded(status(account, "gen-403-ro"))
+
+        // Last, so that neither can hide a check above: the revision the binding reports for the stored
+        // blob, and the file modes, which the store leaves to the platform.
+        assertEquals("the header's revision is the blob's own revision uid", decrypted.etag, waiting.revision)
+        assertClosedToOtherUsers(store)
+    }
+
+    @Test fun aPushRefusedAfterAccessWasLostIsConfirmedAndTheNotebookLeavesTheCache() {
+        val account = newAccount("gen-404")
+        val notebook = uploadNotebook("Shared")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-404")
+        editLocally(account, "gen-404", notebook, note.uid, "Plan", "Phone edit", mtime = 2_000L)
+
+        val since = fake.requests.size
+        val push = fake.hold("POST", TRANSACTION)
+        startManualRun(account, "gen-404")
+        push.awaitArrival()
+        fake.removeMembership(notebook)
+        push.release()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, "gen-404"))
+        assertEquals(listOf(transactionOf(notebook)), uploads(since))
+        assertEquals("one confirming fetch of the notebook", 1, notebookFetches(since, notebook))
+        val store = pending(account, "gen-404")
+        val held = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.LOST_ACCESS, held.held!!.reason)
+        assertFalse("the notebook is no longer listed as writable", notebook in cachedNotebooks(account))
+        assertNotNull("its copy stays, so the held text can still be decrypted", store.notebook(notebook))
+        assertEquals("and through that copy it does decrypt", "Phone edit", decryptThroughStoredCopy(store, held).contentString)
+        assertSucceeded(status(account, "gen-404"))
+    }
+
+    @Test fun anAutomaticRunLeavesAChangeInBackoffAndCarriesItsFailure() {
+        val account = newAccount("gen-skip")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-skip")
+        val first = uploadNotebook("First")
+        val second = uploadNotebook("Second")
+        val a = uploadNote(first, "A", "a", mtime = 1_000L)
+        val b = uploadNote(second, "B", "b", mtime = 1_000L)
+        syncNow(account, "gen-skip")
+        editLocally(account, "gen-skip", first, a.uid, "A", "a edited", mtime = 2_000L)
+        editLocally(account, "gen-skip", second, b.uid, "B", "b edited", mtime = 2_000L)
+        fake.answer("POST", TRANSACTION, code = null)
+        syncNow(account, "gen-skip")
+        val store = pending(account, "gen-skip")
+        val failed = (store.read(a.uid) as PendingNotesStore.Read.Present).entry
+        val before = status(account, "gen-skip")
+
+        // Opening the screen is not the user asking to sync: A sits out its backoff.
+        val since = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-skip", NotesSyncPolicy.Trigger.SCREEN_OPEN)
+        awaitSettled(identity)
+        assertEquals(listOf(transactionOf(second)), uploads(since))
+        val skipped = (store.read(a.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals("the skip adds nothing to A's failures", failed.failureCount, skipped.failureCount)
+        assertEquals(failed.lastFailureAt, skipped.lastFailureAt)
+        val after = status(account, "gen-skip")
+        assertEquals("the run records A's failure, not success", SyncStatusStore.TerminalResult.FAILURE, after.lastTerminalResult)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, after.lastFailureCategory)
+        assertTrue("recorded by this run", after.lastFailureAt!! > before.lastFailureAt!!)
+
+        // A run the user starts tries it at once.
+        syncNow(account, "gen-skip")
+        assertEquals("a edited", itemManager(first).fetch(a.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-skip").isEmpty())
+        assertSucceeded(status(account, "gen-skip"))
+    }
+
+    @Test fun aRunTheNetworkSettingsRefuseAsksNothingAndRecordsNothingAndAnAttemptThatFailsIsStillAFailure() {
+        val account = newAccount("gen-net")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-net")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-net")
+        var mtime = 2_000L
+        fun edit(text: String) = editLocally(account, "gen-net", notebook, note.uid, "Plan", text, mtime++)
+        fun pin(connection: NotesNetworkPolicy.Connection) {
+            NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(connection) }
+        }
+        fun open(force: Boolean = false) {
+            NotesSyncCoordinator.request(context, account, "gen-net", NotesSyncPolicy.Trigger.SCREEN_OPEN, forceRefresh = force)
+        }
+
+        // 1. Not Wi-Fi, with the defaults: opening Notes is refused (row A2).
+        edit("edit 1")
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        assertRefused(account, "gen-net", note.uid, "opening Notes off Wi-Fi") { open() }
+
+        // 2. No active network: refused as well, and no network failure is recorded (row A3, answer 5 on #709).
+        pin(NotesNetworkPolicy.Connection.NONE)
+        assertRefused(account, "gen-net", note.uid, "opening Notes with no active network") { open() }
+
+        // 3. The run after an adapter sync, as the adapters ask for it.
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        assertRefused(account, "gen-net", note.uid, "the run after an adapter sync off Wi-Fi") {
+            NotesSyncCoordinator.piggybackAfterAdapterSync(context, account, "gen-net")
+        }
+
+        // 4. A forced refresh that is refused stays owed.
+        assertRefused(account, "gen-net", note.uid, "a forced automatic run off Wi-Fi") { open(force = true) }
+
+        // 5. Pull to refresh on the same network is a run the user starts (row E2): it sends the change,
+        // and it makes the full listing the refused run still owed.
+        statusBeforeRun = status(account, "gen-net")
+        val mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-net", NotesSyncPolicy.Trigger.SCREEN)
+        awaitSettled(identity)
+        assertEquals("pull to refresh off Wi-Fi sends the waiting change", listOf(transactionOf(notebook)), uploads(mark))
+        assertTrue("and lists from scratch, as the refused run could not", listings(mark).any(::fromScratch))
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-net").isEmpty())
+        assertSucceeded(status(account, "gen-net"))
+
+        // 6. With automatic sync allowed on any network, opening Notes off Wi-Fi sends (row A10).
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        edit("edit 2")
+        assertSent(account, "gen-net", notebook, "opening Notes off Wi-Fi with automatic sync on any network") { open() }
+        // The run after an adapter sync is admitted on the same terms. So the refusal of step 3 was
+        // a run that started and was refused, not a run that never started.
+        edit("edit 2, after an adapter sync")
+        assertSent(account, "gen-net", notebook, "the run after an adapter sync off Wi-Fi with automatic sync on any network") {
+            NotesSyncCoordinator.piggybackAfterAdapterSync(context, account, "gen-net")
+        }
+
+        // 7. With Sync now on Wi-Fi only, the dashboard's Sync now off Wi-Fi is refused and its request is
+        // closed (row E5). The automatic setting, still on any network, is not looked at.
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+        edit("edit 3")
+        assertRefused(account, "gen-net", note.uid, "Sync now off Wi-Fi with Sync now on Wi-Fi only") { requestSync(context, account) }
+
+        // 8. Sync now on any network again, and no active network: the run is attempted, and an attempt
+        // that fails is a failure (row E3, answer 5 on #709).
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        pin(NotesNetworkPolicy.Connection.NONE)
+        fake.answer("POST", TRANSACTION, code = null)
+        val before = status(account, "gen-net")
+        syncNow(account, "gen-net")
+        val failed = status(account, "gen-net")
+        assertEquals("an attempted run that fails is a failure", SyncStatusStore.TerminalResult.FAILURE, failed.lastTerminalResult)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, failed.lastFailureCategory)
+        assertTrue("recorded by this run", (failed.lastFailureAt ?: 0L) > (before.lastFailureAt ?: 0L))
+
+        // 9. On Wi-Fi a run the user starts sends it.
+        pin(NotesNetworkPolicy.Connection.WIFI)
+        syncNow(account, "gen-net")
+        assertEquals("edit 3", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-net").isEmpty())
+        assertSucceeded(status(account, "gen-net"))
+    }
+
+    @Test fun anAutomaticRunAlsoNeedsTheAccountsOwnWifiSwitchAndNetworkNameAndARunTheUserStartsDoesNot() {
+        val account = newAccount("gen-acct")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-acct")
+        // Automatic sync on any network, so that only the account's own rule decides below.
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        val settings = AccountSettings(context, account)
+        settings.setSyncWiFiOnly(true)
+        var mtime = 2_000L
+        fun edit(text: String) = editLocally(account, "gen-acct", notebook, note.uid, "Plan", text, mtime++)
+        fun open() {
+            NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN_OPEN)
+        }
+        // The pinned reading gives the Wi-Fi name only when the production code asks for it, and keeps each ask.
+        val asked = CopyOnWriteArrayList<Boolean>()
+        fun pin(connection: NotesNetworkPolicy.Connection, name: String? = null) {
+            NotesNetwork.readingOverride = { withWifiName ->
+                asked += withWifiName
+                NotesNetworkPolicy.Reading(connection, name.takeIf { withWifiName })
+            }
+        }
+        val wifi = NotesNetworkPolicy.Connection.WIFI
+        val other = NotesNetworkPolicy.Connection.OTHER
+
+        // 1. The switch on, no network name: refused off Wi-Fi and with no active network, sent on Wi-Fi
+        // (rows A13, A14, A12). The Wi-Fi name is never asked for.
+        edit("edit 1")
+        pin(other)
+        assertRefused(account, "gen-acct", note.uid, "an automatic run off Wi-Fi with the account switch on") { open() }
+        pin(NotesNetworkPolicy.Connection.NONE)
+        assertRefused(account, "gen-acct", note.uid, "an automatic run with no active network and the account switch on") { open() }
+        pin(wifi)
+        assertSent(account, "gen-acct", notebook, "an automatic run on Wi-Fi with the account switch on") { open() }
+        assertTrue("with no network name on the account the Wi-Fi name is never asked for: $asked", asked.isNotEmpty() && asked.none { it })
+        asked.clear()
+
+        // 2. A network name on the account: another name, no name from the platform, and the platform's
+        // unknown-name value are all refusals (row A16). The Wi-Fi name is asked for each time.
+        settings.syncWifiOnlySSID = "home"
+        edit("edit 2")
+        listOf("\"cafe\"", null, "<unknown ssid>").forEachIndexed { index, name ->
+            pin(wifi, name)
+            assertRefused(account, "gen-acct", note.uid, "an automatic run on Wi-Fi without the account's network name (case $index)") { open() }
+        }
+        assertTrue("with a network name on the account the Wi-Fi name is asked for: $asked", asked.isNotEmpty() && asked.all { it })
+        asked.clear()
+
+        // 3. A run the user starts does not look at the account's rule: not at the switch off Wi-Fi
+        // (row E2 with the switch on), not at the name on Wi-Fi (row E7). So it never asks for the
+        // Wi-Fi name either.
+        pin(other)
+        assertSent(account, "gen-acct", notebook, "pull to refresh off Wi-Fi with the account switch on") {
+            NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN)
+        }
+        edit("edit 2, second")
+        pin(wifi, "\"cafe\"")
+        assertSent(account, "gen-acct", notebook, "pull to refresh on a Wi-Fi network with another name") {
+            NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN)
+        }
+        assertTrue("a run the user starts never asks for the Wi-Fi name: $asked", asked.size == 2 && asked.none { it })
+        asked.clear()
+
+        // 4. On the named network an automatic run is sent (row A15). It is not when the production
+        // code does not ask for the name, since the pinned reading then gives none.
+        edit("edit 3")
+        pin(wifi, "\"home\"")
+        assertSent(account, "gen-acct", notebook, "an automatic run on the named Wi-Fi network") { open() }
+        assertTrue("the Wi-Fi name was asked for: $asked", asked.isNotEmpty() && asked.all { it })
+
+        // 5. The switch off with the name left over: the name means nothing and is not asked for (row A17).
+        settings.setSyncWiFiOnly(false)
+        edit("edit 4")
+        asked.clear()
+        pin(other)
+        assertSent(account, "gen-acct", notebook, "an automatic run off Wi-Fi with the switch off and a name left over") { open() }
+        assertTrue("a name left over from a switch that is off is not asked for: $asked", asked.isNotEmpty() && asked.none { it })
+
+        // 6. Both rules on (row A5).
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+        settings.setSyncWiFiOnly(true)
+        settings.syncWifiOnlySSID = null
+        edit("edit 5")
+        pin(other)
+        assertRefused(account, "gen-acct", note.uid, "an automatic run off Wi-Fi with both rules on") { open() }
+
+        // 7. No pin: the production reading, on whatever network this device has, against the adapters'
+        // own function. It passes on any network and records which one it was.
+        NotesNetwork.readingOverride = null
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        val real = NotesNetwork.read(context, withWifiName = true)
+        val realName = real.wifiName
+        assertNull("the Wi-Fi name is not read when it was not asked for", NotesNetwork.read(context, withWifiName = false).wifiName)
+        val readable = realName != null && realName.length >= 2 && realName.startsWith("\"") && realName.endsWith("\"")
+        val nameState = when {
+            realName == null -> "none"
+            realName == "<unknown ssid>" -> "unknown"
+            readable -> "quoted"
+            else -> "hex"
+        }
+        val compared = mutableListOf<String>()
+        for ((wifiOnly, name) in listOf(false to null, true to null, true to "notes-test-no-such-network",
+                true to realName?.takeIf { readable }?.removeSurrounding("\""))) {
+            settings.setSyncWiFiOnly(wifiOnly)
+            settings.syncWifiOnlySSID = name
+            val adapters = runCatching { syncConditionsAllow(context, settings) }.getOrDefault(false)
+            val notes = NotesNetwork.verdict(context, manager, account, settings, explicit = false).run
+            assertEquals("Notes and the adapters agree on the account's rule (switch $wifiOnly, name set ${name != null})", adapters, notes)
+            compared += "switch=$wifiOnly nameSet=${name != null} allowed=$adapters"
+        }
+        // No network name in this line: fixed words, flags and the API level only. The adapters'
+        // function called above writes a log line of its own, which carries the Wi-Fi name as the
+        // platform reports it.
+        android.util.Log.i("NotesNetworkReading", "sdk=${Build.VERSION.SDK_INT} connection=${real.connection} " +
+            "wifiName=$nameState compared: ${compared.joinToString("; ")}")
+
+        // 8. Still no pin: a real run through the gate on the Notes worker, with nothing restricting
+        // it. It reads this device's own network there and is admitted on any network.
+        settings.setSyncWiFiOnly(false)
+        settings.syncWifiOnlySSID = null
+        assertSent(account, "gen-acct", notebook, "an automatic run with no pin and nothing restricting it") { open() }
+    }
+
+    @Test fun aServerCopyThatIsAnotherNoteResolvesNothing() {
+        val account = newAccount("gen-swap")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        val other = uploadNote(notebook, "Other", "Other text", mtime = 1_500L)
+        syncNow(account, "gen-swap")
+        editLocally(account, "gen-swap", notebook, note.uid, "Plan", "Edited on the phone", mtime = 2_000L)
+        // Edited elsewhere, so the push gets a 409, and the server copy comes back as another note.
+        editOnAnotherDevice(notebook, note.uid, "Edited on the web")
+        fake.answerAsFor("GET", "collection/$notebook/item/${note.uid}/", "collection/$notebook/item/${other.uid}/")
+
+        syncNow(account, "gen-swap")
+        val entry = (pending(account, "gen-swap").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals("the edit is still waiting", PendingEntry.State.UPSERT, entry.state)
+        assertEquals(1, entry.failureCount)
+        assertEquals(NotePushPolicy.FailureKind.TRANSIENT.name, entry.lastFailureCategory)
+        assertEquals(setOf(note.uid, other.uid), fake.itemUids(notebook))
+        assertEquals("Edited on the web", itemManager(notebook).fetch(note.uid).contentString)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, status(account, "gen-swap").lastFailureCategory)
+
+        // With the note's own copy, the conflict is settled as any edit against an edit made elsewhere (design 3.4).
+        syncNow(account, "gen-swap")
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-swap").isEmpty())
+        val onServer = fake.itemUids(notebook)
+        assertEquals("the phone's text has a note of its own", 3, onServer.size)
+        assertEquals("Edited on the web", itemManager(notebook).fetch(note.uid).contentString)
+        assertEquals("Edited on the phone", itemManager(notebook).fetch((onServer - note.uid - other.uid).single()).contentString)
+        assertEquals(setOf("Plan", "Other", "Plan (conflicted copy)"), cachedNotes(account, notebook))
+        assertSucceeded(status(account, "gen-swap"))
+    }
+
+    @Test fun aPendingStoreThatCannotBeReadIsAStorageFailureAndTheFetchStillRuns() {
+        val account = newAccount("gen-unreadable")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-unreadable")
+        editLocally(account, "gen-unreadable", notebook, note.uid, "Plan", "Phone edit", mtime = 2_000L)
+        // The store's version counter ("sequence") becomes something that cannot be read, as after a damaged restore.
+        val sequence = File(PendingNotesStore.identityDir(context.noBackupFilesDir, account.type, account.name, "gen-unreadable"), "sequence")
+        assertTrue(sequence.delete() && sequence.mkdir())
+        uploadNote(notebook, "From the web", "New", mtime = 3_000L)
+
+        val since = fake.requests.size
+        syncNow(account, "gen-unreadable")
+        assertEquals("nothing was pushed", emptyList<String>(), uploads(since))
+        assertTrue("the fetch still ran", "From the web" in cachedNotes(account, notebook))
+        assertEquals(SyncStatusStore.FailureCategory.STORAGE, status(account, "gen-unreadable").lastFailureCategory)
+
+        // Once the counter can be read again, the change goes out.
+        assertTrue(sequence.delete())
+        syncNow(account, "gen-unreadable")
+        assertEquals("Phone edit", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-unreadable").isEmpty())
+        assertSucceeded(status(account, "gen-unreadable"))
+    }
+
+    @Test fun aNotebookAnswerAboutAnotherNotebookHoldsNothing() {
+        val account = newAccount("gen-swapnb")
+        val notebook = uploadNotebook("Work")
+        val other = uploadNotebook("Elsewhere")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-swapnb")
+        editLocally(account, "gen-swapnb", notebook, note.uid, "Plan", "Phone edit", mtime = 2_000L)
+        // A single 403, and a confirming fetch answered with a notebook that is read-only for this account.
+        fake.setAccessLevel(other, 0L)
+        fake.answer("POST", TRANSACTION, 403)
+        fake.answerAsFor("GET", "collection/$notebook/", "collection/$other/")
+
+        syncNow(account, "gen-swapnb")
+        val entry = (pending(account, "gen-swapnb").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals("nothing is held on an answer about another notebook", PendingEntry.State.UPSERT, entry.state)
+        assertEquals(1, entry.failureCount)
+        assertEquals(SyncStatusStore.FailureCategory.UNKNOWN, status(account, "gen-swapnb").lastFailureCategory)
+
+        syncNow(account, "gen-swapnb")
+        assertEquals("Phone edit", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-swapnb").isEmpty())
+        assertSucceeded(status(account, "gen-swapnb"))
+    }
+
+    @Test fun aChangeThatCannotGoOntoMetadataThatIsNotOneMapIsHeldAndNothingIsWrittenOverIt() {
+        val account = newAccount("gen-notamap")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-notamap")
+        // An upload of this device lands with metadata that is well-formed msgpack but not one map, and
+        // its answer is lost. No save of the app writes such metadata; it stands for a copy of ours on
+        // the server that this app cannot write into.
+        editLocally(account, "gen-notamap", notebook, note.uid, "Plan", "First phone edit", mtime = 2_000L, metaRaw = NOT_ONE_MAP)
+        fake.loseAnswer("POST", TRANSACTION)
+        syncNow(account, "gen-notamap")
+        val landed = itemManager(notebook).fetch(note.uid)
+        assertEquals("the upload landed", "First phone edit", landed.contentString)
+        assertArrayEquals(NOT_ONE_MAP, landed.metaRaw)
+
+        // The user saves again. Its push conflicts with our own upload, so the new text would be rebased
+        // onto that copy, name and time merged into its metadata.
+        editLocally(account, "gen-notamap", notebook, note.uid, "Plan", "Second phone edit", mtime = 3_000L,
+            metaRaw = NoteMetaCodec.fresh("Plan", 3_000L).bytes)
+        val since = fake.requests.size
+        syncNow(account, "gen-notamap")
+        assertEquals("the push that met the conflict, and nothing after it", listOf(transactionOf(notebook)), uploads(since))
+        val onServer = itemManager(notebook).fetch(note.uid)
+        assertEquals("First phone edit", onServer.contentString)
+        assertArrayEquals("nothing was written over the metadata, typed or otherwise", NOT_ONE_MAP, onServer.metaRaw)
+        assertEquals("and no conflicted copy was made", setOf(note.uid), fake.itemUids(notebook))
+        val held = (pending(account, "gen-notamap").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.UNREADABLE_METADATA, held.held!!.reason)
+        assertEquals("the text is kept", "Second phone edit", itemManager(notebook).cacheLoad(held.blob).contentString)
+        assertEquals("no failure is counted against it", 0, held.failureCount)
+        assertSucceeded(status(account, "gen-notamap"))
+
+        // Trying again by hand changes nothing while that copy is what it is: one refused push, held again.
+        assertTrue(pending(account, "gen-notamap").release(note.uid))
+        val again = fake.requests.size
+        syncNow(account, "gen-notamap")
+        assertEquals(listOf(transactionOf(notebook)), uploads(again))
+        val heldAgain = (pending(account, "gen-notamap").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, heldAgain.state)
+        assertEquals(HeldReason.UNREADABLE_METADATA, heldAgain.held!!.reason)
+        assertEquals("Second phone edit", itemManager(notebook).cacheLoad(heldAgain.blob).contentString)
+        assertArrayEquals(NOT_ONE_MAP, itemManager(notebook).fetch(note.uid).metaRaw)
+    }
+
+    @Test fun aConflictCopyThatCannotBeMadeHoldsTheTextAndNoCopyIsUploaded() {
+        val account = newAccount("gen-nocopy")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-nocopy")
+        // The local edit carries metadata no decoder reads (a map cut short), so no title can be taken
+        // from it for a copy. No save of the app writes such metadata; it stands for a copy that
+        // cannot be made.
+        editLocally(account, "gen-nocopy", notebook, note.uid, "Plan", "Edited on the phone", mtime = 2_000L, metaRaw = CUT_SHORT_MAP)
+        editOnAnotherDevice(notebook, note.uid, "Edited on the web")
+
+        val since = fake.requests.size
+        syncNow(account, "gen-nocopy")
+        assertEquals("the refused push, and no copy after it", listOf(transactionOf(notebook)), uploads(since))
+        assertEquals("no second note on the server", setOf(note.uid), fake.itemUids(notebook))
+        assertEquals("Edited on the web", itemManager(notebook).fetch(note.uid).contentString)
+        val held = (pending(account, "gen-nocopy").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.NOT_BUILT, held.held!!.reason)
+        assertEquals("the text is kept", "Edited on the phone", itemManager(notebook).cacheLoad(held.blob).contentString)
+        assertEquals("no failure is counted against it", 0, held.failureCount)
+        assertNull("and no storage error is on record for it", held.lastFailureCategory)
+        assertSucceeded(status(account, "gen-nocopy"))
+
+        // Held text is not pushed: the next run sends nothing.
+        val again = fake.requests.size
+        syncNow(account, "gen-nocopy")
+        assertEquals(emptyList<String>(), uploads(again))
+        assertEquals(PendingEntry.State.HELD, (pending(account, "gen-nocopy").read(note.uid) as PendingNotesStore.Read.Present).entry.state)
+    }
+
+    @Test fun aRebasedNoteThatDoesNotReadBackIsHeldAndIsNotUploaded() {
+        val account = newAccount("gen-readback")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-readback")
+        // An upload of this device lands with metadata that is one well-formed map, which the raw merge
+        // can write into, but with a field the typed decoder every client reads with rejects (a
+        // description that is a number). Its answer is lost. No save of the app writes such a field.
+        val oddField = TestMsgPack.encode(linkedMapOf("description" to 7L))
+        editLocally(account, "gen-readback", notebook, note.uid, "Plan", "First phone edit", mtime = 2_000L, metaRaw = oddField)
+        fake.loseAnswer("POST", TRANSACTION)
+        syncNow(account, "gen-readback")
+        assertArrayEquals("the upload landed", oddField, itemManager(notebook).fetch(note.uid).metaRaw)
+
+        // The next save is rebased onto that copy: name and time merge into the map, and the result is
+        // read back through the typed decoder before anything is sent.
+        editLocally(account, "gen-readback", notebook, note.uid, "Plan", "Second phone edit", mtime = 3_000L,
+            metaRaw = NoteMetaCodec.fresh("Plan", 3_000L).bytes)
+        val since = fake.requests.size
+        syncNow(account, "gen-readback")
+        assertEquals("the push that met the conflict, and nothing after it", listOf(transactionOf(notebook)), uploads(since))
+        val onServer = itemManager(notebook).fetch(note.uid)
+        assertEquals("First phone edit", onServer.contentString)
+        assertArrayEquals("the copy on the server is as it was", oddField, onServer.metaRaw)
+        val held = (pending(account, "gen-readback").read(note.uid) as PendingNotesStore.Read.Present).entry
+        assertEquals(PendingEntry.State.HELD, held.state)
+        assertEquals(HeldReason.READ_BACK_FAILED, held.held!!.reason)
+        assertEquals("the text is kept", "Second phone edit", itemManager(notebook).cacheLoad(held.blob).contentString)
+        assertEquals("no failure is counted against it", 0, held.failureCount)
+        assertSucceeded(status(account, "gen-readback"))
+    }
+
+    @Test fun aCancelledOrSwitchedOffRunWritesNothingAfterItsInFlightPush() {
+        val account = newAccount("gen-push-stop")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-push-stop")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        val list = uploadNote(notebook, "List", "Milk", mtime = 1_500L)
+        syncNow(account, "gen-push-stop")
+        // Every held run below has two changes waiting. The plan's is the older one, so the held
+        // upload is the plan's. What a run that went on would do with the list's differs: in steps 1
+        // and 3, where the server takes the upload, it would be seen sending it; in step 2 the dropped
+        // connection would end the push step with the plan's failure counted; in step 4 it would hold
+        // both. A note is also added on the server before each of those runs, so a run that went on
+        // would fetch it and move the notebook's cursor. A stop by the cancelled schedule alone, with
+        // the interrupt swallowed, is shown on a dropped upload (step 2) and on the notebook fetch
+        // (step 4), not on an upload the server took.
+
+        // 1. The run is cancelled while the upload is in flight, after the server took it. Like a
+        // blocking socket read, the request does not stop for the interrupt; its answer arrives afterwards.
+        editLocally(account, "gen-push-stop", notebook, note.uid, "Plan", "Phone edit one", mtime = 2_000L)
+        editLocally(account, "gen-push-stop", notebook, list.uid, "List", "Milk and eggs", mtime = 2_500L)
+        val webOne = uploadNote(notebook, "From the web one", "Web text one", mtime = 3_000L)
+        val cancelled = holdPush(account, "gen-push-stop", notebook, note.uid, applied = true)
+        NotesSyncCoordinator.cancel(identity)
+        release(cancelled)
+        assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+        assertNothingWrittenFromPush(cancelled, account, "gen-push-stop", notebook, note.uid)
+        assertEquals("the upload itself landed", "Phone edit one", itemManager(notebook).fetch(note.uid).contentString)
+        assertEquals("the change behind it was not sent", "Milk", itemManager(notebook).fetch(list.uid).contentString)
+
+        // The next run is not affected. It sends the same revision again, which the server takes
+        // without a change, then the list, and it fetches the note from the web: no conflicted copy.
+        var again = fake.requests.size
+        syncNow(account, "gen-push-stop")
+        assertEquals(listOf(transactionOf(notebook), transactionOf(notebook)), uploads(again))
+        assertEquals("the resent revision was taken as it is, with no fetch of the server's copy", 0,
+            fake.requests.drop(again).count { it.substringBefore('?') == "GET collection/$notebook/item/${note.uid}/" })
+        assertEquals("no conflicted copy", setOf(note.uid, list.uid, webOne.uid), fake.itemUids(notebook))
+        assertEquals("Milk and eggs", itemManager(notebook).fetch(list.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-push-stop").isEmpty())
+        assertEquals("Phone edit one", cachedBody(account, notebook, note.uid))
+        assertEquals("Milk and eggs", cachedBody(account, notebook, list.uid))
+        assertEquals(setOf("Plan", "List", "From the web one"), cachedNotes(account, notebook))
+        assertEquals(fake.itemStoken(notebook), notebookCursor(account, notebook))
+        assertSucceeded(status(account, "gen-push-stop"))
+
+        // 2. Cancelled again, but the server never takes the upload and the network stack swallows
+        // the interrupt. The connection drops, which a run that is still wanted counts as the
+        // change's failure; here only the cancelled schedule, not the thread's interrupt, says stop.
+        editLocally(account, "gen-push-stop", notebook, note.uid, "Plan", "Phone edit two", mtime = 4_000L)
+        editLocally(account, "gen-push-stop", notebook, list.uid, "List", "Milk, eggs and tea", mtime = 4_500L)
+        val webTwo = uploadNote(notebook, "From the web two", "Web text two", mtime = 5_000L)
+        val dropped = holdPush(account, "gen-push-stop", notebook, note.uid, applied = false, swallowInterrupt = true)
+        NotesSyncCoordinator.cancelAccount(account.type, account.name)
+        release(dropped)
+        assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+        assertNothingWrittenFromPush(dropped, account, "gen-push-stop", notebook, note.uid)
+        assertEquals("the server has the text from before", "Phone edit one", itemManager(notebook).fetch(note.uid).contentString)
+
+        // Unlike after step 1, the held upload never landed: the next run's first upload is not a
+        // resend the server already has, and both of its uploads change the server's notes.
+        again = fake.requests.size
+        syncNow(account, "gen-push-stop")
+        assertEquals(listOf(transactionOf(notebook), transactionOf(notebook)), uploads(again))
+        assertEquals("no conflicted copy", setOf(note.uid, list.uid, webOne.uid, webTwo.uid), fake.itemUids(notebook))
+        assertEquals("Phone edit two", itemManager(notebook).fetch(note.uid).contentString)
+        assertEquals("Milk, eggs and tea", itemManager(notebook).fetch(list.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-push-stop").isEmpty())
+        assertEquals(setOf("Plan", "List", "From the web one", "From the web two"), cachedNotes(account, notebook))
+        assertEquals(fake.itemStoken(notebook), notebookCursor(account, notebook))
+        assertSucceeded(status(account, "gen-push-stop"))
+
+        // 3. Notes is switched off while the upload is in flight, with no cancellation reaching the
+        // run, and the server took the upload.
+        editLocally(account, "gen-push-stop", notebook, note.uid, "Plan", "Phone edit three", mtime = 6_000L)
+        editLocally(account, "gen-push-stop", notebook, list.uid, "List", "Milk, eggs, tea and jam", mtime = 6_500L)
+        val webThree = uploadNote(notebook, "From the web three", "Web text three", mtime = 7_000L)
+        val switchedOff = holdPush(account, "gen-push-stop", notebook, note.uid, applied = true)
+        assertTrue(AccountSettings.writeNotesEnabled(manager, account, false))
+        release(switchedOff)
+        awaitSettled(identity)
+        assertNothingWrittenFromPush(switchedOff, account, "gen-push-stop", notebook, note.uid)
+        assertEquals("the upload itself landed", "Phone edit three", itemManager(notebook).fetch(note.uid).contentString)
+
+        // Notes is switched on again and the plan is saved once more before the next run. That save
+        // goes onto the change still waiting, so it is still based on the copy from before the upload,
+        // and its push is refused. The server's copy is the revision the switched-off run sent, so
+        // the save is rebased onto it and not copied.
+        assertTrue(AccountSettings.writeNotesEnabled(manager, account, true))
+        editLocally(account, "gen-push-stop", notebook, note.uid, "Plan", "Phone edit four", mtime = 8_000L)
+        again = fake.requests.size
+        syncNow(account, "gen-push-stop")
+        assertEquals("the list, the refused push of the new save, and its rebased push",
+            listOf(transactionOf(notebook), transactionOf(notebook), transactionOf(notebook)), uploads(again))
+        assertEquals("the server copy was fetched once", 1,
+            fake.requests.drop(again).count { it.substringBefore('?') == "GET collection/$notebook/item/${note.uid}/" })
+        assertEquals("no conflicted copy", setOf(note.uid, list.uid, webOne.uid, webTwo.uid, webThree.uid), fake.itemUids(notebook))
+        assertEquals("Phone edit four", itemManager(notebook).fetch(note.uid).contentString)
+        assertEquals("Milk, eggs, tea and jam", itemManager(notebook).fetch(list.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-push-stop").isEmpty())
+        assertEquals(setOf("Plan", "List", "From the web one", "From the web two", "From the web three"), cachedNotes(account, notebook))
+        assertSucceeded(status(account, "gen-push-stop"))
+
+        // 4. One step further than the fetch cases go: the upload is refused, and the run is
+        // cancelled while the fetch that confirms why is in flight, which is of the notebook itself
+        // and not the upload. The notebook turns read-only after this run's listing, so only the push
+        // and that fetch can see it, and the interrupt is swallowed, so when the answer comes back
+        // only the cancelled schedule says stop. The cancelled run must not hold what waits in the
+        // notebook. This step is the last one, since it leaves the notebook read-only.
+        editLocally(account, "gen-push-stop", notebook, note.uid, "Plan", "Phone edit five", mtime = 9_000L)
+        editLocally(account, "gen-push-stop", notebook, list.uid, "List", "Milk only", mtime = 9_500L)
+        uploadNote(notebook, "From the web four", "Web text four", mtime = 10_000L)
+        val store = pending(account, "gen-push-stop")
+        val waiting = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+        val stoken = fake.itemStoken(notebook)
+        val cursor = notebookCursor(account, notebook)
+        val cached = cachedNotes(account, notebook)
+        val before = status(account, "gen-push-stop")
+        val since = fake.requests.size
+        val push = fake.hold("POST", TRANSACTION)
+        val confirming = fake.hold("GET", Regex("collection/$notebook/"), swallowInterrupt = true)
+        startManualRun(account, "gen-push-stop")
+        push.awaitArrival()
+        val pushHeldAt = SystemClock.uptimeMillis()
+        assertEquals("the held request is the upload", transactionOf(notebook), push.request)
+        assertEquals("its entry names the revision that was sent", waiting.copy(sent = listOf(waiting.revision)),
+            PendingCodec.decodeEntry(filesOnDisk(store).getValue("${note.uid}.note")).orFail("${note.uid}.note"))
+        fake.setAccessLevel(notebook, 0L)
+        release(push, pushHeldAt)
+        confirming.awaitArrival()
+        val confirmingHeldAt = SystemClock.uptimeMillis()
+        assertEquals("the held request is the fetch of the notebook", "GET collection/$notebook/", confirming.request)
+        val through = fake.requests.size
+        val whileHeld = filesOnDisk(store)
+        NotesSyncCoordinator.cancel(identity)
+        release(confirming, confirmingHeldAt)
+        assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+        // The first two lines are controls: once a refusal is confirmed as read-only, no run uploads
+        // again or fetches the notebook twice. A run that went on shows in what follows.
+        assertEquals("the refused upload, and none after it", listOf(transactionOf(notebook)), uploads(since))
+        assertEquals("one confirming fetch of the notebook", 1, notebookFetches(since, notebook))
+        assertEquals("no request of any kind followed that fetch", emptyList<String>(), fake.requests.drop(through))
+        assertSameFiles("nothing was held or counted by the cancelled run", whileHeld, filesOnDisk(store))
+        assertEquals("the notebook's cursor did not move", cursor, notebookCursor(account, notebook))
+        assertEquals("the note from the web was not fetched into the cache", cached, cachedNotes(account, notebook))
+        // The stand-in counts an upload before it looks at the access level, so the notes' cursor,
+        // not that count, says the refused upload was not applied.
+        assertEquals("the refused upload was not applied", stoken, fake.itemStoken(notebook))
+        status(account, "gen-push-stop").let {
+            assertEquals("no success was recorded for the cancelled run", before.lastSuccessAt, it.lastSuccessAt)
+            assertEquals("no failure was recorded for it", before.lastFailureAt, it.lastFailureAt)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+
+        // The next run's listing shows the notebook as read-only, so both changes are held without an
+        // upload. Reading is still allowed, and the run fetches the note from the web.
+        again = fake.requests.size
+        syncNow(account, "gen-push-stop")
+        assertEquals("nothing was uploaded", emptyList<String>(), uploads(again))
+        assertEquals(cached + "From the web four", cachedNotes(account, notebook))
+        for (uid in listOf(note.uid, list.uid)) {
+            val held = (store.read(uid) as PendingNotesStore.Read.Present).entry
+            assertEquals(PendingEntry.State.HELD, held.state)
+            assertEquals(HeldReason.READ_ONLY, held.held!!.reason)
+        }
+        assertSucceeded(status(account, "gen-push-stop"))
+    }
+
+    @Test fun signOutWhileAPushIsInFlightLetsItsLateAnswerWriteNothing() {
+        // What this case shows about the push is in the request log and in the signed-out account's
+        // store: one upload, no request after it, and the store's files as they were while the upload
+        // was held. The cache and status checks after the release are controls, the ones the fetch
+        // case makes: the status store refuses any late write once sign-out has cleared the record,
+        // whatever the push does.
+        val account = newAccount("gen-push-out")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-push-out")
+        val notebook = uploadNotebook("Signed out of")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        val list = uploadNote(notebook, "List", "Milk", mtime = 1_500L)
+        syncNow(account, "gen-push-out")
+        // Two changes wait and a note was added on the server, as in the case above. The server takes
+        // the held upload, so its answer is one that a run that went on would follow directly with a
+        // write into the cache, with no other request in between.
+        editLocally(account, "gen-push-out", notebook, note.uid, "Plan", "Phone edit before sign-out", mtime = 2_000L)
+        editLocally(account, "gen-push-out", notebook, list.uid, "List", "Milk and eggs", mtime = 2_500L)
+        uploadNote(notebook, "From the web", "Web text", mtime = 3_000L)
+        val held = holdPush(account, "gen-push-out", notebook, note.uid, applied = true)
+
+        // The app's own sign-out, from start to finish, while the upload's answer is still held.
+        signOut(account, "gen-push-out")
+        assertFalse(account in manager.getAccountsByType(account.type))
+        assertFalse("sign-out cancelled the Notes run", NotesSyncCoordinator.isActive(identity) || NotesSyncCoordinator.isPending(identity))
+        assertTrue("sign-out cleared the cache: ${cacheFiles(account.name)}", cacheFiles(account.name).isEmpty())
+        assertEquals("sign-out cleared the status", SyncStatusStore.Status(), status(account, "gen-push-out"))
+
+        release(held)
+        assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+        // Sign-out does not clear the pending store yet. Once it does, no file is left to compare,
+        // and this comparison says nothing until that change brings checks of its own.
+        val after = filesOnDisk(held.store)
+        if (after.isNotEmpty()) assertSameFiles("the signed-out account's store after the late answer", held.files, after)
+        assertEquals("one upload, and none after it", listOf(transactionOf(notebook)), uploads(held.since))
+        assertEquals("no request of any kind followed the held upload", emptyList<String>(), fake.requests.drop(held.through))
+        assertEquals("the server routed that one upload", listOf(1), fake.uploadSizes.drop(held.sizes))
+        assertTrue("the late answer wrote nothing into the cache: ${cacheFiles(account.name)}", cacheFiles(account.name).isEmpty())
+        assertEquals("the late run recorded nothing", SyncStatusStore.Status(), status(account, "gen-push-out"))
+
+        // A same-name account that signs in afterwards starts from nothing, with a store of its own
+        // that is empty. Its run sends nothing and fetches what the server took: the plan's upload,
+        // and not the list's, which never left the device. Both accounts are one Etebase user in this
+        // class, which is why the new one can read it.
+        val next = newAccount("gen-push-in", account.name, discoveryKey = false)
+        assertNull(listCursor(next))
+        assertTrue(cachedNotebooks(next).isEmpty())
+        assertEquals(SyncStatusStore.Status(), status(next, "gen-push-in"))
+        val newStore = pending(next, "gen-push-in")
+        assertFalse("a directory of its own", newStore.dir.canonicalPath == held.store.dir.canonicalPath)
+        assertEquals(PendingNotesStore.Observed(PendingNotesStore.Read.Missing, 0), newStore.observe(note.uid))
+        assertTrue(newStore.snapshot { true }.let { it.headers.isEmpty() && it.entries.isEmpty() && it.unreadable.isEmpty() })
+        val beforeRun = fake.requests.size
+        syncNow(next, "gen-push-in")
+        assertEquals("the new account's run uploads nothing", emptyList<String>(), uploads(beforeRun))
+        assertEquals("the upload the server took is its copy now", "Phone edit before sign-out", cachedBody(next, notebook, note.uid))
+        assertEquals("Milk", cachedBody(next, notebook, list.uid))
+        assertEquals(setOf("Plan", "List", "From the web"), cachedNotes(next, notebook))
+        assertEquals("no unsynced text", 0, (NotesLoader.notebooks(context, next, "gen-push-in") as NotesLoad.Loaded).value.unsyncedText)
+        assertSucceeded(status(next, "gen-push-in"))
+    }
+
+    @Test fun aSameNameAccountThatReplacedTheOldOneGetsNothingFromTheOldRunsInFlightPush() {
+        val name = "notes-boundary-${System.nanoTime()}@example.invalid"
+        val account = newAccount("gen-push-old", name)
+        val oldIdentity = ExactAccountIdentity(account.type, name, "gen-push-old")
+        val notebook = uploadNotebook("Shared before the swap")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        val list = uploadNote(notebook, "List", "Milk", mtime = 1_500L)
+        syncNow(account, "gen-push-old")
+        // Two changes wait and a note was added on the server, as in the two cases above.
+        editLocally(account, "gen-push-old", notebook, note.uid, "Plan", "Phone edit before the swap", mtime = 2_000L)
+        editLocally(account, "gen-push-old", notebook, list.uid, "List", "Milk and eggs", mtime = 2_500L)
+        uploadNote(notebook, "From the web", "Web text", mtime = 3_000L)
+        val held = holdPush(account, "gen-push-old", notebook, note.uid, applied = true)
+
+        // The account is removed and a same-name one added while the upload's answer is held. Nothing
+        // cancels the old run and Notes is on for the replacement, so only the creation id says the
+        // run is not this account's. The cache, which the two share by name, is not cleared.
+        replaceAccount(account, "gen-push-new")
+        assertStillHeld(held.heldAt)
+        assertTrue("the old run is still waiting for its answer", NotesSyncCoordinator.isActive(oldIdentity))
+        release(held)
+        assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+        assertNothingWrittenFromPush(held, account, "gen-push-old", notebook, note.uid)
+        // Two controls, as in the fetch case: status is kept per account generation, and the loader
+        // turns the old generation away before it reads anything.
+        assertEquals("the replacement's status is untouched", SyncStatusStore.Status(), status(account, "gen-push-new"))
+        assertEquals(NotesLoad.Stale, NotesLoader.note(context, account, "gen-push-old", notebook, note.uid))
+        // Not inherited: the replacement's store is another directory, with nothing in it, and the
+        // loader the screens use finds no unsynced text.
+        val newStore = pending(account, "gen-push-new")
+        assertFalse("a directory of its own", newStore.dir.canonicalPath == held.store.dir.canonicalPath)
+        assertEquals(PendingNotesStore.Observed(PendingNotesStore.Read.Missing, 0), newStore.observe(note.uid))
+        assertTrue(newStore.snapshot { true }.let { it.headers.isEmpty() && it.entries.isEmpty() && it.unreadable.isEmpty() })
+        assertNull(newStore.notebook(notebook))
+        assertEquals("no unsynced text", 0, (NotesLoader.notebooks(context, account, "gen-push-new") as NotesLoad.Loaded).value.unsyncedText)
+
+        val beforeRun = fake.requests.size
+        syncNow(account, "gen-push-new")
+        assertEquals("the replacement's run uploads nothing", emptyList<String>(), uploads(beforeRun))
+        // Both accounts of this class use one Etebase session, so the text the old account uploaded
+        // reaches the replacement as the server's copy, fetched by the replacement's own run.
+        assertEquals("Phone edit before the swap", cachedBody(account, notebook, note.uid))
+        assertEquals(setOf("Plan", "List", "From the web"), cachedNotes(account, notebook))
+        assertEquals("the change behind the held upload was not sent", "Milk", itemManager(notebook).fetch(list.uid).contentString)
+        assertSameFiles("the old account's store after the replacement's run", held.files, filesOnDisk(held.store))
+
+        // The replacement saves the same note and pushes it, and the old account's files are as they were.
+        editLocally(account, "gen-push-new", notebook, note.uid, "Plan", "Replacement text", mtime = 4_000L)
+        val beforePush = fake.requests.size
+        syncNow(account, "gen-push-new")
+        assertEquals("the replacement's push", listOf(transactionOf(notebook)), uploads(beforePush))
+        assertEquals("Replacement text", itemManager(notebook).fetch(note.uid).contentString)
+        assertSameFiles("the old account's store after the replacement's push", held.files, filesOnDisk(held.store))
+        assertSucceeded(status(account, "gen-push-new"))
+    }
+
+    @Test fun theRawMetadataCodecAgreesWithTheBindingsTypedEncoderAndDecoderExceptWhereStated() {
+        // Pure Kotlin first: the screens and the comparison must report hand-made differences before
+        // any call into the binding.
+        NoteMetaBindingComparison.selfCheck()
+        val colMgr = server.collectionManager
+        // Made from raw bytes and never uploaded. Every typed call is the comparison's own, behind its screens.
+        val notebook = colMgr.create_raw(Constants.ETEBASE_TYPE_NOTES,
+            TestMsgPack.encode(linkedMapOf("name" to "Comparison, never uploaded")), ByteArray(0))
+        val sdk = Build.VERSION.SDK_INT
+        val report = NoteMetaBindingComparison.run(colMgr.getItemManager(notebook), sdk)
+        assertEquals(report.text(), 0, report.differences.size)
+        // No difference alone does not show that the rows ran: which calls the screens kept out and how
+        // many rows were compared are pinned too.
+        assertEquals("the typed calls that were not made", NoteMetaBindingComparison.expectedNotSent(sdk), report.notSent)
+        assertEquals("the rows that were compared", NoteMetaBindingComparison.expectedCompared(sdk), report.compared)
+        assertEquals("the notebook never reached the server", emptySet<String>(), fake.collectionUids())
+        assertEquals("no request names the notebook", emptyList<String>(), fake.requests.filter { notebook.uid in it })
+    }
+
+    @Test fun theMetadataFormOnMsgpackCoreRunsInTheMinifiedBuildAndGivesWhatTheCodecGives() {
+        // The first call into the library in this process. A class that R8 removed, or a buffer class the
+        // library cannot load on this runtime, ends the case here with an Error, which nothing catches.
+        val first = NoteMetaLibraryEvaluation.fresh("n", 1)
+        assertArrayEquals("the first note the form writes", NoteMetaCodec.fresh("n", 1).bytes, first.bytes)
+        // The library chooses its buffer class by itself: neither the app nor this test sets its property.
+        assertNull("nothing set the library's buffer property", System.getProperty("msgpack.universal-buffer"))
+        val report = NoteMetaLibraryComparison.run()
+        // The simple name: no device test file may hold the library's package name, so that the test APK
+        // gives the debug build no keep rule for the library. The log line of the comparison has the full name.
+        assertEquals("the buffer class msgpack-core chose on this device", "MessageBufferU", report.bufferClass.substringAfterLast('.'))
+        assertEquals(report.differences.joinToString("\n"), 0, report.differences.size)
+        // No difference alone shows neither that the rows ran nor that the form is the library's. The
+        // counts are those of the table, and the last row of the map below is the one that tells the
+        // two sides apart.
+        assertEquals("what the codec makes of the table's merges: merged, refused, not a map",
+            Triple(65, 19, 6), Triple(report.merged, report.refused, report.notAMap))
+        assertEquals("reads of an input, reads of a merged output, fresh pairs",
+            Triple(90, 65, 32), Triple(report.peeks, report.outputPeeks, report.freshes))
+        val trailing = "trailing bytes after the map"
+        val notOneMap = "the top level is not a map"
+        assertEquals(
+            "the inputs both sides refuse as not a map, each with the codec's reason and the form's",
+            mapOf(
+                "trailingByte" to (trailing to trailing),
+                "twoMaps" to (trailing to trailing),
+                "arrayOfFive" to (notOneMap to notOneMap),
+                "notAMap" to (notOneMap to notOneMap),
+                "topLevelNil" to (notOneMap to notOneMap),
+                // The codec's own words, and the name of the exception msgpack-core throws when a read
+                // runs out of input. With the caller pointed at the codec, both would be the codec's words.
+                "cutAtAValueBoundary" to ("a length runs past the end of the input" to "MessageInsufficientBufferException"),
+            ),
+            report.reasons,
+        )
+    }
+
     // ---- helpers ----
 
     private fun newAccount(generation: String, name: String = "notes-boundary-${System.nanoTime()}@example.invalid",
@@ -1220,12 +2488,236 @@ class NotesSyncBoundaryRuntimeTest {
         return note
     }
 
+    private fun hex(s: String): ByteArray = s.replace(" ", "").chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+    /** A note with exactly these metadata bytes, as another client could upload it; nothing passes through a typed string. */
+    private fun uploadRawNote(notebook: String, metaRaw: ByteArray, body: String): Item {
+        val itemMgr = itemManager(notebook)
+        val note = itemMgr.create_raw(metaRaw, body.toByteArray(Charsets.UTF_8))
+        itemMgr.batch(arrayOf(note))
+        return note
+    }
+
     /** Uploads one note per title, each as its own change, so the server lists them in this order. */
     private fun uploadNotes(notebook: String, vararg titles: String) {
         titles.forEachIndexed { index, title -> uploadNote(notebook, title, "Body of $title", mtime = 1_000L + index) }
     }
 
     private fun cache(account: Account) = EtebaseLocalCache.getInstance(context, account.name)
+
+    /** A manual run that lists the collections again, so a change made on the stand-in server is seen. */
+    private fun syncNow(account: Account, generation: String) {
+        startManualRun(account, generation)
+        awaitSettled(ExactAccountIdentity(account.type, account.name, generation))
+    }
+
+    private fun startManualRun(account: Account, generation: String) {
+        statusBeforeRun = status(account, generation)
+        forgetLastListing(account.name)
+        NotesSyncCoordinator.request(context, account, generation, NotesSyncPolicy.Trigger.MANUAL)
+    }
+
+    /** The fetches of [notebook] itself since request [since]. */
+    private fun notebookFetches(since: Int, notebook: String) =
+        fake.requests.drop(since).count { it.substringBefore('?') == "GET collection/$notebook/" }
+
+    private fun pending(account: Account, generation: String): PendingNotesStore =
+        PendingNotesStore.forIdentity(context, account.type, account.name, generation).also { if (it !in stores) stores += it }
+
+    private fun pendingHeaders(account: Account, generation: String) = pending(account, generation).snapshot { false }.headers
+
+    // ---- the pending store on disk: the three store requirements on #709 (design 3.1) ----
+
+    /** [text] in the encodings plain text could be written in: UTF-8 and both byte orders of UTF-16. */
+    private fun plainForms(text: String): List<ByteArray> =
+        listOf(Charsets.UTF_8, Charsets.UTF_16LE, Charsets.UTF_16BE).map { text.toByteArray(it) }
+
+    private fun ByteArray.holds(needle: ByteArray): Boolean {
+        require(needle.isNotEmpty())
+        outer@ for (start in 0..size - needle.size) {
+            for (i in needle.indices) if (this[start + i] != needle[i]) continue@outer
+            return true
+        }
+        return false
+    }
+
+    /** Every file of the store, by name, as it is on disk right now, read without the store. */
+    private fun filesOnDisk(store: PendingNotesStore): Map<String, ByteArray> {
+        val listed = store.dir.listFiles().orEmpty()
+        assertTrue("only files: ${listed.map { it.name }}", listed.all { it.isFile })
+        return listed.associate { it.name to it.readBytes() }
+    }
+
+    private fun assertSameFiles(what: String, expected: Map<String, ByteArray>, actual: Map<String, ByteArray>) {
+        assertEquals(what, expected.keys, actual.keys)
+        for ((name, bytes) in expected) assertArrayEquals("$what: $name", bytes, actual.getValue(name))
+    }
+
+    /** What a file of the store decoded to; one that does not decode fails with the codec's reason. */
+    private fun <T> PendingCodec.Decoded<T>.orFail(name: String): T = when (this) {
+        is PendingCodec.Decoded.Ok -> value
+        is PendingCodec.Decoded.Bad -> throw AssertionError("$name does not decode: $reason")
+    }
+
+    /**
+     * "Keep the pending store encrypted": reads every file of the store from disk. None holds any of
+     * [texts] (a title, a text, a notebook name) as UTF-8 or UTF-16. Every file is one of the four
+     * kinds the store writes and encodes again to the same bytes from what it decodes to, so it has no
+     * byte that is not a header field, a blob or a checksum; a leftover temporary file fails here.
+     * Returns the entries by note uid, for the caller to compare their plain headers field by field.
+     */
+    private fun assertNothingPlainOnDisk(store: PendingNotesStore, texts: List<String>): Map<String, PendingEntry> {
+        val files = filesOnDisk(store)
+        assertTrue("the store has files to check", files.isNotEmpty())
+        val entries = HashMap<String, PendingEntry>()
+        for ((name, bytes) in files) {
+            for (text in texts) for (form in plainForms(text)) {
+                assertFalse("$name holds '$text' in plain text", bytes.holds(form))
+            }
+            when {
+                name == "sequence" -> {
+                    val value = PendingCodec.decodeSequence(bytes).orFail(name)
+                    assertArrayEquals(name, PendingCodec.encodeSequence(value), bytes)
+                }
+                name.endsWith(".note") -> {
+                    val entry = PendingCodec.decodeEntry(bytes).orFail(name)
+                    assertArrayEquals("$name is its header and its blob", PendingCodec.encodeEntry(entry), bytes)
+                    assertEquals("named by its note's uid", "${entry.noteUid}.note", name)
+                    entries[entry.noteUid] = entry
+                }
+                name.endsWith(".notebook") -> {
+                    val (uid, blob) = PendingCodec.decodeNotebook(bytes).orFail(name)
+                    assertArrayEquals(name, PendingCodec.encodeNotebook(uid, blob), bytes)
+                    assertEquals("named by its notebook's uid", "$uid.notebook", name)
+                }
+                name.endsWith(".landed") -> {
+                    val landed = PendingCodec.decodeLanded(bytes).orFail(name)
+                    assertArrayEquals(name, PendingCodec.encodeLanded(landed), bytes)
+                    assertEquals("named by its note's uid", "${landed.noteUid}.landed", name)
+                }
+                else -> throw AssertionError("a file the store's format does not account for: $name")
+            }
+        }
+        return entries
+    }
+
+    /** No directory or file of the store is open to another user. The store sets no mode itself. */
+    private fun assertClosedToOtherUsers(store: PendingNotesStore) {
+        for (path in listOf(store.dir.parentFile!!, store.dir) + store.dir.listFiles().orEmpty()) {
+            val mode = Os.stat(path.path).st_mode and 0x1FF
+            assertEquals("${path.name} has no group or other permission: ${Integer.toOctalString(mode)}", 0, mode and 0x3F)
+        }
+    }
+
+    /** A pending entry decrypted as design 3.1 says: through the notebook copy the store keeps, not through the Etebase cache. */
+    private fun decryptThroughStoredCopy(store: PendingNotesStore, entry: PendingEntry): Item {
+        val colMgr = server.collectionManager
+        val copy = checkNotNull(store.notebook(entry.notebookUid)) { "the store keeps a copy of the notebook" }
+        return colMgr.getItemManager(colMgr.cacheLoad(copy)).cacheLoad(entry.blob)
+    }
+
+    /** The text the Etebase cache holds for [note]. */
+    private fun cachedBody(account: Account, notebook: String, note: String): String? = cache(account).let { cache ->
+        synchronized(cache) {
+            val colMgr = server.collectionManager
+            val col = cache.collectionGet(colMgr, notebook).col
+            cache.itemGet(colMgr.getItemManager(col), notebook, note)?.content
+        }
+    }
+
+    /** The Etebase cache of the account name [name], which sign-out clears. Its path is decided by the name. */
+    private fun etebaseCacheDir(name: String) = File(context.filesDir, name)
+
+    /** The directories Android's "Clear cache" empties for an app. */
+    private fun androidCacheDirs(): List<File> = buildList {
+        add(context.cacheDir)
+        add(context.codeCacheDir)
+        addAll(context.externalCacheDirs.filterNotNull())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val deviceProtected = context.createDeviceProtectedStorageContext()
+            add(deviceProtected.cacheDir)
+            add(deviceProtected.codeCacheDir)
+        }
+    }
+
+    private fun File.isInside(root: File): Boolean =
+        canonicalPath == root.canonicalPath || canonicalPath.startsWith(root.canonicalPath + File.separator)
+
+    private fun assertStoreOutsideEveryCache(store: PendingNotesStore, name: String) {
+        assertTrue("under the no-backup directory", store.dir.isInside(context.noBackupFilesDir))
+        for (root in androidCacheDirs() + etebaseCacheDir(name)) assertFalse("the store is not under $root", store.dir.isInside(root))
+    }
+
+    /**
+     * A cache clear, done as the app's own user: the Etebase cache by the call sign-out makes, then the
+     * contents of every directory Android's "Clear cache" empties. The platform's own operation needs a
+     * permission a test does not hold, so this deletes the same directories' contents itself.
+     */
+    private fun clearEveryCache(account: Account) {
+        EtebaseLocalCache.clearUserCache(context, account.name)
+        forgetLastListing(account.name)
+        assertTrue("the Etebase cache is empty: ${cacheFiles(account.name)}", cacheFiles(account.name).isEmpty())
+        // Most of these directories are empty on a test device, so a file of the test's own goes into
+        // each first: the clear is then seen to reach every one of them. Nothing is asserted about a
+        // directory being empty afterwards, since other threads of the process may write there.
+        val dirs = androidCacheDirs()
+        val markers = dirs.map { File(it, "pending-store-check").apply { writeText("x") } }
+        for (dir in dirs) dir.listFiles()?.forEach { it.deleteRecursively() }
+        for (marker in markers) assertFalse("the cache clear reached ${marker.parentFile}", marker.exists())
+    }
+
+    /**
+     * A save by note uid, not through an editor handle, on the base design 3.2 gives a save: the new title
+     * and text go onto the note's pending entry when there is one, else onto the copy this account's cache
+     * holds, and the result is saved into the pending store with a copy of the notebook. No landed record
+     * is kept when it is pushed, unless the case itself has an editor handle open on the note. With
+     * [metaRaw], the item gets exactly those bytes as its metadata in place of the merge, for metadata no
+     * save of the app would write.
+     */
+    private fun editLocally(account: Account, generation: String, notebook: String, note: String, title: String, body: String, mtime: Long,
+                            withNotebookCopy: Boolean = true, metaRaw: ByteArray? = null) {
+        val store = pending(account, generation)
+        val (itemMgr, item, copy) = editable(account, store, notebook, note)
+        item.setContent(body)
+        item.setMetaRaw(metaRaw ?: (NoteMetaCodec.merge(item.metaRaw, title, mtime) as NoteMetaCodec.Merge.Merged).bytes)
+        val saved = store.saveLocal(note, notebook, item.etag, itemMgr.cacheSaveWithContent(item), isCreate = false,
+            notebookCopy = copy.takeIf { withNotebookCopy })
+        assertTrue("the edit was saved: $saved", saved is PendingNotesStore.SaveOutcome.Saved)
+    }
+
+    /** The item a save starts from, with its item manager and a copy of its notebook; the pending lock and the cache monitor are never held together. */
+    private fun editable(account: Account, store: PendingNotesStore, notebook: String, note: String): Triple<ItemManager, Item, ByteArray> {
+        val colMgr = server.collectionManager
+        val entry = (store.read(note) as? PendingNotesStore.Read.Present)?.entry
+        val cache = cache(account)
+        val (col, cached) = synchronized(cache) {
+            val col = cache.collectionGet(colMgr, notebook).col
+            col to if (entry == null) checkNotNull(cache.itemGet(colMgr.getItemManager(col), notebook, note)) { "the note is cached" }.item else null
+        }
+        val itemMgr = colMgr.getItemManager(col)
+        return Triple(itemMgr, entry?.let { itemMgr.cacheLoad(it.blob) } ?: cached!!, colMgr.cacheSave(col))
+    }
+
+    /** Another device's save: the server's copy changes, and this account's cache does not know it yet. */
+    private fun editOnAnotherDevice(notebook: String, note: String, body: String) {
+        val itemMgr = itemManager(notebook)
+        val item = itemMgr.fetch(note)
+        item.setContent(body)
+        itemMgr.transaction(arrayOf(item))
+    }
+
+    /** Every item upload since request [since], as "POST collection/<uid>/item/<transaction or batch>/", with any query kept. */
+    private fun uploads(since: Int) = fake.requests.drop(since).filter { UPLOAD.matches(it.substringBefore('?')) }
+
+    private fun transactionOf(notebook: String) = "POST collection/$notebook/item/transaction/"
+
+    /** The last manual run succeeded, and recorded so itself: a success left by an earlier run does not count. */
+    private fun assertSucceeded(status: SyncStatusStore.Status) {
+        assertEquals("the run succeeded: $status", SyncStatusStore.TerminalResult.SUCCESS, status.lastTerminalResult)
+        assertNull("no attempt left open: $status", status.activeAttemptId)
+        val before = checkNotNull(statusBeforeRun) { "no manual run was started" }
+        assertTrue("the success was recorded by the last run: $status", (status.lastSuccessAt ?: 0L) > (before.lastSuccessAt ?: 0L))
+    }
 
     private fun listCursor(account: Account): String? = cache(account).let { synchronized(it) { it.loadStoken() } }
 
@@ -1289,6 +2781,119 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("the held page's notes were not cached", alreadyCached, cachedNotes(account, notebook))
         assertEquals("the notebook's cursor did not move past the held page", cursorOf(held), notebookCursor(account, notebook))
         assertEquals("no page was requested after the held one", held.request, itemRequests(notebook).last())
+    }
+
+    /** A push held in flight: the hold, and what the test read before the run and while the upload was held. */
+    private class HeldPush(
+        val hold: FakeEtebaseServer.Hold,
+        /** Whether the server took the upload before its answer was held. */
+        val applied: Boolean,
+        /** Where the request log stood before the run, and right after the held upload arrived. */
+        val since: Int,
+        val through: Int,
+        /** How many uploads the stand-in had routed before the run. */
+        val sizes: Int,
+        val store: PendingNotesStore,
+        /** The store's files while the upload was held. */
+        val files: Map<String, ByteArray>,
+        /** Before the run: the account's Notes status, and what the Etebase cache held for the note and its notebook. */
+        val status: SyncStatusStore.Status,
+        val cachedText: String?,
+        val cursor: String?,
+        val cachedNotes: Set<String>,
+        /** When the test saw the held upload arrive. */
+        val heldAt: Long,
+    )
+
+    /**
+     * Starts a manual run and holds the upload of [note], which must be the change the run sends
+     * first (here the oldest one waiting), and checks that the run got that far. With [applied] the
+     * server takes the upload on arrival and only its answer is held; without, the upload is held
+     * before the server looks at it, and on release the connection drops with nothing applied. Read
+     * here for the comparison afterwards: the cache and the status before the run, the pending
+     * store's files while the upload is held, and where the request log and the count of routed
+     * uploads stood.
+     */
+    private fun holdPush(account: Account, generation: String, notebook: String, note: String, applied: Boolean,
+                         swallowInterrupt: Boolean = false): HeldPush {
+        val store = pending(account, generation)
+        val waiting = (store.read(note) as PendingNotesStore.Read.Present).entry
+        assertTrue("the change has not been sent before", waiting.sent.isEmpty())
+        val cachedText = cachedBody(account, notebook, note)
+        val cursor = notebookCursor(account, notebook)
+        val cachedNotes = cachedNotes(account, notebook)
+        val before = status(account, generation)
+        val stoken = fake.itemStoken(notebook)
+        val sizes = fake.uploadSizes.size
+        val since = fake.requests.size
+        if (!applied) fake.answer("POST", TRANSACTION, code = null)
+        val hold = fake.hold("POST", TRANSACTION, swallowInterrupt = swallowInterrupt, answerFirst = applied)
+        startManualRun(account, generation)
+        hold.awaitArrival()
+        val heldAt = SystemClock.uptimeMillis()
+        assertEquals("the held request is the upload", transactionOf(notebook), hold.request)
+        assertEquals("nothing was requested after it", hold.request, fake.requests.last())
+        val through = fake.requests.size
+        assertEquals("the server took the upload, or has not looked at it",
+            if (applied) listOf(1) else emptyList<Int>(), fake.uploadSizes.drop(sizes))
+        assertEquals("its notes changed, or did not", applied, fake.itemStoken(notebook) != stoken)
+        assertNotNull("the run is recorded as in progress", status(account, generation).activeAttemptId)
+        val files = filesOnDisk(store)
+        assertEquals("the sent revision is on disk before the answer, and nothing else changed",
+            waiting.copy(sent = listOf(waiting.revision)), PendingCodec.decodeEntry(files.getValue("$note.note")).orFail("$note.note"))
+        return HeldPush(hold, applied, since, through, sizes, store, files, before, cachedText, cursor, cachedNotes, heldAt)
+    }
+
+    /**
+     * The stand-in lets a parked request go by itself after 60 s and says nothing, and what is
+     * asserted afterwards would then be about a run nothing stopped in flight. So a request that
+     * arrived more than 50 s ago, which leaves room below those 60, fails here by name.
+     */
+    private fun assertStillHeld(heldAt: Long) {
+        val age = SystemClock.uptimeMillis() - heldAt
+        assertTrue("the request arrived $age ms ago, more than 50 s (the stand-in lets a parked request go by itself at 60 s)", age < 50_000)
+    }
+
+    /** Lets a held request go, unless the stand-in may already have let it go. */
+    private fun release(hold: FakeEtebaseServer.Hold, heldAt: Long) {
+        assertStillHeld(heldAt)
+        hold.release()
+    }
+
+    private fun release(held: HeldPush) = release(held.hold, held.heldAt)
+
+    /**
+     * The held upload was answered after its run stopped being allowed to write: no other upload
+     * and no request of any kind followed it, the pending store's files are byte for byte as they
+     * were while it was held, the cache holds the text, the cursor and the notes it held before the
+     * run, and the run recorded neither a success nor a failure. Every difference is reported, not
+     * only the first. It reads the request log to its end, so it goes before any request of the test's own.
+     */
+    private fun assertNothingWrittenFromPush(held: HeldPush, account: Account, generation: String, notebook: String, note: String) {
+        val problems = ArrayList<String>()
+        fun same(what: String, expected: Any?, actual: Any?) {
+            if (expected != actual) problems += "$what: expected <$expected> but was <$actual>"
+        }
+        same("one upload, and none after it", listOf(transactionOf(notebook)), uploads(held.since))
+        same("no request of any kind followed the held upload", emptyList<String>(), fake.requests.drop(held.through))
+        same("the uploads the server routed", if (held.applied) listOf(1) else emptyList<Int>(), fake.uploadSizes.drop(held.sizes))
+        val files = filesOnDisk(held.store)
+        same("the pending store's files", held.files.keys, files.keys)
+        for ((name, bytes) in held.files) {
+            val current = files[name] ?: continue
+            if (current.contentEquals(bytes)) continue
+            // An entry's header is plain, so what changed in it (a failure count, a hold) can be shown.
+            problems += "the pending store's $name changed" +
+                if (name.endsWith(".note")) ": it was ${PendingCodec.decodeEntry(bytes)} and is ${PendingCodec.decodeEntry(current)}" else ""
+        }
+        same("the uploaded note was not cached", held.cachedText, cachedBody(account, notebook, note))
+        same("the notebook's cursor did not move", held.cursor, notebookCursor(account, notebook))
+        same("no other note was fetched into the cache", held.cachedNotes, cachedNotes(account, notebook))
+        val now = status(account, generation)
+        same("no success was recorded", held.status.lastSuccessAt, now.lastSuccessAt)
+        same("no failure was recorded", held.status.lastFailureAt, now.lastFailureAt)
+        same("no attempt left open", null, now.activeAttemptId)
+        assertTrue(problems.joinToString("\n"), problems.isEmpty())
     }
 
     /**
@@ -1407,6 +3012,28 @@ class NotesSyncBoundaryRuntimeTest {
         assertNull("no attempt left open: $status", status.activeAttemptId)
     }
 
+    /** A run the network rule refuses asks the server nothing, leaves the waiting change of [note] alone, and leaves the status as it was. */
+    private fun assertRefused(account: Account, generation: String, note: String, what: String, start: () -> Unit) {
+        val store = pending(account, generation)
+        val waiting = (store.read(note) as PendingNotesStore.Read.Present).entry
+        val before = status(account, generation)
+        val mark = fake.requests.size
+        start()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, generation))
+        assertEquals("$what asks the server nothing", emptyList<String>(), fake.requests.drop(mark))
+        assertEquals("$what leaves the waiting change alone", waiting, (store.read(note) as PendingNotesStore.Read.Present).entry)
+        assertEquals("$what records neither success nor failure", before, status(account, generation))
+    }
+
+    /** A run the network rule admits sends the one waiting change of [notebook]. */
+    private fun assertSent(account: Account, generation: String, notebook: String, what: String, start: () -> Unit) {
+        val mark = fake.requests.size
+        start()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, generation))
+        assertEquals("$what sends the waiting change", listOf(transactionOf(notebook)), uploads(mark))
+        assertTrue("$what leaves nothing waiting", pendingHeaders(account, generation).isEmpty())
+    }
+
     private fun listings(since: Int) = fake.requests.drop(since).filter { it.startsWith("POST collection/list_multi/") }
 
     private fun fromScratch(request: String) = !request.contains("stoken=")
@@ -1434,7 +3061,27 @@ class NotesSyncBoundaryRuntimeTest {
     companion object {
         private val LIST = Regex("collection/list_multi/")
         private val ITEMS = Regex("collection/[^/]+/item/")
+        private val TRANSACTION = Regex("collection/[^/]+/item/transaction/")
+        private val UPLOAD = Regex("POST collection/[^/]+/item/(transaction|batch)/")
         private const val QUIET_MILLIS = 300L
+
+        /** Well-formed msgpack that is not a map: an array holding the string "x". */
+        private val NOT_ONE_MAP = byteArrayOf(0x91.toByte(), 0xa1.toByte(), 0x78)
+
+        /** The header of a map with one entry, and nothing after it. */
+        private val CUT_SHORT_MAP = byteArrayOf(0x81.toByte())
+
+        /**
+         * What the checks of the pending store on disk look for. Long and distinctive, so a match in a
+         * file is never chance, and ASCII, so the same strings work on Android 5.
+         */
+        private const val STORE_CHECK_NOTEBOOK = "Quarterly planning notebook of the pending store check"
+        private const val STORE_CHECK_TITLE = "Title only the pending store check uses"
+        private const val STORE_CHECK_BODY = "Text only the pending store check uses, line one"
+
+        /** The draft of the account that the same-name case replaces. */
+        private const val OLD_DRAFT_TITLE = "Draft title of the replaced account"
+        private const val OLD_DRAFT_BODY = "Draft text of the replaced account"
 
         /**
          * One Etebase signup for the whole class: its key derivation takes seconds, and the session

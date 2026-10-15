@@ -12,6 +12,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import io.silentsuite.sync.R
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -21,6 +22,7 @@ class NoteViewFragment : Fragment() {
     private lateinit var creationId: String
     private lateinit var notebookUid: String
     private lateinit var noteUid: String
+    private var loadJob: Job? = null
 
     internal var renderedNote: NoteContent? = null
         private set
@@ -46,7 +48,9 @@ class NoteViewFragment : Fragment() {
     private fun reload() {
         val host = host() ?: return
         val appContext = host.applicationContext
-        viewLifecycleOwner.lifecycleScope.launch {
+        // A newer load replaces an older one, so an older result can never render last.
+        loadJob?.cancel()
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { NotesLoader.note(appContext, account, creationId, notebookUid, noteUid) }
             val view = view ?: return@launch
             val current = host() ?: return@launch
@@ -74,6 +78,7 @@ class NoteViewFragment : Fragment() {
                 getString(R.string.notes_edited, DateUtils.getRelativeTimeSpanString(
                     it, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE))
             },
+            NoteListFragment.syncLabel(requireContext(), note.sync),
             getString(R.string.notes_read_only_hint),
         ).joinToString(". ")
         view.findViewById<TextView>(R.id.note_body).text = note.body

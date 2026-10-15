@@ -74,3 +74,14 @@
 -dontwarn org.kxml2.**
 -dontwarn org.xmlpull.**
 -dontwarn org.kxml2.io.KXmlParser,org.kxml2.io.KXmlSerializer
+
+# msgpack-core (evaluation only, not for merge). Every line below is here because R8 asked for it or
+# removed what the library loads by name. The commit message quotes R8's own output for each.
+# Classes of the JDK that msgpack-core refers to and android.jar does not have:
+-dontwarn sun.nio.ch.DirectBuffer
+# MessageBuffer loads its ByteBuffer-based class by name and takes these two constructors by
+# reflection, so R8 cannot see the use. Without this rule R8 removed it (usage.txt, quoted in the commit).
+-keep class org.msgpack.core.buffer.MessageBufferU {
+    <init>(byte[], int, int);
+    <init>(java.nio.ByteBuffer);
+}

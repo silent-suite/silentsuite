@@ -73,6 +73,11 @@ android {
 
     testOptions {
         unitTests.returnDefaultValues = true
+        // msgpack-core picks its ByteBuffer-based buffer on Android by itself (the device case of the
+        // evaluation asserts the class, with this property not set); make the JVM tests run that same class.
+        unitTests.all {
+            systemProperty 'msgpack.universal-buffer', 'true'
+        }
     }
 
     defaultConfig {
@@ -212,6 +217,14 @@ dependencies {
     implementation project(':cert4android')
     implementation project(':ical4android')
     implementation project(':vcard4android')
+    // EVALUATION ONLY, not for merge (the msgpack-core evaluation). The library is on the app's classpath so
+    // that R8 and a device run can say something about NoteMetaMsgpack, the form of the note metadata merge
+    // that never calls skipValue. The app does not use it: notes are read and written through NoteMetaCodec,
+    // and the form's one caller in main code, NoteMetaLibraryEvaluation, is called by tests only.
+    // 0.9.12 is the latest release (read 2026-10-13). CVE-2026-21452 is fixed in 0.9.11. CVE-2026-90472
+    // (unpackValue) and CVE-2026-90473 (skipValue) list every version through 0.9.12 and no fixed version;
+    // main code calls neither method. See NoteMetaMsgpack, MsgpackCoreNoteMeta and NoteMetaCodecComparisonTest.
+    implementation 'org.msgpack:msgpack-core:0.9.12'
     // for tests
     androidTestImplementation "androidx.test:runner:${androidX.testRunner}"
     androidTestImplementation "androidx.test:rules:${androidX.testRules}"
