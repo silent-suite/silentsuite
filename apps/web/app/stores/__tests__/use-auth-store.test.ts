@@ -80,12 +80,17 @@ vi.mock('@/app/lib/self-hosted', () => ({
   isCustomServer: (serverUrl?: string) => Boolean(serverUrl && serverUrl !== 'https://server.silentsuite.io'),
 }))
 
-// Mock etebase store (used by logout)
-vi.mock('@/app/stores/use-etebase-store', () => ({
-  useEtebaseStore: {
-    getState: () => ({ destroy: vi.fn() }),
-  },
-}))
+// Mock etebase store (used by logout). Like the real destroy(), teardown
+// invalidates the account epoch and returns the token it produced.
+vi.mock('@/app/stores/use-etebase-store', async () => {
+  const { bumpAccountEpoch } = await import('@/app/lib/account-epoch')
+  return {
+    EtebaseTeardownError: class extends Error {},
+    useEtebaseStore: {
+      getState: () => ({ destroy: vi.fn(() => bumpAccountEpoch()) }),
+    },
+  }
+})
 
 vi.mock('@/app/stores/use-calendar-store', () => ({ useCalendarStore: { setState: calendarSetState } }))
 vi.mock('@/app/stores/use-task-store', () => ({ useTaskStore: { setState: taskSetState } }))

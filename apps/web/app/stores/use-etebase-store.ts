@@ -209,6 +209,14 @@ async function ensureCollectionsForAccount(
   return collections
 }
 
+/** destroy() failed after invalidating the account boundary; `epoch` is the token it produced. */
+export class EtebaseTeardownError extends Error {
+  constructor(readonly epoch: number, readonly teardownError: unknown) {
+    super('Etebase teardown failed after account invalidation')
+    this.name = 'EtebaseTeardownError'
+  }
+}
+
 /**
  * Account epoch whose initial collection discovery failed before the
  * SyncEngine was started. A later successful reconcile for the same epoch
@@ -1039,8 +1047,10 @@ interface EtebaseActions {
 
   /**
    * Clean up on logout -- stop sync engine, clear all state.
+   * Returns the account epoch this teardown produced (not one observed after
+   * re-entrant callbacks); throws EtebaseTeardownError carrying it on failure.
    */
-  destroy: () => void
+  destroy: () => number
 
   /**
    * Register a handler for sync change events from the SyncEngine.
@@ -2701,11 +2711,17 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   destroy: () => {
-    bumpAccountEpoch()
+    const epoch = bumpAccountEpoch()
     const { syncEngine } = get()
     if (syncEngine) {
-      syncEngine.stop()
+      try {
+        syncEngine.stop()
+      } catch (err) {
+        throw new EtebaseTeardownError(epoch, err)
+      }
     }
+    // A synchronously re-entrant account boundary now owns this store.
+    if (!isCurrentAccountEpoch(epoch)) return epoch
     set({
       account: null,
       accountFingerprint: null,
@@ -2719,6 +2735,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       syncEngine: null,
     })
     logger.debug('[etebase-store] Destroyed')
+    return epoch
   },
 
   onSyncChange: (handler) => {
