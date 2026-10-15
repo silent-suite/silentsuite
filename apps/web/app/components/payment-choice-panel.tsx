@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { getAccountEpoch } from '@/app/lib/account-epoch'
 import { createAuthenticatedPaymentFetch, PaymentSessionRecoveryError } from '@/app/lib/authenticated-payment-fetch'
-import { Crown, Lock, Zap } from 'lucide-react'
+import { Crown, Lock } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
 import {
@@ -29,7 +29,7 @@ import {
   annualOfferMonthlyLabel,
   annualOfferPlanLabel,
   annualOfferRenewalCopy,
-  annualTermsCopy,
+  compactAnnualPaymentCopy,
   formatDisclosureAmount,
   isAnnualOfferProviderAvailable,
 } from '@/app/lib/annual-offer-presentation'
@@ -642,7 +642,7 @@ export default function PaymentChoicePanel({
       <BitcoinPaymentPanel
         session={bitcoinSession}
         title={`Pay ${formatDisclosureAmount(paymentDisclosure)}/year annual with Bitcoin, Lightning and Monero`}
-        description={`Scan the QR code or copy the payment details to pay ${formatDisclosureAmount(paymentDisclosure)} for ${paymentPlan ? `${annualOfferPlanLabel(paymentPlan)} (${paymentPlan.planId})` : 'this annual payment'}. ${annualTermsCopy(paymentDisclosure)}`}
+        description={compactAnnualPaymentCopy(paymentDisclosure)}
         settledMessage="Payment settled. Refreshing your subscription..."
         backLabel={loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         backDisabled={cancellationDisabled}
@@ -688,7 +688,7 @@ export default function PaymentChoicePanel({
               <Crown className="h-4 w-4 text-amber-400" />
               <div>
                 <span className="text-sm font-medium text-[rgb(var(--foreground))]">{paymentPlan ? annualOfferPlanLabel(paymentPlan) : 'Annual payment'}</span>
-                <p className="text-xs text-[rgb(var(--muted))]">{paymentPlan ? `Annual card payment · ${paymentPlan.planId}` : 'Annual card payment'}</p>
+                <p className="text-xs text-[rgb(var(--muted))]">Annual card payment</p>
               </div>
             </div>
             <div className="text-right">
@@ -698,7 +698,7 @@ export default function PaymentChoicePanel({
               </p>
             </div>
           </div>
-          <p className="mt-2 text-xs text-[rgb(var(--muted))]">{annualTermsCopy(paymentDisclosure)}</p>
+          <p className="mt-2 text-xs text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(paymentDisclosure)}</p>
         </div>
         <StripeTrustNote />
         <StripePaymentForm
@@ -754,7 +754,7 @@ export default function PaymentChoicePanel({
             To prevent double payments, only one payment flow can be active at a time. Continue the current payment or cancel it before choosing another method.
           </p>
           {currentFlow.disclosure && (
-            <p className="mt-2 text-sm text-[rgb(var(--muted))]">{annualTermsCopy(currentFlow.disclosure)}</p>
+            <p className="mt-2 text-sm text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(currentFlow.disclosure)}</p>
           )}
         </div>
         {error && (
@@ -801,37 +801,19 @@ export default function PaymentChoicePanel({
   return (
     <div className="space-y-5">
       <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{title}</h2>
-      <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/5 p-4 text-left">
-        <div className="flex items-start gap-3">
-          <div className="rounded-lg bg-[rgb(var(--border))] p-2 shrink-0">
-            <Zap className="h-4 w-4 text-amber-400" />
-          </div>
-          <div>
-            <h3 className="font-medium text-[rgb(var(--foreground))]">Pay now</h3>
-            <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
-              {annualOffer
-                ? `Choose a server-authorized payment method for ${annualOfferPlanLabel(annualOffer.offer)}.`
-                : !optionsLoaded ? 'Loading the server-owned annual offer before payment options are shown.'
-                : offerUnavailableMessage}
-            </p>
-          </div>
-        </div>
-      </div>
+      {!annualOffer && (
+        <p role="status" className="text-sm text-[rgb(var(--muted))]">
+          {!optionsLoaded ? 'Loading payment options...' : offerUnavailableMessage}
+        </p>
+      )}
 
       {annualOffer && (
         <div className="flex items-center justify-end" data-plan-id={annualOffer.offer.planId}>
           <div className="flex items-center gap-2">
             <Crown className="h-3.5 w-3.5 text-amber-400" />
-            <span className="sr-only">{annualOfferPlanLabel(annualOffer.offer)} ({annualOffer.offer.planId})</span>
+            <span className="sr-only">{annualOfferPlanLabel(annualOffer.offer)}</span>
             <PriceDisplay offer={annualOffer.offer} />
           </div>
-        </div>
-      )}
-
-      {annualOffer && accountDisclosures && (
-        <div className="space-y-2 text-xs text-[rgb(var(--muted))]">
-          {stripeAvailable && accountDisclosures.stripe && <p>{annualTermsCopy(accountDisclosures.stripe)}</p>}
-          {btcpayAvailable && accountDisclosures.btcpay && <p>{annualTermsCopy(accountDisclosures.btcpay)}</p>}
         </div>
       )}
 
@@ -854,9 +836,12 @@ export default function PaymentChoicePanel({
       )}
 
       {currentFlowLoaded && btcpayAnnualOption && btcpayAvailable && annualOffer && (
-        <Button onClick={startBtcpay} disabled={loading !== null} variant="outline" className="w-full" aria-label={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOffer.offer)}`}>
-          {loading === 'btcpay' ? 'Opening cryptocurrency checkout...' : 'Bitcoin, Lightning and Monero'}
-        </Button>
+        <div className="space-y-2">
+          <Button onClick={startBtcpay} disabled={loading !== null} className="w-full" aria-label={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOffer.offer)}`}>
+            {loading === 'btcpay' ? 'Opening cryptocurrency checkout...' : 'Bitcoin, Lightning and Monero'}
+          </Button>
+          {accountDisclosures?.btcpay && <p className="text-xs text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(accountDisclosures.btcpay)}</p>}
+        </div>
       )}
 
       {!currentFlowLoaded ? (
@@ -873,9 +858,12 @@ export default function PaymentChoicePanel({
           Loading payment options...
         </Button>
       ) : stripeOption && stripeAvailable && annualOffer ? (
-        <Button onClick={startStripe} disabled={loading !== null} className="w-full" aria-label={`Continue to card payment for ${annualOfferPlanLabel(annualOffer.offer)}, ${annualOfferRenewalCopy(annualOffer.offer)}`}>
-          {loading === 'stripe' ? 'Setting up...' : 'Continue to card payment'}
-        </Button>
+        <div className="space-y-2">
+          <Button onClick={startStripe} disabled={loading !== null} className="w-full" aria-label={`Continue to card payment for ${annualOfferPlanLabel(annualOffer.offer)}, ${annualOfferRenewalCopy(annualOffer.offer)}`}>
+            {loading === 'stripe' ? 'Setting up...' : 'Continue to card payment'}
+          </Button>
+          {accountDisclosures?.stripe && <p className="text-xs text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(accountDisclosures.stripe)}</p>}
+        </div>
       ) : termsUnavailable ? null : (
         <p className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 text-sm text-[rgb(var(--muted))]">
           {offerUnavailableMessage}

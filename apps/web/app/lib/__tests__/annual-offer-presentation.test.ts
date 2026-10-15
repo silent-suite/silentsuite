@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { annualTermsCopy } from '../annual-offer-presentation'
+import { annualTermsCopy, compactAnnualPaymentCopy } from '../annual-offer-presentation'
 import type { AnnualDisclosure } from '../billing-v2'
 
 const accountCard: AnnualDisclosure = {
@@ -8,6 +8,30 @@ const accountCard: AnnualDisclosure = {
   refundWindowDays: 30, bonusDays: 0, periodEndRule: 'account_confirmation_rules_v1', renewalAt: null, entitlementEndsAt: null,
 }
 const accountBitcoin: AnnualDisclosure = { ...accountCard, kind: 'prepaid', renewalAmountMinor: null, autoRenew: false, prepaid: true }
+
+describe('compactAnnualPaymentCopy', () => {
+  it('keeps the immediate charge and renewal without the rejected bonus/refund paragraph', () => {
+    expect(compactAnnualPaymentCopy(accountCard)).toBe('€36.00 now · renews at €36.00/year until cancelled.')
+  })
+
+  it('distinguishes prepaid crypto without inventing when an existing account period begins', () => {
+    expect(compactAnnualPaymentCopy(accountBitcoin)).toBe('€36.00 for one year · no automatic renewal.')
+  })
+
+  it('uses frozen historical charges and renewals, not current prices', () => {
+    expect(compactAnnualPaymentCopy({ ...accountCard, annualAmountMinor: 4800, monthlyEquivalentMinor: 400, firstChargeAmountMinor: 4800, renewalAmountMinor: 4800 }))
+      .toBe('€48.00 now · renews at €48.00/year until cancelled.')
+  })
+
+  it('does not describe a non-renewing immediate charge as a subscription', () => {
+    expect(compactAnnualPaymentCopy({ ...accountCard, autoRenew: false, renewalAmountMinor: null })).toBe('€36.00 now · no automatic renewal.')
+  })
+
+  it('leaves other disclosure kinds on the existing presentation path', () => {
+    const trial: AnnualDisclosure = { ...accountCard, kind: 'card_trial', firstChargeAmountMinor: 0, periodEndRule: 'first_charge_plus_1_utc_calendar_year' }
+    expect(compactAnnualPaymentCopy(trial)).toBe(annualTermsCopy(trial))
+  })
+})
 
 describe('annualTermsCopy', () => {
   // Frozen against unchanged Billing fulfillment (btcpay-invoice-persistence.ts,

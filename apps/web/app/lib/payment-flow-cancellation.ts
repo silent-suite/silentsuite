@@ -46,6 +46,11 @@ const KNOWN_FAILURES: ReadonlyArray<readonly [number, string, PaymentFlowCancell
   [400, 'bitcoin-cancellation-acknowledgement-required', 'bitcoin-acknowledgement-required'],
   [400, 'invalid-cancellation-request', 'invalid-cancellation-request'],
   [409, 'payment-reconciliation-required', 'payment-reconciliation-required'],
+  // Deliberate refusals that keep the flow: held/not cancellable, a different
+  // flow than the one displayed, and a flow still being finalized.
+  [409, 'flow-not-cancellable', 'payment-reconciliation-required'],
+  [409, 'payment-flow-changed', 'invalid-cancellation-request'],
+  [409, 'flow-finalization-pending', 'invalid-cancellation-request'],
   [502, 'provider-cancellation-failed', 'provider-cancellation-failed'],
 ]
 
