@@ -1786,7 +1786,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       logger.warn('[auth-store] Session restore failed (network):', err)
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
       const hasEtebaseSession = !!(await secureGet('etebase_session'))
-      if (!current() && !signedOut()) return
+      // A signed-out state here may be another operation's (e.g. a logout awaiting
+      // its DELETE); only this restore's unchanged boundary may publish or clear.
+      if (!current()) return
       const marker = readHostedValidationMarker()
       const activeTabMarker = hasEtebaseSession ? readOtherActiveHostedSessionTab() : null
       if (hasEtebaseSession && marker) {
@@ -1808,7 +1810,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       } else {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
-        if (hasEtebaseSession) await clearSignedOut()
+        // Subscribers of that publication may establish another account; cleanup
+        // invalidates the epoch before its own checks, so recheck first.
+        if (hasEtebaseSession && signedOut()) await clearSignedOut()
       }
     }
   },

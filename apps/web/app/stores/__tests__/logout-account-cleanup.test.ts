@@ -629,6 +629,95 @@ describe('restoreSession and retryBillingConnection never clear a newly establis
   })
 })
 
+const REMEMBERED_MARKER = 'silentsuite-hosted-validation-remembered'
+
+/** The remembered-device marker exactly as markHostedValidation writes it. */
+function markRememberedA() {
+  localStorage.setItem(REMEMBERED_MARKER, JSON.stringify({ userId: userA.id, rememberDevice: true, validatedAt: Date.now() }))
+}
+
+/** Routes billing with a refresh that rejects as a network failure when `fail` is called. */
+function routeFailingRefresh(remove?: () => Promise<Response>) {
+  const refreshing = deferred<void>()
+  let fail!: () => void
+  const reply = new Promise<Response>((_, reject) => { fail = () => reject(new TypeError('synthetic Failed to fetch')) })
+  routeBilling(() => { refreshing.resolve(); return reply }, remove)
+  return { refreshing: refreshing.promise, fail: () => fail() }
+}
+
+describe('restoreSession network fallback acts only for its own boundary', () => {
+  it('restoreSession: a network rejection while logout awaits its DELETE does not undo the logout', async () => {
+    signInA()
+    markRememberedA()
+    const deleting = deferred<void>()
+    const remove = deferred<Response>()
+    const refresh = routeFailingRefresh(() => { deleting.resolve(); return remove.promise })
+
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    const logout = useAuthStore.getState().logout()
+    await deleting.promise
+    refresh.fail()
+    await restore
+    remove.resolve(new Response(null, { status: 204 }))
+    await logout
+
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(useEtebaseStore.getState().accountFingerprint).toBeNull()
+    expect(await persisted()).toEqual(CLEARED)
+    expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+  })
+
+  it('restoreSession: account B established by the markerless fallback\'s signed-out publication suffers no later invalidation or cleanup', async () => {
+    const refresh = routeFailingRefresh()
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    // The fallback's signed-out publication is the next Auth notification.
+    let b: ReturnType<typeof registerBPrivateState> | undefined
+    const unsubscribe = useAuthStore.subscribe(() => {
+      unsubscribe()
+      bumpAccountEpoch()
+      useAuthStore.setState({ user: userB, isAuthenticated: true })
+      b = registerBPrivateState()
+    })
+    refresh.fail()
+    await restore
+
+    expect(b).toBeDefined() // the re-entry really ran
+    expectBPrivateStateIntact(b!)
+    expect(await persisted()).toEqual(RETAINED_A)
+    expect(localStorage.getItem(INVALIDATED)).toBeNull()
+  })
+
+  it('restoreSession: a network rejection with a retained session and marker still enters its own degraded mode', async () => {
+    markRememberedA()
+    const refresh = routeFailingRefresh()
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    refresh.fail()
+    await restore
+
+    expect(useAuthStore.getState().user?.id).toBe(userA.id)
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+    expect(useAuthStore.getState().subscriptionStatus).toBe('billing_unavailable')
+    expect(await persisted()).toEqual(RETAINED_A)
+  })
+
+  it('restoreSession: a markerless network fallback without a takeover still clears its own material', async () => {
+    const refresh = routeFailingRefresh()
+    const restore = useAuthStore.getState().restoreSession()
+    await refresh.refreshing
+    refresh.fail()
+    await restore
+
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    expect(await persisted()).toEqual(CLEARED)
+    expect(localStorage.getItem(INVALIDATED)).not.toBeNull()
+  })
+})
+
 describe('restoreSession and retryBillingConnection keep their own cleanup and publication', () => {
   it('restoreSession hosted 401 still clears its own material', async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 401 }))
