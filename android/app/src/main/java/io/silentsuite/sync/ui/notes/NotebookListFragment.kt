@@ -18,6 +18,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import io.silentsuite.sync.R
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.ui.AccountActivity
@@ -25,6 +26,7 @@ import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.Constants
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -41,6 +43,9 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private var loaded = false
     private var lastLoadFailed = false
     private var everSynced = false
+    // What the network line is decided on, from the last load that passed the account check.
+    private var network: NotesNetworkState? = null
+    private var loadJob: Job? = null
 
     /** Last rendered rows; process-only observation point for runtime tests. */
     internal var renderedNotebooks: List<NotebookRow> = emptyList()
@@ -48,6 +53,13 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
 
     /** What the empty list currently says, or null while rows show; observation point for runtime tests. */
     internal var renderedEmptyState: NotesEmptyState? = null
+        private set
+
+    internal var renderedUnsyncedText: Int = 0
+        private set
+
+    /** The sentences of the network line as last rendered, empty while no line shows; observation point for runtime tests. */
+    internal var renderedNetworkNotice: List<NotesNetworkPolicy.NoticePart> = emptyList()
         private set
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -175,9 +187,15 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private fun reload() {
         val host = host() ?: return
         val appContext = host.applicationContext
-        viewLifecycleOwner.lifecycleScope.launch {
-            val (result, synced) = withContext(Dispatchers.IO) {
-                NotesLoader.notebooks(appContext, account, creationId) to NotesLoader.everSynced(appContext, account, creationId)
+        // A newer load replaces an older one, so an older result can never render last.
+        loadJob?.cancel()
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
+            val (result, synced, seen) = withContext(Dispatchers.IO) {
+                val rows = NotesLoader.notebooks(appContext, account, creationId)
+                // The network settings are read by account name, so only after a load that found the
+                // exact generation.
+                Triple(rows, NotesLoader.everSynced(appContext, account, creationId),
+                    if (rows is NotesLoad.Loaded) NotesLoader.network(appContext, account) else null)
             }
             view ?: return@launch
             val current = host() ?: return@launch
@@ -188,25 +206,38 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
                     // A failure repeats on every sync notification until it clears; say it once.
                     if (!lastLoadFailed) Toast.makeText(current, R.string.notes_loading_failed, Toast.LENGTH_LONG).show()
                     lastLoadFailed = true
-                    // Keep whatever was already shown rather than blanking the list.
-                    render(renderedNotebooks)
+                    // Nothing was read this time; keep the rows and the last known way to unsynced text.
+                    render(NotebookOverview(renderedNotebooks, renderedUnsyncedText))
                 }
                 is NotesLoad.Loaded -> if (current.exactAccountStillCurrent()) {
-                    lastLoadFailed = false
-                    render(result.value)
-                } else current.finish()
+                    // The network was read by account name, so it is kept only here, for the generation
+                    // checked on the line above. A failed load renders with what the last load kept.
+                    network = seen
+                    // The notebooks could not be read but the local changes were (design 3.5): still a
+                    // failure to report once, and the rows already shown stay.
+                    val overview = result.value
+                    if (overview.failed && !lastLoadFailed) {
+                        Toast.makeText(current, R.string.notes_loading_failed, Toast.LENGTH_LONG).show()
+                    }
+                    lastLoadFailed = overview.failed
+                    render(if (overview.failed) NotesOverlay.keptAfterFailure(renderedNotebooks, overview) else overview)
+                } else {
+                    current.finish()
+                }
             }
         }
     }
 
-    private fun render(rows: List<NotebookRow>) {
+    private fun render(overview: NotebookOverview) {
+        val rows = overview.notebooks
         renderedNotebooks = rows
+        renderedUnsyncedText = overview.unsyncedText
         loaded = true
         notebookAdapter?.apply {
             setNotifyOnChange(false)
             clear()
             addAll(rows.map {
-                AccountActivity.CollectionListItemInfo(it.uid, CollectionInfo.Type.NOTES, it.name, it.description,
+                AccountActivity.CollectionListItemInfo(it.uid, CollectionInfo.Type.NOTES, it.name, describe(it),
                     it.color, it.readOnly, isAdmin = !it.shared)
             })
             notifyDataSetChanged()
@@ -215,7 +246,40 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
             list?.onRestoreInstanceState(state)
             listState = null
         }
+        // Held text and changes whose notebook is gone or read-only are counted here, so they stay
+        // findable even with no notebook left. The row opens the unsynced text screen once it exists.
+        view?.findViewById<TextView>(R.id.notebooks_unsynced)?.apply {
+            text = getString(R.string.notes_unsynced_text, overview.unsyncedText)
+            visibility = if (overview.unsyncedText > 0) View.VISIBLE else View.GONE
+        }
+        renderNetworkNotice(rows.sumOf { it.waiting })
         renderEmptyState()
+    }
+
+    /**
+     * The line that says Notes do not sync by themselves on the network the device reports, and
+     * what pulling down would do (answer 5 of 2026-10-12 on #709). It is decided again on every
+     * reload and at no other time: nothing here listens for network changes, so it can be out of
+     * date while the screen stays open. Without a reading there is no line. [waiting] is the sum of
+     * the rows' counts, so it leaves out what the unsynced text row counts.
+     */
+    private fun renderNetworkNotice(waiting: Int) {
+        val parts = network?.let { NotesNetworkPolicy.notice(waiting, it.settings, it.account, it.reading) }.orEmpty()
+        renderedNetworkNotice = parts
+        val line = view?.findViewById<TextView>(R.id.notebooks_network_notice) ?: return
+        line.visibility = if (parts.isEmpty()) View.GONE else View.VISIBLE
+        line.text = parts.joinToString(" ") { getString(noticeText(it)) }
+    }
+
+    private fun noticeText(part: NotesNetworkPolicy.NoticePart): Int = when (part) {
+        NotesNetworkPolicy.NoticePart.CHANGES_WAITING -> R.string.notes_network_changes_waiting
+        NotesNetworkPolicy.NoticePart.MAY_BE_OUT_OF_DATE -> R.string.notes_network_may_be_out_of_date
+        NotesNetworkPolicy.NoticePart.NOTES_SETTING -> R.string.notes_network_notes_setting
+        NotesNetworkPolicy.NoticePart.ACCOUNT_WIFI_ONLY -> R.string.notes_network_account_wifi_only
+        NotesNetworkPolicy.NoticePart.NO_WIFI_REPORTED -> R.string.notes_network_no_wifi_reported
+        NotesNetworkPolicy.NoticePart.ACCOUNT_NETWORK_NAME -> R.string.notes_network_account_network_name
+        NotesNetworkPolicy.NoticePart.TRY_NOW -> R.string.notes_network_try_now
+        NotesNetworkPolicy.NoticePart.SYNC_NOW_NEEDS_WIFI -> R.string.notes_network_sync_now_needs_wifi
     }
 
     private fun renderEmptyState() {
@@ -239,6 +303,16 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
         // Offer to create a notebook only once a sync has shown there really are none.
         view.findViewById<View>(R.id.notebooks_create).visibility =
             if (state == NotesEmptyState.EMPTY) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * The notebook's description, after its count of waiting changes when there are any. The count goes
+     * first because the row shows at most two lines of description.
+     */
+    private fun describe(row: NotebookRow): String {
+        if (row.waiting == 0) return row.description
+        val waiting = resources.getQuantityString(R.plurals.notes_waiting_changes, row.waiting, row.waiting)
+        return if (row.description.isBlank()) waiting else "$waiting\n${row.description}"
     }
 
     companion object {

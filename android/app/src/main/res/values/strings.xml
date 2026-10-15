@@ -735,7 +735,22 @@
     <string name="dashboard_notes_destination">Syncs notebooks for the Notes screen in this app</string>
     <string name="settings_experimental_title">Experimental</string>
     <string name="settings_notes_enabled">Notes (experimental)</string>
-    <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. There is no separate background schedule yet.</string>
+    <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. The two settings below choose the connections they may use. There is no separate background schedule yet.</string>
+    <string name="settings_notes_automatic_network">Automatic Notes sync</string>
+    <string name="settings_notes_automatic_network_wifi">Wi-Fi only. Notes sync by themselves, when you open Notes and after a calendar, contact, or task sync, only on Wi-Fi.</string>
+    <string name="settings_notes_automatic_network_any">Wi-Fi or mobile data. Notes also sync by themselves on mobile data, unless Sync over WiFi only is on for this account.</string>
+    <string name="settings_notes_sync_now_network">Sync now for Notes</string>
+    <string name="settings_notes_sync_now_network_any">Wi-Fi or mobile data. Sync now, pull to refresh, and turning Notes on sync Notes on any connection.</string>
+    <string name="settings_notes_sync_now_network_wifi">Wi-Fi only. Off Wi-Fi, Sync now and pull to refresh do not sync Notes.</string>
+    <!-- The names and the values of the next two arrays are paired by position. -->
+    <string-array name="settings_notes_network_names">
+        <item>Wi-Fi only</item>
+        <item>Wi-Fi or mobile data</item>
+    </string-array>
+    <string-array name="settings_notes_network_values" translatable="false">
+        <item>WIFI_ONLY</item>
+        <item>ANY_NETWORK</item>
+    </string-array>
     <string name="create_notebook">Create notebook</string>
     <string name="create_notebook_display_name_hint">Notebook name</string>
     <string name="notes_open">Open notes</string>
@@ -753,4 +768,17 @@
     <string name="notes_edited">Edited %1$s</string>
     <string name="notes_refresh">Refresh</string>
     <string name="notes_loading_failed">Could not load notes. Sync and try again.</string>
+    <string name="notes_not_synced_yet">Not synced yet</string>
+    <string name="notes_local_change_unreadable">A local change could not be read</string>
+    <string name="notes_local_text_held">Your local text is kept in Unsynced text</string>
+    <string name="notes_unsynced_text">Unsynced text (%1$d)</string>
+    <!-- The notebook list's network line: one opening sentence, the reasons, one closing sentence, joined by spaces. -->
+    <string name="notes_network_changes_waiting">Changes on this device are waiting to sync.</string>
+    <string name="notes_network_may_be_out_of_date">Notes are not syncing by themselves and may be out of date.</string>
+    <string name="notes_network_notes_setting">Automatic Notes sync is set to Wi-Fi only (Settings, Account).</string>
+    <string name="notes_network_account_wifi_only">Sync over WiFi only is on for this account (Settings, Sync).</string>
+    <string name="notes_network_no_wifi_reported">Android does not report Wi-Fi as the active connection.</string>
+    <string name="notes_network_account_network_name">WiFi SSID restriction (Settings, Sync) names one Wi-Fi network for this account. Android reports another one, or gives this app no name.</string>
+    <string name="notes_network_try_now">Pull down the list to try now.</string>
+    <string name="notes_network_sync_now_needs_wifi">Sync now for Notes is set to Wi-Fi only too (Settings, Account). When Wi-Fi is the active connection, pull down the list to try.</string>
 </resources>

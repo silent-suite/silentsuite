@@ -73,6 +73,11 @@ android {
 
     testOptions {
         unitTests.returnDefaultValues = true
+        // By its source, msgpack-core picks its ByteBuffer-based buffer on Android (not run on a device here);
+        // make the JVM tests run that same class.
+        unitTests.all {
+            systemProperty 'msgpack.universal-buffer', 'true'
+        }
     }
 
     defaultConfig {
@@ -225,4 +230,8 @@ dependencies {
     androidTestImplementation 'net.sf.kxml:kxml2:2.3.0'
     testImplementation 'junit:junit:4.13.2'
     testImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
+    // Comparison oracle for NoteMetaCodec, unit tests only: not in the APK and not on the app or androidTest classpaths.
+    // Two advisories were published against 0.9.12 when this was added (CVE-2026-90472, unpackValue;
+    // CVE-2026-90473, skipValue; read 2026-10-09); see MsgpackCoreNoteMeta and NoteMetaCodecComparisonTest.
+    testImplementation 'org.msgpack:msgpack-core:0.9.12'
 }

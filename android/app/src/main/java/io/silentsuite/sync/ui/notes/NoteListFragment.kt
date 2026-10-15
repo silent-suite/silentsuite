@@ -21,6 +21,7 @@ import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.ui.ExactAccountIdentity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -37,6 +38,7 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private var listState: Parcelable? = null
     private var loaded = false
     private var everSynced = false
+    private var loadJob: Job? = null
 
     internal var renderedNotes: List<NoteRow> = emptyList()
         private set
@@ -136,7 +138,9 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private fun reload() {
         val host = host() ?: return
         val appContext = host.applicationContext
-        viewLifecycleOwner.lifecycleScope.launch {
+        // A newer load replaces an older one, so an older result can never render last.
+        loadJob?.cancel()
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val (result, synced) = withContext(Dispatchers.IO) {
                 NotesLoader.notebook(appContext, account, creationId, notebookUid) to NotesLoader.everSynced(appContext, account, creationId)
             }
@@ -172,6 +176,10 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
         if (contents.notes.isNotEmpty()) listState?.let { state ->
             list?.onRestoreInstanceState(state)
             listState = null
+        }
+        view.findViewById<TextView>(R.id.notes_unreadable).apply {
+            text = resources.getQuantityString(R.plurals.notes_items_unreadable, contents.unreadable, contents.unreadable)
+            visibility = if (contents.unreadable > 0) View.VISIBLE else View.GONE
         }
         renderEmptyState()
     }
@@ -213,11 +221,23 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
                 edited.text = context.getString(R.string.notes_edited, DateUtils.getRelativeTimeSpanString(
                     editedAt, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE))
             }
+            val sync = view.findViewById<TextView>(R.id.note_sync)
+            val syncText = syncLabel(context, note.sync)
+            sync.text = syncText
+            sync.visibility = if (syncText == null) View.GONE else View.VISIBLE
             return view
         }
     }
 
     companion object {
+        /** The marker for a note with a local change, or null when it has none. */
+        internal fun syncLabel(context: Context, sync: NoteSync): String? = when (sync) {
+            NoteSync.SYNCED -> null
+            NoteSync.WAITING -> context.getString(R.string.notes_not_synced_yet)
+            NoteSync.LOCAL_UNREADABLE -> context.getString(R.string.notes_local_change_unreadable)
+            NoteSync.HELD -> context.getString(R.string.notes_local_text_held)
+        }
+
         private const val ARG_ACCOUNT = "notes.account"
         private const val ARG_CREATION_ID = "notes.creationId"
         private const val ARG_NOTEBOOK_UID = "notes.notebookUid"
