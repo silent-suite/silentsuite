@@ -2,51 +2,39 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { isSelfHosted } from '@/app/lib/self-hosted'
-
-const allTabs = [
-  { label: 'Account', href: '/settings/account' },
-  { label: 'Subscription', href: '/settings/subscription' },
-  { label: 'Security', href: '/settings/security' },
-  { label: 'Sharing', href: '/settings/sharing' },
-  { label: 'Mobile', href: '/settings/mobile' },
-  { label: 'Desktop', href: '/settings/desktop' },
-  { label: 'Import', href: '/settings/import' },
-  { label: 'Export', href: '/settings/export' },
-  { label: 'Experimental', href: '/settings/experimental' },
-]
-
-const tabs = isSelfHosted
-  ? allTabs.filter((t) => t.href !== '/settings/subscription')
-  : allTabs
+import { ChevronLeft } from 'lucide-react'
+import { SettingsNav } from './settings-nav'
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
+  const isOverview = pathname === '/settings'
+
+  if (isOverview) {
+    return (
+      <div className="mx-auto w-full max-w-4xl space-y-6">
+        <h1 className="text-lg font-semibold text-[rgb(var(--foreground))]">Settings</h1>
+        <div>{children}</div>
+      </div>
+    )
+  }
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-6">
-      <h1 className="text-lg font-semibold text-[rgb(var(--foreground))]">Settings</h1>
+    <div className="mx-auto w-full max-w-4xl space-y-6">
+      <Link
+        href="/settings"
+        className="-ml-2 inline-flex min-h-11 items-center gap-1 rounded-md px-2 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:focus-visible:ring-emerald-300 lg:hidden"
+      >
+        <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        Settings
+      </Link>
+      <h1 className="sr-only text-lg font-semibold text-[rgb(var(--foreground))] lg:not-sr-only">Settings</h1>
 
-      <nav className="flex gap-1 border-b border-[rgb(var(--border))] overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
-        {tabs.map((tab) => {
-          const isActive = pathname.startsWith(tab.href)
-          return (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              className={`whitespace-nowrap px-4 py-2 text-sm font-medium transition-colors ${
-                isActive
-                  ? 'border-b-2 border-[rgb(var(--primary))] text-[rgb(var(--foreground))]'
-                  : 'text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]'
-              }`}
-            >
-              {tab.label}
-            </Link>
-          )
-        })}
-      </nav>
-
-      <div>{children}</div>
+      <div className="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-8">
+        <aside className="hidden lg:block">
+          <SettingsNav variant="rail" pathname={pathname} />
+        </aside>
+        <div className="min-w-0">{children}</div>
+      </div>
     </div>
   )
 }

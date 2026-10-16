@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { Crown, Lock, Zap } from 'lucide-react'
+import Link from 'next/link'
+import { useAuthStore } from '@/app/stores/use-auth-store'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
+import { createAuthenticatedPaymentFetch, PaymentSessionRecoveryError } from '@/app/lib/authenticated-payment-fetch'
+import { Crown, Lock } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
 import {
@@ -25,7 +29,7 @@ import {
   annualOfferMonthlyLabel,
   annualOfferPlanLabel,
   annualOfferRenewalCopy,
-  annualTermsCopy,
+  compactAnnualPaymentCopy,
   formatDisclosureAmount,
   isAnnualOfferProviderAvailable,
 } from '@/app/lib/annual-offer-presentation'
@@ -70,6 +74,8 @@ type CurrentPaymentFlow = {
   createdAt: string
   cancellable: boolean
   checkoutUrl: string | null
+  /** The server's own flow status; only `provider_confirmed` evidences confirmation. */
+  status: string | null
   /** Present only when Billing names the authority; binds cancellation to it. */
   authorityId: string | null
   /** The flow's own frozen signed terms; never the latest offer. */
@@ -152,6 +158,7 @@ function readCurrentPaymentFlow(data: unknown): CurrentPaymentFlow | null {
     createdAt: flow.createdAt,
     cancellable: flow.cancellable,
     checkoutUrl: typeof flow.checkoutUrl === 'string' ? flow.checkoutUrl : null,
+    status: typeof flow.status === 'string' ? flow.status : null,
     authorityId: typeof flow.authorityId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(flow.authorityId) ? flow.authorityId : null,
     disclosure: readFrozenAnnualDisclosure(flow.disclosure),
   }
@@ -218,6 +225,23 @@ export default function PaymentChoicePanel({
   title = 'Continue with silentsuite.io',
   successPoll,
 }: PaymentChoicePanelProps) {
+  const accountId = useAuthStore(state => state.user?.id ?? null)
+  const owner = useRef({ accountId, epoch: getAccountEpoch() })
+  const live = useRef(true)
+  const accountCurrent = () => live.current && owner.current.accountId === (useAuthStore.getState().user?.id ?? null)
+    && owner.current.epoch === getAccountEpoch()
+  const [sessionRecovery, setSessionRecovery] = useState<PaymentSessionRecoveryError | null>(null)
+  const paymentFetch = useMemo(() => {
+    const authenticated = createAuthenticatedPaymentFetch(owner.current.accountId, owner.current.epoch)
+    return async (input: RequestInfo | URL, init?: RequestInit) => {
+      try { return await authenticated(input, init) }
+      catch (error) {
+        if (live.current && error instanceof PaymentSessionRecoveryError && (accountCurrent() || useAuthStore.getState().user === null)) setSessionRecovery(error)
+        throw error
+      }
+    }
+  }, [])
+  useEffect(() => { live.current = true; return () => { live.current = false } }, [])
   const [clientSecret, setClientSecret] = useState<string | null>(null)
   // Plan labels only for a capability this panel just created from that offer;
   // a resumed authority has no trusted plan label, only its frozen terms.
@@ -280,7 +304,7 @@ export default function PaymentChoicePanel({
 
   const loadOptions = useCallback(async (isCancelled: () => boolean = () => false) => {
     const sequence = ++offerRequestSequence.current
-    const current = () => offerMounted.current && sequence === offerRequestSequence.current && !isCancelled()
+    const current = () => accountCurrent() && offerMounted.current && sequence === offerRequestSequence.current && !isCancelled()
     setOptionsLoaded(false)
     setAnnualOffer(null)
     setOptions([])
@@ -288,23 +312,24 @@ export default function PaymentChoicePanel({
     setTermsUnavailable(false)
     setOfferAuthFailed(false)
     try {
-      const offer = await fetchAuthenticatedAccountOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL })
+      const offer = await fetchAuthenticatedAccountOffer({ fetcher: paymentFetch, billingApiUrl: BILLING_API_URL })
       if (current()) {
         applyAccountOffer(offer)
         setOfferRefreshFailed(false)
         setInitialOfferFailed(false)
+        setSessionRecovery(null)
       }
     } catch (error) {
       if (current()) {
         setAnnualOffer(null)
         setOptions([])
-        setInitialOfferFailed(classifyAnnualOfferLoadFailure(error) === 'transient')
+        setInitialOfferFailed(classifyAnnualOfferLoadFailure(error) === 'transient' || (error instanceof PaymentSessionRecoveryError && !error.signInRequired))
         setOfferAuthFailed(isAnnualOfferAuthenticationError(error))
       }
     } finally {
       if (current()) setOptionsLoaded(true)
     }
-  }, [applyAccountOffer])
+  }, [applyAccountOffer, paymentFetch])
 
   useEffect(() => {
     let cancelled = false
@@ -314,7 +339,7 @@ export default function PaymentChoicePanel({
 
   async function renewAnnualOfferAndRequireConsent() {
     const sequence = ++offerRequestSequence.current
-    const current = () => offerMounted.current && sequence === offerRequestSequence.current
+    const current = () => accountCurrent() && offerMounted.current && sequence === offerRequestSequence.current
     // Never reuse a provider selection, card secret, or Bitcoin authority
     // after the signed offer that authorized it was rejected.
     setClientSecret(null)
@@ -327,7 +352,7 @@ export default function PaymentChoicePanel({
     setOfferRefreshFailed(false)
     setOfferAuthFailed(false)
     try {
-      const offer = await fetchAuthenticatedAccountOffer({ fetcher: fetch, billingApiUrl: BILLING_API_URL })
+      const offer = await fetchAuthenticatedAccountOffer({ fetcher: paymentFetch, billingApiUrl: BILLING_API_URL })
       if (!current()) return
       if (!applyAccountOffer(offer)) return
       setError('The annual terms changed. Review the updated offer and choose a payment method again.')
@@ -385,7 +410,7 @@ export default function PaymentChoicePanel({
     : clientSecret
       ? 'stripe:inline'
       : currentFlow
-        ? `${currentFlow.flowKind}:${currentFlow.createdAt}`
+        ? `${currentFlow.flowKind}:${currentFlow.authorityId ?? 'unnamed'}:${currentFlow.createdAt}`
         : 'none'
 
   // Reset before the browser can accept input for the new authority. A passive
@@ -403,20 +428,20 @@ export default function PaymentChoicePanel({
     && loading === null
 
   async function loadCurrentFlow(isCancelled: () => boolean = () => false) {
-    if (!isCancelled()) {
+    if (accountCurrent() && !isCancelled()) {
       setCurrentFlowLoaded(false)
       setCurrentFlowLoadFailed(false)
     }
     try {
-      const res = await fetch(`${BILLING_API_URL}/subscription/payment-flows/current?preview=1`, { credentials: 'include' })
+      const res = await paymentFetch(`${BILLING_API_URL}/subscription/payment-flows/current?preview=1`, { credentials: 'include' })
       if (!res.ok) throw new Error('Could not verify the current payment flow.')
       const flow = readCurrentPaymentFlow(await res.json())
-      if (!isCancelled()) {
+      if (accountCurrent() && !isCancelled()) {
         setCurrentFlow(flow)
         setCurrentFlowLoaded(true)
       }
     } catch {
-      if (!isCancelled()) {
+      if (accountCurrent() && !isCancelled()) {
         setCurrentFlowLoadFailed(true)
         setError('Could not verify whether a payment is already in progress. Retry before starting another payment.')
       }
@@ -449,12 +474,13 @@ export default function PaymentChoicePanel({
     setError(null)
     try {
       const result = await cancelPaymentFlow({
-        fetcher: fetch,
+        fetcher: paymentFetch,
         billingApiUrl: BILLING_API_URL,
         provider,
         confirmNoBitcoinSent: bitcoinCancelAcknowledged,
         expectedAuthorityId: displayedAuthorityId ?? undefined,
       })
+      if (!accountCurrent()) return false
       if (!result.cancelled) {
         // The provider authority survives every refusal, ambiguity and lost
         // response: local panel state is left exactly as it was.
@@ -476,11 +502,10 @@ export default function PaymentChoicePanel({
       const reprovedCurrentFlow = loadCurrentFlow()
       await loadOptions()
       await reprovedCurrentFlow
-      return true
+      return accountCurrent()
     } finally {
       // Each attempt requires its own deliberate acknowledgement.
-      setBitcoinCancelAcknowledged(false)
-      setLoading(null)
+      if (accountCurrent()) { setBitcoinCancelAcknowledged(false); setLoading(null) }
     }
   }
 
@@ -494,7 +519,7 @@ export default function PaymentChoicePanel({
     }
 
     void cancelCurrentFlow().then((cancelled) => {
-      if (cancelled) onCancel?.()
+      if (cancelled && accountCurrent()) onCancel?.()
     })
   }
 
@@ -505,7 +530,7 @@ export default function PaymentChoicePanel({
     setTermsUnavailable(true)
   }
 
-  // Owner D1/D2: the signed terms were shown before the choice, so a choice
+  // The signed terms were shown before the choice, so a choice
   // goes straight to the provider. Payment starts only when activation signed
   // exactly those terms; anything else stops before provider creation.
   const startPayment = async (provider: 'stripe' | 'btcpay') => {
@@ -522,7 +547,7 @@ export default function PaymentChoicePanel({
         return
       }
       const activation = await activateAuthenticatedAnnualCheckout({
-        fetcher: fetch,
+        fetcher: paymentFetch,
         billingApiUrl: BILLING_API_URL,
         offer: annualOffer,
         trialPath: 'immediate',
@@ -530,12 +555,14 @@ export default function PaymentChoicePanel({
         behavior: provider === 'stripe' ? 'immediate_card' : 'prepaid_bitcoin',
         accountTerms: terms,
       })
+      if (!accountCurrent()) return
       const data = await startAuthenticatedAnnualPayment({
-        fetcher: fetch,
+        fetcher: paymentFetch,
         billingApiUrl: BILLING_API_URL,
         checkoutIntentToken: activation.checkoutIntentToken,
         returnUrl: `${window.location.origin}/settings/subscription`,
       })
+      if (!accountCurrent()) return
       if (data.kind !== provider) throw new Error('Billing returned the wrong payment provider.')
       if (data.kind === 'stripe') {
         setClientSecret(data.clientSecret)
@@ -551,6 +578,7 @@ export default function PaymentChoicePanel({
       setPaymentPlan(annualOffer.offer)
       setPaymentDisclosure(terms)
     } catch (err) {
+      if (!accountCurrent()) return
       if (err instanceof AccountTermsUnavailableError) {
         markTermsUnavailable()
         return
@@ -564,7 +592,7 @@ export default function PaymentChoicePanel({
       // same authority is resumable or cancellable, never silently replaced.
       await loadCurrentFlow()
     } finally {
-      setLoading(null)
+      if (accountCurrent()) setLoading(null)
     }
   }
 
@@ -577,7 +605,8 @@ export default function PaymentChoicePanel({
     setLoading('resume')
     setError(null)
     try {
-      const resumed = await resumeAuthenticatedAnnualPayment({ fetcher: fetch, billingApiUrl: BILLING_API_URL, authorityId: flow.authorityId })
+      const resumed = await resumeAuthenticatedAnnualPayment({ fetcher: paymentFetch, billingApiUrl: BILLING_API_URL, authorityId: flow.authorityId })
+      if (!accountCurrent()) return
       if (resumed.kind !== (flow.flowKind === 'btcpay_annual' ? 'btcpay' : 'stripe')) throw new Error('Billing returned the wrong payment provider.')
       if (resumed.kind === 'stripe') {
         setClientSecret(resumed.clientSecret)
@@ -593,21 +622,27 @@ export default function PaymentChoicePanel({
       setPaymentPlan(null)
       setPaymentDisclosure(resumed.disclosure)
     } catch (err) {
+      if (!accountCurrent()) return
       setError(err instanceof Error ? err.message : 'Unable to resume the current payment.')
     } finally {
-      setLoading(null)
+      if (accountCurrent()) setLoading(null)
     }
   }
 
   const startStripe = () => { void startPayment('stripe') }
   const startBtcpay = () => { void startPayment('btcpay') }
 
+  const signIn = <Link href="/login?reason=billing&returnTo=%2Fsettings%2Fsubscription">Sign in again</Link>
+  if (!accountCurrent()) return <div>Payment account changed. Reopen subscription settings.{accountId === null && signIn}</div>
+  if (sessionRecovery?.signInRequired) return <div><p>{sessionRecovery.message}</p>{signIn}</div>
+  const retrySession = sessionRecovery && <Button onClick={() => { void loadOptions() }} disabled={loading !== null}>Retry current annual offer</Button>
+
   if (bitcoinSession && paymentDisclosure && CRYPTO_CHECKOUT_ENABLED) {
     return (
       <BitcoinPaymentPanel
         session={bitcoinSession}
         title={`Pay ${formatDisclosureAmount(paymentDisclosure)}/year annual with Bitcoin, Lightning and Monero`}
-        description={`Scan the QR code or copy the payment details to pay ${formatDisclosureAmount(paymentDisclosure)} for ${paymentPlan ? `${annualOfferPlanLabel(paymentPlan)} (${paymentPlan.planId})` : 'this annual payment'}. ${annualTermsCopy(paymentDisclosure)}`}
+        description={`Scan the QR code or copy the payment details to pay ${formatDisclosureAmount(paymentDisclosure)} for ${paymentPlan ? `${annualOfferPlanLabel(paymentPlan)} (${paymentPlan.planId})` : 'this annual payment'}. ${compactAnnualPaymentCopy(paymentDisclosure)}`}
         settledMessage="Payment settled. Refreshing your subscription..."
         backLabel={loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         backDisabled={cancellationDisabled}
@@ -627,8 +662,9 @@ export default function PaymentChoicePanel({
         )}
         onBack={() => { void cancelCurrentFlow('btcpay') }}
         onPaymentComplete={async () => {
+          if (!accountCurrent()) return
           await onSuccess()
-          await successPoll?.()
+          if (accountCurrent()) await successPoll?.()
         }}
       />
     )
@@ -662,14 +698,15 @@ export default function PaymentChoicePanel({
               </p>
             </div>
           </div>
-          <p className="mt-2 text-xs text-[rgb(var(--muted))]">{annualTermsCopy(paymentDisclosure)}</p>
+          <p className="mt-2 text-xs text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(paymentDisclosure)}</p>
         </div>
         <StripeTrustNote />
         <StripePaymentForm
           clientSecret={clientSecret}
           onSuccess={async () => {
+            if (!accountCurrent()) return
             await onSuccess()
-            await successPoll?.()
+            if (accountCurrent()) await successPoll?.()
           }}
           submitLabel={`Pay ${formatDisclosureAmount(paymentDisclosure)}`}
           mode="payment"
@@ -698,6 +735,14 @@ export default function PaymentChoicePanel({
     // the global crypto switch (and the BTCPay origin check) still applies.
     const recoverBitcoin = currentFlow.flowKind === 'btcpay_annual' && CRYPTO_CHECKOUT_ENABLED
     const recoverStripe = currentFlow.flowKind === 'stripe_pay_now'
+    // An incomplete, non-cancellable Bitcoin authority with no trusted invoice
+    // continuation proves nothing payable: only its current status is re-read.
+    const unprovenBitcoin = recoverBitcoin && !currentFlow.cancellable && !currentFlowCheckoutUrl
+      && currentFlow.status !== 'provider_confirmed'
+    // A confirmed or conflicted authority is held: no payment continuation
+    // (resume or direct invoice link) is offered, only its current status.
+    const heldOutcome = currentFlow.status === 'provider_confirmed' || currentFlow.status === 'provider_creation_conflict'
+    const statusOnly = heldOutcome || unprovenBitcoin || (!currentFlow.cancellable && recoverBitcoin)
     return (
       <div className="space-y-5">
         <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Payment already in progress</h2>
@@ -709,12 +754,7 @@ export default function PaymentChoicePanel({
             To prevent double payments, only one payment flow can be active at a time. Continue the current payment or cancel it before choosing another method.
           </p>
           {currentFlow.disclosure && (
-            <p className="mt-2 text-sm text-[rgb(var(--muted))]">{annualTermsCopy(currentFlow.disclosure)}</p>
-          )}
-          {recoverBitcoin && currentFlowCheckoutUrl && (
-            <a href={currentFlowCheckoutUrl} className="mt-3 inline-flex w-full items-center justify-center rounded-md border border-amber-500/30 px-4 py-2 text-sm font-medium text-amber-700 transition-colors hover:bg-amber-500/10 dark:text-amber-200">
-              Continue in BTCPay
-            </a>
+            <p className="mt-2 text-sm text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(currentFlow.disclosure)}</p>
           )}
         </div>
         {error && (
@@ -722,12 +762,22 @@ export default function PaymentChoicePanel({
             <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
           </div>
         )}
-        {currentFlow.authorityId && currentFlow.disclosure && (recoverStripe || recoverBitcoin) && (
+        {statusOnly ? (
+          <Button onClick={() => { void loadCurrentFlow() }} disabled={loading !== null} className="w-full">
+            Check payment status
+          </Button>
+        ) : currentFlow.authorityId && currentFlow.disclosure && (recoverStripe || recoverBitcoin) && (
           <Button onClick={() => { void resumeCurrentFlow() }} disabled={loading !== null} className="w-full">
             {loading === 'resume' ? 'Resuming payment...' : recoverStripe ? 'Resume card payment' : 'Resume cryptocurrency payment'}
           </Button>
         )}
-        {bitcoinAcknowledgementRequired && (
+        {statusOnly && !heldOutcome && currentFlow.authorityId && currentFlow.disclosure && (recoverStripe || recoverBitcoin) && (
+          <Button onClick={() => { void resumeCurrentFlow() }} disabled={loading !== null} className="w-full">
+            {loading === 'resume' ? 'Recovering payment...' : 'Recover existing payment'}
+          </Button>
+        )}
+        {retrySession}
+        {bitcoinAcknowledgementRequired && currentFlow.cancellable && (
           <BitcoinCancellationAcknowledgement
             checked={bitcoinCancelAcknowledged}
             disabled={loading !== null || !currentFlow.cancellable}
@@ -738,7 +788,11 @@ export default function PaymentChoicePanel({
           {loading === 'cancel-flow' ? 'Cancelling payment flow...' : cancellationLabel}
         </Button>
         {!currentFlow.cancellable && (
-          <p className="text-xs text-[rgb(var(--muted))]">This payment is already being confirmed. Please wait for the provider update or contact support.</p>
+          <p className="text-xs text-[rgb(var(--muted))]">
+            {currentFlow.status === 'provider_confirmed'
+              ? 'This payment is already being confirmed. Please wait for the provider update or contact support.'
+              : 'This payment is incomplete and its recovery is currently blocked. Retry this same payment later, and contact support if it keeps failing.'}
+          </p>
         )}
       </div>
     )
@@ -747,22 +801,11 @@ export default function PaymentChoicePanel({
   return (
     <div className="space-y-5">
       <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">{title}</h2>
-      <div className="rounded-xl border border-emerald-500/50 bg-emerald-500/5 p-4 text-left">
-        <div className="flex items-start gap-3">
-          <div className="rounded-lg bg-[rgb(var(--border))] p-2 shrink-0">
-            <Zap className="h-4 w-4 text-amber-400" />
-          </div>
-          <div>
-            <h3 className="font-medium text-[rgb(var(--foreground))]">Pay now</h3>
-            <p className="mt-0.5 text-xs text-[rgb(var(--muted))]">
-              {annualOffer
-                ? `Choose a server-authorized payment method for ${annualOfferPlanLabel(annualOffer.offer)}.`
-                : !optionsLoaded ? 'Loading the server-owned annual offer before payment options are shown.'
-                : offerUnavailableMessage}
-            </p>
-          </div>
-        </div>
-      </div>
+      {!annualOffer && (
+        <p role="status" className="text-sm text-[rgb(var(--muted))]">
+          {!optionsLoaded ? 'Loading payment options...' : offerUnavailableMessage}
+        </p>
+      )}
 
       {annualOffer && (
         <div className="flex items-center justify-end" data-plan-id={annualOffer.offer.planId}>
@@ -771,13 +814,6 @@ export default function PaymentChoicePanel({
             <span className="sr-only">{annualOfferPlanLabel(annualOffer.offer)} ({annualOffer.offer.planId})</span>
             <PriceDisplay offer={annualOffer.offer} />
           </div>
-        </div>
-      )}
-
-      {annualOffer && accountDisclosures && (
-        <div className="space-y-2 text-xs text-[rgb(var(--muted))]">
-          {stripeAvailable && accountDisclosures.stripe && <p>{annualTermsCopy(accountDisclosures.stripe)}</p>}
-          {btcpayAvailable && accountDisclosures.btcpay && <p>{annualTermsCopy(accountDisclosures.btcpay)}</p>}
         </div>
       )}
 
@@ -800,9 +836,12 @@ export default function PaymentChoicePanel({
       )}
 
       {currentFlowLoaded && btcpayAnnualOption && btcpayAvailable && annualOffer && (
-        <Button onClick={startBtcpay} disabled={loading !== null} variant="outline" className="w-full" aria-label={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOffer.offer)}`}>
-          {loading === 'btcpay' ? 'Opening cryptocurrency checkout...' : 'Bitcoin, Lightning and Monero'}
-        </Button>
+        <div className="space-y-2">
+          <Button onClick={startBtcpay} disabled={loading !== null} className="w-full" aria-label={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOffer.offer)}`}>
+            {loading === 'btcpay' ? 'Opening cryptocurrency checkout...' : 'Bitcoin, Lightning and Monero'}
+          </Button>
+          {accountDisclosures?.btcpay && <p className="text-xs text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(accountDisclosures.btcpay)}</p>}
+        </div>
       )}
 
       {!currentFlowLoaded ? (
@@ -819,9 +858,12 @@ export default function PaymentChoicePanel({
           Loading payment options...
         </Button>
       ) : stripeOption && stripeAvailable && annualOffer ? (
-        <Button onClick={startStripe} disabled={loading !== null} className="w-full" aria-label={`Continue to card payment for ${annualOfferPlanLabel(annualOffer.offer)}, ${annualOfferRenewalCopy(annualOffer.offer)}`}>
-          {loading === 'stripe' ? 'Setting up...' : 'Continue to card payment'}
-        </Button>
+        <div className="space-y-2">
+          <Button onClick={startStripe} disabled={loading !== null} className="w-full" aria-label={`Continue to card payment for ${annualOfferPlanLabel(annualOffer.offer)}, ${annualOfferRenewalCopy(annualOffer.offer)}`}>
+            {loading === 'stripe' ? 'Setting up...' : 'Continue to card payment'}
+          </Button>
+          {accountDisclosures?.stripe && <p className="text-xs text-[rgb(var(--muted))]">{compactAnnualPaymentCopy(accountDisclosures.stripe)}</p>}
+        </div>
       ) : termsUnavailable ? null : (
         <p className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 text-sm text-[rgb(var(--muted))]">
           {offerUnavailableMessage}

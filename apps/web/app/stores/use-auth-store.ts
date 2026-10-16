@@ -11,7 +11,8 @@ import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
 import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
 import { createLoginSessionPersistenceDiagnostics } from '@/app/lib/sync-restore-diagnostics'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
-import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import type * as EtebaseStoreModule from '@/app/stores/use-etebase-store'
 import { BillingResponseError, startSignupAnnualPayment, type AnnualOffer } from '@/app/lib/billing-v2'
 
 export interface User {
@@ -817,24 +818,47 @@ function readHostedValidationMarker(): HostedValidationMarker | null {
   }
 }
 
-async function resetInMemoryAccountState(reason: 'login' | 'logout' | 'invalid-hosted-auth') {
+/** Invalidation held by one account-boundary operation. `epoch` is only ever a
+ * token this operation's own bump produced, never an epoch observed later. */
+interface AccountBoundaryOwner {
+  epoch: number
+  etebaseDestroyed: boolean
+}
+
+function destroyEtebaseFor(owner: AccountBoundaryOwner, etebase: typeof EtebaseStoreModule) {
+  try {
+    owner.epoch = etebase.useEtebaseStore.getState().destroy()
+    owner.etebaseDestroyed = true
+  } catch (err) {
+    if (err instanceof etebase.EtebaseTeardownError) owner.epoch = err.epoch
+    throw err
+  }
+}
+
+/** Resolves false when `current` reports another operation now owns the boundary. */
+async function resetInMemoryAccountState(
+  reason: 'login' | 'logout' | 'invalid-hosted-auth',
+  current: () => boolean = () => true,
+  owner: AccountBoundaryOwner = { epoch: 0, etebaseDestroyed: false },
+): Promise<boolean> {
   // Invalidate every account-scoped async publisher before clearing snapshots.
-  bumpAccountEpoch()
+  owner.epoch = bumpAccountEpoch()
+  owner.etebaseDestroyed = false
   try {
     const [
       { useCalendarStore },
       { useTaskStore },
-      { useContactStore },
+      { useContactStore, resetContactLifecycle },
       { useCalendarListStore },
       { useTaskListStore },
       { useContactListStore },
-      { useNoteStore },
+      { useNoteStore, resetNoteLifecycle },
       { useNotebookStore },
       { useLabelSuggestionsStore },
       { useLabelColorStore },
       { usePreferencesStore },
       { usePreferencesSyncStore },
-      { useEtebaseStore },
+      etebase,
     ] = await Promise.all([
       import('@/app/stores/use-calendar-store'),
       import('@/app/stores/use-task-store'),
@@ -851,73 +875,98 @@ async function resetInMemoryAccountState(reason: 'login' | 'logout' | 'invalid-h
       import('@/app/stores/use-etebase-store'),
     ])
 
-    useEtebaseStore.getState().destroy()
-    useCalendarStore.setState({
-      events: [],
-      isLoading: false,
-      syncStatus: 'synced',
-      selectedEventId: null,
-      searchQuery: '',
-    })
-    useTaskStore.setState({ tasks: [], isLoading: false, syncStatus: 'synced' })
-    useContactStore.setState({ contacts: [], isLoading: false, syncStatus: 'synced', searchQuery: '' })
-    useNoteStore.setState({ notes: [], isLoading: false, syncStatus: 'synced' })
-    useCalendarListStore.setState({
-      calendars: [{ id: 'default', name: 'Personal', color: '#10b981', visible: true }],
-      defaultCalendarId: 'default',
-    })
-    useTaskListStore.setState({
-      lists: [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }],
-      activeListId: 'all',
-    })
-    useContactListStore.setState({
-      lists: [{ id: 'default', name: 'My Contacts', color: '#8b5cf6', visible: true }],
-      activeListId: 'all',
-    })
-    useNotebookStore.setState({
-      lists: [{ id: 'default', name: 'Personal Notes', color: '#f59e0b', visible: true }],
-      activeListId: 'all',
-    })
-    useLabelSuggestionsStore.getState().reset()
-    useLabelColorStore.setState({ colors: {} })
-    usePreferencesSyncStore.getState().destroy()
-    usePreferencesStore.getState().resetSyncedPreferences()
+    if (!current()) return false
+    destroyEtebaseFor(owner, etebase)
+    // Store subscribers run synchronously and may re-enter account setup, so
+    // ownership is rechecked after every reset that can notify listeners.
+    const resets = [
+      () => useCalendarStore.setState({
+        events: [],
+        isLoading: false,
+        syncStatus: 'synced',
+        selectedEventId: null,
+        searchQuery: '',
+      }),
+      () => useTaskStore.setState({ tasks: [], isLoading: false, syncStatus: 'synced' }),
+      () => useContactStore.setState({ contacts: [], isLoading: false, syncStatus: 'synced', searchQuery: '', contactSaveStates: {} }),
+      // Contact draft ledgers and save chains hold draft vCards (#744).
+      () => resetContactLifecycle(),
+      () => useNoteStore.setState({ notes: [], isLoading: false, syncStatus: 'synced' }),
+      // Note obligations and editor registrations hold callbacks over draft text (#744).
+      () => resetNoteLifecycle(),
+      () => useCalendarListStore.setState({
+        calendars: [{ id: 'default', name: 'Personal', color: '#10b981', visible: true }],
+        defaultCalendarId: 'default',
+      }),
+      () => useTaskListStore.setState({
+        lists: [{ id: 'default', name: 'My Tasks', color: '#3b82f6', visible: true }],
+        activeListId: 'all',
+      }),
+      () => useContactListStore.setState({
+        lists: [{ id: 'default', name: 'My Contacts', color: '#8b5cf6', visible: true }],
+        activeListId: 'all',
+      }),
+      () => useNotebookStore.setState({
+        lists: [{ id: 'default', name: 'Personal Notes', color: '#f59e0b', visible: true }],
+        activeListId: 'all',
+      }),
+      () => useLabelSuggestionsStore.getState().reset(),
+      () => useLabelColorStore.setState({ colors: {} }),
+      () => usePreferencesSyncStore.getState().destroy(),
+      () => usePreferencesStore.getState().resetSyncedPreferences(),
+    ]
+    for (const reset of resets) {
+      if (!current()) return false
+      reset()
+    }
+    return current()
   } catch (err) {
     logger.error(`[auth-store] Failed to reset decrypted account state during ${reason}:`, err)
     throw err
   }
 }
 
-async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') {
+async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth', ownerCurrent?: (epoch: number) => boolean) {
+  // The reset assigns this cleanup's own invalidation token before yielding;
+  // later teardown may only replace it with the token that teardown produced.
+  const owner: AccountBoundaryOwner = { epoch: getAccountEpoch(), etebaseDestroyed: false }
+  const current = () => !ownerCurrent || ownerCurrent(owner.epoch)
   // Clear decrypted account-scoped state before persistent cleanup. This is
   // required even when the next account's restore is only partially successful.
   // Continue clearing persistent credentials if a store module fails to load;
   // callers keep the protected UI unauthenticated in that failure mode.
   try {
-    await resetInMemoryAccountState(reason)
+    await resetInMemoryAccountState(reason, current, owner)
   } catch {
     // resetInMemoryAccountState already emitted a reason-scoped error.
   }
+  if (!current()) return
 
-  try {
-    const { useEtebaseStore } = await import('@/app/stores/use-etebase-store')
-    useEtebaseStore.getState().destroy()
-  } catch (err) {
-    logger.warn(`[auth-store] Failed to destroy Etebase store during ${reason}:`, err)
+  if (!owner.etebaseDestroyed) {
+    try {
+      const etebase = await import('@/app/stores/use-etebase-store')
+      if (!current()) return
+      destroyEtebaseFor(owner, etebase)
+    } catch (err) {
+      logger.warn(`[auth-store] Failed to destroy Etebase store during ${reason}:`, err)
+    }
   }
 
   try {
+    if (!current()) return
     await clearLocalDataCache()
   } catch (err) {
     logger.warn(`[auth-store] Failed to clear local data cache during ${reason}:`, err)
   }
 
   try {
+    if (!current()) return
     await clearOfflineQueue()
   } catch (err) {
     logger.warn(`[auth-store] Failed to clear offline queue during ${reason}:`, err)
   }
 
+  if (!current()) return
   signupRedirectCheckpoint.clear()
   clearPaidSignupRecoveryIdentity()
   if (typeof window !== 'undefined') {
@@ -932,10 +981,12 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') 
   }
 
   try {
+    if (!current()) return
     await secureClear()
   } catch (err) {
     logger.warn(`[auth-store] Failed to clear secure storage during ${reason}:`, err)
   }
+  if (!current()) return
   localStorage.removeItem('silentsuite-server-url')
   localStorage.removeItem('silentsuite-tasks')
   localStorage.removeItem('silentsuite-contacts')
@@ -951,6 +1002,7 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth') 
 
   try {
     const { usePreferencesStore } = await import('@/app/stores/use-preferences-store')
+    if (!current()) return
     usePreferencesStore.getState().resetSyncedPreferences()
   } catch (err) {
     logger.warn(`[auth-store] Failed to reset synced preferences during ${reason}:`, err)
@@ -1550,18 +1602,24 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // asynchronous storage cleanup can yield.
     syncAdminCookie(false)
     set({ user: null, isAuthenticated: false, pendingSignup: null, isLoading: false, error: null, subscriptionStatus: null })
+    const logoutEpoch = getAccountEpoch()
 
     if (!isSelfHosted) {
       await deleteHostedServerSession('invalid-hosted-auth')
     }
 
-    await clearLocalAuthMaterial('logout')
+    if (get().user !== null || getAccountEpoch() !== logoutEpoch) return
+    await clearLocalAuthMaterial('logout', epoch => get().user === null && getAccountEpoch() === epoch)
   },
 
   refreshSession: async () => {
+    const originalUser = get().user
+    const epoch = getAccountEpoch()
+    const current = () => getAccountEpoch() === epoch && get().user === originalUser
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!(await secureGet('etebase_session'))
+      if (!current()) return false
       if (hasSession) {
         syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, subscriptionStatus: 'active' })
@@ -1580,6 +1638,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     try {
       const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      if (!current()) return false
       // Only treat the session as invalid on explicit auth failures. A 5xx
       // response or network blip would otherwise log out e.g. an unverified
       // user when the verify-banner re-checks on tab focus (see
@@ -1588,7 +1647,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, subscriptionStatus: null })
         await deleteHostedServerSession('refresh auth failure')
-        await clearLocalAuthMaterial('invalid-hosted-auth')
+        if (get().user !== null || getAccountEpoch() !== epoch) return false
+        await clearLocalAuthMaterial('invalid-hosted-auth', boundary => get().user === null && getAccountEpoch() === boundary)
         return false
       }
       if (!res.ok) {
@@ -1596,19 +1656,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return false
       }
       const data = await res.json()
+      if (!current()) return false
       const rememberDevice = data.rememberDevice === true
       if (!rememberDevice) {
         const marker = readHostedValidationMarker()
-        if ((!marker || marker.rememberDevice !== false || marker.userId !== data.id) && !(await hasLiveOtherHostedSessionTab(data.id))) {
+        const otherTab = (!marker || marker.rememberDevice !== false || marker.userId !== data.id) && await hasLiveOtherHostedSessionTab(data.id)
+        if (!current()) return false
+        if ((!marker || marker.rememberDevice !== false || marker.userId !== data.id) && !otherTab) {
           syncAdminCookie(false)
           set({ user: null, isAuthenticated: false, subscriptionStatus: null })
           await deleteHostedServerSession('invalid-hosted-auth')
-          await clearLocalAuthMaterial('invalid-hosted-auth')
+          if (get().user !== null || getAccountEpoch() !== epoch) return false
+          await clearLocalAuthMaterial('invalid-hosted-auth', boundary => get().user === null && getAccountEpoch() === boundary)
           return false
         }
       }
       const isAdmin = data.isAdmin === true
-      if (get().user?.id !== data.id) await resetInMemoryAccountState('login')
+      if (get().user?.id !== data.id) {
+        const owner: AccountBoundaryOwner = { epoch, etebaseDestroyed: false }
+        const owned = () => get().user === originalUser && getAccountEpoch() === owner.epoch
+        // Recheck after resuming: microtasks queued by the reset run before this continuation.
+        if (!(await resetInMemoryAccountState('login', owned, owner)) || !owned()) return false
+      }
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(data.id, rememberDevice)
       set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true })
@@ -1620,8 +1689,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   restoreSession: async () => {
+    // Every continuation belongs to the boundary this restore began in; only its
+    // own reset may replace the token. Another account's arrival ends it silently.
+    const originalUser = get().user
+    const owner: AccountBoundaryOwner = { epoch: getAccountEpoch(), etebaseDestroyed: false }
+    const current = () => get().user === originalUser && getAccountEpoch() === owner.epoch
+    const signedOut = () => get().user === null && getAccountEpoch() === owner.epoch
+    const clearSignedOut = () => clearLocalAuthMaterial('invalid-hosted-auth', boundary => get().user === null && getAccountEpoch() === boundary)
+
     // Run one-time migration from localStorage to IndexedDB
     await migrateFromLocalStorage()
+    if (!current()) return
 
     // If a signup is in progress (pendingSignup exists or flag in sessionStorage),
     // do NOT restore the session — the user must complete the signup flow first.
@@ -1634,6 +1712,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
     if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
       const hasSession = !!(await secureGet('etebase_session'))
+      if (!current()) return
       if (hasSession) {
         syncAdminCookie(true)
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
@@ -1653,21 +1732,28 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true })
     try {
       const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      if (!current()) return
       if (res.ok) {
         const data = await res.json()
+        if (!current()) return
         const rememberDevice = data.rememberDevice === true
         if (!rememberDevice) {
           const marker = readHostedValidationMarker()
-          if ((!marker || marker.rememberDevice !== false || marker.userId !== data.id) && !(await hasLiveOtherHostedSessionTab(data.id))) {
+          const unmarked = !marker || marker.rememberDevice !== false || marker.userId !== data.id
+          const otherTab = unmarked && await hasLiveOtherHostedSessionTab(data.id)
+          if (!current()) return
+          if (unmarked && !otherTab) {
             syncAdminCookie(false)
             set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
             await deleteHostedServerSession('invalid-hosted-auth')
-            await clearLocalAuthMaterial('invalid-hosted-auth')
+            if (!signedOut()) return
+            await clearSignedOut()
             return
           }
         }
         const isAdmin = data.isAdmin === true
-        if (get().user?.id !== data.id) await resetInMemoryAccountState('login')
+        // Recheck after resuming: microtasks queued by the reset run before this continuation.
+        if (get().user?.id !== data.id && (!(await resetInMemoryAccountState('login', current, owner)) || !current())) return
         syncAdminCookie(isAdmin, rememberDevice)
         markHostedValidation(data.id, rememberDevice)
         set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, isLoading: false })
@@ -1675,19 +1761,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
         await deleteHostedServerSession('restore auth failure')
-        await clearLocalAuthMaterial('invalid-hosted-auth')
+        if (!signedOut()) return
+        await clearSignedOut()
       } else if (res.status === 429) {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
         const hasEtebaseSession = !!(await secureGet('etebase_session'))
+        if (!signedOut()) return
         const marker = readHostedValidationMarker()
         const activeTabMarker = hasEtebaseSession ? readOtherActiveHostedSessionTab() : null
-        if (hasEtebaseSession && !marker && !activeTabMarker) await clearLocalAuthMaterial('invalid-hosted-auth')
+        if (hasEtebaseSession && !marker && !activeTabMarker) await clearSignedOut()
       } else if (res.status >= 400 && res.status < 500) {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
         await deleteHostedServerSession('restore auth failure')
-        await clearLocalAuthMaterial('invalid-hosted-auth')
+        if (!signedOut()) return
+        await clearSignedOut()
       } else {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
@@ -1697,6 +1786,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       logger.warn('[auth-store] Session restore failed (network):', err)
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.
       const hasEtebaseSession = !!(await secureGet('etebase_session'))
+      // A signed-out state here may be another operation's (e.g. a logout awaiting
+      // its DELETE); only this restore's unchanged boundary may publish or clear.
+      if (!current()) return
       const marker = readHostedValidationMarker()
       const activeTabMarker = hasEtebaseSession ? readOtherActiveHostedSessionTab() : null
       if (hasEtebaseSession && marker) {
@@ -1718,7 +1810,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       } else {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
-        if (hasEtebaseSession) await clearLocalAuthMaterial('invalid-hosted-auth')
+        // Subscribers of that publication may establish another account; cleanup
+        // invalidates the epoch before its own checks, so recheck first.
+        if (hasEtebaseSession && signedOut()) await clearSignedOut()
       }
     }
   },
@@ -1746,35 +1840,50 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     if (typeof window !== 'undefined' && localStorage.getItem(HOSTED_AUTH_INVALIDATED_KEY)) return false
 
+    // As in restoreSession: only this retry's own reset may replace its boundary token.
+    const originalUser = get().user
+    const owner: AccountBoundaryOwner = { epoch: getAccountEpoch(), etebaseDestroyed: false }
+    const current = () => get().user === originalUser && getAccountEpoch() === owner.epoch
+    const signedOut = () => get().user === null && getAccountEpoch() === owner.epoch
+    const clearSignedOut = () => clearLocalAuthMaterial('invalid-hosted-auth', boundary => get().user === null && getAccountEpoch() === boundary)
+
     try {
       // Fetch both endpoints — only apply state if BOTH succeed
       const [refreshRes, subRes] = await Promise.all([
         fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }),
         fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' }),
       ])
+      if (!current()) return false
       if (refreshRes.status === 401 || refreshRes.status === 403 || (refreshRes.status >= 400 && refreshRes.status < 500 && refreshRes.status !== 429)) {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, subscriptionStatus: null })
         await deleteHostedServerSession('retry auth failure')
-        await clearLocalAuthMaterial('invalid-hosted-auth')
+        if (!signedOut()) return false
+        await clearSignedOut()
         return false
       }
       if (!refreshRes.ok || !subRes.ok) return false
       const refreshData = await refreshRes.json()
       const subData = await subRes.json()
+      if (!current()) return false
       const rememberDevice = refreshData.rememberDevice === true
       if (!rememberDevice) {
         const marker = readHostedValidationMarker()
-        if ((!marker || marker.rememberDevice !== false || marker.userId !== refreshData.id) && !(await hasLiveOtherHostedSessionTab(refreshData.id))) {
+        const unmarked = !marker || marker.rememberDevice !== false || marker.userId !== refreshData.id
+        const otherTab = unmarked && await hasLiveOtherHostedSessionTab(refreshData.id)
+        if (!current()) return false
+        if (unmarked && !otherTab) {
           syncAdminCookie(false)
           set({ user: null, isAuthenticated: false, subscriptionStatus: null })
           await deleteHostedServerSession('invalid-hosted-auth')
-          await clearLocalAuthMaterial('invalid-hosted-auth')
+          if (!signedOut()) return false
+          await clearSignedOut()
           return false
         }
       }
       const isAdmin = refreshData.isAdmin === true
-      if (get().user?.id !== refreshData.id) await resetInMemoryAccountState('login')
+      // Recheck after resuming: microtasks queued by the reset run before this continuation.
+      if (get().user?.id !== refreshData.id && (!(await resetInMemoryAccountState('login', current, owner)) || !current())) return false
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(refreshData.id, rememberDevice)
       set({

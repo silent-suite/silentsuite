@@ -21,6 +21,7 @@ vi.mock('lucide-react', () => ({
 
 vi.mock('@/app/lib/config', () => ({
   BILLING_API_URL: 'https://billing.example.test',
+  ETEBASE_SERVER_URL: 'https://server.example.test',
 }))
 
 // The account panel reads the opt-in preview: the unchanged signed offer plus
@@ -51,14 +52,14 @@ const annualOffer = previewOf({
 
 const REFUSED = 'Payment options are not available for this account state.'
 const TRANSIENT = 'The current annual offer could not be loaded. Retry to review current terms before continuing.'
-const LOADING = 'Loading the server-owned annual offer before payment options are shown.'
+const LOADING = 'Loading payment options...'
 const AUTHENTICATION = 'Billing could not confirm your sign-in. Sign in again to review payment options.'
 const RENEWAL_TRANSIENT = 'The annual terms changed, but the current offer could not be loaded. Retry to review current terms before continuing.'
 
 /** The three offer-message slots of the choice view, read by position, not by copy. */
 function panelMessages() {
   return {
-    description: screen.getByText('Pay now').nextElementSibling?.textContent ?? null,
+    description: screen.queryByRole('status')?.textContent ?? null,
     action: document.querySelector('p.rounded-lg')?.textContent?.trim() ?? null,
     error: document.querySelector('p.text-red-600')?.textContent ?? null,
   }
@@ -231,7 +232,7 @@ describe('PaymentChoicePanel initial offer failures', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Continue to card payment/ }))
     await waitFor(() => expect(offers).toBe(4))
     expect(activations[0]).toMatchObject({ offerToken: 'signed-offer', requestId: annualOffer.requestId })
-    if (newest === 'success') expect(await screen.findByText(/€48\.00\/year/)).toBeTruthy()
+    if (newest === 'success') expect(await screen.findByText(/^€48\.00\/year/)).toBeTruthy()
     else expect((await screen.findAllByText(REFUSED)).length).toBeGreaterThan(0)
 
     // The obsolete initial retry A resolves last.
@@ -242,8 +243,8 @@ describe('PaymentChoicePanel initial offer failures', () => {
     expect(screen.queryByText(AUTHENTICATION)).toBeNull()
 
     if (newest === 'success') {
-      expect(screen.getByText(/€48\.00\/year/)).toBeTruthy()
-      expect(screen.queryByText(/€36\.00\/year/)).toBeNull()
+      expect(screen.getByText(/^€48\.00\/year/)).toBeTruthy()
+      expect(screen.queryByText(/^€36\.00\/year/)).toBeNull()
       expect(screen.queryAllByText(REFUSED)).toHaveLength(0)
       fireEvent.click(screen.getByRole('button', { name: /Continue to card payment/ }))
       await waitFor(() => expect(activations).toHaveLength(2))

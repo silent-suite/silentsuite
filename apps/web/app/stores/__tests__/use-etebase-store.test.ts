@@ -13,6 +13,11 @@ const offlineQueueMock = vi.hoisted(() => ({
   remove: vi.fn(async () => {}),
   removeItemMutations: vi.fn(async () => 0),
   isOfflineError: vi.fn(() => false),
+  // The queue's closed-world rule (#744): only a content-free note or contact update is legacy.
+  isLegacyEntry: (entry: { type: string; sealed?: unknown; content?: unknown; collectionType: string }) => (
+    entry.type === 'update' && !entry.sealed && typeof entry.content !== 'string'
+    && (entry.collectionType === 'notes' || entry.collectionType === 'contacts')
+  ),
 }))
 
 const coreMock = vi.hoisted(() => ({
@@ -22,6 +27,11 @@ const coreMock = vi.hoisted(() => ({
   createCollection: vi.fn(),
   listItems: vi.fn(),
   isMarkdownNoteItem: vi.fn(() => true),
+  // The real core contract: a revision only for an SDK object saved at that etag.
+  savedRevisionOf: vi.fn((item: any) => {
+    const lastEtag = item?.encryptedItem?.lastEtag
+    return typeof lastEtag === 'string' && lastEtag.length > 0 && lastEtag === item.etag ? lastEtag : null
+  }),
   SyncEngine: vi.fn(),
   createItem: vi.fn(),
   deleteItem: vi.fn(),
@@ -1760,7 +1770,7 @@ describe('useEtebaseStore.refreshCollection', () => {
     const result = await useEtebaseStore.getState().refreshCollection('calendar', 'col-1')
     const state = useEtebaseStore.getState()
 
-    expect(result).toEqual([{ uid: 'new-col-1', content: 'fresh calendar', collectionUid: 'col-1' }])
+    expect(result).toEqual([{ uid: 'new-col-1', content: 'fresh calendar', collectionUid: 'col-1', revision: null }])
     expect(state.itemCache.has('old-col-1')).toBe(false)
     expect(state.itemCache.get('new-col-1')).toBe(freshItem)
     expect(state.itemCollectionMap.get('new-col-1')).toBe('col-1')
@@ -1795,7 +1805,7 @@ describe('useEtebaseStore.refreshCollection', () => {
     const result = await useEtebaseStore.getState().refreshCollection('calendar')
     const state = useEtebaseStore.getState()
 
-    expect(result).toEqual([{ uid: 'existing', content: 'existing calendar', collectionUid: 'col-1' }])
+    expect(result).toEqual([{ uid: 'existing', content: 'existing calendar', collectionUid: 'col-1', revision: null }])
     expect(state.itemCache.get('existing')).toBe(existingItem)
     expect(state.itemCollectionMap.get('existing')).toBe('col-1')
     expect(state.domainLoadState.calendar).toBe('failed')
@@ -1829,7 +1839,7 @@ describe('useEtebaseStore.refreshCollection', () => {
     })
 
     const scoped = await useEtebaseStore.getState().refreshCollection('calendar', 'col-1')
-    expect(scoped).toEqual([{ uid: 'fresh-col-1', content: 'fresh calendar', collectionUid: 'col-1' }])
+    expect(scoped).toEqual([{ uid: 'fresh-col-1', content: 'fresh calendar', collectionUid: 'col-1', revision: null }])
     expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('failed')
     expect(useEtebaseStore.getState().itemCache.get('existing-col-2')).toBe(existingItem)
     expect(itemManagers['col-2'].list).not.toHaveBeenCalled()

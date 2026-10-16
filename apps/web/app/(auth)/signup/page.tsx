@@ -546,6 +546,7 @@ function CryptoPaymentPanel({
   onBack,
   disclosure,
   onConfirm,
+  onRecover,
   provisioning = false,
   provisionError,
   onPaymentComplete,
@@ -554,6 +555,7 @@ function CryptoPaymentPanel({
   session: CryptoPaymentSession | null
   disclosure: AnnualCheckoutActivation['disclosure']
   onConfirm?: () => void
+  onRecover?: () => void
   provisioning?: boolean
   provisionError?: string | null
   onBack: () => void
@@ -682,9 +684,15 @@ function CryptoPaymentPanel({
       {!session && <AnnualTermsSummary disclosure={disclosure} />}
       {provisionError && <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">{provisionError}</div>}
       {!session ? (
-        <Button type="button" className="w-full" disabled={provisioning} onClick={onConfirm}>
-          {provisioning ? 'Starting…' : annualRetryAction(disclosure)}
-        </Button>
+        <>
+          <Button type="button" className="w-full" disabled={provisioning} onClick={onConfirm}>
+            {provisioning ? 'Starting…' : annualRetryAction(disclosure)}
+          </Button>
+          {/* A dispatched start may already own an invoice; its existing recovery reads the current state. */}
+          {onRecover && <button type="button" disabled={provisioning} onClick={onRecover} className="block w-full text-center text-sm underline disabled:opacity-60">
+            Check this payment&apos;s status
+          </button>}
+        </>
       ) : status === 'settled' ? (
         <div className="space-y-4 text-center">
           <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-700 dark:text-emerald-300">
@@ -787,6 +795,7 @@ function StepChoosePlan({
   cryptoPaymentSession,
   pendingAnnualClaim,
   onConfirmAnnualClaim,
+  onRecoverPayment,
 }: {
   annualOffer: AnnualOfferResponse
   onSelectFree: () => void
@@ -805,6 +814,7 @@ function StepChoosePlan({
   cryptoPaymentSession: CryptoPaymentSession | null
   pendingAnnualClaim: PendingAnnualClaim | null
   onConfirmAnnualClaim: () => void
+  onRecoverPayment?: () => void
 }) {
   const contentRef = useRef<HTMLDivElement>(null)
   const [selectedTrial, setSelectedTrial] = useState<TrialPath>('30day')
@@ -865,7 +875,7 @@ function StepChoosePlan({
     const disclosure = pendingAnnualClaim.activation.disclosure
     if (pendingAnnualClaim.provider === 'btcpay') return <CryptoPaymentPanel
       annualOffer={annualOfferDetails} session={null} disclosure={disclosure}
-      onConfirm={onConfirmAnnualClaim} provisioning={provisioning} provisionError={provisionError}
+      onConfirm={onConfirmAnnualClaim} onRecover={onRecoverPayment} provisioning={provisioning} provisionError={provisionError}
       onBack={onBack} onPaymentComplete={onPaymentComplete} />
     if (pendingAnnualClaim.provider === 'none') {
       // The password-loss acknowledgement is the only gate before the no-card
@@ -1478,6 +1488,8 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   // Keep this bounded UI pre-claim; partial/uncertain creation keeps its continuation.
   const paymentBackOpener = useRef<HTMLElement | null>(null)
   const [paymentReceiptReceived, setPaymentReceiptReceived] = useState(false)
+  // Selects the existing in-document payment recovery; it grants no authority.
+  const [paymentRecoveryRequested, setPaymentRecoveryRequested] = useState(false)
   const [paymentNeedsVerification, setPaymentNeedsVerification] = useState(false)
   const [emailOwnershipExpiresAt, setEmailOwnershipExpiresAt] = useState<string | null>(null)
   const [paymentSwitch, setPaymentSwitch] = useState<'stripe' | 'btcpay' | null>(null)
@@ -2234,6 +2246,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   // pending-payment continuation restores its capability and controls itself.
   const handleRecoveredPaymentRelease = () => {
     setPaymentReceiptReceived(true)
+    setPaymentRecoveryRequested(false)
     navigation.clear({ retirePayment: true })
     setClientSecret(null)
     setCardDisclosure(null)
@@ -2248,7 +2261,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
       setPlanView('method')
     } else setPaymentNeedsVerification(true)
   }
-  if (!paymentReceiptReceived && (initialPaymentRecovery || navigation.recovery === 'payment')) return <PendingPaymentPage onReleased={handleRecoveredPaymentRelease} />
+  if (paymentRecoveryRequested || (!paymentReceiptReceived && (initialPaymentRecovery || navigation.recovery === 'payment'))) return <PendingPaymentPage onReleased={handleRecoveredPaymentRelease} />
   if (paymentNeedsVerification) return <div className="space-y-4">
     <h1 className="text-xl font-semibold">Verify email to choose a payment method</h1>
     <p>Payment cancelled. This browser no longer has valid email verification and signed signup terms. Verify your email again to load payment choices.</p>
@@ -2392,6 +2405,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
             cryptoPaymentSession={cryptoPaymentSession}
             pendingAnnualClaim={pendingAnnualClaim}
             onConfirmAnnualClaim={handleConfirmAnnualClaim}
+            onRecoverPayment={claimAttemptedRef.current ? () => { if (!operationRef.current) setPaymentRecoveryRequested(true) } : undefined}
           /> : <div role="alert" className="rounded-lg border border-red-500/20 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400">
             <p>{provisionError ?? 'Your annual offer is unavailable. Verify your email to request a new offer.'}</p>
             {annualOfferRequestId && recoveredSignupEmail && (

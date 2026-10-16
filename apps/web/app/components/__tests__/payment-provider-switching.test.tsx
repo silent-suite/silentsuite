@@ -28,6 +28,7 @@ vi.mock('lucide-react', () => ({
 
 vi.mock('@/app/lib/config', () => ({
   BILLING_API_URL: 'https://billing.example.test',
+  ETEBASE_SERVER_URL: 'https://server.example.test',
 }))
 
 const earlyOffer = {
@@ -184,12 +185,12 @@ describe('explicit provider-switch consequence labels', () => {
     expect(screen.queryByText(BITCOIN_CANCELLATION_WARNING)).not.toBeInTheDocument()
   })
 
-  it('labels the resumed Bitcoin flow with the card switch and preserves the validated BTCPay continuation link', async () => {
+  it('labels the retained Bitcoin flow with the card switch without treating its stored URL as a validated continuation', async () => {
     mockBilling({ currentFlow: async () => response({ flow: bitcoinFlow }) })
     renderPanel()
 
     expect(await screen.findByRole('button', { name: 'Cancel cryptocurrency payment and choose card' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /continue in btcpay/i })).toHaveAttribute('href', 'https://btcpay.test/i/abc123')
+    expect(screen.queryByRole('link', { name: /continue in btcpay/i })).not.toBeInTheDocument()
   })
 
   it('does not promise a provider the current server offer does not expose', async () => {
@@ -230,8 +231,8 @@ describe('explicit provider-switch consequence labels', () => {
     mockBilling({})
     renderPanel()
 
-    expect(await screen.findByText(/€36\.00 now, then €36\.00 every year until you cancel/i)).toBeInTheDocument()
-    expect(screen.getByText(/current subscription period is still running/i)).toHaveTextContent('30-day refund window.')
+    expect(await screen.findByText('€36.00 now · renews at €36.00/year until cancelled.')).toBeInTheDocument()
+    expect(screen.getByText('€36.00 for one year · no automatic renewal.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /continue to card payment/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /back to payment options/i })).not.toBeInTheDocument()
     expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/offers/v2/activate'))).toBe(false)
@@ -526,9 +527,9 @@ describe('provider switching never creates a second authority', () => {
 
     // The neutral heading, the signed price and the exact Bitcoin terms are
     // shown before the new choice; there is no unconditional bonus promise.
-    expect(await screen.findByRole('heading', { name: 'Pay now' })).toBeInTheDocument()
-    expect(screen.getByText(/€36\.00\/year/)).toBeInTheDocument()
-    expect(screen.getByText(/€36\.00 prepaid for one year, no automatic renewal/i)).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: /continue to card payment/i })).toBeInTheDocument()
+    expect(screen.getByText(/^€36\.00\/year/)).toBeInTheDocument()
+    expect(screen.getByText('€36.00 for one year · no automatic renewal.')).toBeInTheDocument()
     expect(screen.queryByText(/14 bonus days/i)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: CREATE_BITCOIN }))

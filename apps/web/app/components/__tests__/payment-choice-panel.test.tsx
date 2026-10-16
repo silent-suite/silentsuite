@@ -9,7 +9,7 @@ vi.mock('next/dynamic', () => ({
 }))
 
 vi.mock('@silentsuite/ui', () => ({
-  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
+  Button: ({ children, variant = 'default', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: string }) => <button data-variant={variant} {...props}>{children}</button>,
 }))
 
 vi.mock('lucide-react', () => ({
@@ -23,6 +23,7 @@ vi.mock('lucide-react', () => ({
 
 vi.mock('@/app/lib/config', () => ({
   BILLING_API_URL: 'https://billing.example.test',
+  ETEBASE_SERVER_URL: 'https://server.example.test',
 }))
 
 const annualOffer = {
@@ -56,7 +57,7 @@ const activeFlow = {
   cancellable: true,
 }
 
-// Owner-QA plan B2/B3: the account panel reads the opt-in preview, which
+// The account panel reads the opt-in preview, which
 // carries the exact signed terms per provider before any choice is made.
 const PROFILE = 'account_confirmation_rules_v1'
 function cardDisclosure(annualAmountMinor = 3600, monthlyEquivalentMinor = 300) {
@@ -117,7 +118,47 @@ afterEach(() => {
 })
 
 describe('PaymentChoicePanel direct progression with terms before choice', () => {
-  it('shows the signed card terms before the choice and goes straight to the card form (owner: delete the approval text)', async () => {
+  it('uses matching primary choices without the rejected payment boilerplate', async () => {
+    const BitcoinPanel = await bitcoinEnabledPanel()
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const { path } = route(input)
+      if (path === '/subscription/payment-flows/current') return response({ flow: null })
+      if (path === '/subscription/offers/v2') return response(previewOffer)
+      return response({}, false)
+    })
+    render(<BitcoinPanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    const crypto = await screen.findByRole('button', { name: /pay .* with bitcoin, lightning and monero/i })
+    const card = screen.getByRole('button', { name: /continue to card payment/i })
+    expect(crypto).toHaveAttribute('data-variant', 'default')
+    expect(card).toHaveAttribute('data-variant', 'default')
+    expect(crypto.className).toBe(card.className)
+    expect(screen.queryByRole('heading', { name: 'Pay now' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/server-authorized|server-owned|conversion bonus|current subscription period|refund window/i)).not.toBeInTheDocument()
+    expect(screen.getByText('€36.00 now · renews at €36.00/year until cancelled.')).toBeInTheDocument()
+    expect(screen.getByText('€36.00 for one year · no automatic renewal.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveAttribute('data-variant', 'outline')
+    expect(called('/subscription/offers/v2/activate')).toHaveLength(0)
+    expect(called('/subscription/payment-flows/v2')).toHaveLength(0)
+  })
+
+  it('replaces the verbose inline card paragraph with compact frozen payment terms', async () => {
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
+      const { path } = route(input)
+      if (path === '/subscription/payment-flows/current') return response({ flow: { ...activeFlow, authorityId: serverFlowId, disclosure: cardDisclosure(4800, 400) } })
+      if (path === '/subscription/offers/v2') return response(previewOffer)
+      if (path === '/subscription/payment-flows/v2/resume') return response({ contractVersion: 2, kind: 'stripe', authorityId: serverFlowId, clientSecret: 'pi_resumed', disclosure: cardDisclosure(4800, 400) })
+      return response({}, false)
+    })
+    renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: /resume card payment/i }))
+    expect(await screen.findByTestId('stripe-payment-form')).toHaveAttribute('data-submit-label', 'Pay €48.00')
+    expect(screen.queryByText(/conversion bonus|refund window|early_annual|standard_annual/)).not.toBeInTheDocument()
+    expect(screen.getByText('€48.00 now · renews at €48.00/year until cancelled.')).toBeInTheDocument()
+    expect(called('/subscription/offers/v2/activate')).toHaveLength(0)
+    expect(called('/subscription/payment-flows/v2')).toHaveLength(0)
+  })
+
+  it('shows compact signed card terms before the choice and goes straight to the card form', async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const { path, preview } = route(input)
       if (path === '/subscription/payment-flows/current') return response({ flow: null })
@@ -127,8 +168,8 @@ describe('PaymentChoicePanel direct progression with terms before choice', () =>
       return response({}, false)
     })
     renderPanel()
-    expect(await screen.findByText(/€36\.00 now, then €36\.00 every year until you cancel/i)).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Pay now' })).toBeInTheDocument()
+    expect(await screen.findByText('€36.00 now · renews at €36.00/year until cancelled.')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Pay now' })).not.toBeInTheDocument()
     expect(screen.queryByText(/14 bonus days/i)).not.toBeInTheDocument()
     expect(called('/subscription/offers/v2/activate')).toHaveLength(0)
     expect(called('/subscription/payment-flows/v2')).toHaveLength(0)
@@ -152,7 +193,7 @@ describe('PaymentChoicePanel direct progression with terms before choice', () =>
       return response({}, false)
     })
     render(<BitcoinPanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
-    expect(await screen.findByText(/current subscription period is still running/i)).toBeInTheDocument()
+    expect(await screen.findByText('€36.00 for one year · no automatic renewal.')).toBeInTheDocument()
     expect(screen.queryByText(/paid or free trial/i)).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /pay .* with bitcoin, lightning and monero/i }))
@@ -170,7 +211,7 @@ describe('PaymentChoicePanel direct progression with terms before choice', () =>
       return response({}, false)
     })
     renderPanel()
-    expect(await screen.findByText(/€48\.00 now, then €48\.00 every year until you cancel/i)).toBeInTheDocument()
+    expect(await screen.findByText('€48.00 now · renews at €48.00/year until cancelled.')).toBeInTheDocument()
     expect(screen.queryByText(/€36\.00 now/i)).not.toBeInTheDocument()
   })
 
@@ -229,7 +270,7 @@ describe('PaymentChoicePanel direct progression with terms before choice', () =>
     expect(screen.queryByTestId('stripe-payment-form')).not.toBeInTheDocument()
   })
 
-  // Owner line 3: after a failed start the same owned authority must be resumable,
+  // After a failed start the same owned authority must be resumable,
   // and switching provider must stay reachable through its cancellation.
   const ownedFlow = { ...activeFlow, status: 'provider_creation_reconciling', authorityId: serverFlowId, disclosure: cardDisclosure() }
   function resumeMock(firstFlow: unknown) {
@@ -323,7 +364,7 @@ describe('PaymentChoicePanel direct progression with terms before choice', () =>
     })
     render(<BitcoinPanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
 
-    expect(await screen.findByText(/current subscription period is still running/i)).toBeInTheDocument()
+    expect(await screen.findByText('€36.00 for one year · no automatic renewal.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /resume cryptocurrency payment/i }))
     await waitFor(() => expect(called('/subscription/payment-flows/v2/resume')).toHaveLength(1))
     expect(JSON.parse(String(called('/subscription/payment-flows/v2/resume')[0]![1]!.body))).toEqual({ contractVersion: 2, authorityId: serverFlowId })
@@ -343,7 +384,7 @@ describe('PaymentChoicePanel direct progression with terms before choice', () =>
       return response({}, false)
     })
     renderPanel()
-    expect(await screen.findByText(/€36\.00 now, then €36\.00 every year until you cancel/i)).toBeInTheDocument()
+    expect(await screen.findByText('€36.00 now · renews at €36.00/year until cancelled.')).toBeInTheDocument()
     expect(screen.queryByText(/€48\.00/)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel card payment' }))
     await waitFor(() => expect(called('/subscription/payment-flows/cancel')).toHaveLength(1))
@@ -392,7 +433,8 @@ describe('PaymentChoicePanel owned-flow recovery without a fresh offer', () => {
       return response({}, false)
     })
     render(<BitcoinPanel onSuccess={vi.fn()} onCancel={vi.fn()} />)
-    expect(await screen.findByRole('link', { name: 'Continue in BTCPay' })).toHaveAttribute('href', 'https://btcpay.test/i/abc123')
+    await screen.findByText('Payment already in progress')
+    expect(screen.queryByRole('link', { name: 'Continue in BTCPay' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /resume cryptocurrency payment/i }))
     expect(await screen.findByText(/pay €36\.00\/year annual with bitcoin, lightning and monero/i)).toBeInTheDocument()
     expect(called('/subscription/offers/v2/activate')).toHaveLength(0)
@@ -459,7 +501,7 @@ describe('PaymentChoicePanel owned-flow recovery without a fresh offer', () => {
     expect(screen.queryByText(/Standard Plan|standard_annual/)).not.toBeInTheDocument()
   })
 
-  it('shows the signed refund window before the choice and on the recovery screen', async () => {
+  it('keeps compact signed payment terms before activation without the rejected refund paragraph', async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const { path, preview } = route(input)
       if (path === '/subscription/payment-flows/current') return response({ flow: null })
@@ -467,11 +509,12 @@ describe('PaymentChoicePanel owned-flow recovery without a fresh offer', () => {
       return response({}, false)
     })
     renderPanel()
-    expect(await screen.findByText(/€36\.00 now, then €36\.00 every year until you cancel/)).toHaveTextContent('30-day refund window.')
+    expect(await screen.findByText('€36.00 now · renews at €36.00/year until cancelled.')).toBeInTheDocument()
+    expect(screen.queryByText(/conversion bonus|refund window/)).not.toBeInTheDocument()
     expect(called('/subscription/offers/v2/activate')).toHaveLength(0)
   })
 
-  it('shows the frozen refund window for an owned flow even without a fresh offer', async () => {
+  it('keeps compact frozen payment terms for an owned flow even without a fresh offer', async () => {
     vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => {
       const { path } = route(input)
       if (path === '/subscription/payment-flows/current') return response({ flow: ownedCard })
@@ -479,7 +522,8 @@ describe('PaymentChoicePanel owned-flow recovery without a fresh offer', () => {
       return response({}, false)
     })
     renderPanel()
-    expect(await screen.findByText(/€36\.00 now, then €36\.00 every year until you cancel/)).toHaveTextContent('30-day refund window.')
+    expect(await screen.findByText('€36.00 now · renews at €36.00/year until cancelled.')).toBeInTheDocument()
+    expect(screen.queryByText(/conversion bonus|refund window/)).not.toBeInTheDocument()
   })
 })
 

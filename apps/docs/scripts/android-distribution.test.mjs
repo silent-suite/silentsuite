@@ -177,7 +177,37 @@ function isTruthfulFdroidContext(sentence) {
     /\b(?:will|would)\s+(?:eventually\s+)?(?:include|support|publish)\b[^,;.\n]*\bF-Droid\b/i.test(sentence) ||
     /\b(?:install|download|get)\s+(?:Obtainium|Tasks\.org|Etar|Simple Calendar)\b[^\n]*\bfrom\b[^\n]*\bF-Droid\b/i.test(sentence) ||
     /\b(?:Obtainium|Tasks\.org|Etar|Simple Calendar)\b\s+(?:is|are)\s+available\s+from\s+F-Droid\b/i.test(sentence) ||
-    /\boriginal EteSync app\b[^\n]*\bfrom\b[^\n]*\bF-Droid\b/i.test(sentence)
+    /\boriginal EteSync app\b[^\n]*\bfrom\b[^\n]*\bF-Droid\b/i.test(sentence) ||
+    isCurrentOfficialFdroidAvailability(sentence)
+  )
+}
+
+function isCurrentOfficialFdroidAvailability(sentence) {
+  if (/\b(?:pending|not yet|not available|on the roadmap|future reproducible|future F-Droid|becomes available)\b/i.test(sentence)) {
+    return false
+  }
+  return (
+    /\b(?:download|install|get)\s+(?:SilentSuite|the (?:SilentSuite )?(?:Android )?app)\s+(?:on|from|through|via)\s+(?:the official\s+)?F-Droid\b/i.test(sentence) ||
+    /\b(?:SilentSuite|the (?:SilentSuite )?(?:Android )?app)\s+(?:is\s+|can be\s+)?(?:currently\s+|now\s+)?(?:available|downloadable|downloaded|installed)\s+(?:on|from|through|via)\s+(?:the official\s+)?F-Droid\b/i.test(sentence) ||
+    /\bavailable\s+(?:now\s+)?(?:on|from|through|via)\b[^\n]*\bF-Droid\b/i.test(sentence) ||
+    /\bofficial F-Droid (?:package|repository|builds)\b/i.test(sentence)
+  )
+}
+
+const staleFdroidPendingPatterns = [
+  /\bF-Droid\b[^\n]*\b(?:inclusion|publication)\b[^\n]*\bpending\b/i,
+  /\bpending official inclusion\b/i,
+  /\bnot yet\b[^\n]*\bF-Droid\b/i,
+  /\bF-Droid is not available\b/i,
+  /\bfuture(?: reproducible)? F-Droid\b/i,
+  /\bwhen official F-Droid distribution becomes available\b/i,
+  /\bwhen\b[^\n]*\bF-Droid\b[^\n]*\bbecomes available\b/i,
+  /\bF-Droid, on the roadmap\b/i,
+]
+
+function findStaleFdroidPendingClaim(content) {
+  return sentences(content).find((sentence) =>
+    staleFdroidPendingPatterns.some((pattern) => pattern.test(sentence)),
   )
 }
 
@@ -219,7 +249,8 @@ test('hosted Android guide exposes direct logo buttons for every distribution st
   assert.match(hostedAndroid, /href="https:\/\/github\.com\/silent-suite\/silentsuite\/releases\/latest"/)
   assert.doesNotMatch(hostedAndroid, /class="android-channel-button"[^>]*href="https:\/\/github\.com\/silent-suite\/silentsuite\/releases\/latest"/)
   assert.match(hostedAndroid, /class="android-channel-secondary-link"[^>]*href="https:\/\/github\.com\/silent-suite\/silentsuite\/releases\/latest"/)
-  assert.match(hostedAndroid, /class="android-channel-button is-pending"[^>]*aria-label="F-Droid, on the roadmap, pending official inclusion"/)
+  assert.match(hostedAndroid, /class="android-channel-button" href="https:\/\/f-droid.org\/packages\/io\.silentsuite\.android"/)
+  assert.doesNotMatch(hostedAndroid, /class="android-channel-button is-pending"/)
 })
 
 test('hosted Android guide presents Orion as a standard-size third-party tile below the other stores', () => {
@@ -313,72 +344,64 @@ test('Bridge runtime guidance is limited to supported desktop integrations', () 
   assert.doesNotMatch(windowsGuide, /em Client|Windows Calendar|other Windows apps/)
 })
 
-test('all Android documentation states that official F-Droid inclusion is pending', () => {
-  assert.match(hostedAndroid, /Official F-Droid publication is pending inclusion\./)
-  assert.match(hostedFaq, /Official F-Droid inclusion is pending\./)
-  assert.match(siblingFaq, /Official F-Droid inclusion is pending\./)
-  assert.match(siblingGettingStarted, /Official F-Droid inclusion is pending\./)
-  assert.match(siblingGuideIndex, /Official F-Droid inclusion is pending\./)
-  assert.match(rootReadme, /Official F-Droid inclusion is pending\./)
+test('Android documentation links the official F-Droid package', () => {
+  const officialPackage = /https:\/\/f-droid\.org\/packages\/io\.silentsuite\.android/
+  for (const [label, content] of [
+    ['hosted Android guide', hostedAndroid],
+    ['hosted FAQ', hostedFaq],
+    ['sibling FAQ', siblingFaq],
+    ['sibling getting started', siblingGettingStarted],
+    ['sibling guide index', siblingGuideIndex],
+    ['root README', rootReadme],
+    ['Settings → Mobile', settingsMobile],
+  ]) {
+    assert.match(content, officialPackage, label)
+    assert.equal(findStaleFdroidPendingClaim(content), undefined, label)
+  }
 })
 
-test('F-Droid availability classifier rejects false claims and permits truthful context', () => {
-  const rejected = [
+test('F-Droid classifiers accept the official listing and reject stale pending claims', () => {
+  const currentAvailability = [
     'SilentSuite is available on F-Droid.',
     'The Android app is available from the official F-Droid repository.',
     'SilentSuite can be downloaded from F-Droid.',
     'Download SilentSuite from F-Droid.',
     'Install SilentSuite via F-Droid.',
     'Get the Android app through F-Droid.',
-    'F-Droid — available now',
-    'F-Droid is available now.',
-    'F-Droid: download now',
-    'F-Droid: install now',
     'Available on Google Play, Zapstore, and F-Droid.',
-    'Available channels: Google Play, Zapstore, and F-Droid.',
-    'Download channels include GitHub Releases and F-Droid.',
-    'Installation channels include Google Play and F-Droid.',
-    'Our Android channels include F-Droid.',
-    '> SilentSuite can be downloaded\n> from F-Droid.',
-    '### Future F-Droid\nSilentSuite is available on F-Droid.',
     'SilentSuite does not include ads and is available on F-Droid.',
-    '> Future F-Droid\n>\n> SilentSuite is available on F-Droid.',
     'Future updates improve privacy, and SilentSuite is available on F-Droid.',
     'Obtainium is useful, and SilentSuite is available on F-Droid.',
-    'Install Obtainium from F-Droid, and SilentSuite is available on F-Droid.',
-    'Official F-Droid inclusion is pending, but SilentSuite is available on F-Droid.',
-    'Future reproducible F-Droid builds use one certificate, and SilentSuite is available on F-Droid.',
     'Google Play is not available, and SilentSuite is available on F-Droid.',
-    'Official F-Droid inclusion is pending and SilentSuite is available on F-Droid.',
-    'Install Obtainium from F-Droid and SilentSuite is available on F-Droid.',
-    'Future reproducible F-Droid builds use one certificate and SilentSuite is available on F-Droid.',
-    'Official F-Droid inclusion is pending and F-Droid is available now.',
-  ]
-  const accepted = [
-    'SilentSuite is not yet available from the official F-Droid package index.',
-    'Official F-Droid inclusion is pending.',
-    'When F-Droid distribution becomes available, keep updates on that channel.',
-    'When available, installation channels will include F-Droid.',
     'Install Obtainium from F-Droid.',
     'Tasks.org is available from F-Droid.',
-    'Future reproducible F-Droid builds use the developer-signed certificate.',
-    'SilentSuite is not available from Google Play or F-Droid.',
-    'Available channels do not include F-Droid.',
     '~~~text\nSilentSuite is available on F-Droid.\n~~~',
     '```text\nSilentSuite is available on F-Droid.\n```',
   ]
+  const stalePending = [
+    'SilentSuite is not yet available from the official F-Droid package index.',
+    'Official F-Droid inclusion is pending.',
+    'When F-Droid distribution becomes available, keep updates on that channel.',
+    'Future reproducible F-Droid builds use the developer-signed certificate.',
+    'Official F-Droid inclusion is pending, but SilentSuite is available on F-Droid.',
+    'Official F-Droid inclusion is pending and SilentSuite is available on F-Droid.',
+    'Official F-Droid inclusion is pending and F-Droid is available now.',
+    'F-Droid, on the roadmap, pending official inclusion',
+  ]
 
-  for (const content of rejected) {
-    assert.equal(hasFalseFdroidAvailabilityClaim(content), true, content)
-  }
-  for (const content of accepted) {
+  for (const content of currentAvailability) {
     assert.equal(hasFalseFdroidAvailabilityClaim(content), false, content)
+    assert.equal(findStaleFdroidPendingClaim(content), undefined, content)
+  }
+  for (const content of stalePending) {
+    assert.notEqual(findStaleFdroidPendingClaim(content), undefined, content)
   }
 })
 
-test('documentation inventory contains no false F-Droid availability claims', () => {
+test('documentation inventory contains no stale F-Droid pending claims', () => {
   for (const path of inventory) {
     const content = read(path)
+    assert.equal(findStaleFdroidPendingClaim(content), undefined, path)
     assert.equal(findFalseFdroidAvailabilityClaim(content), undefined, path)
   }
 })

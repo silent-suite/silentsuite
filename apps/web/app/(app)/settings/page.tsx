@@ -1,5 +1,9 @@
-import { redirect } from 'next/navigation'
+import { SettingsNav } from './settings-nav'
 
 export default function SettingsPage() {
-  redirect('/settings/account')
+  return (
+    <div className="max-w-2xl">
+      <SettingsNav variant="overview" pathname="/settings" />
+    </div>
+  )
 }

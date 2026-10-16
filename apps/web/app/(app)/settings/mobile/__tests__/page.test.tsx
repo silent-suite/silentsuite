@@ -24,7 +24,7 @@ vi.mock('next/image', () => ({
 }))
 
 describe('MobileSettingsPage Android download choices', () => {
-  it('offers active channels, a pending F-Droid state, and direct APK access', () => {
+  it('offers active channels, the official F-Droid package, and direct APK access', () => {
     render(<MobileSettingsPage />)
 
     expect(screen.getByRole('link', { name: /Google Play/i })).toHaveAttribute(
@@ -39,14 +39,14 @@ describe('MobileSettingsPage Android download choices', () => {
       'href',
       'https://zapstore.dev/apps/io.silentsuite.android',
     )
+    expect(screen.getByRole('link', { name: /F-Droid/i })).toHaveAttribute(
+      'href',
+      'https://f-droid.org/packages/io.silentsuite.android',
+    )
     expect(screen.getByText(/release timing may differ by channel/i)).toBeInTheDocument()
     expect(screen.queryByText(/work the same across every channel/i)).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: /F-Droid/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('group', {
-      name: 'F-Droid, on the roadmap. Pending official inclusion',
-    })).toBeInTheDocument()
-    expect(screen.getByText('Soon')).toBeInTheDocument()
-    expect(screen.getByText(/Pending official inclusion/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Pending official inclusion/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Soon$/)).not.toBeInTheDocument()
     const directApk = screen.getByRole('link', { name: /Direct APK/i })
     expect(directApk).toHaveAttribute(
       'href',
@@ -78,13 +78,15 @@ describe('MobileSettingsPage Android download choices', () => {
     expect(qr).toHaveAttribute('data-value', 'https://docs.silentsuite.io/user-guide/apps/android')
     expect(qr).toHaveAttribute('data-size', '144')
     expect(qr.parentElement).toHaveClass('h-40', 'w-40', 'p-[7px]')
+    // The settings rail narrows the pane at lg, so the QR column waits for xl.
     expect(qr.closest('[data-android-download-qr]')).toHaveClass(
       'hidden',
-      'lg:flex',
-      'lg:col-start-3',
-      'lg:row-start-1',
-      'lg:row-span-2',
+      'xl:flex',
+      'xl:col-start-3',
+      'xl:row-start-1',
+      'xl:row-span-2',
     )
+    expect(qr.closest('[data-android-download-qr]')).not.toHaveClass('lg:flex')
     expect(qr.closest('a')).toHaveClass('min-h-28', 'rounded-lg')
     expect(screen.getByRole('link', { name: /Google Play/i })).toHaveClass('min-h-28', 'rounded-lg')
   })
@@ -99,16 +101,17 @@ describe('MobileSettingsPage Android download choices', () => {
     }
   })
 
-  it('uses a responsive two-by-two managed grid beside the spanning desktop QR card', () => {
+  it('uses a responsive two-by-two managed grid beside the spanning wide-desktop QR card', () => {
     render(<MobileSettingsPage />)
 
     const grid = document.querySelector('[data-android-managed-channels]')
     expect(grid).toHaveClass(
       'grid',
       'sm:grid-cols-2',
-      'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,0.9fr)]',
-      'lg:grid-rows-2',
+      'xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,0.9fr)]',
+      'xl:grid-rows-2',
     )
+    expect(grid).not.toHaveClass('lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,0.9fr)]')
     expect(
       Array.from(grid?.querySelectorAll('[data-android-channel]') ?? []).map((card) =>
         card.getAttribute('data-android-channel'),
@@ -119,18 +122,23 @@ describe('MobileSettingsPage Android download choices', () => {
     expect(directApk.closest('[data-android-managed-channels]')).toBeNull()
   })
 
+  it('points the desktop crosslink at the Desktop bridge settings page', () => {
+    render(<MobileSettingsPage />)
+
+    expect(screen.getByRole('link', { name: 'See Settings → Desktop bridge' })).toHaveAttribute(
+      'href',
+      '/settings/desktop',
+    )
+  })
+
   it('keeps active channels keyboard-visible and safe when opening external destinations', () => {
     render(<MobileSettingsPage />)
 
-    for (const name of ['Google Play', 'Zapstore', 'Obtainium']) {
+    for (const name of ['Google Play', 'Zapstore', 'Obtainium', 'F-Droid']) {
       const link = screen.getByRole('link', { name: new RegExp(name, 'i') })
       expect(link).toHaveAttribute('target', '_blank')
       expect(link).toHaveAttribute('rel', 'noopener noreferrer')
       expect(link).toHaveClass('focus-visible:ring-2')
     }
-
-    expect(screen.getByRole('group', {
-      name: 'F-Droid, on the roadmap. Pending official inclusion',
-    })).toHaveAttribute('aria-disabled', 'true')
   })
 })

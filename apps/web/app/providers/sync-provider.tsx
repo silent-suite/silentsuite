@@ -248,7 +248,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           try {
             const contacts = contactItems.map((it) => {
               const contact = core.deserializeContact(it.content)
-              return { ...contact, id: it.itemUid, listId: it.collectionUid }
+              // The display cache holds no SDK item, so the revision is unknown (#744).
+              return { ...contact, id: it.itemUid, listId: it.collectionUid, revision: null }
             })
             useContactStore.getState().syncFromRemote(contacts)
             logger.log(`[sync-provider] Hydrated ${contacts.length} contacts from cache`)
@@ -274,7 +275,8 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           try {
             const visibleNoteItems = await withoutPendingDeletes('notes', noteItems, accountEpoch, useEtebaseStore.getState().accountFingerprint)
             assertCurrentAccountEpoch(accountEpoch)
-            const notes = visibleNoteItems.map((it) => core.deserializeNote(it.content, it.itemUid, it.collectionUid))
+            // The display cache holds no SDK item, so the revision is unknown (#744).
+            const notes = visibleNoteItems.map((it) => ({ ...core.deserializeNote(it.content, it.itemUid, it.collectionUid), revision: null }))
             useNoteStore.getState().syncFromRemote(notes)
             logger.log(`[sync-provider] Hydrated ${notes.length} notes from cache`)
           } catch (err) {
@@ -359,14 +361,15 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           } else if (type === 'contacts') {
             const contacts = items.map((item) => {
               const contact = core.deserializeContact(item.content)
-              return { ...contact, id: item.uid, listId: item.collectionUid }
+              // Content and revision are paired from the same SDK item (#744).
+              return { ...contact, id: item.uid, listId: item.collectionUid, revision: item.revision }
             })
             domainItemCount = contacts.length
             useContactStore.getState().syncFromRemote(contacts)
             logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
             await mirrorToCache(type, items)
           } else if (type === 'notes') {
-            const notes = items.map((item) => core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid))
+            const notes = items.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
             domainItemCount = notes.length
             useNoteStore.getState().syncFromRemote(notes)
             logger.log(`[sync-provider] Loaded ${notes.length} notes from server`)
@@ -442,7 +445,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               assertCurrentAccountEpoch(accountEpoch)
               const contacts = contactItems.map((item) => {
                 const contact = core.deserializeContact(item.content)
-                return { ...contact, id: item.uid, listId: item.collectionUid }
+                return { ...contact, id: item.uid, listId: item.collectionUid, revision: item.revision }
               })
               assertCurrentAccountEpoch(accountEpoch)
               useContactStore.getState().syncFromRemote(contacts)
@@ -478,7 +481,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             if (useEtebaseStore.getState().domainLoadState.notes === 'loaded') {
               const noteItems = await useEtebaseStore.getState().fetchAllItems('notes', accountEpoch)
               assertCurrentAccountEpoch(accountEpoch)
-              const notes = noteItems.map((item) => core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid))
+              const notes = noteItems.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
               assertCurrentAccountEpoch(accountEpoch)
               useNoteStore.getState().syncFromRemote(notes)
             }

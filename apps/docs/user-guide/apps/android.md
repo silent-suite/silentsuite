@@ -9,8 +9,8 @@ Once set up, your SilentSuite data syncs directly into Android's system calendar
 ## Install
 
 Choose the install channel you want to keep using for updates. Google Play is
-the simplest option for most people, while Obtainium, Zapstore, and direct APK
-downloads keep independent distribution paths available.
+the simplest option for most people. F-Droid, Obtainium, Zapstore, and direct
+APK downloads keep independent distribution paths available.
 
 <div class="android-channel-grid">
   <a class="android-channel-button" href="https://play.google.com/store/apps/details?id=io.silentsuite.android" target="_blank" rel="noopener noreferrer">
@@ -25,10 +25,10 @@ downloads keep independent distribution paths available.
     <span class="android-channel-logo"><img src="/channel-icons/zapstore.png" alt="" aria-hidden="true"></span>
     <span class="android-channel-copy"><strong>Zapstore</strong><small>Independent app-store updates</small></span>
   </a>
-  <div class="android-channel-button is-pending" role="group" aria-label="F-Droid, on the roadmap, pending official inclusion">
+  <a class="android-channel-button" href="https://f-droid.org/packages/io.silentsuite.android" target="_blank" rel="noopener noreferrer">
     <span class="android-channel-logo"><img src="/channel-icons/fdroid.png" alt="" aria-hidden="true"></span>
-    <span class="android-channel-copy"><strong>F-Droid</strong><small>Pending official inclusion</small><span class="android-channel-status">On the roadmap</span></span>
-  </div>
+    <span class="android-channel-copy"><strong>F-Droid</strong><small>Official F-Droid repository</small></span>
+  </a>
   <a class="android-channel-button" href="orionstore://app/silentsuite">
     <span class="android-channel-logo"><img src="/channel-icons/orion.png" alt="" aria-hidden="true"></span>
     <span class="android-channel-copy"><strong>Orion Store</strong><small>Third-party community store</small></span>
@@ -76,22 +76,20 @@ SilentSuite is also indexed by the independent, open-source [Orion Store](https:
 
 Orion is a third-party distribution client and is not operated by SilentSuite. Before installing, confirm that Orion shows the expected SilentSuite version and GitHub release source.
 
-### F-Droid status
+### F-Droid
 
-Official F-Droid publication is pending inclusion. SilentSuite is not yet
-available from the official F-Droid package index. Until that changes, use one
-of the available installation channels above.
+[Download SilentSuite from F-Droid](https://f-droid.org/packages/io.silentsuite.android) if you want the official F-Droid repository. F-Droid builds this package from the public source and signs it with the developer release certificate. Release timing can differ from GitHub Releases, so check the version shown before installing.
 
 ### Certificate hashes and channel switching
 
-Android only allows an app update when the installed app and the update APK are signed with the same certificate. Google Play uses Play App Signing, so the APK installed from Play can have a different certificate than the developer-signed APK distributed through GitHub Releases, Zapstore, Orion Store, or a future F-Droid build.
+Android only allows an app update when the installed app and the update APK are signed with the same certificate. Google Play uses Play App Signing, so the APK installed from Play can have a different certificate than the developer-signed package distributed through GitHub Releases, Zapstore, Orion Store, and official F-Droid.
 
 SilentSuite's known Android signing certificate SHA-256 hashes are:
 
 - **Google Play app signing certificate:** `2e10d9ef90276e755bddf086391d7e0c933589c6d36e4e43fae59a7babcb8a49`
-- **Developer-signed release certificate for GitHub Releases, Zapstore, Orion Store, and future reproducible F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
+- **Developer-signed release certificate for GitHub Releases, Zapstore, Orion Store, and official F-Droid builds:** `8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79`
 
-If you installed from Google Play, update through Google Play. If you installed from GitHub Releases, Zapstore, or Orion Store, update through that same developer-signed APK channel. When official F-Droid distribution becomes available, keep F-Droid installations on that channel. Switching between Google Play and developer-signed APK channels may require uninstalling and reinstalling the app. A certificate mismatch warning in that situation is expected and does not by itself indicate a compromised build.
+If you installed from Google Play, update through Google Play. GitHub Releases, Zapstore, Orion Store, and official F-Droid currently share the developer release certificate, so an update between those channels can install without a certificate mismatch. Stay on the channel you installed from if you want that store to keep managing updates. Switching between Google Play and a developer-signed channel may require uninstalling and reinstalling the app. A certificate mismatch warning in that situation is expected and does not by itself indicate a compromised build.
 
 ::: tip
 The SilentSuite Android app is a fork of the [EteSync Android app](https://github.com/etesync/android) with SilentSuite branding and `server.silentsuite.io` pre-configured as the default server. If you prefer, the original EteSync app from [Google Play](https://play.google.com/store/apps/details?id=com.etesync.syncadapter) or [F-Droid](https://f-droid.org/packages/com.etesync.syncadapter/) also works -- just enter the server URL manually.
@@ -152,7 +150,7 @@ When you report a beta test result, include:
 
 - **Android version** (for example, Android 15).
 - **Device model** (for example, Pixel 8).
-- **Install source** -- Google Play, Obtainium, Zapstore, or a signed APK from GitHub Releases. F-Droid is not available yet.
+- **Install source** -- Google Play, F-Droid, Obtainium, Zapstore, Orion Store, or a signed APK from GitHub Releases.
 - **Signup/login result** -- whether account creation and login succeeded.
 - **Sync result for contacts, calendars, and tasks** -- what synced, what did not, and any error message shown.
 - **Errors or screenshots** -- redact your username, email address, server URL (if self-hosted), and any contact, event, or task content before sharing.

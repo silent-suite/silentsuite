@@ -83,8 +83,8 @@ See the [latest public beta release](https://github.com/silent-suite/silentsuite
 
 | Status | Details |
 |---|---|
-| **Available now** | Hosted web app, self-hosting, Google Play, Obtainium, Zapstore, signed Android APK, desktop Bridge binaries, import/export, and GitHub Releases |
-| **In progress** | Official F-Droid inclusion, broader Android testing, and more DAV compatibility reports |
+| **Available now** | Hosted web app, self-hosting, Google Play, F-Droid, Obtainium, Zapstore, signed Android APK, desktop Bridge binaries, import/export, and GitHub Releases |
+| **In progress** | Broader Android testing and more DAV compatibility reports |
 | **Not in this beta** | Native iOS app, push notifications, shared or multiple collections, encrypted notes outside the web app (Android and Bridge), and OAuth-based Google/iCloud import |
 
 The source is public for inspection, but SilentSuite has not yet completed an independent third-party security audit. See the [security page](https://silentsuite.io/security) for the threat model, limitations, and disclosure route.
@@ -97,9 +97,9 @@ The source is public for inspection, but SilentSuite has not yet completed an in
 
 ### Android and desktop Bridge
 
-Install SilentSuite for Android through Google Play, Obtainium, Zapstore, or a
+Install SilentSuite for Android through [Google Play](https://play.google.com/store/apps/details?id=io.silentsuite.android), [F-Droid](https://f-droid.org/packages/io.silentsuite.android), Obtainium, Zapstore, or a
 signed APK. The [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android)
-explains each channel and its update behavior. Official F-Droid inclusion is pending.
+explains each channel and its update behavior.
 
 Download Bridge binaries and signed Android APKs with checksums from
 [GitHub Releases](https://github.com/silent-suite/silentsuite/releases/latest).

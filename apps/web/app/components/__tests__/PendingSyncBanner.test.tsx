@@ -27,6 +27,12 @@ vi.mock('@/app/lib/offline-queue', () => ({
   clearFailed: vi.fn(),
   retryFailed: vi.fn(),
   getStaleEntries: vi.fn().mockResolvedValue([{}]),
+  // No held or legacy records here; the #744 notices have their own rendered test.
+  getAll: vi.fn().mockResolvedValue([]),
+  onCountChange: vi.fn(() => () => {}),
+  isLegacyEntry: () => false,
+  casStub: vi.fn(),
+  dismissLegacy: vi.fn(),
 }))
 
 vi.mock('@/app/lib/account-epoch', () => ({

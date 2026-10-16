@@ -47,11 +47,11 @@ The repository is a pnpm monorepo managed by Turborepo:
 | **Reverse Proxy** | Caddy (automatic TLS) |
 | **Encryption** | XChaCha20-Poly1305, Argon2 (via Etebase) |
 | **Monorepo** | pnpm workspaces, Turborepo |
-| **Hosting** | EU cloud infrastructure, Cloudflare Workers |
+| **Hosting** | Cloud infrastructure, Cloudflare Workers |
 
 ## Key Design Principles
 
 1. **Encryption is the architecture, not a feature.** There is no unencrypted mode. Everything is E2EE by default.
 2. **Open source by default.** All code is open. The encryption can be audited.
 3. **No lock-in.** Standard Etebase protocol, not proprietary formats. Export anytime, self-host if you want.
-4. **EU-hosted, GDPR-compliant.** Your encrypted data stays in the EU. GDPR as a baseline.
+4. **Hosted or self-hosted.** Use the hosted service, or self-host to control the infrastructure that stores your encrypted data.

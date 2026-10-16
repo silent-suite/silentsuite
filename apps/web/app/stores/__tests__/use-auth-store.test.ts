@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
 import { secureClear } from '@/app/lib/secure-storage'
 import { logger } from '@/app/lib/logger'
+import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 
 // Mock fetch globally
 vi.stubGlobal('fetch', vi.fn())
@@ -17,6 +18,8 @@ const {
   taskSetState,
   contactSetState,
   noteSetState,
+  noteLifecycleReset,
+  contactLifecycleReset,
   calendarListSetState,
   taskListSetState,
   contactListSetState,
@@ -32,6 +35,8 @@ const {
   taskSetState: vi.fn(),
   contactSetState: vi.fn(),
   noteSetState: vi.fn(),
+  noteLifecycleReset: vi.fn(),
+  contactLifecycleReset: vi.fn(),
   calendarListSetState: vi.fn(),
   taskListSetState: vi.fn(),
   contactListSetState: vi.fn(),
@@ -79,17 +84,22 @@ vi.mock('@/app/lib/self-hosted', () => ({
   isCustomServer: (serverUrl?: string) => Boolean(serverUrl && serverUrl !== 'https://server.silentsuite.io'),
 }))
 
-// Mock etebase store (used by logout)
-vi.mock('@/app/stores/use-etebase-store', () => ({
-  useEtebaseStore: {
-    getState: () => ({ destroy: vi.fn() }),
-  },
-}))
+// Mock etebase store (used by logout). Like the real destroy(), teardown
+// invalidates the account epoch and returns the token it produced.
+vi.mock('@/app/stores/use-etebase-store', async () => {
+  const { bumpAccountEpoch } = await import('@/app/lib/account-epoch')
+  return {
+    EtebaseTeardownError: class extends Error {},
+    useEtebaseStore: {
+      getState: () => ({ destroy: vi.fn(() => bumpAccountEpoch()) }),
+    },
+  }
+})
 
 vi.mock('@/app/stores/use-calendar-store', () => ({ useCalendarStore: { setState: calendarSetState } }))
 vi.mock('@/app/stores/use-task-store', () => ({ useTaskStore: { setState: taskSetState } }))
-vi.mock('@/app/stores/use-contact-store', () => ({ useContactStore: { setState: contactSetState } }))
-vi.mock('@/app/stores/use-note-store', () => ({ useNoteStore: { setState: noteSetState } }))
+vi.mock('@/app/stores/use-contact-store', () => ({ useContactStore: { setState: contactSetState }, resetContactLifecycle: contactLifecycleReset }))
+vi.mock('@/app/stores/use-note-store', () => ({ useNoteStore: { setState: noteSetState }, resetNoteLifecycle: noteLifecycleReset }))
 vi.mock('@/app/stores/use-calendar-list-store', () => ({ useCalendarListStore: { setState: calendarListSetState } }))
 vi.mock('@/app/stores/use-task-list-store', () => ({ useTaskListStore: { setState: taskListSetState } }))
 vi.mock('@/app/stores/use-contact-list-store', () => ({ useContactListStore: { setState: contactListSetState } }))
@@ -1710,6 +1720,75 @@ describe('useAuthStore', () => {
   })
 
   // --- refreshSession non-destructive on transient errors ---
+  it('does not resurrect authentication while logout server deletion is still pending', async () => {
+    const user = { id: 'payment-account-a', email: 'a@example.invalid', planId: 'early_annual', rememberDevice: true }
+    useAuthStore.setState({ user, isAuthenticated: true })
+    let releaseRefresh!: (response: Response) => void
+    const refreshReply = new Promise<Response>(resolve => { releaseRefresh = resolve })
+    let releaseDelete!: () => void
+    const deleteReply = new Promise<void>(resolve => { releaseDelete = resolve })
+    let entered!: () => void
+    const refreshEntered = new Promise<void>(resolve => { entered = resolve })
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/auth/refresh')) { entered(); return refreshReply }
+      expect(init?.method).toBe('DELETE')
+      await deleteReply
+      return new Response(null, { status: 204 })
+    })
+    const refresh = useAuthStore.getState().refreshSession()
+    await refreshEntered
+    const logout = useAuthStore.getState().logout()
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    try {
+      releaseRefresh(new Response(JSON.stringify(user)))
+      await refresh
+      expect(useAuthStore.getState().user).toBeNull()
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+    } finally {
+      releaseDelete()
+      await logout
+    }
+  })
+
+  // Payment recovery must use this real refresh boundary without allowing a
+  // late response to resurrect logout or overwrite a replacement identity.
+  it.each(['logout', 'replacement', 'replacement-rejection'] as const)('ignores a refresh response after %s changes the account boundary', async transition => {
+    const original = { id: 'payment-account-a', email: 'a@example.invalid', planId: 'early_annual', rememberDevice: true }
+    const replacement = { id: 'payment-account-b', email: 'b@example.invalid', planId: 'standard_annual', rememberDevice: true }
+    useAuthStore.setState({ user: original, isAuthenticated: true, subscriptionStatus: 'cancelled' })
+    let release!: (response: Response) => void
+    const pendingResponse = new Promise<Response>(resolve => { release = resolve })
+    let entered!: () => void
+    const requestEntered = new Promise<void>(resolve => { entered = resolve })
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/auth/refresh')) {
+        expect(init?.method).toBe('POST')
+        expect(init?.credentials).toBe('include')
+        entered()
+        return pendingResponse
+      }
+      return new Response(null, { status: 204 }) // existing logout/delete boundary
+    })
+    const epoch = getAccountEpoch()
+    const refresh = useAuthStore.getState().refreshSession()
+    await requestEntered
+    if (transition === 'logout') await useAuthStore.getState().logout()
+    else {
+      bumpAccountEpoch()
+      useAuthStore.setState({ user: replacement, isAuthenticated: true, subscriptionStatus: 'active' })
+    }
+    expect(getAccountEpoch()).toBeGreaterThan(epoch)
+    const afterTransition = useAuthStore.getState()
+    release(transition === 'replacement-rejection'
+      ? new Response(JSON.stringify({ type: 'invalid-access-token' }), { status: 401 })
+      : new Response(JSON.stringify({ ...original, emailVerified: true })))
+    await refresh
+    expect(useAuthStore.getState().user).toEqual(afterTransition.user)
+    expect(useAuthStore.getState().isAuthenticated).toBe(afterTransition.isAuthenticated)
+    expect(useAuthStore.getState().subscriptionStatus).toBe(afterTransition.subscriptionStatus)
+  })
+
   // Regression: the EmailVerificationBanner re-checks the session on every
   // tab focus while the user is unverified. A transient billing 5xx or a
   // network blip used to null the session, silently logging out users who

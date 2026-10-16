@@ -68,6 +68,20 @@ export function annualTermsCopy(disclosure: AnnualDisclosure): string {
   return `${disclosure.bonusDays === 14 ? `${terms} 14 bonus days after payment confirms.` : terms}${refund}`
 }
 
+/** Compact existing-account payment summary; never changes the signed terms. */
+export function compactAnnualPaymentCopy(disclosure: AnnualDisclosure): string {
+  if (disclosure.kind === 'prepaid') {
+    return `${formatMinorAmount(disclosure.annualAmountMinor, disclosure.currency)} for one year · no automatic renewal.`
+  }
+  if (disclosure.kind === 'charge_now') {
+    const charge = formatDisclosureAmount(disclosure)
+    return disclosure.autoRenew && disclosure.renewalAmountMinor !== null
+      ? `${charge} now · renews at ${formatMinorAmount(disclosure.renewalAmountMinor, disclosure.currency)}/year until cancelled.`
+      : `${charge} now · no automatic renewal.`
+  }
+  return annualTermsCopy(disclosure)
+}
+
 export function isAnnualOfferProviderAvailable(
   offer: AnnualOffer,
   provider: AnnualProvider,

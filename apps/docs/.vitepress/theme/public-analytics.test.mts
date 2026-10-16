@@ -27,6 +27,10 @@ test('classifies Android destinations only on the Android guide', () => {
     event: 'Android Download Click',
     props: { surface: 'docs_android', channel: 'zapstore' },
   })
+  assert.deepEqual(classifyDocsOutboundEvent('https://f-droid.org/packages/io.silentsuite.android', '/user-guide/apps/android'), {
+    event: 'Android Download Click',
+    props: { surface: 'docs_android', channel: 'fdroid' },
+  })
   assert.deepEqual(
     classifyDocsOutboundEvent(
       'obtainium://add/https://github.com/silent-suite/silentsuite',

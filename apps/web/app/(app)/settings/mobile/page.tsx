@@ -7,6 +7,7 @@ import { QRCodeSVG } from 'qrcode.react'
 
 const INSTALL_DOCS_URL = 'https://docs.silentsuite.io/user-guide/apps/android'
 const GOOGLE_PLAY_URL = 'https://play.google.com/store/apps/details?id=io.silentsuite.android'
+const FDROID_URL = 'https://f-droid.org/packages/io.silentsuite.android'
 const ZAPSTORE_URL = 'https://zapstore.dev/apps/io.silentsuite.android'
 const RELEASES_URL = 'https://github.com/silent-suite/silentsuite/releases/latest'
 
@@ -29,6 +30,12 @@ const activeChannels = [
     href: INSTALL_DOCS_URL,
     logo: '/channel-icons/obtainium.svg',
   },
+  {
+    name: 'F-Droid',
+    detail: 'Official F-Droid repository',
+    href: FDROID_URL,
+    logo: '/channel-icons/fdroid.png',
+  },
 ]
 
 const channelCardClass = 'flex min-h-28 items-center gap-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4'
@@ -48,7 +55,7 @@ export default function MobileSettingsPage() {
 
       <div
         data-android-managed-channels
-        className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,0.9fr)] lg:grid-rows-2 lg:items-stretch"
+        className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,0.9fr)] xl:grid-rows-2 xl:items-stretch"
       >
         {activeChannels.map(({ name, detail, href, logo }) => (
           <a
@@ -79,35 +86,8 @@ export default function MobileSettingsPage() {
         ))}
 
         <div
-          data-android-channel="F-Droid"
-          role="group"
-          aria-disabled="true"
-          aria-label="F-Droid, on the roadmap. Pending official inclusion"
-          className={channelCardClass}
-        >
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-[rgb(var(--border))] bg-white p-2 opacity-75">
-            <Image
-              src="/channel-icons/fdroid.png"
-              alt=""
-              aria-hidden="true"
-              width={28}
-              height={28}
-              unoptimized
-              className="h-7 w-7 object-contain"
-            />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-[rgb(var(--muted))]">F-Droid</span>
-              <span className="rounded-full bg-[rgb(var(--border))] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--foreground))]">Soon</span>
-            </span>
-            <span className="mt-1 block text-xs leading-relaxed text-[rgb(var(--muted))]">Pending official inclusion</span>
-          </span>
-        </div>
-
-        <div
           data-android-download-qr
-          className="hidden lg:col-start-3 lg:row-start-1 lg:row-span-2 lg:flex"
+          className="hidden xl:col-start-3 xl:row-start-1 xl:row-span-2 xl:flex"
         >
           <a
             href={INSTALL_DOCS_URL}
@@ -178,7 +158,7 @@ export default function MobileSettingsPage() {
         <Monitor className="inline h-3 w-3 mr-1 -mt-0.5" />
         Looking for desktop integration?{' '}
         <Link href="/settings/desktop" className="text-[rgb(var(--primary))] hover:underline">
-          See Settings → Desktop
+          See Settings → Desktop bridge
         </Link>
         .
       </p>

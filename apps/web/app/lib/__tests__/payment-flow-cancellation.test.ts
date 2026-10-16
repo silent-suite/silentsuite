@@ -129,6 +129,47 @@ describe('cancelPaymentFlow failure mapping', () => {
     expect(JSON.stringify(result)).not.toContain('cus_')
   })
 
+  // The recognized 409 can surface after a stale cancellable display. Its fixed
+  // copy must not assert ongoing reconciliation or promise later cancellation;
+  // asserted literally, never against the exported constant itself.
+  it('maps the recognized 409 refusal to truthful fixed copy', async () => {
+    const fetcher = fetcherReturning(problem(409, 'https://api.silentsuite.io/errors/payment_reconciliation_required', SENSITIVE))
+
+    const result = await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'btcpay', confirmNoBitcoinSent: true })
+
+    expect(result).toEqual({
+      cancelled: false,
+      failure: 'payment-reconciliation-required',
+      message: 'This payment could not be cancelled. Contact support if cancellation remains blocked.',
+    })
+    expect(JSON.stringify(result)).not.toContain('secret')
+    expect(requestOf(fetcher).init.body).toBe('{"confirmNoBitcoinSent":true}')
+  })
+
+  // Billing's deliberate 409 refusals (payment-flows.ts cancel route) keep the
+  // flow; each maps to existing fixed copy rather than the generic fallback.
+  it.each([
+    ['https://api.silentsuite.io/errors/flow_not_cancellable', 'payment-reconciliation-required', 'This payment could not be cancelled. Contact support if cancellation remains blocked.'],
+    ['https://api.silentsuite.io/errors/payment-flow-changed', 'invalid-cancellation-request', 'This payment could not be cancelled. Reload the page and try again.'],
+    ['https://api.silentsuite.io/errors/flow-finalization-pending', 'invalid-cancellation-request', 'This payment could not be cancelled. Reload the page and try again.'],
+  ] as const)('maps the deliberate 409 %s refusal to existing fixed copy', async (type, failure, message) => {
+    const fetcher = fetcherReturning(problem(409, type, SENSITIVE))
+
+    const result = await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false })
+
+    expect(result).toEqual({ cancelled: false, failure, message })
+    expect(JSON.stringify(result)).not.toContain('secret')
+  })
+
+  it.each([
+    ['flow_not_cancellable', 400], ['payment-flow-changed', 502], ['flow-finalization-pending', 500],
+  ] as const)('keeps the generic fallback for %s on a status other than 409', async (slug, status) => {
+    const fetcher = fetcherReturning(problem(status, `https://api.silentsuite.io/errors/${slug}`, SENSITIVE))
+
+    expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
+      .toEqual({ cancelled: false, failure: 'unavailable', message: PAYMENT_FLOW_CANCELLATION_MESSAGES.unavailable })
+  })
+
   it('accepts bare problem slugs as well as absolute problem type URLs', async () => {
     const fetcher = fetcherReturning(problem(409, 'payment_reconciliation_required', SENSITIVE))
 
