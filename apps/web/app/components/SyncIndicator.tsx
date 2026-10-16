@@ -21,12 +21,14 @@ const ariaLabels: Record<SyncStatus, string> = {
   error: 'Sync status: error',
 }
 
-function getTooltipText(status: SyncStatus, lastSyncedAt: Date | null, error: string | null, pendingCount: number, partialLoad = false): string {
+function getTooltipText(status: SyncStatus, lastSyncedAt: Date | null, error: string | null, pendingCount: number, partialLoad = false, heldCount = 0): string {
   const queueSuffix = pendingCount > 0 ? ` (${pendingCount} queued)` : ''
   const partialSuffix = partialLoad && status === 'synced' ? ' · some data did not load' : ''
+  // Kept changes wait for the user; whether any reached the server is not always known (#744).
+  const heldSuffix = heldCount > 0 ? ` · ${heldCount} kept on this device need your action` : ''
   switch (status) {
     case 'synced':
-      return (lastSyncedAt ? `Synced ${formatTimeAgo(lastSyncedAt)}` : 'Synced') + queueSuffix + partialSuffix
+      return (lastSyncedAt ? `Synced ${formatTimeAgo(lastSyncedAt)}` : 'Synced') + queueSuffix + partialSuffix + heldSuffix
     case 'syncing':
       return 'Syncing...' + queueSuffix
     case 'offline':
@@ -42,6 +44,7 @@ export function SyncIndicator() {
   const error = useSyncStore((s) => s.error)
   const simulateSyncCycle = useSyncStore((s) => s.simulateSyncCycle)
   const pendingQueueCount = useSyncStore((s) => s.pendingQueueCount)
+  const heldQueueCount = useSyncStore((s) => s.heldQueueCount)
   const partialLoad = useSyncStore((s) => s.partialLoad)
   const preferenceIntegrity = usePreferencesSyncStore((s) => s.integrity)
   const [showTooltip, setShowTooltip] = useState(false)
@@ -51,6 +54,8 @@ export function SyncIndicator() {
   const isSyncing = syncStatus === 'syncing'
   const isOffline = syncStatus === 'offline'
   const isError = syncStatus === 'error'
+  const needsAttention = syncStatus === 'synced' && heldQueueCount > 0
+  const syncedWarning = syncStatus === 'synced' && (partialLoad || needsAttention)
   const handleSync = useCallback(() => {
     if (isSyncing || isOffline) return
     simulateSyncCycle()
@@ -59,15 +64,15 @@ export function SyncIndicator() {
   // Update tooltip text on an interval while visible so relative times stay fresh
   useEffect(() => {
     if (showTooltip) {
-      setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad))
+      setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad, heldQueueCount))
       intervalRef.current = setInterval(() => {
-        setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad))
+        setTooltipText(getTooltipText(syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad, heldQueueCount))
       }, 1000)
     }
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
-  }, [showTooltip, syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad])
+  }, [showTooltip, syncStatus, lastSyncedAt, error, pendingQueueCount, partialLoad, heldQueueCount])
 
   return (
     <div
@@ -78,9 +83,9 @@ export function SyncIndicator() {
       {/* Status dot with smooth transition */}
       <div className="relative">
         <div
-          className={`h-2 w-2 rounded-full transition-all duration-300 ${partialLoad && syncStatus === 'synced' ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.45)]' : dotStyles[syncStatus]}`}
+          className={`h-2 w-2 rounded-full transition-all duration-300 ${syncedWarning ? 'bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.45)]' : dotStyles[syncStatus]}`}
           role="status"
-          aria-label={partialLoad && syncStatus === 'synced' ? 'Sync status: synced with warning' : ariaLabels[syncStatus]}
+          aria-label={needsAttention ? 'Sync status: changes need your attention' : syncedWarning ? 'Sync status: synced with warning' : ariaLabels[syncStatus]}
         />
         {pendingQueueCount > 0 && (
           <span className="absolute -top-1.5 -right-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-amber-500 text-[8px] font-bold leading-none text-white">
@@ -112,6 +117,12 @@ export function SyncIndicator() {
       {!isError && pendingQueueCount > 0 && (
         <span className="hidden text-xs text-amber-400 md:inline">
           {pendingQueueCount} pending
+        </span>
+      )}
+
+      {!isError && heldQueueCount > 0 && (
+        <span className="hidden text-xs text-amber-400 md:inline">
+          {heldQueueCount} need attention
         </span>
       )}
 

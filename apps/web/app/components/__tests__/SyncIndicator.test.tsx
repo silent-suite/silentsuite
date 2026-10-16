@@ -9,6 +9,7 @@ const mockSyncState = {
   lastSyncedAt: null as Date | null,
   error: null as string | null,
   pendingQueueCount: 0,
+  heldQueueCount: 0,
   partialLoad: false,
   simulateSyncCycle: vi.fn(),
 }
@@ -31,6 +32,7 @@ describe('SyncIndicator', () => {
     mockSyncState.lastSyncedAt = null
     mockSyncState.error = null
     mockSyncState.pendingQueueCount = 0
+    mockSyncState.heldQueueCount = 0
     mockSyncState.partialLoad = false
     mockSyncState.simulateSyncCycle.mockClear()
     mockPreferenceState.integrity = 'valid'
@@ -60,6 +62,26 @@ describe('SyncIndicator', () => {
     const dot = screen.getByRole('status')
     expect(dot).toHaveAttribute('aria-label', 'Sync status: synced with warning')
     expect(dot.className).toContain('bg-amber-400')
+  })
+
+  it('never shows synced green while kept changes wait for the user', () => {
+    mockSyncState.syncStatus = 'synced'
+    mockSyncState.heldQueueCount = 2
+    render(<SyncIndicator />)
+    const dot = screen.getByRole('status')
+    expect(dot).toHaveAttribute('aria-label', 'Sync status: changes need your attention')
+    expect(dot.className).not.toContain('bg-emerald-500')
+    expect(dot.className).toContain('bg-amber-400')
+    expect(screen.getByText('2 need attention')).toBeInTheDocument()
+    expect(document.body.textContent).not.toMatch(/not on the server/i)
+  })
+
+  it('keeps the error state ahead of kept changes', () => {
+    mockSyncState.syncStatus = 'error'
+    mockSyncState.heldQueueCount = 2
+    render(<SyncIndicator />)
+    expect(screen.getByRole('status')).toHaveAttribute('aria-label', 'Sync status: error')
+    expect(screen.getByRole('status').className).toContain('bg-red-500')
   })
 
   it('renders offline status with gray color', () => {

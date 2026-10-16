@@ -580,6 +580,13 @@ export async function dismissLegacy(id: string, guard: OfflineQueueAccountGuard)
   })
 }
 
+/** Held sealed custody and legacy entries (#744): kept on this device until the user acts. */
+export async function getHeldCount(guard: OfflineQueueAccountGuard): Promise<number> {
+  const entries = await getAll(guard)
+  assertGuard(guard)
+  return entries.filter((entry) => (entry.sealed && entry.held) || isLegacyEntry(entry)).length
+}
+
 export async function getPendingCount(guard: OfflineQueueAccountGuard): Promise<number> {
   const entries = await getAll(guard)
   assertGuard(guard)

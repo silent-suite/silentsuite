@@ -47,7 +47,16 @@ import {
 } from '@/app/lib/data-cache'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { RestoreDiagnosticsRecorder, classifySessionPersistence } from '@/app/lib/sync-restore-diagnostics'
-import { AccountBoundaryChangedError, assertCurrentAccountEpoch, bumpAccountEpoch, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import {
+  AccountBoundaryChangedError,
+  assertCurrentAccountEpoch,
+  bumpAccountEpoch,
+  establishLogoutGeneration,
+  getAccountEpoch,
+  isCurrentAccountEpoch,
+  readLogoutGeneration,
+  releaseLogoutGeneration,
+} from '@/app/lib/account-epoch'
 import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard } from '@/app/lib/offline-queue-account'
 
 /**
@@ -442,7 +451,22 @@ async function writeItemToCache(
     content: await toCacheContent(type, itemUid, collectionUid, content, meta),
     lastModified: Date.now(),
   }
-  await cachePutItem(record, accountEpoch)
+  await displayCacheAfterAck(() => cachePutItem(record, accountEpoch), accountEpoch)
+}
+
+/**
+ * A display-cache write after the server acknowledged a change. The cache is
+ * never authority: a record another tab cleared or re-owned refuses the write,
+ * and that does not undo the remote change while this tab still owns its
+ * account. A boundary this tab crossed still propagates.
+ */
+async function displayCacheAfterAck(write: () => Promise<void>, accountEpoch: number): Promise<void> {
+  try {
+    await write()
+  } catch (err) {
+    if (!(err instanceof AccountBoundaryChangedError) || !isCurrentAccountEpoch(accountEpoch)) throw err
+    logger.warn('[etebase-store] Display cache refused a write after a remote change')
+  }
 }
 
 /**
@@ -651,7 +675,8 @@ async function replaceNoteStubWithDescendant(
     assertGuard()
     await cachePutItem({ itemUid, collectionType: 'notes', collectionUid, content: cacheContent, lastModified: Date.now() }, accountEpoch, { allowWithoutFeatureFlag: true })
   } catch (displayErr) {
-    if (displayErr instanceof AccountBoundaryChangedError) throw displayErr
+    // Only a boundary this tab crossed revokes it; a display record another tab cleared does not.
+    if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
     logger.warn('[etebase-store] Display write after sealed succession failed', getSafeErrorDetails(displayErr))
   }
   assertGuard()
@@ -956,7 +981,8 @@ async function clearMembersConditionally(
       itemTypeMap.delete(uid)
       itemCollectionMap.delete(uid)
       if (isLocalCacheEnabled()) {
-        await cacheDeleteItem(uid, accountEpoch)
+        // The server deleted this member at its shown revision; the display cache is not authority.
+        await displayCacheAfterAck(() => cacheDeleteItem(uid, accountEpoch), accountEpoch)
         assertGuard()
       }
     }
@@ -1369,7 +1395,8 @@ async function queueSealedNoteUpdate(
       lastModified: Date.now(),
     }, accountEpoch, { allowWithoutFeatureFlag: true })
   } catch (displayErr) {
-    if (displayErr instanceof AccountBoundaryChangedError) throw displayErr
+    // Only a boundary this tab crossed revokes it; a display record another tab cleared does not.
+    if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
     logger.warn('[etebase-store] Display write after sealed custody failed', getSafeErrorDetails(displayErr))
   }
   assertOfflineQueueAccountGuard(offlineQueueGuard, getState())
@@ -2014,6 +2041,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     })
     // Clear any stale blocked state from a prior attempt before re-trying.
     set({ restoreBlocked: false })
+    // Read before the session, so a logout elsewhere during the restore is never adopted.
+    const logoutGenerationAtStart = readLogoutGeneration()
 
     try {
       diagnostics.startPhase('sessionRead')
@@ -2043,6 +2072,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       diagnostics.completePhase('restoreSession')
       assertCurrentAccountEpoch(accountEpoch)
       set({ account, accountFingerprint })
+      establishLogoutGeneration(logoutGenerationAtStart)
       logger.debug('[etebase-store] Session restored')
 
       // Local-cache fingerprint check: if a different account previously
@@ -2231,6 +2261,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       const colType = keyToCollectionType(type)
       const collection = await core.createCollection(account, colType, { name, color, mtime: Date.now() })
       assertCurrentAccountEpoch(accountEpoch)
@@ -2270,6 +2301,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       if (type === 'notes' || type === 'contacts') {
         // #744 §9: only a proved, unchanged collection with nothing owed here is tombstoned.
         const deleted = await deleteCollectionIfProved(type, collection.uid, get)
@@ -2306,7 +2338,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         itemCollectionMap: newItemCollectionMap,
       })
       if (isLocalCacheEnabled()) {
-        await cacheReplaceItemsForCollection(collection.uid, [], accountEpoch)
+        await displayCacheAfterAck(() => cacheReplaceItemsForCollection(collection.uid, [], accountEpoch), accountEpoch)
       }
       assertCurrentAccountEpoch(accountEpoch)
       await removeQueuedMutationsForCollection(type, collection.uid, true, accountEpoch, accountFingerprint)
@@ -2334,6 +2366,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       const currentMeta = collection?.getMeta?.() ?? {}
       const updatedMeta: CollectionMetaUpdates = {}
       if (updates.name !== undefined) updatedMeta.name = updates.name
@@ -2546,6 +2579,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       await core.cancelOutgoingInvitation(account, invitation)
       assertCurrentAccountEpoch(accountEpoch)
       return true
@@ -2711,6 +2745,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       await core.removeCollectionMember(account, collection, username)
       assertCurrentAccountEpoch(accountEpoch)
       return true
@@ -2733,6 +2768,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       await core.leaveCollection(account, collection)
       assertCurrentAccountEpoch(accountEpoch)
       await get().reconcileCollections()
@@ -2757,6 +2793,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       await core.modifyCollectionMemberAccess(account, collection, username, accessLevel)
       assertCurrentAccountEpoch(accountEpoch)
       return true
@@ -2793,7 +2830,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       }
     }
 
-    const removeCachedItems = async (uids: string[]) => {
+    /** `acknowledged`: the server confirmed these deletes, so the display cache is not authority. */
+    const removeCachedItems = async (uids: string[], acknowledged: boolean) => {
       if (uids.length === 0) return
       assertCurrentAccountEpoch(accountEpoch)
       const uidSet = new Set(uids)
@@ -2805,7 +2843,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         newItemTypeMap.delete(uid)
         newItemCollectionMap.delete(uid)
         if (isLocalCacheEnabled()) {
-          await cacheDeleteItem(uid, accountEpoch)
+          if (acknowledged) await displayCacheAfterAck(() => cacheDeleteItem(uid, accountEpoch), accountEpoch)
+          else await cacheDeleteItem(uid, accountEpoch)
           assertCurrentAccountEpoch(accountEpoch)
         }
       }
@@ -2839,14 +2878,15 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         const batchEntries = itemEntries.slice(i, i + BATCH_SIZE)
         const batchItems = batchEntries.map(({ item }) => item)
         for (const item of batchItems) item.delete()
+        assertCurrentAccountEpoch(accountEpoch)
         await itemManager.batch(batchItems)
         assertCurrentAccountEpoch(accountEpoch)
         successfulUids.push(...batchEntries.map(({ uid }) => uid))
       }
 
-      await removeCachedItems(successfulUids)
+      await removeCachedItems(successfulUids, true)
       if (isLocalCacheEnabled()) {
-        await cacheReplaceItemsForCollection(collection.uid, [], accountEpoch)
+        await displayCacheAfterAck(() => cacheReplaceItemsForCollection(collection.uid, [], accountEpoch), accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
       }
       await removeQueuedMutationsForCollection(type, collection.uid, true, accountEpoch, accountFingerprint)
@@ -2871,7 +2911,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
               console.error('[etebase-store] Failed to enqueue collection item delete', getSafeErrorDetails(queueErr))
             }
           }
-          await removeCachedItems(itemEntries.map(({ uid }) => uid))
+          await removeCachedItems(itemEntries.map(({ uid }) => uid), false)
           if (isLocalCacheEnabled()) {
             await cacheReplaceItemsForCollection(collection.uid, [], accountEpoch)
             assertCurrentAccountEpoch(accountEpoch)
@@ -2883,7 +2923,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
         console.error(`[etebase-store] Failed to clear ${type} collection`, getSafeErrorDetails(err))
         if (successfulUids.length > 0) {
-          await removeCachedItems(successfulUids)
+          await removeCachedItems(successfulUids, true)
           await removeItemsFromDomainStore(type, collection.uid, successfulUids, accountEpoch)
           assertCurrentAccountEpoch(accountEpoch)
           showErrorToast(`Deleted ${successfulUids.length} of ${itemEntries.length} ${collectionItemNoun(type)}. Please try again to delete the rest.`)
@@ -3122,6 +3162,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             stoken = response.stoken
           } while (true)
           if (!child) return hold('target-missing')
+          // Deleted elsewhere: the item is gone, not changed (#744).
+          if (child.isDeleted) return hold('target-missing')
           if (!await proves(child)) return hold('base-changed')
           const provedRevision = core.savedRevisionOf(child)
           if (!provedRevision) throw new ReplayNotConfirmedError('Sealed custody target revision is unknown')
@@ -3278,6 +3320,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       const item = await core.createItem(account, collection, content, meta)
       assertCurrentAccountEpoch(accountEpoch)
       // Cache the item for future update/delete
@@ -3434,7 +3477,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         onCommitted?.(contents[i]!.tempId, items[i])
       }
       if (isLocalCacheEnabled() && cachedRecords.length > 0) {
-        await cachePutItems(cachedRecords, accountEpoch)
+        await displayCacheAfterAck(() => cachePutItems(cachedRecords, accountEpoch), accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
       }
 
@@ -3668,7 +3711,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       assertCurrentAccountEpoch(accountEpoch)
       set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
       if (isLocalCacheEnabled()) {
-        if (!keepSourceUntilQueuedDelete) await cacheDeleteItem(itemUid, accountEpoch)
+        if (!keepSourceUntilQueuedDelete) await displayCacheAfterAck(() => cacheDeleteItem(itemUid, accountEpoch), accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
         await writeItemToCache(type, targetCollection.uid, created.uid, content, accountEpoch, meta ?? itemMetaOf(created))
         assertCurrentAccountEpoch(accountEpoch)
@@ -3731,7 +3774,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         newCollectionMap.delete(itemUid)
         set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
         if (isLocalCacheEnabled()) {
-          await cacheDeleteItem(itemUid, accountEpoch)
+          await displayCacheAfterAck(() => cacheDeleteItem(itemUid, accountEpoch), accountEpoch)
           assertCurrentAccountEpoch(accountEpoch)
         }
         return 'remote'
@@ -3764,6 +3807,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
     try {
       const core = await import('@silentsuite/core')
+      assertCurrentAccountEpoch(accountEpoch)
       await core.deleteItem(account, collection, item)
       assertCurrentAccountEpoch(accountEpoch)
       const newCache = new Map(get().itemCache)
@@ -3774,7 +3818,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
       newCollectionMap.delete(itemUid)
       set({ itemCache: newCache, itemTypeMap: newTypeMap, itemCollectionMap: newCollectionMap })
       if (isLocalCacheEnabled()) {
-        await cacheDeleteItem(itemUid, accountEpoch)
+        await displayCacheAfterAck(() => cacheDeleteItem(itemUid, accountEpoch), accountEpoch)
         assertCurrentAccountEpoch(accountEpoch)
       }
       if (type === 'notes') {
@@ -3966,6 +4010,8 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
 
   destroy: () => {
     const epoch = bumpAccountEpoch()
+    // The account goes with its generation; released first so the check below sees only this bump.
+    releaseLogoutGeneration()
     // Any failure after the bump, including a nested teardown's typed error,
     // is stamped with this invocation's token so callers never adopt another.
     try {

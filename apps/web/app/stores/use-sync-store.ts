@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 import type { SyncStatus } from '@silentsuite/core'
-import { replay, getPendingCount, getFailedCount, onCountChange, type ConfirmedRemoteMutation, type QueueEntry, type OfflineQueueAccountGuard, type ReplayCheckpoint } from '@/app/lib/offline-queue'
+import { replay, getHeldCount, getPendingCount, getFailedCount, onCountChange, type ConfirmedRemoteMutation, type QueueEntry, type OfflineQueueAccountGuard, type ReplayCheckpoint } from '@/app/lib/offline-queue'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { logger } from '@/app/lib/logger'
@@ -18,11 +18,11 @@ async function captureQueueGuard(): Promise<OfflineQueueAccountGuard> {
 }
 
 async function readQueueCounts(guard: OfflineQueueAccountGuard) {
-  const [pendingQueueCount, failedQueueCount] = await Promise.all([
-    getPendingCount(guard), getFailedCount(guard),
+  const [pendingQueueCount, failedQueueCount, heldQueueCount] = await Promise.all([
+    getPendingCount(guard), getFailedCount(guard), getHeldCount(guard),
   ])
   assertCurrentAccountEpoch(guard.accountEpoch)
-  return { pendingQueueCount, failedQueueCount }
+  return { pendingQueueCount, failedQueueCount, heldQueueCount }
 }
 
 interface SyncState {
@@ -32,6 +32,8 @@ interface SyncState {
   error: string | null
   pendingQueueCount: number
   failedQueueCount: number
+  /** Held and legacy records (#744): never sent until the user acts, so never "synced". */
+  heldQueueCount: number
   partialLoad: boolean
   partialLoadDomainCount: number
 }
@@ -59,6 +61,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
   error: null,
   pendingQueueCount: 0,
   failedQueueCount: 0,
+  heldQueueCount: 0,
   partialLoad: false,
   partialLoadDomainCount: 0,
 
@@ -322,7 +325,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       }
 
       // Refresh counts to ensure UI is accurate after sync
-      const { pendingQueueCount: pc, failedQueueCount: fc } = await readQueueCounts(guard)
+      const { pendingQueueCount: pc, failedQueueCount: fc, heldQueueCount: hc } = await readQueueCounts(guard)
       assertCurrentAccountEpoch(guard.accountEpoch)
       set({
         syncStatus: 'synced',
@@ -330,6 +333,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
         error: null,
         pendingQueueCount: pc,
         failedQueueCount: fc,
+        heldQueueCount: hc,
         partialLoad: partialDomainCount > 0,
         partialLoadDomainCount: partialDomainCount,
       })

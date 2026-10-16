@@ -25,11 +25,15 @@ type HeldReason = NonNullable<QueueEntry['held']>
 
 /** #744 §12: each text states only the present fact about the kept record. */
 const HELD_TEXT: Record<HeldReason, string> = {
-  'retry-exhausted': 'Kept on this device.',
-  'target-missing': "Isn't available to this account; kept on this device.",
+  // A send that kept failing may or may not have reached the server.
+  'retry-exhausted': "The server didn't confirm this change. Kept on this device.",
+  'target-missing': "Not saved to the server: this item was deleted or isn't available to this account. Your edit is kept on this device.",
   unreadable: "Can't be read on this device right now; it may not have been saved.",
-  'base-changed': "This offline edit doesn't match the current saved version, so it wasn't saved over it. It's kept on this device.",
+  'base-changed': "Not saved to the server: this item changed after your offline edit, so it wasn't saved over it. Your edit is kept on this device.",
 }
+
+/** The label of a row whose item no current store names; nothing is read from the kept record. */
+const FALLBACK_LABEL: Partial<Record<QueueEntry['collectionType'], string>> = { notes: 'Note', contacts: 'Contact' }
 const LEGACY_TEXT = "Can't be verified, won't be sent automatically; changes paused."
 
 /** A held sealed record or a legacy entry, as last read from the queue. No body is ever read. */
@@ -125,9 +129,10 @@ export function PendingSyncBanner() {
 
   // Titles come from the current stores at render; nothing about the record body is shown.
   const titleOf = (notice: QueueNotice): string | undefined => {
-    if (notice.collectionType === 'notes') return notes.find((note) => note.id === notice.itemUid)?.title
-    if (notice.collectionType === 'contacts') return contacts.find((contact) => contact.id === notice.itemUid)?.displayName
-    return undefined
+    let title: string | undefined
+    if (notice.collectionType === 'notes') title = notes.find((note) => note.id === notice.itemUid)?.title
+    if (notice.collectionType === 'contacts') title = contacts.find((contact) => contact.id === notice.itemUid)?.displayName
+    return title || FALLBACK_LABEL[notice.collectionType]
   }
 
   /** Asserts the captured account, runs one queue action, then always reads the list again. */

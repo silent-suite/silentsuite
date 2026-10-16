@@ -60,7 +60,7 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
 }))
 
 import { PendingSyncBanner } from '../PendingSyncBanner'
-import { _resetForTests as resetOfflineQueue, casStub, removeItemMutations } from '@/app/lib/offline-queue'
+import { _resetForTests as resetOfflineQueue, casStub, insertIfNoOutstanding, removeItemMutations } from '@/app/lib/offline-queue'
 import { _resetForTests as resetDataCache } from '@/app/lib/data-cache'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
@@ -84,7 +84,8 @@ const BASE_TITLE = 'Kept note title 744'
 const BASE_BODY = 'BASE BODY R0 744'
 const PEER_BODY = 'PEER BODY A 744'
 const HELD_BODY = 'PRIVATE HELD BODY B 744'
-const BASE_CHANGED_TEXT = "This offline edit doesn't match the current saved version, so it wasn't saved over it. It's kept on this device."
+const BASE_CHANGED_TEXT = "Not saved to the server: this item changed after your offline edit, so it wasn't saved over it. Your edit is kept on this device."
+const TARGET_MISSING_TEXT = "Not saved to the server: this item was deleted or isn't available to this account. Your edit is kept on this device."
 const LEGACY_TEXT = "Can't be verified, won't be sent automatically; changes paused."
 
 const mounted: { unmount: () => void }[] = []
@@ -205,6 +206,52 @@ describe('#744 the pending sync banner lists kept and legacy offline changes', (
     expect(ui().getAllByRole('button').map((button) => button.textContent)).toEqual(['Retry', 'Discard'])
     expect(document.body.textContent).not.toContain(HELD_BODY)
     expect(held.sealed).toBeDefined()
+  })
+
+  it('#744 holds an offline edit of a note deleted elsewhere as unavailable, under a non-blank label, with its body unread', async () => {
+    const { account, collection, item } = await savedNote()
+    server.offline = true
+    expect(await useNoteStore.getState().updateNote(
+      item.uid,
+      { title: BASE_TITLE, content: HELD_BODY },
+      { base: { title: BASE_TITLE, content: BASE_BODY, revision: item.etag } },
+    )).toBe(true)
+    server.offline = false
+    // Another tab deletes the note; this tab's stores no longer list it.
+    const peer = item._clone()
+    peer.delete()
+    await account.getCollectionManager().getItemManager(collection).transaction([peer])
+    useNoteStore.setState({ notes: [] })
+    await useSyncStore.getState().replayOfflineQueue()
+    const [held] = await queueRecords()
+
+    // 744 wired boundary
+    expect(held?.held).toBe('target-missing')
+
+    renderBanner()
+    await settle()
+    expect(ui().queryByText(TARGET_MISSING_TEXT)).not.toBeNull()
+    expect(ui().queryByText('Note')).not.toBeNull()
+    expect(ui().getAllByRole('button').map((button) => button.textContent)).toEqual(['Retry', 'Discard'])
+    expect(document.body.textContent).not.toContain(HELD_BODY)
+    expect(document.body.textContent).not.toContain(BASE_TITLE)
+  })
+
+  it('characterization: #744 says a retry-exhausted edit was not confirmed by the server, never that it is absent there', async () => {
+    const { collection, item } = await savedNote()
+    expect(await insertIfNoOutstanding(
+      { type: 'sealed-update', collectionType: 'notes', collectionUid: collection.uid, itemUid: item.uid, sealed: { iv: [1], ct: [1] }, rev: 1 },
+      queueGuard(),
+    )).toBe(true)
+    const [record] = await queueRecords()
+    expect(await casStub(record.id, 1, { held: 'retry-exhausted' }, queueGuard())).toBe(true)
+
+    renderBanner()
+    await settle()
+
+    expect(ui().queryByText("The server didn't confirm this change. Kept on this device.")).not.toBeNull()
+    expect(ui().queryByText(BASE_TITLE)).not.toBeNull()
+    expect(document.body.textContent).not.toMatch(/not (saved|on) (to )?the server/i)
   })
 
   it('#744 retries a held edit only by making it eligible, and replay holds it again without overwriting', async () => {

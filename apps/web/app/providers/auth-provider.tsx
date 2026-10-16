@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { useAuthStore } from '@/app/stores/use-auth-store'
+import { useAuthStore, watchSignedOutElsewhere } from '@/app/stores/use-auth-store'
 
 const DEGRADED_RETRY_INTERVAL_MS = 60_000 // retry billing every 60s in degraded mode
 
@@ -37,6 +37,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .then(() => fetchSubscription())
       .finally(() => setIsInitialized(true))
   }, [restoreSession, fetchSubscription])
+
+  // A logout in another tab ends this tab's account too.
+  useEffect(() => watchSignedOutElsewhere(), [])
 
   // Auto-retry billing connection when in degraded mode
   useEffect(() => {

@@ -11,7 +11,17 @@ import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
 import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
 import { createLoginSessionPersistenceDiagnostics } from '@/app/lib/sync-restore-diagnostics'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
-import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import {
+  LOGOUT_GENERATION_KEY,
+  boundLogoutGeneration,
+  bumpAccountEpoch,
+  establishLogoutGeneration,
+  getAccountEpoch,
+  hasLostLogoutGeneration,
+  onLogoutElsewhere,
+  releaseLogoutGeneration,
+  writeLogoutGeneration,
+} from '@/app/lib/account-epoch'
 import type * as EtebaseStoreModule from '@/app/stores/use-etebase-store'
 import { BillingResponseError, startSignupAnnualPayment, type AnnualOffer } from '@/app/lib/billing-v2'
 
@@ -1598,10 +1608,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   logout: async () => {
+    // Another tab already logged this account out, and a newer account may own the shared
+    // storage, cookie and server session by now: end only this tab, as its receiver does.
+    if (hasLostLogoutGeneration()) {
+      signedOutElsewhere()
+      return
+    }
     // Stop rendering protected account data before any network request or
     // asynchronous storage cleanup can yield.
     syncAdminCookie(false)
     set({ user: null, isAuthenticated: false, pendingSignup: null, isLoading: false, error: null, subscriptionStatus: null })
+    // Tell other open tabs, and adopt the write so this tab's own cleanup is not taken for theirs.
+    establishLogoutGeneration(writeLogoutGeneration())
     const logoutEpoch = getAccountEpoch()
 
     if (!isSelfHosted) {
@@ -1959,6 +1977,68 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     return data
   },
 }))
+
+let signedOutElsewhereInFlight = false
+
+/**
+ * Another tab logged out after this tab's account was bound. Only this tab's
+ * memory is ended: no shared storage, cookie, list key or server session is
+ * touched, since a newer account may own them by now.
+ */
+function signedOutElsewhere(): void {
+  if (signedOutElsewhereInFlight || !hasLostLogoutGeneration()) return
+  signedOutElsewhereInFlight = true
+  const generation = boundLogoutGeneration()
+  // No bump here: the lost generation already refuses this epoch, including work the
+  // signed-out publication starts, until destroy() takes the boundary with the account.
+  const epoch = getAccountEpoch()
+  syncSignedOutElsewhereState()
+  void import('@/app/stores/use-etebase-store').then((etebase) => {
+    // Only the account bound under the lost generation, and only while no newer boundary began.
+    const state = etebase.useEtebaseStore.getState()
+    if (boundLogoutGeneration() !== generation || getAccountEpoch() !== epoch) return
+    // Without a published account there is nothing to tear down; the binding still ends here.
+    if (!state.account) {
+      releaseLogoutGeneration()
+      return
+    }
+    try {
+      state.destroy()
+    } catch (err) {
+      logger.warn('[auth-store] Failed to end an account signed out in another tab:', err)
+    }
+  }).catch((err) => {
+    logger.warn('[auth-store] Failed to load the Etebase store after a logout elsewhere:', err)
+  }).finally(() => {
+    signedOutElsewhereInFlight = false
+  })
+}
+
+function syncSignedOutElsewhereState() {
+  stopHostedActiveTabHeartbeat()
+  useAuthStore.setState({ user: null, isAuthenticated: false, subscriptionStatus: null })
+}
+
+/** Ends this tab's account when another tab logs out; the returned function stops watching. */
+export function watchSignedOutElsewhere(): () => void {
+  if (typeof window === 'undefined') return () => {}
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === LOGOUT_GENERATION_KEY && event.newValue !== null) signedOutElsewhere()
+  }
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') signedOutElsewhere()
+  }
+  window.addEventListener('storage', onStorage)
+  window.addEventListener('pageshow', signedOutElsewhere)
+  document.addEventListener('visibilitychange', onVisibility)
+  const stopHandler = onLogoutElsewhere(signedOutElsewhere)
+  return () => {
+    window.removeEventListener('storage', onStorage)
+    window.removeEventListener('pageshow', signedOutElsewhere)
+    document.removeEventListener('visibilitychange', onVisibility)
+    stopHandler()
+  }
+}
 
 useAuthStore.subscribe((state, previous) => {
   if (!state.pendingSignup) { signupRedirectCheckpoint.resetMemory(); return }

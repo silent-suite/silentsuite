@@ -75,6 +75,7 @@ vi.mock('@/app/lib/offline-queue', () => ({
   replay: vi.fn().mockResolvedValue([]),
   getPendingCount: vi.fn().mockResolvedValue(0),
   getFailedCount: vi.fn().mockResolvedValue(0),
+  getHeldCount: vi.fn().mockResolvedValue(0),
   onCountChange: vi.fn().mockReturnValue(() => {}),
   getStaleEntries: vi.fn().mockResolvedValue([]),
   remove: vi.fn().mockResolvedValue(undefined),

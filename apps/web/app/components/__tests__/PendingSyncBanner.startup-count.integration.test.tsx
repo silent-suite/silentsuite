@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { act, cleanup as unmountAll, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { getAll } from '@/app/lib/offline-queue'
+import { casStub, getAll, insertIfNoOutstanding } from '@/app/lib/offline-queue'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { TEST_FINGERPRINT, queueGuard, resetRealOfflineQueue } from '../../stores/__tests__/offline-queue-store-test-utils'
 
@@ -34,6 +34,39 @@ describe('PendingSyncBanner startup count with the real stores and offline queue
     coreMock.listItems.mockReset()
     coreMock.restoreSession.mockReset()
     toastMock.showErrorToast.mockReset()
+  })
+
+  it('publishes a kept record in the held count, and a manual sync cycle keeps it', async () => {
+    useEtebaseStore.setState(restoredAccount(TEST_FINGERPRINT))
+    // A sealed note edit that replay held: never sent until the user acts.
+    expect(await insertIfNoOutstanding(
+      { type: 'sealed-update', collectionType: 'notes', collectionUid: 'notes-1', itemUid: 'note-1', sealed: { iv: [1], ct: [1] }, rev: 1 },
+      queueGuard(),
+    )).toBe(true)
+    const [record] = await getAll(queueGuard())
+    expect(await casStub(record!.id, 1, { held: 'retry-exhausted' }, queueGuard())).toBe(true)
+    useEtebaseStore.setState({
+      reconcileCollections: async () => {},
+      refreshCollection: async () => [],
+      domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' },
+      syncEngine: null,
+    } as never)
+    let stopSync: (() => void) | null = null
+    try {
+      act(() => { stopSync = useSyncStore.getState().initializeSync() })
+      await vi.waitFor(() => expect(useSyncStore.getState().heldQueueCount).toBe(1))
+      expect(useSyncStore.getState().pendingQueueCount).toBe(0)
+
+      useSyncStore.setState({ isOnline: true, heldQueueCount: 0 })
+      act(() => { useSyncStore.getState().simulateSyncCycle() })
+      await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+      expect(useSyncStore.getState().heldQueueCount).toBe(1)
+    } finally {
+      (stopSync as (() => void) | null)?.()
+      useSyncStore.setState(useSyncStore.getInitialState(), true)
+      useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+      await resetRealOfflineQueue()
+    }
   })
 
   it('shows a change queued by a previous session once the account is restored after sync initialization', async () => {

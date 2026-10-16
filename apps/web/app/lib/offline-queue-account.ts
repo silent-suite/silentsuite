@@ -1,4 +1,4 @@
-import { AccountBoundaryChangedError, assertCurrentAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import { AccountBoundaryChangedError, assertCurrentAccountEpoch, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import type { OfflineQueueAccountGuard } from '@/app/lib/offline-queue'
 
 interface ActiveAccountState {
@@ -11,8 +11,11 @@ export function captureOfflineQueueAccountGuard(
   state: ActiveAccountState,
 ): OfflineQueueAccountGuard | null {
   if (!state.account || !state.accountFingerprint) return null
+  // A logout in another tab ends this account before anything is sent for it.
+  const accountEpoch = getAccountEpoch()
+  if (!isCurrentAccountEpoch(accountEpoch)) return null
   return {
-    accountEpoch: getAccountEpoch(),
+    accountEpoch,
     accountFingerprint: state.accountFingerprint,
   }
 }
