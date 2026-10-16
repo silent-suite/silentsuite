@@ -1,0 +1,15 @@
+Package: libre-workspace-module-silentsuite
+Version: @VERSION@
+Architecture: all
+Maintainer: SilentSuite <info@silentsuite.io>
+Depends: libre-workspace-portal, bash, coreutils, curl, iproute2, openssl, tar
+Section: admin
+Priority: optional
+Homepage: https://silentsuite.io
+Description: SilentSuite sync server add-on for Libre Workspace
+ Installs the SilentSuite end-to-end encrypted sync server and its PostgreSQL
+ database from a verified, digest-pinned SilentSuite release (@RELEASE@) and
+ serves it over HTTPS through the Libre Workspace Caddy. SilentSuite accounts
+ are independent of Libre Workspace users; there is no single sign-on.
+ Installing this package does not start anything: the server is set up when an
+ administrator installs the add-on from the Libre Workspace portal.
