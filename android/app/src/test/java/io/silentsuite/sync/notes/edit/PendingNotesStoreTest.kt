@@ -148,6 +148,7 @@ class PendingNotesStoreTest {
         store.clearLanded("n1")
         val e = entry("n1")
         assertEquals(listOf("r1"), e.sent)
+        assertEquals(NotePushPolicy.ConflictOutcome.REBASE, NotePushPolicy.decide(e, null, NotePushPolicy.ServerCopy("r1", false)))
     }
 
     // ---- pushing ----
