@@ -2,6 +2,9 @@ import { useEffect, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import PendingPaymentPage from '../page'
+// The route wrapper takes no props; the signup funnel mounts this component
+// directly with `onReleased`, so the release callback is proven on it.
+import PendingPaymentRecovery from '../payment-recovery'
 
 vi.hoisted(() => {
   process.env.NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED = 'true'
@@ -69,6 +72,14 @@ function anonymousRecoverySignup(overrides: Record<string, unknown> = {}) {
 
 const recoveryBody = { contractVersion: 2, email: 'customer@example.test', requestKey: paymentSessionRequestKey, recoverySecret: paymentSessionToken, switchingProfile: 'v1' }
 const REDIRECT_STATE_KEY = 'silentsuite-signup-redirect-state'
+// `current` for a never-dispatched signup: open, no payable continuation. The
+// client escalates to `reconcile` for exactly this shape.
+const openWithoutContinuation = (provider: 'stripe' | 'btcpay') => ({ contractVersion: 2, state: 'open', flow: { provider, status: 'provider_pending' } })
+// T6.2 release receipt: Billing closed the never-dispatched signup at the
+// 8-hour deadline. No provider object exists, so `providerObjectId` is null.
+const undispatchedRelease = (provider: 'stripe' | 'btcpay') => ({ contractVersion: 2, state: 'released', flow: { provider, status: 'reconciliation_required' }, release: { requestKey: paymentSessionRequestKey, provider, providerObjectId: null } })
+const UNKNOWN_TITLE = 'Payment release not confirmed'
+const RELEASED_TITLE = 'Verify email to choose a payment method'
 
 function persistedRedirectSignup(overrides: Record<string, unknown> = {}) {
   return anonymousRecoverySignup({
@@ -166,6 +177,92 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     expect(authState.clearPendingSignupPaymentRecovery).not.toHaveBeenCalled()
     expect(authState.pendingSignup.paymentSessionToken).toBe(paymentSessionToken)
     expect(screen.queryByRole('button', { name: /new invoice/i })).not.toBeInTheDocument()
+  })
+
+  it.each(['btcpay', 'stripe'] as const)('a released %s reconcile after open-without-continuation clears recovery, calls onReleased and never renders unknown', async provider => {
+    const pending = anonymousRecoverySignup({ paymentMethod: provider })
+    authState.pendingSignup = pending
+    authState.clearPendingSignupPaymentRecovery.mockImplementation(() => { authState.pendingSignup = { ...pending, paymentSessionToken: undefined, paymentSessionRequestKey: undefined } })
+    const onReleased = vi.fn()
+    const routes: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const route = String(url).split('/').at(-1)!
+      routes.push(route)
+      if (route === 'current') return new Response(JSON.stringify(openWithoutContinuation(provider)))
+      if (route === 'reconcile') return new Response(JSON.stringify(undispatchedRelease(provider)))
+      throw new Error(`unexpected route ${route}`)
+    }))
+    // Record every heading the page renders between mount and release.
+    const headings: string[] = []
+    const observer = new MutationObserver(() => { const h = document.querySelector('h1'); if (h) headings.push(h.textContent ?? '') })
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+    try {
+      render(<PendingPaymentRecovery onReleased={onReleased} />)
+      expect(await screen.findByRole('heading', { name: RELEASED_TITLE })).toBeVisible()
+    } finally { observer.disconnect() }
+    expect(routes).toEqual(['current', 'reconcile'])
+    expect(headings).toContain(RELEASED_TITLE)
+    expect(headings).not.toContain(UNKNOWN_TITLE)
+    expect(headings.every(h => h === 'Checking checkout status' || h === RELEASED_TITLE)).toBe(true)
+    expect(screen.queryByText(UNKNOWN_TITLE)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /check again|retry/i })).not.toBeInTheDocument()
+    expect(authState.clearPendingSignupPaymentRecovery).toHaveBeenCalledTimes(1)
+    expect(authState.clearPendingSignupPaymentRecovery).toHaveBeenCalledWith({ email: pending.email, requestKey: paymentSessionRequestKey, recoverySecret: paymentSessionToken })
+    expect(authState.pendingSignup.paymentSessionToken).toBeUndefined()
+    expect(onReleased).toHaveBeenCalledTimes(1)
+    // The release ends the capability; nothing restarts a payment on its own.
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
+    expect(screen.getByRole('link', { name: 'Verify email again' })).toHaveAttribute('href', '/signup')
+  })
+
+  it('a released reconcile for another request key is rejected and does not call onReleased', async () => {
+    const pending = anonymousRecoverySignup()
+    authState.pendingSignup = pending
+    const onReleased = vi.fn()
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(String(url).endsWith('/reconcile')
+      ? { ...undispatchedRelease('btcpay'), release: { ...undispatchedRelease('btcpay').release, requestKey: '6fd4d86d-34de-4b82-9a66-9598ddf6e02f' } }
+      : openWithoutContinuation('btcpay')))))
+    render(<PendingPaymentRecovery onReleased={onReleased} />)
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(onReleased).not.toHaveBeenCalled()
+    expect(authState.clearPendingSignupPaymentRecovery).not.toHaveBeenCalled()
+    expect(authState.pendingSignup.paymentSessionToken).toBe(paymentSessionToken)
+    expect(screen.queryByRole('heading', { name: RELEASED_TITLE })).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['btcpay', null],
+    ['stripe', null],
+    ['btcpay', 'cancelled'],
+    ['stripe', 'expired'],
+  ] as const)('a generic closed %s reconcile (flow %s) after open-without-continuation stays conservative and does not call onReleased', async (provider, flowStatus) => {
+    const pending = anonymousRecoverySignup({ paymentMethod: provider })
+    authState.pendingSignup = pending
+    const onReleased = vi.fn()
+    const routes: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const route = String(url).split('/').at(-1)!
+      routes.push(route)
+      return new Response(JSON.stringify(route === 'current'
+        ? openWithoutContinuation(provider)
+        : { contractVersion: 2, state: 'closed', flow: flowStatus === null ? null : { provider, status: flowStatus } }))
+    }))
+    render(<PendingPaymentRecovery onReleased={onReleased} />)
+    expect(await screen.findByRole('heading', { name: UNKNOWN_TITLE })).toBeVisible()
+    expect(routes).toEqual(['current', 'reconcile'])
+    expect(onReleased).not.toHaveBeenCalled()
+    expect(authState.clearPendingSignupPaymentRecovery).not.toHaveBeenCalled()
+    expect(authState.pendingSignup).toBe(pending)
+    expect(authState.pendingSignup.paymentSessionToken).toBe(paymentSessionToken)
+    expect(screen.queryByRole('heading', { name: RELEASED_TITLE })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Payment cancelled/)).not.toBeInTheDocument()
+    // The same capability can be re-checked; nothing offers a new payment.
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: /new invoice|start another|cancel and start/i })).not.toBeInTheDocument()
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+    expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
   })
 
 
@@ -542,6 +639,49 @@ describe('PendingPaymentPage BTCPay settlement polling', () => {
     const callsAtTimeout = vi.mocked(fetch).mock.calls.length
     await advance(300_000)
     expect(fetch).toHaveBeenCalledTimes(callsAtTimeout)
+  })
+
+  it('computes no client-side expiry: only a server release receipt ends an open payment session, even days past the 8-hour deadline', async () => {
+    const pending = anonymousRecoverySignup()
+    authState.pendingSignup = pending
+    authState.clearPendingSignupPaymentRecovery.mockImplementation(() => { authState.pendingSignup = { ...pending, paymentSessionToken: undefined, paymentSessionRequestKey: undefined } })
+    const onReleased = vi.fn()
+    const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => openRecovery())
+    vi.stubGlobal('fetch', fetcher)
+    render(<PendingPaymentRecovery onReleased={onReleased} />)
+    await settle()
+
+    // The bounded schedule ends after 20 attempts (80 minutes). The clock then
+    // runs past the 8-hour release deadline and the 48-hour capability expiry.
+    await advance(20 * 4 * 60_000)
+    const stopped = fetcher.mock.calls.length
+    expect(stopped).toBe(20 * REQUESTS_PER_OPEN_POLL)
+    await advance(50 * 60 * 60_000)
+    expect(fetcher).toHaveBeenCalledTimes(stopped)
+    expect(onReleased).not.toHaveBeenCalled()
+    expect(authState.clearPendingSignupPaymentRecovery).not.toHaveBeenCalled()
+    expect(authState.pendingSignup.paymentSessionToken).toBe(paymentSessionToken)
+    expect(authState.pendingSignup.paymentSessionRequestKey).toBe(paymentSessionRequestKey)
+    // Only the polling budget is exhausted; nothing was declared expired, cancelled or released locally.
+    expect(screen.getByRole('heading', { name: /payment status is still unconfirmed/i })).toBeInTheDocument()
+    expect(screen.queryByText(/expired|cancelled/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(UNKNOWN_TITLE)).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: RELEASED_TITLE })).not.toBeInTheDocument()
+    // The outgoing request carries no client clock or expiry field.
+    for (const [, init] of fetcher.mock.calls) expect(JSON.parse(String(init?.body))).toEqual(recoveryBody)
+
+    // A manual re-check sends the same capability. The server's release receipt
+    // on `reconcile` is the only thing that ends the session.
+    fetcher.mockImplementation(async (url: string) => new Response(JSON.stringify(String(url).endsWith('/reconcile') ? undispatchedRelease('btcpay') : openWithoutContinuation('btcpay'))))
+    fireEvent.click(screen.getByRole('button', { name: 'Check again' }))
+    await settle()
+    expect(fetcher).toHaveBeenCalledTimes(stopped + 2)
+    expect(fetcher.mock.calls.slice(stopped).map(([url]) => String(url).split('/').at(-1))).toEqual(['current', 'reconcile'])
+    expect(screen.getByRole('heading', { name: RELEASED_TITLE })).toBeInTheDocument()
+    expect(screen.queryByText(UNKNOWN_TITLE)).not.toBeInTheDocument()
+    expect(onReleased).toHaveBeenCalledTimes(1)
+    expect(authState.clearPendingSignupPaymentRecovery).toHaveBeenCalledTimes(1)
+    expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
   })
 
   it('cancels the scheduled poll when the page unmounts', async () => {
