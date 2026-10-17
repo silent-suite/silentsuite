@@ -1,8 +1,16 @@
 'use client'
 
+import { useEffect } from 'react'
 import { WifiOff } from 'lucide-react'
 
 export default function OfflinePage() {
+  // This fallback holds no drafts, so it alone reloads once the connection returns.
+  useEffect(() => {
+    const reload = () => window.location.reload()
+    window.addEventListener('online', reload)
+    return () => window.removeEventListener('online', reload)
+  }, [])
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[rgb(var(--background))] px-4 text-center">
       <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-gray-800/50">

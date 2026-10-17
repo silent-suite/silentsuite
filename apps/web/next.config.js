@@ -63,6 +63,9 @@ const pwaConfig = withPWA({
   disable: process.env.NODE_ENV === 'development',
   register: true,
   skipWaiting: true,
+  // A reload on reconnect would erase drafts the app keeps only in memory, such as
+  // refused typing marked Not saved (#744). Only the offline fallback page reloads.
+  reloadOnOnline: false,
   fallbacks: {
     document: '/offline',
   },
