@@ -78,7 +78,7 @@ describe('useNoteStore', () => {
   beforeEach(() => {
     toastMock.showErrorToast.mockReset()
     useAuthStore.setState({ subscriptionStatus: 'active' })
-    useNoteStore.setState({ notes: [], isLoading: false, syncStatus: 'synced' })
+    useNoteStore.setState({ notes: [], syncStatus: 'synced' })
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     useNotebookStore.setState({
       lists: [{ id: 'notes-1', name: 'Notes', color: '#fff', visible: true, accessLevel: 1 }],
@@ -525,10 +525,8 @@ describe('useNoteStore', () => {
     expect((await useNoteStore.getState().createNote()).notebookId).toBe('a')
   })
 
-  it('syncFromRemote replaces notes and clears the loading flag', () => {
-    useNoteStore.setState({ isLoading: true })
+  it('syncFromRemote replaces notes', () => {
     useNoteStore.getState().syncFromRemote([note('remote-1')])
     expect(useNoteStore.getState().notes.map((n) => n.id)).toEqual(['remote-1'])
-    expect(useNoteStore.getState().isLoading).toBe(false)
   })
 })

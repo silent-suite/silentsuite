@@ -191,7 +191,6 @@ describe('#744 the rendered contact detail saves only through its captured recor
         { ...deserializeContact(baseVcard), id: item.uid, listId: collection.uid, revision: item.etag },
         { ...deserializeContact(otherVcard), id: other.uid, listId: collection.uid, revision: other.etag },
       ],
-      isLoading: false,
     } as any)
     return { account, collection, item, other }
   }

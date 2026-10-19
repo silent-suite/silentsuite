@@ -134,7 +134,6 @@ function typedSince(id: string, authorized: MountedNoteEditor | undefined, perio
 
 interface NoteState {
   notes: StoredNote[]
-  isLoading: boolean
   syncStatus: SyncStatus
 }
 
@@ -180,7 +179,6 @@ function defaultNotebookId(): string | undefined {
 export const useNoteStore = create<NoteState & NoteActions>()(
   (set, get) => ({
     notes: [],
-    isLoading: true,
     syncStatus: 'synced' as SyncStatus,
 
     createNote: async (newNote: NewNote = {}) => {
@@ -434,7 +432,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       // A note the server no longer lists stays shown while its open editor holds unsaved typing (#744).
       const remoteIds = new Set(remoteNotes.map((n) => n.id))
       const kept = get().notes.filter((n) => !remoteIds.has(n.id) && getMountedNoteEditor(n.id)?.isClean() === false)
-      set({ notes: [...remoteNotes, ...kept], isLoading: false, syncStatus: 'synced' })
+      set({ notes: [...remoteNotes, ...kept], syncStatus: 'synced' })
     },
   }),
 )

@@ -251,7 +251,6 @@ describe('#744 the rendered note editor saves only through its captured base', (
     const at = new Date(1000)
     useNoteStore.setState({
       notes: [{ id: item.uid, uid: item.uid, title: BASE_TITLE, content: BASE_BODY, notebookId: collection.uid, created_at: at, updated_at: at, revision: item.etag }],
-      isLoading: false,
     } as any)
     return { account, collection, item }
   }
@@ -372,7 +371,6 @@ describe('#744 the rendered note editor saves only through its captured base', (
     const at = new Date(1000)
     useNoteStore.setState({
       notes: [{ id: item.uid, uid: item.uid, title: BASE_TITLE, content: BASE_BODY, notebookId: collection.uid, created_at: at, updated_at: at, revision: item.etag }],
-      isLoading: false,
     } as any)
     renderNotesPage()
     fireEvent.click(ui().getByRole('button', { name: new RegExp(BASE_TITLE) }))

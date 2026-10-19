@@ -28,7 +28,6 @@ interface NewTask {
 
 interface TaskState {
   tasks: Task[]
-  isLoading: boolean
   syncStatus: SyncStatus
 }
 
@@ -50,7 +49,6 @@ function defaultTaskListId(): string | undefined {
 export const useTaskStore = create<TaskState & TaskActions>()(
     (set, get) => ({
       tasks: [],
-      isLoading: false,
       syncStatus: 'synced' as SyncStatus,
 
       createTask: async (newTask: NewTask) => {

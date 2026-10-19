@@ -48,7 +48,6 @@ function resetStore() {
   etebaseMock.state.itemCollectionMap = new Map()
   useCalendarStore.setState({
     events: [],
-    isLoading: false,
     syncStatus: 'synced',
     currentView: 'week',
     currentDate: new Date('2026-06-01T12:00:00Z'),

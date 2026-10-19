@@ -40,7 +40,6 @@ export type ContactSaveState = 'pending' | 'queued' | 'refused'
 
 interface ContactState {
   contacts: StoredContact[]
-  isLoading: boolean
   syncStatus: SyncStatus
   searchQuery: string
   contactSaveStates: Record<string, ContactSaveState>
@@ -397,7 +396,6 @@ export const useContactStore = create<ContactState & ContactActions>()(
 
       return {
       contacts: [],
-      isLoading: false,
       syncStatus: 'synced' as SyncStatus,
       searchQuery: '',
       contactSaveStates: {},

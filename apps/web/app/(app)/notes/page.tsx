@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
+import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
 import { useEtebaseStore, type SealedEditingBase } from '@/app/stores/use-etebase-store'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { ArrowLeft, Eye, Folder, Plus, Search, StickyNote, Trash2, WifiOff } from 'lucide-react'
@@ -493,7 +494,8 @@ function NotesPageBody() {
   const collectionsT = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const notes = useNoteStore((s) => s.notes)
-  const isLoading = useNoteStore((s) => s.isLoading)
+  // Cached notes paint while the domain is still unknown; they replace the skeleton.
+  const isLoading = useDomainInitializing('notes') && notes.length === 0
   const createNote = useNoteStore((s) => s.createNote)
   const deleteNote = useNoteStore((s) => s.deleteNote)
   const canWriteNote = useNoteStore((s) => s.canWriteNote)

@@ -31,7 +31,6 @@ interface NewCalendarEvent {
 
 interface CalendarState {
   events: CalendarEvent[]
-  isLoading: boolean
   syncStatus: SyncStatus
   currentView: CalendarView
   currentDate: Date
@@ -175,7 +174,6 @@ function defaultCalendarId(): string {
 
 export const useCalendarStore = create<CalendarState & CalendarActions>()((set, get) => ({
   events: [],
-  isLoading: false,
   syncStatus: 'synced' as SyncStatus,
   currentView: 'week',
   currentDate: new Date(),

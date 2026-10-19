@@ -17,6 +17,7 @@ import {
   useContactStore,
 } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
+import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
@@ -1169,7 +1170,7 @@ export default function ContactsPage() {
   const t = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const contacts = useContactStore((s) => s.contacts)
-  const isLoading = useContactStore((s) => s.isLoading)
+  const isLoading = useDomainInitializing('contacts') && contacts.length === 0
   const searchQuery = useContactStore((s) => s.searchQuery)
   const isOnline = useSyncStore((s) => s.isOnline)
   const contactLists = useContactListStore((s) => s.lists)

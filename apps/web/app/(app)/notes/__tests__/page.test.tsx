@@ -11,10 +11,19 @@ import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 vi.mock('@/app/stores/use-etebase-store', () => ({
-  useEtebaseStore: (selector: (state: { accountFingerprint: string }) => unknown) => selector({ accountFingerprint: 'notes-test-account' }),
+  useEtebaseStore: (selector: (state: typeof storeMock.etebaseState) => unknown) => selector(storeMock.etebaseState),
 }))
 
+type DomainStatus = 'unknown' | 'loaded' | 'failed'
+
 const storeMock = vi.hoisted(() => ({
+  etebaseState: {
+    accountFingerprint: 'notes-test-account',
+    account: null as object | null,
+    isInitialized: false,
+    restoreBlocked: false,
+    domainLoadState: {} as Record<'calendar' | 'tasks' | 'contacts' | 'notes' | 'preferences', DomainStatus>,
+  },
   noteState: {
     notes: [] as Note[],
     isLoading: true,
@@ -110,17 +119,85 @@ function typedOn(title: string, content: string) {
   return expect.objectContaining({ base: { title, content, revision: null } })
 }
 
+/** A cold restore: no session yet, every domain unknown, initialization still running. */
+function coldRestore() {
+  storeMock.etebaseState.account = null
+  storeMock.etebaseState.isInitialized = false
+  storeMock.etebaseState.restoreBlocked = false
+  storeMock.etebaseState.domainLoadState = { calendar: 'unknown', tasks: 'unknown', contacts: 'unknown', notes: 'unknown', preferences: 'unknown' }
+}
+
 function loaded(notes: Note[], lists: Notebook[] = [NOTEBOOK]) {
   storeMock.noteState.isLoading = false
+  storeMock.etebaseState.domainLoadState = { ...storeMock.etebaseState.domainLoadState, notes: 'loaded' }
   storeMock.noteState.notes = notes
   storeMock.notebookState.lists = lists
 }
+
+const hasSkeleton = () => document.querySelector('.skeleton-shimmer') !== null
+
+describe('NotesPage loading skeleton (#747)', () => {
+  beforeEach(() => {
+    useExperimentalStore.setState({ hydrated: true, notesAccounts: ['notes-test-account'] })
+    coldRestore()
+    storeMock.noteState.notes = []
+    storeMock.notebookState.lists = [NOTEBOOK]
+    storeMock.authState.canWrite.mockReturnValue(true)
+  })
+
+  // The legacy note-store flag is set opposite to the expected outcome each
+  // time, so only the domain initialization state can produce the result.
+  it('shows the skeleton during a cold session restore before any account is restored', () => {
+    storeMock.noteState.isLoading = false
+    renderWithIntl(<NotesPage />)
+    expect(hasSkeleton()).toBe(true)
+    expect(screen.queryByText('No notes yet')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+  })
+
+  it.each([
+    ['the notes domain loaded', () => { storeMock.etebaseState.domainLoadState.notes = 'loaded' }],
+    ['the notes domain failed', () => { storeMock.etebaseState.domainLoadState.notes = 'failed' }],
+    ['initialization ended with every domain still unknown', () => { storeMock.etebaseState.isInitialized = true }],
+    ['the session restore is blocked', () => { storeMock.etebaseState.restoreBlocked = true }],
+  ])('hides the skeleton once %s', (_label, settle) => {
+    storeMock.noteState.isLoading = true
+    settle()
+    renderWithIntl(<NotesPage />)
+    expect(hasSkeleton()).toBe(false)
+    expect(screen.getByText('No notes yet')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'New note' })[0]).toBeEnabled()
+  })
+
+  it('keeps cached notes painted while the notes domain is still unknown', () => {
+    storeMock.noteState.isLoading = true
+    storeMock.noteState.notes = [note('cached', { title: 'Cached note' })]
+    renderWithIntl(<NotesPage />)
+    expect(hasSkeleton()).toBe(false)
+    expect(screen.getByRole('button', { name: /Cached note/ })).toBeInTheDocument()
+    // Painted cached notes enable creation in a writable notebook, as the old
+    // cache paint did by clearing the store flag.
+    expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'New note' })).toHaveAttribute('title', 'New note in Personal Notes')
+  })
+
+  it('drops the skeleton when initialization ends after the first render', () => {
+    storeMock.noteState.isLoading = false
+    const view = renderWithIntl(<NotesPage />)
+    expect(hasSkeleton()).toBe(true)
+    storeMock.etebaseState.isInitialized = true
+    view.rerender(<NotesPage />)
+    expect(hasSkeleton()).toBe(false)
+    expect(screen.getByText('No notes yet')).toBeInTheDocument()
+  })
+})
 
 describe('NotesPage', () => {
   beforeEach(() => {
     localStorage.clear()
     useExperimentalStore.setState({ hydrated: true, notesAccounts: ['notes-test-account'] })
     storeMock.noteState.isLoading = true
+    coldRestore()
     storeMock.noteState.notes = []
     storeMock.notebookState.lists = []
     storeMock.noteState.createNote.mockReset().mockResolvedValue(note('new-note', { title: 'Untitled' }))

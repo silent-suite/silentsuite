@@ -1,10 +1,11 @@
-import { fireEvent, screen } from '@testing-library/react'
+import { act, fireEvent, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ContactsPage from '../page'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import messages from '@/messages/en.json'
 import type { Contact } from '@silentsuite/core'
 import type { ContactList } from '@/app/stores/use-contact-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
 // Mobile reachability smoke test for the Contacts page (epic #295). jsdom does
 // not evaluate CSS media queries, so these assert that the primary create
@@ -19,7 +20,6 @@ const manageAddressBooks = messages.Collections.manageAddressBooks
 const storeMock = vi.hoisted(() => ({
   contactState: {
     contacts: [] as Contact[],
-    isLoading: true,
     searchQuery: '',
     setSearchQuery: vi.fn(),
     createContact: vi.fn(),
@@ -71,15 +71,31 @@ vi.mock('@/app/components/MobileCollectionSheet', () => ({
 
 describe('ContactsPage mobile reachability', () => {
   beforeEach(() => {
-    storeMock.contactState.isLoading = true
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     storeMock.contactState.searchQuery = ''
     storeMock.contactState.contacts = []
     storeMock.contactListState.lists = []
     storeMock.authState.canWrite.mockReturnValue(true)
   })
 
+  it('derives its skeleton from the contacts domain and skips it for cached contacts (#747)', () => {
+    const hasSkeleton = () => document.querySelector('.skeleton-shimmer') !== null
+    const view = renderWithIntl(<ContactsPage />)
+    expect(hasSkeleton()).toBe(true)
+
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.contactState.contacts = [{ id: 'c', uid: 'c', displayName: 'Cached', name: { prefix: '', given: 'Cached', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId: 'book', created_at: new Date(), updated_at: new Date() }]
+    view.rerender(<ContactsPage />)
+    expect(hasSkeleton()).toBe(false)
+    expect(screen.getByText('Cached')).toBeInTheDocument()
+
+    storeMock.contactState.contacts = []
+    act(() => useEtebaseStore.setState({ restoreBlocked: true }))
+    view.rerender(<ContactsPage />)
+    expect(hasSkeleton()).toBe(false)
+  })
+
   it('uses separate valid row and star controls and filters favorites', () => {
-    storeMock.contactState.isLoading = false
     storeMock.contactState.contacts = [
       { id: '1', uid: '1', displayName: 'Ada', name: { prefix: '', given: 'Ada', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, favorite: true, listId: 'book', created_at: new Date(), updated_at: new Date() },
       { id: '2', uid: '2', displayName: 'Bob', name: { prefix: '', given: 'Bob', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, favorite: false, listId: 'book', created_at: new Date(), updated_at: new Date() },
@@ -96,7 +112,6 @@ describe('ContactsPage mobile reachability', () => {
 
   it('preserves imported custom and multiple types when editing a value', () => {
     storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
-    storeMock.contactState.isLoading = false
     storeMock.contactState.contacts = [{ id: 'custom', uid: 'custom', displayName: 'Synthetic', name: { given: 'Synthetic', family: '', prefix: '', suffix: '' }, phones: [{ type: 'Desk: west', value: '111' }, { type: 'home,voice', value: '222' }], emails: [{ type: 'x-emergency', value: 'a@example.invalid' }], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, created_at: new Date(), updated_at: new Date() }]
     storeMock.contactState.contacts[0]!.listId = 'book'
     storeMock.contactState.contacts[0]!.addresses = [{ type: 'Postal desk', street: 'Street', city: '', state: '', postalCode: '', country: '' }]

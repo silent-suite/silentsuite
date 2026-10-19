@@ -24,7 +24,6 @@ function resetStore() {
   resetContactLifecycle()
   useContactStore.setState({
     contacts: [],
-    isLoading: false,
     syncStatus: 'synced',
     searchQuery: '',
     contactSaveStates: {},

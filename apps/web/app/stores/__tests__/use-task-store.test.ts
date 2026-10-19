@@ -20,7 +20,6 @@ vi.mock('@/app/stores/use-sync-store', () => ({
 function resetStore() {
   useTaskStore.setState({
     tasks: [],
-    isLoading: false,
     syncStatus: 'synced',
   })
   useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)

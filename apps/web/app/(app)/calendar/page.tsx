@@ -7,6 +7,7 @@ import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate, startOfWeek, getWeekNumber } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
@@ -142,7 +143,7 @@ function CalendarPageBody() {
   const t = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const events = useCalendarStore((s) => s.events)
-  const isLoading = useCalendarStore((s) => s.isLoading)
+  const isLoading = useDomainInitializing('calendar') && events.length === 0
   const currentView = useCalendarStore((s) => s.currentView)
   const currentDate = useCalendarStore((s) => s.currentDate)
   const navigateForward = useCalendarStore((s) => s.navigateForward)

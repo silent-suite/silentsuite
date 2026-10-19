@@ -892,16 +892,15 @@ async function resetInMemoryAccountState(
     const resets = [
       () => useCalendarStore.setState({
         events: [],
-        isLoading: false,
         syncStatus: 'synced',
         selectedEventId: null,
         searchQuery: '',
       }),
-      () => useTaskStore.setState({ tasks: [], isLoading: false, syncStatus: 'synced' }),
-      () => useContactStore.setState({ contacts: [], isLoading: false, syncStatus: 'synced', searchQuery: '', contactSaveStates: {} }),
+      () => useTaskStore.setState({ tasks: [], syncStatus: 'synced' }),
+      () => useContactStore.setState({ contacts: [], syncStatus: 'synced', searchQuery: '', contactSaveStates: {} }),
       // Contact draft ledgers and save chains hold draft vCards (#744).
       () => resetContactLifecycle(),
-      () => useNoteStore.setState({ notes: [], isLoading: false, syncStatus: 'synced' }),
+      () => useNoteStore.setState({ notes: [], syncStatus: 'synced' }),
       // Note obligations and editor registrations hold callbacks over draft text (#744).
       () => resetNoteLifecycle(),
       () => useCalendarListStore.setState({

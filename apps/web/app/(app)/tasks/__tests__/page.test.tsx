@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react'
+import { act, screen } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TasksPage from '../page'
@@ -6,6 +6,7 @@ import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import messages from '@/messages/en.json'
 import type { Task } from '@silentsuite/core'
 import type { TaskList } from '@/app/stores/use-task-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
 // Mobile reachability smoke test for the Tasks page (epic #295). jsdom does not
 // evaluate CSS media queries, so these assert that the primary create action and
@@ -19,7 +20,6 @@ const manageTaskLists = messages.Collections.manageTaskLists
 const storeMock = vi.hoisted(() => ({
   taskState: {
     tasks: [] as Task[],
-    isLoading: true,
     createTask: vi.fn(),
     updateTask: vi.fn(),
     deleteTask: vi.fn(),
@@ -63,8 +63,24 @@ vi.mock('@/app/components/MobileCollectionSheet', () => ({
 
 describe('TasksPage mobile reachability', () => {
   beforeEach(() => {
-    storeMock.taskState.isLoading = true
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    storeMock.taskState.tasks = []
     storeMock.authState.canWrite.mockReturnValue(true)
+  })
+
+  it('derives its skeleton from the tasks domain and skips it for cached tasks (#747)', () => {
+    const hasSkeleton = () => document.querySelector('.skeleton-shimmer') !== null
+    const view = renderWithIntl(<TasksPage />)
+    expect(hasSkeleton()).toBe(true)
+
+    storeMock.taskState.tasks = [{ id: 'cached', uid: 'cached', title: 'Cached task', listId: 'default' } as Task]
+    view.rerender(<TasksPage />)
+    expect(hasSkeleton()).toBe(false)
+
+    storeMock.taskState.tasks = []
+    act(() => useEtebaseStore.setState((state) => ({ domainLoadState: { ...state.domainLoadState, tasks: 'loaded' } })))
+    view.rerender(<TasksPage />)
+    expect(hasSkeleton()).toBe(false)
   })
 
   it('exposes the primary create action on all widths', () => {

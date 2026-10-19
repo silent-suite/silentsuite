@@ -82,10 +82,9 @@ const etebaseMock = vi.hoisted(() => {
 const taskStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.push('syncTasks')) }))
 const contactStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.push('syncContacts')) }))
 const calendarStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn(() => order.push('syncCalendar')) }))
-// Mirrors the real store closely enough to observe the provider-owned notes
-// loading flag: setState merges into the same object getState returns.
+// setState is observed only to prove the provider no longer toggles a notes
+// loading flag: list skeletons derive from domainLoadState (#747).
 const noteStoreMock = vi.hoisted(() => ({
-  isLoading: false,
   syncFromRemote: vi.fn((_notes: unknown[] = []) => order.push('syncNotes')),
   setState: vi.fn(),
 }))
@@ -236,10 +235,6 @@ describe('SyncProvider timing instrumentation', () => {
     cacheMock.getItemsByType.mockImplementation(async (type: string) => {
       order.push(`cacheGet:${type}`)
       return []
-    })
-    noteStoreMock.isLoading = false
-    noteStoreMock.setState.mockImplementation((partial: Partial<typeof noteStoreMock>) => {
-      Object.assign(noteStoreMock, partial)
     })
     timingMock.logSyncTiming.mockImplementation(() => {})
     timingMock.markSyncTimingStart.mockReturnValue(100)
@@ -424,19 +419,19 @@ describe('SyncProvider timing instrumentation', () => {
     expect(order.indexOf('cacheGet:calendar')).toBeLessThan(order.indexOf('fetchAllItems:calendar'))
   })
 
-  it('clears the notes loading flag when initialize resolves without a notes domain callback', async () => {
+  it.each([
+    ['every domain reaches a terminal callback', 'synced', etebaseMock.defaultInitialize],
     // Offline shape: collection setup fails, the store swallows it, and
     // initialize resolves without ever reaching a notes terminal callback.
-    etebaseMock.state.initialize.mockImplementation(async () => {
-      order.push('etebaseInitialize')
-    })
+    ['initialize resolves without a notes domain callback', 'synced', async () => { order.push('etebaseInitialize') }],
+    ['initialize rejects', 'error', async () => { throw new Error('init failed') }],
+  ] as const)('never toggles a notes loading flag when %s', async (_label, finalStatus, initialize) => {
+    etebaseMock.state.initialize.mockImplementation(initialize)
 
     renderProvider()
 
-    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
-    expect(noteStoreMock.setState).toHaveBeenCalledWith({ isLoading: true })
-    expect(noteStoreMock.isLoading).toBe(false)
-    expect(syncStoreMock.setSyncStatus).toHaveBeenCalledWith('synced')
+    await waitFor(() => expect(syncStoreMock.setSyncStatus).toHaveBeenCalledWith(finalStatus))
+    expect(noteStoreMock.setState).not.toHaveBeenCalled()
   })
 
   it('keeps notes painted from cache when no remote domain callback follows', async () => {
@@ -456,7 +451,6 @@ describe('SyncProvider timing instrumentation', () => {
     await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
     expect(noteStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
     expect(noteStoreMock.syncFromRemote.mock.calls[0][0]).toHaveLength(1)
-    expect(noteStoreMock.isLoading).toBe(false)
   })
 
   it('keeps a note with a pending offline delete out of the notes painted from cache', async () => {
@@ -730,8 +724,6 @@ describe('SyncProvider timing instrumentation', () => {
     expect(syncStoreMock.setPartialLoad).not.toHaveBeenCalled()
     expect(syncStoreMock.setSyncStatus).not.toHaveBeenCalled()
     expect(syncStoreMock.setError).not.toHaveBeenCalled()
-    // The new account owns the notes loading flag once the epoch moves.
-    expect(noteStoreMock.setState).not.toHaveBeenCalled()
   })
 
   it('suppresses an ordinary initialization rejection after the account epoch changes', async () => {

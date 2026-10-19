@@ -5,6 +5,7 @@ import { X, ChevronDown, Calendar, Flag, WifiOff, Plus, AlignLeft, Pencil, List,
 import { useTranslations } from 'next-intl'
 import { LabelEditor, LabelChips } from '@/app/components/LabelEditor'
 import { useTaskStore } from '@/app/stores/use-task-store'
+import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -848,7 +849,7 @@ export default function TasksPage() {
   const t = useTranslations('Collections')
   const canWrite = useAuthStore((s) => s.canWrite())
   const tasks = useTaskStore((s) => s.tasks)
-  const isLoading = useTaskStore((s) => s.isLoading)
+  const isLoading = useDomainInitializing('tasks') && tasks.length === 0
   const isOnline = useSyncStore((s) => s.isOnline)
   const taskLists = useTaskListStore((s) => s.lists)
   const [showDialog, setShowDialog] = useState(false)

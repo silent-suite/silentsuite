@@ -810,7 +810,6 @@ describe('useEtebaseStore.createItemsBatch', () => {
     offlineQueueMock.isOfflineError.mockReset().mockReturnValue(false)
     useCalendarStore.setState({
       events: [],
-      isLoading: false,
       syncStatus: 'synced',
       currentView: 'week',
       currentDate: new Date('2026-01-01T00:00:00Z'),
@@ -1976,7 +1975,6 @@ describe('useEtebaseStore.reconcileCollections', () => {
     useCalendarStore.setState({
       events: [],
       selectedEventId: null,
-      isLoading: false,
       syncStatus: 'synced',
       currentView: 'week',
       currentDate: new Date('2026-01-01T00:00:00Z'),

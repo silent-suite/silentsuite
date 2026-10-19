@@ -6,6 +6,7 @@ import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import messages from '@/messages/en.json'
 import type { CalendarEvent } from '@silentsuite/core'
 import type { CalendarList } from '@/app/stores/use-calendar-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 
 // Calendar page tests. The visibility suite guards against hidden calendars
 // leaking into the agenda/grid; the mobile reachability suite (epic #295)
@@ -24,7 +25,6 @@ const timingMock = vi.hoisted(() => ({
 const storeMock = vi.hoisted(() => ({
   calendarState: {
     events: [] as CalendarEvent[],
-    isLoading: false,
     currentView: 'week' as const,
     currentDate: new Date('2026-06-01T12:00:00Z'),
     navigateForward: vi.fn(),
@@ -109,7 +109,19 @@ vi.mock('@/app/components/MobileCollectionSheet', () => ({
   MobileCollectionSheet: ({ open }: { open: boolean }) => (open ? <div data-testid="collection-sheet" /> : null),
 }))
 
+/** Cold restore: the real store's initial state, no account, every domain unknown. */
+function coldRestore() {
+  useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+}
+
+function calendarDomain(status: 'loaded' | 'failed') {
+  useEtebaseStore.setState((state) => ({ domainLoadState: { ...state.domainLoadState, calendar: status } }))
+}
+
+const hasSkeleton = () => document.querySelector('.skeleton-shimmer') !== null
+
 function resetCalendarMocks() {
+  coldRestore()
   storeMock.calendarState.currentView = 'week'
   storeMock.calendarState.currentDate = new Date('2026-06-01T12:00:00Z')
   storeMock.calendarState.selectedEventId = null
@@ -131,7 +143,7 @@ function resetCalendarMocks() {
 describe('CalendarPage calendar visibility', () => {
   beforeEach(() => {
     resetCalendarMocks()
-    storeMock.calendarState.isLoading = false
+    calendarDomain('loaded')
     storeMock.calendarState.events = [
       { id: 'visible-event', calendarId: 'visible-cal', title: 'Visible event' },
       { id: 'hidden-event', calendarId: 'hidden-cal', title: 'Hidden event' },
@@ -196,6 +208,40 @@ describe('CalendarPage calendar visibility', () => {
   })
 })
 
+describe('CalendarPage loading skeleton (#747)', () => {
+  beforeEach(() => {
+    resetCalendarMocks()
+    storeMock.calendarState.events = []
+    storeMock.calendarListState.calendars = [{ id: 'cal', name: 'Cal', color: '#10b981', visible: true }]
+  })
+
+  it('shows the skeleton during a cold restore with no account and no events', () => {
+    expect(useEtebaseStore.getState().account).toBeNull()
+    renderWithIntl(<CalendarPage />)
+    expect(hasSkeleton()).toBe(true)
+    expect(screen.queryByTestId('desktop-grid')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['the calendar domain loaded', () => calendarDomain('loaded')],
+    ['the calendar domain failed', () => calendarDomain('failed')],
+    ['initialization ended with the domain still unknown', () => useEtebaseStore.setState({ isInitialized: true })],
+    ['the session restore is blocked', () => useEtebaseStore.setState({ restoreBlocked: true })],
+  ])('hides the skeleton once %s', (_label, settle) => {
+    settle()
+    renderWithIntl(<CalendarPage />)
+    expect(hasSkeleton()).toBe(false)
+    expect(screen.getByTestId('desktop-grid')).toBeInTheDocument()
+  })
+
+  it('paints cached events instead of the skeleton while the domain is still unknown', () => {
+    storeMock.calendarState.events = [{ id: 'cached', calendarId: 'cal', title: 'Cached event' }]
+    renderWithIntl(<CalendarPage />)
+    expect(hasSkeleton()).toBe(false)
+    expect(within(screen.getByTestId('desktop-grid')).getByText('Cached event')).toBeInTheDocument()
+  })
+})
+
 describe('CalendarPage first content paint timing', () => {
   beforeEach(() => {
     resetCalendarMocks()
@@ -203,16 +249,16 @@ describe('CalendarPage first content paint timing', () => {
     storeMock.calendarListState.calendars = []
   })
 
-  it('does not log while the calendar is still loading', () => {
-    storeMock.calendarState.isLoading = true
-
+  it('does not log while the calendar is still loading', async () => {
     renderWithIntl(<CalendarPage />)
 
+    expect(hasSkeleton()).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 0))
     expect(timingMock.logCalendarPaintTiming).not.toHaveBeenCalled()
   })
 
   it('logs first non-loading content once with visible aggregate counts only', async () => {
-    storeMock.calendarState.isLoading = false
+    calendarDomain('loaded')
     storeMock.calendarState.events = [
       { id: 'visible-event', calendarId: 'visible-cal', title: 'Visible event' },
       { id: 'hidden-event', calendarId: 'hidden-cal', title: 'Hidden event' },
@@ -239,7 +285,7 @@ describe('CalendarPage first content paint timing', () => {
   })
 
   it('logs valid empty calendar content with hasEvents false', async () => {
-    storeMock.calendarState.isLoading = false
+    calendarDomain('loaded')
 
     renderWithIntl(<CalendarPage />)
 
@@ -253,7 +299,7 @@ describe('CalendarPage first content paint timing', () => {
   })
 
   it('cancels the pending paint callback on unmount', async () => {
-    storeMock.calendarState.isLoading = false
+    calendarDomain('loaded')
     let queued: FrameRequestCallback | null = null
     const cancel = vi.fn()
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -274,7 +320,6 @@ describe('CalendarPage first content paint timing', () => {
 describe('CalendarPage mobile reachability', () => {
   beforeEach(() => {
     resetCalendarMocks()
-    storeMock.calendarState.isLoading = true
     storeMock.calendarState.events = []
     storeMock.calendarListState.calendars = []
   })
@@ -374,7 +419,7 @@ describe('CalendarPage mobile reachability', () => {
   })
 
   it('passes upcoming mode into the mobile agenda by default', () => {
-    storeMock.calendarState.isLoading = false
+    calendarDomain('loaded')
 
     renderWithIntl(<CalendarPage />)
 

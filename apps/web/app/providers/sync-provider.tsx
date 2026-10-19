@@ -135,7 +135,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         // before slower tasks/contacts finish. This replaces the old
         // post-initialize all-domain load, so no domain is replaced twice.
         const etebaseStartedAt = nowMs()
-        useNoteStore.setState({ isLoading: true })
         await etebaseInitialize({
           onCacheHydrate: async () => {
             const cacheStartedAt = nowMs()
@@ -144,17 +143,10 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
           onDomainLoaded: async (event) => {
             await loadDomainIntoStore(event.type)
             assertCurrentAccountEpoch(accountEpoch)
-            if (event.type === 'notes') useNoteStore.setState({ isLoading: false })
             updatePartialLoadFlag()
           },
         })
         assertCurrentAccountEpoch(accountEpoch)
-        // Every visible domain has reached a terminal state by now. Offline,
-        // collection setup fails silently and the notes callback above never
-        // fires, so clear the provider-owned flag here or the list is stuck on
-        // its skeleton. Runs after the epoch assert, so a switched account
-        // keeps its own loading state.
-        useNoteStore.setState({ isLoading: false })
         safeLogSyncTiming('etebase-initialize', etebaseStartedAt)
 
         // Wire SyncEngine change events
@@ -203,7 +195,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
         if (err instanceof AccountBoundaryChangedError) return
         safeLogSyncTiming('initial-sync-failed', initStartedAt, { errorCategory: safeTimingErrorCategory('unknown') })
         reportSyncError('init', err)
-        useNoteStore.setState({ isLoading: false })
         setSyncStatus('error')
         setError('Sync initialization failed')
       }
