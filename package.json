@@ -11,7 +11,7 @@
     "build": "turbo build",
     "build:docs": "turbo build --filter=@silentsuite/docs",
     "lint": "turbo lint",
-    "test": "turbo test",
+    "test": "node --test scripts/selfhost-welcome.test.mjs && turbo test",
     "type-check": "turbo type-check",
     "i18n:check": "pnpm --filter @silentsuite/web i18n:check",
     "i18n:report": "pnpm --filter @silentsuite/web i18n:report",
