@@ -1,0 +1,56 @@
+# Commit metadata: rejects automated attribution identities, trailers and signatures
+# in EVERY commit a pull request newly introduces, i.e. PR head --not the current
+# target branch tip (merges and imported ancestors included, no truncation).
+# Plain pull_request (never pull_request_target): read-only token, no secrets.
+# Full history is fetched and credentials are not persisted. No path filters.
+# This check is not required for merging until branch protection lists it.
+# Local hooks and procedure: scripts/commit-metadata/README.md.
+name: Commit metadata
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  commit-metadata:
+    name: Commit metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate exact PR head and target branch
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          echo "$PR_HEAD_SHA" | grep -Eqx '[0-9a-f]{40}' || {
+            echo "PR head SHA is not an exact 40-hex value" >&2; exit 1; }
+          test "$PR_BASE_REF" = main
+
+      - name: Checkout full history without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Check every newly introduced commit (fail closed)
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          git cat-file -e "$PR_HEAD_SHA^{commit}"
+          node scripts/commit-metadata/guard.mjs range --base "refs/remotes/origin/$PR_BASE_REF" --head "$PR_HEAD_SHA"
