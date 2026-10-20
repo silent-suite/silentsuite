@@ -221,6 +221,24 @@ test('with dev and main bases, pre-push checks against the one declared or desti
   assert.equal(head(clone, 'refs/remotes/origin/feature-c'), '')
   ok(clone, ['config', 'branch.feature-c.commitMetadataBase', 'dev'])
   ok(clone, ['push', '-q', 'origin', 'feature-c'])
+  // Empty declarations are counted and invalid, alone or next to a valid value.
+  ok(clone, ['checkout', '-q', '-b', 'decl', 'origin/dev'])
+  assert.equal(commit(clone, 'feat: clean D').status, 0)
+  const key = 'branch.decl.commitMetadataBase'
+  const declare = values => {
+    run(clone, ['config', '--unset-all', key])
+    values.forEach((value, i) => ok(clone, ['config', ...(i ? ['--add'] : []), key, value]))
+    assert.equal(run(clone, ['config', '--get-all', '-z', key]).stdout.split('\0').length - 1, values.length)
+  }
+  for (const values of [[''], ['dev', ''], ['', 'dev'], ['', '']]) {
+    declare(values)
+    const result = run(clone, ['push', 'origin', 'decl'])
+    assert.notEqual(result.status, 0, JSON.stringify(values))
+    assert.match(result.stderr, /fail closed\): refs\/heads\/decl: invalid commitMetadataBase declaration/, JSON.stringify(values))
+    assert.equal(head(clone, 'refs/remotes/origin/decl'), '')
+  }
+  declare(['dev'])
+  ok(clone, ['push', '-q', 'origin', 'decl'])
   // A: a promotion toward main is checked against main, so dev cannot hide bad.
   ok(clone, ['checkout', '-q', '-b', 'promotion', 'origin/dev'])
   assert.equal(commit(clone, 'chore: clean promotion tip').status, 0)

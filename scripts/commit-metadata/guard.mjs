@@ -146,9 +146,12 @@ function targetBase(bases, localRef, remoteRef) {
   const targets = new Set(bases.filter(base => remoteRef === `refs/heads/${base}`))
   const branch = localRef.startsWith('refs/heads/') ? localRef.slice('refs/heads/'.length) : ''
   if (branch) {
-    const declared = spawnSync('git', ['config', '--get-all', `branch.${branch}.commitMetadataBase`], { encoding: 'utf8' })
-    if (declared.status !== 0 && declared.status !== 1) throw new Error(`${localRef}: unreadable commitMetadataBase declaration`)
-    const values = declared.status === 0 ? declared.stdout.split('\n').filter(Boolean) : []
+    // -z: every value, including an empty one, ends with NUL; only that terminator is dropped.
+    const declared = spawnSync('git', ['config', '--get-all', '-z', `branch.${branch}.commitMetadataBase`], { encoding: 'utf8' })
+    if ((declared.status !== 0 && declared.status !== 1) || (declared.status === 0 && !declared.stdout.endsWith('\0'))) {
+      throw new Error(`${localRef}: unreadable commitMetadataBase declaration`)
+    }
+    const values = declared.status === 0 ? declared.stdout.slice(0, -1).split('\0') : []
     if (values.length > 1 || values.some(value => !bases.includes(value))) throw new Error(`${localRef}: invalid commitMetadataBase declaration`)
     values.forEach(value => targets.add(value))
   }
