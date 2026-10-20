@@ -1,0 +1,1 @@
+- No Android app functionality changes in this release.
