@@ -5,7 +5,7 @@
 //
 //   guard.mjs commit-msg <message-file>             (local commit-msg hook)
 //   guard.mjs pre-push --base <branch>... -- <remote> <url>   (local pre-push hook; refs on stdin)
-//   guard.mjs range --base <rev>... --head <rev>    (CI: every commit in head --not bases)
+//   guard.mjs range --base <rev>... --head <rev>    (CI: every commit in head --not each base)
 //
 // Exit 0 clean, 1 violations, 2 usage/unresolvable input (fail closed). Output names
 // commit ids and reasons only, never message content.
@@ -37,7 +37,11 @@ const AUTOMATED_EMAIL = new RegExp(String.raw`^(?:(?:no-?reply|claude|codex)[^@]
 // Identity trailers whose value is checked; the session-link trailer is always rejected.
 const IDENTITY_TRAILER = /^\s*(?:[*-]\s+)?(co-authored-by|signed-off-by|assisted-by|generated-by|helped-by)\s*:\s*(.*)$/i
 const SESSION_TRAILER = /^\s*(?:[*-]\s+)?claude-session\s*:/i
-const PROVENANCE = new RegExp(String.raw`^[^\p{L}\p{N}]*generated\s+(?:with|by|using)\s+\[?\s*${TOOL}`, 'iu')
+// The whole line must be the signature ("Generated with <product>", optionally as a markdown
+// link or with a URL), so human attribution and prose about such footers pass. Bare first
+// names (Claude, Devin) are not product names here.
+const PRODUCT = String.raw`(?:claude (?:code|(?:opus|sonnet|haiku|fable)(?: [\d.]+)?)|anthropic(?: claude)?|(?:openai )?codex(?: cli)?|chatgpt|openai|gpt-?[\d.]+[a-z]*|(?:github )?copilot|gemini(?: code assist| cli)?|cursor(?: agent)?|devin ai|aider)`
+const PROVENANCE = new RegExp(String.raw`^[^\p{L}\p{N}]*generated (?:with|by|using) (?:\[${PRODUCT}\]\([^)\s]*\)|${PRODUCT}(?: \(?https?://[^\s)]*\)?)?)[\s.!]*$`, 'iu')
 
 const normalize = value => String(value).normalize('NFKC').replace(/\s+/g, ' ').trim()
 
@@ -63,7 +67,7 @@ export function inspectCommit({ author, committer, message }) {
       reasons.push(`automated ${trailer[1].toLowerCase()} trailer (${at})`)
     } else if (SESSION_TRAILER.test(line)) {
       reasons.push(`automated session link trailer (${at})`)
-    } else if (PROVENANCE.test(line)) {
+    } else if (PROVENANCE.test(normalize(line))) {
       reasons.push(`automated provenance signature (${at})`)
     }
   })
@@ -97,12 +101,15 @@ function parseRawCommit(raw) {
   return commit
 }
 
-// Every commit reachable from head and not from any base (merges and their imported
-// ancestors included; no truncation). Unresolvable refs throw (fail closed).
+// Every commit reachable from head and not from EACH base, checked per base and combined
+// (merges and their imported ancestors included; no truncation). Bases never shield each
+// other: a commit on dev but not main is still checked when main is also a base.
+// Unresolvable refs throw (fail closed).
 export function checkRange(bases, head) {
   if (!bases.length) throw new Error('at least one base is required')
-  const exclusions = bases.map(base => `^${resolveCommit(base)}`)
-  const list = git(['rev-list', resolveCommit(head), ...exclusions]).split('\n').filter(Boolean)
+  const tip = resolveCommit(head)
+  const resolved = bases.map(resolveCommit)
+  const list = [...new Set(resolved.flatMap(base => git(['rev-list', tip, `^${base}`]).split('\n').filter(Boolean)))]
   if (!list.length) return []
   const batch = git(['cat-file', '--batch'], { input: `${list.join('\n')}\n`, raw: true })
   const violations = []

@@ -27,15 +27,23 @@ node scripts/commit-metadata/install-hooks.mjs --repo <private checkout> --base 
 
 The installer copies a snapshot of `guard.mjs` to `<common git dir>/hooks/` next to
 the two hook wrappers, so hooks do not depend on any worktree's files. It refuses to
-run when `core.hooksPath` is set or when a differing hook file already exists, never
-changes git config, and re-running with identical files is a no-op. After the guard
-changes, review and re-install (remove the three installed files first).
+run when a differing hook file already exists, or when any linked worktree sets
+`core.hooksPath` (including per-worktree config), resolves another hooks directory or
+cannot be inspected (`git worktree prune` stale entries). It never changes git config.
+Re-running with identical files only restores their executable mode. After the guard
+changes, review and re-install (remove the three installed files first). Linked
+worktrees or hook settings added later are not re-checked; re-run the installer.
 
-`pre-push` checks every commit in the pushed tip that is not reachable from
-`refs/remotes/<remote>/<base>` for each `--base`, independent of the previous remote
-branch head, so already-pushed violations, new branches and ancestors imported by
-merges are covered. Deletions are skipped. Missing remote-tracking bases or pushes to
-an unnamed URL fail closed (`git fetch` first). History is never rewritten.
+`pre-push` checks, for EACH `--base`, every commit in the pushed tip that is not
+reachable from `refs/remotes/<remote>/<base>`, independent of the previous remote branch
+head, so already-pushed violations, new branches and ancestors imported by merges are
+covered. Bases never shield each other. In the private repository, a commit that is on
+`origin/dev` but not yet on `origin/main` is therefore checked on every push. If such a
+commit carried automated attribution, all pushes containing it, ordinary dev-based
+feature branches included, would be rejected; the next dev-to-main promotion would also
+fail CI, so it needs explicit owner-directed remediation. Deletions are skipped. Missing
+remote-tracking bases or pushes to an unnamed URL fail closed (`git fetch` first).
+History is never rewritten.
 
 `git commit --no-verify` / `git push --no-verify` bypass local hooks; the CI check is
 the shared backstop.
