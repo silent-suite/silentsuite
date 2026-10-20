@@ -199,7 +199,7 @@ test('already-pushed violations, new branches with imported ancestors, and delet
   assert.equal(head(work, 'refs/remotes/origin/legacy'), '')
 })
 
-test('dev and main bases each exclude only their own history, so dev-only violations cannot reach main', () => {
+test('with dev and main bases, pre-push checks against the one declared or destination target', () => {
   const promoRemote = join(root, 'promo-remote.git')
   const clone = join(root, 'promo-work')
   ok(root, ['init', '-q', '--bare', '-b', 'main', promoRemote])
@@ -212,16 +212,41 @@ test('dev and main bases each exclude only their own history, so dev-only violat
   const bad = commit(clone, `feat: dev-only\n\n${BOT_TRAILER}\n`).sha
   ok(clone, ['push', '-q', 'origin', 'dev'])
   assert.equal(install(clone, ['dev', 'main']).written.length, 3)
+  // B: a clean feature for dev is not rejected because dev already contains bad.
+  ok(clone, ['checkout', '-q', '-b', 'feature-c', 'origin/dev'])
+  assert.equal(commit(clone, 'feat: clean C').status, 0)
+  const undeclared = run(clone, ['push', 'origin', 'feature-c'])
+  assert.notEqual(undeclared.status, 0, 'an undeclared target must fail closed, not silently use dev')
+  assert.match(undeclared.stderr, /git config branch\.feature-c\.commitMetadataBase <dev\|main>/)
+  assert.equal(head(clone, 'refs/remotes/origin/feature-c'), '')
+  ok(clone, ['config', 'branch.feature-c.commitMetadataBase', 'dev'])
+  ok(clone, ['push', '-q', 'origin', 'feature-c'])
+  // A: a promotion toward main is checked against main, so dev cannot hide bad.
   ok(clone, ['checkout', '-q', '-b', 'promotion', 'origin/dev'])
   assert.equal(commit(clone, 'chore: clean promotion tip').status, 0)
+  ok(clone, ['config', 'branch.promotion.commitMetadataBase', 'main'])
   const push = run(clone, ['push', 'origin', 'promotion'])
   assert.notEqual(push.status, 0)
   assert.match(push.stderr, new RegExp(`${bad}: automated co-authored-by trailer`))
   assert.equal(head(clone, 'refs/remotes/origin/promotion'), '')
-  assert.equal(guardRun(clone, ['range', '--base', 'origin/dev', '--base', 'origin/main', '--head', 'promotion']).status, 1)
+  // Exact protected destinations select themselves; conflicts and invalid targets fail closed.
+  const toMain = run(clone, ['push', 'origin', 'feature-c:refs/heads/main'])
+  assert.notEqual(toMain.status, 0)
+  assert.match(toMain.stderr, /conflicting/)
+  const direct = run(clone, ['push', 'origin', 'HEAD:refs/heads/main'])
+  assert.notEqual(direct.status, 0)
+  assert.match(direct.stderr, new RegExp(`${bad}: automated co-authored-by trailer`))
+  ok(clone, ['config', 'branch.promotion.commitMetadataBase', 'staging'])
+  assert.match(run(clone, ['push', 'origin', 'promotion']).stderr, /fail closed/)
+  ok(clone, ['config', '--add', 'branch.promotion.commitMetadataBase', 'main'])
+  assert.match(run(clone, ['push', 'origin', 'promotion']).stderr, /fail closed/)
+  assert.equal(head(clone, 'refs/remotes/origin/promotion'), '')
+  // CI range stays single-target.
   assert.equal(guardRun(clone, ['range', '--base', 'origin/dev', '--head', 'promotion']).status, 0)
+  assert.equal(guardRun(clone, ['range', '--base', 'origin/main', '--head', 'promotion']).status, 1)
   ok(clone, ['checkout', '-q', '-b', 'from-main', 'origin/main'])
   assert.equal(commit(clone, 'feat: clean').status, 0)
+  ok(clone, ['config', 'branch.from-main.commitMetadataBase', 'main'])
   ok(clone, ['push', '-q', 'origin', 'from-main'])
 })
 
@@ -232,6 +257,8 @@ test('missing or unresolvable refs and unnamed remotes fail closed', () => {
   const missingBase = guardRun(wt, ['pre-push', '--base', 'no-such-branch', '--', 'origin', remote], line)
   assert.equal(missingBase.status, 2)
   assert.match(missingBase.stderr, /fail closed/)
+  const toMissingDev = `refs/heads/feature ${tip} refs/heads/dev ${zero}\n`
+  assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--base', 'dev', '--', 'origin', remote], toMissingDev).status, 2)
   assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--base', 'dev', '--', 'origin', remote], line).status, 2)
   assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--', 'origin', remote], line).status, 0)
   assert.equal(guardRun(wt, ['pre-push', '--base', 'main', '--', remote, remote], line).status, 2)

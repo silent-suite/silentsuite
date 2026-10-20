@@ -4,7 +4,8 @@
 // human co-authors are preserved. Dependency-free; identical in both repositories.
 //
 //   guard.mjs commit-msg <message-file>             (local commit-msg hook)
-//   guard.mjs pre-push --base <branch>... -- <remote> <url>   (local pre-push hook; refs on stdin)
+//   guard.mjs pre-push --base <branch>... -- <remote> <url>   (local pre-push hook; refs on stdin;
+//     with several bases each pushed ref needs one target, see targetBase)
 //   guard.mjs range --base <rev>... --head <rev>    (CI: every commit in head --not each base)
 //
 // Exit 0 clean, 1 violations, 2 usage/unresolvable input (fail closed). Output names
@@ -136,6 +137,26 @@ function parseBases(args) {
   return { bases, rest: args.slice(i + 1) }
 }
 
+// One target base per pushed ref, never guessed: the only configured base; otherwise an
+// exact protected destination (refs/heads/<base>) and/or the local branch declaration
+// `git config branch.<name>.commitMetadataBase <base>`. Absent, invalid or conflicting
+// targets fail closed.
+function targetBase(bases, localRef, remoteRef) {
+  if (bases.length === 1) return bases[0]
+  const targets = new Set(bases.filter(base => remoteRef === `refs/heads/${base}`))
+  const branch = localRef.startsWith('refs/heads/') ? localRef.slice('refs/heads/'.length) : ''
+  if (branch) {
+    const declared = spawnSync('git', ['config', '--get-all', `branch.${branch}.commitMetadataBase`], { encoding: 'utf8' })
+    if (declared.status !== 0 && declared.status !== 1) throw new Error(`${localRef}: unreadable commitMetadataBase declaration`)
+    const values = declared.status === 0 ? declared.stdout.split('\n').filter(Boolean) : []
+    if (values.length > 1 || values.some(value => !bases.includes(value))) throw new Error(`${localRef}: invalid commitMetadataBase declaration`)
+    values.forEach(value => targets.add(value))
+  }
+  if (targets.size > 1) throw new Error(`${localRef}: conflicting target for ${remoteRef}`)
+  if (!targets.size) throw new Error(`${localRef}: undeclared PR target; run: git config branch.${branch || '<branch>'}.commitMetadataBase <${bases.join('|')}>`)
+  return [...targets][0]
+}
+
 function report(violations, hint) {
   for (const { commit, reason } of violations) console.error(`commit-metadata: ${commit}: ${reason}`)
   if (violations.length) console.error(`commit-metadata: rejected ${violations.length} violation(s). ${hint}`)
@@ -158,10 +179,10 @@ export function main(argv, stdin = () => readFileSync(0, 'utf8')) {
       if (!remote || !/^[A-Za-z0-9._-]+$/.test(remote) || remote.startsWith('-')) throw new Error('pre-push requires a named remote')
       const violations = []
       for (const line of stdin().split('\n').filter(Boolean)) {
-        const [localRef, localSha] = line.split(' ')
-        if (!localRef || !/^[0-9a-f]{40,64}$/.test(localSha ?? '')) throw new Error('malformed pre-push input')
+        const [localRef, localSha, remoteRef] = line.split(' ')
+        if (!localRef || !remoteRef || !/^[0-9a-f]{40,64}$/.test(localSha ?? '')) throw new Error('malformed pre-push input')
         if (/^0+$/.test(localSha)) continue // deletion: nothing new is published
-        violations.push(...checkRange(bases.map(base => `refs/remotes/${remote}/${base}`), localSha))
+        violations.push(...checkRange([`refs/remotes/${remote}/${targetBase(bases, localRef, remoteRef)}`], localSha))
       }
       const unique = [...new Map(violations.map(v => [`${v.commit} ${v.reason}`, v])).values()]
       return report(unique, 'History is not rewritten automatically; fix the branch before pushing.')

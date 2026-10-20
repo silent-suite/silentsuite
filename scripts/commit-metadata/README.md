@@ -34,16 +34,23 @@ Re-running with identical files only restores their executable mode. After the g
 changes, review and re-install (remove the three installed files first). Linked
 worktrees or hook settings added later are not re-checked; re-run the installer.
 
-`pre-push` checks, for EACH `--base`, every commit in the pushed tip that is not
-reachable from `refs/remotes/<remote>/<base>`, independent of the previous remote branch
-head, so already-pushed violations, new branches and ancestors imported by merges are
-covered. Bases never shield each other. In the private repository, a commit that is on
-`origin/dev` but not yet on `origin/main` is therefore checked on every push. If such a
-commit carried automated attribution, all pushes containing it, ordinary dev-based
-feature branches included, would be rejected; the next dev-to-main promotion would also
-fail CI, so it needs explicit owner-directed remediation. Deletions are skipped. Missing
-remote-tracking bases or pushes to an unnamed URL fail closed (`git fetch` first).
-History is never rewritten.
+`pre-push` checks every commit in the pushed tip that is not reachable from
+`refs/remotes/<remote>/<target>`, independent of the previous remote branch head, so
+already-pushed violations, new branches and ancestors imported by merges are covered,
+while violations already in the target are not. With one `--base` (public) the target is
+automatic. With several (private `dev` and `main`) the target is never guessed: a push
+to exactly `refs/heads/dev` or `refs/heads/main` selects itself; any other branch must
+declare the base its pull request will target, once per local branch:
+
+```sh
+git config branch.<branch>.commitMetadataBase dev    # feature branch for a PR into dev
+git config branch.<branch>.commitMetadataBase main   # dev-to-main promotion branch
+```
+
+A missing, unknown, repeated or conflicting declaration (for example declared `dev`
+but pushed to `refs/heads/main`) fails closed. The declaration is a local claim; the CI
+check uses the actual PR target. Deletions are skipped. Missing remote-tracking bases
+or pushes to an unnamed URL fail closed (`git fetch` first). History is never rewritten.
 
 `git commit --no-verify` / `git push --no-verify` bypass local hooks; the CI check is
 the shared backstop.
