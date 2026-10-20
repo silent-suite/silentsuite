@@ -149,7 +149,10 @@ internal class PendingNotesStore private constructor(
 
     fun read(noteUid: String): Read = locked { readEntry(noteUid) }
 
-    /** Lists every entry. A committed file that cannot be read is reported in [Scan.unreadable], never deleted. */
+    /**
+     * Lists every entry. A committed file that cannot be read is reported in [Scan.unreadable], never deleted.
+     * A listing that fails throws IOException: read as an empty store, it would hide every waiting change.
+     */
     fun scan(): Scan = locked { scanOf(files(NOTE)) }
 
     private fun scanOf(noteFiles: List<File>): Scan {
@@ -173,7 +176,7 @@ internal class PendingNotesStore private constructor(
      * header was written counts by its header here, and is found by whatever reads the whole entry (the
      * notebook's own screen, the viewer, a push). A kept entry that fails its full read is reported with
      * the notebook its header names. [keep] runs under the store lock and must not take the Etebase
-     * cache monitor or the cache's write fence.
+     * cache monitor or the cache's write fence. A listing that fails throws IOException, as in [scan].
      */
     fun snapshot(keep: (EntryHeader) -> Boolean): Snapshot = locked {
         val headers = mutableListOf<EntryHeader>()
@@ -197,14 +200,15 @@ internal class PendingNotesStore private constructor(
             }
         }
         unreadable += currentRecoveryProblems(headers.mapTo(HashSet()) { it.noteUid })
-        Snapshot(headers.sortedBy { it.noteUid }, kept, unreadable.sortedBy { it.file }, currentSequence())
+        Snapshot(headers.sortedBy { it.noteUid }, kept, unreadable.sortedBy { it.file },
+            currentSequence(strict = false))
     }
 
     /**
      * One note's entry with the store-wide sequence at the same moment. A load carries the sequence, so
      * an editor can drop any load older than its last save whether or not an entry existed.
      */
-    fun observe(noteUid: String): Observed = locked { Observed(readEntry(noteUid), currentSequence()) }
+    fun observe(noteUid: String): Observed = locked { Observed(readEntry(noteUid), currentSequence(strict = false)) }
 
     // ---- the one primitive every change goes through ----
 
@@ -616,17 +620,29 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * Removes notebook copies no entry references. Skipped entirely while anything is unreadable,
-     * since its notebook is unknown and its copy may be the only way to decrypt it. A listing that
-     * fails throws and removes nothing: read as an empty store, it would leave every copy unreferenced.
+     * Removes notebook copies no entry references, decided from one listing: a listing that reads as
+     * empty then has no copy to remove either. Skipped entirely while anything is unreadable, since its
+     * notebook is unknown and its copy may be the only way to decrypt it, and while the listing holds a
+     * first write that is not committed yet ("<uid>.note.new"), which may be the only copy of a note
+     * whose notebook no committed entry names. A listing that fails throws, as every listing of the store
+     * does, and nothing is removed.
+     *
+     * It runs no recovery: while one is owed, it lists and removes nothing and returns at once. The runner
+     * only logs a prune that fails, so a recovery that failed here would be logged and nothing more. The
+     * next other call runs it instead, at the latest the snapshot of the next run, where a failure counts.
      */
-    fun pruneNotebooks(): List<String> = locked {
-        val scan = scanOf(listedFiles(NOTE))
-        if (scan.unreadable.isNotEmpty()) return@locked emptyList()
-        val referenced = scan.entries.map { it.notebookUid }.toSet()
-        listedFiles(NOTEBOOK).map { it.name.removeSuffix(NOTEBOOK) }
-            .filter { it !in referenced }
-            .onEach { remove(notebookFile(it)) }
+    fun pruneNotebooks(): List<String> = synchronized(lock) {
+        check(!closed) { "the pending store was cleared" }
+        if (!recovered) emptyList() else locked {
+            val listed = listing()
+            if (listed.any { it.name.endsWith(NOTE + NEW) }) return@locked emptyList()
+            val scan = scanOf(withSuffix(listed, NOTE))
+            if (scan.unreadable.isNotEmpty()) return@locked emptyList()
+            val referenced = scan.entries.map { it.notebookUid }.toSet()
+            withSuffix(listed, NOTEBOOK).filter { it.isFile }.map { it.name.removeSuffix(NOTEBOOK) }
+                .filter { it !in referenced }
+                .onEach { remove(notebookFile(it)) }
+        }
     }
 
     /**
@@ -646,11 +662,18 @@ internal class PendingNotesStore private constructor(
     // ---- internals ----
 
     /**
-     * Every public operation: refuse after [clearAll], and finish any interrupted work first. Recovery
-     * runs again before the next operation for as long as anything in it did not work out, including a
-     * write or removal inside recovery itself.
+     * Every public operation except [clearAll] and [pruneNotebooks]: refuse after [clearAll], and finish
+     * any interrupted work first. Recovery runs again before the next operation for as long as anything in
+     * it did not work out, including a write or removal inside recovery itself, or a listing it works
+     * from. A recovery whose listing fails throws, so the operation fails with it and the recovery is not
+     * taken for done: a first write it did not see may be the only copy of a note's text, and an original
+     * it did not see may still wait for its conflict copy.
      *
-     * It runs once per operation, at its start. An operation that calls another one under the lock (a
+     * [pruneNotebooks] refuses after [clearAll] as well, but runs no recovery: while one is owed it does
+     * nothing, and it comes here only when none is, so no recovery runs inside a prune, where a failure
+     * would show only as a log line.
+     *
+     * Recovery runs once per operation, at its start. An operation that calls another one under the lock (a
      * save through a handle, anything that goes through [update]) does not recover again in between:
      * recovery can remove an original and move editors, and what the outer call read or decided before
      * the inner one must still hold when the inner one writes.
@@ -690,20 +713,107 @@ internal class PendingNotesStore private constructor(
         writeAtomically(notebookFile(notebookUid), PendingCodec.encodeNotebook(notebookUid, blob))
     }
 
-    /** The next value of the store-wide counter, persisted before it is handed out. */
+    /**
+     * The next value of the store-wide counter, persisted before it is handed out. A counter that does not
+     * read is rebuilt strictly ([highestVersion]): while a version on disk cannot be read, or a file there
+     * may hold one this build cannot read (a counter written in full in a layout it does not know, a file
+     * of a kind it does not know), it throws, and nothing is written, the counter included. A version that
+     * is not above all of them could be one an entry already holds, and a drop or a rebase that checks the
+     * version would then take the newer text for the older.
+     */
     private fun nextVersion(): Long {
-        val next = currentSequence() + 1
+        val next = currentSequence(strict = true) + 1
         writeAtomically(File(dir, SEQUENCE), PendingCodec.encodeSequence(next))
         return next
     }
 
-    /** The last version handed out. A lost or damaged counter restarts above every version still on disk. */
-    private fun currentSequence(): Long {
+    /**
+     * The last version handed out. A counter that is lost, cut short or fails its checksum is rebuilt as
+     * the highest version still on disk ([highestVersion]) and is not written back here; [nextVersion]
+     * hands out the one above it. A counter written in full in a layout this build does not know (a newer
+     * build's after a downgrade, or an older one this build no longer reads) comes from a build that may
+     * have handed out versions above every file here, so nothing is rebuilt over it: with [strict], which
+     * is for [nextVersion], it throws, as a version on disk that cannot be read does. A counter file that
+     * cannot be read at all throws. The readers ([snapshot], [observe]) take the highest version they can
+     * read instead: the value is only compared, never written, and a push needs no new version, so one
+     * file that cannot be read does not stop a run from pushing the others.
+     *
+     * The counter shares [PendingCodec.RECORD_FORMAT_VERSION] with landed records and notebook copies, and
+     * the codec reads no other format version, an earlier one included. A build that raises it must keep
+     * decoding every earlier counter layout: otherwise, after the upgrade, every write that needs a new
+     * version fails here, since [versionOf] takes an intact counter it cannot decode for one that may hold
+     * versions it cannot read.
+     */
+    private fun currentSequence(strict: Boolean): Long {
         val file = File(dir, SEQUENCE)
         val stored = if (file.exists()) (PendingCodec.decodeSequence(file.readBytes()) as? PendingCodec.Decoded.Ok)?.value else null
-        return stored ?: (files(NOTE).mapNotNull { (decodeFile(it) as? Read.Present)?.entry?.version } +
-            files(LANDED).mapNotNull { (PendingCodec.decodeLanded(it.readBytes()) as? PendingCodec.Decoded.Ok)?.value?.version }).maxOrNull() ?: 0L
+        return stored ?: highestVersion(strict)
     }
+
+    /**
+     * The highest version on disk, from one [listing]: each entry's, read from its header alone, which
+     * checks its own CRC and reads no blob, each landed record's, the counter's when the listing shows
+     * one that reads, and those of intact writes not committed yet ("<uid>.note.new", "<uid>.landed.new",
+     * "sequence.new"), since recovery may still commit one. A write that was cut short holds none: it was
+     * never reported saved, and recovery drops it. Neither does a counter that is cut short or fails its
+     * checksum, which is what is rebuilt here, nor a notebook copy. A listing that fails throws. With
+     * [strict], so does a version that cannot be read (a damaged header, a newer format after a
+     * downgrade, a landed record that does not decode, a counter written in full in a layout this build
+     * does not know), and so does a file of a kind this build does not know, which may hold one;
+     * otherwise that file is passed over.
+     */
+    private fun highestVersion(strict: Boolean): Long {
+        var highest = 0L
+        for (file in listing()) {
+            val version = try {
+                versionOf(file)
+            } catch (e: IOException) {
+                if (strict) throw e
+                null
+            }
+            if (version != null && version > highest) highest = version
+        }
+        return highest
+    }
+
+    /**
+     * The version [file] holds, or null for a file that holds none (a notebook copy, a write or a counter
+     * that was cut short or fails its checksum). Throws when it holds one that cannot be read, and for a
+     * file of a kind this build does not know, which may hold one.
+     */
+    private fun versionOf(file: File): Long? {
+        val name = file.name
+        val version = when {
+            name.endsWith(NOTE) -> readHeader(file)?.version
+            name.endsWith(LANDED) -> landedVersion(file.readBytes())
+            name.endsWith(NOTEBOOK) || name.endsWith(NOTEBOOK + NEW) -> return null
+            name.endsWith(NOTE + NEW) || name.endsWith(LANDED + NEW) || name == SEQUENCE || name == SEQUENCE + NEW -> {
+                val bytes = file.readBytes()
+                if (!PendingCodec.isIntact(bytes)) return null
+                when {
+                    name.endsWith(LANDED + NEW) -> landedVersion(bytes)
+                    name.endsWith(NOTE + NEW) -> entryVersion(bytes)
+                    else -> (PendingCodec.decodeSequence(bytes) as? PendingCodec.Decoded.Ok)?.value
+                }
+            }
+            else -> throw IOException("$name is of a kind this build does not know")
+        }
+        return version ?: throw IOException("the version in $name cannot be read")
+    }
+
+    private fun entryVersion(bytes: ByteArray): Long? =
+        (PendingCodec.decodeEntryHeader(bytes) as? PendingCodec.Decoded.Ok)?.value?.version
+
+    private fun landedVersion(bytes: ByteArray): Long? =
+        (PendingCodec.decodeLanded(bytes) as? PendingCodec.Decoded.Ok)?.value?.version
+
+    /**
+     * A write this build makes, which recovery may finish or drop: the "<name>.new" of an entry, a landed record, a
+     * notebook copy or the counter.
+     */
+    private fun isKnownWrite(name: String): Boolean =
+        name.endsWith(NOTE + NEW) || name.endsWith(LANDED + NEW) || name.endsWith(NOTEBOOK + NEW) ||
+            name == SEQUENCE + NEW
 
     /**
      * Recovery problems that still stand: the file is still there and is not an entry that now reads
@@ -738,18 +848,21 @@ internal class PendingNotesStore private constructor(
     private fun recoverLocked(): List<Read.Unreadable> {
         val problems = mutableListOf<Read.Unreadable>()
         val unfinished = HashSet<String>()
-        // 1. A leftover "<name>.new" was never committed. While "<name>" exists that write never reported
-        // success, so it goes, unread. Without a committed file it is the first write of that file,
-        // stopped before its rename. One that is cut short or fails its checksum goes as well. Any other
-        // is committed under its own name, in the order a write commits (content synced, renamed in one
-        // step, the rename synced), whether or not this build can read its layout (a newer format
-        // after a downgrade, a held reason added later), so nothing a build wrote in full is thrown away
-        // (design 3.1). An entry file this build cannot read is then reported like every committed entry
-        // that cannot be read. The other kinds are kept for a build that can read them but not reported,
-        // and not for long: a landed record goes in step 2 unless an editor is open, a notebook copy
-        // lasts until a run prunes or rewrites it, and a counter that cannot be read restarts above
-        // every version on disk.
-        for (tmp in listDirectory()?.filter { it.name.endsWith(NEW) }.orEmpty()) {
+        // 1. A leftover "<name>.new" of a kind this build writes was never committed. While "<name>" exists
+        // that write never reported success, so it goes, unread. Without a committed file it is the first
+        // write of that file, stopped before its rename. One that is cut short or fails its checksum goes as
+        // well. Any other is committed under its own name, in the order a write commits (content synced,
+        // renamed in one step, the rename synced), whether or not this build can read its layout (a newer
+        // format after a downgrade, a held reason added later), so nothing a build wrote in full is thrown
+        // away (design 3.1). An entry file this build cannot read is then reported like every committed
+        // entry that cannot be read. The other kinds are kept for a build that can read them but not
+        // reported. A landed record goes in step 2 unless an editor is open, and a notebook copy lasts until
+        // a run prunes or rewrites it. A counter this build cannot read stays as it is, and every write that
+        // needs a new version fails while it does: the build that wrote it may have handed out higher ones.
+        // A ".new" of any other kind is left as it is: not deleted, not committed and not reported, since
+        // this build cannot judge it and a newer build may keep versions in it. With the counter lost, the
+        // version rebuild ([versionOf]) then takes it for a file of a kind this build does not know.
+        for (tmp in listing().filter { isKnownWrite(it.name) }) {
             try {
                 val target = File(dir, tmp.name.removeSuffix(NEW))
                 if (target.exists() || !PendingCodec.isIntact(tmp.readBytes())) {
@@ -765,8 +878,9 @@ internal class PendingNotesStore private constructor(
         }
         // 2. A landed record only matters while an editor for its note is open. Any other is left from an
         // editor that closed without clearing it, or from an earlier process (no editor survives one),
-        // and would otherwise keep a full copy of the note on the device.
-        for (file in files(LANDED).filter { !hasEditor(it.name.removeSuffix(LANDED)) }) {
+        // and would otherwise keep a full copy of the note on the device. Only regular files are removed,
+        // as in [pruneNotebooks].
+        for (file in files(LANDED).filter { it.isFile && !hasEditor(it.name.removeSuffix(LANDED)) }) {
             try {
                 remove(file)
             } catch (e: IOException) {
@@ -809,19 +923,48 @@ internal class PendingNotesStore private constructor(
         return problems
     }
 
-    private fun files(suffix: String): List<File> = withSuffix(listDirectory().orEmpty(), suffix)
+    /** The files with [suffix], from [listing]: a listing that fails throws. */
+    private fun files(suffix: String): List<File> = withSuffix(listing(), suffix)
 
-    /** [files], except that a listing that fails throws. Only a directory that was never created lists as empty. */
-    private fun listedFiles(suffix: String): List<File> {
-        val listed = listDirectory() ?: if (dir.exists()) throw IOException("could not list the pending store") else emptyArray()
-        return withSuffix(listed, suffix)
+    /**
+     * The files in [listed] with [suffix], chosen by name alone. File.isFile also answers false when its
+     * check fails, and an entry dropped for that would be neither reported nor pushed, its version would
+     * be passed over, and its notebook copy would look unreferenced. A caller that removes what it lists
+     * keeps only regular files on top, since there a shorter list can only keep more.
+     */
+    private fun withSuffix(listed: Array<out File>, suffix: String): List<File> =
+        listed.filter { it.name.endsWith(suffix) }.sortedBy { it.name }
+
+    /**
+     * Everything in the store's directory. A listing that fails throws IOException, so nothing reads it
+     * as an empty store: only a directory shown not to be there ([knownAbsent]), such as one that was
+     * never created, lists as empty. File.exists() is not asked: it answers false for a check that
+     * failed as well as for a directory that is not there.
+     */
+    private fun listing(): Array<File> =
+        listDirectory() ?: if (knownAbsent(dir)) emptyArray() else throw IOException("could not list the pending store")
+
+    /**
+     * Whether [d] is shown not to be there: the nearest directory above it that can be listed does not
+     * hold the next name on the way down to it. When that directory does hold the name, or no directory
+     * above can be listed, it is unknown. File.exists() is not asked, for the reason [listing] gives.
+     */
+    private fun knownAbsent(d: File): Boolean {
+        var below = d
+        while (true) {
+            val above = below.parentFile ?: return false
+            val names = listDirectory(above)?.map { it.name }
+            if (names != null) return below.name !in names
+            below = above
+        }
     }
 
-    private fun withSuffix(listed: Array<out File>, suffix: String): List<File> =
-        listed.filter { it.isFile && it.name.endsWith(suffix) }.sortedBy { it.name }
-
-    /** The directory's files, or null when the listing fails, as File.listFiles answers. */
-    private fun listDirectory(): Array<File>? = listFilesForTesting.let { if (it != null) it(dir) else dir.listFiles() }
+    /**
+     * The files in [d], or null when the listing fails, as File.listFiles answers: [d] is not there, is
+     * not a directory, or the check failed.
+     */
+    private fun listDirectory(d: File = dir): Array<File>? =
+        listFilesForTesting.let { if (it != null) it(d) else d.listFiles() }
 
     private fun noteFile(uid: String) = File(dir, checkedUid(uid) + NOTE)
     private fun landedFile(uid: String) = File(dir, checkedUid(uid) + LANDED)
@@ -914,11 +1057,18 @@ internal class PendingNotesStore private constructor(
         private val UID = Regex("^[A-Za-z0-9_-]{1,128}$")
         private val registry = ConcurrentHashMap<String, PendingNotesStore>()
 
-        /** Test seams: crash points inside the write, conflict, and sign-out sequences, and the directory listing. */
+        /** Test seams: crash points inside the write, conflict, and sign-out sequences. */
         @Volatile internal var beforeOriginalRemovedForTesting: (() -> Unit)? = null
         @Volatile internal var beforeRenameForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeRemoveForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeClearForTesting: (() -> Unit)? = null
+
+        /**
+         * Test seam: what a listing of the directory it is given answers in place of File.listFiles();
+         * null is a listing that failed. It answers every listing the store makes itself: of its own
+         * directory, and of the directories above it that [knownAbsent] lists after a listing of it fails.
+         * It does not answer the deletion in [clearAll].
+         */
         @Volatile internal var listFilesForTesting: ((File) -> Array<File>?)? = null
 
         /** rename(2) through File.renameTo: on Android and Linux it replaces the target in one step. */

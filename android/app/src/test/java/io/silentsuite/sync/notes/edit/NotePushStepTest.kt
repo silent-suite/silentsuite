@@ -52,6 +52,7 @@ class NotePushStepTest {
     @After fun reset() {
         PendingNotesStore.beforeRemoveForTesting = null
         PendingNotesStore.beforeRenameForTesting = null
+        PendingNotesStore.listFilesForTesting = null
         PendingNotesStore.resetForTesting()
         Thread.interrupted()
     }
@@ -301,6 +302,47 @@ class NotePushStepTest {
         assertTrue(result.succeeded)
         assertTrue(waiting().isEmpty())
         assertEquals(setOf("a", "b", "c"), server.items.keys)
+    }
+
+    @Test fun `a store listing that fails ends the step with an error, not with a pass that pushed nothing`() {
+        save("a", "first")
+        save("b", "second", notebook = "b2")
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == dir.name) null else d.listFiles() }
+        // Read as an empty store, the pass would end COMPLETED with nothing pushed, and the run would
+        // record success while both wait. The runner records the error as a storage failure.
+        assertThrows(IOException::class.java) { run() }
+        assertTrue("nothing went to the server", server.uploads.isEmpty())
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals("nothing was counted against either", listOf(0, 0),
+            listOf("a", "b").map { entry(it).failureCount })
+        assertTrue(run().succeeded)
+        assertEquals(listOf("a", "b"), uploaded())
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a store listing that fails while a notebook's entries are held is a storage failure, not a pass`() {
+        save("a", "one")
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        // The store cannot be listed from the moment the notebook is confirmed read-only.
+        var listingFails = true
+        val failing: (File) -> Array<File>? = { d -> if (d.name == dir.name) null else d.listFiles() }
+        server.notebookAnswer = {
+            if (listingFails) PendingNotesStore.listFilesForTesting = failing
+            NotebookCheck.Found(readOnly = true, deleted = false)
+        }
+        val result = run()
+        // Read as an empty store, the listing that holds the notebook's entries would hold none, and the
+        // run would record success while "a" waits, neither held nor failed.
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(0, result.held)
+        assertEquals(listOf("a"), uploaded())
+        listingFails = false
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(PendingEntry.State.UPSERT, entry("a").state)
+        assertEquals(1, entry("a").failureCount)
+        // With the store listed again, the next run holds it.
+        assertEquals(1, run().held)
+        assertEquals(HeldReason.READ_ONLY, entry("a").held?.reason)
     }
 
     @Test fun `the saved item is in the cache before the entry is dropped`() {

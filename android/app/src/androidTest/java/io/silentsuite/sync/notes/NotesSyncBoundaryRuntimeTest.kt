@@ -180,6 +180,7 @@ class NotesSyncBoundaryRuntimeTest {
         } finally {
             HttpClient.testInterceptor = null
             requestSyncDispatchOverride = null
+            PendingNotesStore.listFilesForTesting = null
             ContentResolver.setMasterSyncAutomatically(previousMasterSync)
         }
         assertTrue("the Notes thread finished", drained)
@@ -1845,6 +1846,9 @@ class NotesSyncBoundaryRuntimeTest {
         val account = newAccount("gen-unreadable")
         val notebook = uploadNotebook("Work")
         val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        // A second notebook, for the last step, where changes in both wait.
+        val home = uploadNotebook("Home")
+        val list = uploadNote(home, "List", "Milk", mtime = 1_500L)
         syncNow(account, "gen-unreadable")
         editLocally(account, "gen-unreadable", notebook, note.uid, "Plan", "Phone edit", mtime = 2_000L)
         // The store's version counter ("sequence") becomes something that cannot be read, as after a damaged restore.
@@ -1862,6 +1866,39 @@ class NotesSyncBoundaryRuntimeTest {
         assertTrue(sequence.delete())
         syncNow(account, "gen-unreadable")
         assertEquals("Phone edit", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-unreadable").isEmpty())
+        assertSucceeded(status(account, "gen-unreadable"))
+
+        // A listing of the store that fails is a storage failure as well. Read as an empty store, the run
+        // would find nothing waiting and record success while both changes still wait.
+        editLocally(account, "gen-unreadable", notebook, note.uid, "Plan", "Second phone edit", mtime = 4_000L)
+        editLocally(account, "gen-unreadable", home, list.uid, "List", "Milk and bread", mtime = 4_500L)
+        uploadNote(notebook, "Also from the web", "Newer", mtime = 5_000L)
+        val storeDir = sequence.parentFile!!
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == storeDir.name) null else d.listFiles() }
+        val unlisted = fake.requests.size
+        try {
+            syncNow(account, "gen-unreadable")
+        } finally {
+            PendingNotesStore.listFilesForTesting = null
+        }
+        assertEquals("nothing was pushed", emptyList<String>(), uploads(unlisted))
+        assertTrue("the fetch still ran", "Also from the web" in cachedNotes(account, notebook))
+        status(account, "gen-unreadable").let {
+            assertEquals("a failure, not a success: $it", SyncStatusStore.TerminalResult.FAILURE, it.lastTerminalResult)
+            assertEquals(SyncStatusStore.FailureCategory.STORAGE, it.lastFailureCategory)
+        }
+        // Both changes are still there, nothing was counted against them, and their notebook copies stay.
+        val store = pending(account, "gen-unreadable")
+        for (uid in listOf(note.uid, list.uid)) {
+            assertEquals(uid, 0, (store.read(uid) as PendingNotesStore.Read.Present).entry.failureCount)
+        }
+        assertNotNull(store.notebook(notebook))
+        assertNotNull(store.notebook(home))
+        // Once the store can be listed again, both changes go out.
+        syncNow(account, "gen-unreadable")
+        assertEquals("Second phone edit", itemManager(notebook).fetch(note.uid).contentString)
+        assertEquals("Milk and bread", itemManager(home).fetch(list.uid).contentString)
         assertTrue("nothing is left waiting", pendingHeaders(account, "gen-unreadable").isEmpty())
         assertSucceeded(status(account, "gen-unreadable"))
     }

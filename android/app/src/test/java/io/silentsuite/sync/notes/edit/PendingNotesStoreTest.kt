@@ -114,6 +114,202 @@ class PendingNotesStoreTest {
         assertTrue(saved(restarted().saveLocal("n2", "b1", "r", blob("c"), isCreate = false)) > high)
     }
 
+    @Test fun `a lost counter is rebuilt above an entry whose blob is damaged behind a header that reads`() {
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        val high = saved(store.saveLocal("n2", "b1", "r1", blob("two"), isCreate = false))
+        // The header still reads on its own; the whole file does not.
+        val file = File(dir, "n2.note")
+        val bytes = file.readBytes()
+        bytes[bytes.size - 6] = (bytes[bytes.size - 6].toInt() xor 0x40).toByte()
+        file.writeBytes(bytes)
+        assertTrue(File(dir, "sequence").delete())
+        assertTrue("n2 still holds its version",
+            saved(store.saveLocal("n3", "b1", "r1", blob("three"), isCreate = false)) > high)
+    }
+
+    @Test fun `with the counter lost, a write fails while an entry's version cannot be read, and nothing is written`() {
+        // As after a downgrade: an entry a newer build wrote, at a version this build cannot read.
+        val newer = withFormatVersion(PendingCodec.encodeEntry(
+            PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 7, "r7", false, blob = blob("by a newer build"))), 3)
+        dir.mkdirs()
+        File(dir, "n1.note").writeBytes(newer)
+        assertThrows(java.io.IOException::class.java) {
+            store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)
+        }
+        assertFalse("no counter is written", File(dir, "sequence").exists() || File(dir, "sequence.new").exists())
+        assertFalse("and no entry", File(dir, "n2.note").exists() || File(dir, "n2.note.new").exists())
+        // Reading still works, and still reports the entry it cannot read.
+        val snapshot = store.snapshot { false }
+        assertTrue(snapshot.headers.isEmpty())
+        assertEquals(listOf(Read.Unreadable("n1.note", "format version 3")), snapshot.unreadable)
+        // Once that file is discarded, no version on disk is unknown, and the save goes through.
+        store.discard("n1")
+        assertTrue(store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false) is SaveOutcome.Saved)
+    }
+
+    @Test fun `with the counter lost, a write fails while a landed record cannot be read`() {
+        // An open editor keeps the landed record of a push, with the version that was sent.
+        val editor = store.editorOpened("n1")
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        assertEquals(SendOutcome.Done, store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed")))
+        val landed = File(dir, "n1.landed")
+        landed.writeBytes(landed.readBytes().also { it[8] = (it[8].toInt() xor 0x40).toByte() })
+        assertTrue(File(dir, "sequence").delete())
+        assertThrows(java.io.IOException::class.java) {
+            store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)
+        }
+        assertFalse("no counter is written", File(dir, "sequence").exists())
+        // The record goes with its editor, and then the save goes through.
+        store.editorClosed(editor)
+        assertTrue(store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false) is SaveOutcome.Saved)
+    }
+
+    @Test fun `a lost counter is rebuilt above a first write that recovery cannot commit yet`() {
+        var refuse = true
+        val d = tmp.newFolder("stranded-version")
+        val stranded = PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 9, "r9", false, blob = blob("the only copy"))
+        File(d, "n1.note.new").writeBytes(PendingCodec.encodeEntry(stranded))
+        val s = refusingRenames(d, "n1.note") { refuse }
+        assertTrue("above the version recovery will commit n1 with",
+            saved(s.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)) > 9)
+        assertArrayEquals(PendingCodec.encodeEntry(stranded), File(d, "n1.note.new").readBytes())
+        refuse = false
+        assertEquals(stranded, s.entry("n1"))
+    }
+
+    @Test fun `a lost counter is rebuilt above a landed record that recovery cannot commit yet`() {
+        val d = tmp.newFolder("stranded-landed")
+        val landed = PendingCodec.encodeLanded(LandedRecord("n5", "r12", 12, blob("landed")))
+        File(d, "n5.landed.new").writeBytes(landed)
+        // Committed, the record would go at once, since no editor is open on n5. Refused, it stays.
+        val s = refusingRenames(d, "n5.landed") { true }
+        assertTrue("above the version the record holds",
+            saved(s.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)) > 12)
+        assertArrayEquals(landed, File(d, "n5.landed.new").readBytes())
+    }
+
+    @Test fun `a counter in a layout this build cannot read stops every new version, while reads and sends go on`() {
+        val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false))
+        val v2 = saved(store.saveLocal("n2", "b1", "r1", blob("two"), isCreate = false))
+        store.hold("n2", HeldReason.READ_ONLY, now = 1)
+        // As after a downgrade: a newer build wrote the counter, and may have handed out versions above
+        // every file this build can read. Rebuilt from those files, it could restart below them.
+        val counter = withFormatVersion(PendingCodec.encodeSequence(41), 2)
+        File(dir, "sequence").writeBytes(counter)
+        assertThrows(java.io.IOException::class.java) {
+            store.saveLocal("n3", "b1", "r1", blob("new"), isCreate = true)
+        }
+        assertThrows(java.io.IOException::class.java) {
+            store.saveLocal("n1", "b1", "r2", blob("edit"), isCreate = false)
+        }
+        assertThrows(java.io.IOException::class.java) { store.rebase("n1", v1, "r1", "r3", blob("rebased")) }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("n1", v1, "srv", newNote()) }
+        assertThrows(java.io.IOException::class.java) { store.release("n2") }
+        assertArrayEquals("left as that build wrote it", counter, File(dir, "sequence").readBytes())
+        assertEquals(Read.Missing, store.read("n3"))
+        assertEquals(Read.Missing, store.read("copy1"))
+        assertEquals("r1", entry("n1").revision)
+        assertEquals(PendingEntry.State.HELD, entry("n2").state)
+        // Reads take the highest version they can read, and a push needs no new version.
+        assertEquals(v2, store.snapshot { false }.sequence)
+        assertEquals(v2, store.observe("n1").sequence)
+        assertEquals(SendOutcome.Done, store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed")))
+        assertEquals(Read.Missing, store.read("n1"))
+        assertArrayEquals(counter, File(dir, "sequence").readBytes())
+    }
+
+    @Test fun `a counter that fails its checksum, with nothing else on disk, restarts at 1`() {
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        store.saveLocal("n1", "b1", "r2", blob("two"), isCreate = false)
+        assertEquals(SendOutcome.Done, store.completeSend("n1", store.beginSend("n1")!!.version, "r2", blob("landed")))
+        assertEquals("only the counter is left", listOf("sequence"), dir.list()!!.toList())
+        val sequence = File(dir, "sequence")
+        assertArrayEquals(PendingCodec.encodeSequence(2), sequence.readBytes())
+        sequence.writeBytes(sequence.readBytes().also { it[6] = (it[6].toInt() xor 0x40).toByte() })
+        // Damaged, not written in another layout: no version is left on disk to stay above.
+        assertEquals(1L, saved(store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)))
+        assertArrayEquals("written anew", PendingCodec.encodeSequence(1), sequence.readBytes())
+    }
+
+    @Test fun `with the counter lost, a file of a kind this build does not know stops every new version`() {
+        val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false))
+        // As after a downgrade: a newer build may keep versions in a file or directory this build has no name for.
+        File(dir, "n1.draft").writeBytes(blob("a newer build's"))
+        assertTrue(File(dir, "versions").mkdir())
+        assertEquals("while the counter reads, nothing else is looked at",
+            v1 + 1, saved(store.saveLocal("n1", "b1", "r2", blob("two"), isCreate = false)))
+        assertTrue(File(dir, "sequence").delete())
+        assertThrows(java.io.IOException::class.java) { store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false) }
+        assertFalse("no counter is written", File(dir, "sequence").exists() || File(dir, "sequence.new").exists())
+        assertEquals(Read.Missing, store.read("n2"))
+        assertEquals("reads pass over them", v1 + 1, store.snapshot { false }.sequence)
+        assertTrue(File(dir, "n1.draft").delete())
+        assertThrows(java.io.IOException::class.java) { store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false) }
+        assertTrue(File(dir, "versions").delete())
+        assertEquals("then above every version on disk",
+            v1 + 2, saved(store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)))
+    }
+
+    @Test fun `a leftover new file of a kind this build does not know is left as it is, and stops new versions`() {
+        val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false))
+        store.putNotebook("b9", blob("key b9"))
+        // As after a downgrade: one fails this build's check, one sits beside a committed file of its name, and one is
+        // intact with nothing of its name.
+        val cut = PendingCodec.encodeSequence(7).copyOf(5)
+        val beside = PendingCodec.encodeSequence(9)
+        val whole = PendingCodec.encodeSequence(11)
+        File(dir, "x.draft.new").writeBytes(cut)
+        File(dir, "y.draft").writeBytes(blob("a newer build's"))
+        File(dir, "y.draft.new").writeBytes(beside)
+        File(dir, "z.draft.new").writeBytes(whole)
+        // A known kind beside them: an intact landed record with no editor open is committed and then dropped.
+        File(dir, "n5.landed.new").writeBytes(PendingCodec.encodeLanded(LandedRecord("n5", "r5", v1, blob("landed"))))
+        val s = restarted()
+        val scan = s.scan()
+        assertEquals(listOf("n1"), scan.entries.map { it.noteUid })
+        assertTrue("nothing is reported", scan.unreadable.isEmpty())
+        assertArrayEquals("not deleted", cut, File(dir, "x.draft.new").readBytes())
+        assertArrayEquals("not deleted beside its committed file", beside, File(dir, "y.draft.new").readBytes())
+        assertArrayEquals("not committed", whole, File(dir, "z.draft.new").readBytes())
+        assertFalse(File(dir, "z.draft").exists())
+        assertFalse("a known kind is finished as before",
+            File(dir, "n5.landed.new").exists() || File(dir, "n5.landed").exists())
+        assertEquals("the recovery finished, so the prune runs", listOf("b9"), s.pruneNotebooks())
+        // With the counter lost, each of them is a file of a kind this build does not know, alone as well.
+        assertTrue(File(dir, "sequence").delete())
+        assertTrue(File(dir, "y.draft").delete())
+        val save = { s.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false) }
+        assertThrows(java.io.IOException::class.java) { save() }
+        assertFalse("no counter is written", File(dir, "sequence").exists() || File(dir, "sequence.new").exists())
+        assertFalse("no entry is written", File(dir, "n2.note").exists() || File(dir, "n2.note.new").exists())
+        assertEquals("reads still work", "r1", (s.read("n1") as Read.Present).entry.revision)
+        assertEquals(v1, s.snapshot { false }.sequence)
+        assertTrue(File(dir, "y.draft.new").delete() && File(dir, "z.draft.new").delete())
+        assertThrows("the one that fails the check, alone", java.io.IOException::class.java) { save() }
+        assertTrue(File(dir, "x.draft.new").delete())
+        File(dir, "z.draft.new").writeBytes(whole)
+        assertThrows("an intact one, alone", java.io.IOException::class.java) { save() }
+        assertTrue(File(dir, "z.draft.new").delete())
+        assertEquals("then above every version on disk", v1 + 1, saved(save()))
+    }
+
+    @Test fun `an uncommitted counter write in a layout this build cannot read stops new versions`() {
+        var refuse = true
+        val d = tmp.newFolder("stranded-counter")
+        // A newer build wrote its counter in full, and the rename never happened.
+        val counter = withFormatVersion(PendingCodec.encodeSequence(41), 2)
+        File(d, "sequence.new").writeBytes(counter)
+        val s = refusingRenames(d, "sequence") { refuse }
+        assertThrows(java.io.IOException::class.java) { s.saveLocal("n1", "b1", "r1", blob("u"), isCreate = true) }
+        assertArrayEquals("not written over", counter, File(d, "sequence.new").readBytes())
+        assertEquals(Read.Missing, s.read("n1"))
+        refuse = false
+        // Committed by the next recovery, it is a counter this build cannot read, and still stops them.
+        assertThrows(java.io.IOException::class.java) { s.saveLocal("n1", "b1", "r1", blob("u"), isCreate = true) }
+        assertArrayEquals(counter, File(d, "sequence").readBytes())
+        assertFalse(File(d, "sequence.new").exists())
+    }
+
     // ---- editor saves ----
 
     @Test fun `a later save replaces the content and resets the backoff`() {
@@ -1172,9 +1368,14 @@ class PendingNotesStoreTest {
         assertNull("this build cannot use it", store.notebook("b1"))
         assertFalse(File(dir, "b1.notebook.new").exists())
         assertFalse("one that was cut short goes, as before", File(dir, "cut.notebook.new").exists() || File(dir, "cut.notebook").exists())
-        // A counter this build cannot read restarts above every version on disk, and is written anew.
+        // A counter written in full in a layout this build cannot read, here a newer build's: no version
+        // is handed out over it, and it stays as that build wrote it.
         assertArrayEquals(counter, File(dir, "sequence").readBytes())
-        assertEquals(1L, saved(store.saveLocal("n1", "b1", "r1", blob("first"), isCreate = true)))
+        assertThrows(java.io.IOException::class.java) {
+            store.saveLocal("n1", "b1", "r1", blob("first"), isCreate = true)
+        }
+        assertArrayEquals(counter, File(dir, "sequence").readBytes())
+        assertEquals(Read.Missing, store.read("n1"))
     }
 
     @Test fun `removing an entry also removes a stale new file so a later recovery cannot bring it back`() {
@@ -1288,7 +1489,7 @@ class PendingNotesStoreTest {
         assertArrayEquals(blob("key"), store.notebook("b9"))
     }
 
-    @Test fun `a failed entry listing prunes nothing, even when the notebook listing after it works`() {
+    @Test fun `a failed listing prunes nothing, even when the listings after it work`() {
         store.putNotebook("b9", blob("key b9"))
         store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
         var listings = 0
@@ -1300,10 +1501,228 @@ class PendingNotesStoreTest {
         assertEquals(listOf("b9"), store.pruneNotebooks())
     }
 
+    @Test fun `a prune runs no recovery that is owed, and lists and removes nothing until another call has run it`() {
+        store.putNotebook("b9", blob("key b9"))
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
+        // A refresh of a copy that is there already stops at its rename, so a recovery is owed: it drops the
+        // write left beside that copy.
+        PendingNotesStore.beforeRenameForTesting = {
+            if (it.name == "b1.notebook") throw java.io.IOException("rename refused")
+        }
+        assertThrows(java.io.IOException::class.java) { store.putNotebook("b1", blob("key b1 again")) }
+        PendingNotesStore.beforeRenameForTesting = null
+        assertTrue(File(dir, "b1.notebook.new").exists())
+        // Run by the prune, a recovery that fails would only be logged. The prune asks for no listing at all.
+        val asked = ArrayList<String>()
+        PendingNotesStore.listFilesForTesting = { d -> asked += d.name; null }
+        assertEquals(emptyList<String>(), store.pruneNotebooks())
+        assertEquals("no listing, so no recovery either", emptyList<String>(), asked)
+        PendingNotesStore.listFilesForTesting = null
+        assertTrue(File(dir, "b9.notebook").exists() && File(dir, "b1.notebook.new").exists())
+        // The next other call runs the recovery, where a failure counts, and a prune after it works as before.
+        assertEquals(listOf("n1"), store.scan().entries.map { it.noteUid })
+        assertFalse(File(dir, "b1.notebook.new").exists())
+        assertEquals(listOf("b9"), store.pruneNotebooks())
+        assertArrayEquals(blob("key b1"), store.notebook("b1"))
+        assertNull(store.notebook("b9"))
+    }
+
     @Test fun `a store whose directory was never created prunes nothing and stays uncreated`() {
         val never = File(tmp.root, "never")
-        assertTrue(open(never).pruneNotebooks().isEmpty())
+        val s = open(never)
+        // A prune runs no recovery, so a scan runs it first; the prune then lists the directory itself.
+        assertTrue(s.scan().entries.isEmpty())
+        val asked = ArrayList<String>()
+        PendingNotesStore.listFilesForTesting = { d -> asked += d.name; d.listFiles() }
+        assertTrue(s.pruneNotebooks().isEmpty())
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals("not there, as the directory above shows", listOf("never", tmp.root.name), asked)
         assertFalse(never.exists())
+    }
+
+    // ---- a listing that fails is never an empty store ----
+
+    @Test fun `a listing of the store that fails is not read as an empty store`() {
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == store.dir.name) null else d.listFiles() }
+        assertThrows("read as empty, a run would report success while n1 waits", java.io.IOException::class.java) {
+            store.scan()
+        }
+        assertThrows(java.io.IOException::class.java) { store.snapshot { false } }
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(listOf("n1"), store.scan().entries.map { it.noteUid })
+        assertEquals(listOf("n1"), store.snapshot { false }.headers.map { it.noteUid })
+        // A store whose directory was never made still lists as empty, and asking does not make it.
+        val never = File(tmp.root, "never-listed")
+        assertTrue(open(never).snapshot { false }.headers.isEmpty())
+        assertFalse(never.exists())
+    }
+
+    @Test fun `a recovery that cannot list the store decides nothing, and the next call commits what it missed`() {
+        // The first write of n1 stopped before its rename, in a process that ended: that file is the only
+        // copy of the text, and the notebook copy beside it is the way to decrypt it.
+        val only = PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("the only copy"))
+        store.putNotebook("b1", blob("key b1"))
+        File(dir, "n1.note.new").writeBytes(PendingCodec.encodeEntry(only))
+        val s = restarted()
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == s.dir.name) null else d.listFiles() }
+        assertThrows(java.io.IOException::class.java) { s.read("n1") }
+        assertEquals("a prune runs no recovery, and removes nothing while one is owed",
+            emptyList<String>(), s.pruneNotebooks())
+        PendingNotesStore.listFilesForTesting = null
+        // Taken for done, the failed recovery would leave n1 uncommitted, and no scan or snapshot would
+        // show it.
+        assertEquals(listOf("n1"), s.snapshot { false }.headers.map { it.noteUid })
+        assertEquals("the copy the stranded text needs is kept", emptyList<String>(), s.pruneNotebooks())
+        assertEquals(only, s.entry("n1"))
+        assertFalse(File(dir, "n1.note.new").exists())
+        assertArrayEquals(blob("key b1"), s.notebook("b1"))
+    }
+
+    @Test fun `a new process whose recovery cannot list the store does not send an unfinished original`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (it.name == "orig.note") throw java.io.IOException("could not remove orig.note")
+        }
+        assertThrows(java.io.IOException::class.java) {
+            store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote())
+        }
+        val next = restarted()
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == next.dir.name) null else d.listFiles() }
+        // Taken for done, this recovery would know of no unfinished original: orig would go out again,
+        // get the same 409, and become a second copy of the same text.
+        assertThrows(java.io.IOException::class.java) { next.startSend("orig") }
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(PendingNotesStore.SendStart.Refused(PendingNotesStore.Refusal.UNFINISHED_ORIGINAL),
+            next.startSend("orig"))
+    }
+
+    @Test fun `a lost version counter is not rebuilt from a listing that fails`() {
+        val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false))
+        val sequence = File(dir, "sequence")
+        assertTrue(sequence.delete())
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == dir.name) null else d.listFiles() }
+        // Read as an empty store, the rebuild would restart below n1 and hand out a version n1 holds.
+        assertThrows(java.io.IOException::class.java) {
+            store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)
+        }
+        assertFalse(sequence.exists())
+        // And a load would carry sequence 0, below the save that n1 holds.
+        assertThrows(java.io.IOException::class.java) { store.observe("n1") }
+        PendingNotesStore.listFilesForTesting = null
+        assertTrue("it restarts above every version on disk",
+            saved(store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)) > v1)
+    }
+
+    @Test fun `a damaged version counter is not rebuilt from a listing that fails, and is left as it is`() {
+        val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false))
+        val sequence = File(dir, "sequence")
+        val damaged = sequence.readBytes().also { it[6] = (it[6].toInt() xor 0x40).toByte() }
+        sequence.writeBytes(damaged)
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == dir.name) null else d.listFiles() }
+        assertThrows(java.io.IOException::class.java) {
+            store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)
+        }
+        assertArrayEquals("nothing was written over it", damaged, sequence.readBytes())
+        assertThrows(java.io.IOException::class.java) { store.observe("n1") }
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(Read.Missing, store.read("n2"))
+        assertTrue(saved(store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)) > v1)
+    }
+
+    @Test fun `a store directory that is there but cannot be listed is not empty, however far up the walk goes`() {
+        // File.exists() answers false for a check that fails as well as for a directory that is not there.
+        val root = tmp.newFolder("no_backup")
+        val s = open(PendingNotesStore.identityDir(root, "io.silentsuite", "alice@example.invalid", "gen-1"))
+        s.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        // The directories each case lists, so that every case is seen to take its own way up.
+        val asked = ArrayList<String>()
+        fun failing(vararg names: String): (File) -> Array<File>? =
+            { d -> asked += d.name; if (d.name in names) null else d.listFiles() }
+        PendingNotesStore.listFilesForTesting = failing(s.dir.name)
+        assertThrows("the directory above shows it is there", java.io.IOException::class.java) { s.snapshot { false } }
+        assertEquals(listOf(s.dir.name, "notes-pending"), asked)
+        asked.clear()
+        PendingNotesStore.listFilesForTesting = failing(s.dir.name, "notes-pending")
+        assertThrows("the nearest directory above that can be listed shows the one below it",
+            java.io.IOException::class.java) { s.snapshot { false } }
+        assertEquals(listOf(s.dir.name, "notes-pending", "no_backup"), asked)
+        PendingNotesStore.listFilesForTesting = { null }
+        assertThrows("no directory above can be listed", java.io.IOException::class.java) { s.snapshot { false } }
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals("the change was there all along", listOf("n1"), s.snapshot { false }.headers.map { it.noteUid })
+    }
+
+    @Test fun `a store under directories that were never made holds nothing, and asking makes none of them`() {
+        // As for an account that never saved a note on a device where no account did: no notes-pending either.
+        val root = tmp.newFolder("no_backup")
+        val never = open(PendingNotesStore.identityDir(root, "io.silentsuite", "alice@example.invalid", "gen-1"))
+        val snapshot = never.snapshot { true }
+        assertTrue(snapshot.headers.isEmpty() && snapshot.entries.isEmpty() && snapshot.unreadable.isEmpty())
+        assertEquals(PendingNotesStore.Scan(emptyList(), emptyList()), never.scan())
+        assertEquals(PendingNotesStore.Observed(Read.Missing, 0), never.observe("n1"))
+        assertTrue(never.pruneNotebooks().isEmpty())
+        assertFalse(File(root, "notes-pending").exists())
+    }
+
+    @Test fun `a listed entry that File isFile does not count as a file is still read, and its notebook copy kept`() {
+        // File.isFile answers false when its check fails, as well as for anything that is not a regular
+        // file. Dropped for that, the entry would be neither reported nor pushed, its version would be
+        // passed over when a lost counter is rebuilt, and the copy of its notebook would look unreferenced.
+        val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1")))
+        fun statFails(f: File): File = object : File(f.path) {
+            override fun isFile() = false
+        }
+        PendingNotesStore.listFilesForTesting = { d ->
+            d.listFiles()?.map { if (it.name == "n1.note") statFails(it) else it }?.toTypedArray()
+        }
+        assertEquals(listOf("n1"), store.snapshot { false }.headers.map { it.noteUid })
+        assertEquals(listOf("n1"), store.scan().entries.map { it.noteUid })
+        assertEquals(emptyList<String>(), store.pruneNotebooks())
+        assertTrue(File(dir, "sequence").delete())
+        assertTrue("above the version n1 holds",
+            saved(store.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)) > v1)
+        PendingNotesStore.listFilesForTesting = null
+        assertArrayEquals(blob("key b1"), store.notebook("b1"))
+    }
+
+    @Test fun `a prune decides from one listing, so a listing above that wrongly shows nothing removes no copy`() {
+        store.putNotebook("b9", blob("key b9"))
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
+        // The store's own listing fails once, and the listing above it then answers with no names, as if
+        // the store were not there. Every listing after those two is real.
+        val asked = ArrayList<String>()
+        PendingNotesStore.listFilesForTesting = { d ->
+            asked += d.name
+            when (asked.size) {
+                1 -> null
+                2 -> emptyArray()
+                else -> d.listFiles()
+            }
+        }
+        assertEquals("read as a store that is not there, which holds no copy to remove",
+            emptyList<String>(), store.pruneNotebooks())
+        assertEquals("one listing of the store, and the one above it",
+            listOf(dir.name, store.dir.parentFile!!.name), asked)
+        PendingNotesStore.listFilesForTesting = null
+        assertArrayEquals(blob("key b1"), store.notebook("b1"))
+        assertArrayEquals(blob("key b9"), store.notebook("b9"))
+        assertEquals(listOf("b9"), store.pruneNotebooks())
+    }
+
+    @Test fun `a prune keeps every copy while its listing holds a first write that is not committed yet`() {
+        store.putNotebook("b1", blob("key b1"))
+        // A first write of n1 that recovery does not know of, as when its check that a problem's file is
+        // still there fails: written in full after recovery ran. No committed entry names b1, and the next
+        // recovery commits this write, which needs that copy.
+        val first = PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("first write"))
+        File(dir, "n1.note.new").writeBytes(PendingCodec.encodeEntry(first))
+        assertEquals(emptyList<String>(), store.pruneNotebooks())
+        assertArrayEquals(blob("key b1"), store.notebook("b1"))
+        val next = restarted()
+        assertEquals(first, next.entry("n1"))
+        assertEquals("an entry names it now", emptyList<String>(), next.pruneNotebooks())
+        assertArrayEquals(blob("key b1"), next.notebook("b1"))
     }
 
     @Test fun `uids that could escape the directory are refused for every kind of file`() {
