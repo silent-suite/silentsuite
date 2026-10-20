@@ -73,6 +73,16 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         if (how == null) stalledItemLists.remove(uid) else stalledItemLists[uid] = how
     }
 
+    private val unlistableItemLists: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * While [notFound], the item listing of [uid] answers 404 although the collection is still
+     * there: it is still listed and can still be fetched by its uid.
+     */
+    fun answerItemListNotFound(uid: String, notFound: Boolean) {
+        if (notFound) unlistableItemLists += uid else unlistableItemLists -= uid
+    }
+
     private class StoredItem(val body: Map<String, Any?>, val changedAt: Long)
 
     private class StoredCollection(
@@ -322,7 +332,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         }
         method == "GET" && ITEM_LIST.matches(path) -> {
             val stored = collections[ITEM_LIST.find(path)!!.groupValues[1]]
-            if (stored == null || stored.removedAt != null) {
+            if (stored == null || stored.removedAt != null || stored.uid in unlistableItemLists) {
                 noCollection()
             } else {
                 val stoken = url.queryParameter("stoken")

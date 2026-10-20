@@ -1,0 +1,3 @@
+- Find deleted contacts under Settings → Recover deleted contacts, organised by account and address book.
+- Confirm before restoring a contact, with read-only address books protected from changes.
+- Keep the selected contact when rotating the screen, and avoid a contact-loading crash.

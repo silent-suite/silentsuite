@@ -340,6 +340,32 @@ internal object NotesSyncRunner {
         else -> NotebookFailure.NOTEBOOK_FAILED
     }
 
+    /** A 404 on a notebook's notes listing while the notebook itself is still there: this notebook's failure. */
+    internal class NotebookStillListedException(cause: NotFoundException) :
+        Exception("The notebook is still there although its notes could not be listed", cause)
+
+    /**
+     * A notes listing that answered 404 proves nothing on its own (answer 6 on #709). [notebookDeleted]
+     * fetches the notebook: its own 404, or a deleted notebook, makes it lost access and [notFound] is
+     * thrown; a notebook that is there makes it this notebook's failure; any other answer is passed on
+     * as it is. [stillCurrent] runs before the fetch and after it however it ends, an Error included, so
+     * a run that may no longer write stops there with nothing recorded.
+     */
+    internal fun confirmNotebookGone(notFound: NotFoundException, stillCurrent: () -> Unit, notebookDeleted: () -> Boolean): Nothing {
+        stillCurrent()
+        val deleted = try {
+            notebookDeleted()
+        } catch (gone: NotFoundException) {
+            stillCurrent()
+            throw notFound
+        } catch (e: Throwable) {
+            stillCurrent()
+            throw e
+        }
+        stillCurrent()
+        throw if (deleted) notFound else NotebookStillListedException(notFound)
+    }
+
     internal enum class NotebooksOutcome { ALL_FETCHED, SOME_FAILED, STALE }
 
     /**
@@ -394,7 +420,16 @@ internal object NotesSyncRunner {
         do {
             if (Thread.interrupted()) throw InterruptedException()
             guard.check()
-            val itemList = itemMgr.list(FetchOptions().stoken(stoken))
+            val itemList = try {
+                itemMgr.list(FetchOptions().stoken(stoken))
+            } catch (e: NotFoundException) {
+                // Outside the cache's monitor, like every request here; nothing is written for this notebook.
+                confirmNotebookGone(e, guard::check) {
+                    val col = colMgr.fetch(colUid)
+                    check(col.uid == colUid && col.collectionType == Constants.ETEBASE_TYPE_NOTES) { "the server answered with another collection" }
+                    col.isDeleted
+                }
+            }
             synchronized(cache) {
                 guard.write(cache) {
                     for (item in itemList.data) {

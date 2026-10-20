@@ -99,8 +99,10 @@ import kotlin.concurrent.thread
  * and one that misbehaves in a given way. One of them opens an editor handle before its run, so
  * that the push leaves a landed record to look at. Three of them hold the upload in flight and
  * cancel the run, switch Notes off, sign out or replace the account before its answer arrives.
- * Some cases also read the pending store's files from disk: none holds a title, a text or a
- * notebook name in plain form, and they are still there, byte for byte, after a cache clear and
+ * Four cases give a notebook's notes listing a 404 while the notebook may still be there; two of
+ * them hold the fetch of the notebook that would confirm it, and cancel the run, switch Notes off
+ * or replace the account before its answer arrives. Some cases also read the pending store's files
+ * from disk: none holds a title, a text or a notebook name in plain form, and they are still there, byte for byte, after a cache clear and
  * after a same-name account replaced the one that saved them. One case sends nothing: it compares
  * the raw metadata codec with the binding's typed encoder and decoder
  * ([NoteMetaBindingComparison]), on a notebook that is never uploaded.
@@ -751,6 +753,234 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("Renamed again", cachedNotebookName(account, edited))
         assertEquals(setOf(edited) + added, cachedNotebooks(account))
         assertTrue("the listing time was recorded", lastListingKeys(account.name).any { it.endsWith("gen-retry-stall") })
+    }
+
+    @Test fun aNotebookWhoseNotesListingAnswersNotFoundWhileItStillExistsIsAFailureNotALostNotebook() {
+        val account = newAccount("gen-item-404")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-item-404")
+        val unlistable = uploadNotebook("Notes cannot be listed")
+        val sibling = uploadNotebook("Sibling")
+        uploadNotes(unlistable, "One")
+        uploadNotes(sibling, "Two")
+
+        // 1. The listing of one notebook's notes answers 404, but the notebook is still there: the
+        // collection list still shows it and it can still be fetched by its uid. That is not a lost
+        // notebook. Its sibling still syncs, it stays cached, and the run is not a success.
+        fake.answerItemListNotFound(unlistable, true)
+        val confirmMark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-item-404", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertTrue("the notes listing was asked for and answered 404", itemRequests(unlistable).isNotEmpty())
+        assertEquals("the sibling's notes were synced", setOf("Two"), cachedNotes(account, sibling))
+        assertEquals("the sibling's cursor was saved", fake.itemStoken(sibling), notebookCursor(account, sibling))
+        assertTrue("the notebook is still cached", unlistable in cachedNotebooks(account))
+        assertNull("no cursor was saved for the notebook whose notes could not be listed", notebookCursor(account, unlistable))
+        status(account, "gen-item-404").let {
+            assertNull("a run that could not list an existing notebook's notes recorded no success: $it", it.lastSuccessAt)
+            assertNotNull("it recorded a failure: $it", it.lastFailureAt)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+        assertEquals("the notebook itself was fetched to confirm it is still there", 1, notebookFetches(confirmMark, unlistable))
+
+        // Once the listing answers again, the next run fetches that notebook's notes and succeeds.
+        fake.answerItemListNotFound(unlistable, false)
+        forgetLastListing(account.name)
+        NotesSyncCoordinator.request(context, account, "gen-item-404", NotesSyncPolicy.Trigger.MANUAL)
+        awaitSettled(identity)
+        assertEquals(setOf("One"), cachedNotes(account, unlistable))
+        assertEquals(fake.itemStoken(unlistable), notebookCursor(account, unlistable))
+        val recovered = status(account, "gen-item-404").lastSuccessAt
+        assertNotNull("the recovered run succeeded", recovered)
+
+        // 2. For comparison, a notebook that really is gone. Its notes changed, and the list answer
+        // that says so is built before the account loses the notebook and arrives after. The notes
+        // listing then answers 404 and so does the notebook itself: it is skipped, the sibling is
+        // unaffected, and the run is a success.
+        uploadNotes(unlistable, "Three")
+        forgetLastListing(account.name)
+        val asked = itemRequests(unlistable).size
+        val goneMark = fake.requests.size
+        val listing = fake.hold("POST", LIST, answerFirst = true)
+        NotesSyncCoordinator.request(context, account, "gen-item-404", NotesSyncPolicy.Trigger.MANUAL)
+        try {
+            listing.awaitArrival()
+            fake.removeMembership(unlistable)
+        } finally {
+            listing.release()
+        }
+        awaitSettled(identity)
+        assertTrue("the gone notebook's notes listing was asked for", itemRequests(unlistable).size > asked)
+        assertEquals("nothing new was cached for the gone notebook", setOf("One"), cachedNotes(account, unlistable))
+        assertEquals(setOf("Two"), cachedNotes(account, sibling))
+        status(account, "gen-item-404").let {
+            assertTrue("a run that only skipped a lost notebook succeeded: $it", it.lastSuccessAt!! > recovered!!)
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+        assertEquals("the gone notebook was fetched to confirm it is gone", 1, notebookFetches(goneMark, unlistable))
+    }
+
+    @Test fun aNotebookWhoseExistenceCannotBeConfirmedAfterANotesListing404IsStillAFailure() {
+        val account = newAccount("gen-item-404-unconfirmed")
+        val unconfirmed = uploadNotebook("Existence cannot be confirmed")
+        val sibling = uploadNotebook("Sibling")
+        uploadNotes(unconfirmed, "One")
+        uploadNotes(sibling, "Two")
+        val before = syncedThenChangedOnServer(account, "gen-item-404-unconfirmed", unconfirmed, "Changed elsewhere")
+
+        // The notes listing answers 404, and the fetch of the notebook that would confirm whether it
+        // is still there fails too. A failed read is no proof the notebook is gone: the run is a failure.
+        fake.answerItemListNotFound(unconfirmed, true)
+        fake.answer("GET", Regex("collection/$unconfirmed/"), 500)
+        val mark = fake.requests.size
+        syncNow(account, "gen-item-404-unconfirmed")
+        status(account, "gen-item-404-unconfirmed").let {
+            assertEquals("a run whose notebook could not be confirmed recorded no new success: $it",
+                before.status.lastSuccessAt, it.lastSuccessAt)
+            assertTrue("it recorded a failure: $it", (it.lastFailureAt ?: 0L) > (before.status.lastFailureAt ?: 0L))
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+        }
+        val requests = fake.requests.drop(mark)
+        val listed = requests.indexOfFirst { it.startsWith("POST collection/list_multi/") }
+        val notesAsked = requests.indexOfFirst { it.startsWith("GET collection/$unconfirmed/item/") }
+        assertTrue("the collection list was refreshed, then the notes were asked for: $requests", listed in 0 until notesAsked)
+        assertEquals("the notebook itself was fetched once", 1, notebookFetches(mark, unconfirmed))
+        assertEquals("the notebook's cursor did not move", before.cursor, notebookCursor(account, unconfirmed))
+        assertEquals("nothing was fetched into the cache", before.notes, cachedNotes(account, unconfirmed))
+        assertTrue("the notebook is still cached", unconfirmed in cachedNotebooks(account))
+
+        // Once both answer again, the next run fetches the change and succeeds.
+        fake.answerItemListNotFound(unconfirmed, false)
+        val failed = status(account, "gen-item-404-unconfirmed")
+        syncNow(account, "gen-item-404-unconfirmed")
+        assertTrue("Changed elsewhere" in cachedNotes(account, unconfirmed))
+        assertEquals(fake.itemStoken(unconfirmed), notebookCursor(account, unconfirmed))
+        status(account, "gen-item-404-unconfirmed").let {
+            assertTrue("the recovered run succeeded: $it", (it.lastSuccessAt ?: 0L) > (failed.lastSuccessAt ?: 0L))
+            assertNull(it.activeAttemptId)
+        }
+    }
+
+    @Test fun aNotebookCheckHeldAcrossCancellationRecordsNothingAndSendsNothingMore() {
+        val account = newAccount("gen-check-cancel")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-check-cancel")
+        val checked = uploadNotebook("Checked while cancelled")
+        val sibling = uploadNotebook("Sibling")
+        uploadNotes(checked, "One")
+        uploadNotes(sibling, "Two")
+        val before = syncedThenChangedOnServer(account, "gen-check-cancel", checked, "Changed elsewhere")
+
+        // 1. The notes listing answers 404, and the fetch of the notebook that would confirm it is held.
+        // The run is cancelled while it waits, the interrupt is swallowed, and the answer that then
+        // arrives is an error that would end the whole run. The cancelled run records nothing.
+        fake.answerItemListNotFound(checked, true)
+        val confirming = fake.hold("GET", Regex("collection/$checked/"), swallowInterrupt = true)
+        fake.answer("GET", Regex("collection/$checked/"), 503)
+        val mark = fake.requests.size
+        var through = -1
+        try {
+            startManualRun(account, "gen-check-cancel")
+            confirming.awaitArrival()
+            val heldAt = SystemClock.uptimeMillis()
+            assertEquals("the held request is the fetch of the notebook", "GET collection/$checked/", confirming.request)
+            through = fake.requests.size
+            NotesSyncCoordinator.cancel(identity)
+            release(confirming, heldAt)
+        } finally {
+            confirming.release()
+        }
+        assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+        assertEquals("no request of any kind followed the held fetch", emptyList<String>(), fake.requests.drop(through))
+        assertUnchangedBy("the cancelled run", account, "gen-check-cancel", checked, before)
+        endNotebookCheckPhase(checked, mark)
+
+        // 2. Notes is turned off while the fetch is held, and the notebook's real answer arrives.
+        val other = newAccount("gen-check-off")
+        val offBefore = syncedThenChangedOnServer(other, "gen-check-off", checked, "Changed again")
+        fake.answerItemListNotFound(checked, true)
+        val held = fake.hold("GET", Regex("collection/$checked/"), swallowInterrupt = true)
+        val offMark = fake.requests.size
+        var offThrough = -1
+        try {
+            startManualRun(other, "gen-check-off")
+            held.awaitArrival()
+            val heldAt = SystemClock.uptimeMillis()
+            assertEquals("the held request is the fetch of the notebook", "GET collection/$checked/", held.request)
+            offThrough = fake.requests.size
+            assertTrue(AccountSettings.writeNotesEnabled(manager, other, false))
+            release(held, heldAt)
+        } finally {
+            held.release()
+        }
+        try {
+            assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+            assertEquals("no request of any kind followed the held fetch", emptyList<String>(), fake.requests.drop(offThrough))
+            assertUnchangedBy("the run of an account whose Notes were turned off", other, "gen-check-off", checked, offBefore)
+            endNotebookCheckPhase(checked, offMark)
+        } finally {
+            fake.answerItemListNotFound(checked, false)
+        }
+    }
+
+    @Test fun aNotebookCheckHeldAcrossAccountReplacementLeavesBothGenerationsUntouched() {
+        val account = newAccount("gen-check-old")
+        val checked = uploadNotebook("Checked while replaced")
+        val sibling = uploadNotebook("Sibling")
+        uploadNotes(checked, "One")
+        uploadNotes(sibling, "Two")
+        val before = syncedThenChangedOnServer(account, "gen-check-old", checked, "Changed elsewhere")
+
+        // A. The account is removed and a same-name one added while the confirming fetch is held, and
+        // the answer that then arrives is an error that would end the whole run. Neither generation
+        // gets an outcome from the old run.
+        fake.answerItemListNotFound(checked, true)
+        val confirming = fake.hold("GET", Regex("collection/$checked/"), swallowInterrupt = true)
+        fake.answer("GET", Regex("collection/$checked/"), 503)
+        val mark = fake.requests.size
+        var through = -1
+        try {
+            startManualRun(account, "gen-check-old")
+            confirming.awaitArrival()
+            val heldAt = SystemClock.uptimeMillis()
+            assertEquals("the held request is the fetch of the notebook", "GET collection/$checked/", confirming.request)
+            through = fake.requests.size
+            replaceAccount(account, "gen-check-new")
+            release(confirming, heldAt)
+        } finally {
+            confirming.release()
+        }
+        assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+        assertEquals("no request of any kind followed the held fetch", emptyList<String>(), fake.requests.drop(through))
+        assertUnchangedBy("the replaced generation's run", account, "gen-check-old", checked, before)
+        assertEquals("the replacement's status is untouched", SyncStatusStore.Status(), status(account, "gen-check-new"))
+        endNotebookCheckPhase(checked, mark)
+
+        // B. The same with the notebook's real answer.
+        val other = newAccount("gen-check-old2")
+        val otherBefore = syncedThenChangedOnServer(other, "gen-check-old2", checked, "Changed again")
+        fake.answerItemListNotFound(checked, true)
+        val held = fake.hold("GET", Regex("collection/$checked/"), swallowInterrupt = true)
+        val otherMark = fake.requests.size
+        var otherThrough = -1
+        try {
+            startManualRun(other, "gen-check-old2")
+            held.awaitArrival()
+            val heldAt = SystemClock.uptimeMillis()
+            assertEquals("the held request is the fetch of the notebook", "GET collection/$checked/", held.request)
+            otherThrough = fake.requests.size
+            replaceAccount(other, "gen-check-new2")
+            release(held, heldAt)
+        } finally {
+            held.release()
+        }
+        try {
+            assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
+            assertEquals("no request of any kind followed the held fetch", emptyList<String>(), fake.requests.drop(otherThrough))
+            assertUnchangedBy("the replaced generation's run", other, "gen-check-old2", checked, otherBefore)
+            assertEquals("the replacement's status is untouched", SyncStatusStore.Status(), status(other, "gen-check-new2"))
+            endNotebookCheckPhase(checked, otherMark)
+        } finally {
+            fake.answerItemListNotFound(checked, false)
+        }
     }
 
     @Test fun concurrentRefreshesOfOneAccountListOneAtATimeAndNeverMoveTheCursorBack() {
@@ -2230,6 +2460,47 @@ class NotesSyncBoundaryRuntimeTest {
     /** The fetches of [notebook] itself since request [since]. */
     private fun notebookFetches(since: Int, notebook: String) =
         fake.requests.drop(since).count { it.substringBefore('?') == "GET collection/$notebook/" }
+
+    /** What a run must leave as it was: the notebook's cursor and cached notes, and the account's NOTES status. */
+    private data class NotebookSnapshot(val cursor: String?, val notes: Set<String>, val status: SyncStatusStore.Status)
+
+    /**
+     * Syncs [account] once and checks that run succeeded, then changes [notebook]'s notes on the
+     * stand-in server, so the next run lists that notebook's notes again. Returns what the first run left.
+     */
+    private fun syncedThenChangedOnServer(account: Account, generation: String, notebook: String, change: String): NotebookSnapshot {
+        syncNow(account, generation)
+        val synced = NotebookSnapshot(notebookCursor(account, notebook), cachedNotes(account, notebook), status(account, generation))
+        assertNotNull("the first run succeeded: ${synced.status}", synced.status.lastSuccessAt)
+        assertEquals("the first run fetched all of the notebook's notes", fake.itemStoken(notebook), synced.cursor)
+        uploadNotes(notebook, change)
+        assertFalse("the notebook's notes changed on the server", fake.itemStoken(notebook) == synced.cursor)
+        return synced
+    }
+
+    /** [run] recorded neither a success nor a failure, closed its attempt, and wrote nothing for [notebook]. */
+    private fun assertUnchangedBy(run: String, account: Account, generation: String, notebook: String, before: NotebookSnapshot) {
+        status(account, generation).let {
+            assertEquals("$run recorded no success: $it", before.status.lastSuccessAt, it.lastSuccessAt)
+            assertEquals("$run recorded no failure: $it", before.status.lastFailureAt, it.lastFailureAt)
+            assertNull("$run left no attempt open: $it", it.activeAttemptId)
+        }
+        assertEquals("the notebook's cursor did not move", before.cursor, notebookCursor(account, notebook))
+        assertEquals("nothing was fetched into the cache", before.notes, cachedNotes(account, notebook))
+        assertTrue("the notebook is still cached", notebook in cachedNotebooks(account))
+    }
+
+    /**
+     * Ends a phase that held the fetch of [notebook]: its notes listing answers again, the held fetch was
+     * the only one since [since], and a scripted answer for it was used up. Reads the request log, so it
+     * goes after the phase's own request assertions.
+     */
+    private fun endNotebookCheckPhase(notebook: String, since: Int) {
+        fake.answerItemListNotFound(notebook, false)
+        assertEquals("one fetch of the notebook itself", 1, notebookFetches(since, notebook))
+        // A scripted answer still waiting would be given to this fetch, and it would throw.
+        assertEquals("the notebook answers its own fetch", notebook, server.collectionManager.fetch(notebook).uid)
+    }
 
     private fun pending(account: Account, generation: String): PendingNotesStore =
         PendingNotesStore.forIdentity(context, account.type, account.name, generation).also { if (it !in stores) stores += it }
