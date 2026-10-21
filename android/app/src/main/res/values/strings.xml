@@ -203,7 +203,7 @@
     <string name="dashboard_detail_permission">Allow %1$s access on this device.</string>
     <string name="dashboard_detail_setup">Review this account\'s collections and Android integrations.</string>
     <string name="dashboard_detail_paused">Turn on Android system sync to continue.</string>
-    <string name="dashboard_detail_task_provider">Install Tasks.org or OpenTasks to sync tasks on this device.</string>
+    <string name="dashboard_detail_task_provider">Tasks don\'t sync on this device without a compatible task app, such as Tasks.org or OpenTasks.</string>
     <string name="dashboard_detail_storage">Check device storage, then try again.</string>
     <string name="dashboard_detail_parent_refresh">SilentSuite will retry the Contacts collection check.</string>
     <string name="dashboard_detail_child_removed">Run sync again to reconcile the latest address books.</string>

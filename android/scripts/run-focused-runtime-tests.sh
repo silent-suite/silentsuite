@@ -39,7 +39,7 @@ tests = sorted(
     for class_name, methods in ledger["classes"].items()
     for method in methods
 )
-if len(tests) != 140 or len(set(tests)) != 140:
+if len(tests) != 163 or len(set(tests)) != 163:
     raise SystemExit(f"bad canonical runtime ledger size: {len(tests)}")
 
 mixed = [tuple(pair) for pair in ledger["shards"]["21:mixed"]]
@@ -52,7 +52,7 @@ elif mode == "21:remaining":
     selected = [pair for pair in tests if pair not in set(mixed + requested)]
 elif mode == "35:all":
     selected = tests
-elif mode in {"36:account-dashboard", "36:first-run-setup", "36:status-routes"}:
+elif mode in {"36:account-dashboard", "36:first-run-setup", "36:sibling-routes", "36:status-routes"}:
     owners = set(ledger["shards"][mode])
     selected = [pair for pair in tests if pair[0] in owners]
 else:
@@ -61,11 +61,12 @@ else:
 expected = {
     "21:mixed": 1,
     "21:requested": 1,
-    "21:remaining": 138,
-    "35:all": 140,
-    "36:account-dashboard": 29,
+    "21:remaining": 161,
+    "35:all": 163,
+    "36:account-dashboard": 30,
     "36:first-run-setup": 19,
-    "36:status-routes": 92,
+    "36:sibling-routes": 47,
+    "36:status-routes": 67,
 }[mode]
 if len(selected) != expected:
     raise SystemExit(f"bad selector count for {mode}: {len(selected)}")
@@ -79,6 +80,7 @@ remaining_selectors="$(ledger_selectors '21:remaining')"
 all_selectors="$(ledger_selectors '35:all')"
 api36_account_dashboard_selectors="$(ledger_selectors '36:account-dashboard')"
 api36_first_run_setup_selectors="$(ledger_selectors '36:first-run-setup')"
+api36_sibling_routes_selectors="$(ledger_selectors '36:sibling-routes')"
 api36_status_routes_selectors="$(ledger_selectors '36:status-routes')"
 
 command -v timeout >/dev/null 2>&1
@@ -114,7 +116,7 @@ requested=[pair for pair in tests if pair[1] == "requestedQueuedRunningSettlingA
 if mode == "21:mixed": selected=mixed
 elif mode == "21:remaining": selected=[pair for pair in tests if pair not in set(mixed + requested)]
 elif mode == "35:all": selected=tests
-elif mode in {"36:account-dashboard", "36:first-run-setup", "36:status-routes"}:
+elif mode in {"36:account-dashboard", "36:first-run-setup", "36:sibling-routes", "36:status-routes"}:
     owners=set(ledger["shards"][mode]); selected=[pair for pair in tests if pair[0] in owners]
 else: raise SystemExit(f"unsupported scenario mode: {mode}")
 selected_keys={f"{c}#{m}" for c,m in selected}
@@ -265,6 +267,9 @@ elif [[ "${api_level}:${shard}" == "36:account-dashboard" ]]; then
 elif [[ "${api_level}:${shard}" == "36:first-run-setup" ]]; then
   timeout --signal=TERM --kill-after=10s 1800s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_first_run_setup_selectors}" "${scenario_args[@]}"
+elif [[ "${api_level}:${shard}" == "36:sibling-routes" ]]; then
+  timeout --signal=TERM --kill-after=10s 1800s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_sibling_routes_selectors}" "${scenario_args[@]}"
 elif [[ "${api_level}:${shard}" == "36:status-routes" ]]; then
   timeout --signal=TERM --kill-after=10s 1800s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_status_routes_selectors}" "${scenario_args[@]}"

@@ -36,8 +36,10 @@ class LocalGroup : AndroidGroup, LocalAddress {
          * Processes all groups with non-null {@link #COLUMN_PENDING_MEMBERS}: the pending memberships
          * are (if possible) applied, keeping cached memberships in sync.
          * @param addressBook    address book to take groups from
+         * @param keepLocalChanges  merge the server's members with local membership changes still to
+         *                          upload instead of applying the server's list as it is (writable replay only)
          */
-        fun applyPendingMemberships(addressBook: LocalAddressBook) {
+        fun applyPendingMemberships(addressBook: LocalAddressBook, keepLocalChanges: Boolean = false) {
             addressBook.provider!!.query(
                     addressBook.groupsSyncUri(),
                     arrayOf(Groups._ID, COLUMN_PENDING_MEMBERS),
@@ -60,15 +62,19 @@ class LocalGroup : AndroidGroup, LocalAddress {
                         parcel.recycle()
                     }
 
-                    // insert memberships
-                    val membersIds = members.map {uid ->
-                        Constants.log.fine("Assigning group member")
-                        val contact = addressBook.findByUid(uid) as LocalContact?
-                        if (contact != null) contact.id else null
-                    }.filterNotNull()
-
                     val group = addressBook.findGroupById(id)
-                    group.setMembers(batch, membersIds)
+                    if (keepLocalChanges)
+                        group.reconcileMembers(batch, members)
+                    else {
+                        // insert memberships
+                        val membersIds = members.map {uid ->
+                            Constants.log.fine("Assigning group member")
+                            val contact = addressBook.findByUid(uid) as LocalContact?
+                            if (contact != null) contact.id else null
+                        }.filterNotNull()
+
+                        group.setMembers(batch, membersIds)
+                    }
 
                     batch.commit()
                 }
@@ -177,11 +183,16 @@ class LocalGroup : AndroidGroup, LocalAddress {
         // required for workaround for Android 7 which sets DIRTY flag when only meta-data is changed
         val changeContactIDs = HashSet<Long>()
 
-        // delete all memberships and cached memberships for this group
-        for (contact in addressBook.getByGroupMembership(id)) {
-            contact.removeGroupMemberships(batch)
+        // delete all memberships and cached memberships for this group; a member's rows for other groups stay
+        for (contact in addressBook.getByGroupMembership(id))
             changeContactIDs += contact.id!!
-        }
+        batch.enqueue(BatchOperation.CpoBuilder.newDelete(addressBook.syncAdapterURI(ContactsContract.Data.CONTENT_URI))
+                        .withSelection(
+                                "(${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID}=?) OR " +
+                                        "(${CachedGroupMembership.MIMETYPE}=? AND ${CachedGroupMembership.GROUP_ID}=?)",
+                                arrayOf(GroupMembership.CONTENT_ITEM_TYPE, id.toString(), CachedGroupMembership.CONTENT_ITEM_TYPE, id.toString())
+                        )
+        )
 
         // insert memberships
         for (memberId in members) {
@@ -227,6 +238,98 @@ class LocalGroup : AndroidGroup, LocalAddress {
         batch.commit()
 
         return ret
+    }
+
+    /**
+     * Stores the server's member list of [server] as pending, without touching this group's title,
+     * content or dirty flag, so a local edit of the group is kept while the server's members are merged.
+     */
+    fun stagePendingMembers(server: Contact) {
+        val values = ContentValues(1)
+        val members = Parcel.obtain()
+        try {
+            members.writeStringList(server.members)
+            values.put(COLUMN_PENDING_MEMBERS, members.marshall())
+        } finally {
+            members.recycle()
+        }
+        addressBook.provider!!.update(groupSyncUri(), values, null, null)
+    }
+
+    /**
+     * Merges the server's members ([serverUids]) with this group's membership changes still to upload.
+     * Current rows hold the local state and cached rows the state last agreed with the server, so a
+     * local addition is current without cached and a local removal cached without current. The target
+     * is (server ∪ local additions) − local removals; contacts deleted locally gain no membership and
+     * keep their rows until their deletion is uploaded.
+     *
+     * The operations are queued so any committed prefix is safe if [BatchOperation] yields or splits:
+     * first current rows only, then cached rows only and only toward the server's list (a cached row of
+     * a server member is never deleted, so local-removal evidence survives), and last the pending list
+     * is cleared and the group marked dirty when the target differs from the server. Until that last
+     * step commits the pending list remains, and recomputing from the rows gives the same target.
+     */
+    private fun reconcileMembers(batch: BatchOperation, serverUids: List<String>) {
+        val id = requireNotNull(id)
+        val addressBook = this.addressBook as LocalAddressBook
+        val pendingDeletion = addressBook.findDeletedContacts().mapNotNull { it.id }.toSet()
+        val server = serverUids.mapNotNull { uid -> (addressBook.findByUid(uid) as? LocalContact)?.id }
+                .filterNot { it in pendingDeletion }.toSet()
+        val current = memberRawIds(GroupMembership.CONTENT_ITEM_TYPE, GroupMembership.GROUP_ROW_ID)
+        val cached = memberRawIds(CachedGroupMembership.CONTENT_ITEM_TYPE, CachedGroupMembership.GROUP_ID)
+        val target = (server + (current - cached)) - (cached - current) - pendingDeletion
+        val dataUri = addressBook.syncAdapterURI(ContactsContract.Data.CONTENT_URI)
+
+        // A: current rows only
+        for (rawId in target - current)
+            batch.enqueue(BatchOperation.CpoBuilder.newInsert(dataUri)
+                    .withValue(GroupMembership.MIMETYPE, GroupMembership.CONTENT_ITEM_TYPE)
+                    .withValue(GroupMembership.RAW_CONTACT_ID, rawId)
+                    .withValue(GroupMembership.GROUP_ROW_ID, id))
+        for (rawId in current - target - pendingDeletion)
+            batch.enqueue(BatchOperation.CpoBuilder.newDelete(dataUri)
+                    .withSelection("${GroupMembership.RAW_CONTACT_ID}=? AND ${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID}=?",
+                            arrayOf(rawId.toString(), GroupMembership.CONTENT_ITEM_TYPE, id.toString())))
+        if (LocalContact.HASH_HACK)
+        // workaround for Android 7 which sets DIRTY flag when only meta-data is changed
+            ((target - current) + (current - target - pendingDeletion))
+                    .map { addressBook.findContactByID(it) }
+                    .forEach { it.updateHashCode(batch) }
+
+        // B: cached rows only, toward the server's list
+        for (rawId in server - cached)
+            batch.enqueue(BatchOperation.CpoBuilder.newInsert(dataUri)
+                    .withValue(CachedGroupMembership.MIMETYPE, CachedGroupMembership.CONTENT_ITEM_TYPE)
+                    .withValue(CachedGroupMembership.RAW_CONTACT_ID, rawId)
+                    .withValue(CachedGroupMembership.GROUP_ID, id))
+        for (rawId in cached - server)
+            batch.enqueue(BatchOperation.CpoBuilder.newDelete(dataUri)
+                    .withSelection("${CachedGroupMembership.RAW_CONTACT_ID}=? AND ${CachedGroupMembership.MIMETYPE}=? AND ${CachedGroupMembership.GROUP_ID}=?",
+                            arrayOf(rawId.toString(), CachedGroupMembership.CONTENT_ITEM_TYPE, id.toString())))
+
+        // C: last; a group is never marked clean here
+        val done = BatchOperation.CpoBuilder.newUpdate(addressBook.syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, id)))
+                .withValue(COLUMN_PENDING_MEMBERS, null)
+        if (target != server)
+            done.withValue(Groups.DIRTY, 1)
+        batch.enqueue(done)
+    }
+
+    /** Raw contact IDs with a membership row of [mimeType] for this group. */
+    private fun memberRawIds(mimeType: String, groupColumn: String): Set<Long> {
+        val id = requireNotNull(id)
+        val members = HashSet<Long>()
+        addressBook.provider!!.query(
+                addressBook.syncAdapterURI(ContactsContract.Data.CONTENT_URI),
+                arrayOf(ContactsContract.Data.RAW_CONTACT_ID),
+                "${ContactsContract.Data.MIMETYPE}=? AND $groupColumn=?",
+                arrayOf(mimeType, id.toString()),
+                null
+        )?.use { cursor ->
+            while (cursor.moveToNext())
+                members += cursor.getLong(0)
+        }
+        return members
     }
 
     // helpers

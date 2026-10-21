@@ -168,6 +168,7 @@ class LoginLifecycleContractTest {
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: account-dashboard""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: first-run-setup""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: status-routes""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: sibling-routes""").findAll(job).count())
         assertEquals(1, Regex("shard: mixed").findAll(job).count())
         assertEquals(1, Regex("shard: remaining").findAll(job).count())
         assertEquals(1, Regex("shard: all").findAll(job).count())
@@ -183,7 +184,7 @@ class LoginLifecycleContractTest {
         assertTrue(navigationWrapper.contains("settings get secure navigation_mode"))
         assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
-            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 140",
+            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 163",
             "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
             "-PrequireEtebase16Kb=true", "--no-daemon"
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
@@ -261,17 +262,17 @@ class LoginLifecycleContractTest {
     fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         assertTrue(runtimeScript.contains("focused-runtime-ledger-v1.json"))
-        assertTrue(runtimeScript.contains("if len(tests) != 140 or len(set(tests)) != 140"))
+        assertTrue(runtimeScript.contains("if len(tests) != 163 or len(set(tests)) != 163"))
         listOf(
-            "\"21:mixed\": 1", "\"21:requested\": 1", "\"21:remaining\": 138",
-            "\"35:all\": 140", "\"36:account-dashboard\": 29",
-            "\"36:first-run-setup\": 19", "\"36:status-routes\": 92",
+            "\"21:mixed\": 1", "\"21:requested\": 1", "\"21:remaining\": 161",
+            "\"35:all\": 163", "\"36:account-dashboard\": 30",
+            "\"36:first-run-setup\": 19", "\"36:sibling-routes\": 47", "\"36:status-routes\": 67",
         ).forEach { assertTrue(runtimeScript.contains(it)) }
         assertTrue(runtimeScript.contains("remaining_selectors=\"\$(ledger_selectors '21:remaining')\""))
         assertTrue(runtimeScript.contains("all_selectors=\"\$(ledger_selectors '35:all')\""))
         assertFalse(runtimeScript.contains("other77_selectors"))
         assertFalse(runtimeScript.contains("focused_classes="))
-        assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800", "1800"),
+        assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
         assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)
@@ -288,9 +289,10 @@ class LoginLifecycleContractTest {
     @Test
     fun dashboardLifecycleObservationAvoidsRepeatedActivityScenarioPolling() {
         val source = File("src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").readText()
+        // Ends at the next test method, so this is exactly the lifecycle method's body.
         val lifecycle = source.substringAfter(
             "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()"
-        ).substringBefore("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()")
+        ).substringBefore("@Test fun ")
         val observerPoll = source.substringAfter("private fun waitForObservedText(")
             .substringBefore("private fun waitForText(")
 

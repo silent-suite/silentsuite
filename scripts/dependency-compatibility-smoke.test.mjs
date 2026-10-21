@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import test from 'node:test'
 
 function requireFrom(packagePath) {
@@ -297,6 +297,55 @@ test('Next and its ESLint config stay on the patched compatible release', () => 
   assert.equal(web('eslint-config-next/package.json').version, '15.5.24')
 })
 
+// Vite (GHSA-587h-7wmj-h5pm / CVE-2026-112942, with GHSA-698v-4r3x-3vcv and
+// GHSA-r825-w8mm-5pxw): Vite ships launch-editor, so the patched lines are 6.4.4 and 8.1.6.
+// pnpm resolves Vite once per consumer peer context, so every real consumer is walked from
+// its installed directory, one hop at a time, instead of through a package exports map.
+function installedPackageDir(fromDir, name) {
+  for (let dir = fromDir; ; dir = dirname(dir)) {
+    const candidate = join(dir, 'node_modules', name)
+    if (existsSync(join(candidate, 'package.json'))) return realpathSync(candidate)
+    if (dirname(dir) === dir) throw new Error(`${name} is not installed above ${fromDir}`)
+  }
+}
+
+function installedVersion(packageDir) {
+  return JSON.parse(readFileSync(join(packageDir, 'package.json'), 'utf8')).version
+}
+
+// Every consumer is resolved before comparing, so one report shows each peer context.
+function assertViteConsumers(consumers, expectedVite) {
+  const resolved = {}
+  for (const [label, consumerDir, consumerVersion] of consumers) {
+    if (consumerVersion) assert.equal(installedVersion(consumerDir), consumerVersion, `${label} consumer version`)
+    resolved[`${label} > vite`] = installedVersion(installedPackageDir(consumerDir, 'vite'))
+  }
+  assert.deepEqual(
+    resolved,
+    Object.fromEntries(Object.keys(resolved).map((label) => [label, expectedVite])),
+    `every Vite consumer must resolve the patched ${expectedVite}`,
+  )
+}
+
+test('Vite 8 web and core consumers resolve the patched 8.1.6 release in every peer context', () => {
+  const web = resolve(import.meta.dirname, '..', 'apps/web')
+  const core = resolve(import.meta.dirname, '..', 'packages/core')
+  assertViteConsumers([
+    ['apps/web', web],
+    ['apps/web > vitest', installedPackageDir(web, 'vitest'), '4.1.0'],
+    ['packages/core > vitest', installedPackageDir(core, 'vitest'), '4.1.0'],
+    ['apps/web > @vitejs/plugin-react', installedPackageDir(web, '@vitejs/plugin-react'), '6.0.2'],
+  ], '8.1.6')
+})
+
+test('Vite 6 docs consumers resolve the patched 6.4.4 release', () => {
+  const vitepress = installedPackageDir(resolve(import.meta.dirname, '..', 'apps/docs'), 'vitepress')
+  assertViteConsumers([
+    ['apps/docs > vitepress', vitepress, '1.6.4'],
+    ['apps/docs > vitepress > @vitejs/plugin-vue', installedPackageDir(vitepress, '@vitejs/plugin-vue'), '5.2.4'],
+  ], '6.4.4')
+})
+
 test('Next resolves patched Sharp and transforms image data with patched libheif', async () => {
   const web = requireFrom('apps/web/package.json')
   const nextRequire = createRequire(web.resolve('next/package.json'))
@@ -355,6 +404,15 @@ test('security overrides remain scoped to compatible vulnerable major lines', ()
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'js-yaml'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'nanoid@<3.3.18'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'browserslist'), false)
+  assert.equal(manifest.pnpm.overrides['vitepress>vite'], '6.4.4')
+  assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'vite'), false)
+  // Only the bounded same-major Vite 8 selector may exist; Vite is never forced across a major.
+  const viteSelectors = Object.entries(manifest.pnpm.overrides).filter(([selector]) => /^vite(@|$)/.test(selector))
+  assert.ok(
+    viteSelectors.length === 0
+      || JSON.stringify(viteSelectors) === JSON.stringify([['vite@>=8.0.0 <8.1.6', '8.1.6']]),
+    `unexpected Vite override selectors: ${JSON.stringify(viteSelectors)}`,
+  )
 })
 
 // source-map-js (GHSA-68fv-2mgg-jv7q / CVE-2026-93749): a section's offset.line in an

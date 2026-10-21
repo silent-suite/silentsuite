@@ -113,12 +113,63 @@ class AccountDashboardStateTest {
             lastFailureCategory = SyncStatusStore.FailureCategory.AUTHENTICATION)
         val configuration = SyncStatusStore.Status(lastFailureAt = 2,
             lastFailureCategory = SyncStatusStore.FailureCategory.CONFIGURATION)
-        val authInput = AccountDashboardInput(true, false, true, false, false, false, true, auth, now = 10, windows = windows)
+        // With a provider present the local ranks hold; without one, the missing task app comes first.
+        val authInput = AccountDashboardInput(true, false, true, false, false, true, true, auth, now = 10, windows = windows)
         assertEquals(AccountDashboardAction.OPEN_ACCOUNT_SETTINGS,
             presentAccountDashboard(reduceAccountDashboardState(authInput), null).action)
-        val configInput = AccountDashboardInput(true, false, true, true, true, false, true, configuration, now = 10, windows = windows)
+        val configInput = AccountDashboardInput(true, false, true, true, true, true, true, configuration, now = 10, windows = windows)
         assertEquals(AccountDashboardAction.OPEN_SYNC_SETTINGS,
             presentAccountDashboard(reduceAccountDashboardState(configInput), null).action)
+        listOf(authInput.copy(providerReady = false), configInput.copy(providerReady = false)).forEach { input ->
+            assertEquals(AccountDashboardAction.INSTALL_TASK_APP,
+                presentAccountDashboard(reduceAccountDashboardState(input), null).action)
+        }
+    }
+
+    @Test fun `missing task provider outranks lifecycle setup storage system and failure states`() {
+        val request = SyncStatusStore.Status(activeRequestId = "request", requestedAt = 1)
+        val attempt = request.copy(activeAttemptId = "attempt", attemptStartedAt = 1)
+        val storage = SyncStatusStore.Status(structuralStorageFailure = true)
+        fun failure(category: SyncStatusStore.FailureCategory) =
+            SyncStatusStore.Status(lastFailureAt = 2, lastFailureCategory = category)
+        val masking = listOf(
+            "running" to input(running = true),
+            "open attempt" to input(status = attempt),
+            "pending" to input(pending = true),
+            "open request" to input(status = request),
+            "setup" to input(setup = false),
+            "no collections" to input(collections = false),
+            "system sync off" to input(master = false),
+            "permission" to input(permission = false),
+            "structural storage" to input(status = storage),
+            "authentication" to input(status = failure(SyncStatusStore.FailureCategory.AUTHENTICATION)),
+            "permission failure" to input(status = failure(SyncStatusStore.FailureCategory.PERMISSION)),
+            "configuration" to input(status = failure(SyncStatusStore.FailureCategory.CONFIGURATION)),
+        )
+        masking.forEach { (name, present) ->
+            val absent = present.copy(providerReady = false)
+            val model = reduceAccountDashboardState(absent)
+            assertEquals(name, AccountDashboardState.BLOCKED, model.state)
+            assertEquals(name, AccountDashboardBlock.PROVIDER, model.blockedBy)
+            val presentation = presentAccountDashboard(model, null)
+            assertEquals(name, AccountDashboardLabel.TASK_APP_NEEDED, presentation.label)
+            assertEquals(name, AccountDashboardAction.INSTALL_TASK_APP, presentation.action)
+            assertFalse("$name with a provider", reduceAccountDashboardState(present).blockedBy == AccountDashboardBlock.PROVIDER)
+        }
+        // With a provider present, every masking state keeps its current presentation.
+        assertEquals(AccountDashboardState.RUNNING, reduceAccountDashboardState(input(running = true)).state)
+        assertEquals(AccountDashboardState.SETTLING, reduceAccountDashboardState(input(status = attempt)).state)
+        assertEquals(AccountDashboardState.QUEUED, reduceAccountDashboardState(input(pending = true)).state)
+        assertEquals(AccountDashboardState.REQUESTED, reduceAccountDashboardState(input(status = request)).state)
+        assertEquals(AccountDashboardState.SETUP_REQUIRED, reduceAccountDashboardState(input(setup = false)).state)
+        assertEquals(AccountDashboardBlock.MASTER_SYNC, reduceAccountDashboardState(input(master = false)).blockedBy)
+        assertEquals(AccountDashboardBlock.PERMISSION, reduceAccountDashboardState(input(permission = false)).blockedBy)
+        assertEquals(AccountDashboardLabel.STORAGE,
+            presentAccountDashboard(reduceAccountDashboardState(input(status = storage)), null).label)
+        // Loading and a failed load still come first.
+        assertEquals(AccountDashboardState.LOADING, reduceAccountDashboardState(input(loaded = false, provider = false)).state)
+        assertEquals(AccountDashboardLabel.STORAGE,
+            presentAccountDashboard(reduceAccountDashboardState(input(loadFailed = true, provider = false)), null).label)
     }
 
     @Test fun `aggregate retains blocked sibling issue and no work precedence is stable`() {
@@ -241,7 +292,9 @@ class AccountDashboardStateTest {
         assertEquals(AccountDashboardBlock.PERMISSION,
             reduceAccountDashboardState(input(permission = false, status = configurationFailure)).blockedBy)
         assertEquals(AccountDashboardState.ACTION_REQUIRED,
-            reduceAccountDashboardState(input(provider = false, status = configurationFailure)).state)
+            reduceAccountDashboardState(input(status = configurationFailure)).state)
+        assertEquals(AccountDashboardBlock.PROVIDER,
+            reduceAccountDashboardState(input(provider = false, status = configurationFailure)).blockedBy)
         assertEquals(AccountDashboardState.SETUP_REQUIRED,
             reduceAccountDashboardState(input(collections = false, status = setupFailure)).state)
     }

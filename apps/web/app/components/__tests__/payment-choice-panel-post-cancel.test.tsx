@@ -246,6 +246,72 @@ describe('PaymentChoicePanel post-cancel verification', () => {
     act(() => { useAuthStore.setState({ user: null }) })
   })
 
+  // An older, still-valid early offer (€36) that the initial loader may deliver late.
+  const olderEarlyOffer = {
+    contractVersion: 2,
+    requestId: '3c0b9f6e-2a41-4d7c-8e95-6b1f2a7d9c30',
+    offer: { ...annualOffer.offer, planId: 'early_annual', customerClass: 'early', annualAmountMinor: 3600, monthlyEquivalentMinor: 300, providers: ['stripe', 'btcpay'], offerToken: 'signed-offer-older' },
+    accountTermsProfile: PROFILE,
+    accountDisclosures: {
+      stripe: { ...cardDisclosure(), annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: 3600, monthlyEquivalentMinor: 300 },
+      btcpay: { ...cardDisclosure(), kind: 'prepaid', annualAmountMinor: 3600, firstChargeAmountMinor: 3600, renewalAmountMinor: null, monthlyEquivalentMinor: 300, autoRenew: false, prepaid: true },
+    },
+  }
+  const lateInitial = {
+    'older success': () => response(olderEarlyOffer),
+    'invalid disclosures': () => response(invalidDisclosureOffer),
+    error: () => response({ type: 'https://api.silentsuite.io/errors/offer-unavailable', status: 503 }, 503),
+  } as const
+
+  it.each(Object.keys(lateInitial) as Array<keyof typeof lateInitial>)('ignores a late initial offer (%s) delivered after the joint verdict', async (late) => {
+    const initial = deferred()
+    serve({
+      current: [() => response({ flow: activeFlow }), () => response({ flow: null })],
+      offer: [() => initial.promise, () => response(validOffer)],
+      cancel: [() => response({ cancelled: true, flowKind: 'stripe_pay_now' })],
+    })
+    const { onCancel, dismissible } = renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment' }))
+    expect(await screen.findByRole('button', { name: /Continue to card payment/ })).toBeTruthy()
+    expect(dismissible()).toBe(true)
+
+    await act(async () => { initial.resolve(lateInitial[late]()); await initial.promise; await new Promise(resolve => setTimeout(resolve, 20)) })
+
+    expect(screen.getByRole('button', { name: /Continue to card payment/ })).toBeTruthy()
+    expect(screen.getByText(/^€48\.00\/year/)).toBeTruthy()
+    expect(screen.queryByText(/€36\.00\/year/)).toBeNull()
+    expect(screen.queryByText('Payment options are temporarily unavailable.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
+    expect(dismissible()).toBe(true)
+    expect(onCancel).not.toHaveBeenCalled()
+  })
+
+  it.each(Object.keys(lateInitial) as Array<keyof typeof lateInitial>)('keeps a pending joint verification when a late initial offer (%s) arrives first', async (late) => {
+    const initial = deferred()
+    const verifying = deferred()
+    serve({
+      current: [() => response({ flow: activeFlow }), () => response({ flow: null })],
+      offer: [() => initial.promise, () => verifying.promise],
+      cancel: [() => response({ cancelled: true, flowKind: 'stripe_pay_now' })],
+    })
+    const { dismissible } = renderPanel()
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel card payment' }))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Checking current payment...' }).length).toBeGreaterThan(0))
+
+    await act(async () => { initial.resolve(lateInitial[late]()); await initial.promise; await new Promise(resolve => setTimeout(resolve, 20)) })
+    // Still pending: the stale loader published no terms, failure or loaded state.
+    expect(screen.queryByText(/€36\.00\/year/)).toBeNull()
+    expect(screen.queryByText('Payment options are temporarily unavailable.')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Retry current annual offer' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Checking current payment...' }).length).toBeGreaterThan(0)
+    expect(dismissible()).toBe(false)
+
+    await act(async () => { verifying.resolve(response(validOffer)); await verifying.promise; await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(screen.getByRole('button', { name: /Continue to card payment/ })).toBeTruthy()
+    expect(screen.getByText(/^€48\.00\/year/)).toBeTruthy()
+    expect(dismissible()).toBe(true)
+  })
+
   const unavailable = () => response({ type: 'https://api.silentsuite.io/errors/offer-unavailable', status: 503 }, 503)
   it.each([
     ['current-failed', 'Retry payment status', true, [() => response({}, 503)], []],

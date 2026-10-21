@@ -140,7 +140,9 @@ constructor(protected val context: Context, protected val account: Account, prot
             prepareFetch()
 
             var itemList: ItemListResponse?
-            var stoken = synchronized(etebaseLocalCache) {
+            // Read before any upload, so a destination that cannot say whether it is complete fails here.
+            replaying = replayFromStart()
+            var stoken = if (replaying) null else synchronized(etebaseLocalCache) {
                 etebaseLocalCache.collectionLoadStoken(cachedCollection.col.uid)
             }
             // Push local changes
@@ -198,6 +200,8 @@ constructor(protected val context: Context, protected val account: Account, prot
             syncPhase = R.string.sync_phase_post_processing
             Logger.log.info("Sync phase: " + context.getString(syncPhase))
             postProcess()
+            // Only a listing from the start that reached its done page completes a replay.
+            if (replaying && itemList?.isDone == true) onReplayCompleted()
 
             if (numDiscarded > 0) {
                 notifyDiscardedChange()
@@ -324,7 +328,8 @@ constructor(protected val context: Context, protected val account: Account, prot
     }
 
     private fun fetchItems(stoken: String?): ItemListResponse? {
-        if (remoteCTag != stoken) {
+        // A replay lists every page up to the done page, even where a page's cursor equals the cached token.
+        if (replaying || remoteCTag != stoken) {
             val ret = itemMgr.list(FetchOptions().stoken(stoken))
             Logger.log.info("Fetched items. Done=${ret.isDone}")
             return ret
@@ -347,6 +352,11 @@ constructor(protected val context: Context, protected val account: Account, prot
             i++
             Logger.log.info("Processing remote resource (${i}/${size}) deleted=${item.isDeleted}")
 
+            if (keepsLocalChange(item)) {
+                // Neither applied nor cached: the cached copy stays the base of the local change's upload.
+                Logger.log.info("Keeping a local change over a server deletion for the next upload")
+                continue
+            }
             processItem(item)
             persistItem(item)
         }
@@ -545,6 +555,29 @@ constructor(protected val context: Context, protected val account: Account, prot
      */
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     protected open fun restoreLocalFromRemote(local: T): String? = null
+
+    /** Whether this run lists the collection from its start rather than from the saved cursor. */
+    protected var replaying: Boolean = false
+        private set
+
+    /**
+     * Whether this run lists the collection from its start, for a local destination that may be
+     * missing entries the saved cursor has already passed. Off by default.
+     */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    protected open fun replayFromStart(): Boolean = false
+
+    /**
+     * Whether a server deletion [item] is left unapplied and uncached because a local change of that
+     * entry is still to be uploaded. Off by default.
+     */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    protected open fun keepsLocalChange(item: Item): Boolean = false
+
+    /** Called once a listing from the start has reached its done page and post-processing succeeded. */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    protected open fun onReplayCompleted() {
+    }
 
     /**
      * For post-processing of entries, for instance assigning groups.

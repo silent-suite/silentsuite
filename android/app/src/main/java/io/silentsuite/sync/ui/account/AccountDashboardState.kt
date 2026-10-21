@@ -65,6 +65,8 @@ fun reduceAccountDashboardState(input: AccountDashboardInput): AccountDashboardM
     val status = input.status
     if (input.loadFailed) return AccountDashboardModel(AccountDashboardState.TRANSIENT, failure = SyncStatusStore.FailureCategory.STORAGE)
     if (!input.loaded) return AccountDashboardModel(AccountDashboardState.LOADING)
+    // No compatible provider means no work of this service can run: lifecycle and setup flags never hide it.
+    if (!input.providerReady) return AccountDashboardModel(AccountDashboardState.BLOCKED, AccountDashboardBlock.PROVIDER)
     if (status?.structuralStorageFailure == true)
         return AccountDashboardModel(AccountDashboardState.TRANSIENT, failure = SyncStatusStore.FailureCategory.STORAGE)
     if (input.running) return AccountDashboardModel(AccountDashboardState.RUNNING)
@@ -87,7 +89,6 @@ fun reduceAccountDashboardState(input: AccountDashboardInput): AccountDashboardM
     if (!input.permissionReady) return AccountDashboardModel(AccountDashboardState.BLOCKED, AccountDashboardBlock.PERMISSION)
     if (status != null && latestIsFailure(status) && status.lastFailureCategory == SyncStatusStore.FailureCategory.CONFIGURATION)
         return failureModel(SyncStatusStore.FailureCategory.CONFIGURATION)
-    if (!input.providerReady) return AccountDashboardModel(AccountDashboardState.BLOCKED, AccountDashboardBlock.PROVIDER)
     if (status?.latestGenerationIncomplete == true) return AccountDashboardModel(AccountDashboardState.INTERRUPTED,
         failure = SyncStatusStore.FailureCategory.INTERRUPTED)
     if (status == null || (status.lastSuccessAt == null && status.lastFailureAt == null)) return AccountDashboardModel(AccountDashboardState.NEVER_SYNCED)

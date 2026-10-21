@@ -476,13 +476,15 @@ export default function PaymentChoicePanel({
   // returned, so a caller never reads React state captured before it.
   const runPostCancelVerification = async (): Promise<PostCancelVerdict | 'superseded'> => {
     const generation = ++verificationGeneration.current
+    // Also own offer publication, so every older offer load is superseded.
+    const offerSequence = ++offerRequestSequence.current
     setPostCancel({ generation, verdict: 'pending' })
     setCurrentFlowLoaded(false)
     setCurrentFlowLoadFailed(false)
     setError(null)
     const [flowResult, offerResult] = await Promise.all([fetchCurrentFlowResult(), fetchOfferResult()])
     // A newer verification or another account owns the panel: publish nothing.
-    if (generation !== verificationGeneration.current || !accountCurrent()) return 'superseded'
+    if (generation !== verificationGeneration.current || offerSequence !== offerRequestSequence.current || !accountCurrent()) return 'superseded'
     // HTTP 200 without valid signed terms is not a valid offer.
     const verdict: PostCancelVerdict = !flowResult.ok ? 'current-failed'
       : flowResult.flow ? 'flow-present'

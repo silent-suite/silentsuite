@@ -306,7 +306,7 @@ def test_dashboard_uses_every_exact_approved_pr1_copy_string():
         "dashboard_detail_paused": "Turn on Android system sync to continue.",
         "dashboard_status_permission_needed": "Permission needed",
         "dashboard_status_task_app_needed": "Task app needed",
-        "dashboard_detail_task_provider": "Install Tasks.org or OpenTasks to sync tasks on this device.",
+        "dashboard_detail_task_provider": "Tasks don't sync on this device without a compatible task app, such as Tasks.org or OpenTasks.",
         "dashboard_status_authentication": "Sign in again",
         "dashboard_detail_authentication": "This account couldn't authenticate. Open account settings or sign out and sign in again.",
         "dashboard_status_configuration": "Review sync settings",
@@ -478,6 +478,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         ("21", "x86", "mixed"), ("21", "x86", "remaining"),
         ("35", "x86_64", "all"), ("36", "x86_64", "account-dashboard"),
         ("36", "x86_64", "first-run-setup"), ("36", "x86_64", "status-routes"),
+        ("36", "x86_64", "sibling-routes"),
     ]
     assert "name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})" in job
     artifact = re.search(r"^\s+name: (account-recreation-androidTest-.+)$", job, re.MULTILINE).group(1)
@@ -507,7 +508,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
     ledger_size = sum(len(methods) for methods in ledger["classes"].values())
-    assert len(canonical) == len(runtime_methods) == ledger_size == 140
+    assert len(canonical) == len(runtime_methods) == ledger_size == 163
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
@@ -517,7 +518,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     }
     api36 = {
         key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
-        for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes")
+        for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes", "36:sibling-routes")
     }
     assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (
         1, 1, ledger_size - 2, ledger_size
@@ -526,8 +527,9 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 138, 140)
-    assert tuple(len(api36[key]) for key in api36) == (29, 19, 92)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 161, 163)
+    assert tuple(len(api36[key]) for key in api36) == (30, 19, 67, 47)
+    assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())
@@ -547,7 +549,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     subprocess.run(["bash", "-n", FOCUSED_RUNTIME_SCRIPT], check=True)
     subprocess.run(["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "21" "mixed"'], check=True)
-    assert script.count("app:connectedDebugAndroidTest") == 7
+    assert script.count("app:connectedDebugAndroidTest") == 8
     assert "focused-runtime-ledger-v1.json" in script
     assert "object_pairs_hook=reject_duplicate_keys" in script
     assert "canonical compact sorted UTF-8/LF JSON" in script
@@ -558,7 +560,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "api21-requested" in script and "api21_batch_" not in script
     assert 'command -v timeout >/dev/null 2>&1' in script
     assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == [
-        "600", "600", "1500", "2400", "1800", "1800", "1800"
+        "600", "600", "1500", "2400", "1800", "1800", "1800", "1800"
     ]
     requested_run = script.index('class="${requested_selector}"')
     save = script.index("\n  save_requested_results", requested_run)
@@ -588,8 +590,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':139,'35:all':140,'36:account-dashboard':29,'36:first-run-setup':19,'36:status-routes':92}" in assertion
-    assert '"21:remaining": 138' in script
+    assert "expected_sizes={'21:mixed':1,'21:remaining':162,'35:all':163,'36:account-dashboard':30,'36:first-run-setup':19,'36:sibling-routes':47,'36:status-routes':67}" in assertion
+    assert '"21:remaining": 161' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper
@@ -661,9 +663,11 @@ def test_dashboard_install_task_app_routes_to_android_apps_docs():
 
 def test_api21_lifecycle_observer_avoids_blocking_activity_polling():
     runtime = (ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui/AccountDashboardRuntimeTest.kt").read_text(encoding="utf-8")
+    # The slice ends at the next test method, so it covers exactly this lifecycle method's body
+    # whatever method follows it in the file.
     lifecycle = runtime.split(
         "@Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention()", 1
-    )[1].split("@Test fun freshContactsGenerationFinishesBeforeChildDispatchOrCompletion()", 1)[0]
+    )[1].split("@Test fun ", 1)[0]
 
     assert lifecycle.count("scenario.onActivity") == 6
     assert lifecycle.count("addTextChangedListener") == 1

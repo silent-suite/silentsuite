@@ -58,7 +58,7 @@
       "sharp": "0.35.5",
       "@babel/plugin-transform-modules-systemjs": "^7.29.4",
       "ws": "^7.5.11",
-      "vitepress>vite": "^6.4.3"
+      "vitepress>vite": "6.4.4"
     },
     "patchedDependencies": {
       "braces@3.0.3": "patches/braces@3.0.3.patch"
