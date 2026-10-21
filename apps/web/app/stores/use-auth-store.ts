@@ -1040,6 +1040,43 @@ async function deleteHostedServerSession(context: string) {
   }
 }
 
+// Resource bound on the server-provided wait; Billing sends Retry-After: 1.
+const REFRESH_UNCONFIRMED_MAX_WAIT_SECONDS = 5
+
+/**
+ * Seconds to wait before re-requesting, only for Billing's canonical 503
+ * `refresh-unconfirmed` (no cookies set: a concurrent rotation may have won).
+ * Any other reply returns null and keeps its existing handling.
+ */
+async function refreshUnconfirmedWaitSeconds(res: Response): Promise<number | null> {
+  if (res.status !== 503) return null
+  const retryAfter = res.headers?.get('Retry-After')?.trim() ?? ''
+  if (!/^\d+$/.test(retryAfter)) return null
+  try {
+    const body: unknown = await res.json()
+    const type = typeof body === 'object' && body !== null ? (body as { type?: unknown }).type : null
+    if (typeof type !== 'string' || type.split(/[/#]/).filter(Boolean).pop() !== 'refresh-unconfirmed') return null
+  } catch {
+    return null
+  }
+  return Math.min(Number(retryAfter), REFRESH_UNCONFIRMED_MAX_WAIT_SECONDS)
+}
+
+/**
+ * POST /auth/refresh with exactly one re-request after an unconfirmed 503.
+ * A second reply of any kind, including another 503, is returned to the
+ * caller's existing non-destructive handling; a changed boundary skips it.
+ */
+async function postAuthRefresh(current: () => boolean): Promise<Response> {
+  const request = () => fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+  const first = await request()
+  const waitSeconds = await refreshUnconfirmedWaitSeconds(first)
+  if (waitSeconds === null || !current()) return first
+  await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000))
+  if (!current()) return first
+  return request()
+}
+
 const SIGNUP_SESSION_ERROR = 'Your account is set up, but we could not confirm the Billing session. Retry to finish signing in; your account and payment are retained.'
 
 /** Publish the promise before entering async work so duplicate clicks share it. */
@@ -1654,7 +1691,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
 
     try {
-      const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      const res = await postAuthRefresh(current)
       if (!current()) return false
       // Only treat the session as invalid on explicit auth failures. A 5xx
       // response or network blip would otherwise log out e.g. an unverified
@@ -1748,7 +1785,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     set({ isLoading: true })
     try {
-      const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      const res = await postAuthRefresh(current)
       if (!current()) return
       if (res.ok) {
         const data = await res.json()
@@ -1867,7 +1904,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       // Fetch both endpoints — only apply state if BOTH succeed
       const [refreshRes, subRes] = await Promise.all([
-        fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }),
+        postAuthRefresh(current),
         fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' }),
       ])
       if (!current()) return false

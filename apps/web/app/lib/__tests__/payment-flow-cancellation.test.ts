@@ -98,6 +98,15 @@ describe('cancelPaymentFlow request shape', () => {
     expect(requestOf(fetcher).url).toBe(CANCEL_URL)
   })
 
+  // Billing's 200 `{ cancelled: false, reason: 'no_active_flow' }` proves no
+  // authority remained to release; the panel then verifies it like a success.
+  it('reports an already-resolved flow for the literal no-active-flow reply', async () => {
+    const fetcher = fetcherReturning(ok({ cancelled: false, reason: 'no_active_flow' }))
+
+    expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
+      .toEqual({ cancelled: false, alreadyResolved: true })
+  })
+
   it('returns a null flow kind when the server omits it', async () => {
     const fetcher = fetcherReturning(ok({ cancelled: true }))
 
