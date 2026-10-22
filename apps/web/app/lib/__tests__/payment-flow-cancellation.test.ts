@@ -104,6 +104,23 @@ describe('cancelPaymentFlow request shape', () => {
     expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
       .toEqual({ cancelled: true, flowKind: null })
   })
+
+  // #770: a retry after a race, or a webhook that already retired the flow,
+  // leaves nothing pending. That is the outcome the user asked for, and the
+  // panel re-proves the current flow and offer before any new payment starts.
+  it.each(['stripe', 'btcpay'] as const)('treats a %s 200 no_active_flow reply as already resolved', async provider => {
+    const fetcher = fetcherReturning(ok({ cancelled: false, reason: 'no_active_flow' }))
+
+    expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider, confirmNoBitcoinSent: true }))
+      .toEqual({ cancelled: true, flowKind: null })
+  })
+
+  it('does not treat no_active_flow on a non-200 reply as resolved', async () => {
+    const fetcher = fetcherReturning({ ok: false, status: 409, json: async () => ({ cancelled: false, reason: 'no_active_flow' }) } as Response)
+
+    expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
+      .toMatchObject({ cancelled: false, failure: 'unavailable' })
+  })
 })
 
 describe('cancelPaymentFlow failure mapping', () => {
@@ -187,6 +204,7 @@ describe('cancelPaymentFlow failure mapping', () => {
     ['an untyped failure', () => problem(503, null, SENSITIVE)],
     ['a 200 body that does not confirm cancellation', () => ok({ cancelled: false, detail: SENSITIVE })],
     ['a 200 body with a non-literal cancelled flag', () => ok({ cancelled: 'true', detail: SENSITIVE })],
+    ['a 200 body with an unknown not-cancelled reason', () => ok({ cancelled: false, reason: 'something_else' })],
   ] as const)('falls back to one generic message for %s', async (_label, make) => {
     const fetcher = fetcherReturning(make())
 

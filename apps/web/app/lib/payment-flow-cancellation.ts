@@ -127,6 +127,11 @@ export async function cancelPaymentFlow(params: {
     return failed(known ? known[2] : 'unavailable')
   }
 
-  if (!isObject(body) || body.cancelled !== true) return failed('unavailable')
+  if (!isObject(body)) return failed('unavailable')
+  // Nothing is pending any more (an earlier attempt or a provider webhook
+  // already retired it). The caller re-proves the current flow and offer
+  // before any new payment can start, so this is safe to treat as resolved.
+  if (response.status === 200 && body.cancelled === false && body.reason === 'no_active_flow') return { cancelled: true, flowKind: null }
+  if (body.cancelled !== true) return failed('unavailable')
   return { cancelled: true, flowKind: typeof body.flowKind === 'string' ? body.flowKind : null }
 }
