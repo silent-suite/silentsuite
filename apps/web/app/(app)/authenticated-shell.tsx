@@ -1,0 +1,55 @@
+'use client'
+
+import { useTranslations } from 'next-intl'
+import { Sidebar } from '@/app/components/sidebar'
+import { Header } from '@/app/components/header'
+import { BottomNav } from '@/app/components/bottom-nav'
+import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-overlay'
+import { RestoreBlockedBanner } from '@/app/components/restore-blocked-banner'
+import { PartialLoadBanner } from '@/app/components/partial-load-banner'
+import { PendingSyncBanner } from '@/app/components/PendingSyncBanner'
+import { OfflineToast } from '@/app/components/OfflineToast'
+import { ToastContainer } from '@/app/components/Toast'
+import { EmailVerificationBanner } from '@/app/components/EmailVerificationBanner'
+import { SyncProvider } from '@/app/providers/sync-provider'
+import { NotificationProvider } from '@/app/providers/notification-provider'
+import { useAuthStore } from '@/app/stores/use-auth-store'
+import { isSelfHosted } from '@/app/lib/self-hosted'
+
+export default function AuthenticatedShell({ children }: { children: React.ReactNode }) {
+  const t = useTranslations('Navigation')
+  const readOnly = useAuthStore((s) => s.isReadOnly())
+  const degraded = useAuthStore((s) => s.isDegraded())
+
+  return (
+      <SyncProvider>
+        <NotificationProvider>
+          <div className="flex h-screen bg-[rgb(var(--background))]">
+            {/* Skip navigation link for keyboard/screen reader users */}
+            <a
+              href="#main-content"
+              className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:rounded-lg focus:bg-[rgb(var(--primary))] focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-white focus:shadow-lg"
+            >
+              {t('skipToContent')}
+            </a>
+            <Sidebar />
+            <div className="flex flex-1 flex-col min-w-0">
+              <Header />
+              <EmailVerificationBanner />
+              <RestoreBlockedBanner />
+              <PartialLoadBanner />
+              {!isSelfHosted && degraded && <DegradedModeBanner />}
+              {!isSelfHosted && readOnly && <ReadOnlyBanner />}
+              <PendingSyncBanner />
+              <main id="main-content" className="relative z-0 flex-1 overflow-auto p-3 pb-20 md:p-4 md:pb-4 page-transition">
+                {children}
+              </main>
+            </div>
+            <BottomNav />
+            <OfflineToast />
+            <ToastContainer />
+          </div>
+        </NotificationProvider>
+      </SyncProvider>
+  )
+}

@@ -22,13 +22,6 @@ Install **Tasks.org** from one of these sources:
 
 Your task lists from SilentSuite will appear in the app. Any tasks you create, complete, or edit will sync back to `server.silentsuite.io` or your self-hosted server with end-to-end encryption.
 
-## Using with EteSync Android App
-
-If you also have the [EteSync Android app](./android.md) installed, Tasks.org can read tasks from Android's system task provider as well. However, the built-in EteSync support in Tasks.org is simpler -- you don't need both. Choose one method:
-
-- **Tasks.org built-in EteSync** -- direct connection, simpler setup, recommended.
-- **EteSync Android app + Tasks.org reading from Android** -- useful if you also want tasks in other apps via the system provider.
-
 ## Features
 
 Tasks.org supports:

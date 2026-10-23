@@ -23,7 +23,7 @@ export default function AuthLayout({
     : 'items-center py-4 sm:py-8'
 
   return (
-    <div className={`relative flex min-h-dvh justify-center overflow-x-hidden transition-colors duration-300 ${verticalAlignment} ${
+    <main className={`relative flex min-h-dvh justify-center overflow-x-hidden transition-colors duration-300 ${verticalAlignment} ${
       isDark ? 'bg-gradient-to-br from-navy-950 via-navy-900 to-emerald-950/20' : 'bg-gradient-to-br from-gray-50 via-white to-emerald-50/30'
     }`}>
       {/* Subtle grid pattern background */}
@@ -155,6 +155,6 @@ export default function AuthLayout({
           </p>
         )}
       </div>
-    </div>
+    </main>
   )
 }

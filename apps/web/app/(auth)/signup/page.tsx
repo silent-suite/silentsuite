@@ -15,7 +15,7 @@ import {
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
-import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
+import { normalizeServerUrl } from '@/app/lib/server-url'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { DISPLAY_VERSION } from '@/app/lib/constants'

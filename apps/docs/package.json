@@ -4,9 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "vitepress dev",
-    "build": "vitepress build",
+    "build": "vitepress build && pnpm run test:accessibility",
     "preview": "vitepress preview",
-    "test:android-distribution": "node --test scripts/android-distribution.test.mjs"
+    "test:android-distribution": "node --test scripts/android-distribution.test.mjs",
+    "test:accessibility": "node --test scripts/home-accessibility.test.mjs"
   },
   "devDependencies": {
     "vitepress": "^1.6.3",
