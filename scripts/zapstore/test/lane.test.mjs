@@ -1012,6 +1012,22 @@ test('an exhausted pre-sign read-only relay check is reported as incomplete veri
   assert.equal(buildIssue({ ...base, releaseId: 'x', tag: 'bad tag' }).title, 'Zapstore lane failed: reconcile', 'lane-level titles are unchanged')
 })
 
+test('a pre-sign incomplete that was never retried (refusal, malformed, truncated, invalid event) makes no retry claim', () => {
+  const base = { releaseId: '418222556', tag: 'v0.5.14-beta', sourceSha: 'a91fcdb7e99bf00a1f2305f08d94e8d76c631ce5', runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/39902659420/attempts/1', phase: 'reconcile', outcome: 'incomplete', reason: 'incomplete', publication: 'not-attempted' }
+  for (const detail of [
+    'relay closed the subscription: auth-required: sign in',
+    'relay sent a non-JSON frame',
+    'relay returned 500 events, reaching the limit; result may be truncated',
+    `event ${'a'.repeat(64)} carries an invalid signature`,
+  ]) {
+    const issue = buildIssue({ ...base, detail })
+    assert.equal(issue.title, 'Zapstore relay verification incomplete: v0.5.14-beta (release 418222556)', detail)
+    assert.doesNotMatch(issue.body, /bounded retries|after (its|the) .*retr/i, `${detail}: no false retry claim`)
+    assert.match(issue.body, /not evidence that the release is absent or unpublished/, detail)
+    assert.ok(issue.body.includes(detail), `${detail}: the real error is preserved`)
+  }
+})
+
 test('issues for states a re-run cannot fix say stop, preserve the event ids, and never advise a re-run or a hand-run publisher as the remedy', () => {
   const apkId = 'a'.repeat(64)
   const base = { releaseId: '383603104', tag: 'v0.5.6-beta', sourceSha: SHA, runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/1/attempts/1', phase: 'reconcile', outcome: 'partial', publication: 'not-attempted', detail: `present: apk ${apkId}; missing: release; the accepted APK event cannot be reused by the official publisher` }
