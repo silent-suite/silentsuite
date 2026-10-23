@@ -264,7 +264,7 @@ function sshHostVerificationViolations(parsed: ParsedWorkflow): string[] {
 }
 
 // Complete parsed-object binding and separately readable effective controls for standalone Web.
-const standaloneWebWorkflowDigest = 'e7c61f683c552630d6008bf307b74860e59b78f797bbbcb98913c4282c2b082b'
+const standaloneWebWorkflowDigest = 'c30d62b61b238a1c8432c5d5a980f3a8b6902d4cc2500efacfffbf2eb759a1d6'
 const standaloneWebAuthorizationDigest = 'b7eb5ce5bef0fba7ece1736fee05cbf1b4cfd86b27d3a88ef6320c130774a069'
 const standaloneWebPredicates = {
   "build": "needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha",
@@ -1027,7 +1027,13 @@ type WebCutoverTrace = {
 // 'broken' additionally shadows jq with an executable that exits 127.
 const remoteHostTools = ['bash', 'timeout', 'mktemp', 'rm', 'cat', 'grep', 'python3']
 
-function runWebCutoverFixture(script: string, wrongPublicSha: boolean, remoteJq?: 'absent' | 'broken') {
+type WebCutoverOptions = {
+  // Start with the failed candidate running and serving a wrong identity (post-SSH failure).
+  failedCandidateRunning?: boolean
+  env?: Record<string, string>
+}
+
+function runWebCutoverFixture(script: string, wrongPublicSha: boolean, remoteJq?: 'absent' | 'broken', options: WebCutoverOptions = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'silentsuite-web-cutover-'))
   const bin = join(directory, 'bin')
   const tools = join(directory, 'tools')
@@ -1068,9 +1074,16 @@ try {
     } else if (args.length === 4 && args[0] === 'inspect' && args[2] === '--format') {
       const target = args[1], format = args[3]
       const container = target === state.containerId
-      if (!container && target !== exactImage) refuse()
-      const imageId = container ? state.imageId : config.candidateConfigId
-      const revision = container ? state.revision : config.candidateSha
+      // Cached predecessor by config ID, or its local restore tag once tagged.
+      const predecessor = target === config.previousConfigId || (target === rollbackTag && state.rollbackTagged)
+      if (!container && !predecessor && /^sha256:[0-9a-f]{64}$/.test(target)) {
+        record({ operation: 'missing-image' })
+        process.stderr.write('Error: No such object: ' + target + '\n')
+        process.exit(1)
+      }
+      if (!container && !predecessor && target !== exactImage) refuse()
+      const imageId = container ? state.imageId : predecessor ? config.previousConfigId : config.candidateConfigId
+      const revision = container ? state.revision : predecessor ? config.previousSha : config.candidateSha
       let value, operation
       if (container && format === '{{.Image}}') {
         value = imageId; operation = 'running-config'
@@ -1136,7 +1149,10 @@ try {
     mkdirSync(bin)
     mkdirSync(join(fixtureHome, 'etebase'), { recursive: true })
     mkdirSync(fixtureTmp)
-    writeFileSync(stateFile, JSON.stringify({
+    writeFileSync(stateFile, JSON.stringify(options.failedCandidateRunning ? {
+      containerId: '2'.repeat(64), imageId: config.candidateConfigId,
+      revision: config.candidateSha, publicSha: config.wrongSha, rollbackTagged: false,
+    } : {
       containerId: '1'.repeat(64), imageId: config.previousConfigId,
       revision: config.previousSha, publicSha: config.previousSha, rollbackTagged: false,
     }))
@@ -1171,6 +1187,7 @@ try {
         PATH: fixturePath, HOME: fixtureHome, TMPDIR: fixtureTmp, LC_ALL: 'C',
         WEB_CUTOVER_FIXTURE: JSON.stringify(config), IMAGE_NAME: config.imageName,
         DEPLOY_SHA: config.candidateSha, IMAGE_DIGEST: config.manifestDigest, IMAGE_CONFIG_ID: config.candidateConfigId,
+        ...options.env,
       },
     })
     const trace = readFileSync(traceFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) as WebCutoverTrace[]
@@ -1892,6 +1909,59 @@ jobs:
     expect(wrong.trace.some((call, index) => index > restored &&
       call.operation === 'http-identity' && call.publicSha === ids.previousSha && call.returned === '200')).toBe(true)
   }, 20000)
+
+  it('a post-SSH Web failure is recoverable: re-dispatch refuses, the runbook restoration restores the captured predecessor', () => {
+    const ids = webCutoverIdentities
+    const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
+    const deployScript = (parsed.jobs.deploy.steps ?? []).find(step => step.uses === pinnedSshAction)?.with?.script ?? ''
+    expect(deployScript).not.toBe('')
+    // Why the generic revert-and-dispatch path cannot recover: the healthy-predecessor guard refuses first.
+    const redispatch = runWebCutoverFixture(deployScript, false, undefined, { failedCandidateRunning: true })
+    expect(redispatch.result.status).not.toBe(0)
+    expect(redispatch.trace.filter(call => call.operation === 'recreate')).toEqual([])
+    expect(redispatch.state).toMatchObject({ imageId: ids.candidateConfigId, publicSha: ids.wrongSha })
+
+    // The deployment log must carry the non-secret predecessor identities the restoration consumes.
+    const deployed = runWebCutoverFixture(deployScript, false)
+    expect(deployed.result.status, deployed.result.stderr).toBe(0)
+    expect(deployed.result.stdout).toContain(`Predecessor receipt: image-config-id=${ids.previousConfigId} revision=${ids.previousSha}\n`)
+
+    const heading = deployRunbook.indexOf('### Restore the captured predecessor after a post-SSH failure')
+    expect(heading, 'runbook must document an executable post-SSH restoration').toBeGreaterThan(-1)
+    const blocks = [...deployRunbook.slice(heading).matchAll(/```bash\n([\s\S]*?)```/g)]
+    const restore = blocks[0]?.[1] ?? ''
+    expect(restore).toContain('--no-deps --no-build web')
+    const receipt = { PREVIOUS_IMAGE_ID: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
+    const restored = runWebCutoverFixture(restore, false, undefined, { failedCandidateRunning: true, env: receipt })
+    expect(restored.result.error).toBeUndefined()
+    expect(restored.trace.filter(call => call.operation === 'unsupported')).toEqual([])
+    expect(restored.result.status, restored.result.stderr).toBe(0)
+    const recreated = restored.trace.findIndex(call => call.operation === 'recreate')
+    expect(restored.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['predecessor'])
+    expect(restored.trace.findIndex(call => call.operation === 'tag-predecessor')).toBeLessThan(recreated)
+    // Current health is not a precondition: no public request happens before the restoration.
+    expect(restored.trace.findIndex(call => call.operation?.startsWith('http-'))).toBeGreaterThan(recreated)
+    expect(restored.trace.some((call, index) => index > recreated && call.operation === 'running-config' && call.returned === ids.previousConfigId)).toBe(true)
+    expect(restored.trace.some((call, index) => index > recreated && call.operation === 'running-revision' && call.returned === ids.previousSha)).toBe(true)
+    expect(restored.trace.some((call, index) => index > recreated && call.operation === 'http-root' && call.returned === '200')).toBe(true)
+    expect(restored.trace.some((call, index) => index > recreated && call.operation === 'http-identity' && call.publicSha === ids.previousSha)).toBe(true)
+    expect(restored.state).toMatchObject({ imageId: ids.previousConfigId, revision: ids.previousSha, publicSha: ids.previousSha })
+
+    const refusals: [string, Record<string, string>][] = [
+      ['running image is not the failed candidate', { ...receipt, IMAGE_CONFIG_ID: 'sha256:' + '9'.repeat(64) }],
+      ['running revision is not the failed candidate', { ...receipt, DEPLOY_SHA: ids.wrongSha }],
+      ['predecessor image is not cached', { ...receipt, PREVIOUS_IMAGE_ID: 'sha256:' + '8'.repeat(64) }],
+      ['cached predecessor has another revision', { ...receipt, PREVIOUS_REVISION: ids.wrongSha }],
+      ['predecessor equals the failed candidate', { ...receipt, PREVIOUS_IMAGE_ID: ids.candidateConfigId }],
+      ['missing receipt', { PREVIOUS_IMAGE_ID: '', PREVIOUS_REVISION: '' }],
+    ]
+    for (const [label, env] of refusals) {
+      const refused = runWebCutoverFixture(restore, false, undefined, { failedCandidateRunning: true, env })
+      expect(refused.result.status, label).not.toBe(0)
+      expect(refused.trace.some(call => call.operation === 'recreate' || call.operation === 'tag-predecessor'), label).toBe(false)
+      expect(refused.state, label).toMatchObject({ imageId: ids.candidateConfigId, revision: ids.candidateSha })
+    }
+  }, 30000)
 
   it('standalone Web remote identity parser admits only the exact single-key publicSha object (after-edit characterization)', () => {
     const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))

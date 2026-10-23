@@ -384,6 +384,8 @@ jobs:
             PREVIOUS_REVISION=$(docker inspect "$PREVIOUS_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
             [[ "$PREVIOUS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "${#PREVIOUS_IMAGE_ID}" -eq 71 ]]
             [[ "$PREVIOUS_REVISION" =~ ^[0-9a-f]{40}$ && "${#PREVIOUS_REVISION}" -eq 40 ]]
+            # Non-secret identities consumed by the runbook's post-SSH restoration.
+            echo "Predecessor receipt: image-config-id=${PREVIOUS_IMAGE_ID} revision=${PREVIOUS_REVISION}"
             DEPLOY_OVERRIDE=$(mktemp)
             ROLLBACK_OVERRIDE=$(mktemp)
             HEALTH_HEADERS=$(mktemp)
