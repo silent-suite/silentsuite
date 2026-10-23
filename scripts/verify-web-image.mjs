@@ -290,7 +290,7 @@ async function main() {
           await r.arrayBuffer(); ready = true; break } catch { await new Promise(resolve => setTimeout(resolve, 250)) } }
         assert.ok(ready, 'server readiness deadline');
         assert.ok(fs.readlinkSync('/proc/1/exe').endsWith('/node'), 'PID1 must be node');
-        assert.equal(fs.readlinkSync('/proc/1/cwd'), '/app');
+        assert.equal(fs.readlinkSync('/proc/1/cwd'), '/app/apps/web');
         const serverPid = Number(fs.readFileSync('/proc/1/stat', 'utf8').split(' ')[0]); assert.equal(serverPid, 1);
         const routes = [];
         for (const route of ${JSON.stringify(smokeRoutes)}) {
