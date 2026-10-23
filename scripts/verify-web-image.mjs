@@ -92,7 +92,9 @@ export function parseNativeMappings(text) {
 }
 
 export function verifyNativeProbe(probe) {
-  assert.deepEqual(probe.versions, { next: '15.5.28', '@sentry/nextjs': '10.75.2', react: '19.2.4', 'react-dom': '19.2.4' })
+  assert.deepEqual(probe.versions, { next: '15.5.28', react: '19.2.4', 'react-dom': '19.2.4' })
+  assert.equal(probe.sentry.declared, '10.75.2')
+  assert.ok(probe.sentry.runtimeVersion === null || probe.sentry.runtimeVersion === '10.75.2')
   assert.equal(probe.sharpVersion, '0.35.5')
   assert.match(probe.rsvg, /^\d+\.\d+\.\d+$/)
   const [major, minor, patch] = probe.rsvg.split('.').map(Number)
@@ -158,8 +160,12 @@ ${packageRootOf.toString()}
 ${parseNativeMappings.toString()}
 ;(async () => {
   const app = createRequire('/app/apps/web/server.js')
-  const versions = Object.fromEntries(['next', '@sentry/nextjs', 'react', 'react-dom'].map(name =>
+  const versions = Object.fromEntries(['next', 'react', 'react-dom'].map(name =>
     [name, JSON.parse(readFileSync(join(packageRootOf(app.resolve(name), name), 'package.json'), 'utf8')).version]))
+  const declared = JSON.parse(readFileSync('/app/apps/web/package.json', 'utf8')).dependencies['@sentry/nextjs']
+  let runtimeVersion = null
+  try { runtimeVersion = JSON.parse(readFileSync(join(packageRootOf(app.resolve('@sentry/nextjs'), '@sentry/nextjs'), 'package.json'), 'utf8')).version }
+  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error }
   const sharp = createRequire(app.resolve('next'))('sharp')
   const bytes = await sharp({ create: { width: 8, height: 8, channels: 4,
     background: { r: 12, g: 34, b: 56, alpha: 1 } } }).png().toBuffer()
@@ -172,7 +178,7 @@ ${parseNativeMappings.toString()}
   assert.equal(rendered.info.channels, 4)
   const mappings = parseNativeMappings(readFileSync('/proc/self/maps', 'utf8')).map(path =>
     ({ path, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') }))
-  console.log(JSON.stringify({ versions, sharpVersion: sharp.versions.sharp, rsvg: sharp.versions.rsvg,
+  console.log(JSON.stringify({ versions, sentry: { declared, runtimeVersion }, sharpVersion: sharp.versions.sharp, rsvg: sharp.versions.rsvg,
     png: { width, height, format }, svgPixel: [...rendered.data.subarray(0, 4)], mappings }))
 })().catch(error => { console.error(error.message); process.exitCode = 1 })
 `
@@ -243,11 +249,18 @@ async function main() {
     mkdirSync(extracted)
     run('tar', ['-xf', archive, '--directory', extracted, '--no-same-owner', '--no-same-permissions', 'app'], 180000)
     const entries = imageEntries(join(extracted, 'app'))
+    const appManifest = entries.find(entry => entry.path === '/app/apps/web/package.json' && entry.type === 'file')
+    assert.equal(appManifest?.sha256, createHash('sha256').update(readFileSync(join(root, 'apps/web/package.json'))).digest('hex'),
+      'shipped application manifest must match the tested source')
     const inventory = entries.map(entry => entry.type === 'file'
       ? `file\t${entry.path}\t${entry.size}\t${entry.sha256}` : `link\t${entry.path}\t${entry.target}`).join('\n') + '\n'
     writeFileSync(join(directory, 'inventory.tsv'), inventory)
     const native = JSON.parse(docker(['start', '--attach', nativeContainer], 60000))
     verifyNativeProbe(native)
+    if (native.sentry.runtimeVersion === null) {
+      assert.ok(!entries.some(entry => /\/node_modules\/@sentry\/nextjs(?:\/|$)|\/\.pnpm\/@sentry\+nextjs@/.test(entry.path)),
+        'a shipped SDK package must resolve rather than being mistaken for build-only output')
+    }
     const out = join(directory, 'out'), preload = join(directory, 'preload.cjs')
     mkdirSync(out)
     chmodSync(out, 0o1777)
@@ -292,6 +305,7 @@ async function main() {
     report = { imageId, testedSha, prHeadSha: process.env.PR_HEAD_SHA ?? '', relation,
       buildArgs, runnerImageEnv: image.Config.Env, smokeHostnameOverride: '127.0.0.1',
       inventoryEntries: entries.length, inventorySha256: createHash('sha256').update(inventory).digest('hex'),
+      appManifestSha256: appManifest.sha256,
       publicPwaMaps: entries.filter(entry => knownPwaMap(entry)).map(({ path, sha256, sources }) => ({ path, sha256, sources })),
       native, routes: smoke.routes, runtimeProcesses: records.length,
       modulesLoaded: verifyRuntimeRecords(records, smoke.serverPid), blockedOutbound: records.flatMap(record => record.blockedOutbound),
