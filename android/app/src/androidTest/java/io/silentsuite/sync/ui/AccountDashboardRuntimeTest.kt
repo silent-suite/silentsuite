@@ -319,11 +319,6 @@ class AccountDashboardRuntimeTest {
                 assertTrue(AppPreferences(activity).hideTaskAppReminder)
             }
 
-            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { fresh ->
-                waitForModel(fresh)
-                fresh.onActivity { assertTaskReminder(it, shown = false) }
-            }
-
             // A higher-priority issue must not bring back the hidden reminder as secondary text.
             assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
                 SyncStatusStore.FailureCategory.AUTHENTICATION, now + 1))
@@ -358,6 +353,13 @@ class AccountDashboardRuntimeTest {
                 assertEquals(View.GONE, activity.findViewById<View>(R.id.dashboard_status_row).visibility)
                 assertEquals(View.GONE, activity.findViewById<View>(R.id.dashboard_context_action).visibility)
                 assertEquals(account.name, dashboardText(activity, R.id.dashboard_account_identity))
+            }
+
+            // Launch last: ActivityScenario's fresh task can destroy the original Activity.
+            // All assertions on the original scenario must finish before this cold screen visit.
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { fresh ->
+                waitForModel(fresh)
+                fresh.onActivity { assertTaskReminder(it, shown = false) }
             }
         }
     }
