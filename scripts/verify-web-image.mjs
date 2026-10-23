@@ -160,13 +160,16 @@ ${packageRootOf.toString()}
 ${parseNativeMappings.toString()}
 ;(async () => {
   const app = createRequire('/app/apps/web/server.js')
-  const versions = Object.fromEntries(['next', 'react', 'react-dom'].map(name =>
-    [name, JSON.parse(readFileSync(join(packageRootOf(app.resolve(name), name), 'package.json'), 'utf8')).version]))
+  const next = createRequire(app.resolve('next'))
+  const versions = Object.fromEntries(['next', 'react', 'react-dom'].map(name => {
+    const entry = (name === 'react-dom' ? next : app).resolve(name)
+    return [name, JSON.parse(readFileSync(join(packageRootOf(entry, name), 'package.json'), 'utf8')).version]
+  }))
   const declared = JSON.parse(readFileSync('/app/apps/web/package.json', 'utf8')).dependencies['@sentry/nextjs']
   let runtimeVersion = null
   try { runtimeVersion = JSON.parse(readFileSync(join(packageRootOf(app.resolve('@sentry/nextjs'), '@sentry/nextjs'), 'package.json'), 'utf8')).version }
   catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error }
-  const sharp = createRequire(app.resolve('next'))('sharp')
+  const sharp = next('sharp')
   const bytes = await sharp({ create: { width: 8, height: 8, channels: 4,
     background: { r: 12, g: 34, b: 56, alpha: 1 } } }).png().toBuffer()
   const pngBytes = await sharp(bytes).resize(4, 4).png().toBuffer()
