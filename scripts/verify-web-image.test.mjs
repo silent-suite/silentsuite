@@ -164,4 +164,6 @@ test('CI loads its one built image and passes provenance through env without gra
   for (const name of ['TESTED_SHA', 'PR_HEAD_SHA', 'EVENT_NAME', 'WEB_IMAGE_ID']) assert.ok(build.includes(`${name}:`))
   assert.match(build, /node --test scripts\/verify-web-image\.test\.mjs && node scripts\/verify-web-image\.mjs/)
   assert.doesNotMatch(build, /permissions:|secrets:|push: true|workflow_dispatch:/)
+  const dockerfile = readFileSync(new URL('../Dockerfile.web', import.meta.url), 'utf8')
+  assert.ok(dockerfile.includes('VERIFIED_WEB_BUILD_SENTRY_VERSION='), 'SDK version must be asserted in its real builder resolution context')
 })
