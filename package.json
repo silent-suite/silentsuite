@@ -62,7 +62,8 @@
       "@sentry/nextjs@10.75.2>rollup": "4.60.3"
     },
     "patchedDependencies": {
-      "braces@3.0.3": "patches/braces@3.0.3.patch"
+      "braces@3.0.3": "patches/braces@3.0.3.patch",
+      "etebase@0.43.1": "patches/etebase@0.43.1.patch"
     }
   },
   "dependencies": {

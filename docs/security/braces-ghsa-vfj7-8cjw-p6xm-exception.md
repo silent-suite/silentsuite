@@ -77,7 +77,11 @@ untrusted inputs that are only read.
 
 `scripts/braces-byte-preflight.mjs` loads no package code. It checks:
 
-- `package.json` declares exactly `braces@3.0.3 → patches/braces@3.0.3.patch`;
+- `package.json` declares exactly `braces@3.0.3 → patches/braces@3.0.3.patch`, alone or with only the
+  pinned SDK patch `etebase@0.43.1 → patches/etebase@0.43.1.patch`. When etebase is declared, that
+  patch must match its pinned digest (`78084d83…`) by the same rule, and the lock's single
+  `patchedDependencies` block must bind exactly those two entries. Any other patch set fails. The
+  etebase patch adds no trust to braces and changes none of the braces checks below;
 - the patch matches the reviewed digest, using pnpm's rule (CRLF → LF, sha256). A patch and lock that
   agree with each other but not with the reviewed digest fail;
 - the lock binds that digest and path, keeps the canonical integrity, and holds one patched braces

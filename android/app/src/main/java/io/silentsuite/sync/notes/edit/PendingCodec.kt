@@ -9,10 +9,11 @@ import java.io.IOException
 import java.util.zip.CRC32
 
 /**
- * On-disk format of the pending store: a magic number, a format version, the fields, and a CRC32
- * over everything before it. A file that fails any check decodes to [Decoded.Bad] and is kept,
- * never guessed at. Any other format version is also [Decoded.Bad], so neither a downgrade nor an
- * old file can be misread.
+ * On-disk format of the pending store and of its discard permits and acknowledgements
+ * ([PendingNotesDiscardPermits]): a magic number, a format version, the fields, and a CRC32 over
+ * everything before it. A file that fails any check decodes to [Decoded.Bad] and is kept, never
+ * guessed at. Any other format version is also [Decoded.Bad], so neither a downgrade nor an old file
+ * can be misread.
  *
  * Entry files (format 2) put every field except the blob in a header with its own length and CRC32
  * ahead of the blob, so a screen that only counts entries reads a few hundred bytes per file instead
@@ -33,6 +34,8 @@ internal object PendingCodec {
     private const val KIND_LANDED = 1
     private const val KIND_NOTEBOOK = 2
     private const val KIND_SEQUENCE = 3
+    private const val KIND_PERMIT = 4
+    private const val KIND_ACKNOWLEDGEMENT = 5
     /** The largest blob the store keeps; a larger save is refused before anything is written. */
     const val MAX_BLOB = 64 * 1024 * 1024
     /** Bytes before a format 2 entry header: magic, format version, header length. */
@@ -207,6 +210,62 @@ internal object PendingCodec {
         if (input.readUnsignedByte() != KIND_SEQUENCE) throw IOException("not a sequence record")
         input.readLong()
     }
+
+    /**
+     * A discard permit ([PendingNotesDiscardPermits]): the store directory it is for, and the answer it covers,
+     * with its names in sorted order. A permit is only ever for a store that was listed, so it does not hold
+     * [UnsyncedNotes.listed]: one for an answer from a store that could not be listed is refused, and every
+     * permit reads back as listed.
+     */
+    fun encodePermit(store: String, shown: UnsyncedNotes): ByteArray {
+        require(shown.listed) { "a permit is never for a store that could not be listed" }
+        return withChecksum { out ->
+            out.writeInt(RECORD_MAGIC)
+            out.writeByte(RECORD_FORMAT_VERSION)
+            out.writeByte(KIND_PERMIT)
+            out.writeUTF(store)
+            out.writeInt(shown.count)
+            out.writeLong(shown.sequence)
+            out.writeBoolean(shown.unreadable)
+            out.writeInt(shown.names.size)
+            for (name in shown.names.sorted()) out.writeUTF(name)
+        }
+    }
+
+    fun decodePermit(bytes: ByteArray): Decoded<Pair<String, UnsyncedNotes>> = open(bytes, RECORD_MAGIC) { input ->
+        if (input.readUnsignedByte() != KIND_PERMIT) throw IOException("not a permit record")
+        val store = input.readUTF()
+        val count = input.readInt()
+        val sequence = input.readLong()
+        if (count < 0 || sequence < 0) throw IOException("count $count, sequence $sequence")
+        val unreadable = input.readBoolean()
+        // Each name takes two bytes at least, so a larger number cannot be read and nothing is set aside for it.
+        val size = input.readInt()
+        if (size < 0 || size > input.available() / 2) throw IOException("$size names")
+        val names = HashSet<String>()
+        repeat(size) { names += input.readUTF() }
+        store to UnsyncedNotes(count, sequence, unreadable, names = names)
+    }
+
+    /**
+     * An acknowledgement ([PendingNotesDiscardPermits.acknowledge]): the store directory it is for, and the
+     * identity that directory had when it was recorded. A kind of its own, so no permit reader takes it.
+     */
+    fun encodeAcknowledgement(store: String, identity: PendingNotesStore.DirectoryIdentity): ByteArray =
+        withChecksum { out ->
+            out.writeInt(RECORD_MAGIC)
+            out.writeByte(RECORD_FORMAT_VERSION)
+            out.writeByte(KIND_ACKNOWLEDGEMENT)
+            out.writeUTF(store)
+            out.writeLong(identity.device)
+            out.writeLong(identity.inode)
+        }
+
+    fun decodeAcknowledgement(bytes: ByteArray): Decoded<Pair<String, PendingNotesStore.DirectoryIdentity>> =
+        open(bytes, RECORD_MAGIC) { input ->
+            if (input.readUnsignedByte() != KIND_ACKNOWLEDGEMENT) throw IOException("not an acknowledgement record")
+            input.readUTF() to PendingNotesStore.DirectoryIdentity(input.readLong(), input.readLong())
+        }
 
     /**
      * The state as entry files hold it. Code 2 stood for a pending delete on the unreleased prototype

@@ -124,6 +124,14 @@ export default defineConfig({
 
     search: {
       provider: 'local',
+      options: {
+        translations: {
+          button: {
+            // VitePress joins the visible search text and shortcut without a space.
+            buttonAriaLabel: 'SearchK',
+          },
+        },
+      },
     },
 
     footer: {

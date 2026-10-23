@@ -10,7 +10,7 @@ import { ChevronRight } from 'lucide-react'
 import { Button } from '@silentsuite/ui'
 import { Input } from '@silentsuite/ui'
 import { useAuthStore } from '@/app/stores/use-auth-store'
-import { normalizeServerUrl } from '@/app/stores/use-etebase-store'
+import { normalizeServerUrl } from '@/app/lib/server-url'
 
 const loginSchema = z.object({
   email: z.string().email('Please enter a valid email address'),

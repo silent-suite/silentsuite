@@ -26,6 +26,7 @@ BRIDGE_PLATFORMS = (
 )
 BRIDGE_CHECKSUM_MANIFEST = "SHA256SUMS.txt"
 SELF_HOST_MANIFEST = "server-image.json"
+UMBREL_MANIFEST = "umbrel-images.json"
 
 
 class InventoryError(ValueError):
@@ -66,6 +67,7 @@ def self_host_assets(tag: str) -> tuple[str, ...]:
         f"silentsuite-self-host-{tag}.tar.gz",
         f"silentsuite-self-host-{tag}.tar.gz.sha256",
         SELF_HOST_MANIFEST,
+        UMBREL_MANIFEST,
     )
 
 

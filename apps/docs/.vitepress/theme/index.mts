@@ -2,6 +2,7 @@ import DefaultTheme from 'vitepress/theme'
 import { useRouter, type EnhanceAppContext } from 'vitepress'
 import { defineComponent, h, onMounted, onUnmounted } from 'vue'
 import AppLogoStrip from './components/AppLogoStrip.vue'
+import AccessibleHome from './components/AccessibleHome.vue'
 import { deliverDocsAnalyticsPayload } from './analytics-transport.mts'
 import {
   DOCS_ANALYTICS_DOMAIN,
@@ -34,6 +35,7 @@ export default {
   enhanceApp(context: EnhanceAppContext) {
     DefaultTheme.enhanceApp?.(context)
     context.app.component('AppLogoStrip', AppLogoStrip)
+    context.app.component('AccessibleHome', AccessibleHome)
   },
   Layout: defineComponent({
     setup() {

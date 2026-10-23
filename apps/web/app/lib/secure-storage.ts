@@ -100,6 +100,31 @@ export async function secureRemove(key: string): Promise<void> {
 }
 
 /**
+ * Remove a value only while it still equals `expected`. The read and the delete share one
+ * readwrite transaction, so a value written by a later operation is never removed.
+ */
+export async function secureRemoveIfEqual(key: string, expected: string): Promise<void> {
+  try {
+    await openDB().then(
+      (db) =>
+        new Promise<void>((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite')
+          const store = tx.objectStore(STORE_NAME)
+          const req = store.get(key)
+          req.onsuccess = () => {
+            if (req.result === expected) store.delete(key)
+          }
+          tx.oncomplete = () => resolve()
+          tx.onerror = () => reject(tx.error)
+          tx.onabort = () => reject(tx.error)
+        }),
+    )
+  } catch {
+    // Ignore errors on removal
+  }
+}
+
+/**
  * Clear all data from secure storage.
  */
 export async function secureClear(): Promise<void> {

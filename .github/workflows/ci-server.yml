@@ -6,9 +6,13 @@ on:
     paths:
       - 'server/**'
       - 'Dockerfile.server'
+      - 'Dockerfile.web'
+      - 'scripts/umbrel-candidate-*'
       - '.dockerignore'
       - 'self-host/**'
       - 'contracts/self-host-server-image.schema.json'
+      - 'contracts/umbrel-images.schema.json'
+      - 'scripts/umbrel_release_contract.py'
       - 'docs/self-hosting/**'
       - 'apps/docs/self-hosting/**'
       - 'scripts/build-self-host-bundle.py'
@@ -42,9 +46,13 @@ on:
     paths:
       - 'server/**'
       - 'Dockerfile.server'
+      - 'Dockerfile.web'
+      - 'scripts/umbrel-candidate-*'
       - '.dockerignore'
       - 'self-host/**'
       - 'contracts/self-host-server-image.schema.json'
+      - 'contracts/umbrel-images.schema.json'
+      - 'scripts/umbrel_release_contract.py'
       - 'docs/self-hosting/**'
       - 'apps/docs/self-hosting/**'
       - 'scripts/build-self-host-bundle.py'
@@ -184,6 +192,7 @@ jobs:
         run: |
           python -m pytest -q \
             --ignore=tests/test_self_host_server_image_materials.py \
+            --ignore=tests/test_self_host_web_image_materials.py \
             tests/test_self_host_*.py \
             tests/test_umbrella_release_*.py \
             tests/test_server_image_verifier.py
@@ -211,7 +220,8 @@ jobs:
             scripts/verify-server-image-release.sh \
             scripts/attach-umbrella-release-assets.sh \
             scripts/verify-release-identity.sh \
-            scripts/stage-bridge-release-assets.sh; do
+            scripts/stage-bridge-release-assets.sh \
+            scripts/umbrel-candidate-smoke.sh; do
             bash -n "$script"
           done
 
@@ -223,7 +233,10 @@ jobs:
             scripts/lock-server-requirements.py \
             scripts/selfhost_release_contract.py \
             scripts/umbrella_release_contract.py \
-            scripts/verify-umbrella-release-readiness.py
+            scripts/umbrel_release_contract.py \
+            scripts/verify-umbrella-release-readiness.py \
+            scripts/umbrel-candidate-effective-compose.py \
+            scripts/umbrel-candidate-probe.py
 
       - name: Enforce the release control-plane boundary
         run: python scripts/check-android-signing-boundary.py
@@ -234,7 +247,9 @@ jobs:
       - name: Verify the pinned base image and the hash lock against live indexes
         env:
           SILENTSUITE_REQUIRE_REGISTRY_CONTRACT: '1'
-        run: python -m pytest tests/test_self_host_server_image_materials.py -q
+        run: |
+          python -m pytest tests/test_self_host_server_image_materials.py -q
+          python -m pytest tests/test_self_host_web_image_materials.py -q
 
   self-host-backup-behaviour:
     name: Self-Host Backup Behaviour (amd64)

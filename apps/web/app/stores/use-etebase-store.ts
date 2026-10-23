@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
+import { normalizeServerUrl } from '@/app/lib/server-url'
 import type {
   CollectionAccessLevel,
   CollectionType,
@@ -79,13 +80,7 @@ function isValidServerUrl(url: string): boolean {
   }
 }
 
-/** Normalize a server URL: trim, add https:// if no protocol present. */
-export function normalizeServerUrl(url: string): string {
-  const trimmed = url.trim()
-  if (!trimmed) return trimmed
-  if (!/^https?:\/\//i.test(trimmed)) return `https://${trimmed}`
-  return trimmed
-}
+export { normalizeServerUrl }
 
 /** Read the user's custom server URL from localStorage, falling back to the env default. */
 function getServerUrl(): string {

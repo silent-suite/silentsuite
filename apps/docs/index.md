@@ -1,5 +1,5 @@
 ---
-layout: home
+layout: AccessibleHome
 hero:
   name: SilentSuite
   text: Documentation
