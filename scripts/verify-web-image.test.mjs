@@ -87,15 +87,18 @@ test('native proof admits only the authenticated musl mappings and an executed S
   assert.deepEqual(parseNativeMappings(`1-2 r-xp 0 0 1 ${sharp}\n2-3 r--p 0 0 1 ${vips}\n3-4 r--p 0 0 1 ${sharp}`), [sharp, vips])
   const probe = { versions: { next: '15.5.28', react: '19.2.4', 'react-dom': '19.2.4' },
     sentry: { declared: '10.75.2', runtimeVersion: null },
-    sharpVersion: '0.35.5', rsvg: '2.63.2', svgPixel: [12, 34, 56, 255],
+    sharpVersion: '0.35.5', vipsVersion: '8.18.7', rsvg: '2.63.2', svgPixel: [12, 34, 56, 255],
     png: { width: 4, height: 4, format: 'png' },
     mappings: [{ path: sharp, sha256: '14ce8ddd283c101f225089152da805632568bfa372d336ccbfdd811f4f1dca02' },
       { path: vips, sha256: '979b625437190a1970b835164e0e30d47dc60159ce6a394ce78cc40cb9d59ab8' }] }
   assert.equal(verifyNativeProbe(probe), true)
+  assert.equal(verifyNativeProbe({ ...probe, rsvg: null }), true)
   assert.equal(verifyNativeProbe({ ...probe, sentry: { declared: '10.75.2', runtimeVersion: '10.75.2' } }), true)
   for (const change of [{ mappings: [] }, { sharpVersion: '0.35.3' }, { rsvg: '2.63.1' },
     { sentry: { declared: '^10.75.2', runtimeVersion: null } },
     { sentry: { declared: '10.75.2', runtimeVersion: '10.46.0' } },
+    { vipsVersion: '8.18.6' },
+    { rsvg: null, mappings: probe.mappings.map(mapping => ({ ...mapping, sha256: '0'.repeat(64) })) },
     { versions: { ...probe.versions, next: '15.5.24' } }, { svgPixel: [0, 0, 0, 0] },
     { png: { width: 8, height: 8, format: 'png' } },
     { mappings: probe.mappings.map(mapping => ({ ...mapping, path: mapping.path.replaceAll('linuxmusl', 'linux') })) },

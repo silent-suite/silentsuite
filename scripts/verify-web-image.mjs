@@ -86,6 +86,14 @@ export const nativePins = Object.freeze([
     sha256: '979b625437190a1970b835164e0e30d47dc60159ce6a394ce78cc40cb9d59ab8' },
 ])
 
+// From the SAME SRI-verified archive as the pinned libvips bytes above. Tracing
+// can omit Sharp's optional versions.json lookup; the loaded-byte pins still bind
+// its component versions. Keep missing runtime metadata explicit in the report.
+export const nativeComponents = Object.freeze({
+  package: '@img/sharp-libvips-linuxmusl-x64@1.3.4', vips: '8.18.7', rsvg: '2.63.2',
+  metadataSha256: 'e2611d5d854815a8b33c8a3d2ec649511a9596ccf16844e8eae7cf81e79881c4',
+})
+
 export function parseNativeMappings(text) {
   return [...new Set(text.split('\n').filter(line => /sharp-.*\.node|libvips-cpp\.so/.test(line))
     .map(line => { const match = /\s(\/.*)$/.exec(line); assert.ok(match, 'malformed native mapping'); return match[1] }))]
@@ -96,8 +104,10 @@ export function verifyNativeProbe(probe) {
   assert.equal(probe.sentry.declared, '10.75.2')
   assert.ok(probe.sentry.runtimeVersion === null || probe.sentry.runtimeVersion === '10.75.2')
   assert.equal(probe.sharpVersion, '0.35.5')
-  assert.match(probe.rsvg, /^\d+\.\d+\.\d+$/)
-  const [major, minor, patch] = probe.rsvg.split('.').map(Number)
+  assert.equal(probe.vipsVersion, nativeComponents.vips)
+  const rsvg = probe.rsvg === null ? nativeComponents.rsvg : probe.rsvg
+  assert.equal(rsvg, nativeComponents.rsvg)
+  const [major, minor, patch] = rsvg.split('.').map(Number)
   assert.ok(major > 2 || (major === 2 && (minor > 63 || (minor === 63 && patch >= 2))), 'librsvg floor')
   assert.deepEqual(probe.svgPixel, [12, 34, 56, 255])
   assert.deepEqual(probe.png, { width: 4, height: 4, format: 'png' })
@@ -181,7 +191,8 @@ ${parseNativeMappings.toString()}
   assert.equal(rendered.info.channels, 4)
   const mappings = parseNativeMappings(readFileSync('/proc/self/maps', 'utf8')).map(path =>
     ({ path, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') }))
-  console.log(JSON.stringify({ versions, sentry: { declared, runtimeVersion }, sharpVersion: sharp.versions.sharp, rsvg: sharp.versions.rsvg,
+  console.log(JSON.stringify({ versions, sentry: { declared, runtimeVersion }, sharpVersion: sharp.versions.sharp,
+    vipsVersion: sharp.versions.vips, rsvg: sharp.versions.rsvg ?? null,
     png: { width, height, format }, svgPixel: [...rendered.data.subarray(0, 4)], mappings }))
 })().catch(error => { console.error(error.message); process.exitCode = 1 })
 `
@@ -259,6 +270,7 @@ async function main() {
       ? `file\t${entry.path}\t${entry.size}\t${entry.sha256}` : `link\t${entry.path}\t${entry.target}`).join('\n') + '\n'
     writeFileSync(join(directory, 'inventory.tsv'), inventory)
     const native = JSON.parse(docker(['start', '--attach', nativeContainer], 60000))
+    console.log('Native image probe: ' + JSON.stringify(native))
     verifyNativeProbe(native)
     if (native.sentry.runtimeVersion === null) {
       assert.ok(!entries.some(entry => /\/node_modules\/@sentry\/nextjs(?:\/|$)|\/\.pnpm\/@sentry\+nextjs@/.test(entry.path)),
@@ -310,7 +322,7 @@ async function main() {
       inventoryEntries: entries.length, inventorySha256: createHash('sha256').update(inventory).digest('hex'),
       appManifestSha256: appManifest.sha256,
       publicPwaMaps: entries.filter(entry => knownPwaMap(entry)).map(({ path, sha256, sources }) => ({ path, sha256, sources })),
-      native, routes: smoke.routes, runtimeProcesses: records.length,
+      native, authenticatedNativeComponents: nativeComponents, routes: smoke.routes, runtimeProcesses: records.length,
       modulesLoaded: verifyRuntimeRecords(records, smoke.serverPid), blockedOutbound: records.flatMap(record => record.blockedOutbound),
       rawBuildWarningSource: 'This run: Build Web App / Build web Docker image. Raw warnings are not copied or interpreted by this verifier.' }
   } finally {
