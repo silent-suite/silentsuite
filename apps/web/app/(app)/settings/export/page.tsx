@@ -49,6 +49,23 @@ function buildCalendarIcs(vcomponents: string[]): string {
   ].join('\r\n')
 }
 
+/** UTF-8 byte order mark. The serializer emits vCard 3.0, which (unlike 4.0)
+ * does not imply a charset; a downloaded file has no MIME charset either, so
+ * some importers guess a legacy encoding. The BOM is an in-band UTF-8 hint
+ * added only to exported files — never to individual cards or synced data. */
+const UTF8_BOM = new Uint8Array([0xef, 0xbb, 0xbf])
+
+/** Build the bytes of a multi-card .vcf file: UTF-8 BOM, then each card
+ * terminated by CRLF as the vCard grammar requires. No cards → empty file. */
+function buildContactsVcf(vcomponents: string[]): Uint8Array {
+  if (vcomponents.length === 0) return new Uint8Array(0)
+  const body = new TextEncoder().encode(vcomponents.map((card) => `${card}\r\n`).join(''))
+  const bytes = new Uint8Array(UTF8_BOM.length + body.length)
+  bytes.set(UTF8_BOM)
+  bytes.set(body, UTF8_BOM.length)
+  return bytes
+}
+
 /** Serialize each item independently and skip the ones that throw, so a single
  * malformed event doesn't take the whole export down silently. Returns the
  * successfully-serialized payload plus a count of skipped items, which we
@@ -189,7 +206,7 @@ export default function ExportPage() {
   function exportContacts() {
     try {
       const { vcomponents, skipped } = serializeContacts(filteredContacts)
-      const vcf = vcomponents.join('\n')
+      const vcf = buildContactsVcf(vcomponents)
       const filename = buildExportFilename('contacts', 'vcf', selectedContactListId, contactLists)
       downloadFile(vcf, filename, 'text/vcard')
       reportSkipped('contact', skipped)
@@ -233,7 +250,7 @@ export default function ExportPage() {
       // value here, not the savings), this makes the build robust at scale.
       zip.file('silentsuite-calendar.ics', enc.encode(buildCalendarIcs(eventsResult.vcomponents)))
       zip.file('silentsuite-tasks.ics', enc.encode(buildCalendarIcs(tasksResult.vcomponents)))
-      zip.file('silentsuite-contacts.vcf', enc.encode(contactsResult.vcomponents.join('\n')))
+      zip.file('silentsuite-contacts.vcf', buildContactsVcf(contactsResult.vcomponents))
 
       // Throttle progress updates: only re-render when the integer percent
       // changes. JSZip can fire onUpdate hundreds of times per second.

@@ -65,6 +65,8 @@ from umbrella_release_contract import (  # noqa: E402
     expected_assets,
 )
 
+from umbrel_release_contract import MANIFEST_NAME as UMBREL_MANIFEST, verify as verify_umbrel_images  # noqa: E402
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 IDENTITY_SCRIPT = SCRIPT_DIR / "verify-release-identity.sh"
 # Two orders of magnitude beyond this repository's release count. Reaching it
@@ -258,6 +260,7 @@ def verify_bytes(tag: str, commit: str, by_name: dict[str, dict], workdir: Path)
         arm64_digest=manifest["arm64Digest"],
     )
     assert_manifest_matches(manifest, identity)
+    verify_umbrel_images(payloads[UMBREL_MANIFEST].decode("utf-8"), tag, commit, payloads[MANIFEST_NAME].decode("utf-8"))
 
     archive = workdir / bundle_basename(tag)
     names = assert_archive_members_safe(archive, tag)

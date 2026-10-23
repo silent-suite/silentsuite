@@ -77,7 +77,11 @@ untrusted inputs that are only read.
 
 `scripts/braces-byte-preflight.mjs` loads no package code. It checks:
 
-- `package.json` declares exactly `braces@3.0.3 → patches/braces@3.0.3.patch`;
+- `package.json` declares exactly `braces@3.0.3 → patches/braces@3.0.3.patch`, alone or with only the
+  pinned SDK patch `etebase@0.43.1 → patches/etebase@0.43.1.patch`. When etebase is declared, that
+  patch must match its pinned digest (`78084d83…`) by the same rule, and the lock's single
+  `patchedDependencies` block must bind exactly those two entries. Any other patch set fails. The
+  etebase patch adds no trust to braces and changes none of the braces checks below;
 - the patch matches the reviewed digest, using pnpm's rule (CRLF → LF, sha256). A patch and lock that
   agree with each other but not with the reviewed digest fail;
 - the lock binds that digest and path, keeps the canonical integrity, and holds one patched braces
@@ -104,7 +108,7 @@ The only importer is `apps/web`. Reviewed paths:
 | Path | Consumer role |
 | --- | --- |
 | `apps/web > @ducanh2912/next-pwa@10.2.9 > fast-glob@3.3.2 > micromatch@4.0.8 > braces@3.0.3` | Webpack/workbox plugin wrapped around `next.config.js`; globs build output during `next build` |
-| `apps/web > eslint-config-next@15.5.24 > @next/eslint-plugin-next@15.5.24 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3` | Lint only (`next lint`; builds set `ignoreDuringBuilds`) |
+| `apps/web > eslint-config-next@15.5.28 > @next/eslint-plugin-next@15.5.28 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3` | Lint only (`next lint`; builds set `ignoreDuringBuilds`) |
 | `apps/web > tailwindcss@3.4.19 > chokidar@3.6.0 > braces@3.0.3` | Tailwind watch mode (dev/CLI) |
 | `apps/web > tailwindcss@3.4.19 > fast-glob@3.3.3 > micromatch@4.0.8 > braces@3.0.3` | Tailwind content scanning at CSS build |
 | `apps/web > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3` | Tailwind content scanning at CSS build |
@@ -143,7 +147,10 @@ The web build rewrites a tracked PWA fallback file in `apps/web/public`. That fi
 its committed bytes before the check, so the committed version was scanned, not the freshly
 generated one. This ran on local Node over glibc, not the CI `node:22-alpine` image.
 
-`next@15.5.24` vendors its own unversioned braces copy inside the nft bundle, used for build-time
+2026-10-23: Next 15.5.28 tooling rebind; the eight-path remediation scope is unchanged.
+The CI image verifier is the authoritative shipped-bytes check; it scans the actual generated assets in that image.
+
+`next@15.5.28` vendors its own unversioned braces copy inside the nft bundle, used for build-time
 output tracing. It is not `braces@3.0.3`, is outside this remediation, and is evaluated only for
 reachability from the production server.
 

@@ -33,6 +33,7 @@ permissions: {}
 
 env:
   IMAGE_NAME: ghcr.io/silent-suite/silentsuite-server
+  WEB_IMAGE_NAME: ghcr.io/silent-suite/silentsuite-web-selfhost
 
 jobs:
   build:
@@ -147,9 +148,121 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-web:
+    name: Build web and smoke pair (${{ matrix.platform }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      DOCKER_CONFIG: ${{ github.workspace }}/.web-registry-${{ matrix.arch }}
+    steps:
+      - name: Checkout the admitted commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: candidate
+          persist-credentials: false
+      - name: Check out the trusted controller revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: trusted
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.12'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - name: Download the verified native server digest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: server-image-digest-${{ matrix.arch }}
+          path: server-digest
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push owner-enabled web by digest
+        id: web
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: candidate
+          file: candidate/Dockerfile.web
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          sbom: false
+          outputs: type=image,name=${{ env.WEB_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VCS_REF=${{ inputs.source_sha }}
+            NEXT_PUBLIC_SELF_HOSTED=true
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=
+            NEXT_PUBLIC_OWNER_REGISTRATION=true
+            NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=false
+            NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
+            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
+      - name: Pull pair and smoke without registry credentials
+        env:
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SERVER_DIGEST="$(tr -d '\n' < "server-digest/${ARCH}.digest")"
+          for digest in "$WEB_DIGEST" "$SERVER_DIGEST"; do
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf -- "$DOCKER_CONFIG"' EXIT
+          docker pull "${WEB_IMAGE_NAME}@${WEB_DIGEST}"
+          docker pull "${IMAGE_NAME}@${SERVER_DIGEST}"
+          docker logout ghcr.io
+          rm -rf -- "$DOCKER_CONFIG"
+          env -i PATH="$PATH" RUNNER_TEMP="$RUNNER_TEMP" \
+            bash trusted/scripts/umbrel-candidate-smoke.sh \
+              "${WEB_IMAGE_NAME}@${WEB_DIGEST}" "${IMAGE_NAME}@${SERVER_DIGEST}" \
+              --package-dir "$GITHUB_WORKSPACE/candidate/self-host/umbrel/silentsuite" \
+              --platform "$PLATFORM" --expect-revision "$SOURCE_SHA"
+      - name: Record the verified web producer identity
+        env:
+          WEB_DIGEST: ${{ steps.web.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          CONTROLLER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir web-digests
+          printf '%s\n' "$WEB_DIGEST" > "web-digests/${ARCH}.digest"
+          printf '{"sourceCommit":"%s","controllerCommit":"%s","platform":"%s","digest":"%s","runId":"%s","runAttempt":"%s"}\n' \
+            "$SOURCE_SHA" "$CONTROLLER_SHA" "$PLATFORM" "$WEB_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            > "web-digests/${ARCH}.producer.json"
+      - name: Upload the verified web digest and run evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: web-image-digest-${{ matrix.arch }}
+          path: web-digests/
+          if-no-files-found: error
+          retention-days: 14
+
   publish-index:
     name: Merge, verify and bundle
-    needs: build
+    needs: [build, build-web]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -171,6 +284,9 @@ jobs:
       index-digest: ${{ steps.verify.outputs.index-digest }}
       amd64-digest: ${{ steps.digests.outputs.amd64 }}
       arm64-digest: ${{ steps.digests.outputs.arm64 }}
+      web-index-digest: ${{ steps.verify-web.outputs.index-digest }}
+      web-amd64-digest: ${{ steps.digests.outputs.web-amd64 }}
+      web-arm64-digest: ${{ steps.digests.outputs.web-arm64 }}
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       RELEASE_COMMIT: ${{ inputs.source_sha }}
@@ -197,6 +313,13 @@ jobs:
           pattern: server-image-digest-*
           merge-multiple: true
 
+      - name: Download verified web digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: web-digests
+          pattern: web-image-digest-*
+          merge-multiple: true
+
       - name: Read child digests
         id: digests
         shell: bash
@@ -216,6 +339,14 @@ jobs:
           fi
           echo "amd64=$AMD64" >> "$GITHUB_OUTPUT"
           echo "arm64=$ARM64" >> "$GITHUB_OUTPUT"
+          WEB_AMD64="$(tr -d '\n' < web-digests/amd64.digest)"
+          WEB_ARM64="$(tr -d '\n' < web-digests/arm64.digest)"
+          for digest in "$WEB_AMD64" "$WEB_ARM64"; do
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          done
+          test "$WEB_AMD64" != "$WEB_ARM64"
+          echo "web-amd64=$WEB_AMD64" >> "$GITHUB_OUTPUT"
+          echo "web-arm64=$WEB_ARM64" >> "$GITHUB_OUTPUT"
 
       # The verifier talks to the GHCR API directly rather than through the
       # Docker client, so `docker/login-action` below does nothing for it: it
@@ -240,6 +371,8 @@ jobs:
           BEFORE="$(trusted/scripts/verify-server-image-release.sh --repository "$IMAGE_NAME" --resolve latest)"
           echo "digest=$BEFORE" >> "$GITHUB_OUTPUT"
           echo "latest before merge: $BEFORE"
+          WEB_BEFORE="$(trusted/scripts/verify-server-image-release.sh --repository "$WEB_IMAGE_NAME" --resolve latest)"
+          echo "web-digest=$WEB_BEFORE" >> "$GITHUB_OUTPUT"
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -265,6 +398,8 @@ jobs:
       - name: Merge verified children into the release index
         shell: bash
         env:
+          WEB_AMD64_DIGEST: ${{ steps.digests.outputs.web-amd64 }}
+          WEB_ARM64_DIGEST: ${{ steps.digests.outputs.web-arm64 }}
           AMD64_DIGEST: ${{ steps.digests.outputs.amd64 }}
           ARM64_DIGEST: ${{ steps.digests.outputs.arm64 }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -272,6 +407,15 @@ jobs:
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          SERVER_REPOSITORY="$IMAGE_NAME"
+          SERVER_AMD64_DIGEST="$AMD64_DIGEST"
+          SERVER_ARM64_DIGEST="$ARM64_DIGEST"
+          for component in server web; do
+          if [ "$component" = "web" ]; then
+            IMAGE_NAME="$WEB_IMAGE_NAME"
+            AMD64_DIGEST="$WEB_AMD64_DIGEST"
+            ARM64_DIGEST="$WEB_ARM64_DIGEST"
+          fi
           COMMIT_REF="selfhost-${RELEASE_COMMIT}"
           ALIAS_DIR="$(mktemp -d)"
           trap 'rm -rf "$ALIAS_DIR"' EXIT
@@ -286,7 +430,7 @@ jobs:
             bash trusted/scripts/verify-release-identity.sh \
               --tag "$RELEASE_TAG" \
               --commit "$RELEASE_COMMIT" \
-              --stage "server-alias-write:$1"
+              --stage "self-host-${component}-alias-write:$1"
           }
 
           # Resolve and fully verify any existing alias before a write. An
@@ -365,6 +509,12 @@ jobs:
             fi
           done
 
+          rm -rf "$ALIAS_DIR"
+          done
+          IMAGE_NAME="$SERVER_REPOSITORY"
+          AMD64_DIGEST="$SERVER_AMD64_DIGEST"
+          ARM64_DIGEST="$SERVER_ARM64_DIGEST"
+
       - name: Verify the published release image
         id: verify
         shell: bash
@@ -384,10 +534,26 @@ jobs:
             --index-digest-file index.digest
           echo "index-digest=$(cat index.digest)" >> "$GITHUB_OUTPUT"
 
+      - name: Verify the published web image
+        id: verify-web
+        env:
+          REGISTRY_USERNAME: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          WEB_AMD64_DIGEST: ${{ steps.digests.outputs.web-amd64 }}
+          WEB_ARM64_DIGEST: ${{ steps.digests.outputs.web-arm64 }}
+        run: |
+          set -euo pipefail
+          bash trusted/scripts/verify-server-image-release.sh \
+            --repository "$WEB_IMAGE_NAME" --tag "$RELEASE_TAG" --commit "$RELEASE_COMMIT" \
+            --amd64-digest "$WEB_AMD64_DIGEST" --arm64-digest "$WEB_ARM64_DIGEST" \
+            --index-digest-file web-index.digest
+          echo "index-digest=$(cat web-index.digest)" >> "$GITHUB_OUTPUT"
+
       - name: Assert latest was not moved
         shell: bash
         env:
           LATEST_BEFORE: ${{ steps.latest-before.outputs.digest }}
+          WEB_LATEST_BEFORE: ${{ steps.latest-before.outputs.web-digest }}
           REGISTRY_USERNAME: ${{ github.actor }}
           REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -398,6 +564,8 @@ jobs:
             exit 1
           fi
           echo "latest unchanged: $AFTER"
+          WEB_AFTER="$(trusted/scripts/verify-server-image-release.sh --repository "$WEB_IMAGE_NAME" --resolve latest)"
+          test "$WEB_AFTER" = "$WEB_LATEST_BEFORE"
 
       # Repository build provenance for the verified index and for each runnable
       # child. push-to-registry is left off so the evidence is stored by GitHub
@@ -423,6 +591,27 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.digests.outputs.arm64 }}
+          push-to-registry: false
+
+      # These attestations name the protected controller producer. The admitted
+      # candidate and native runs are recorded separately in producer evidence.
+      - name: Attest web index provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ env.WEB_IMAGE_NAME }}
+          subject-digest: ${{ steps.verify-web.outputs.index-digest }}
+          push-to-registry: false
+      - name: Attest web amd64 provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ env.WEB_IMAGE_NAME }}
+          subject-digest: ${{ steps.digests.outputs.web-amd64 }}
+          push-to-registry: false
+      - name: Attest web arm64 provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-name: ${{ env.WEB_IMAGE_NAME }}
+          subject-digest: ${{ steps.digests.outputs.web-arm64 }}
           push-to-registry: false
 
       # The bundle carries the candidate's operator-facing self-host files, but
@@ -459,6 +648,22 @@ jobs:
             --index-digest "$INDEX_DIGEST" \
             --amd64-digest "$AMD64_DIGEST" \
             --arm64-digest "$ARM64_DIGEST"
+
+      - name: Build and verify the paired image identity
+        env:
+          WEB_INDEX: ${{ steps.verify-web.outputs.index-digest }}
+          WEB_AMD64: ${{ steps.digests.outputs.web-amd64 }}
+          WEB_ARM64: ${{ steps.digests.outputs.web-arm64 }}
+        run: |
+          set -euo pipefail
+          python3 trusted/scripts/umbrel_release_contract.py \
+            --directory release-assets --tag "$RELEASE_TAG" --source-commit "$RELEASE_COMMIT" \
+            --web-index-digest "$WEB_INDEX" --web-amd64-digest "$WEB_AMD64" \
+            --web-arm64-digest "$WEB_ARM64" --write
+          python3 trusted/scripts/umbrel_release_contract.py \
+            --directory release-assets --tag "$RELEASE_TAG" --source-commit "$RELEASE_COMMIT" \
+            --web-index-digest "$WEB_INDEX" --web-amd64-digest "$WEB_AMD64" \
+            --web-arm64-digest "$WEB_ARM64"
 
       - name: Upload the verified self-host assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -523,6 +728,17 @@ jobs:
             --amd64-digest "$AMD64_DIGEST" \
             --arm64-digest "$ARM64_DIGEST"
 
+      - name: Re-verify the paired image identity
+        env:
+          WEB_INDEX: ${{ needs.publish-index.outputs.web-index-digest }}
+          WEB_AMD64: ${{ needs.publish-index.outputs.web-amd64-digest }}
+          WEB_ARM64: ${{ needs.publish-index.outputs.web-arm64-digest }}
+        run: |
+          python3 scripts/umbrel_release_contract.py \
+            --directory release-assets --tag "$RELEASE_TAG" --source-commit "$RELEASE_COMMIT" \
+            --web-index-digest "$WEB_INDEX" --web-amd64-digest "$WEB_AMD64" \
+            --web-arm64-digest "$WEB_ARM64"
+
       # One credential, for exactly one purpose: the workflow token, used only
       # for the draft-release reads and writes the helper performs. The helper
       # revalidates the live tag and both rulesets on either side of the upload,
@@ -541,4 +757,5 @@ jobs:
             --directory release-assets \
             --asset "silentsuite-self-host-${RELEASE_TAG}.tar.gz" \
             --asset "silentsuite-self-host-${RELEASE_TAG}.tar.gz.sha256" \
-            --asset server-image.json
+            --asset server-image.json \
+            --asset umbrel-images.json

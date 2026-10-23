@@ -22,22 +22,20 @@ const consumers = ['braces', 'micromatch', 'fast-glob', 'chokidar', 'tailwindcss
 // String literals from braces lib/parse.js and lib/expand.js; minifiers keep string literals
 // and (by default) property names, so these survive bundling of braces source.
 const signatures = ['exceeds max characters (', 'rangeLimit']
-// next@15.5.24 vendors @vercel/nft, which bundles an unversioned braces copy (not braces@3.0.3 and
+// next@15.5.28 vendors @vercel/nft, which bundles an unversioned braces copy (not braces@3.0.3 and
 // outside this exception), for build-time output tracing. Only this exact file and content is
 // tolerated; a changed bundle or any other file carrying the signatures fails the check.
 export const toleratedSignatureFiles = Object.freeze([Object.freeze({
-  file: 'apps/web/.next/standalone/node_modules/.pnpm/next@15.5.24_@babel+core@7.29.0_@opentelemetry+api@1.9.1_@types+node@20.19.37_babel-plu_645be988d9e529a02f3844286daf8410/node_modules/next/dist/compiled/@vercel/nft/index.js',
+  file: 'apps/web/.next/standalone/node_modules/.pnpm/next@15.5.28_@babel+core@7.29.0_@opentelemetry+api@1.9.1_@types+node@20.19.37_babel-plu_1c2ef35023280d7d3bd3097f2312d346/node_modules/next/dist/compiled/@vercel/nft/index.js',
   sha256: '19e4e6ea76d56deed0da625b0d9cbe5f5a761cf87a1c502bbb09c9406a70527e',
 })])
-// Every module on the static load chains of the vendored nft bundle in next@15.5.24: the nft bundle,
-// its only requirer, its only loader (webpack-config), webpack-config's requirers, and the dev
-// bundler modules that reach them.
+// The nft bundle and reviewed build/dev boundary modules that can load it.
 const buildOnlyModules = /(^|\/)next\/dist\/(compiled\/@vercel\/nft\/|build\/webpack\/plugins\/next-trace-entrypoints-plugin\.js|build\/webpack-config\.js|build\/create-compiler-aliases\.js|build\/handle-externals\.js|build\/webpack\/config\/blocks\/images\/index\.js|server\/lib\/router-utils\/setup-dev-bundler\.js|server\/dev\/hot-reloader-(webpack|turbopack)\.js)/
-const smokeRoutes = ['/', '/login', '/offline', '/calendar', '/settings', '/api/deployment-identity', '/braces-smoke-not-found']
+export const smokeRoutes = ['/', '/login', '/offline', '/calendar', '/settings', '/api/deployment-identity', '/braces-smoke-not-found']
 export const productionInputs = Object.freeze(['Dockerfile.web', '.dockerignore', '.npmrc', 'package.json',
   'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'turbo.json', 'patches', 'apps/web', 'packages'])
-const maxFiles = 100000
-const maxScanBytes = 64 * 1024 * 1024
+export const maxFiles = 100000
+export const maxScanBytes = 64 * 1024 * 1024
 const smokeTimeoutMs = 60000
 
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
@@ -45,7 +43,7 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const consumerPathPatterns = consumers.map((name) => new RegExp(
   `(^|/)node_modules/${escape(name)}(/|$)|(^|/)\\.pnpm/${escape(name.replace('/', '+'))}@`))
-const namesConsumer = (path) => consumerPathPatterns.some((pattern) => pattern.test(path))
+export const namesConsumer = (path) => consumerPathPatterns.some((pattern) => pattern.test(path))
 
 export function unexplainedSignatureHits(hits) {
   return hits.filter((hit) => !toleratedSignatureFiles.some((tolerated) => tolerated.file === hit.file
@@ -241,7 +239,7 @@ function artifacts(outDir, failures) {
 
 // Preloaded into the standalone server: records every resolved module and refuses non-loopback
 // sockets and fetches. Nothing from the environment or responses is written.
-const runtimePreload = `'use strict'
+export const runtimePreload = `'use strict'
 const fs = require('node:fs')
 const net = require('node:net')
 const Module = require('node:module')
@@ -273,6 +271,40 @@ globalThis.fetch = function (input, init) {
   if (!loopback(host)) { blocked.push(host); return Promise.reject(new Error('outbound blocked by braces runtime smoke')) }
   return originalFetch.call(this, input, init)
 }
+// A loopback-looking DNS name (such as 127.example.invalid) is not a loopback IP.
+const dns = require('node:dns')
+const localLookup = (host) => loopback(host) && (host == null || host === '' || host === 'localhost' || net.isIP(host) !== 0)
+const originalLookup = dns.lookup
+dns.lookup = function (host, ...args) {
+  if (localLookup(host)) return originalLookup.call(this, host, ...args)
+  blocked.push(String(host))
+  const error = new Error('outbound DNS blocked by braces runtime smoke')
+  const callback = args[args.length - 1]
+  if (typeof callback !== 'function') throw error
+  process.nextTick(() => callback(error))
+}
+const originalPromiseLookup = dns.promises.lookup
+dns.promises.lookup = async function (host, ...args) {
+  if (localLookup(host)) return originalPromiseLookup.call(this, host, ...args)
+  blocked.push(String(host))
+  throw new Error('outbound DNS blocked by braces runtime smoke')
+}
+// Unlike lookup, resolve/reverse can query a configured external DNS server even
+// for a loopback-looking name. The smoke needs none of these network resolvers.
+for (const api of [dns, dns.promises, dns.Resolver.prototype, dns.promises.Resolver.prototype]) {
+  for (const method of Object.getOwnPropertyNames(api).filter(name => name.startsWith('resolve') || name === 'reverse' || name === 'lookupService')) {
+    if (typeof api[method] !== 'function') continue
+    api[method] = function (host, ...args) {
+      blocked.push(String(host))
+      const error = new Error('outbound DNS blocked by braces runtime smoke')
+      const callback = args[args.length - 1]
+      if (typeof callback === 'function') return process.nextTick(() => callback(error))
+      if (api === dns.promises || api === dns.promises.Resolver.prototype) return Promise.reject(error)
+      throw error
+    }
+  }
+}
+Module.syncBuiltinESMExports()
 process.on('SIGTERM', () => {
   const modules = [...new Set([...loaded, ...Object.keys(require.cache)])].sort()
   fs.writeFileSync(require('node:path').join(process.env.BRACES_SMOKE_OUT, 'runtime-modules-' + process.pid + '.json'),

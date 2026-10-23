@@ -293,8 +293,9 @@ test('js-yaml counts empty merge mappings against the CPU budget', () => {
 
 test('Next and its ESLint config stay on the patched compatible release', () => {
   const web = requireFrom('apps/web/package.json')
-  assert.equal(web('next/package.json').version, '15.5.24')
-  assert.equal(web('eslint-config-next/package.json').version, '15.5.24')
+  assert.equal(web('next/package.json').version, '15.5.28')
+  assert.equal(web('eslint-config-next/package.json').version, '15.5.28')
+  assert.equal(web('@sentry/nextjs/package.json').version, '10.75.2')
 })
 
 // Vite (GHSA-587h-7wmj-h5pm / CVE-2026-112942, with GHSA-698v-4r3x-3vcv and
