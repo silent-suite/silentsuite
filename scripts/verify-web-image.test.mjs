@@ -157,6 +157,8 @@ test('runtime images reject all public maps, including PWA debug maps and spoofe
     { ...fallback, sources: [...fallback.sources, 'webpack://_N_E/apps/web/app/page.tsx'] },
     { ...workbox, sha256: '0'.repeat(64) },
     { ...worker, path: '/app/apps/web/public/app.js.map' },
+    ...['\u2028', '\u2029'].flatMap(separator => ['public', '.next/static'].map(root =>
+      ({ ...server, path: `/app/apps/web/${root}/debug${separator}.js.map` }))),
   ]) assert.throws(() => verifyImageEntries([server, entry]))
 })
 

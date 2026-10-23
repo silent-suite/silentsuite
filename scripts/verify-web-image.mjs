@@ -117,7 +117,8 @@ export function verifyNativeProbe(probe) {
 }
 
 function publicSourceMap(path) {
-  return /^\/app\/apps\/web\/(?:\.next\/static|public)\/.*\.map$/.test(path)
+  return path.endsWith('.map') && (path.startsWith('/app/apps/web/public/')
+    || path.startsWith('/app/apps/web/.next/static/'))
 }
 
 // Resolve using the exported container namespace, never host realpath or lexical
