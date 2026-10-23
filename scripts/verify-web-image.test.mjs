@@ -122,6 +122,117 @@ test('effective build arguments retain their Dockerfile stage and defaults, sepa
   assert.throws(() => effectiveBuildArgs(source, 'UNKNOWN=value'))
 })
 
+test('characterization: CLI standalone proof maps exact environment fields and refuses missing or malformed bindings', async () => {
+  const { standaloneIdentityFromEnvironment, verifyIdentity } = await import('./verify-web-image.mjs')
+  const sha = 'a'.repeat(40)
+  const env = {
+    GITHUB_REPOSITORY: 'silent-suite/silentsuite',
+    GITHUB_WORKFLOW_REF: 'silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main',
+    GITHUB_WORKFLOW_SHA: sha, EXPECTED_SHA: sha, WEB_STANDALONE_DEPLOY_APPROVED_SHA: sha,
+  }
+  const proof = standaloneIdentityFromEnvironment(env)
+  assert.deepEqual(proof, { repository: env.GITHUB_REPOSITORY, workflowRef: env.GITHUB_WORKFLOW_REF,
+    workflowSha: sha, expectedSha: sha, approvedSha: sha })
+  const input = {
+    testedSha: sha, headSha: sha, prHeadSha: '', eventName: 'workflow_dispatch', refName: 'refs/heads/main',
+    commitObject: '', standalone: proof,
+    image: { Config: { User: 'nextjs', Labels: { 'org.opencontainers.image.revision': sha },
+      Env: [`SILENTSUITE_PUBLIC_BUILD_SHA=${sha}`] } },
+    route: { status: 200, body: { publicSha: sha }, cacheControl: 'no-store' },
+  }
+  assert.doesNotThrow(() => verifyIdentity(input))
+  for (const name of Object.keys(env)) {
+    for (const value of [undefined, '', 'unqualified', 42]) {
+      assert.throws(() => verifyIdentity({ ...input, standalone: standaloneIdentityFromEnvironment({ ...env, [name]: value }) }))
+    }
+  }
+  const newlineSha = sha + '\n'
+  assert.throws(() => verifyIdentity({ ...input, testedSha: newlineSha, headSha: newlineSha,
+    standalone: { ...proof, workflowSha: newlineSha, expectedSha: newlineSha, approvedSha: newlineSha } }))
+})
+
+test('characterization: actual hosted build arguments validate in memory and report serialization omits the protected key', async () => {
+  const { effectiveBuildArgs, verifyStandaloneBuildArgs, serializeImageReport } = await import('./verify-web-image.mjs')
+  const dockerfile = readFileSync(new URL('../Dockerfile.web', import.meta.url), 'utf8')
+  const sha = 'a'.repeat(40), canary = 'pk_live_SYNTHETIC_PROTECTED_BUILD_KEY_CANARY'
+  const actual = {
+    NEXT_PUBLIC_BILLING_API_URL: 'https://api.silentsuite.io',
+    NEXT_PUBLIC_ETEBASE_SERVER_URL: 'https://server.silentsuite.io',
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: canary, NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
+    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
+    NEXT_PUBLIC_SELF_HOSTED: 'false', NEXT_PUBLIC_OWNER_REGISTRATION: 'false', VCS_REF: sha,
+  }
+  const overrides = Object.entries(actual).map(([name, value]) => `${name}=${value}`).join('\n')
+  assert.doesNotThrow(() => verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha: sha, publishableKey: canary }))
+  const report = { imageId: `sha256:${'b'.repeat(64)}`, testedSha: sha, relation: 'standalone identity verified',
+    buildArgs: effectiveBuildArgs(dockerfile, overrides), inventorySha256: 'c'.repeat(64), cleanupVerified: true,
+    runnerImageEnv: [`PROTECTED=${canary}`], unreviewedMetadata: canary }
+  const serialized = serializeImageReport(report, { standalone: true })
+  assert.ok(!serialized.includes(canary))
+  assert.ok(!serialized.includes(overrides))
+  const safe = JSON.parse(serialized)
+  assert.equal(safe.verification, 'passed')
+  assert.equal(safe.imageId, report.imageId)
+  assert.equal(safe.testedSha, sha)
+  assert.equal(safe.cleanupVerified, true)
+  assert.equal(safe.runnerImageEnv, undefined)
+  assert.equal(safe.unreviewedMetadata, undefined)
+  assert.deepEqual(safe.buildArgs.find(arg => arg.name === 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY'),
+    { stage: 'builder', name: 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', binding: 'value omitted' })
+  for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION']) {
+    assert.equal(safe.buildArgs.find(arg => arg.name === name).value, 'false')
+  }
+  // The existing CI report also omits the key argument, including a Dockerfile default.
+  const ciReport = { ...report, runnerImageEnv: [], unreviewedMetadata: undefined }
+  assert.ok(!serializeImageReport(ciReport).includes(canary))
+  const defaultKey = effectiveBuildArgs(dockerfile, '').find(arg => arg.name === 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY').value
+  assert.ok(!serializeImageReport({ ...ciReport, buildArgs: effectiveBuildArgs(dockerfile, '') }).includes(defaultKey))
+})
+
+test('characterization: mismatched production argument vectors and key types fail without reflecting protected values', async () => {
+  const { verifyStandaloneBuildArgs } = await import('./verify-web-image.mjs')
+  const dockerfile = readFileSync(new URL('../Dockerfile.web', import.meta.url), 'utf8')
+  const sha = 'a'.repeat(40), canary = 'pk_live_SYNTHETIC_PROTECTED_BUILD_KEY_CANARY', otherKey = 'pk_live_OTHER_PROTECTED_CANARY'
+  const actual = {
+    NEXT_PUBLIC_BILLING_API_URL: 'https://api.silentsuite.io',
+    NEXT_PUBLIC_ETEBASE_SERVER_URL: 'https://server.silentsuite.io',
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: canary, NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
+    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
+    NEXT_PUBLIC_SELF_HOSTED: 'false', NEXT_PUBLIC_OWNER_REGISTRATION: 'false', VCS_REF: sha,
+  }
+  const encode = values => Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n')
+  const overrides = encode(actual), proof = { testedSha: sha, publishableKey: canary }
+  const cases = []
+  for (const name of Object.keys(actual)) {
+    cases.push([dockerfile, encode({ ...actual, [name]: name === 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY' ? otherKey : 'mismatch' }), proof])
+    const missing = { ...actual }; delete missing[name]
+    cases.push([dockerfile, encode(missing), proof])
+  }
+  for (const publishableKey of [undefined, null, 42, '', new String(canary), canary + '\n', otherKey]) {
+    cases.push([dockerfile, overrides, { ...proof, publishableKey }])
+  }
+  for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION']) {
+    cases.push([dockerfile.replace(`ARG ${name}=false`, `ARG ${name}=true`), overrides, proof])
+  }
+  cases.push([dockerfile, overrides + '\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=' + otherKey, proof])
+  cases.push([dockerfile, overrides + '\nUNDECLARED=' + canary, proof])
+  cases.push([dockerfile, overrides + '\n' + canary, proof])
+  cases.push([dockerfile, overrides, { ...proof, testedSha: sha + '\n' }])
+  cases.push([dockerfile, null, proof])
+  for (const [source, args, binding] of cases) {
+    assert.throws(() => verifyStandaloneBuildArgs(source, args, binding), error => {
+      assert.match(error.message, /build arguments are invalid \(values withheld\)/)
+      assert.equal(error.cause, undefined)
+      for (const rendered of [String(error), error.stack, JSON.stringify(error)]) {
+        assert.ok(!rendered.includes(canary))
+        assert.ok(!rendered.includes(otherKey))
+        assert.ok(!rendered.includes(overrides))
+      }
+      return true
+    })
+  }
+})
+
 test('native proof admits only the authenticated musl mappings and an executed SVG/PNG result', async () => {
   const { parseNativeMappings, verifyNativeProbe } = await import('./verify-web-image.mjs')
   assert.equal(typeof verifyNativeProbe, 'function', 'native image admission is required')

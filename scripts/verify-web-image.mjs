@@ -16,7 +16,7 @@ export function imagePathToStandalone(path) {
   return `apps/web/.next/standalone/${path.slice(5)}`
 }
 
-export function verifyIdentity({ testedSha, prHeadSha, eventName, refName, headSha, commitObject, image, route }) {
+export function verifyIdentity({ testedSha, prHeadSha, eventName, refName, headSha, commitObject, image, route, standalone }) {
   assert.match(testedSha, /^[a-f0-9]{40}$/)
   assert.equal(headSha, testedSha, 'checkout must be the tested commit')
   let relation
@@ -27,6 +27,16 @@ export function verifyIdentity({ testedSha, prHeadSha, eventName, refName, headS
     for (const parent of parents) assert.match(parent, /^parent [a-f0-9]{40}$/)
     assert.equal(parents[1], `parent ${prHeadSha}`, 'PR head must be the direct second parent')
     relation = 'pull_request: direct second parent verified'
+  } else if (eventName === 'workflow_dispatch') {
+    assert.equal(testedSha.length, 40, 'standalone SHA must have exactly 40 characters')
+    assert.equal(refName, 'refs/heads/main')
+    assert.equal(prHeadSha, '')
+    assert.equal(standalone?.repository, 'silent-suite/silentsuite')
+    assert.equal(standalone?.workflowRef, 'silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main')
+    assert.equal(standalone?.workflowSha, testedSha, 'workflow source must be the tested commit')
+    assert.equal(standalone?.expectedSha, testedSha, 'expected source must be the tested commit')
+    assert.equal(standalone?.approvedSha, testedSha, 'standalone approval must be the tested commit')
+    relation = 'workflow_dispatch: exact standalone Web identity verified'
   } else {
     assert.equal(eventName, 'push', 'unsupported workflow event')
     assert.equal(refName, 'refs/heads/main')
@@ -76,6 +86,63 @@ export function effectiveBuildArgs(dockerfile, overrides) {
   }
   for (const name of values.keys()) assert.ok(result.some(arg => arg.name === name), 'unknown build argument')
   return result
+}
+
+export function standaloneIdentityFromEnvironment(env) {
+  return {
+    repository: env.GITHUB_REPOSITORY, workflowRef: env.GITHUB_WORKFLOW_REF,
+    workflowSha: env.GITHUB_WORKFLOW_SHA, expectedSha: env.EXPECTED_SHA,
+    approvedSha: env.WEB_STANDALONE_DEPLOY_APPROVED_SHA,
+  }
+}
+
+// Validate the complete argument string actually supplied to the image build, in memory.
+export function verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha, publishableKey } = {}) {
+  try {
+    assert.ok(typeof testedSha === 'string' && /^[a-f0-9]{40}$/.test(testedSha) && testedSha.length === 40)
+    assert.ok(typeof publishableKey === 'string' && publishableKey.length > 0 && !/[\0\r\n]/.test(publishableKey))
+    const required = {
+      NEXT_PUBLIC_BILLING_API_URL: 'https://api.silentsuite.io',
+      NEXT_PUBLIC_ETEBASE_SERVER_URL: 'https://server.silentsuite.io',
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: publishableKey,
+      NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
+      NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true',
+      NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
+      NEXT_PUBLIC_SELF_HOSTED: 'false',
+      NEXT_PUBLIC_OWNER_REGISTRATION: 'false',
+      VCS_REF: testedSha,
+    }
+    const actual = effectiveBuildArgs(dockerfile, overrides)
+    const suppliedNames = overrides.split('\n').filter(Boolean).map(line => line.split('=')[0])
+    assert.deepEqual(suppliedNames.sort(), Object.keys(required).sort())
+    for (const [name, value] of Object.entries(required)) {
+      const matches = actual.filter(arg => arg.name === name)
+      assert.equal(matches.length, 1)
+      // A boolean assertion cannot format either protected value on a mismatch.
+      assert.ok(matches[0].value === value)
+      assert.equal(matches[0].stage, name === 'VCS_REF' ? 'runner' : 'builder')
+    }
+    const defaults = effectiveBuildArgs(dockerfile, '')
+    for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION']) {
+      const matches = defaults.filter(arg => arg.name === name)
+      assert.equal(matches.length, 1)
+      assert.equal(matches[0].value, 'false')
+    }
+  } catch {
+    // Do not propagate parser/assertion objects, override strings, values or causes.
+    throw new Error('Standalone Web production build arguments are invalid (values withheld)')
+  }
+}
+
+export function serializeImageReport(report, { standalone = false } = {}) {
+  const buildArgs = report.buildArgs.map(({ stage, name, value }) => name === 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY'
+    ? { stage, name, binding: 'value omitted' } : { stage, name, value })
+  // Production publishes only verification status and admitted identity/configuration metadata.
+  const safeReport = standalone ? {
+    verification: 'passed', imageId: report.imageId, testedSha: report.testedSha, relation: report.relation,
+    buildArgs, inventorySha256: report.inventorySha256, cleanupVerified: report.cleanupVerified,
+  } : { ...report, buildArgs }
+  return JSON.stringify(safeReport, null, 2)
 }
 
 // Derived from the SRI-verified published musl packages, not from the candidate image.
@@ -248,6 +315,7 @@ async function main() {
   const docker = (args, timeout) => run('docker', args, timeout).trim()
   const headSha = run('git', ['rev-parse', 'HEAD']).trim()
   assert.equal(headSha, testedSha)
+  if (process.env.EVENT_NAME === 'workflow_dispatch') assert.equal(process.env.GITHUB_SHA, testedSha)
   const commitObject = run('git', ['cat-file', '-p', 'HEAD'])
   const image = JSON.parse(docker(['image', 'inspect', imageId]))[0]
   assert.equal(image.Id, imageId)
@@ -258,6 +326,11 @@ async function main() {
   assert.ok(!image.Config.Volumes || Object.keys(image.Config.Volumes).length === 0, 'image volumes obscure exported bytes')
   const buildArgs = effectiveBuildArgs(readFileSync(join(root, 'Dockerfile.web'), 'utf8'), process.env.WEB_BUILD_ARGS ?? '')
   assert.equal(buildArgs.find(arg => arg.name === 'VCS_REF')?.value, testedSha)
+  if (process.env.EVENT_NAME === 'workflow_dispatch') {
+    verifyStandaloneBuildArgs(readFileSync(join(root, 'Dockerfile.web'), 'utf8'), process.env.WEB_BUILD_ARGS ?? '', {
+      testedSha, publishableKey: process.env.NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY,
+    })
+  }
   const directory = mkdtempSync(join(process.env.RUNNER_TEMP, 'web-image-'))
   const containers = []
   const create = (options, command = []) => {
@@ -317,6 +390,7 @@ async function main() {
     const smoke = JSON.parse(docker(['exec', '--env', 'NODE_OPTIONS=', server, 'node', '-e', routeProbe], 150000))
     const relation = verifyIdentity({ testedSha, prHeadSha: process.env.PR_HEAD_SHA ?? '',
       eventName: process.env.EVENT_NAME, refName: process.env.GITHUB_REF, headSha, commitObject, image,
+      standalone: standaloneIdentityFromEnvironment(process.env),
       route: smoke.routes.find(route => route.route === '/api/deployment-identity') })
     docker(['stop', '--time', '15', server], 20000)
     const state = JSON.parse(docker(['inspect', server]))[0].State
@@ -347,12 +421,13 @@ async function main() {
     rmSync(join(directory, 'rootfs.tar'), { force: true })
   }
   report.cleanupVerified = true
-  writeFileSync(join(directory, 'summary.json'), JSON.stringify(report, null, 2))
-  const summary = `## Web image verification\n\n\`\`\`json\n${JSON.stringify(report, null, 2)}\n\`\`\`\n`
+  const serialized = serializeImageReport(report, { standalone: process.env.EVENT_NAME === 'workflow_dispatch' })
+  writeFileSync(join(directory, 'summary.json'), serialized)
+  const summary = `## Web image verification\n\n\`\`\`json\n${serialized}\n\`\`\`\n`
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary)
   console.log(summary)
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch(error => { console.error(error.message); process.exitCode = 1 })
+  main().catch(error => { console.error(process.env.EVENT_NAME === 'workflow_dispatch' ? 'Standalone Web image verification failed (details withheld)' : error.message); process.exitCode = 1 })
 }
