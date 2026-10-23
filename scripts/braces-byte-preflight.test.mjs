@@ -27,6 +27,12 @@ const walkerGuard = [
   '',
 ].join('\n')
 
+// The pinned etebase SDK patch, the only patch allowed beside braces.
+const etebaseKey = 'etebase@0.43.1'
+const etebasePatch = 'patches/etebase@0.43.1.patch'
+const etebaseDigest = '78084d835e90b41b34784e7f037bfa8ca5ee715d614a39d2779539293a8fcb02'
+const etebaseLockEntry = `  ${etebaseKey}:\n    hash: ${etebaseDigest}\n    path: ${etebasePatch}\n`
+
 const temps = []
 test.after(() => {
   for (const dir of temps) rmSync(dir, { recursive: true, force: true })
@@ -47,7 +53,7 @@ function edit(file, change) {
 // full copy of the installed patched braces. The real install is never touched.
 function fixtureRoot({ nodeModules = true } = {}) {
   const root = tempDir('braces-preflight-root-')
-  for (const file of ['package.json', 'pnpm-lock.yaml', 'patches/braces@3.0.3.patch', 'apps/web/package.json']) {
+  for (const file of ['package.json', 'pnpm-lock.yaml', 'patches/braces@3.0.3.patch', etebasePatch, 'apps/web/package.json']) {
     mkdirSync(dirname(join(root, file)), { recursive: true })
     copyFileSync(join(repoRoot, file), join(root, file))
   }
@@ -77,6 +83,72 @@ test('accepts the real patched install on all eight consumer chains', () => {
 
 test('accepts an isolated fixture root that mirrors the reviewed install', () => {
   assert.deepEqual(preflight({ root: fixtureRoot() }).failures, [])
+})
+
+function declare(root, entries) {
+  edit(join(root, 'package.json'), (text) => {
+    const manifest = JSON.parse(text)
+    manifest.pnpm.patchedDependencies = Object.fromEntries(entries)
+    return JSON.stringify(manifest, null, 2)
+  })
+}
+
+const bracesDeclaration = ['braces@3.0.3', 'patches/braces@3.0.3.patch']
+const etebaseDeclaration = [etebaseKey, etebasePatch]
+
+test('accepts the real dual declaration: the reviewed braces patch plus the pinned etebase SDK patch', () => {
+  const root = fixtureRoot()
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  assert.deepEqual(manifest.pnpm.patchedDependencies, Object.fromEntries([bracesDeclaration, etebaseDeclaration]))
+  assert.ok(readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8').includes(etebaseLockEntry))
+  assert.deepEqual(preflight({ root }).failures, [])
+})
+
+test('accepts the braces-only declaration and either declaration order', () => {
+  const bracesOnly = fixtureRoot()
+  declare(bracesOnly, [bracesDeclaration])
+  edit(join(bracesOnly, 'pnpm-lock.yaml'), (text) => text.replace(etebaseLockEntry, ''))
+  unlinkSync(join(bracesOnly, etebasePatch))
+  assert.deepEqual(preflight({ root: bracesOnly }).failures, [])
+  const reordered = fixtureRoot()
+  declare(reordered, [etebaseDeclaration, bracesDeclaration])
+  assert.deepEqual(preflight({ root: reordered }).failures, [])
+})
+
+test('rejects any other patch set, a changed etebase binding and a manifest/lock mismatch', () => {
+  const lock = (root) => join(root, 'pnpm-lock.yaml')
+  const otherDigest = 'a'.repeat(64)
+  const otherLockEntry = `  lodash@4.17.21:\n    hash: ${otherDigest}\n    path: patches/lodash@4.17.21.patch\n`
+  for (const [label, mutate] of [
+    ['unknown additional patch', (root) => {
+      declare(root, [bracesDeclaration, etebaseDeclaration, ['lodash@4.17.21', 'patches/lodash@4.17.21.patch']])
+      writeFileSync(join(root, 'patches/lodash@4.17.21.patch'), '')
+      edit(lock(root), (text) => text.replace(etebaseLockEntry, etebaseLockEntry + otherLockEntry))
+    }],
+    ['unknown patch instead of etebase', (root) => {
+      declare(root, [bracesDeclaration, ['lodash@4.17.21', 'patches/lodash@4.17.21.patch']])
+      edit(lock(root), (text) => text.replace(etebaseLockEntry, otherLockEntry))
+    }],
+    ['etebase without braces', (root) => declare(root, [etebaseDeclaration])],
+    ['other etebase version', (root) => declare(root, [bracesDeclaration, ['etebase@0.43.2', etebasePatch]])],
+    ['wrong etebase path', (root) => declare(root, [bracesDeclaration, [etebaseKey, 'patches/etebase.patch']])],
+    ['etebase lock hash', (root) => edit(lock(root), (text) => text.replace(`hash: ${etebaseDigest}`, `hash: ${otherDigest}`))],
+    ['etebase patch bytes', (root) => appendFileSync(join(root, etebasePatch), '\n')],
+    ['etebase patch missing', (root) => unlinkSync(join(root, etebasePatch))],
+    ['etebase declared, not locked', (root) => edit(lock(root), (text) => text.replace(etebaseLockEntry, ''))],
+    ['etebase locked, not declared', (root) => declare(root, [bracesDeclaration])],
+    ['duplicate lock binding', (root) => edit(lock(root), (text) => text.replace('\nimporters:\n',
+      `\npatchedDependencies:\n  braces@3.0.3:\n    hash: ${patchDigest}\n    path: patches/braces@3.0.3.patch\n\nimporters:\n`))],
+    ['non-object declaration', (root) => edit(join(root, 'package.json'), (text) => {
+      const manifest = JSON.parse(text)
+      manifest.pnpm.patchedDependencies = [bracesDeclaration, etebaseDeclaration]
+      return JSON.stringify(manifest)
+    })],
+  ]) {
+    const root = fixtureRoot()
+    mutate(root)
+    assert.equal(preflight({ root }).ok, false, label)
+  }
 })
 
 test('rejects an extensionless shadow before any package code runs', () => {

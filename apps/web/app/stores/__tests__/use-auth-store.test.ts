@@ -2,7 +2,7 @@ import { createElement } from 'react'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
-import { secureClear } from '@/app/lib/secure-storage'
+import { secureClear, secureSet } from '@/app/lib/secure-storage'
 import { logger } from '@/app/lib/logger'
 import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 
@@ -61,6 +61,10 @@ vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async (key: string) => secureStore[key] ?? null),
   secureSet: vi.fn(async (key: string, value: string) => { secureStore[key] = value }),
   secureRemove: vi.fn(async (key: string) => { delete secureStore[key] }),
+  // In-memory stand-in for one IndexedDB transaction (see secure-storage.test.ts for the real one).
+  secureRemoveIfEqual: vi.fn(async (key: string, expected: string) => {
+    if (secureStore[key] === expected) delete secureStore[key]
+  }),
   secureClear: vi.fn(async () => { secureStore = {} }),
   migrateFromLocalStorage: vi.fn(async () => {}),
 }))
@@ -264,6 +268,78 @@ describe('useAuthStore', () => {
       email: 'recover@example.com', wantsProductUpdates: true, rememberDevice: true,
     })
     expect(secureStore.etebase_session).toBe('mock-saved-session')
+  })
+
+  describe('owner signup cancelled while the session write is pending', () => {
+    const serverUrl = 'https://sync.example.test'
+
+    // Like IndexedDB, the put is queued when issued; only its completion is deferred.
+    function deferNextSessionWrite() {
+      let started!: () => void
+      let release!: () => void
+      const writeStarted = new Promise<void>((resolve) => { started = resolve })
+      const writeDone = new Promise<void>((resolve) => { release = resolve })
+      vi.mocked(secureSet).mockImplementationOnce(async (key: string, value: string) => {
+        secureStore[key] = value
+        started()
+        await writeDone
+      })
+      return { writeStarted, release }
+    }
+
+    function startOwnerSignup(signal: AbortSignal) {
+      return useAuthStore.getState().createEtebaseAccount('owner@example.test', 'OwnerPass1', serverUrl, {
+        ownerPassword: 'installation-password', signal,
+      })
+    }
+
+    function expectNothingPublished() {
+      expect(localStorage.getItem('silentsuite-server-url')).toBeNull()
+      expect(sessionStorage.getItem('silentsuite-signup-in-progress')).toBeNull()
+      expect(useAuthStore.getState().pendingSignup).toBeNull()
+      expect(useAuthStore.getState().isLoading).toBe(false)
+    }
+
+    it('leaves no session, endpoint, signup marker or ready signup', async () => {
+      const controller = new AbortController()
+      const write = deferNextSessionWrite()
+      const signup = startOwnerSignup(controller.signal)
+      await write.writeStarted
+      controller.abort()
+      write.release()
+      await expect(signup).rejects.toMatchObject({ name: 'AbortError' })
+      expect(secureStore.etebase_session).toBeUndefined()
+      expectNothingPublished()
+    })
+
+    it('never removes or replaces a newer session written meanwhile', async () => {
+      const controller = new AbortController()
+      const write = deferNextSessionWrite()
+      const signup = startOwnerSignup(controller.signal)
+      await write.writeStarted
+      await secureSet('etebase_session', 'newer-session')
+      controller.abort()
+      write.release()
+      await expect(signup).rejects.toMatchObject({ name: 'AbortError' })
+      expect(secureStore.etebase_session).toBe('newer-session')
+      expectNothingPublished()
+    })
+
+    it('still persists and publishes when not aborted', async () => {
+      const controller = new AbortController()
+      const write = deferNextSessionWrite()
+      const signup = startOwnerSignup(controller.signal)
+      await write.writeStarted
+      expect(useAuthStore.getState().pendingSignup).toBeNull()
+      write.release()
+      await signup
+      expect(secureStore.etebase_session).toBe('mock-saved-session')
+      expect(localStorage.getItem('silentsuite-server-url')).toBe(serverUrl)
+      expect(sessionStorage.getItem('silentsuite-signup-in-progress')).toBe('true')
+      expect(useAuthStore.getState().pendingSignup).toMatchObject({
+        email: 'owner@example.test', serverUrl, etebaseAccountReady: true,
+      })
+    })
   })
 
   it('keeps custom-server signup and finalization out of hosted Billing', async () => {

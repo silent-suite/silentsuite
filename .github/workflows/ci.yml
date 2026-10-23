@@ -172,6 +172,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [lint-and-typecheck, test]
+    env:
+      WEB_BUILD_ARGS: |
+        NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+        NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+        VCS_REF=${{ github.sha }}
 
     steps:
       - name: Checkout
@@ -180,15 +185,28 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
+      - name: Setup Node.js for image verification
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+
       - name: Build web Docker image
+        id: image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Dockerfile.web
           push: false
+          load: true
           tags: silentsuite-web:ci-${{ github.sha }}
-          build-args: |
-            NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
-            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+          build-args: ${{ env.WEB_BUILD_ARGS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify the built image, native libraries and isolated server
+        env:
+          TESTED_SHA: ${{ github.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          WEB_IMAGE_ID: ${{ steps.image.outputs.imageid }}
+        run: node --test scripts/verify-web-image.test.mjs && node scripts/verify-web-image.mjs

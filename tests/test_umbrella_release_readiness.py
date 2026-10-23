@@ -30,6 +30,7 @@ READINESS = ROOT / "scripts" / "verify-umbrella-release-readiness.py"
 BUILD_BUNDLE = ROOT / "scripts" / "build-self-host-bundle.py"
 
 sys.path.insert(0, str(ROOT / "scripts"))
+from umbrel_release_contract import render as render_umbrel_images  # noqa: E402
 from umbrella_release_contract import (  # noqa: E402
     BRIDGE_PLATFORMS,
     android_assets,
@@ -78,6 +79,11 @@ def complete_assets(tmp_path_factory) -> dict[str, bytes]:
         capture_output=True,
     )
 
+    paired = render_umbrel_images(
+        TAG, COMMIT, (directory / "server-image.json").read_text(encoding="utf-8"),
+        "sha256:" + "4" * 64, "sha256:" + "5" * 64, "sha256:" + "6" * 64,
+    )
+    (directory / "umbrel-images.json").write_text(paired, encoding="utf-8")
     payloads: dict[str, bytes] = {}
     for name in self_host_assets(TAG):
         payloads[name] = (directory / name).read_bytes()
@@ -219,6 +225,7 @@ def test_a_draft_targeting_the_default_branch_is_accepted(stub, complete_assets)
         ("bridge", "SHA256SUMS.txt"),
         ("self-host", self_host_assets(TAG)[0]),
         ("self-host", "server-image.json"),
+        ("self-host", "umbrel-images.json"),
     ],
 )
 def test_a_missing_component_asset_blocks_publication(stub, complete_assets, component, omitted):
@@ -351,7 +358,7 @@ def test_the_inventory_is_the_union_of_three_disjoint_component_sets():
     assert android & self_host == set()
     assert bridge & self_host == set()
     assert set(expected_assets(TAG)) == android | bridge | self_host
-    assert len(expected_assets(TAG)) == 6 + 11 + 3
+    assert len(expected_assets(TAG)) == 6 + 11 + 4
 
 
 def test_the_inventory_refuses_a_tag_outside_the_release_grammar():
@@ -363,3 +370,23 @@ def test_the_inventory_refuses_a_tag_outside_the_release_grammar():
     for bad in ("nightly", "1.2.3", "v1.2", "v1.2.3-beta_1"):
         with pytest.raises(contract.InventoryError):
             contract.expected_assets(bad)
+
+
+@pytest.mark.parametrize("field", ["sourceCommit", "platforms", "server", "buildArgs"])
+def test_bad_paired_identity_blocks_readiness(stub, complete_assets, field):
+    payloads = dict(complete_assets)
+    document = json.loads(payloads["umbrel-images.json"])
+    if field == "sourceCommit":
+        document[field] = OTHER_COMMIT
+    elif field == "platforms":
+        document[field] = ["linux/amd64"]
+    elif field == "server":
+        document[field]["indexDigest"] = "sha256:" + "9" * 64
+    else:
+        document[field]["NEXT_PUBLIC_OWNER_REGISTRATION"] = "false"
+    payloads["umbrel-images.json"] = json.dumps(document).encode("utf-8")
+    publish_draft(stub, payloads)
+    result = readiness(stub)
+    assert result.returncode != 0
+    assert "NOT READY" in result.stderr
+    assert all(method == "GET" for method, _ in stub.state["requests"])

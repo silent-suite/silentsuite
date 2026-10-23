@@ -11,6 +11,16 @@ export async function initializeEtebase(serverUrl: string): Promise<void> {
   }
 }
 
+export interface SignUpOptions {
+  /**
+   * Owner-issued registration token for servers that require one. Sent only as a
+   * header on the signup request; never stored in the account or saved session.
+   */
+  registrationToken?: string;
+}
+
+const REGISTRATION_TOKEN_PATTERN = /^[\x21-\x7E]{1,512}$/;
+
 /**
  * Create a new Etebase account (sign up).
  */
@@ -18,11 +28,20 @@ export async function signUp(
   serverUrl: string,
   email: string,
   password: string,
+  options?: SignUpOptions,
 ): Promise<Etebase.Account> {
+  const registrationToken = options?.registrationToken;
+  if (
+    registrationToken !== undefined &&
+    (typeof registrationToken !== 'string' || !REGISTRATION_TOKEN_PATTERN.test(registrationToken))
+  ) {
+    throw new Error('Invalid registration token');
+  }
   const account = await Etebase.Account.signup(
     { username: email, email },
     password,
     serverUrl,
+    registrationToken === undefined ? undefined : { registrationToken },
   );
   return account;
 }

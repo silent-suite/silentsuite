@@ -1,12 +1,12 @@
 # ---- Dependencies stage ----
-FROM node:22-alpine AS deps
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS deps
 
 RUN corepack enable && corepack prepare pnpm@10.6.5 --activate
 
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json ./
-# pnpm applies patchedDependencies during the frozen install below
+# pnpm applies patchedDependencies (braces, etebase SDK) during the frozen install below
 COPY patches/ patches/
 
 # Copy all package.json files so pnpm workspace resolution works
@@ -19,7 +19,7 @@ COPY packages/config/package.json packages/config/
 RUN pnpm install --frozen-lockfile
 
 # ---- Build stage ----
-FROM node:22-alpine AS builder
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS builder
 
 RUN corepack enable && corepack prepare pnpm@10.6.5 --activate
 
@@ -33,6 +33,13 @@ ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
 # Durable encrypted local caching. Default-off: every build that does not pass
 # this argument explicitly, production included, ships with the flag disabled.
 ARG NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
+# Self-host build mode. With NEXT_PUBLIC_ETEBASE_SERVER_URL set empty, the web app
+# talks to the Etebase server on the browser's own origin.
+ARG NEXT_PUBLIC_SELF_HOSTED=false
+ENV NEXT_PUBLIC_SELF_HOSTED=$NEXT_PUBLIC_SELF_HOSTED
+# Installation-owner registration (self-host builds only). Default off.
+ARG NEXT_PUBLIC_OWNER_REGISTRATION=false
+ENV NEXT_PUBLIC_OWNER_REGISTRATION=$NEXT_PUBLIC_OWNER_REGISTRATION
 ENV NEXT_PUBLIC_BILLING_API_URL=$NEXT_PUBLIC_BILLING_API_URL
 ENV NEXT_PUBLIC_ETEBASE_SERVER_URL=$NEXT_PUBLIC_ETEBASE_SERVER_URL
 ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
@@ -45,12 +52,20 @@ COPY --from=deps /app/ ./
 COPY packages/ packages/
 COPY apps/web/ apps/web/
 
-RUN pnpm --filter @silentsuite/core build && \
+# The SDK is consumed by the build plugin and need not survive standalone tracing.
+RUN node -e "const app = require('node:module').createRequire(process.cwd() + '/apps/web/package.json'); const version = app('@sentry/nextjs/package.json').version; require('node:assert/strict').equal(version, '10.75.2'); console.log('VERIFIED_WEB_BUILD_SENTRY_VERSION=' + version)" && \
+    pnpm --filter @silentsuite/core build && \
     pnpm --filter @silentsuite/ui build && \
     pnpm --filter @silentsuite/web build
 
+# Omit debug maps before copying public assets into any runtime-image layer.
+# Their executable workers remain unchanged.
+RUN rm ./apps/web/public/sw.js.map \
+    ./apps/web/public/workbox-5194662c.js.map \
+    ./apps/web/public/fallback-ce627215c0e4a9af.js.map
+
 # ---- Production stage ----
-FROM node:22-alpine AS runner
+FROM node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runner
 
 WORKDIR /app
 

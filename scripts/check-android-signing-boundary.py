@@ -142,6 +142,10 @@ TRUSTED_HELPERS = (
     "build-self-host-bundle.py",
     "verify-self-host-bundle.py",
     "self-host-image-smoke.sh",
+    "umbrel_release_contract.py",
+    "umbrel-candidate-smoke.sh",
+    "umbrel-candidate-effective-compose.py",
+    "umbrel-candidate-probe.py",
     # The gate that decides whether a build may be signed at all. Its bytes
     # must come from the protected revision, never from the tree being released.
     "verify-android-build-reproducibility.py",
@@ -545,8 +549,13 @@ EXPECTED_ARTIFACT_ADMISSION_SHA256 = "5c810ac880a6f91c334dc108c456927a70dbbbd628
 EXPECTED_SIGNING_HELPER_SHA256 = "6e36285e5837ac13eb8ef20e1a34d07eb88b857c1acaffbaff6af458ed94ade5"
 EXPECTED_REPRODUCIBILITY_HELPER_SHA256 = "f968f9cb21cbcab1bdb65d624727514579c3daca7b3b1722234383e08447c767"
 EXPECTED_KEYSTORE_HELPER_SHA256 = "b9b0c8046a85209754c5e206b9cc1778036d2366d0709caf9a60fbf741f5c9b6"
-EXPECTED_READINESS_HELPER_SHA256 = "c75ebfba772c4f7bd6559161f64df3127c9c390bf1e5a81e39236ba47cc6e26f"
+EXPECTED_READINESS_HELPER_SHA256 = "066b64d487cc9fd23d2c947c801cb663c6b40f4fb42b22dffc8d0cc49c87e763"
 EXPECTED_BRIDGE_STAGING_HELPER_SHA256 = "b9dd8980fa763c485caa5ac999b2ba9f9d187a9545e02e3cc580425fc223e0b6"
+EXPECTED_UMBREL_INPUT_SHA256 = {
+    "scripts/umbrel_release_contract.py": "122c7b55425324cf30b446f02f40cd872c822f638f4f0617a6dd26f67a08bf9b",
+    "contracts/umbrel-images.schema.json": "1dd23914b0f8a372da97466ea3c4df0ecf5575d690460e95ee305af7f5100861",
+    "scripts/umbrella_release_contract.py": "7d16d249ccaeed8cff512110ae7c15ec8ec03810872a588ed6f8aac5f5a1759f",
+}
 # The Conscrypt producer exists twice: unprivileged CI builds it from the
 # triggering ref, the release lane builds it from the admitted commit. Both are
 # pinned so neither can drift into an unreviewed native toolchain.
@@ -1086,6 +1095,57 @@ def check_reproducibility_drill(
         violations.append(f"{DRILL_WORKFLOW} must match its exact reviewed whole-workflow digest")
 
 
+def check_umbrel_publication(server: Mapping[str, Any], violations: list[str]) -> None:
+    """The paired smoke must finish before either application's aliases exist."""
+    jobs = server.get("jobs") or {}
+    web = jobs.get("build-web") or {}
+    publish = jobs.get("publish-index") or {}
+    if web.get("needs") != "build" or publish.get("needs") != ["build", "build-web"]:
+        violations.append("paired publication must await both native image producers")
+    if web.get("permissions") != {"contents": "read", "packages": "write"}:
+        violations.append("web producer permissions must be contents:read and packages:write")
+    if web.get("strategy") != (jobs.get("build") or {}).get("strategy"):
+        violations.append("web producer must use the server native matrix")
+    if web.get("env") != {"DOCKER_CONFIG": "${{ github.workspace }}/.web-registry-${{ matrix.arch }}"}:
+        violations.append("web registry credentials need an isolated Docker config")
+    named = {step.get("name"): step for step in job_steps(web)}
+    build = (named.get("Build and push owner-enabled web by digest") or {}).get("with") or {}
+    if (
+        build.get("context") != "candidate" or build.get("file") != "candidate/Dockerfile.web"
+        or build.get("platforms") != "${{ matrix.platform }}"
+        or build.get("outputs") != "type=image,name=${{ env.WEB_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true"
+        or build.get("provenance") != "false" or build.get("sbom") != "false"
+    ):
+        violations.append("web build must publish only admitted native child digests")
+    required_args = {
+        "VCS_REF=${{ inputs.source_sha }}", "NEXT_PUBLIC_SELF_HOSTED=true",
+        "NEXT_PUBLIC_ETEBASE_SERVER_URL=", "NEXT_PUBLIC_OWNER_REGISTRATION=true",
+        "NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=false", "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false",
+        "NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false",
+    }
+    if set(str(build.get("build-args", "")).splitlines()) != required_args:
+        violations.append("web self-host build arguments changed")
+    smoke = named.get("Pull pair and smoke without registry credentials") or {}
+    body = str(smoke.get("run", ""))
+    ordered = [
+        'docker pull "${WEB_IMAGE_NAME}@${WEB_DIGEST}"',
+        'docker pull "${IMAGE_NAME}@${SERVER_DIGEST}"',
+        "\ndocker logout ghcr.io", '\nrm -rf -- "$DOCKER_CONFIG"', "env -i ",
+        "bash trusted/scripts/umbrel-candidate-smoke.sh",
+    ]
+    positions = [body.find(token) for token in ordered]
+    if -1 in positions or positions != sorted(positions) or "secrets." in json.dumps(smoke):
+        violations.append("paired smoke must pull, discard credentials and execute trusted code with a clean environment")
+    merge = next((step for step in job_steps(publish) if step.get("name") == ALIAS_MERGE_STEP), {})
+    merge_body = str(merge.get("run", ""))
+    for required in (
+        "for component in server web; do", 'IMAGE_NAME="$WEB_IMAGE_NAME"',
+        'AMD64_DIGEST="$WEB_AMD64_DIGEST"', 'ARM64_DIGEST="$WEB_ARM64_DIGEST"',
+    ):
+        if required not in merge_body:
+            violations.append("alias loop must cover the exact verified server and web pair")
+
+
 def check_control_plane(
     loaded: Mapping[Path, dict[str, Any]], violations: list[str]
 ) -> None:
@@ -1396,6 +1456,7 @@ def check_control_plane(
     #     identity that was only confirmed before the first.
     server = loaded.get(SERVER_WORKFLOW)
     if server is not None:
+        check_umbrel_publication(server, violations)
         publish = (server.get("jobs") or {}).get("publish-index")
         merge = None
         if isinstance(publish, Mapping):
@@ -1616,6 +1677,7 @@ def check(root: Path) -> list[str]:
         (IDENTITY_HELPER, EXPECTED_IDENTITY_HELPER_SHA256),
         (ATTACHMENT_HELPER, EXPECTED_ATTACHMENT_HELPER_SHA256),
         (READINESS_HELPER, EXPECTED_READINESS_HELPER_SHA256),
+        *((Path(path), digest) for path, digest in EXPECTED_UMBREL_INPUT_SHA256.items()),
         (BRIDGE_STAGING_HELPER, EXPECTED_BRIDGE_STAGING_HELPER_SHA256),
         (KEYSTORE_HELPER, EXPECTED_KEYSTORE_HELPER_SHA256),
         (ARTIFACT_ADMISSION_HELPER, EXPECTED_ARTIFACT_ADMISSION_SHA256),

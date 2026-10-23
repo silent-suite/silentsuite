@@ -20,6 +20,7 @@ boundaries fixed:
 from __future__ import annotations
 
 import re
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -27,6 +28,7 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 WORKFLOW_DIR = ROOT / ".github" / "workflows"
 CONTROLLER_WORKFLOW = WORKFLOW_DIR / "release-controller.yml"
 ANDROID_WORKFLOW = WORKFLOW_DIR / "release-android.yml"
@@ -389,8 +391,8 @@ def test_the_bridge_build_stamps_the_admitted_tag_into_the_binary():
 
 
 def test_release_jobs_are_exactly_the_build_merge_attach_chain():
-    assert set(RELEASE["jobs"]) == {"build", "publish-index", "attach-release-assets"}
-    assert RELEASE["jobs"]["publish-index"]["needs"] == "build"
+    assert set(RELEASE["jobs"]) == {"build", "build-web", "publish-index", "attach-release-assets"}
+    assert RELEASE["jobs"]["publish-index"]["needs"] == ["build", "build-web"]
     assert RELEASE["jobs"]["attach-release-assets"]["needs"] == "publish-index"
 
 
@@ -398,6 +400,7 @@ def test_release_jobs_are_exactly_the_build_merge_attach_chain():
     "job_name,expected",
     [
         ("build", {"contents": "read", "packages": "write"}),
+        ("build-web", {"contents": "read", "packages": "write"}),
         (
             "publish-index",
             {"contents": "read", "packages": "write", "id-token": "write", "attestations": "write"},
@@ -418,7 +421,7 @@ def test_only_the_asset_attachment_job_can_write_repository_contents():
     assert writers == ["attach-release-assets"]
 
 
-@pytest.mark.parametrize("job_name", ["build", "publish-index"])
+@pytest.mark.parametrize("job_name", ["build", "build-web", "publish-index"])
 def test_the_candidate_and_the_controller_are_checked_out_separately(job_name):
     """Candidate bytes are the build input; trusted bytes verify and mutate."""
 
@@ -562,6 +565,7 @@ def test_every_registry_verifier_step_can_obtain_a_pull_token():
         "publish-index/Record the current latest reference",
         "publish-index/Merge verified children into the release index",
         "publish-index/Verify the published release image",
+        "publish-index/Verify the published web image",
         "publish-index/Assert latest was not moved",
     ], found
     for name, step in found:
@@ -1403,3 +1407,57 @@ def test_the_pattern_covers_exactly_the_five_matrix_producers():
     upload = step_named(load(BRIDGE_BUILD_WORKFLOW)["jobs"]["build"], "Upload artifact")
     assert upload["with"]["name"] == "${{ matrix.asset-name }}"
     assert {name for name in produced if fnmatch(name, BRIDGE_ARTIFACT_PATTERN)} == produced
+
+
+def test_web_native_producer_and_alias_loop_are_admission_bound():
+    job = RELEASE["jobs"]["build-web"]
+    assert job["needs"] == "build"
+    assert job["strategy"]["matrix"] == RELEASE["jobs"]["build"]["strategy"]["matrix"]
+    assert job["env"] == {"DOCKER_CONFIG": "${{ github.workspace }}/.web-registry-${{ matrix.arch }}"}
+    build = step_named(job, "Build and push owner-enabled web by digest")["with"]
+    assert build["context"] == "candidate" and build["file"] == "candidate/Dockerfile.web"
+    assert build["platforms"] == "${{ matrix.platform }}"
+    assert build["outputs"] == "type=image,name=${{ env.WEB_IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true"
+    assert build["provenance"] == build["sbom"] == "false"
+    from umbrel_release_contract import BUILD_ARGS
+    for name, value in BUILD_ARGS.items():
+        assert f"{name}={value}" in build["build-args"].splitlines()
+    assert "VCS_REF=${{ inputs.source_sha }}" in build["build-args"].splitlines()
+    smoke = step_named(job, "Pull pair and smoke without registry credentials")
+    assert not set(REGISTRY_CREDENTIALS) & set(smoke["env"])
+    code = smoke["run"]
+    pull_web = code.index('docker pull "${WEB_IMAGE_NAME}@${WEB_DIGEST}"')
+    pull_server = code.index('docker pull "${IMAGE_NAME}@${SERVER_DIGEST}"')
+    logout = code.index("\n" + "docker logout ghcr.io")
+    removal = code.index('\nrm -rf -- "$DOCKER_CONFIG"')
+    execution = code.index("env -i ")
+    assert max(pull_web, pull_server) < logout < removal < execution
+    assert "bash trusted/scripts/umbrel-candidate-smoke.sh" in code
+    assert '--package-dir "$GITHUB_WORKSPACE/candidate/self-host/umbrel/silentsuite"' in code
+    names = step_names(job)
+    assert names.index("Pull pair and smoke without registry credentials") < names.index("Record the verified web producer identity")
+    merge = step_named(RELEASE["jobs"]["publish-index"], "Merge verified children into the release index")["run"]
+    assert "for component in server web; do" in merge
+    assert 'IMAGE_NAME="$WEB_IMAGE_NAME"' in merge
+    assert 'AMD64_DIGEST="$WEB_AMD64_DIGEST"' in merge and 'ARM64_DIGEST="$WEB_ARM64_DIGEST"' in merge
+    assert RELEASE["env"]["WEB_IMAGE_NAME"] == "ghcr.io/silent-suite/silentsuite-web-selfhost"
+
+
+def test_paired_asset_is_verified_before_upload_and_attachment():
+    publish = RELEASE["jobs"]["publish-index"]
+    names = step_names(publish)
+    assert names.index("Verify the published web image") < names.index("Build and verify the paired image identity")
+    assert names.index("Build and verify the paired image identity") < names.index("Upload the verified self-host assets")
+    attach = RELEASE["jobs"]["attach-release-assets"]
+    assert step_names(attach).index("Re-verify the paired image identity") < step_names(attach).index("Attach the verified assets to the shared draft release")
+    assert "--asset umbrel-images.json" in step_named(attach, "Attach the verified assets to the shared draft release")["run"]
+    for name, subject in (
+        ("Attest web index provenance", "${{ steps.verify-web.outputs.index-digest }}"),
+        ("Attest web amd64 provenance", "${{ steps.digests.outputs.web-amd64 }}"),
+        ("Attest web arm64 provenance", "${{ steps.digests.outputs.web-arm64 }}"),
+    ):
+        settings = step_named(publish, name)["with"]
+        assert settings == {
+            "subject-name": "${{ env.WEB_IMAGE_NAME }}",
+            "subject-digest": subject, "push-to-registry": "false",
+        }
