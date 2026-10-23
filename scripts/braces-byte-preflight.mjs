@@ -32,7 +32,7 @@ export const expectedFiles = Object.freeze({
 // exported entry, never by a shortened lookup.
 export const consumerChains = Object.freeze([
   [['@ducanh2912/next-pwa', '10.2.9'], ['fast-glob', '3.3.2'], ['micromatch', '4.0.8'], ['braces', '3.0.3']],
-  [['eslint-config-next', '15.5.24'], ['@next/eslint-plugin-next', '15.5.24'], ['fast-glob', '3.3.1'],
+  [['eslint-config-next', '15.5.28'], ['@next/eslint-plugin-next', '15.5.28'], ['fast-glob', '3.3.1'],
     ['micromatch', '4.0.8'], ['braces', '3.0.3']],
   [['tailwindcss', '3.4.19'], ['chokidar', '3.6.0'], ['braces', '3.0.3']],
   [['tailwindcss', '3.4.19'], ['fast-glob', '3.3.3'], ['micromatch', '4.0.8'], ['braces', '3.0.3']],
