@@ -51,6 +51,12 @@ RUN node -e "const app = require('node:module').createRequire(process.cwd() + '/
     pnpm --filter @silentsuite/ui build && \
     pnpm --filter @silentsuite/web build
 
+# Omit debug maps before copying public assets into any runtime-image layer.
+# Their executable workers remain unchanged.
+RUN rm ./apps/web/public/sw.js.map \
+    ./apps/web/public/workbox-5194662c.js.map \
+    ./apps/web/public/fallback-ce627215c0e4a9af.js.map
+
 # ---- Production stage ----
 FROM node:22-alpine AS runner
 

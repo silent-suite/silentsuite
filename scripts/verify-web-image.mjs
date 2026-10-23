@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { appendFileSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
-import { join, posix, relative, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { packageRootOf } from './braces-byte-preflight.mjs'
 import { forbiddenRuntimeModules, maxFiles, maxScanBytes, namesConsumer, runtimePreload, smokeRoutes, unexplainedSignatureHits } from './verify-braces-tooling-exposure.mjs'
@@ -116,35 +116,50 @@ export function verifyNativeProbe(probe) {
   return true
 }
 
-// These three PWA outputs also exist at the immutable predecessor. They contain
-// generated worker/vendor sources, not application client chunks. Inventory them
-// explicitly rather than claiming there are no public maps of any kind.
-function knownPwaMap(entry) {
-  if (!Array.isArray(entry.sources) || !entry.sources.every(source => typeof source === 'string')) return false
-  if (entry.path === '/app/apps/web/public/sw.js.map') {
-    return entry.sources.length === 1 && entry.sources[0].endsWith('/sw.js')
+function publicSourceMap(path) {
+  return /^\/app\/apps\/web\/(?:\.next\/static|public)\/.*\.map$/.test(path)
+}
+
+// Resolve using the exported container namespace, never host realpath or lexical
+// normalization: an intermediate symlink changes what a later '..' traverses.
+function resolveImageLink(path, links) {
+  const pending = path.split('/'), resolved = []
+  let followed = 0
+  while (pending.length) {
+    const part = pending.shift()
+    if (!part || part === '.') continue
+    if (part === '..') {
+      assert.ok(resolved.length > 1, 'link escapes application')
+      resolved.pop()
+      continue
+    }
+    resolved.push(part)
+    assert.equal(resolved[0], 'app', 'link escapes application')
+    const current = `/${resolved.join('/')}`
+    if (links.has(current)) {
+      assert.ok(++followed <= 40, 'symlink resolution limit')
+      const target = links.get(current)
+      assert.ok(typeof target === 'string' && target.length > 0 && !/[\0\t\r\n]/.test(target), 'invalid symlink target')
+      resolved.pop()
+      if (target.startsWith('/')) resolved.length = 0
+      pending.unshift(...target.split('/'))
+    }
   }
-  if (entry.path === '/app/apps/web/public/workbox-5194662c.js.map') {
-    return entry.sha256 === 'f5ec5e18b3cf8c6fb1a06c97d24e6e933ea387b01a2a227165d0b467106dda10'
-  }
-  if (entry.path === '/app/apps/web/public/fallback-ce627215c0e4a9af.js.map') {
-    const suffixes = ['/node_modules/next/dist/build/polyfills/process.js',
-      '/node_modules/next/dist/compiled/process/browser.js', '/webpack/bootstrap', '/webpack/runtime/global',
-      '/node_modules/@ducanh2912/next-pwa/dist/fallback.js']
-    return entry.sources.length === suffixes.length && suffixes.every((suffix, i) => entry.sources[i].endsWith(suffix))
-  }
-  return false
+  return `/${resolved.join('/')}`
 }
 
 export function verifyImageEntries(entries) {
   assert.ok(Array.isArray(entries) && entries.length > 0 && entries.length <= maxFiles)
   assert.ok(entries.some(entry => entry.type === 'file' && entry.path === '/app/apps/web/server.js'), 'missing shipped server')
+  const links = new Map(entries.filter(entry => entry.type === 'link').map(entry => [entry.path, entry.target]))
   for (const entry of entries) {
     const mapped = imagePathToStandalone(entry.path)
     assert.ok(!/[\t\r\n]/.test(entry.path))
     assert.ok(!namesConsumer(entry.path), 'shipped tooling consumer')
     if (entry.type === 'link') {
-      const target = posix.resolve(posix.dirname(entry.path), entry.target)
+      assert.ok(!['/app/apps/web/public', '/app/apps/web/.next/static'].some(root =>
+        entry.path === root || entry.path.startsWith(`${root}/`) || root.startsWith(`${entry.path}/`)), 'public asset symlink')
+      const target = resolveImageLink(entry.path, links)
       assert.ok(target.startsWith('/app/'), 'link escapes application')
       assert.ok(!namesConsumer(entry.target) && !namesConsumer(target), 'link names tooling consumer')
     } else {
@@ -153,8 +168,7 @@ export function verifyImageEntries(entries) {
       assert.match(entry.sha256, /^[a-f0-9]{64}$/)
       assert.ok(Array.isArray(entry.signatures))
       assert.deepEqual(unexplainedSignatureHits(entry.signatures.map(signature => ({ file: mapped, sha256: entry.sha256, signature }))), [])
-      assert.ok(!/^\/app\/apps\/web\/(?:\.next\/static|public)\/.*\.map$/.test(entry.path)
-        || knownPwaMap(entry), 'public client source map')
+      assert.ok(!publicSourceMap(entry.path), 'public client source map')
     }
   }
   return true
@@ -214,9 +228,7 @@ function imageEntries(appDir) {
         const bytes = readFileSync(file), text = bytes.toString('latin1')
         entries.push({ type: 'file', path, size: bytes.length,
           sha256: createHash('sha256').update(bytes).digest('hex'),
-          signatures: ['exceeds max characters (', 'rangeLimit'].filter(signature => text.includes(signature)),
-          ...(/^\/app\/apps\/web\/(?:\.next\/static|public)\/.*\.map$/.test(path)
-            ? { sources: JSON.parse(bytes.toString('utf8')).sources } : {}) })
+          signatures: ['exceeds max characters (', 'rangeLimit'].filter(signature => text.includes(signature)) })
       }
     }
   }
@@ -321,7 +333,7 @@ async function main() {
       buildArgs, runnerImageEnv: image.Config.Env, smokeHostnameOverride: '127.0.0.1',
       inventoryEntries: entries.length, inventorySha256: createHash('sha256').update(inventory).digest('hex'),
       appManifestSha256: appManifest.sha256,
-      publicPwaMaps: entries.filter(entry => knownPwaMap(entry)).map(({ path, sha256, sources }) => ({ path, sha256, sources })),
+      publicSourceMaps: entries.filter(entry => publicSourceMap(entry.path)).map(({ path, sha256 }) => ({ path, sha256 })),
       native, authenticatedNativeComponents: nativeComponents, routes: smoke.routes, runtimeProcesses: records.length,
       modulesLoaded: verifyRuntimeRecords(records, smoke.serverPid), blockedOutbound: records.flatMap(record => record.blockedOutbound),
       rawBuildWarningSource: 'This run: Build Web App / Build web Docker image. Raw warnings are not copied or interpreted by this verifier.' }

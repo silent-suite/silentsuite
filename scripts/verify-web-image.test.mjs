@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
@@ -135,7 +137,7 @@ test('the executable refuses outside hosted CI before attempting Docker', () => 
   assert.match(child.stderr, /CI-only/)
 })
 
-test('pre-existing PWA generator and library maps are identified, never mistaken for application maps', async () => {
+test('runtime images reject all public maps, including PWA debug maps and spoofed producer names', async () => {
   const { verifyImageEntries } = await import('./verify-web-image.mjs')
   const server = { type: 'file', path: '/app/apps/web/server.js', size: 10, sha256: '0'.repeat(64), signatures: [] }
   const worker = { ...server, path: '/app/apps/web/public/sw.js.map', sources: ['../../scratch/generated/sw.js'] }
@@ -147,13 +149,49 @@ test('pre-existing PWA generator and library maps are identified, never mistaken
     'webpack://_N_E/webpack/bootstrap', 'webpack://_N_E/webpack/runtime/global',
     'webpack://_N_E/node_modules/@ducanh2912/next-pwa/dist/fallback.js',
   ] }
-  for (const entry of [worker, workbox, fallback]) assert.equal(verifyImageEntries([server, entry]), true)
   for (const entry of [
+    worker, workbox, fallback,
+    { ...worker, sources: ['apps/web/sw.js'], sourcesContent: ['private application source'] },
+    { ...fallback, sourcesContent: fallback.sources.map(() => 'private application source') },
     { ...worker, sources: ['webpack://_N_E/apps/web/app/page.tsx'] },
     { ...fallback, sources: [...fallback.sources, 'webpack://_N_E/apps/web/app/page.tsx'] },
     { ...workbox, sha256: '0'.repeat(64) },
     { ...worker, path: '/app/apps/web/public/app.js.map' },
   ]) assert.throws(() => verifyImageEntries([server, entry]))
+})
+
+test('public assets and their serving-root ancestors cannot be symlinks', async () => {
+  const { verifyImageEntries } = await import('./verify-web-image.mjs')
+  const server = { type: 'file', path: '/app/apps/web/server.js', size: 10, sha256: '0'.repeat(64), signatures: [] }
+  const privateMap = { ...server, path: '/app/apps/web/.next/server/private.js.map' }
+  for (const path of ['/app/apps/web/public/app.js.map', '/app/apps/web/public/app.js',
+    '/app/apps/web/.next/static/app.js.map', '/app/apps/web/public', '/app/apps/web/.next']) {
+    assert.throws(() => verifyImageEntries([server, privateMap,
+      { type: 'link', path, target: '/app/apps/web/.next/server/private.js.map' }]), /public asset symlink/)
+  }
+  assert.equal(verifyImageEntries([server, { type: 'link', path: '/app/node_modules/example', target: '../packages/example' }]), true)
+})
+
+test('link containment follows intermediate symlinks before processing parent traversal', async () => {
+  const { verifyImageEntries } = await import('./verify-web-image.mjs')
+  const server = { type: 'file', path: '/app/apps/web/server.js', size: 10, sha256: '0'.repeat(64), signatures: [] }
+  const fixture = mkdtempSync(join(tmpdir(), 'image-link-containment-'))
+  try {
+    for (const path of ['app/a', 'app/c', 'outside']) mkdirSync(join(fixture, path), { recursive: true })
+    writeFileSync(join(fixture, 'outside/probe'), 'synthetic fixture')
+    symlinkSync('../c', join(fixture, 'app/a/b'))
+    symlinkSync('a/b/../../outside/probe', join(fixture, 'app/link'))
+    assert.equal(realpathSync.native(join(fixture, 'app/link')), join(fixture, 'outside/probe'))
+    assert.throws(() => verifyImageEntries([server,
+      { type: 'link', path: '/app/a/b', target: '../c' },
+      { type: 'link', path: '/app/link', target: 'a/b/../../outside/probe' }]), /link escapes application/)
+  } finally { rmSync(fixture, { recursive: true, force: true }) }
+  assert.throws(() => verifyImageEntries([server,
+    { type: 'link', path: '/app/a', target: 'b' },
+    { type: 'link', path: '/app/b', target: 'a' }]), /symlink resolution limit/)
+  assert.equal(verifyImageEntries([server,
+    { type: 'link', path: '/app/a/b', target: '/app/c/d' },
+    { type: 'link', path: '/app/link', target: 'a/b/../package' }]), true)
 })
 
 test('CI loads its one built image and passes provenance through env without granting publication', () => {
@@ -169,4 +207,8 @@ test('CI loads its one built image and passes provenance through env without gra
   assert.doesNotMatch(build, /permissions:|secrets:|push: true|workflow_dispatch:/)
   const dockerfile = readFileSync(new URL('../Dockerfile.web', import.meta.url), 'utf8')
   assert.ok(dockerfile.includes('VERIFIED_WEB_BUILD_SENTRY_VERSION='), 'SDK version must be asserted in its real builder resolution context')
+  const omitted = dockerfile.slice(dockerfile.indexOf('RUN rm ./apps/web/public/sw.js.map'), dockerfile.indexOf('# ---- Production stage ----'))
+  for (const name of ['sw.js.map', 'workbox-5194662c.js.map', 'fallback-ce627215c0e4a9af.js.map']) {
+    assert.ok(omitted.includes(`./apps/web/public/${name}`), 'PWA debug maps must be omitted before copying any runtime-image layer')
+  }
 })
