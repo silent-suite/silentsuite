@@ -10,7 +10,7 @@ const beforeOldExpiry = Date.parse('2026-10-13T00:00:00Z')
 const quiet = { log: () => {}, error: () => {} }
 const reviewedPaths = [
   'apps/web > @ducanh2912/next-pwa@10.2.9 > fast-glob@3.3.2 > micromatch@4.0.8 > braces@3.0.3',
-  'apps/web > eslint-config-next@15.5.24 > @next/eslint-plugin-next@15.5.24 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3',
+  'apps/web > eslint-config-next@15.5.28 > @next/eslint-plugin-next@15.5.28 > fast-glob@3.3.1 > micromatch@4.0.8 > braces@3.0.3',
   'apps/web > tailwindcss@3.4.19 > chokidar@3.6.0 > braces@3.0.3',
   'apps/web > tailwindcss@3.4.19 > fast-glob@3.3.3 > micromatch@4.0.8 > braces@3.0.3',
   'apps/web > tailwindcss@3.4.19 > micromatch@4.0.8 > braces@3.0.3',
