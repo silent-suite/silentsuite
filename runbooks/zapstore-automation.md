@@ -157,7 +157,8 @@ Sibling paths:
 | Relay: a matching APK event present without its release, or without app metadata | `partial`, unrecoverable → fail closed with the exact preserved ids; see 5.2. |
 | Relay: same version with a different hash, extra e-links, extra APK references, tuple differences | `conflict` → fail closed. |
 | Relay: nothing for this version and a newer `version_code` exists | `superseded` → skip. |
-| Relay timeout, close, `CLOSED`, or result at the subscription limit | `incomplete` → fail; never treated as absent. |
+| Relay timeout (no EOSE), socket error or close before EOSE | Read-only query retried on a fresh socket and subscription, 3 attempts 5 s apart (at most 70 s); a partial answer is discarded. Still failing: `incomplete` → fail; never treated as absent. Before any signer/upload attempt the issue is titled `Zapstore relay verification incomplete`, not a publication failure. |
+| Relay `CLOSED`, a malformed frame, or result at the subscription limit | `incomplete` → fail at once, not retried; never treated as absent. |
 | Bunker unreachable, needs interactive approval, or returns another account | Fails before any signature or upload. |
 | `zsp` exits nonzero | Read-back still runs; publication is reported as `unknown` unless read-back proves otherwise. |
 | CDN bytes differ or are missing after `complete-match`/`legacy-complete` | Candidate status `failure`, phase `cdn`; issue opened even though nothing was signed. |
@@ -237,7 +238,10 @@ lines, and corrupt downloaded bytes.
 - `lane.test.mjs`: eligibility and newest-only marking; schedule-only admission
   including refusal of `release`; real `GITHUB_REF` pass-through to the identity
   helper; binding, digests, `apksigner`, template, media, changelog, `zsp`
-  invocation, relay subscription semantics, signature verification on real
+  invocation, relay subscription semantics (including bounded transport
+  retries against a local relay through Node's WebSocket client: fresh socket
+  and subscription, partial answers discarded, exhaustion fail-closed, no
+  retry of `CLOSED`, malformed or truncated answers), signature verification on real
   relay events, and every reconciliation outcome: exact match, legacy match on
   the recorded 0.5.4-beta and duplicate-APK 0.5.0-beta history, `app-drift`,
   outcome-aware issue guidance (stop, not re-run, for unrecoverable `partial`,
@@ -260,7 +264,8 @@ lines, and corrupt downloaded bytes.
   `record-result` status/phase derivation; `plan` selection and missing
   evidence; `notify` end to end against a local fake GitHub API: a successful
   sibling opens nothing, a CDN failure on an already-complete candidate opens an
-  issue, missing evidence opens an issue, open issues are deduplicated, retired
+  issue, missing evidence opens an issue, open issues are deduplicated, an
+  exhausted pre-signing relay read opens a deduplicated verification issue, retired
   historical evidence opens no issue even when stale evidence marks it
   publishable, while a mismatched id+tag pair, the current release and a
   lane-level failure still notify.
@@ -343,7 +348,7 @@ for the next scheduled reconciliation to read the relay first.
 | `partial` (`partial-unrecoverable`) | A matching APK event exists without its release or app | **Stop; no automatic recovery exists.** Accepted limitation: see 5.3. The issue names the preserved event ids. |
 | `partial` (`partial-not-newest`) | Recoverable state on a release that is no longer the newest | Nothing is published; a newer release is the publishable one. |
 | `conflict` | Same version, different bytes or tuples | Manual relay review. Never overwrite. |
-| `incomplete` | Relay did not finish answering | Re-run later. |
+| `incomplete` | Relay did not finish answering, after the bounded read-only retries for transport failures | Re-run later. Without a signer/upload attempt nothing was published by the run; it is not evidence of absence. |
 | `unknown` publication after a nonzero `zsp` exit | Read-back did not prove the set | Treat as possibly published; the next schedule reconciles. |
 
 ### 5.3 Accepted limitation: APK event present, release or app missing

@@ -65,9 +65,15 @@ export function buildIssue({ releaseId, tag, sourceSha, runUrl, phase, outcome, 
   const claim = publication || 'unknown'
   const safeReason = cleanText(reason, 40).replace(/[^a-z0-9-]/gi, '')
   const manualStop = MANUAL_STOP_REASONS.includes(safeReason)
+  // The read-only relay check exhausted its retries before any signer/upload
+  // attempt: say so instead of claiming a publication failure. The title stays
+  // exact per release, so repeated failures of this class still dedupe.
+  const verificationOnly = safeOutcome === 'incomplete' && claim === 'not-attempted'
   const title = safeId === '[unknown]' && safeTag === '[tag failed validation]'
     ? `Zapstore lane failed: ${safePhase || 'run'}`
-    : `Zapstore publication failed: ${safeTag} (release ${safeId})`
+    : verificationOnly
+      ? `Zapstore relay verification incomplete: ${safeTag} (release ${safeId})`
+      : `Zapstore publication failed: ${safeTag} (release ${safeId})`
   const claimLine = {
     'already-published': 'Relay read-back already reports a complete match; this failure is after publication.',
     'published': 'Read-back reports the exact set is now on the relay.',
@@ -76,9 +82,10 @@ export function buildIssue({ releaseId, tag, sourceSha, runUrl, phase, outcome, 
     'unknown': 'Publication state is unknown: a signer/upload attempt may have written events. Do not assume nothing was published.',
   }[claim] || 'Publication state is unknown. Do not assume nothing was published.'
   const body = [
-    '## Zapstore publication did not complete',
+    verificationOnly ? '## Zapstore relay verification did not complete' : '## Zapstore publication did not complete',
     '',
     claimLine,
+    ...(verificationOnly ? ['The read-only relay query did not complete after its bounded retries. This is not evidence that the release is absent or unpublished; the lane failed closed.'] : []),
     '',
     `- Release: ${safeTag} (GitHub release id ${safeId})`,
     `- Source commit: ${safeSha}`,

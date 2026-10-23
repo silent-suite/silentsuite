@@ -9,6 +9,8 @@ import { mkdtempSync, readFileSync, statSync, existsSync, writeFileSync } from '
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
+import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
 
 import { classifyRelease, compareTags, markPublishable, RETIRED_HISTORICAL_FAILURES, retiredHistoricalReason, selectScheduleCandidates } from '../lib/eligibility.mjs'
 import { activationState, admitTrigger, requireManualRehearsal, requireProtectedRef, requireProtectedSchedule, requireProtectedWorkflow } from '../lib/dispatch.mjs'
@@ -16,7 +18,9 @@ import { bindReleaseAssets, createGitHubClient, EnumerationIncomplete, hashFromC
 import { buildBinding, revalidateBinding, verifyApkHashes } from '../lib/binding.mjs'
 import { parseApksignerOutput, requireSignedBy } from '../lib/apksigner.mjs'
 import { generateConfig, loadTemplate, parseZapstoreYaml, resolveChangelog, stageMedia } from '../lib/metadata.mjs'
+import * as nostr from '../lib/nostr.mjs'
 import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, tagValues, verifyEvent } from '../lib/nostr.mjs'
+import { collectFailures, recordResult } from '../lib/results.mjs'
 import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, legacyChannelAccepted, publicationAction, requireReadbackComplete } from '../lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, zspArgs, zspEnv, ZSP } from '../lib/zsp.mjs'
 import { materializeClientKey } from '../lib/bunker-key.mjs'
@@ -37,6 +41,7 @@ const APK_SHA = '3007b51474f8d646c652576b924aef540e46a200b1db2b283d3b772cd309fdd
 const CERT = '8035a4ff1511e2045c579c905d26e93af6009b239e741ef78542ae04e7a7ca79'
 const WORKFLOW_REF = 'silent-suite/silentsuite/.github/workflows/zapstore-publish.yml@refs/heads/main'
 const passIdentity = async () => true
+const { RELAY_READ_ATTEMPTS, RELAY_RETRY_DELAY_MS } = nostr
 
 const release = (over = {}) => ({ id: 383603104, tag_name: 'v0.5.6-beta', draft: false, prerelease: false, published_at: '2026-09-06T10:00:00Z', assets: [
   { id: 547273876, name: 'silentsuite-android-v0.5.6-beta.apk', size: 26916361, digest: `sha256:${APK_SHA}` },
@@ -401,8 +406,8 @@ test('relay subscription completes only on EOSE; timeout, close and truncation a
   const filters = [{ kinds: [3063] }]
   const complete = await queryRelay({ filters, WebSocketImpl: fakeSocketFactory((sub) => [['EVENT', sub, observed[0]], ['EOSE', sub]]) })
   assert.equal(complete.events.length, 1)
-  await assert.rejects(queryRelay({ filters, timeoutMs: 50, WebSocketImpl: fakeSocketFactory((sub) => [['EVENT', sub, observed[0]], 'HANG']) }), RelayIncomplete)
-  await assert.rejects(queryRelay({ filters, WebSocketImpl: fakeSocketFactory(() => ['CLOSE']) }), /closed before EOSE/)
+  await assert.rejects(queryRelay({ filters, timeoutMs: 50, retryDelayMs: 0, WebSocketImpl: fakeSocketFactory((sub) => [['EVENT', sub, observed[0]], 'HANG']) }), RelayIncomplete)
+  await assert.rejects(queryRelay({ filters, retryDelayMs: 0, WebSocketImpl: fakeSocketFactory(() => ['CLOSE']) }), /closed before EOSE/)
   await assert.rejects(queryRelay({ filters, limit: 1, WebSocketImpl: fakeSocketFactory((sub) => [['EVENT', sub, observed[0]], ['EOSE', sub]]) }), /truncated/)
   await assert.rejects(queryRelay({ filters, WebSocketImpl: fakeSocketFactory((sub) => [['CLOSED', sub, 'auth-required']]) }), /closed the subscription/)
   assert.equal(publicationAction({ assessment: { outcome: 'incomplete', detail: 'no EOSE' }, publishable: true }).action, 'fail')
@@ -421,6 +426,159 @@ async function signedCopies(mutate = (e) => e) {
   const expected = { app: { ...unsigned.app, pubkey: pub }, release: { ...unsigned.release, pubkey: pub }, apk: { ...unsigned.apk, pubkey: pub } }
   return { expected, apk, release: rel, app, pub, sign }
 }
+
+// A minimal local relay speaking real RFC 6455 framing over node:http, so relay
+// reads run through Node's own WebSocket client. Each connection is a fresh
+// socket; `perConnection` scripts the answer by connection index.
+async function localRelay(perConnection) {
+  const connections = []
+  const sockets = new Set()
+  const server = createServer((_, response) => { response.writeHead(426); response.end() })
+  server.on('upgrade', (request, socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+    socket.on('error', () => {})
+    const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64')
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+    const index = connections.length
+    const record = { subscriptions: [] }
+    connections.push(record)
+    const send = (frame) => {
+      const payload = Buffer.from(typeof frame === 'string' ? frame : JSON.stringify(frame))
+      let header
+      if (payload.length < 126) header = Buffer.from([0x81, payload.length])
+      else if (payload.length < 65536) { header = Buffer.alloc(4); header[0] = 0x81; header[1] = 126; header.writeUInt16BE(payload.length, 2) }
+      else { header = Buffer.alloc(10); header[0] = 0x81; header[1] = 127; header.writeBigUInt64BE(BigInt(payload.length), 2) }
+      socket.write(Buffer.concat([header, payload]))
+    }
+    let buffer = Buffer.alloc(0)
+    socket.on('data', (chunk) => {
+      buffer = Buffer.concat([buffer, chunk])
+      while (buffer.length >= 2) {
+        const opcode = buffer[0] & 0x0f
+        let length = buffer[1] & 0x7f
+        let offset = 2
+        if (length === 126) { if (buffer.length < 4) return; length = buffer.readUInt16BE(2); offset = 4 }
+        else if (length === 127) { if (buffer.length < 10) return; length = Number(buffer.readBigUInt64BE(2)); offset = 10 }
+        if (buffer.length < offset + 4 + length) return
+        const mask = buffer.subarray(offset, offset + 4)
+        const payload = Buffer.from(buffer.subarray(offset + 4, offset + 4 + length)).map((byte, i) => byte ^ mask[i % 4])
+        buffer = buffer.subarray(offset + 4 + length)
+        if (opcode === 8) { socket.destroy(); return }
+        if (opcode !== 1) continue
+        const [type, sub] = JSON.parse(payload.toString('utf8'))
+        if (type !== 'REQ') continue
+        record.subscriptions.push(sub)
+        perConnection(index, { sub, send, drop: () => socket.destroy() })
+      }
+    })
+  })
+  await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
+  return {
+    url: `ws://127.0.0.1:${server.address().port}`,
+    connections,
+    close: () => new Promise((resolveClose) => { for (const socket of sockets) socket.destroy(); server.close(resolveClose) }),
+  }
+}
+
+test('relay reads retry an EOSE timeout or dropped socket on a fresh socket and subscription, discard the partial answer, and recover without a false absence or issue (local relay, real WebSocket client)', async () => {
+  const { expected, apk, release: rel, app, sign } = await signedCopies()
+  const stray = sign({ ...unsigned.apk, created_at: unsigned.apk.created_at + 60 })
+  const filters = [{ kinds: [3063] }]
+  const full = ({ sub, send }) => { for (const event of [app, rel, apk]) send(['EVENT', sub, event]); send(['EOSE', sub]) }
+  for (const [name, firstAttempt] of [
+    // The #857 shape: events arrive, EOSE never does.
+    ['EOSE timeout', ({ sub, send }) => { send(['EVENT', sub, stray]); send(['EVENT', sub, apk]) }],
+    ['dropped socket', ({ sub, send, drop }) => { send(['EVENT', sub, stray]); setTimeout(drop, 20) }],
+  ]) {
+    const relay = await localRelay((index, io) => (index === 0 ? firstAttempt(io) : full(io)))
+    try {
+      const started = Date.now()
+      const result = await queryRelay({ url: relay.url, filters, timeoutMs: 300, retryDelayMs: 50 })
+      assert.equal(relay.connections.length, 2, `${name}: exactly one retry on a new socket`)
+      const [first, second] = relay.connections.map((c) => c.subscriptions)
+      assert.equal(first.length, 1, name)
+      assert.equal(second.length, 1, name)
+      assert.notEqual(first[0], second[0], `${name}: the retry uses a fresh subscription id`)
+      assert.deepEqual(result.events.map((e) => e.id), [app.id, rel.id, apk.id], `${name}: first-attempt partial events never leak into the retry`)
+      assert.ok(Date.now() - started >= 50, `${name}: the fixed delay is applied before retrying`)
+      // Fed to the real consumers: a complete match, skipped with CDN check, no failure evidence.
+      const assessment = assessRelayState({ expected, observed: result.events, schnorr })
+      assert.equal(assessment.outcome, 'complete-match', `${name}: a leaked stray APK would have been a conflict`)
+      const decision = publicationAction({ assessment, publishable: true })
+      assert.deepEqual(decision, { action: 'skip', reason: 'complete-match', verifyCdn: true })
+      const evidence = recordResult({ job: 'assess', phases: { checkout: 'success', bind: 'success', apk: 'success', apksigner: 'success', prepare: 'success', reconcile: 'success', cdn: 'success' }, binding: { releaseId: 418222556, tag: 'v0.5.14-beta', sourceSha: SHA }, reconcile: { ...assessment, ...decision }, cdn: { status: 'success' } })
+      assert.equal(evidence.status, 'success')
+      assert.equal(evidence.publication, 'already-published')
+      assert.deepEqual(collectFailures({ candidates: [{ releaseId: 418222556, tag: 'v0.5.14-beta', publishable: true }], assessments: [evidence], jobs: { enumerate: 'success', assess: 'success' } }), [], `${name}: no issue`)
+    } finally {
+      await relay.close()
+    }
+  }
+})
+
+test('relay read retries are bounded and fail closed: exhausted transport failures stay incomplete, never absent, and name the attempts', async () => {
+  const { apk } = await signedCopies()
+  const filters = [{ kinds: [3063] }]
+  const relay = await localRelay((index, { sub, send }) => send(['EVENT', sub, apk]))
+  try {
+    const started = Date.now()
+    const error = await queryRelay({ url: relay.url, filters, timeoutMs: 150, retryDelayMs: 30 }).then(() => null, (e) => e)
+    const elapsed = Date.now() - started
+    assert.ok(error instanceof RelayIncomplete, 'exhaustion is RelayIncomplete')
+    assert.match(error.message, /did not send EOSE within 150 ms/)
+    assert.match(error.message, /3 of 3 read-only attempts/)
+    assert.equal(relay.connections.length, RELAY_READ_ATTEMPTS, 'no attempt beyond the fixed budget')
+    assert.ok(elapsed < 3 * 150 + 2 * 30 + 1500, `bounded wall time (${elapsed} ms)`)
+    // The CLI maps the rejection to `incomplete`, which fails and is never absence.
+    assert.deepEqual(publicationAction({ assessment: { outcome: 'incomplete', detail: error.message }, publishable: true }), { action: 'fail', reason: 'incomplete', verifyCdn: false })
+  } finally {
+    await relay.close()
+  }
+  // Fixed production budget: 3 attempts, 5 s apart, each bounded by the 20 s EOSE timeout.
+  assert.equal(RELAY_READ_ATTEMPTS, 3)
+  assert.equal(RELAY_RETRY_DELAY_MS, 5000)
+  assert.ok(RELAY_READ_ATTEMPTS * 20000 + (RELAY_READ_ATTEMPTS - 1) * RELAY_RETRY_DELAY_MS <= 70000)
+})
+
+test('relay protocol refusals, malformed frames, truncation, invalid events and conflicts are not retried or hidden', async () => {
+  const { expected, apk, release: rel, app, sign } = await signedCopies()
+  const filters = [{ kinds: [3063] }]
+  for (const [name, script, pattern] of [
+    ['CLOSED refusal', ({ sub, send }) => send(['CLOSED', sub, 'auth-required: sign in']), /closed the subscription: auth-required/],
+    ['non-JSON frame', ({ send }) => send('not json'), /non-JSON frame/],
+    ['non-array frame', ({ send }) => send({ EVENT: 1 }), /non-array frame/],
+    ['truncated', ({ sub, send }) => { send(['EVENT', sub, apk]); send(['EOSE', sub]) }, /truncated/],
+  ]) {
+    const relay = await localRelay((index, io) => script(io))
+    try {
+      await assert.rejects(queryRelay({ url: relay.url, filters, limit: 1, timeoutMs: 300, retryDelayMs: 10 }), pattern, name)
+      assert.equal(relay.connections.length, 1, `${name}: a single attempt, no retry`)
+    } finally {
+      await relay.close()
+    }
+  }
+  // A complete answer is never retried; its security and semantic checks still decide.
+  const tampered = { ...apk, content: 'tampered' }
+  const duplicate = sign({ ...unsigned.apk, created_at: unsigned.apk.created_at + 60 })
+  for (const [name, events, check] of [
+    ['invalid signature', [app, rel, tampered], (result) => assert.throws(() => assessRelayState({ expected, observed: result.events, schnorr }), InvalidRelayEvent)],
+    ['conflict', [app, rel, apk, duplicate], (result) => assert.equal(assessRelayState({ expected, observed: result.events, schnorr }).outcome, 'conflict')],
+    ['absent', [], (result) => assert.equal(assessRelayState({ expected, observed: result.events, schnorr }).outcome, 'absent')],
+  ]) {
+    const relay = await localRelay((index, { sub, send }) => { for (const event of events) send(['EVENT', sub, event]); send(['EOSE', sub]) })
+    try {
+      check(await queryRelay({ url: relay.url, filters, timeoutMs: 300, retryDelayMs: 10 }))
+      assert.equal(relay.connections.length, 1, `${name}: a complete answer is used once`)
+    } finally {
+      await relay.close()
+    }
+  }
+  // The relay module never reaches signing, upload or publication code.
+  const source = readFileSync(join(here, '..', 'lib', 'nostr.mjs'), 'utf8')
+  assert.doesNotMatch(source, /from '\.\/(nip46|nip44|publish|upload-auth|zsp|bunker-key|signing-rehearsal)\.mjs'|child_process/)
+  assert.doesNotMatch(source, /send\(JSON\.stringify\(\[\s*'(EVENT|AUTH)'/, 'only REQ frames are ever sent')
+})
 
 test('reconciliation outcomes: absent, complete-match, partial (never recovered), conflict, superseded, invalid signatures', async () => {
   const { expected, apk, release: rel, app, sign } = await signedCopies()
@@ -825,6 +983,33 @@ test('failure issue is structured, quotes untrusted text safely, names the re-ru
     return { status: 201, json: async () => ({ number: 8 }) }
   }
   await assert.rejects(createIssueWithReadback({ fetchImpl: drift, token: 't', issue }), /different content/)
+})
+
+test('an exhausted pre-sign read-only relay check is reported as incomplete verification, not a publication failure, with a deterministic per-release title', () => {
+  const base = { releaseId: '418222556', tag: 'v0.5.14-beta', sourceSha: 'a91fcdb7e99bf00a1f2305f08d94e8d76c631ce5', runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/39902659420/attempts/1', phase: 'reconcile', outcome: 'incomplete', reason: 'incomplete', publication: 'not-attempted', detail: 'relay wss://relay.zapstore.dev did not send EOSE within 20000 ms (3 of 3 read-only attempts)' }
+  const issue = buildIssue(base)
+  assert.equal(issue.title, 'Zapstore relay verification incomplete: v0.5.14-beta (release 418222556)')
+  assert.match(issue.body, /^## Zapstore relay verification did not complete\n/)
+  assert.doesNotMatch(issue.body, /publication did not complete|publication failed/i)
+  assert.match(issue.body, /No signer\/upload attempt ran for this candidate/)
+  assert.match(issue.body, /not evidence that the release is absent or unpublished/)
+  assert.match(issue.body, /- Outcome: incomplete/)
+  assert.match(issue.body, /- Publication claim: not-attempted/)
+  assert.match(issue.body, /### Exact retry/)
+  assert.match(issue.body, /GitHub release id 418222556/)
+  assert.equal(buildIssue(base).title, issue.title, 'repeated failures of the same release share one title and dedupe')
+  assert.notEqual(buildIssue({ ...base, releaseId: '407577541', tag: 'v0.5.13-beta' }).title, issue.title, 'the title stays exact per release')
+  // After any signer/upload attempt an incomplete read-back is a publication failure with unknown state.
+  for (const publication of ['unknown', 'partial', undefined]) {
+    const readback = buildIssue({ ...base, phase: 'readback', publication })
+    assert.equal(readback.title, 'Zapstore publication failed: v0.5.14-beta (release 418222556)', String(publication))
+    assert.match(readback.body, /^## Zapstore publication did not complete/, String(publication))
+  }
+  // Other refusals and failures keep the publication title.
+  for (const [outcome, reason] of [['conflict', 'conflict'], ['app-drift', 'app-drift'], ['partial', 'partial-unrecoverable'], ['evidence-missing', undefined]]) {
+    assert.match(buildIssue({ ...base, outcome, reason }).title, /^Zapstore publication failed: v0\.5\.14-beta \(release 418222556\)$/, outcome)
+  }
+  assert.equal(buildIssue({ ...base, releaseId: 'x', tag: 'bad tag' }).title, 'Zapstore lane failed: reconcile', 'lane-level titles are unchanged')
 })
 
 test('issues for states a re-run cannot fix say stop, preserve the event ids, and never advise a re-run or a hand-run publisher as the remedy', () => {
