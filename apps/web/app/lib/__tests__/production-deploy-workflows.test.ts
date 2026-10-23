@@ -200,6 +200,7 @@ function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVari
   expect(checkouts[0].with?.ref).toBe('${{ inputs.expected_sha }}')
   const authorizationSteps = steps.filter((step) => step.name === authorizationName)
   expect(authorizationSteps).toHaveLength(1)
+  expect(authorizationSteps[0].shell).toBe('bash')
   const run = authorizationSteps[0].run ?? ''
   expect(sha256(run)).toBe(expectedRunSha256)
   expect(run).toContain(`[ "$${approvalVariable}" != "$EXPECTED_SHA" ]`)
@@ -710,6 +711,64 @@ describe('production deployment workflow integrity', () => {
 
     const duplicate = source.replace('    environment: web-production', '    environment: web-production\n    environment: attacker')
     expect(() => parseWorkflow(duplicate)).toThrow()
+  })
+
+  it('standalone Web authorization rejects an ineffective shell with an unchanged reviewed run body', () => {
+    const source = `
+name: Deploy Web standalone authorization fixture
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: { required: true, type: string }
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha
+    runs-on: ubuntu-latest
+    environment: web-production
+    permissions:
+      contents: read
+    env:
+      WEB_STANDALONE_DEPLOY_APPROVED_SHA: \${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}
+    steps:
+      - name: Checkout exact standalone Web commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: \${{ inputs.expected_sha }}
+          fetch-depth: 0
+      - name: Re-assert standalone Web authorization
+        shell: bash
+        env:
+          EXPECTED_SHA: \${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing standalone Web deployment: exact authorization is incomplete"
+            exit 1
+          fi
+`
+    const control = parseWorkflow(source).jobs.deploy
+    const authorizationName = 'Re-assert standalone Web authorization'
+    const controlRun = control.steps?.[1].run ?? ''
+    const expectedRunSha256 = sha256(controlRun)
+    expect(() => expectAuthorizedJob(control, 'web-production', 'WEB_STANDALONE_DEPLOY_APPROVED_SHA', authorizationName, expectedRunSha256)).not.toThrow()
+
+    // Judge the new path's effective shell without consulting workflow or step hashes.
+    const ineffectiveShell = "bash -c 'exit 0' {0}"
+    const mutatedSource = source.replace('        shell: bash\n', `        shell: ${ineffectiveShell}\n`)
+    expect(mutatedSource).not.toBe(source)
+    const mutated = parseWorkflow(mutatedSource).jobs.deploy
+    expect(mutated.steps?.[1].shell).toBe(ineffectiveShell)
+    expect(mutated.steps?.[1].run).toBe(controlRun)
+    expect(sha256(mutated.steps?.[1].run ?? '')).toBe(expectedRunSha256)
+    expect(() => expectAuthorizedJob(mutated, 'web-production', 'WEB_STANDALONE_DEPLOY_APPROVED_SHA', authorizationName, expectedRunSha256)).toThrow()
   })
 
   it('plain-scalar comment decoys cannot satisfy exact structural lines', () => {

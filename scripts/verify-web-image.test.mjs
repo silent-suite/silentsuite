@@ -42,6 +42,47 @@ test('checkout, merge parent, image and served identity must bind to one SHA', a
   assert.throws(() => verifyIdentity({ ...input, eventName: 'push', refName: 'refs/heads/main' }))
 })
 
+test('exact protected standalone Web dispatch admits the same checkout, image and served identity', async () => {
+  const { verifyIdentity } = await import('./verify-web-image.mjs')
+  const sha = 'a'.repeat(40), otherSha = 'b'.repeat(40)
+  const standalone = {
+    repository: 'silent-suite/silentsuite',
+    workflowRef: 'silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main',
+    workflowSha: sha, expectedSha: sha, approvedSha: sha,
+  }
+  const input = {
+    testedSha: sha, headSha: sha, prHeadSha: '',
+    eventName: 'workflow_dispatch', refName: 'refs/heads/main',
+    commitObject: `tree ${'c'.repeat(40)}\nparent ${otherSha}\n\nstandalone Web fixture`,
+    standalone,
+    image: { Config: { User: 'nextjs', Labels: { 'org.opencontainers.image.revision': sha },
+      Env: [`SILENTSUITE_PUBLIC_BUILD_SHA=${sha}`] } },
+    route: { status: 200, body: { publicSha: sha }, cacheControl: 'private, no-store, max-age=0' },
+  }
+  // The actual boundary already admits these checkout/image/route values on main push.
+  assert.equal(verifyIdentity({ ...input, eventName: 'push' }), 'push: no PR')
+  assert.throws(() => verifyIdentity({ ...input, standalone: undefined }), 'unqualified dispatch remains forbidden')
+
+  assert.doesNotThrow(() => verifyIdentity(input), 'matching protected standalone Web dispatch must be admitted')
+
+  for (const change of [
+    { standalone: { ...standalone, repository: 'silent-suite/other' } },
+    { standalone: { ...standalone, workflowRef: 'silent-suite/silentsuite/.github/workflows/deploy-web.yml@refs/heads/main' } },
+    { standalone: { ...standalone, workflowRef: 'silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/attacker' } },
+    { standalone: { ...standalone, workflowSha: otherSha } },
+    { standalone: { ...standalone, expectedSha: undefined } },
+    { standalone: { ...standalone, expectedSha: otherSha } },
+    { standalone: { ...standalone, approvedSha: undefined } },
+    { standalone: { ...standalone, approvedSha: '' } },
+    { standalone: { ...standalone, approvedSha: otherSha } },
+    { refName: 'refs/heads/attacker' },
+    { headSha: otherSha },
+    { prHeadSha: otherSha },
+    { image: { Config: { ...input.image.Config, Labels: { 'org.opencontainers.image.revision': otherSha } } } },
+    { route: { ...input.route, body: { publicSha: otherSha } } },
+  ]) assert.throws(() => verifyIdentity({ ...input, ...change }))
+})
+
 test('runtime records require the real server and reject forbidden modules or attempted egress', async () => {
   const { verifyRuntimeRecords } = await import('./verify-web-image.mjs')
   assert.equal(typeof verifyRuntimeRecords, 'function', 'runtime record verifier is required')
