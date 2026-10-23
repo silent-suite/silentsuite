@@ -289,4 +289,65 @@ class PendingCodecTest {
         assertEquals(42L, (PendingCodec.decodeSequence(unhex(v1Sequence)) as PendingCodec.Decoded.Ok).value)
         assertArrayEquals(unhex(v1Sequence), PendingCodec.encodeSequence(42))
     }
+
+    // A discard permit for the store in directory "store-1" with two changes at sequence 41, n1 and n2, and one
+    // for "store-2" given for an answer that could not be counted, with three files under the names of two
+    // notes and a file of a kind this build does not know, "n3.draft".
+    private val v1Permit = "53534e520104000773746f72652d310000000200000000000000290000000002" +
+        "00076e312e6e6f746500076e322e6e6f7465db785d71"
+    private val v1PermitUncounted = "53534e520104000773746f72652d320000000300000000000000000100000003" +
+        "00076e312e6e6f746500076e322e6e6f746500086e332e647261667411bcdbf7"
+
+    @Test fun `version 1 permit records read back exactly, are written the same, and are no other kind`() {
+        val notes = setOf("n1.note", "n2.note")
+        val fixtures = listOf(v1Permit to ("store-1" to UnsyncedNotes(2, 41, false, names = notes)),
+            v1PermitUncounted to ("store-2" to UnsyncedNotes(3, 0, unreadable = true, names = notes + "n3.draft")))
+        for ((hex, permit) in fixtures) {
+            val (store, shown) = permit
+            assertEquals(permit, (PendingCodec.decodePermit(unhex(hex)) as PendingCodec.Decoded.Ok).value)
+            assertArrayEquals(unhex(hex), PendingCodec.encodePermit(store, shown))
+        }
+        val reversed = UnsyncedNotes(2, 41, false, names = linkedSetOf("n2.note", "n1.note"))
+        assertArrayEquals("the names go in sorted order, however the set holds them", unhex(v1Permit),
+            PendingCodec.encodePermit("store-1", reversed))
+        assertThrows("never for a store that could not be listed", IllegalArgumentException::class.java) {
+            PendingCodec.encodePermit("store-1", UnsyncedNotes(0, 41, unreadable = true, listed = false))
+        }
+        val bytes = unhex(v1Permit)
+        assertTrue("a permit is not a counter", PendingCodec.decodeSequence(bytes) is PendingCodec.Decoded.Bad)
+        assertTrue(PendingCodec.decodeLanded(bytes) is PendingCodec.Decoded.Bad)
+        assertTrue(PendingCodec.decodeNotebook(bytes) is PendingCodec.Decoded.Bad)
+        assertTrue(PendingCodec.decodeEntry(bytes) is PendingCodec.Decoded.Bad)
+        assertEquals("not a permit record",
+            (PendingCodec.decodePermit(unhex(v1Sequence)) as PendingCodec.Decoded.Bad).reason)
+        assertEquals("format version 2",
+            (PendingCodec.decodePermit(withFormatVersion(bytes, 2)) as PendingCodec.Decoded.Bad).reason)
+        for (length in 0 until bytes.size) {
+            assertTrue("cut to $length", PendingCodec.decodePermit(bytes.copyOf(length)) is PendingCodec.Decoded.Bad)
+        }
+    }
+
+    // An acknowledgement for the store in directory "store-1", whose directory was inode 131074 on device 2049.
+    private val v1Acknowledgement = "53534e520105000773746f72652d310000000000000801000000000002000258077d38"
+
+    @Test fun `version 1 acknowledgement records read back exactly, are written the same, and are never a permit`() {
+        val identity = PendingNotesStore.DirectoryIdentity(device = 2049, inode = 131074)
+        val bytes = unhex(v1Acknowledgement)
+        assertEquals("store-1" to identity,
+            (PendingCodec.decodeAcknowledgement(bytes) as PendingCodec.Decoded.Ok).value)
+        assertArrayEquals(bytes, PendingCodec.encodeAcknowledgement("store-1", identity))
+        assertEquals("an acknowledgement is no permit", "not a permit record",
+            (PendingCodec.decodePermit(bytes) as PendingCodec.Decoded.Bad).reason)
+        assertEquals("nor a permit an acknowledgement", "not an acknowledgement record",
+            (PendingCodec.decodeAcknowledgement(unhex(v1Permit)) as PendingCodec.Decoded.Bad).reason)
+        assertTrue(PendingCodec.decodeSequence(bytes) is PendingCodec.Decoded.Bad)
+        assertTrue(PendingCodec.decodeLanded(bytes) is PendingCodec.Decoded.Bad)
+        assertTrue(PendingCodec.decodeNotebook(bytes) is PendingCodec.Decoded.Bad)
+        assertEquals("format version 2",
+            (PendingCodec.decodeAcknowledgement(withFormatVersion(bytes, 2)) as PendingCodec.Decoded.Bad).reason)
+        for (length in 0 until bytes.size) {
+            assertTrue("cut to $length",
+                PendingCodec.decodeAcknowledgement(bytes.copyOf(length)) is PendingCodec.Decoded.Bad)
+        }
+    }
 }
