@@ -1,11 +1,11 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { spawn, spawnSync } from 'node:child_process'
 import { isDeepStrictEqual } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { parseDocument } from 'yaml'
+import { parseDocument, stringify } from 'yaml'
 
 type WorkflowStep = {
   name?: string
@@ -188,10 +188,10 @@ function node24PinViolations(root: string): string[] {
   return violations
 }
 
-function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string) {
+function expectAuthorizedJob(job: WorkflowJob, environment: string, approvalVariable: string, authorizationName: string, expectedRunSha256: string, expectedPredicate?: string) {
   const steps = job.steps ?? []
   expect(job.if).toBe(
-    `github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.${approvalVariable} == inputs.expected_sha`,
+    expectedPredicate ?? `github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.${approvalVariable} == inputs.expected_sha`,
   )
   expect(job.environment).toBe(environment)
   expect(job.env?.[approvalVariable]).toBe(`\${{ vars.${approvalVariable} }}`)
@@ -263,6 +263,335 @@ function sshHostVerificationViolations(parsed: ParsedWorkflow): string[] {
   return violations
 }
 
+// Complete parsed-object binding and separately readable effective controls for standalone Web.
+const standaloneWebWorkflowDigest = 'e7c61f683c552630d6008bf307b74860e59b78f797bbbcb98913c4282c2b082b'
+const standaloneWebAuthorizationDigest = 'b7eb5ce5bef0fba7ece1736fee05cbf1b4cfd86b27d3a88ef6320c130774a069'
+const standaloneWebPredicates = {
+  "build": "needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha",
+  "deploy": "needs['build-and-push'].result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha"
+}
+const standaloneWebControls = {
+  "name": "Deploy Web standalone (production, no annual Stage A)",
+  "on": {
+    "workflow_dispatch": {
+      "inputs": {
+        "expected_sha": {
+          "description": "Exact reviewed live main commit to build and deploy",
+          "required": true,
+          "type": "string"
+        }
+      }
+    }
+  },
+  "concurrency": {
+    "group": "deploy-web-production",
+    "cancel-in-progress": false
+  },
+  "env": {
+    "IMAGE_NAME": "ghcr.io/silent-suite/silentsuite-web"
+  },
+  "jobs": {
+    "admission": {
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 5,
+      "permissions": {},
+      "env": {
+        "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+        "WEB_STANDALONE_DEPLOY_APPROVED_SHA": "${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}"
+      },
+      "steps": [
+        {
+          "name": "Refuse an unarmed or mismatched standalone Web dispatch",
+          "shell": "bash",
+          "run": "<reviewed shell program>"
+        }
+      ]
+    },
+    "build-and-push": {
+      "if": "needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha",
+      "needs": "admission",
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 35,
+      "environment": "web-production",
+      "permissions": {
+        "contents": "read",
+        "packages": "write"
+      },
+      "outputs": {
+        "image-digest": "${{ steps.publish.outputs.image-digest }}",
+        "image-config-id": "${{ steps.publish.outputs.image-config-id }}",
+        "image-revision": "${{ steps.publish.outputs.image-revision }}"
+      },
+      "env": {
+        "WEB_STANDALONE_DEPLOY_APPROVED_SHA": "${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}",
+        "DOCKER_BUILD_SUMMARY": "false",
+        "DOCKER_BUILD_RECORD_UPLOAD": "false",
+        "DOCKER_BUILD_CHECKS_ANNOTATIONS": "false"
+      },
+      "steps": [
+        {
+          "name": "Checkout exact standalone Web commit for build",
+          "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "with": {
+            "ref": "${{ inputs.expected_sha }}",
+            "fetch-depth": 0,
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Assert this is the live main commit",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Setup pnpm",
+          "uses": "pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86"
+        },
+        {
+          "name": "Setup Node.js",
+          "uses": "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+          "with": {
+            "node-version": "22",
+            "cache": "pnpm"
+          }
+        },
+        {
+          "name": "Install frozen dependencies",
+          "shell": "bash",
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Enforce billing copy",
+          "shell": "bash",
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Verify public analytics and privacy boundary",
+          "shell": "bash",
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Audit dependencies",
+          "shell": "bash",
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Test source and deployment boundaries",
+          "shell": "bash",
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Validate production arguments before build",
+          "shell": "bash",
+          "env": {
+            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}",
+            "NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY": "${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}",
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}"
+          },
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Setup Docker Buildx",
+          "uses": "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
+        },
+        {
+          "name": "Build Web image once",
+          "id": "image",
+          "uses": "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
+          "env": {
+            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}"
+          },
+          "with": {
+            "context": ".",
+            "file": "Dockerfile.web",
+            "platforms": "linux/amd64",
+            "push": false,
+            "load": true,
+            "tags": "${{ env.IMAGE_NAME }}:standalone-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
+            "provenance": false,
+            "sbom": false,
+            "build-args": "${{ env.WEB_BUILD_ARGS }}"
+          }
+        },
+        {
+          "name": "Verify exact production image before publication",
+          "shell": "bash",
+          "env": {
+            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}",
+            "NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY": "${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}",
+            "TESTED_SHA": "${{ inputs.expected_sha }}",
+            "PR_HEAD_SHA": "",
+            "EVENT_NAME": "${{ github.event_name }}",
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+            "WEB_IMAGE_ID": "${{ steps.image.outputs.imageid }}"
+          },
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Login to GHCR",
+          "uses": "docker/login-action@dbcb813823bdd20940b903addbd779551569679f",
+          "with": {
+            "registry": "ghcr.io",
+            "username": "${{ github.actor }}",
+            "password": "${{ secrets.GITHUB_TOKEN }}"
+          }
+        },
+        {
+          "name": "Re-assert live main immediately before publication",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Publish verified image and bind registry identity",
+          "id": "publish",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+            "VERIFIED_IMAGE_ID": "${{ steps.image.outputs.imageid }}"
+          },
+          "run": "<reviewed shell program>"
+        }
+      ]
+    },
+    "deploy": {
+      "if": "needs['build-and-push'].result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha",
+      "needs": "build-and-push",
+      "runs-on": "ubuntu-latest",
+      "timeout-minutes": 20,
+      "environment": "web-production",
+      "permissions": {
+        "contents": "read"
+      },
+      "env": {
+        "WEB_STANDALONE_DEPLOY_APPROVED_SHA": "${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}"
+      },
+      "steps": [
+        {
+          "name": "Checkout exact standalone Web commit for deployment",
+          "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "with": {
+            "ref": "${{ inputs.expected_sha }}",
+            "fetch-depth": 0,
+            "persist-credentials": false
+          }
+        },
+        {
+          "name": "Validate immutable build handoff",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+            "IMAGE_DIGEST": "${{ needs.build-and-push.outputs.image-digest }}",
+            "IMAGE_CONFIG_ID": "${{ needs.build-and-push.outputs.image-config-id }}",
+            "IMAGE_REVISION": "${{ needs.build-and-push.outputs.image-revision }}"
+          },
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Require protected SSH host-key fingerprint before final authorization",
+          "shell": "bash",
+          "env": {
+            "VPS_SSH_FINGERPRINT": "${{ secrets.VPS_SSH_FINGERPRINT }}"
+          },
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Re-assert live main immediately before deployment",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}",
+            "GH_TOKEN": "${{ github.token }}"
+          },
+          "run": "<reviewed shell program>"
+        },
+        {
+          "name": "Deploy via SSH",
+          "uses": "appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2",
+          "env": {
+            "IMAGE_NAME": "${{ env.IMAGE_NAME }}",
+            "DEPLOY_SHA": "${{ inputs.expected_sha }}",
+            "IMAGE_DIGEST": "${{ needs.build-and-push.outputs.image-digest }}",
+            "IMAGE_CONFIG_ID": "${{ needs.build-and-push.outputs.image-config-id }}"
+          },
+          "with": {
+            "host": "${{ secrets.VPS_HOST }}",
+            "username": "${{ secrets.VPS_USER }}",
+            "key": "${{ secrets.VPS_SSH_KEY }}",
+            "fingerprint": "${{ secrets.VPS_SSH_FINGERPRINT }}",
+            "timeout": "30s",
+            "command_timeout": "15m",
+            "envs": "IMAGE_NAME,DEPLOY_SHA,IMAGE_DIGEST,IMAGE_CONFIG_ID",
+            "script": "<reviewed remote program>"
+          }
+        },
+        {
+          "name": "Verify public served identity from the runner",
+          "shell": "bash",
+          "env": {
+            "EXPECTED_SHA": "${{ inputs.expected_sha }}"
+          },
+          "run": "<reviewed shell program>"
+        }
+      ]
+    }
+  }
+}
+const standaloneWebPolicyPrograms: Record<string, string> = {
+  "Install frozen dependencies": "pnpm install --frozen-lockfile",
+  "Enforce billing copy": "pnpm run check:billing-copy",
+  "Verify public analytics and privacy boundary": "pnpm run check:public-analytics",
+  "Audit dependencies": "pnpm run audit:security",
+  "Test source and deployment boundaries": "pnpm run test\npnpm --filter @silentsuite/web test app/lib/__tests__/production-deploy-workflows.test.ts\nnode --test scripts/verify-web-image.test.mjs",
+  "Verify exact production image before publication": "node scripts/verify-web-image.mjs"
+}
+
+function standaloneWebControlEnvelope(parsed: ParsedWorkflow) {
+  const copy = JSON.parse(JSON.stringify(parsed)) as ParsedWorkflow
+  for (const job of Object.values(copy.jobs)) {
+    for (const step of job.steps ?? []) {
+      if ('run' in step) { expect(typeof step.run).toBe('string'); step.run = '<reviewed shell program>' }
+      if (step.with && 'script' in step.with) {
+        expect(typeof step.with.script).toBe('string')
+        step.with.script = '<reviewed remote program>'
+      }
+    }
+  }
+  return copy
+}
+
+function expectStandaloneWebContract(source: string) {
+  const parsed = parseWorkflow(source)
+  expect(standaloneWebControlEnvelope(parsed)).toEqual(standaloneWebControls)
+  expectManualOnlyContract('deploy-web-standalone.yml', source, 'web-production', 'WEB_STANDALONE_DEPLOY_APPROVED_SHA',
+    [standaloneWebAuthorizationDigest, standaloneWebAuthorizationDigest], standaloneWebPredicates)
+  const build = parsed.jobs['build-and-push']
+  expectAuthorizedJob(build, 'web-production', 'WEB_STANDALONE_DEPLOY_APPROVED_SHA',
+    'Re-assert live main immediately before publication', standaloneWebAuthorizationDigest, standaloneWebPredicates.build)
+  for (const [name, run] of Object.entries(standaloneWebPolicyPrograms)) {
+    expect(build.steps?.find(step => step.name === name)?.run).toBe(run)
+  }
+  const publication = build.steps?.findIndex(step => step.name === 'Publish verified image and bind registry identity') ?? -1
+  expect(publication).toBe((build.steps?.length ?? 0) - 1)
+  expect(build.steps?.[publication - 1]?.name).toBe('Re-assert live main immediately before publication')
+  const deploy = parsed.jobs.deploy.steps ?? []
+  // The runner-side identity check follows the only mutation; it cannot authorize or mutate.
+  expect(deploy.at(-1)?.name).toBe('Verify public served identity from the runner')
+  expect(deploy.at(-1)?.uses).toBeUndefined()
+  expect(deploy.at(-1)?.run).toContain('.publicSha == $sha')
+  expect(deploy.at(-1)?.run).not.toMatch(/secrets\.|ssh|docker/)
+  expect(deploy.at(-2)?.uses).toBe(pinnedSshAction)
+  expect(deploy.at(-3)?.name).toBe('Re-assert live main immediately before deployment')
+  expect(deploy.at(-4)?.name).toBe(sshFingerprintPreflightName)
+  expect(source).not.toMatch(/ANNUAL_|annual-only|private_admission|create-github-app-token|verify-annual-pre-public-admission|secrets:\s*inherit/)
+}
+
 function moveStep(source: string, stepName: string, beforeStepName: string): string {
   const start = source.indexOf(`      - name: ${stepName}\n`)
   if (start === -1) throw new Error(`Missing step: ${stepName}`)
@@ -295,15 +624,18 @@ function runSshFingerprintPreflight(run: string, value?: string) {
 
 // Semantic contracts shared by the protected deploy workflows. The whole-workflow and
 // job digests stay in the calling test so these can also judge mutated sources.
-function expectManualOnlyContract(name: string, source: string, environment: string, approvalVariable: string, runDigests: string[]) {
+function expectManualOnlyContract(name: string, source: string, environment: string, approvalVariable: string, runDigests: string[], standaloneWebAdmission?: { build: string; deploy: string }) {
   const parsed = parseWorkflow(source)
   const docs = name === 'deploy-docs.yml' || name === 'deploy-docs-standalone.yml'
-  const jobNames = name === 'deploy-docs-standalone.yml' ? ['admission', 'build', 'deploy'] : docs ? ['build', 'deploy'] : ['build-and-push', 'deploy']
+  const jobNames = standaloneWebAdmission ? ['admission', 'build-and-push', 'deploy'] : name === 'deploy-docs-standalone.yml' ? ['admission', 'build', 'deploy'] : docs ? ['build', 'deploy'] : ['build-and-push', 'deploy']
   expect(Object.keys(parsed.jobs).sort()).toEqual([...jobNames].sort())
 
   expect(source).toContain('workflow_dispatch:')
   expect(source).toContain('expected_sha:')
   expect(source).not.toMatch(/^  push:/m)
+  if (name === 'deploy-web-standalone.yml') {
+    expect(Object.keys(parsed.on ?? {})).toEqual(['workflow_dispatch'])
+  }
   const stageASteps = Object.values(parsed.jobs).flatMap((job) => job.steps ?? []).filter(
     (step) => step.uses === './.github/actions/verify-annual-pre-public-admission',
   )
@@ -322,7 +654,7 @@ function expectManualOnlyContract(name: string, source: string, environment: str
     const authorizationName = jobName === 'deploy'
       ? docs ? 'Re-assert owner approval immediately before deployment' : 'Re-assert live main immediately before deployment'
       : docs ? 'Verify exact owner-approved live main commit for build' : 'Assert this is the live main commit'
-    expectAuthorizedJob(parsed.jobs[jobName], environment, approvalVariable, authorizationName, runDigests[index])
+    expectAuthorizedJob(parsed.jobs[jobName], environment, approvalVariable, authorizationName, runDigests[index], standaloneWebAdmission?.[jobName === 'deploy' ? 'deploy' : 'build'])
   }
 }
 
@@ -668,7 +1000,431 @@ function standaloneAdmissionRun(): string {
   return run
 }
 
+// Execute the real parsed SSH scalar against owned synthetic transports only.
+// Until the standalone workflow exists, deploy-web.yml is the old-source witness;
+// its successful root-only health check must not define standalone acceptance.
+const webCutoverIdentities = {
+  imageName: 'ghcr.io/silent-suite/silentsuite-web',
+  candidateSha: 'a'.repeat(40), previousSha: 'b'.repeat(40), wrongSha: 'c'.repeat(40),
+  manifestDigest: 'sha256:' + 'd'.repeat(64),
+  candidateConfigId: 'sha256:' + 'e'.repeat(64), previousConfigId: 'sha256:' + 'f'.repeat(64),
+}
+
+type WebCutoverTrace = {
+  command: string
+  args: string[]
+  operation?: string
+  service?: string
+  target?: string
+  returned?: string
+  imageId?: string
+  revision?: string
+  publicSha?: string
+}
+
+// The production deploy host has no jq. 'absent' runs the script with PATH limited to
+// the synthetic transports plus an explicit allowlist of real system tools without jq;
+// 'broken' additionally shadows jq with an executable that exits 127.
+const remoteHostTools = ['bash', 'timeout', 'mktemp', 'rm', 'cat', 'grep', 'python3']
+
+function runWebCutoverFixture(script: string, wrongPublicSha: boolean, remoteJq?: 'absent' | 'broken') {
+  const directory = mkdtempSync(join(tmpdir(), 'silentsuite-web-cutover-'))
+  const bin = join(directory, 'bin')
+  const tools = join(directory, 'tools')
+  const fixtureHome = join(directory, 'home')
+  const fixtureTmp = join(directory, 'tmp')
+  const stateFile = join(directory, 'state.json')
+  const traceFile = join(directory, 'trace.jsonl')
+  const config = { ...webCutoverIdentities, directory, stateFile, traceFile, wrongPublicSha }
+  const program = String.raw`
+const fs = require('node:fs')
+const path = require('node:path')
+const config = JSON.parse(process.env.WEB_CUTOVER_FIXTURE)
+const command = path.basename(process.argv[1])
+const args = process.argv.slice(2)
+const state = JSON.parse(fs.readFileSync(config.stateFile, 'utf8'))
+const exactImage = config.imageName + '@' + config.manifestDigest
+const rollbackTag = config.imageName + ':rollback-' + config.candidateSha
+const record = extra => fs.appendFileSync(config.traceFile, JSON.stringify({ command, args, imageId: state.imageId,
+  revision: state.revision, publicSha: state.publicSha, ...extra }) + '\n')
+const refuse = () => { throw new Error('unsupported synthetic ' + command + ' arguments') }
+const same = expected => JSON.stringify(args) === JSON.stringify(expected)
+const owned = file => {
+  const resolved = fs.realpathSync(file)
+  if (!resolved.startsWith(config.directory + path.sep)) refuse()
+  return resolved
+}
+try {
+  if (command === 'docker') {
+    if (same(['compose', 'ps', '-q', 'web'])) {
+      record({ operation: 'container' })
+      process.stdout.write(state.containerId + '\n')
+    } else if (same(['pull', exactImage])) {
+      record({ operation: 'pull' })
+    } else if (same(['tag', config.previousConfigId, rollbackTag])) {
+      state.rollbackTagged = true
+      fs.writeFileSync(config.stateFile, JSON.stringify(state))
+      record({ operation: 'tag-predecessor' })
+    } else if (args.length === 4 && args[0] === 'inspect' && args[2] === '--format') {
+      const target = args[1], format = args[3]
+      const container = target === state.containerId
+      if (!container && target !== exactImage) refuse()
+      const imageId = container ? state.imageId : config.candidateConfigId
+      const revision = container ? state.revision : config.candidateSha
+      let value, operation
+      if (container && format === '{{.Image}}') {
+        value = imageId; operation = 'running-config'
+      } else if (!container && format === '{{.Id}}') {
+        value = imageId; operation = 'pulled-config'
+      } else if (format === '{{ index .Config.Labels "org.opencontainers.image.revision" }}') {
+        value = revision; operation = container ? 'running-revision' : 'pulled-revision'
+      } else refuse()
+      record({ operation, returned: value })
+      process.stdout.write(value + '\n')
+    } else if (args.length === 11 && args[0] === 'compose' && args[1] === '-f' && args[2] === 'docker-compose.yml' &&
+      args[3] === '-f' && JSON.stringify(args.slice(5)) === JSON.stringify(['up', '-d', '--force-recreate', '--no-deps', '--no-build', 'web'])) {
+      const override = fs.readFileSync(owned(args[4]), 'utf8')
+      const match = /^services:\n  web:\n    image: (\S+)\n$/.exec(override)
+      if (!match || (match[1] !== exactImage && match[1] !== rollbackTag)) refuse()
+      const previous = match[1] === rollbackTag
+      if (previous && !state.rollbackTagged) refuse()
+      state.containerId = (previous ? '3' : '2').repeat(64)
+      state.imageId = previous ? config.previousConfigId : config.candidateConfigId
+      state.revision = previous ? config.previousSha : config.candidateSha
+      state.publicSha = previous ? config.previousSha : config.wrongPublicSha ? config.wrongSha : config.candidateSha
+      fs.writeFileSync(config.stateFile, JSON.stringify(state))
+      record({ operation: 'recreate', service: 'web', target: previous ? 'predecessor' : 'candidate' })
+    } else refuse()
+  } else if (command === 'curl') {
+    let url, output, headers, writeOut
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i]
+      if (['-sf', '-fsS', '-sSf', '-f', '-s', '-S', '--fail', '--silent', '--show-error'].includes(arg)) continue
+      if (['--proto', '--connect-timeout', '--max-time', '-H', '--header'].includes(arg)) {
+        const value = args[++i]
+        if (!value) refuse()
+        if (arg === '--proto' && value !== '=https') refuse()
+        if ((arg === '-H' || arg === '--header') && value !== 'Cache-Control: no-cache') refuse()
+        if ((arg === '--connect-timeout' || arg === '--max-time') && !/^[1-9][0-9]?$/.test(value)) refuse()
+      } else if (arg === '-o' || arg === '--output') output = args[++i]
+      else if (arg === '-D' || arg === '--dump-header') headers = args[++i]
+      else if (arg === '-w' || arg === '--write-out') writeOut = args[++i]
+      else if (arg === 'https://app.silentsuite.io/' || arg === 'https://app.silentsuite.io/api/deployment-identity') {
+        if (url) refuse()
+        url = arg
+      } else refuse()
+    }
+    if (!url || (writeOut !== undefined && writeOut !== '%{http_code}')) refuse()
+    const identity = url.endsWith('/api/deployment-identity')
+    const body = identity ? JSON.stringify({ publicSha: state.publicSha }) + '\n' : 'synthetic healthy root\n'
+    const header = 'HTTP/1.1 200 OK\r\nCache-Control: no-store, max-age=0\r\nContent-Type: application/json\r\n\r\n'
+    if (headers) fs.writeFileSync(owned(headers), header)
+    if (output && output !== '/dev/null') fs.writeFileSync(owned(output), body)
+    else if (!output) process.stdout.write(body)
+    if (writeOut) process.stdout.write('200')
+    record({ operation: identity ? 'http-identity' : 'http-root', returned: '200' })
+  } else if (command === 'sleep' && args.length === 1 && /^(?:[0-9]|10)$/.test(args[0])) {
+    record({ operation: 'no-wait' })
+  } else refuse()
+} catch (error) {
+  record({ operation: 'unsupported' })
+  process.stderr.write(error.message + '\n')
+  process.exitCode = 64
+}
+`
+  try {
+    mkdirSync(bin)
+    mkdirSync(join(fixtureHome, 'etebase'), { recursive: true })
+    mkdirSync(fixtureTmp)
+    writeFileSync(stateFile, JSON.stringify({
+      containerId: '1'.repeat(64), imageId: config.previousConfigId,
+      revision: config.previousSha, publicSha: config.previousSha, rollbackTagged: false,
+    }))
+    writeFileSync(traceFile, '')
+    for (const name of ['docker', 'curl', 'sleep']) {
+      const path = join(bin, name)
+      writeFileSync(path, '#!' + process.execPath + '\n' + program)
+      chmodSync(path, 0o700)
+    }
+    let fixturePath = bin + ':/usr/bin:/bin'
+    let jqResolution: number | null | undefined
+    if (remoteJq) {
+      mkdirSync(tools)
+      for (const name of remoteHostTools) {
+        const real = ['/usr/bin', '/bin'].map(root => join(root, name)).find(candidate => existsSync(candidate))
+        if (!real) throw new Error('fixture host lacks required real tool: ' + name)
+        symlinkSync(real, join(tools, name))
+      }
+      if (remoteJq === 'broken') {
+        const jq = join(bin, 'jq')
+        writeFileSync(jq, '#!/bin/sh\nprintf \'%s\\n\' \'{"command":"jq","args":[],"operation":"nonworking-jq"}\' >> ' +
+          JSON.stringify(traceFile) + '\necho "jq: synthetic nonworking dependency" >&2\nexit 127\n')
+        chmodSync(jq, 0o700)
+      }
+      fixturePath = bin + ':' + tools
+      jqResolution = spawnSync(join(tools, 'bash'), ['--noprofile', '--norc', '-c', 'command -v jq >/dev/null'],
+        { env: { PATH: fixturePath }, encoding: 'utf8' }).status
+    }
+    const result = spawnSync(remoteJq ? join(tools, 'bash') : 'bash', ['--noprofile', '--norc', '-se'], {
+      input: script, cwd: fixtureHome, encoding: 'utf8', timeout: 8000,
+      env: {
+        PATH: fixturePath, HOME: fixtureHome, TMPDIR: fixtureTmp, LC_ALL: 'C',
+        WEB_CUTOVER_FIXTURE: JSON.stringify(config), IMAGE_NAME: config.imageName,
+        DEPLOY_SHA: config.candidateSha, IMAGE_DIGEST: config.manifestDigest, IMAGE_CONFIG_ID: config.candidateConfigId,
+      },
+    })
+    const trace = readFileSync(traceFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) as WebCutoverTrace[]
+    const state = JSON.parse(readFileSync(stateFile, 'utf8')) as { imageId: string; revision: string; publicSha: string }
+    return { result, trace, state, jqResolution }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+const standaloneWebArmedEnvironment: Record<string, string> = {
+  GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'silent-suite/silentsuite',
+  GITHUB_WORKFLOW_REF: 'silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main',
+  GITHUB_WORKFLOW_SHA: admittedSha, GITHUB_REF: 'refs/heads/main', GITHUB_SHA: admittedSha,
+  EXPECTED_SHA: admittedSha, WEB_STANDALONE_DEPLOY_APPROVED_SHA: admittedSha,
+}
+
+function runStandaloneWebProgram(run: string, changes: Record<string, string | undefined> = {}) {
+  const directory = mkdtempSync(join(tmpdir(), 'silentsuite-web-authorize-'))
+  try {
+    const git = join(directory, 'git')
+    writeFileSync(git, String.raw`#!/bin/sh
+case "$*" in
+  'fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main') exit 0 ;;
+  'rev-parse origin/main') printf '%s\n' "$FIXTURE_MAIN_SHA" ;;
+  'rev-parse HEAD') printf '%s\n' "$FIXTURE_CHECKOUT_SHA" ;;
+  *) echo 'unsupported synthetic Git invocation' >&2; exit 64 ;;
+esac
+`)
+    chmodSync(git, 0o700)
+    const env: Record<string, string> = {
+      PATH: directory + ':/usr/bin:/bin', ...standaloneWebArmedEnvironment,
+      GH_TOKEN: 'synthetic-contents-read', FIXTURE_MAIN_SHA: admittedSha, FIXTURE_CHECKOUT_SHA: admittedSha,
+    }
+    for (const [name, value] of Object.entries(changes)) {
+      if (value === undefined) delete env[name]
+      else env[name] = value
+    }
+    return spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', run], { env, encoding: 'utf8', timeout: 2000 })
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
+const standaloneWebAdmissionCases: [string, Record<string, string | undefined>][] = [
+  ['unarmed', { WEB_STANDALONE_DEPLOY_APPROVED_SHA: undefined }],
+  ['empty approval', { WEB_STANDALONE_DEPLOY_APPROVED_SHA: '' }],
+  ['wrong approval', { WEB_STANDALONE_DEPLOY_APPROVED_SHA: otherSha }],
+  ['Annual-only arming', { WEB_STANDALONE_DEPLOY_APPROVED_SHA: undefined, WEB_DEPLOY_APPROVED_SHA: admittedSha, ANNUAL_PUBLIC_CUTOVER_APPROVED_SHA: admittedSha }],
+  ['event', { GITHUB_EVENT_NAME: 'push' }],
+  ['ref', { GITHUB_REF: 'refs/heads/attacker' }],
+  ['repository', { GITHUB_REPOSITORY: 'silent-suite/other' }],
+  ['workflow path', { GITHUB_WORKFLOW_REF: 'silent-suite/silentsuite/.github/workflows/deploy-web.yml@refs/heads/main' }],
+  ['workflow source', { GITHUB_WORKFLOW_SHA: otherSha }],
+  ['dispatch head', { GITHUB_SHA: otherSha }],
+  ['unset expected', { EXPECTED_SHA: undefined }],
+  ...['', 'a'.repeat(39), 'a'.repeat(41), 'A'.repeat(40), 'g'.repeat(40), admittedSha + '\n', admittedSha + '\n' + admittedSha]
+    .map(value => ['malformed ' + JSON.stringify(value), { EXPECTED_SHA: value, GITHUB_SHA: value, GITHUB_WORKFLOW_SHA: value, WEB_STANDALONE_DEPLOY_APPROVED_SHA: value }] as [string, Record<string, string>]),
+]
+
+function standaloneWebProgramFailures(run: string, authorization: boolean): string[] {
+  const failures: string[] = []
+  const control = runStandaloneWebProgram(run)
+  if (control.error || control.status !== 0) failures.push('matching armed control')
+  const cases = authorization ? [
+    ...standaloneWebAdmissionCases,
+    ['moved main', { FIXTURE_MAIN_SHA: otherSha }] as [string, Record<string, string>],
+    ['wrong checkout', { FIXTURE_CHECKOUT_SHA: otherSha }] as [string, Record<string, string>],
+  ] : standaloneWebAdmissionCases
+  for (const [name, changes] of cases) {
+    const result = runStandaloneWebProgram(run, changes)
+    if (result.error || result.signal || result.status === 0 || result.stderr.includes('unsupported synthetic')) failures.push(name)
+  }
+  return failures
+}
+
+function runWebPublicationFixture(script: string, corruptConfig = false) {
+  const directory = mkdtempSync(join(tmpdir(), 'silentsuite-web-publication-'))
+  const bin = join(directory, 'bin')
+  const output = join(directory, 'output')
+  const trace = join(directory, 'trace')
+  const imageId = 'sha256:' + 'e'.repeat(64)
+  const sha = admittedSha, imageName = webCutoverIdentities.imageName
+  const manifest = JSON.stringify({
+    schemaVersion: 2, mediaType: 'application/vnd.oci.image.manifest.v1+json',
+    config: { digest: corruptConfig ? 'sha256:' + '9'.repeat(64) : imageId },
+  })
+  const manifestDigest = 'sha256:' + sha256(manifest)
+  const config = { sha, imageName, imageId, manifest, manifestDigest, output, trace,
+    imageRef: imageName + ':standalone-' + sha + '-7-1' }
+  const program = String.raw`
+const fs = require('node:fs')
+const c = JSON.parse(process.env.WEB_PUBLICATION_FIXTURE)
+const args = process.argv.slice(2)
+const exact = c.imageName + '@' + c.manifestDigest
+const same = value => JSON.stringify(args) === JSON.stringify(value)
+fs.appendFileSync(c.trace, JSON.stringify(args) + '\n')
+if (args.length === 3 && args[0] === 'image' && args[1] === 'inspect' && [c.imageId, c.imageRef, exact].includes(args[2])) {
+  process.stdout.write(JSON.stringify([{ Id: c.imageId, Config: { Labels: { 'org.opencontainers.image.revision': c.sha } } }]))
+} else if (same(['push', c.imageRef])) {
+  process.stdout.write('synthetic: digest: ' + c.manifestDigest + ' size: 1234\n')
+} else if (same(['buildx', 'imagetools', 'inspect', '--raw', exact])) {
+  process.stdout.write(c.manifest + '\n')
+} else if (same(['pull', exact])) {
+  process.stdout.write('synthetic immutable pull\n')
+} else {
+  fs.appendFileSync(c.trace, '"UNSUPPORTED"\n')
+  process.stderr.write('unsupported synthetic publication command\n')
+  process.exitCode = 64
+}
+`
+  try {
+    mkdirSync(bin)
+    writeFileSync(output, '')
+    writeFileSync(trace, '')
+    writeFileSync(join(bin, 'docker'), '#!' + process.execPath + '\n' + program)
+    chmodSync(join(bin, 'docker'), 0o700)
+    const result = spawnSync('bash', ['--noprofile', '--norc', '-se'], {
+      input: script, cwd: directory, encoding: 'utf8', timeout: 5000,
+      env: { PATH: bin + ':' + resolve(process.execPath, '..') + ':/usr/bin:/bin',
+        EXPECTED_SHA: sha, VERIFIED_IMAGE_ID: imageId, GITHUB_RUN_ID: '7', GITHUB_RUN_ATTEMPT: '1',
+        GITHUB_OUTPUT: output, WEB_PUBLICATION_FIXTURE: JSON.stringify(config) },
+    })
+    return { result, receipt: readFileSync(output, 'utf8'), trace: readFileSync(trace, 'utf8'), config }
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+}
+
 describe('production deployment workflow integrity', () => {
+  it('standalone Web binds its whole effective workflow and readable three-job envelope', () => {
+    const source = workflow('deploy-web-standalone.yml')
+    expect(sha256(JSON.stringify(parseWorkflow(source)))).toBe(standaloneWebWorkflowDigest)
+    expectStandaloneWebContract(source)
+  })
+
+  it('standalone Web semantic controls reject envelope escapes independently of the whole-workflow digest', () => {
+    const source = workflow('deploy-web-standalone.yml')
+    expectStandaloneWebContract(source)
+    const mutations: [string, (string | number)[], unknown][] = [
+      ['automatic trigger', ['on', 'push'], {}],
+      ['reusable trigger', ['on', 'workflow_call'], {}],
+      ['workflow shell defaults', ['defaults'], { run: { shell: "bash -c 'exit 0' {0}" } }],
+      ['workflow startup injection', ['env', 'BASH_ENV'], '/tmp/startup'],
+      ['broad token', ['jobs', 'build-and-push', 'permissions', 'contents'], 'write'],
+      ['self-hosted runner', ['jobs', 'build-and-push', 'runs-on'], 'self-hosted'],
+      ['job container', ['jobs', 'deploy', 'container'], 'node:22'],
+      ['job shell defaults', ['jobs', 'deploy', 'defaults'], { run: { shell: 'sh' } }],
+      ['weak predicate', ['jobs', 'build-and-push', 'if'], standaloneWebPredicates.build + ' || true'],
+      ['detached dependency', ['jobs', 'deploy', 'needs'], 'admission'],
+      ['Annual approval substitution', ['jobs', 'deploy', 'env', 'WEB_STANDALONE_DEPLOY_APPROVED_SHA'], '${{ vars.WEB_DEPLOY_APPROVED_SHA }}'],
+      ['mutable checkout', ['jobs', 'build-and-push', 'steps', 0, 'with', 'ref'], 'refs/heads/main'],
+      ['mutable action', ['jobs', 'build-and-push', 'steps', 0, 'uses'], 'actions/checkout@v7'],
+      ['ineffective authorization shell', ['jobs', 'build-and-push', 'steps', 1, 'shell'], "bash -c 'exit 0' {0}"],
+      ['skipped authorization', ['jobs', 'build-and-push', 'steps', 1, 'if'], 'false'],
+      ['startup injection on authorization', ['jobs', 'build-and-push', 'steps', 1, 'env', 'BASH_ENV'], '/tmp/startup'],
+      ['extra unnamed mutation', ['jobs', 'build-and-push', 'steps', 16], { run: 'docker push attacker/image' }],
+      ['allowed mutation failure', ['jobs', 'deploy', 'steps', 4, 'continue-on-error'], true],
+      ['fingerprint bypass', ['jobs', 'deploy', 'steps', 4, 'with', 'fingerprint'], ''],
+      ['proxy transport', ['jobs', 'deploy', 'steps', 4, 'with', 'proxy_host'], 'attacker'],
+      ['record upload override', ['jobs', 'build-and-push', 'steps', 11, 'env', 'DOCKER_BUILD_RECORD_UPLOAD'], 'true'],
+      ['build summary enabled', ['jobs', 'build-and-push', 'env', 'DOCKER_BUILD_SUMMARY'], 'true'],
+      ['raw provenance enabled', ['jobs', 'build-and-push', 'steps', 11, 'with', 'provenance'], true],
+      ['publication before image admission', ['jobs', 'build-and-push', 'steps', 11, 'with', 'push'], true],
+      ['manifest/config conflation', ['jobs', 'deploy', 'steps', 4, 'env', 'IMAGE_CONFIG_ID'], '${{ needs.build-and-push.outputs.image-digest }}'],
+    ]
+    for (const [label, path, value] of mutations) {
+      const edited = JSON.parse(JSON.stringify(parseWorkflow(source))) as ParsedWorkflow
+      let target = edited as unknown as Record<string, unknown>
+      for (const key of path.slice(0, -1)) target = target[String(key)] as Record<string, unknown>
+      target[String(path.at(-1))] = value
+      expect(() => expectStandaloneWebContract(stringify(edited)), label).toThrow()
+    }
+    const reordered = parseWorkflow(source)
+    const steps = reordered.jobs.deploy.steps ?? []
+    ;[steps[3], steps[4]] = [steps[4], steps[3]]
+    expect(() => expectStandaloneWebContract(stringify(reordered))).toThrow()
+  })
+
+  it('standalone Web refuses duplicate and merge keys before effective controls are interpreted', () => {
+    const source = workflow('deploy-web-standalone.yml')
+    const duplicate = source.replace('    environment: "web-production"', '    environment: "web-production"\n    environment: attacker')
+    expect(duplicate).not.toBe(source)
+    expect(() => parseWorkflow(duplicate)).toThrow()
+    const merge = parseWorkflow(source)
+    merge.env = { ...merge.env, '<<': 'unreviewed inherited values' }
+    expect(() => parseWorkflow(stringify(merge))).toThrow()
+  })
+
+  it('the parsed standalone Web admission and all exact-source authorizations execute fail-closed', () => {
+    const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
+    const admission = parsed.jobs.admission.steps?.[0].run ?? ''
+    expect(standaloneWebProgramFailures(admission, false)).toEqual([])
+    const runs = [
+      parsed.jobs['build-and-push'].steps?.find(step => step.name === 'Assert this is the live main commit')?.run,
+      parsed.jobs['build-and-push'].steps?.find(step => step.name === 'Re-assert live main immediately before publication')?.run,
+      parsed.jobs.deploy.steps?.find(step => step.name === 'Re-assert live main immediately before deployment')?.run,
+    ]
+    for (const run of runs) {
+      expect(typeof run).toBe('string')
+      expect(standaloneWebProgramFailures(run ?? '', true)).toEqual([])
+    }
+    // An early-success/heredoc decoy still contains the entire reviewed text.
+    const decoy = "exit 0\ncat <<'DECOY'\n" + admission + '\nDECOY\n'
+    expect(standaloneWebProgramFailures(decoy, false)).toContain('unarmed')
+    const auth = runs[0] ?? ''
+    const weakened = auth.replace('[ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ]', '[ "" != "" ]')
+    expect(weakened).not.toBe(auth)
+    expect(standaloneWebProgramFailures(weakened, true)).toContain('dispatch head')
+    const noOp = 'exit 0\n' + auth
+    expect(standaloneWebProgramFailures(noOp, true)).toContain('wrong checkout')
+  }, 20000)
+
+  it('standalone Web publishes the verified config through an authenticated manifest digest mapping', () => {
+    const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
+    const script = parsed.jobs['build-and-push'].steps?.find(step => step.name === 'Publish verified image and bind registry identity')?.run ?? ''
+    expect(script).not.toBe('')
+    const control = runWebPublicationFixture(script)
+    expect(control.result.error).toBeUndefined()
+    expect(control.trace).not.toContain('UNSUPPORTED')
+    expect(control.result.status, control.result.stderr).toBe(0)
+    expect(control.config.manifestDigest).not.toBe(control.config.imageId)
+    expect(control.receipt).toBe('image-digest=' + control.config.manifestDigest + '\nimage-config-id=' + control.config.imageId + '\nimage-revision=' + admittedSha + '\n')
+    const wrong = runWebPublicationFixture(script, true)
+    expect(wrong.result.error).toBeUndefined()
+    expect(wrong.trace).not.toContain('UNSUPPORTED')
+    expect(wrong.trace).toContain('"push"')
+    expect(wrong.trace).toContain('"--raw"')
+    expect(wrong.result.status).not.toBe(0)
+    expect(wrong.receipt).toBe('')
+  }, 15000)
+
+  it('standalone Web reuses protected fingerprint validation and has no Annual callers or evidence', () => {
+    const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
+    const preflight = parsed.jobs.deploy.steps?.find(step => step.name === sshFingerprintPreflightName)?.run ?? ''
+    const fingerprint = 'SHA256:' + createHash('sha256').update('synthetic-web-fingerprint').digest('base64').replace(/=+$/, '')
+    expect(runSshFingerprintPreflight(preflight, fingerprint).status).toBe(0)
+    for (const value of [undefined, '', fingerprint + '=', fingerprint + '\n', 'MD5:untrusted']) {
+      expect(runSshFingerprintPreflight(preflight, value).status).not.toBe(0)
+    }
+    const directory = resolve(process.cwd(), '../../.github/workflows')
+    for (const name of readdirSync(directory).filter(name => /\.ya?ml$/.test(name))) {
+      const caller = parseWorkflow(readFileSync(join(directory, name), 'utf8'))
+      expect(Object.values(caller.jobs).filter(job => job.uses?.includes('deploy-web-standalone.yml')), name).toEqual([])
+    }
+    const annual = parseWorkflow(workflow('annual-only-public-cutover.yml'))
+    expect(annual.jobs['deploy-web'].uses).toBe('./.github/workflows/deploy-web.yml')
+    expect(JSON.stringify(annual)).not.toContain('WEB_STANDALONE_DEPLOY_APPROVED_SHA')
+    expect(deployRunbook).toContain('## Standalone Web admission (no annual Stage A)')
+    const ci = parseWorkflow(workflow('ci.yml'))
+    expect(ci.jobs.test.steps?.some(step => step.run === 'pnpm --filter @silentsuite/web test app/lib/__tests__/production-deploy-workflows.test.ts')).toBe(true)
+    expect(Object.keys(ci.on ?? {}).sort()).toEqual(['pull_request', 'push'])
+  })
+
   it('pins migrated JavaScript actions to approved immutable Node 24 releases', () => {
     expect(node24PinViolations(resolve(process.cwd(), '../..'))).toEqual([])
   })
@@ -769,6 +1525,61 @@ jobs:
     expect(mutated.steps?.[1].run).toBe(controlRun)
     expect(sha256(mutated.steps?.[1].run ?? '')).toBe(expectedRunSha256)
     expect(() => expectAuthorizedJob(mutated, 'web-production', 'WEB_STANDALONE_DEPLOY_APPROVED_SHA', authorizationName, expectedRunSha256)).toThrow()
+  })
+
+  it('standalone Web admission rejects an added effective push trigger despite retained manual admission text', () => {
+    const approvalVariable = 'WEB_STANDALONE_DEPLOY_APPROVED_SHA'
+    const run = [
+      'set -euo pipefail',
+      '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]',
+      '[[ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]]',
+      'git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main',
+      'LIVE_MAIN_SHA=$(git rev-parse origin/main)',
+      'if [ "$GITHUB_REF" != "refs/heads/main" ] ||',
+      '   [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||',
+      '   [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||',
+      '   [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||',
+      '   [ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then',
+      '  exit 1',
+      'fi',
+      '',
+    ].join('\n')
+    const job = (authorizationName: string) => ({
+      if: "github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha",
+      'runs-on': 'ubuntu-latest', environment: 'web-production', permissions: { contents: 'read' },
+      env: { WEB_STANDALONE_DEPLOY_APPROVED_SHA: '${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}' },
+      steps: [
+        { name: 'Checkout exact standalone Web commit', uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+          with: { ref: '${{ inputs.expected_sha }}', 'fetch-depth': 0 } },
+        { name: authorizationName, shell: 'bash', env: { EXPECTED_SHA: '${{ inputs.expected_sha }}' }, run },
+      ],
+    })
+    const dispatch = 'workflow_dispatch: { inputs: { expected_sha: { required: true, type: string } } }'
+    const source = [
+      'name: Standalone Web admission fixture',
+      `on: { ${dispatch} }`,
+      'jobs: ' + JSON.stringify({
+        'build-and-push': job('Assert this is the live main commit'),
+        deploy: job('Re-assert live main immediately before deployment'),
+      }),
+      '',
+    ].join('\n')
+    const runDigests = [sha256(run), sha256(run)]
+    const control = parseWorkflow(source)
+    expect(Object.keys(control.on ?? {})).toEqual(['workflow_dispatch'])
+    expect(() => expectManualOnlyContract('deploy-web-standalone.yml', source, 'web-production', approvalVariable, runDigests)).not.toThrow()
+
+    const mutatedSource = source.replace(`on: { ${dispatch} }`, `on: { ${dispatch}, push: {} }`)
+    expect(mutatedSource).not.toBe(source)
+    const mutated = parseWorkflow(mutatedSource)
+    expect(Object.keys(mutated.on ?? {})).toEqual(['workflow_dispatch', 'push'])
+    expect(mutatedSource).toContain('workflow_dispatch:')
+    expect(mutated.jobs).toStrictEqual(control.jobs)
+    for (const name of ['build-and-push', 'deploy']) {
+      expect(sha256(mutated.jobs[name].steps?.[1].run ?? '')).toBe(sha256(run))
+    }
+    // Exercise the real new-path semantic call independently of workflow/job digests.
+    expect(() => expectManualOnlyContract('deploy-web-standalone.yml', mutatedSource, 'web-production', approvalVariable, runDigests)).toThrow()
   })
 
   it('plain-scalar comment decoys cannot satisfy exact structural lines', () => {
@@ -993,6 +1804,124 @@ jobs:
     expect(source).toContain('RUNNING_REVISION=')
     expect(source).toContain('rollback()')
     expect(source).toContain(`Automatic ${component} rollback failed`)
+  })
+
+  it('standalone Web cutover restores the predecessor on a wrong served SHA (old Web scalar until standalone exists)', () => {
+    const directory = resolve(process.cwd(), '../../.github/workflows')
+    const sourceName = readdirSync(directory).includes('deploy-web-standalone.yml')
+      ? 'deploy-web-standalone.yml' : 'deploy-web.yml'
+    const parsed = parseWorkflow(workflow(sourceName))
+    const mutations = (parsed.jobs.deploy.steps ?? []).filter(step => step.uses === pinnedSshAction && typeof step.with?.script === 'string')
+    expect(mutations).toHaveLength(1)
+    const script = mutations[0].with?.script ?? ''
+    expect(script).not.toBe('')
+    // The parsed scalar is passed byte-for-byte to Bash; no copied rollback body.
+    const control = runWebCutoverFixture(script, false)
+    const wrong = runWebCutoverFixture(script, true)
+    const ids = webCutoverIdentities
+    expect(ids.manifestDigest).not.toBe(ids.candidateConfigId)
+    expect(ids.previousConfigId).not.toBe(ids.candidateConfigId)
+    for (const scenario of [control, wrong]) {
+      expect(scenario.result.error).toBeUndefined()
+      expect(scenario.result.signal).toBeNull()
+      expect(scenario.trace.filter(call => call.operation === 'unsupported')).toEqual([])
+      const recreations = scenario.trace.filter(call => call.operation === 'recreate')
+      expect(recreations.length).toBeGreaterThan(0)
+      expect(recreations.every(call => call.service === 'web')).toBe(true)
+      const replacement = scenario.trace.findIndex(call => call.operation === 'recreate' && call.target === 'candidate')
+      expect(replacement).toBeGreaterThanOrEqual(0)
+      const configRead = scenario.trace.findIndex((call, index) => index > replacement &&
+        call.operation === 'running-config' && call.returned === ids.candidateConfigId)
+      const revisionRead = scenario.trace.findIndex((call, index) => index > replacement &&
+        call.operation === 'running-revision' && call.returned === ids.candidateSha)
+      expect(configRead).toBeGreaterThan(replacement)
+      expect(revisionRead).toBeGreaterThan(replacement)
+      expect(scenario.trace.some(call => call.operation === 'pulled-config' && call.returned === ids.candidateConfigId)).toBe(true)
+      expect(scenario.trace.some((call, index) => index > configRead && index > revisionRead &&
+        call.operation === 'http-root' && call.returned === '200' && call.imageId === ids.candidateConfigId)).toBe(true)
+    }
+    expect(control.result.status, control.result.stderr).toBe(0)
+    expect(control.state).toMatchObject({ imageId: ids.candidateConfigId, revision: ids.candidateSha, publicSha: ids.candidateSha })
+    expect(control.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['candidate'])
+    expect(wrong.trace.some(call => call.operation === 'http-root' && call.returned === '200' &&
+      call.imageId === ids.candidateConfigId && call.revision === ids.candidateSha && call.publicSha === ids.wrongSha)).toBe(true)
+
+    // Old-source witness: deploy-web.yml currently exits successfully on this scenario.
+    // Standalone acceptance requires the real transaction to fail and verify restoration.
+    expect(wrong.result.status, sourceName + ' must reject a wrong public deployment identity').not.toBe(0)
+    expect(wrong.state).toMatchObject({ imageId: ids.previousConfigId, revision: ids.previousSha, publicSha: ids.previousSha })
+    const restored = wrong.trace.findIndex(call => call.operation === 'recreate' && call.target === 'predecessor')
+    expect(restored).toBeGreaterThan(0)
+    expect(wrong.trace.some((call, index) => index > restored &&
+      call.operation === 'running-config' && call.returned === ids.previousConfigId)).toBe(true)
+    expect(wrong.trace.some((call, index) => index > restored &&
+      call.operation === 'http-identity' && call.publicSha === ids.previousSha && call.returned === '200')).toBe(true)
+  }, 20000)
+
+  it.each([
+    ['absent from PATH', 'absent', 1],
+    ['present on PATH but nonworking (exit 127)', 'broken', 0],
+  ] as const)('standalone Web cutover deploys and rolls back on a production host where jq is %s', (_label, remoteJq, commandV) => {
+    const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
+    const mutations = (parsed.jobs.deploy.steps ?? []).filter(step => step.uses === pinnedSshAction && typeof step.with?.script === 'string')
+    expect(mutations).toHaveLength(1)
+    const script = mutations[0].with?.script ?? ''
+    const control = runWebCutoverFixture(script, false, remoteJq)
+    const wrong = runWebCutoverFixture(script, true, remoteJq)
+    const ids = webCutoverIdentities
+    for (const scenario of [control, wrong]) {
+      expect(scenario.result.error).toBeUndefined()
+      expect(scenario.result.signal).toBeNull()
+      // Real `command -v jq` under the fixture PATH: 1 when absent, 0 when only shadowed.
+      expect(scenario.jqResolution).toBe(commandV)
+      expect(scenario.trace.filter(call => call.operation === 'unsupported')).toEqual([])
+    }
+    expect(control.result.status, 'successful baseline without working remote jq: ' + control.result.stderr).toBe(0)
+    expect(control.state).toMatchObject({ imageId: ids.candidateConfigId, revision: ids.candidateSha, publicSha: ids.candidateSha })
+    expect(control.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['candidate'])
+    const replaced = control.trace.findIndex(call => call.operation === 'recreate')
+    expect(control.trace.some((call, index) => index > replaced &&
+      call.operation === 'http-identity' && call.publicSha === ids.candidateSha && call.returned === '200')).toBe(true)
+
+    expect(wrong.result.status, 'wrong served SHA must fail without working remote jq').not.toBe(0)
+    expect(wrong.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['candidate', 'predecessor'])
+    expect(wrong.state).toMatchObject({ imageId: ids.previousConfigId, revision: ids.previousSha, publicSha: ids.previousSha })
+    const restored = wrong.trace.findIndex(call => call.operation === 'recreate' && call.target === 'predecessor')
+    expect(wrong.trace.some((call, index) => index > restored &&
+      call.operation === 'running-config' && call.returned === ids.previousConfigId)).toBe(true)
+    expect(wrong.trace.some((call, index) => index > restored &&
+      call.operation === 'http-identity' && call.publicSha === ids.previousSha && call.returned === '200')).toBe(true)
+  }, 20000)
+
+  it('standalone Web remote identity parser admits only the exact single-key publicSha object (after-edit characterization)', () => {
+    const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
+    const script = (parsed.jobs.deploy.steps ?? []).find(step => step.uses === pinnedSshAction)?.with?.script ?? ''
+    expect(script).not.toMatch(/\bjq\b/)
+    const calls = [...script.matchAll(/python3 -I -c '([^']+)' "\$HEALTH_BODY" "\$expected"/g)]
+    expect(calls).toHaveLength(1)
+    const program = calls[0][1]
+    const sha = webCutoverIdentities.candidateSha
+    const directory = mkdtempSync(join(tmpdir(), 'silentsuite-web-identity-'))
+    try {
+      const verdict = (body: string) => {
+        const file = join(directory, 'body.json')
+        writeFileSync(file, body)
+        return spawnSync('python3', ['-I', '-c', program, file, sha], { cwd: directory, encoding: 'utf8' }).status
+      }
+      expect(verdict(JSON.stringify({ publicSha: sha }) + '\n')).toBe(0)
+      for (const body of [
+        JSON.stringify({ publicSha: webCutoverIdentities.wrongSha }),
+        JSON.stringify({ publicSha: sha, extra: true }),
+        `{"publicSha":"${webCutoverIdentities.wrongSha}","publicSha":"${sha}"}`,
+        JSON.stringify([['publicSha', sha]]),
+        JSON.stringify({ publicSha: [sha] }),
+        JSON.stringify(sha),
+        `{"publicSha":"${sha}"`,
+        '',
+      ]) expect(verdict(body), body).toBe(1)
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('deploy-web.yml verifies the SSH server host key from protected custody before the mutation', () => {
