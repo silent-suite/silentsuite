@@ -45,9 +45,17 @@ COPY --from=deps /app/ ./
 COPY packages/ packages/
 COPY apps/web/ apps/web/
 
-RUN pnpm --filter @silentsuite/core build && \
+# The SDK is consumed by the build plugin and need not survive standalone tracing.
+RUN node -e "const app = require('node:module').createRequire(process.cwd() + '/apps/web/package.json'); const version = app('@sentry/nextjs/package.json').version; require('node:assert/strict').equal(version, '10.75.2'); console.log('VERIFIED_WEB_BUILD_SENTRY_VERSION=' + version)" && \
+    pnpm --filter @silentsuite/core build && \
     pnpm --filter @silentsuite/ui build && \
     pnpm --filter @silentsuite/web build
+
+# Omit debug maps before copying public assets into any runtime-image layer.
+# Their executable workers remain unchanged.
+RUN rm ./apps/web/public/sw.js.map \
+    ./apps/web/public/workbox-5194662c.js.map \
+    ./apps/web/public/fallback-ce627215c0e4a9af.js.map
 
 # ---- Production stage ----
 FROM node:22-alpine AS runner
