@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SilentSuite paired self-host image identity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "tag",
+    "sourceCommit",
+    "platforms",
+    "web",
+    "server",
+    "buildArgs"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "tag": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.]+)?$"
+    },
+    "sourceCommit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "platforms": {
+      "type": "array",
+      "const": [
+        "linux/amd64",
+        "linux/arm64"
+      ]
+    },
+    "web": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "imageRepository",
+        "expectedRevision",
+        "indexDigest",
+        "amd64Digest",
+        "arm64Digest"
+      ],
+      "properties": {
+        "imageRepository": {
+          "const": "ghcr.io/silent-suite/silentsuite-web-selfhost"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "indexDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "amd64Digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "arm64Digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "imageRepository",
+        "expectedRevision",
+        "indexDigest",
+        "amd64Digest",
+        "arm64Digest"
+      ],
+      "properties": {
+        "imageRepository": {
+          "const": "ghcr.io/silent-suite/silentsuite-server"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "indexDigest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "amd64Digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "arm64Digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "buildArgs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "NEXT_PUBLIC_SELF_HOSTED",
+        "NEXT_PUBLIC_ETEBASE_SERVER_URL",
+        "NEXT_PUBLIC_OWNER_REGISTRATION",
+        "NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED",
+        "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED",
+        "NEXT_PUBLIC_LOCAL_CACHE_ENABLED"
+      ],
+      "properties": {
+        "NEXT_PUBLIC_SELF_HOSTED": {
+          "const": "true"
+        },
+        "NEXT_PUBLIC_ETEBASE_SERVER_URL": {
+          "const": ""
+        },
+        "NEXT_PUBLIC_OWNER_REGISTRATION": {
+          "const": "true"
+        },
+        "NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED": {
+          "const": "false"
+        },
+        "NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED": {
+          "const": "false"
+        },
+        "NEXT_PUBLIC_LOCAL_CACHE_ENABLED": {
+          "const": "false"
+        }
+      }
+    }
+  }
+}

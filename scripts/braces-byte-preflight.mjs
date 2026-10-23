@@ -57,10 +57,27 @@ export function packageRootOf(entry, name) {
   }
 }
 
+// The only patch allowed beside braces: the pinned etebase SDK patch, bound by the same lock-hash rule.
+const etebaseKey = 'etebase@0.43.1'
+const etebasePatchPath = 'patches/etebase@0.43.1.patch'
+const etebasePatchDigest = '78084d835e90b41b34784e7f037bfa8ca5ee715d614a39d2779539293a8fcb02'
+const lockBinding = (key, path, digest) => `  ${key}:\n    hash: ${digest}\n    path: ${path}\n`
+
 function checkBinding(root, failures) {
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
-  if (JSON.stringify(manifest.pnpm?.patchedDependencies) !== JSON.stringify({ 'braces@3.0.3': patchPath })) {
-    failures.push('package.json patchedDependencies is not exactly the reviewed braces patch')
+  const declared = manifest.pnpm?.patchedDependencies
+  const entries = declared && typeof declared === 'object' && !Array.isArray(declared)
+    ? Object.entries(declared).sort(([a], [b]) => (a < b ? -1 : 1))
+    : []
+  const bracesOnly = [['braces@3.0.3', patchPath]]
+  // Exactly braces, or exactly braces plus the pinned etebase patch; any other set fails.
+  const withEtebase = JSON.stringify(entries) === JSON.stringify([...bracesOnly, [etebaseKey, etebasePatchPath]])
+  if (!withEtebase && JSON.stringify(entries) !== JSON.stringify(bracesOnly)) {
+    failures.push('package.json patchedDependencies is not exactly the reviewed braces patch, alone or with the pinned etebase patch')
+  }
+  if (withEtebase && (!existsSync(join(root, etebasePatchPath))
+    || sha256(readFileSync(join(root, etebasePatchPath), 'utf8').replace(/\r\n/g, '\n')) !== etebasePatchDigest)) {
+    failures.push(`${etebasePatchPath} is missing or differs from the pinned patch`)
   }
   if (!existsSync(join(root, patchPath))) {
     failures.push(`missing ${patchPath}`)
@@ -72,7 +89,9 @@ function checkBinding(root, failures) {
   }
   const digest = patchDigest
   const lock = readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8')
-  if (!lock.includes(`\npatchedDependencies:\n  braces@3.0.3:\n    hash: ${digest}\n    path: ${patchPath}\n\nimporters:\n`)) {
+  const etebaseBinding = withEtebase ? lockBinding(etebaseKey, etebasePatchPath, etebasePatchDigest) : ''
+  const binding = `\npatchedDependencies:\n${lockBinding('braces@3.0.3', patchPath, digest)}${etebaseBinding}\nimporters:\n`
+  if (!lock.includes(binding) || lock.split('\npatchedDependencies:\n').length !== 2) {
     failures.push('pnpm-lock.yaml patch binding is not exactly the reviewed braces patch')
   }
   if (!lock.includes(`\n  braces@3.0.3:\n    resolution: {integrity: ${canonicalIntegrity}}\n`)) {

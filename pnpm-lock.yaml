@@ -34,6 +34,9 @@ patchedDependencies:
   braces@3.0.3:
     hash: 00379a6565da333c7a8a7d701771eb7bfbfecd1627bcab191ced1b94fc3e3ea6
     path: patches/braces@3.0.3.patch
+  etebase@0.43.1:
+    hash: 78084d835e90b41b34784e7f037bfa8ca5ee715d614a39d2779539293a8fcb02
+    path: patches/etebase@0.43.1.patch
 
 importers:
 
@@ -222,7 +225,7 @@ importers:
     dependencies:
       etebase:
         specifier: ^0.43.1
-        version: 0.43.1
+        version: 0.43.1(patch_hash=78084d835e90b41b34784e7f037bfa8ca5ee715d614a39d2779539293a8fcb02)
     devDependencies:
       '@types/node':
         specifier: ^22.0.0
@@ -9832,7 +9835,7 @@ snapshots:
 
   esutils@2.0.3: {}
 
-  etebase@0.43.1:
+  etebase@0.43.1(patch_hash=78084d835e90b41b34784e7f037bfa8ca5ee715d614a39d2779539293a8fcb02):
     dependencies:
       '@msgpack/msgpack': 1.12.2
       '@types/urijs': 1.19.26

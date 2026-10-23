@@ -86,6 +86,9 @@ def fixture_root(tmp_path: Path) -> Path:
         ARTIFACT_ADMISSION_HELPER,
         SIGNING_HELPER,
         REPRODUCIBILITY_HELPER,
+        Path("scripts/umbrel_release_contract.py"),
+        Path("contracts/umbrel-images.schema.json"),
+        Path("scripts/umbrella_release_contract.py"),
     ):
         (root / helper).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(ROOT / helper, root / helper)
@@ -176,6 +179,18 @@ def test_the_unmutated_fixture_is_clean(tmp_path: Path) -> None:
     """Every rejection below must be caused by its own mutation, not the copy."""
 
     assert run_checker(fixture_root(tmp_path)).returncode == 0
+
+
+@pytest.mark.parametrize("relative", [
+    Path("scripts/umbrel_release_contract.py"),
+    Path("contracts/umbrel-images.schema.json"),
+    Path("scripts/umbrella_release_contract.py"),
+])
+def test_paired_image_inputs_remain_digest_bound(tmp_path: Path, relative: Path) -> None:
+    root = fixture_root(tmp_path)
+    path = root / relative
+    path.write_bytes(path.read_bytes() + b"\n")
+    assert_rejected(run_checker(root), f"{relative} must match its exact reviewed digest")
 
 
 # ── Release authority: the controller, and only the controller ────────
