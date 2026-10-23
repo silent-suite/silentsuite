@@ -460,6 +460,33 @@ test('cli plan and notify: successful siblings are silent; CDN failure on an alr
   }
 })
 
+test('cli notify: an exhausted pre-sign relay read opens one deduplicated verification issue, not a publication-failed one; retired tuples stay suppressed', async () => {
+  const gh = await fakeGitHub()
+  try {
+    const env = { GITHUB_API_URL: gh.apiBase, GITHUB_TOKEN: 't', RUN_URL: runUrl, JOB_ENUMERATE: 'success', JOB_ASSESS: 'failure', JOB_PLAN: 'success', JOB_PUBLISH: 'skipped' }
+    const incomplete = (id, tag) => recordResult({ job: 'assess', phases: { checkout: 'success', bind: 'success', apk: 'success', apksigner: 'success', prepare: 'success', reconcile: 'failure', cdn: 'skipped' }, binding: binding(id, tag), reconcile: { outcome: 'incomplete', action: 'fail', reason: 'incomplete', verifyCdn: false, detail: 'relay wss://relay.zapstore.dev did not send EOSE within 20000 ms (3 of 3 read-only attempts)' } })
+    const current = incomplete(418222556, 'v0.5.14-beta')
+    assert.equal(current.publication, 'not-attempted')
+    const list = [{ releaseId: 418222556, tag: 'v0.5.14-beta', publishable: true }]
+    const first = await runAsync('notify', notifyArgs(evidenceDir({ assessments: [current], candidateList: list, plan: { publish: [], missing: [], count: 0 } })), env)
+    assert.equal(first.status, 0, first.stderr)
+    assert.equal(gh.issues.length, 1)
+    assert.equal(gh.issues[0].title, 'Zapstore relay verification incomplete: v0.5.14-beta (release 418222556)')
+    assert.match(gh.issues[0].body, /No signer\/upload attempt ran/)
+    assert.match(gh.issues[0].body, /3 of 3 read-only attempts/)
+    const again = await runAsync('notify', notifyArgs(evidenceDir({ assessments: [current], candidateList: list, plan: { publish: [], missing: [], count: 0 } })), env)
+    assert.equal(again.status, 0, again.stderr)
+    assert.match(again.summary, /Reused open issue #1/)
+    assert.equal(gh.issues.length, 1, 'the same release and failure class dedupe on the exact title')
+    const retired = await runAsync('notify', notifyArgs(evidenceDir({ assessments: [incomplete(403051319, 'v0.5.11-beta')], candidateList: [{ releaseId: 403051319, tag: 'v0.5.11-beta', publishable: true }] })), env)
+    assert.equal(retired.status, 0, retired.stderr)
+    assert.equal(gh.issues.length, 1, 'retired historical tuples stay suppressed')
+    assert.match(retired.summary, /retired historical failure\(s\) suppressed/)
+  } finally {
+    gh.server.close()
+  }
+})
+
 test('cli notify: retired historical failure evidence opens no issue even in stale evidence, while mismatched pairs, the current release and lane failures still notify', async () => {
   const gh = await fakeGitHub()
   try {
