@@ -116,6 +116,11 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var signOutOnly = false
     private var renderedSignOutErrorId = 0L
     private var signOutCompletionHandled = false
+    // Hidden for this account-screen visit only; "Don't show again" lives in AppPreferences.
+    private var taskAppReminderDismissed = false
+    @VisibleForTesting
+    internal var taskReminderDismissDialog: androidx.appcompat.app.AlertDialog? = null
+        private set
     private lateinit var notificationPermissionFlow: NotificationPermissionFlow
 
     // ActivityResultRegistry keeps this registration across recreation and delivers an outstanding
@@ -227,11 +232,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             savedInstanceState?.getBoolean(KEY_NOTIFICATION_PERMISSION_PENDING, false) ?: false,
             savedInstanceState?.getBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, false) ?: false
         )
+        taskAppReminderDismissed = savedInstanceState?.getBoolean(KEY_TASK_APP_REMINDER_DISMISSED, false) ?: false
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
         setContentView(R.layout.activity_account)
         findViewById<TextView>(R.id.dashboard_account_identity).text = account.name
+        findViewById<View>(R.id.dashboard_task_reminder_dismiss).setOnClickListener { confirmHideTaskAppReminder() }
 
         // Setup toolbar
         val toolbar = findViewById<Toolbar>(R.id.toolbar)
@@ -339,6 +346,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         pendingExportKind?.let { outState.putString(KEY_PENDING_EXPORT_KIND, it.name) }
         outState.putBoolean(KEY_NOTIFICATION_PERMISSION_PENDING, notificationPermissionFlow.notificationRequestPending)
         outState.putBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, notificationPermissionFlow.runtimePermissionFlowStarted)
+        outState.putBoolean(KEY_TASK_APP_REMINDER_DISMISSED, taskAppReminderDismissed)
+    }
+
+    override fun onDestroy() {
+        taskReminderDismissDialog?.dismiss()
+        taskReminderDismissDialog = null
+        super.onDestroy()
     }
 
     private fun requestStartupPermissions() {
@@ -917,19 +931,38 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         )
         services.forEach(::renderServiceStatus)
 
-        val latest = latestMeaningfulResult(services.map { it.status })
-        val overall = presentAccountDashboard(aggregateAccountDashboard(services.map { it.model }), latest?.timestamp)
+        // The missing-task-app reminder is advisory. Hiding it only re-reads the headline from the
+        // other services; the Tasks row, stored evidence and every other issue/action stay as they are.
+        val taskReminder = presentAccountDashboard(aggregateAccountDashboard(services.map { it.model }), null)
+            .label == AccountDashboardLabel.TASK_APP_NEEDED
+        val reminderHidden = taskAppReminderDismissed || AppPreferences(this).hideTaskAppReminder
+        val headlineServices = if (reminderHidden)
+            services.filterNot { it.title == R.string.settings_taskdav && it.model.blockedBy == AccountDashboardBlock.PROVIDER }
+        else services
+        val aggregate = aggregateAccountDashboard(headlineServices.map { it.model })
+        val row = findViewById<View>(R.id.dashboard_status_row)
+        findViewById<View>(R.id.dashboard_task_reminder_dismiss).visibility =
+            if (taskReminder && !reminderHidden) View.VISIBLE else View.GONE
+        // An all-success headline would imply Tasks sync too, so the headline is omitted instead.
+        if (headlineServices.size < services.size && aggregate.state == AccountDashboardState.SUCCESS) {
+            row.visibility = View.GONE
+            renderDashboardAction(AccountDashboardAction.NONE, null)
+            return
+        }
+        row.visibility = View.VISIBLE
+
+        val latest = latestMeaningfulResult(headlineServices.map { it.status })
+        val overall = presentAccountDashboard(aggregate, latest?.timestamp)
         val statusText = dashboardStatusText(overall)
         val detailText = overall.secondaryIssues.firstOrNull()?.let { issue ->
-            val service = services[issue.serviceIndex]
+            val service = headlineServices[issue.serviceIndex]
             val issueModel = AccountDashboardModel(issue.state, issue.blockedBy, failure = issue.category)
             "${getString(service.title)}: ${dashboardStatusText(presentAccountDashboard(issueModel, null))}"
         } ?: if (overall.label == AccountDashboardLabel.SYNCING) {
-            dashboardActiveServicesDetail(services.filter { it.model.state == AccountDashboardState.RUNNING }.map { getString(it.title) })
+            dashboardActiveServicesDetail(headlineServices.filter { it.model.state == AccountDashboardState.RUNNING }.map { getString(it.title) })
         } else dashboardDetailText(overall, latest, R.string.dashboard_waiting_for_results)
         val statusView = findViewById<TextView>(R.id.dashboard_overall_status)
         val detailView = findViewById<TextView>(R.id.dashboard_last_result)
-        val row = findViewById<View>(R.id.dashboard_status_row)
         val shouldAnnounce = model.shouldAnnounce(overall)
         ViewCompat.setAccessibilityLiveRegion(row, if (shouldAnnounce)
             ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE else ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE)
@@ -938,7 +971,23 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         row.contentDescription = "$statusText. $detailText"
         applyDashboardVisual(findViewById(R.id.dashboard_status_icon), statusView, overall)
         renderDashboardAction(overall.action,
-            services.firstOrNull { it.model.state == AccountDashboardState.SETUP_REQUIRED }?.collectionView)
+            headlineServices.firstOrNull { it.model.state == AccountDashboardState.SETUP_REQUIRED }?.collectionView)
+    }
+
+    private fun confirmHideTaskAppReminder() {
+        val content = layoutInflater.inflate(R.layout.dialog_task_reminder_dismiss, null)
+        val dontShowAgain = content.findViewById<CheckBox>(R.id.task_reminder_dont_show_again)
+        taskReminderDismissDialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.dashboard_task_reminder_dismiss_title)
+            .setMessage(R.string.dashboard_task_reminder_dismiss_text)
+            .setView(content)
+            .setPositiveButton(R.string.dashboard_task_reminder_hide) { _, _ ->
+                if (dontShowAgain.isChecked) AppPreferences(this).hideTaskAppReminder = true
+                taskAppReminderDismissed = true
+                accountInfo?.let(::renderDashboard)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun renderServiceStatus(service: DashboardServiceUi) {
@@ -1697,6 +1746,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
         private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
         private const val KEY_STARTUP_PERMISSION_FLOW_STARTED = "startup_permission_flow_started"
+        private const val KEY_TASK_APP_REMINDER_DISMISSED = "task_app_reminder_dismissed"
         private const val ACCOUNT_ROW_ID_MIN = 0x02000000
         private const val ACCOUNT_ROW_ID_MAX = 0x02ffffff
         internal fun accountRowViewId(identity: ExactAccountIdentity) =

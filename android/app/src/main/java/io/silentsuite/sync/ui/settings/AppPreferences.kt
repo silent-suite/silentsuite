@@ -68,6 +68,11 @@ class AppPreferences(context: Context) {
         get() = sharedPreferences.getBoolean(KEY_PREFER_TASKSORG, false)
         set(value) { sharedPreferences.edit().putBoolean(KEY_PREFER_TASKSORG, value).apply() }
 
+    /** Device-local advisory opt-out; it never changes Tasks sync or its service status. */
+    var hideTaskAppReminder: Boolean
+        get() = sharedPreferences.getBoolean(KEY_HIDE_TASK_APP_REMINDER, false)
+        set(value) { sharedPreferences.edit().putBoolean(KEY_HIDE_TASK_APP_REMINDER, value).apply() }
+
     var showChangeNotification: Boolean
         get() = sharedPreferences.getBoolean(KEY_CHANGE_NOTIFICATION, true)
         set(value) { sharedPreferences.edit().putBoolean(KEY_CHANGE_NOTIFICATION, value).apply() }
@@ -91,6 +96,7 @@ class AppPreferences(context: Context) {
         const val KEY_DISTRUST_SYSTEM_CERTS = "distrust_system_certs"
         const val KEY_PREFER_TASKSORG = "prefer_tasksorg"
         const val KEY_CHANGE_NOTIFICATION = "show_change_notification"
+        const val KEY_HIDE_TASK_APP_REMINDER = "hide_task_app_reminder"
         const val KEY_LOG_TO_FILE = "log_to_file"
         const val KEY_LOG_VERBOSE = "log_verbose"
         const val DEFAULT_PROXY_HOST = "localhost"

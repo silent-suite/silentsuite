@@ -5,11 +5,13 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Intent
 import android.content.Context
+import android.content.DialogInterface
 import android.os.Build
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.View
+import android.widget.CheckBox
 import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
@@ -28,6 +30,7 @@ import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.account.SyncLifecycleWindows
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
+import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
 import java.util.concurrent.CountDownLatch
@@ -203,6 +206,191 @@ class AccountDashboardRuntimeTest {
                     failure?.addSuppressed(cleanup) ?: throw cleanup
                 }
             }
+        }
+    }
+
+    @Test fun taskAppReminderCancelKeepsItAndTemporaryHideLastsOnlyForThisVisitAcrossRecreation() {
+        withDashboardAccount { context, account, scenario ->
+            assertEquals("this check needs a device without a task provider", null,
+                io.silentsuite.sync.utils.TaskProviderHandling.getWantedTaskSyncProvider(context))
+            val oldDialog = AtomicReference<androidx.appcompat.app.AlertDialog>()
+            scenario.onActivity { activity ->
+                assertTaskReminder(activity, shown = true)
+                activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss).performClick()
+                oldDialog.set(requireNotNull(activity.taskReminderDismissDialog))
+            }
+            scenario.recreate()
+            waitForModel(scenario)
+            scenario.onActivity { activity ->
+                assertFalse(oldDialog.get().isShowing)
+                assertTaskReminder(activity, shown = true)
+                assertFalse(AppPreferences(activity).hideTaskAppReminder)
+            }
+            // Dialog buttons dispatch through the dialog's handler, so each outcome is read in the next
+            // main-thread turn.
+            scenario.onActivity { activity ->
+                assertTaskReminder(activity, shown = true)
+                // Cancel and system back both leave the reminder and the preference untouched.
+                activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss).performClick()
+                val dialog = requireNotNull(activity.taskReminderDismissDialog)
+                assertTrue(dialog.isShowing)
+                assertFalse(requireNotNull(dialog.findViewById<CheckBox>(R.id.task_reminder_dont_show_again)).isChecked)
+                dialog.getButton(DialogInterface.BUTTON_NEGATIVE).performClick()
+            }
+            scenario.onActivity { activity ->
+                assertFalse(requireNotNull(activity.taskReminderDismissDialog).isShowing)
+                assertTaskReminder(activity, shown = true)
+                activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss).performClick()
+                val dialog = requireNotNull(activity.taskReminderDismissDialog)
+                assertTrue(dialog.isShowing)
+                @Suppress("DEPRECATION") dialog.onBackPressed()
+            }
+            scenario.onActivity { activity ->
+                assertFalse(requireNotNull(activity.taskReminderDismissDialog).isShowing)
+                assertTaskReminder(activity, shown = true)
+                assertFalse(AppPreferences(activity).hideTaskAppReminder)
+
+                // Hide without "Don't show again": siblings keep their honest headline and action.
+                activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss).performClick()
+                requireNotNull(activity.taskReminderDismissDialog).getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+            }
+            scenario.onActivity { activity ->
+                assertFalse(requireNotNull(activity.taskReminderDismissDialog).isShowing)
+                assertTaskReminder(activity, shown = false)
+                assertEquals(activity.getString(R.string.dashboard_status_never_synced), dashboardText(activity, R.id.dashboard_overall_status))
+                assertEquals(activity.getString(R.string.account_synchronize_now), dashboardText(activity, R.id.dashboard_context_action))
+                assertFalse(AppPreferences(activity).hideTaskAppReminder)
+            }
+            assertEquals(null, SyncStatusStore(context).status(account, SyncStatusStore.Service.TASKS).lastFailureCategory)
+
+            scenario.recreate()
+            waitForModel(scenario)
+            scenario.onActivity { assertTaskReminder(it, shown = false) }
+
+            // A fresh launch of the account screen carries no visit state, so the reminder returns.
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { fresh ->
+                waitForModel(fresh)
+                fresh.onActivity { assertTaskReminder(it, shown = true) }
+            }
+        }
+    }
+
+    @Test fun taskAppReminderDontShowAgainPersistsLocallyAndNeverHidesOtherIssuesOrTasksStatus() {
+        // Contacts outcomes are generation-scoped and cannot be recorded directly, so its row mirrors the Calendar
+        // evidence here: that lets every non-Tasks service reach success through the real dashboard.
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            assertEquals("this check needs a device without a task provider", null,
+                io.silentsuite.sync.utils.TaskProviderHandling.getWantedTaskSyncProvider(context))
+            val store = SyncStatusStore(context)
+            val now = System.currentTimeMillis()
+            fun refreshAndWait() {
+                var before = 0
+                scenario.onActivity { before = it.accountInfoDeliveryCount; it.refresh() }
+                waitForDeliveryAfter(scenario, before)
+            }
+
+            // A different headline never offers the task app dismissal.
+            assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
+                SyncStatusStore.FailureCategory.AUTHENTICATION, now))
+            refreshAndWait()
+            scenario.onActivity { activity ->
+                assertEquals(activity.getString(R.string.dashboard_status_authentication), dashboardText(activity, R.id.dashboard_overall_status))
+                assertEquals(View.GONE, activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss).visibility)
+            }
+            assertTrue(store.clear(account))
+            refreshAndWait()
+
+            scenario.onActivity { activity ->
+                assertTaskReminder(activity, shown = true)
+                activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss).performClick()
+                val dialog = requireNotNull(activity.taskReminderDismissDialog)
+                requireNotNull(dialog.findViewById<CheckBox>(R.id.task_reminder_dont_show_again)).performClick()
+                dialog.getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+            }
+            scenario.onActivity { activity ->
+                assertTaskReminder(activity, shown = false)
+                assertTrue(AppPreferences(activity).hideTaskAppReminder)
+            }
+
+            // A higher-priority issue must not bring back the hidden reminder as secondary text.
+            assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
+                SyncStatusStore.FailureCategory.AUTHENTICATION, now + 1))
+            refreshAndWait()
+            scenario.onActivity { activity ->
+                assertTaskReminder(activity, shown = false)
+                assertEquals(activity.getString(R.string.dashboard_status_authentication), dashboardText(activity, R.id.dashboard_overall_status))
+                assertFalse(dashboardText(activity, R.id.dashboard_last_result).contains(
+                    activity.getString(R.string.dashboard_status_task_app_needed)))
+                assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown)
+            }
+
+            // Another service's issue keeps its headline and action while the reminder stays hidden.
+            assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
+                SyncStatusStore.FailureCategory.NETWORK, now + 2))
+            refreshAndWait()
+            scenario.onActivity { activity ->
+                assertTaskReminder(activity, shown = false)
+                assertTrue(activity.findViewById<View>(R.id.dashboard_status_row).isShown)
+                assertEquals(activity.getString(R.string.dashboard_status_network), dashboardText(activity, R.id.dashboard_overall_status))
+                assertEquals(activity.getString(R.string.dashboard_retry_sync), dashboardText(activity, R.id.dashboard_context_action))
+                assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown)
+            }
+
+            // Hiding the reminder never turns the other services' success into an account-wide one.
+            assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, now + 3))
+            refreshAndWait()
+            scenario.onActivity { activity ->
+                assertEquals(activity.getString(R.string.dashboard_status_synced), dashboardText(activity, R.id.caldav_status))
+                assertEquals(activity.getString(R.string.dashboard_status_synced), dashboardText(activity, R.id.carddav_status))
+                assertTaskReminder(activity, shown = false)
+                assertEquals(View.GONE, activity.findViewById<View>(R.id.dashboard_status_row).visibility)
+                assertEquals(View.GONE, activity.findViewById<View>(R.id.dashboard_context_action).visibility)
+                assertEquals(account.name, dashboardText(activity, R.id.dashboard_account_identity))
+            }
+
+            // Launch last: ActivityScenario's fresh task can destroy the original Activity.
+            // All assertions on the original scenario must finish before this cold screen visit.
+            ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account)).use { fresh ->
+                waitForModel(fresh)
+                fresh.onActivity { assertTaskReminder(it, shown = false) }
+            }
+        }
+    }
+
+    private fun dashboardText(activity: AccountActivity, viewId: Int) =
+        activity.findViewById<TextView>(viewId).text.toString()
+
+    private fun assertTaskReminder(activity: AccountActivity, shown: Boolean) {
+        val appNeeded = activity.getString(R.string.dashboard_status_task_app_needed)
+        val appDetail = activity.getString(R.string.dashboard_detail_task_provider)
+        val learn = activity.getString(R.string.dashboard_install_task_app)
+        // The Tasks service row stays accurate whether or not the reminder is shown.
+        assertEquals(appNeeded, dashboardText(activity, R.id.taskdav_status))
+        assertEquals(appDetail, dashboardText(activity, R.id.taskdav_status_detail))
+        val dismiss = activity.findViewById<View>(R.id.dashboard_task_reminder_dismiss)
+        val action = activity.findViewById<TextView>(R.id.dashboard_context_action)
+        if (shown) {
+            assertTrue(dismiss.isShown)
+            assertEquals(activity.getString(R.string.dashboard_task_reminder_dismiss), dismiss.contentDescription.toString())
+            val minTarget = (48 * activity.resources.displayMetrics.density).toInt()
+            assertTrue(dismiss.layoutParams.width >= minTarget && dismiss.layoutParams.height >= minTarget)
+            assertEquals(appNeeded, dashboardText(activity, R.id.dashboard_overall_status))
+            assertEquals(appDetail, dashboardText(activity, R.id.dashboard_last_result))
+            assertTrue(action.isShown)
+            assertEquals(learn, action.text.toString())
+        } else {
+            assertEquals(View.GONE, dismiss.visibility)
+            val row = activity.findViewById<View>(R.id.dashboard_status_row)
+            assertFalse(row.isShown && dashboardText(activity, R.id.dashboard_overall_status) == appNeeded)
+            assertFalse(row.isShown && dashboardText(activity, R.id.dashboard_last_result) == appDetail)
+            assertFalse(action.isShown && action.text.toString() == learn)
         }
     }
 
@@ -737,6 +925,8 @@ class AccountDashboardRuntimeTest {
         val previousMasterSync = android.content.ContentResolver.getMasterSyncAutomatically()
         android.content.ContentResolver.setMasterSyncAutomatically(true)
         context.getSharedPreferences("sync_status_v1", 0).edit().clear().commit()
+        val previousHideTaskAppReminder = AppPreferences(context).hideTaskAppReminder
+        AppPreferences(context).hideTaskAppReminder = false
         val previousBootstrap = App.postLoginBootstrapSucceeded
         App.postLoginBootstrapSucceeded = true
         launchedCollectionIntents.clear()
@@ -784,6 +974,7 @@ class AccountDashboardRuntimeTest {
             }
             ActiveAccountManager.clearActiveAccount(context)
             context.getSharedPreferences("sync_status_v1", 0).edit().clear().commit()
+            AppPreferences(context).hideTaskAppReminder = previousHideTaskAppReminder
         }
     }
 

@@ -118,6 +118,15 @@
                                         android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
                                         android:textColor="@color/semantic_on_surface_variant" />
                                 </LinearLayout>
+                                <ImageButton
+                                    android:id="@+id/dashboard_task_reminder_dismiss"
+                                    android:layout_width="@dimen/touch_target_min"
+                                    android:layout_height="@dimen/touch_target_min"
+                                    android:background="?attr/selectableItemBackgroundBorderless"
+                                    android:contentDescription="@string/dashboard_task_reminder_dismiss"
+                                    android:scaleType="center"
+                                    android:src="@drawable/ic_dashboard_dismiss"
+                                    android:visibility="gone" />
                             </LinearLayout>
                             <com.google.android.material.button.MaterialButton
                                 android:id="@+id/dashboard_context_action"

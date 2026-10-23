@@ -221,6 +221,11 @@
     <string name="dashboard_enable_sync">Turn on sync</string>
     <string name="dashboard_fix_permissions">Allow access</string>
     <string name="dashboard_install_task_app">Learn about task apps</string>
+    <string name="dashboard_task_reminder_dismiss">Hide task app reminder</string>
+    <string name="dashboard_task_reminder_dismiss_title">Hide task app reminder?</string>
+    <string name="dashboard_task_reminder_dismiss_text">Tasks still won\'t sync on this device until a compatible task app is installed. The Tasks status below stays visible.</string>
+    <string name="dashboard_task_reminder_dont_show_again">Don\'t show again</string>
+    <string name="dashboard_task_reminder_hide">Hide</string>
     <string name="dashboard_review_setup">Review setup</string>
     <string name="dashboard_open_sync_settings">Open sync settings</string>
     <string name="dashboard_retry_sync">Try again</string>
