@@ -209,7 +209,7 @@ describe('PendingPaymentPage anonymous payment-session recovery', () => {
     expect(authState.clearPendingSignupPaymentRecovery).toHaveBeenCalledTimes(1)
     expect(authState.clearPendingSignupPaymentRecovery).toHaveBeenCalledWith({ email: pending.email, requestKey: paymentSessionRequestKey, recoverySecret: paymentSessionToken })
     expect(authState.pendingSignup.paymentSessionToken).toBeUndefined()
-    expect(onReleased).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onReleased).toHaveBeenCalledTimes(1))
     // The release ends the capability; nothing restarts a payment on its own.
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
     expect(authState.prepareSignupDraft).not.toHaveBeenCalled()
