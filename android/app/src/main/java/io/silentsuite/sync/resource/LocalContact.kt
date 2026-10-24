@@ -127,14 +127,18 @@ class LocalContact : AndroidContact, LocalAddress {
     override fun insertDataRows(batch: BatchOperation) {
         super.insertDataRows(batch)
 
+        if (id != null) {
+            batch.enqueue(BatchOperation.CpoBuilder.newDelete(dataSyncURI())
+                    .withSelection(
+                            UnknownProperties.RAW_CONTACT_ID + "=? AND " + UnknownProperties.MIMETYPE + "=?",
+                            arrayOf(id.toString(), UnknownProperties.CONTENT_ITEM_TYPE)
+                    )
+            )
+        }
+
         if (contact?.unknownProperties != null) {
-            var builder = BatchOperation.CpoBuilder.newInsert(dataSyncURI())
-            if (id == null) {
-                builder = builder.withValue(UnknownProperties.RAW_CONTACT_ID, 0)
-            } else {
-                builder = builder.withValue(UnknownProperties.RAW_CONTACT_ID, id)
-            }
-            builder.withValue(UnknownProperties.MIMETYPE, UnknownProperties.CONTENT_ITEM_TYPE)
+            val builder = insertDataBuilder(UnknownProperties.RAW_CONTACT_ID)
+                    .withValue(UnknownProperties.MIMETYPE, UnknownProperties.CONTENT_ITEM_TYPE)
                     .withValue(UnknownProperties.UNKNOWN_PROPERTIES, contact?.unknownProperties)
             batch.enqueue(builder)
         }
