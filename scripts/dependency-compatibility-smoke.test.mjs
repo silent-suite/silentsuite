@@ -149,7 +149,7 @@ test('jsdom constructs and tears down through its patched undici dependency path
 })
 
 test('jsdom undici 7 fails a WebSocket handshake that selects an unrequested subprotocol', async () => {
-  assert.equal(undiciRequire('undici/package.json').version, '7.29.1')
+  assert.equal(undiciRequire('undici/package.json').version, '7.30.1')
   const upgradeSockets = new Set()
   const server = createServer()
   server.on('upgrade', (request, socket) => {
@@ -278,6 +278,83 @@ test('jsdom undici 7 BalancedPool forwards connect options to its upstream pools
   }
 })
 
+// undici (GHSA-xjj6-f33q-929c / CVE-2026-109869): fetch() rejects a response carrying more
+// than five content codings, but the vulnerable 7.x line created the internal body stream
+// before that check. When the server then closes before the body, the orphaned stream raises
+// an unhandled error that terminates the process even though the caller caught the rejection.
+test('jsdom undici 7 fetch survives a response with excessive content-encodings that closes before its body', () => {
+  // A crash would take down the test process, so the fetch runs in a child bounded to a
+  // 128 MB heap and a hard 5 s SIGKILL. The child reports "ready" only after resolving the
+  // real jsdom consumer, and a control fetch proves the fetch path works before the
+  // adversarial response is judged.
+  const childScript = [
+    "const fs = require('node:fs');",
+    "const http = require('node:http');",
+    "const { createRequire } = require('node:module');",
+    `const webRequire = createRequire(${JSON.stringify(resolve(import.meta.dirname, '..', 'apps/web/package.json'))});`,
+    "const undiciRequire = createRequire(webRequire.resolve('jsdom'));",
+    "const undici = undiciRequire('undici');",
+    "const report = (message) => fs.writeSync(1, '#SMOKE#' + JSON.stringify(message) + '#SMOKE#');",
+    "report({ stage: 'ready', version: undiciRequire('undici/package.json').version });",
+    'const server = http.createServer((request, response) => {',
+    "  if (request.url === '/control') { response.end('ok'); return; }",
+    "  response.writeHead(200, { 'content-encoding': 'gzip, gzip, gzip, gzip, gzip, gzip', 'content-length': '16' });",
+    '  response.flushHeaders();',
+    '  response.socket.destroy();',
+    '});',
+    '(async () => {',
+    "  await new Promise((listening) => server.listen(0, '127.0.0.1', listening));",
+    "  const origin = 'http://127.0.0.1:' + server.address().port;",
+    "  const control = await undici.fetch(origin + '/control');",
+    "  report({ stage: 'control', status: control.status, text: await control.text() });",
+    '  try {',
+    "    const response = await undici.fetch(origin + '/excessive');",
+    "    report({ stage: 'resolved', status: response.status });",
+    '  } catch (error) {',
+    "    report({ stage: 'rejected', name: error.name, message: error.message });",
+    '  }',
+    '  await new Promise((done) => setTimeout(done, 250));',
+    "  report({ stage: 'survived' });",
+    '  process.exit(0);',
+    '})().catch((error) => {',
+    "  report({ stage: 'failed', name: error.name, message: error.message });",
+    '  process.exit(2);',
+    '});',
+  ].join('')
+
+  const result = spawnSync(process.execPath, ['--max-old-space-size=128', '-e', childScript], {
+    timeout: 5000,
+    killSignal: 'SIGKILL',
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+  })
+
+  const messages = (result.stdout ?? '')
+    .split('#SMOKE#')
+    .filter((segment, index) => index % 2 === 1)
+    .map((segment) => {
+      try {
+        return JSON.parse(segment)
+      } catch {
+        return { stage: 'unparsed', segment: segment.slice(0, 120) }
+      }
+    })
+  const diagnostics = [
+    `exit=${result.status}, signal=${result.signal}, error=${result.error?.code ?? 'none'}`,
+    `messages=${JSON.stringify(messages)}`,
+    `stderr=${JSON.stringify((result.stderr ?? '').slice(-400))}`,
+  ].join('; ')
+
+  assert.ok(messages.some((message) => message.stage === 'ready'), `the bounded undici child never resolved the jsdom consumer: ${diagnostics}`)
+  const control = messages.find((message) => message.stage === 'control')
+  assert.equal(control?.text, 'ok', `the control fetch must succeed before the adversarial response is judged: ${diagnostics}`)
+  assert.ok(messages.some((message) => message.stage === 'rejected'), `fetch must reject the excessive content-encodings response: ${diagnostics}`)
+  assert.ok(messages.some((message) => message.stage === 'survived'), `the process must survive after the caught rejection: ${diagnostics}`)
+  assert.equal(result.status, 0, `the child must exit cleanly: ${diagnostics}`)
+  assert.equal(result.signal, null, `the child must not be signalled: ${diagnostics}`)
+  assert.equal(result.error, undefined, `the child must not surface a subprocess error: ${diagnostics}`)
+})
+
 test('js-yaml 4 parses representative ESLint configuration data', () => {
   assert.deepEqual(yaml.load('rules:\n  no-debugger: error\n'), {
     rules: { 'no-debugger': 'error' },
@@ -389,8 +466,8 @@ test('security overrides remain scoped to compatible vulnerable major lines', ()
   assert.deepEqual(
     Object.entries(manifest.pnpm.overrides).filter(([selector]) => /^(undici|brace-expansion)(@|$)/.test(selector)),
     [
-      ['undici@>=7.0.0 <7.29.1', '7.29.1'],
-      ['undici@>=8.0.0 <8.10.2', '8.10.2'],
+      ['undici@>=7.0.0 <7.30.1', '7.30.1'],
+      ['undici@>=8.0.0 <8.12.2', '8.12.2'],
       ['brace-expansion@<1.1.21', '1.1.21'],
       ['brace-expansion@>=2.0.0 <2.1.7', '2.1.7'],
       ['brace-expansion@>=5.0.0 <5.0.12', '5.0.12'],
