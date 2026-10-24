@@ -22,6 +22,8 @@ export type PaymentFlowCancellationFailure =
 
 export type PaymentFlowCancellationResult =
   | { cancelled: true; flowKind: string | null }
+  /** Billing found no active flow to release; the caller re-verifies the state. */
+  | { cancelled: false; alreadyResolved: true }
   | { cancelled: false; failure: PaymentFlowCancellationFailure; message: string }
 
 /**
@@ -127,6 +129,7 @@ export async function cancelPaymentFlow(params: {
     return failed(known ? known[2] : 'unavailable')
   }
 
+  if (isObject(body) && body.cancelled === false && body.reason === 'no_active_flow') return { cancelled: false, alreadyResolved: true }
   if (!isObject(body) || body.cancelled !== true) return failed('unavailable')
   return { cancelled: true, flowKind: typeof body.flowKind === 'string' ? body.flowKind : null }
 }

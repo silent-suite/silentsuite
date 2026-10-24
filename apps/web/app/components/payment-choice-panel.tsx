@@ -66,6 +66,12 @@ const OFFER_AUTHENTICATION_MESSAGE = 'Billing could not confirm your sign-in. Si
 // The signed account terms could not be shown before the choice, so no
 // payment may start until a retry returns them.
 const TERMS_UNAVAILABLE_MESSAGE = 'Payment options are temporarily unavailable.'
+const POST_CANCEL_CURRENT_FAILED_MESSAGE = 'The current payment state could not be confirmed. Do not start another payment yet; retry to check again.'
+const POST_CANCEL_OFFER_FAILED_MESSAGE = 'No payment is in progress, but payment options could not be loaded. Retry to load current options.'
+
+// After a cancellation, creation and every dismissal wait for one joint
+// verdict over the current flow and a valid offer; `pending` blocks too.
+type PostCancelVerdict = 'ok' | 'current-failed' | 'flow-present' | 'offer-failed'
 
 const CURRENT_FLOW_KINDS = ['stripe_pay_now', 'btcpay_annual'] as const
 
@@ -275,6 +281,9 @@ export default function PaymentChoicePanel({
   // Set when the authoritative endpoint proves a Bitcoin authority the local
   // state could not identify, so the acknowledgement can be offered truthfully.
   const [bitcoinAcknowledgementProven, setBitcoinAcknowledgementProven] = useState(false)
+  const [postCancel, setPostCancel] = useState<{ generation: number; verdict: PostCancelVerdict | 'pending' } | null>(null)
+  const verificationGeneration = useRef(0)
+  const blocking = postCancel !== null && postCancel.verdict !== 'ok'
 
   const applyAnnualOffer = useCallback((offer: AnnualOfferResponse) => {
     setAnnualOffer(offer)
@@ -426,26 +435,83 @@ export default function PaymentChoicePanel({
     && !clientSecret
     && !bitcoinSession
     && loading === null
+    && !blocking
+
+  // Fetchers never touch React state; callers publish only current results.
+  async function fetchCurrentFlowResult(): Promise<{ ok: false } | { ok: true; flow: CurrentPaymentFlow | null }> {
+    try {
+      const res = await paymentFetch(`${BILLING_API_URL}/subscription/payment-flows/current?preview=1`, { credentials: 'include' })
+      if (!res.ok) return { ok: false }
+      return { ok: true, flow: readCurrentPaymentFlow(await res.json()) }
+    } catch {
+      return { ok: false }
+    }
+  }
+
+  async function fetchOfferResult(): Promise<{ ok: false } | { ok: true; account: AccountAnnualOffer }> {
+    try {
+      return { ok: true, account: await fetchAuthenticatedAccountOffer({ fetcher: paymentFetch, billingApiUrl: BILLING_API_URL }) }
+    } catch {
+      return { ok: false }
+    }
+  }
 
   async function loadCurrentFlow(isCancelled: () => boolean = () => false) {
     if (accountCurrent() && !isCancelled()) {
       setCurrentFlowLoaded(false)
       setCurrentFlowLoadFailed(false)
     }
-    try {
-      const res = await paymentFetch(`${BILLING_API_URL}/subscription/payment-flows/current?preview=1`, { credentials: 'include' })
-      if (!res.ok) throw new Error('Could not verify the current payment flow.')
-      const flow = readCurrentPaymentFlow(await res.json())
-      if (accountCurrent() && !isCancelled()) {
-        setCurrentFlow(flow)
-        setCurrentFlowLoaded(true)
-      }
-    } catch {
-      if (accountCurrent() && !isCancelled()) {
-        setCurrentFlowLoadFailed(true)
-        setError('Could not verify whether a payment is already in progress. Retry before starting another payment.')
-      }
+    const result = await fetchCurrentFlowResult()
+    if (!accountCurrent() || isCancelled()) return
+    if (result.ok) {
+      setCurrentFlow(result.flow)
+      setCurrentFlowLoaded(true)
+    } else {
+      setCurrentFlowLoadFailed(true)
+      setError('Could not verify whether a payment is already in progress. Retry before starting another payment.')
     }
+  }
+
+  // Joint post-cancel verification. The verdict is computed locally and
+  // returned, so a caller never reads React state captured before it.
+  const runPostCancelVerification = async (): Promise<PostCancelVerdict | 'superseded'> => {
+    const generation = ++verificationGeneration.current
+    // Also own offer publication, so every older offer load is superseded.
+    const offerSequence = ++offerRequestSequence.current
+    setPostCancel({ generation, verdict: 'pending' })
+    setCurrentFlowLoaded(false)
+    setCurrentFlowLoadFailed(false)
+    setError(null)
+    const [flowResult, offerResult] = await Promise.all([fetchCurrentFlowResult(), fetchOfferResult()])
+    // A newer verification or another account owns the panel: publish nothing.
+    if (generation !== verificationGeneration.current || offerSequence !== offerRequestSequence.current || !accountCurrent()) return 'superseded'
+    // HTTP 200 without valid signed terms is not a valid offer.
+    const verdict: PostCancelVerdict = !flowResult.ok ? 'current-failed'
+      : flowResult.flow ? 'flow-present'
+      : offerResult.ok && offerResult.account.accountDisclosures !== null ? 'ok' : 'offer-failed'
+    if (flowResult.ok) {
+      setCurrentFlow(flowResult.flow)
+      setCurrentFlowLoaded(true)
+    } else {
+      setCurrentFlowLoadFailed(true)
+    }
+    if (offerResult.ok) {
+      applyAccountOffer(offerResult.account)
+      setInitialOfferFailed(false)
+      setSessionRecovery(null)
+    } else {
+      setAnnualOffer(null)
+      setOptions([])
+      setAccountDisclosures(null)
+      setInitialOfferFailed(true)
+    }
+    setOfferRefreshFailed(false)
+    setOfferAuthFailed(false)
+    setOptionsLoaded(true)
+    if (verdict === 'current-failed') setError(POST_CANCEL_CURRENT_FAILED_MESSAGE)
+    if (verdict === 'offer-failed') setError(POST_CANCEL_OFFER_FAILED_MESSAGE)
+    setPostCancel({ generation, verdict })
+    return verdict
   }
 
   useEffect(() => {
@@ -481,7 +547,8 @@ export default function PaymentChoicePanel({
         expectedAuthorityId: displayedAuthorityId ?? undefined,
       })
       if (!accountCurrent()) return false
-      if (!result.cancelled) {
+      // An already-resolved flow is verified exactly like a cancel success.
+      if ('failure' in result) {
         // The provider authority survives every refusal, ambiguity and lost
         // response: local panel state is left exactly as it was.
         if (result.failure === 'bitcoin-acknowledgement-required') setBitcoinAcknowledgementProven(true)
@@ -496,13 +563,9 @@ export default function PaymentChoicePanel({
       setBitcoinSession(null)
       setBitcoinAcknowledgementProven(false)
       // Provider creation stays unavailable continuously from cancellation
-      // success until a fresh lookup proves `flow: null`. The re-proof is
-      // started in the same commit that releases the authority, so a faster
-      // offer refresh can never repopulate the creation controls first.
-      const reprovedCurrentFlow = loadCurrentFlow()
-      await loadOptions()
-      await reprovedCurrentFlow
-      return accountCurrent()
+      // success until one joint verification proves `flow: null` and a valid
+      // offer. It starts in the same commit that releases the authority.
+      return (await runPostCancelVerification()) === 'ok'
     } finally {
       // Each attempt requires its own deliberate acknowledgement.
       if (accountCurrent()) { setBitcoinCancelAcknowledged(false); setLoading(null) }
@@ -515,6 +578,13 @@ export default function PaymentChoicePanel({
     // states must be resolved by the authoritative cancellation endpoint.
     if (implicitDismissible) {
       onCancel?.()
+      return
+    }
+    // After a cancellation, closing waits for the same joint verdict.
+    if (blocking) {
+      void runPostCancelVerification().then((verdict) => {
+        if (verdict === 'ok' && accountCurrent()) onCancel?.()
+      })
       return
     }
 
@@ -635,7 +705,9 @@ export default function PaymentChoicePanel({
   const signIn = <Link href="/login?reason=billing&returnTo=%2Fsettings%2Fsubscription">Sign in again</Link>
   if (!accountCurrent()) return <div>Payment account changed. Reopen subscription settings.{accountId === null && signIn}</div>
   if (sessionRecovery?.signInRequired) return <div><p>{sessionRecovery.message}</p>{signIn}</div>
-  const retrySession = sessionRecovery && <Button onClick={() => { void loadOptions() }} disabled={loading !== null}>Retry current annual offer</Button>
+  // After a cancellation every individual retry restarts the joint verification.
+  const retryCurrentFlow = () => { void (postCancel ? runPostCancelVerification() : loadCurrentFlow()) }
+  const retrySession = sessionRecovery && <Button onClick={() => { void (postCancel ? runPostCancelVerification() : loadOptions()) }} disabled={loading !== null}>Retry current annual offer</Button>
 
   if (bitcoinSession && paymentDisclosure && CRYPTO_CHECKOUT_ENABLED) {
     return (
@@ -763,7 +835,7 @@ export default function PaymentChoicePanel({
           </div>
         )}
         {statusOnly ? (
-          <Button onClick={() => { void loadCurrentFlow() }} disabled={loading !== null} className="w-full">
+          <Button onClick={retryCurrentFlow} disabled={loading !== null} className="w-full">
             Check payment status
           </Button>
         ) : currentFlow.authorityId && currentFlow.disclosure && (recoverStripe || recoverBitcoin) && (
@@ -826,7 +898,11 @@ export default function PaymentChoicePanel({
       {(offerRefreshFailed || initialOfferFailed || termsUnavailable) && (
         <Button
           type="button"
-          onClick={() => { if (initialOfferFailed || termsUnavailable) void loadOptions(); else void renewAnnualOfferAndRequireConsent() }}
+          onClick={() => {
+            if (postCancel) void runPostCancelVerification()
+            else if (initialOfferFailed || termsUnavailable) void loadOptions()
+            else void renewAnnualOfferAndRequireConsent()
+          }}
           disabled={loading !== null}
           variant="outline"
           className="w-full"
@@ -835,7 +911,7 @@ export default function PaymentChoicePanel({
         </Button>
       )}
 
-      {currentFlowLoaded && btcpayAnnualOption && btcpayAvailable && annualOffer && (
+      {currentFlowLoaded && !blocking && btcpayAnnualOption && btcpayAvailable && annualOffer && (
         <div className="space-y-2">
           <Button onClick={startBtcpay} disabled={loading !== null} className="w-full" aria-label={`Pay ${annualOfferAnnualLabel(annualOffer.offer)} with Bitcoin, Lightning and Monero for ${annualOfferPlanLabel(annualOffer.offer)}`}>
             {loading === 'btcpay' ? 'Opening cryptocurrency checkout...' : 'Bitcoin, Lightning and Monero'}
@@ -847,7 +923,7 @@ export default function PaymentChoicePanel({
       {!currentFlowLoaded ? (
         <Button
           disabled={!currentFlowLoadFailed || loading !== null}
-          onClick={() => { void loadCurrentFlow() }}
+          onClick={retryCurrentFlow}
           variant="outline"
           className="w-full"
         >
@@ -857,7 +933,7 @@ export default function PaymentChoicePanel({
         <Button disabled className="w-full">
           Loading payment options...
         </Button>
-      ) : stripeOption && stripeAvailable && annualOffer ? (
+      ) : stripeOption && stripeAvailable && annualOffer && !blocking ? (
         <div className="space-y-2">
           <Button onClick={startStripe} disabled={loading !== null} className="w-full" aria-label={`Continue to card payment for ${annualOfferPlanLabel(annualOffer.offer)}, ${annualOfferRenewalCopy(annualOffer.offer)}`}>
             {loading === 'stripe' ? 'Setting up...' : 'Continue to card payment'}
