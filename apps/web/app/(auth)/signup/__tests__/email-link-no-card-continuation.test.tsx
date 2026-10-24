@@ -52,6 +52,20 @@ vi.mock('@/app/stores/use-auth-store', () => {
 function ownPayment(provider: 'stripe' | 'btcpay') {
   storeState.pendingSignup = { email: 'expiry@example.test', paymentMethod: provider, paymentSessionToken: 'r'.repeat(43), paymentSessionRequestKey: requestId }
 }
+// Fixed Back-modal copy (C1 W1/W2), asserted literally.
+const UNCONFIRMED = 'Cancellation is not confirmed yet. Retry cancellation or stay with this payment. Do not start another payment.'
+const COOLDOWN_2 = 'Too many attempts. Wait 2 minutes, then retry cancellation. This payment is still active; do not start another payment.'
+const FINE_429 = { type: 'https://api.silentsuite.io/errors/rate-limit-exceeded', title: 'Too Many Requests', status: 429, detail: 'Rate limit exceeded for recovery:secret-session' }
+const COARSE_429 = { statusCode: 429, error: 'Too Many Requests', message: 'Rate limit exceeded, retry in 1 minute' }
+function dialogAlert() {
+  return screen.getByRole('dialog').querySelector('[role="alert"]')?.textContent ?? null
+}
+function cancelControl() {
+  return screen.getByRole('button', { name: /^(Retry cancellation|Cancel and go back)$/ })
+}
+function tooManyCancels(body: unknown, retryAfter: string) {
+  return new Response(JSON.stringify(body), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': retryAfter } })
+}
 vi.mock('@/app/stores/use-etebase-store', () => ({ normalizeServerUrl: (value: string) => value }))
 vi.mock('@/app/lib/config', () => ({ BILLING_API_URL: 'https://billing.test' }))
 vi.mock('@/app/lib/self-hosted', () => ({ isSelfHosted: false, isCustomServer: () => false }))
@@ -410,7 +424,9 @@ describe('email-link seven-day no-card continuation', () => {
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
   })
 
-  it('unconfirmed Bitcoin cancellation allows choices or resuming the same payment, never a payable card attempt', async () => {
+  // C1 W1 (requested): "Back without cancelling" is removed. An unconfirmed
+  // cancellation offers only Retry or Stay with the same owned payment.
+  it('unconfirmed Bitcoin cancellation offers only Retry or Stay with the same payment, never a way back without cancelling', async () => {
     await reachPlanScreen()
     ownPayment('btcpay')
     authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/retained', cryptoInvoiceId: 'retained', cryptoInvoiceLookupToken: 'lookup' })
@@ -427,23 +443,164 @@ describe('email-link seven-day no-card continuation', () => {
     fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
     await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
     fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('Cancellation is not confirmed yet')
+    await waitFor(() => expect(dialogAlert()).toBe(UNCONFIRMED))
     expect(cancels).toBe(1)
+    expect(screen.queryByRole('button', { name: /without cancelling/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/without cancelling/i)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Retry cancellation' }))
     await waitFor(() => expect(cancels).toBe(2))
-    expect(screen.getByRole('alert')).toHaveTextContent('Cancellation is not confirmed yet')
-    fireEvent.click(screen.getByRole('button', { name: 'Back without cancelling' }))
-    expect(await screen.findByRole('heading', { name: 'Choose how to pay' })).toBeVisible()
-    // Card cannot become payable while the cryptocurrency payment is still owned.
-    fireEvent.click(screen.getByRole('button', { name: /^pay by card for/i }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('cryptocurrency payment is still pending')
+    expect(dialogAlert()).toBe(UNCONFIRMED)
+    expect(screen.queryByText(/without cancelling/i)).not.toBeInTheDocument()
+    expect(storeState.pendingSignup).toMatchObject({ paymentSessionToken: 'r'.repeat(43), paymentSessionRequestKey: requestId })
+    // Stay resumes the same invoice; the method choices are not reachable while it is owned.
+    fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Copy payment details')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Choose how to pay' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^pay by card for/i })).not.toBeInTheDocument()
     expect(screen.queryByTestId('card-submit')).not.toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
-    // Bitcoin resumes the same invoice without any new payment start.
-    fireEvent.click(screen.getByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i }))
-    expect(await screen.findByText('Copy payment details')).toBeVisible()
-    expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(1)
+  })
+
+  // C1 W2, plan-step mount site: the deadline lives in SignupPage, so Stay →
+  // Back → reopen during the cooldown sends nothing; expiry re-enables Retry
+  // without a request; an exact release clears the deadline.
+  it.each([['fine Problem', FINE_429], ['coarse plugin Error', COARSE_429]] as const)('a %s 429 cooldown survives Stay and reopen on the plan step, expires without a request and clears on release', async (_label, body) => {
+    await reachPlanScreen()
+    ownPayment('btcpay')
+    authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/retained', cryptoInvoiceId: 'retained', cryptoInvoiceLookupToken: 'lookup' })
+    let cancels = 0
+    let cancelReply: () => Response = () => new Response(JSON.stringify(body), { status: 429, headers: { 'content-type': 'application/json', 'retry-after': '120' } })
+    const prior = vi.mocked(fetch).getMockImplementation()!
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/payment-methods')) return new Response(JSON.stringify({ paymentMethods: [{ id: 'BTC', address: 'test-address', qrValue: 'bitcoin:test-address' }] }))
+      if (String(input).endsWith('/invoice/retained')) return new Response(JSON.stringify({ status: 'new' }))
+      if (String(input).endsWith('/cancel')) { cancels++; return cancelReply() }
+      return prior(input, init)
+    }))
+    await choosePaymentMethod('btcpay')
+    await screen.findByText('Copy payment details')
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
+      await waitFor(() => expect(dialogAlert()).toBe(COOLDOWN_2))
+      expect(cancels).toBe(1)
+      expect(cancelControl()).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Stay' })).toBeEnabled()
+      expect(document.body).not.toHaveTextContent(/Rate limit exceeded|Too Many Requests|secret-session/)
+      expect(storeState.pendingSignup).toMatchObject({ paymentSessionToken: 'r'.repeat(43), paymentSessionRequestKey: requestId })
+      // B3: Stay → Back → reopen keeps the same capability's deadline.
+      fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      expect(screen.getByText('Copy payment details')).toBeVisible()
+      fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+      await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+      await waitFor(() => expect(dialogAlert()).toBe(COOLDOWN_2))
+      expect(cancelControl()).toBeDisabled()
+      fireEvent.click(cancelControl())
+      expect(cancels).toBe(1)
+      // B4: expiry with the modal open re-enables the control and sends nothing.
+      await act(async () => { await vi.advanceTimersByTimeAsync(121_000) })
+      await waitFor(() => expect(cancelControl()).toBeEnabled())
+      expect(dialogAlert()).not.toBe(COOLDOWN_2)
+      expect(cancels).toBe(1)
+      // B7: an exact release clears the deadline with the existing release handling.
+      cancelReply = () => new Response(JSON.stringify({ contractVersion: 2, state: 'released', flow: { provider: 'btcpay', status: 'reconciliation_required' }, release: { requestKey: requestId, provider: 'btcpay', providerObjectId: 'exact' } }))
+      fireEvent.click(cancelControl())
+      expect(await screen.findByRole('heading', { name: 'Choose how to pay' })).toBeVisible()
+      expect(cancels).toBe(2)
+      expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(1)
+      // A release returns to the method choices (not the trial step), so the
+      // same method is chosen directly there, as in the exact-release test above.
+      ownPayment('btcpay')
+      fireEvent.click(screen.getByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i }))
+      await screen.findByText('Copy payment details')
+      expect(authState.startAnnualSignupPayment).toHaveBeenCalledTimes(2)
+      fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+      await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+      expect(screen.getByRole('button', { name: 'Cancel and go back' })).toBeEnabled()
+      expect(dialogAlert()).toBeNull()
+      expect(cancels).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // C1 review CR-2, plan-step parent: a refusal belongs to the capability that
+  // sent it. A late 429 for an earlier capability must not replace the current
+  // capability's own live deadline (single-flight locks the dialog while a
+  // request is open, so the late reply arrives with the same dialog open).
+  it('keeps the current capability deadline when a late 429 for another capability arrives on the plan step', async () => {
+    const otherKey = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+    await reachPlanScreen()
+    ownPayment('btcpay')
+    authState.startAnnualSignupPayment.mockResolvedValue({ cryptoCheckoutUrl: 'https://btcpay.silentsuite.io/i/retained', cryptoInvoiceId: 'retained', cryptoInvoiceLookupToken: 'lookup' })
+    const cancelKeys: string[] = []
+    let releaseOther!: (response: Response) => void
+    const otherReply = new Promise<Response>(resolve => { releaseOther = resolve })
+    const prior = vi.mocked(fetch).getMockImplementation()!
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/payment-methods')) return new Response(JSON.stringify({ paymentMethods: [{ id: 'BTC', address: 'test-address', qrValue: 'bitcoin:test-address' }] }))
+      if (String(input).endsWith('/invoice/retained')) return new Response(JSON.stringify({ status: 'new' }))
+      if (String(input).endsWith('/cancel')) {
+        const { requestKey } = JSON.parse(String(init?.body)) as { requestKey: string }
+        cancelKeys.push(requestKey)
+        return requestKey === otherKey ? otherReply : tooManyCancels(FINE_429, '120')
+      }
+      return prior(input, init)
+    }))
+    await choosePaymentMethod('btcpay')
+    await screen.findByText('Copy payment details')
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
+    await waitFor(() => expect(dialogAlert()).toBe(COOLDOWN_2))
+    // The browser's capability changes; the other capability is not blocked by this deadline.
+    fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
+    storeState.pendingSignup = { ...storeState.pendingSignup, paymentSessionRequestKey: otherKey, paymentSessionToken: 's'.repeat(43) }
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+    expect(screen.getByRole('button', { name: 'Cancel and go back' })).toBeEnabled()
+    expect(dialogAlert()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel and go back' }))
+    await waitFor(() => expect(cancelKeys).toEqual([requestId, otherKey]))
+    // While that request is unresolved, the capability returns to the first one,
+    // whose deadline is still live; the other capability's refusal arrives late.
+    storeState.pendingSignup = { ...storeState.pendingSignup, paymentSessionRequestKey: requestId, paymentSessionToken: 'r'.repeat(43) }
+    await act(async () => { releaseOther(tooManyCancels(COARSE_429, '600')) })
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Stay' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Stay' }))
+    fireEvent.click(screen.getByRole('button', { name: /^back$/i }))
+    await screen.findByRole('dialog', { name: 'Cancel this cryptocurrency payment?' })
+    await waitFor(() => expect(dialogAlert()).toBe(COOLDOWN_2))
+    expect(cancelControl()).toBeDisabled()
+    fireEvent.click(cancelControl())
+    expect(cancelKeys).toHaveLength(2)
+    expect(document.body).not.toHaveTextContent(/Wait 10 minutes/)
+  })
+
+  // C1 W3 (requested): the product-updates opt-in is removed; a new draft
+  // records an explicit false. Stored historical `true` contexts are covered by
+  // the existing redirect/new-tab tests below, which must stay unchanged.
+  it('offers no product-updates opt-in and records an explicit false for a new signup', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 202 })))
+    render(<SignupPage />)
+    // Positive control: the same form's remaining device preference is rendered.
+    expect(screen.getByRole('checkbox', { name: /keep me signed in on this device/i })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: /product updates/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/product updates and feature announcements/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Unsubscribe anytime/i)).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(/^email$/i), { target: { value: 'first@example.test' } })
+    const next = screen.getByRole('button', { name: /^continue$/i })
+    await waitFor(() => expect(next).toBeEnabled())
+    fireEvent.click(next)
+    await screen.findByText(/Check your email and open/)
+    const contexts = Object.values(JSON.parse(localStorage.getItem('silentsuite-signup-email-proof')!)) as Array<Record<string, unknown>>
+    expect(contexts).toHaveLength(1)
+    expect(contexts[0]!.wantsProductUpdates).toBe(false)
   })
 
   it('states each method\'s terms on the choice screen, opens the invoice directly and keeps terms beside it', async () => {

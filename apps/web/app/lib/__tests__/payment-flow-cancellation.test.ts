@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BillingResponseError, cancelAnonymousPaymentSessionRecovery } from '../billing-v2'
 import {
   BITCOIN_CANCELLATION_WARNING,
   PAYMENT_FLOW_CANCELLATION_MESSAGES,
@@ -104,6 +105,117 @@ describe('cancelPaymentFlow request shape', () => {
     expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
       .toEqual({ cancelled: true, flowKind: null })
   })
+
+  // Superseded draft #854 (head 81655107968e418d88ddc50493dadf593ca24c2a, diff
+  // sha256 529d9e2e…c5cf): cases reproduced verbatim from its test hunk.
+  // #770: a retry after a race, or a webhook that already retired the flow,
+  // leaves nothing pending. That is the outcome the user asked for, and the
+  // panel re-proves the current flow and offer before any new payment starts.
+  it.each(['stripe', 'btcpay'] as const)('treats a %s 200 no_active_flow reply as already resolved', async provider => {
+    const fetcher = fetcherReturning(ok({ cancelled: false, reason: 'no_active_flow' }))
+
+    expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider, confirmNoBitcoinSent: true }))
+      .toEqual({ cancelled: true, flowKind: null })
+  })
+
+  it('does not treat no_active_flow on a non-200 reply as resolved', async () => {
+    const fetcher = fetcherReturning({ ok: false, status: 409, json: async () => ({ cancelled: false, reason: 'no_active_flow' }) } as Response)
+
+    expect(await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
+      .toMatchObject({ cancelled: false, failure: 'unavailable' })
+  })
+
+  // The mapping is exact: another 2xx status or a non-literal flag is not proof.
+  it.each([
+    ['a 202 status', () => ok({ cancelled: false, reason: 'no_active_flow' }, 202)],
+    ['a non-literal cancelled flag', () => ok({ cancelled: 'false', reason: 'no_active_flow' })],
+    ['a missing cancelled flag', () => ok({ reason: 'no_active_flow' })],
+  ] as const)('does not treat no_active_flow with %s as resolved', async (_label, make) => {
+    expect(await cancelPaymentFlow({ fetcher: fetcherReturning(make()), billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
+      .toEqual({ cancelled: false, failure: 'unavailable', message: PAYMENT_FLOW_CANCELLATION_MESSAGES.unavailable })
+  })
+})
+
+// SC2: a refusal is recognised by HTTP 429 alone. Billing's fine limiter sends a
+// Problem body and the plugin's coarse limiter its own Error body; neither text
+// is ever surfaced, and the wait is derived exactly as billing-v2 derives it.
+describe('cancelPaymentFlow rate limiting', () => {
+  const NOW = Date.UTC(2026, 9, 22, 12, 0, 0)
+  const FINE = { type: 'https://api.silentsuite.io/errors/rate-limit-exceeded', title: 'Too Many Requests', status: 429, detail: 'Rate limit exceeded for account:secret-id' }
+  const COARSE = { statusCode: 429, error: 'Too Many Requests', message: 'Rate limit exceeded, retry in 1 minute' }
+
+  function tooMany(body: unknown, retryAfter: string | null) {
+    return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
+      status: 429,
+      headers: { 'content-type': 'application/json', ...(retryAfter === null ? {} : { 'retry-after': retryAfter }) },
+    })
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(NOW)
+  })
+  afterEach(() => { vi.useRealTimers() })
+
+  const HEADERS = [
+    ['integer seconds', '120', 120_000],
+    ['an HTTP date', new Date(NOW + 90_000).toUTCString(), 90_000],
+    ['a past HTTP date', new Date(NOW - 5_000).toUTCString(), 0],
+    ['an unreadable value', 'soon', 15 * 60_000],
+    ['a missing header', null, 15 * 60_000],
+  ] as const
+
+  it.each([['fine Problem', FINE], ['coarse plugin Error', COARSE]] as const)('maps a %s 429 body to the fixed rate-limited result for every provider', async (_label, body) => {
+    for (const provider of ['stripe', 'btcpay', 'unknown'] as const) {
+      const fetcher = vi.fn(async () => tooMany(body, '120'))
+
+      const result = await cancelPaymentFlow({ fetcher, billingApiUrl: BILLING, provider, confirmNoBitcoinSent: true })
+
+      expect(fetcher).toHaveBeenCalledTimes(1)
+      expect(result).toEqual({
+        cancelled: false,
+        failure: 'rate-limited',
+        message: PAYMENT_FLOW_CANCELLATION_MESSAGES['rate-limited'],
+        retryAfterMs: 120_000,
+      })
+      expect(JSON.stringify(result)).not.toMatch(/Rate limit exceeded|retry in|Too Many Requests|secret-id/)
+    }
+    expect(PAYMENT_FLOW_CANCELLATION_MESSAGES['rate-limited']).toEqual(expect.any(String))
+    expect(PAYMENT_FLOW_CANCELLATION_MESSAGES['rate-limited']).not.toMatch(/Rate limit exceeded|retry in 1 minute/)
+  })
+
+  it.each(HEADERS)('derives the wait from %s', async (_label, header, retryAfterMs) => {
+    const result = await cancelPaymentFlow({ fetcher: vi.fn(async () => tooMany(FINE, header)), billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false })
+
+    expect(result).toMatchObject({ cancelled: false, failure: 'rate-limited', retryAfterMs })
+  })
+
+  it('classifies an unparseable 429 by status alone', async () => {
+    expect(await cancelPaymentFlow({ fetcher: vi.fn(async () => tooMany('<html>busy</html>', '120')), billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
+      .toMatchObject({ cancelled: false, failure: 'rate-limited', retryAfterMs: 120_000 })
+  })
+
+  // The parser inlines billing-v2's retry-after rule (billing-v2.ts is not
+  // C-owned). Pin parity against the real billing-v2 path for every header form.
+  it.each(HEADERS)('derives the same wait as billing-v2 for %s', async (_label, header) => {
+    let reference: unknown
+    try {
+      await cancelAnonymousPaymentSessionRecovery({
+        fetcher: vi.fn(async () => tooMany(COARSE, header)), billingApiUrl: BILLING,
+        email: 'parity@example.test', requestKey: 'e91a6d70-0d4e-4352-9bdc-426d1f76d771',
+        recoverySecret: 'r'.repeat(43), paymentSessionToken: 'r'.repeat(43),
+      })
+    } catch (error) { reference = error }
+    expect(reference).toBeInstanceOf(BillingResponseError)
+    const result = await cancelPaymentFlow({ fetcher: vi.fn(async () => tooMany(COARSE, header)), billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false })
+
+    expect(result).toMatchObject({ failure: 'rate-limited', retryAfterMs: (reference as BillingResponseError).retryAfterMs })
+  })
+
+  it('keeps a lost response as the generic fallback rather than a rate limit', async () => {
+    expect(await cancelPaymentFlow({ fetcher: vi.fn(async () => { throw new TypeError('network lost') }), billingApiUrl: BILLING, provider: 'stripe', confirmNoBitcoinSent: false }))
+      .toEqual({ cancelled: false, failure: 'unavailable', message: PAYMENT_FLOW_CANCELLATION_MESSAGES.unavailable })
+  })
 })
 
 describe('cancelPaymentFlow failure mapping', () => {
@@ -187,6 +299,7 @@ describe('cancelPaymentFlow failure mapping', () => {
     ['an untyped failure', () => problem(503, null, SENSITIVE)],
     ['a 200 body that does not confirm cancellation', () => ok({ cancelled: false, detail: SENSITIVE })],
     ['a 200 body with a non-literal cancelled flag', () => ok({ cancelled: 'true', detail: SENSITIVE })],
+    ['a 200 body with an unknown not-cancelled reason', () => ok({ cancelled: false, reason: 'something_else' })],
   ] as const)('falls back to one generic message for %s', async (_label, make) => {
     const fetcher = fetcherReturning(make())
 

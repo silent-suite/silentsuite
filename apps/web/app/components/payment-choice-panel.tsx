@@ -37,6 +37,7 @@ import {
   BITCOIN_CANCELLATION_WARNING,
   PAYMENT_FLOW_CANCELLATION_MESSAGES,
   cancelPaymentFlow,
+  rateLimitedCancellationCopy,
   type PaymentFlowCancellationProvider,
 } from '@/app/lib/payment-flow-cancellation'
 import BitcoinPaymentPanel, { type BitcoinPaymentSession } from './bitcoin-payment-panel'
@@ -252,6 +253,16 @@ export default function PaymentChoicePanel({
   const [currentFlow, setCurrentFlow] = useState<CurrentPaymentFlow | null>(null)
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [cancelBlockedUntil, setCancelBlockedUntil] = useState<{ authorityId: string | null; until: number; message: string } | null>(null)
+  useEffect(() => {
+    if (!cancelBlockedUntil) return
+    // Expiry only re-enables the control and retires its wait copy; it never sends a request.
+    const timer = window.setTimeout(() => {
+      setCancelBlockedUntil(null)
+      setError(current => current === cancelBlockedUntil.message ? null : current)
+    }, Math.max(0, cancelBlockedUntil.until - Date.now()))
+    return () => window.clearTimeout(timer)
+  }, [cancelBlockedUntil])
   const [options, setOptions] = useState<PaymentOption[]>([])
   const [annualOffer, setAnnualOffer] = useState<AnnualOfferResponse | null>(null)
   // Signed account terms per provider, shown before the choice and required to start.
@@ -402,7 +413,10 @@ export default function PaymentChoicePanel({
   const cancellationLabel = cancellationActionLabel(cancellationProvider, otherProviderAvailable)
   const bitcoinAcknowledgementRequired = cancellationProvider === 'btcpay' || bitcoinAcknowledgementProven
   const cancellationBlocked = bitcoinAcknowledgementRequired && !bitcoinCancelAcknowledged
-  const cancellationDisabled = loading !== null || cancellationBlocked
+  // A 429 refusal holds the displayed authority's cancel controls until the
+  // server's wait elapses; a different authority is never blocked by it.
+  const cancelRateLimited = cancelBlockedUntil !== null && cancelBlockedUntil.authorityId === displayedAuthorityId
+  const cancellationDisabled = loading !== null || cancellationBlocked || cancelRateLimited
   // Identity of the provider authority currently on screen. A different
   // authority must never inherit a previous acknowledgement.
   const activeFlowKey = bitcoinSession
@@ -427,7 +441,8 @@ export default function PaymentChoicePanel({
     && !bitcoinSession
     && loading === null
 
-  async function loadCurrentFlow(isCancelled: () => boolean = () => false) {
+  /** Resolves true only when Billing proved a literal `flow: null` for the current account. */
+  async function loadCurrentFlow(isCancelled: () => boolean = () => false): Promise<boolean> {
     if (accountCurrent() && !isCancelled()) {
       setCurrentFlowLoaded(false)
       setCurrentFlowLoadFailed(false)
@@ -439,6 +454,7 @@ export default function PaymentChoicePanel({
       if (accountCurrent() && !isCancelled()) {
         setCurrentFlow(flow)
         setCurrentFlowLoaded(true)
+        return flow === null
       }
     } catch {
       if (accountCurrent() && !isCancelled()) {
@@ -446,6 +462,7 @@ export default function PaymentChoicePanel({
         setError('Could not verify whether a payment is already in progress. Retry before starting another payment.')
       }
     }
+    return false
   }
 
   useEffect(() => {
@@ -470,6 +487,7 @@ export default function PaymentChoicePanel({
       setError(PAYMENT_FLOW_CANCELLATION_MESSAGES['bitcoin-acknowledgement-required'])
       return false
     }
+    if (cancelRateLimited) return false
     setLoading('cancel-flow')
     setError(null)
     try {
@@ -485,9 +503,21 @@ export default function PaymentChoicePanel({
         // The provider authority survives every refusal, ambiguity and lost
         // response: local panel state is left exactly as it was.
         if (result.failure === 'bitcoin-acknowledgement-required') setBitcoinAcknowledgementProven(true)
+        if (result.failure === 'rate-limited') {
+          // A zero wait is immediately retryable: no wait copy and no block.
+          if (result.retryAfterMs <= 0) {
+            setError(PAYMENT_FLOW_CANCELLATION_MESSAGES.unavailable)
+            return false
+          }
+          const message = rateLimitedCancellationCopy(Math.max(1, Math.ceil(result.retryAfterMs / 60_000)))
+          setCancelBlockedUntil({ authorityId: displayedAuthorityId, until: Date.now() + result.retryAfterMs, message })
+          setError(message)
+          return false
+        }
         setError(result.message)
         return false
       }
+      setCancelBlockedUntil(null)
       setCurrentFlow(null)
       setClientSecret(null)
       setPaymentPlan(null)
@@ -501,8 +531,10 @@ export default function PaymentChoicePanel({
       // offer refresh can never repopulate the creation controls first.
       const reprovedCurrentFlow = loadCurrentFlow()
       await loadOptions()
-      await reprovedCurrentFlow
-      return accountCurrent()
+      // Success (and so dismissal) requires the reproof itself to prove no
+      // flow; a failed or non-empty reproof leaves its error or authority shown.
+      const noCurrentFlow = await reprovedCurrentFlow
+      return noCurrentFlow && accountCurrent()
     } finally {
       // Each attempt requires its own deliberate acknowledgement.
       if (accountCurrent()) { setBitcoinCancelAcknowledged(false); setLoading(null) }
