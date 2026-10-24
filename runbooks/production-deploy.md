@@ -101,11 +101,19 @@ The variable is snapshotted when the workflow run is queued, so clearing it does
 
 ### Restore the captured predecessor after a post-SSH failure
 
-Use this only when `Deploy via SSH` succeeded and the Web service then fails, for example at the runner-side check. Automatic rollback is already disarmed at that point. A revert and fresh dispatch cannot help either, because a fresh dispatch first requires a healthy, identifiable running predecessor. This restoration does not require the current service to be healthy. It falls under the documented rollback of the authorized deployment, not a new deployment: get the owner's go-ahead for the specific restoration, confirm with the Billing coordinator that no other deployment is using the shared host, and do not touch any service other than Compose `web`.
+Use this only when `Deploy via SSH` succeeded and the Web service then fails, for example at the runner-side check. Automatic rollback is already disarmed at that point. A revert and fresh dispatch cannot help either, because a fresh dispatch first requires a healthy, identifiable running predecessor. This restoration does not require the current service to be healthy. It falls under the documented rollback of the authorized deployment, not a new deployment: get the owner's go-ahead for the specific restoration, and do not touch any service other than Compose `web`.
 
-1. From the failed run's `Deploy via SSH` log, copy the line `Predecessor receipt: image-config-id=<sha256:…> revision=<40-hex SHA>`. Cross-check it against the served SHA and running image recorded in the pre-deployment ledger (step 2 above). If the receipt is missing or disagrees with the ledger, stop: there is no trusted restoration target.
-2. Take `DEPLOY_SHA` (the failed `expected_sha`) and `IMAGE_CONFIG_ID` (the failed run's `image-config-id` build output) from the same run. Never use a mutable tag or the currently served identity as a restoration source.
-3. Connect only through the trusted host-key custody described above (strict host-key checking against the commissioned fingerprint). Run the block below on the host with `IMAGE_NAME=ghcr.io/silent-suite/silentsuite-web` and the four values exported, for example by piping it to `bash -se`. Before any change, it refuses unless the running `web` container is exactly the failed candidate (config ID and revision), and the predecessor image is still cached locally with the recorded revision. It then retags that exact image, replaces only `web` with `--no-deps --no-build`, and verifies the running config ID, revision, public root and exact no-store `publicSha`.
+The block runs outside GitHub workflow concurrency, so it is safe only inside an exclusive restoration window:
+
+1. Clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA`, `WEB_DEPLOY_APPROVED_SHA`, and `ANNUAL_PUBLIC_CUTOVER_APPROVED_SHA` and read back their absence. New Web runs then fail admission. Clearing does not stop a run that already exists, because its approval was snapshotted when the run was queued.
+2. List every queued, waiting, or in-progress run of `deploy-web-standalone.yml`, `deploy-web.yml`, and `annual-only-public-cutover.yml`. Cancel each run whose deployment job has not started `Deploy via SSH`, and confirm each has completed. If a run is already inside `Deploy via SSH`, let it finish, then restart this procedure from step 1, because it may have changed the running Web.
+3. Get the Billing coordinator's explicit confirmation that nothing will operate on the shared host until this restoration has been verified, and record it. Do not re-arm any approval or dispatch any deployment until then.
+
+The block re-reads the `web` container immediately before replacing it and refuses if it changed after validation. That check detects a breach of the window; it cannot make the check and the replacement atomic, so the window is what prevents the race.
+
+4. From the failed run's `Deploy via SSH` log, copy the line `Predecessor receipt: image-config-id=<sha256:…> revision=<40-hex SHA>`. Cross-check it against the served SHA and running image recorded in the pre-deployment ledger (step 2 above). If the receipt is missing or disagrees with the ledger, stop: there is no trusted restoration target.
+5. Take `DEPLOY_SHA` (the failed `expected_sha`) and `IMAGE_CONFIG_ID` (the failed run's `image-config-id` build output) from the same run. Never use a mutable tag or the currently served identity as a restoration source.
+6. Connect only through the trusted host-key custody described above (strict host-key checking against the commissioned fingerprint). Run the block below on the host with `IMAGE_NAME=ghcr.io/silent-suite/silentsuite-web` and the four values exported, for example by piping it to `bash -se`. Before any change, it refuses unless Compose has exactly one `web` container in any state (running or exited) and it is exactly the failed candidate (config ID and revision), and the predecessor image is still cached locally with the recorded revision. It then retags that exact image, replaces only `web` with `--no-deps --no-build`, and verifies the running config ID, revision, public root and exact no-store `publicSha`.
 
 ```bash
 set -Eeuo pipefail
@@ -119,8 +127,9 @@ for name in docker timeout curl python3; do command -v "$name" >/dev/null; done
 cd ~/etebase
 docker() { command timeout 15s docker "$@"; }
 revision_format='{{ index .Config.Labels "org.opencontainers.image.revision" }}'
-# Refuse unless the failed candidate is what runs now and the exact predecessor is cached.
-CURRENT_CONTAINER=$(docker compose ps -q web)
+# Refuse unless the single web container (running or exited) is the failed candidate and the exact predecessor is cached.
+CURRENT_CONTAINER=$(docker compose ps -a -q web)
+[[ "$CURRENT_CONTAINER" =~ ^[0-9a-f]{64}$ ]]
 CURRENT_IMAGE_ID=$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')
 CURRENT_REVISION=$(docker inspect "$CURRENT_CONTAINER" --format "$revision_format")
 [ "$CURRENT_IMAGE_ID" = "$IMAGE_CONFIG_ID" ]
@@ -141,6 +150,9 @@ services:
   web:
     image: ${RESTORE_TAG}
 EOF
+# Last check before the only mutation: refuse if anything replaced web since validation.
+[ "$(docker compose ps -a -q web)" = "$CURRENT_CONTAINER" ]
+[ "$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')" = "$IMAGE_CONFIG_ID" ]
 command timeout 90s docker compose -f docker-compose.yml -f "$RESTORE_OVERRIDE" up -d --force-recreate --no-deps --no-build web
 RESTORED_CONTAINER=$(docker compose ps -q web)
 [ "$(docker inspect "$RESTORED_CONTAINER" --format '{{.Image}}')" = "$PREVIOUS_IMAGE_ID" ]
@@ -162,7 +174,7 @@ echo "Predecessor container restored but public identity not verified; operator 
 exit 1
 ```
 
-4. Record the restoration, its verification output and the restored identities on the deployment record, then clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA` if it is still set. A failed refusal check leaves the failed candidate running and unchanged: investigate it rather than editing the block or its values.
+7. Record the restoration, its verification output and the restored identities on the deployment record, then tell the Billing coordinator the window is closed. Keep the approvals cleared until a new, separately authorized deployment. A failed refusal check leaves Compose `web` unchanged: investigate it rather than editing the block or its values, and treat a changed container as a breach of the window.
 
 ## Annual-only private/public handshake
 

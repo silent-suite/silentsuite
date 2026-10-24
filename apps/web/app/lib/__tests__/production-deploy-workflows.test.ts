@@ -1030,6 +1030,9 @@ const remoteHostTools = ['bash', 'timeout', 'mktemp', 'rm', 'cat', 'grep', 'pyth
 type WebCutoverOptions = {
   // Start with the failed candidate running and serving a wrong identity (post-SSH failure).
   failedCandidateRunning?: boolean
+  // The failed candidate's container is retained but exited, so `compose ps -q` omits it.
+  failedCandidateExited?: boolean
+  concurrentReplacementAtTag?: boolean
   env?: Record<string, string>
 }
 
@@ -1041,7 +1044,9 @@ function runWebCutoverFixture(script: string, wrongPublicSha: boolean, remoteJq?
   const fixtureTmp = join(directory, 'tmp')
   const stateFile = join(directory, 'state.json')
   const traceFile = join(directory, 'trace.jsonl')
-  const config = { ...webCutoverIdentities, directory, stateFile, traceFile, wrongPublicSha }
+  const config = { ...webCutoverIdentities, directory, stateFile, traceFile, wrongPublicSha,
+    concurrentReplacementAtTag: options.concurrentReplacementAtTag === true,
+    concurrentConfigId: 'sha256:' + '7'.repeat(64), concurrentSha: '9'.repeat(40) }
   const program = String.raw`
 const fs = require('node:fs')
 const path = require('node:path')
@@ -1063,7 +1068,11 @@ const owned = file => {
 try {
   if (command === 'docker') {
     if (same(['compose', 'ps', '-q', 'web'])) {
+      // Like Compose, plain ps lists running containers only.
       record({ operation: 'container' })
+      if (!state.exited) process.stdout.write(state.containerId + '\n')
+    } else if (same(['compose', 'ps', '-a', '-q', 'web'])) {
+      record({ operation: 'container-all' })
       process.stdout.write(state.containerId + '\n')
     } else if (same(['pull', exactImage])) {
       record({ operation: 'pull' })
@@ -1071,6 +1080,13 @@ try {
       state.rollbackTagged = true
       fs.writeFileSync(config.stateFile, JSON.stringify(state))
       record({ operation: 'tag-predecessor' })
+      if (config.concurrentReplacementAtTag) {
+        // Another deployment replaces web between the restoration's validation and replacement.
+        Object.assign(state, { containerId: '4'.repeat(64), imageId: config.concurrentConfigId, revision: config.concurrentSha,
+          publicSha: config.concurrentSha, exited: false })
+        fs.writeFileSync(config.stateFile, JSON.stringify(state))
+        record({ operation: 'concurrent-replacement' })
+      }
     } else if (args.length === 4 && args[0] === 'inspect' && args[2] === '--format') {
       const target = args[1], format = args[3]
       const container = target === state.containerId
@@ -1102,6 +1118,7 @@ try {
       const previous = match[1] === rollbackTag
       if (previous && !state.rollbackTagged) refuse()
       state.containerId = (previous ? '3' : '2').repeat(64)
+      state.exited = false
       state.imageId = previous ? config.previousConfigId : config.candidateConfigId
       state.revision = previous ? config.previousSha : config.candidateSha
       state.publicSha = previous ? config.previousSha : config.wrongPublicSha ? config.wrongSha : config.candidateSha
@@ -1149,9 +1166,10 @@ try {
     mkdirSync(bin)
     mkdirSync(join(fixtureHome, 'etebase'), { recursive: true })
     mkdirSync(fixtureTmp)
-    writeFileSync(stateFile, JSON.stringify(options.failedCandidateRunning ? {
+    writeFileSync(stateFile, JSON.stringify(options.failedCandidateRunning || options.failedCandidateExited ? {
       containerId: '2'.repeat(64), imageId: config.candidateConfigId,
       revision: config.candidateSha, publicSha: config.wrongSha, rollbackTagged: false,
+      exited: options.failedCandidateExited === true,
     } : {
       containerId: '1'.repeat(64), imageId: config.previousConfigId,
       revision: config.previousSha, publicSha: config.previousSha, rollbackTagged: false,
@@ -1961,6 +1979,51 @@ jobs:
       expect(refused.trace.some(call => call.operation === 'recreate' || call.operation === 'tag-predecessor'), label).toBe(false)
       expect(refused.state, label).toMatchObject({ imageId: ids.candidateConfigId, revision: ids.candidateSha })
     }
+  }, 30000)
+
+  it('the runbook restoration finds and verifies an exited failed candidate', () => {
+    const ids = webCutoverIdentities
+    const heading = deployRunbook.indexOf('### Restore the captured predecessor after a post-SSH failure')
+    expect(heading).toBeGreaterThan(-1)
+    const restore = [...deployRunbook.slice(heading).matchAll(/```bash\n([\s\S]*?)```/g)][0]?.[1] ?? ''
+    const receipt = { PREVIOUS_IMAGE_ID: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
+
+    // A retained but exited candidate is invisible to `compose ps -q`; restoration must still find and verify it.
+    const exited = runWebCutoverFixture(restore, false, undefined, { failedCandidateExited: true, env: receipt })
+    expect(exited.result.status, 'exited candidate restoration: ' + exited.result.stderr).toBe(0)
+    expect(exited.trace.filter(call => call.operation === 'unsupported')).toEqual([])
+    const replaced = exited.trace.findIndex(call => call.operation === 'recreate')
+    expect(exited.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['predecessor'])
+    expect(exited.trace.findIndex(call => call.operation === 'running-config' && call.returned === ids.candidateConfigId)).toBeLessThan(replaced)
+    expect(exited.trace.findIndex(call => call.operation === 'running-revision' && call.returned === ids.candidateSha)).toBeLessThan(replaced)
+    expect(exited.state).toMatchObject({ imageId: ids.previousConfigId, revision: ids.previousSha, publicSha: ids.previousSha })
+  }, 30000)
+
+  it('the runbook restoration holds an exclusive window and refuses if web changes before replacement', () => {
+    const ids = webCutoverIdentities
+    const heading = deployRunbook.indexOf('### Restore the captured predecessor after a post-SSH failure')
+    expect(heading).toBeGreaterThan(-1)
+    const restore = [...deployRunbook.slice(heading).matchAll(/```bash\n([\s\S]*?)```/g)][0]?.[1] ?? ''
+    const receipt = { PREVIOUS_IMAGE_ID: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
+    // Another deployment replaces web after validation: the last pre-mutation check must refuse and leave it alone.
+    const raced = runWebCutoverFixture(restore, false, undefined, { failedCandidateRunning: true, concurrentReplacementAtTag: true, env: receipt })
+    expect(raced.trace.some(call => call.operation === 'concurrent-replacement')).toBe(true)
+    expect(raced.result.status, 'restoration must refuse a web container changed before replacement').not.toBe(0)
+    expect(raced.trace.filter(call => call.operation === 'recreate')).toEqual([])
+    expect(raced.trace.filter(call => call.operation === 'unsupported')).toEqual([])
+    expect(raced.state).toMatchObject({ imageId: 'sha256:' + '7'.repeat(64), revision: '9'.repeat(40) })
+
+    // The check above only detects a breach; the exclusive window is what prevents the race.
+    const section = deployRunbook.slice(heading, deployRunbook.indexOf('\n## ', heading))
+    for (const requirement of [
+      'Clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA`, `WEB_DEPLOY_APPROVED_SHA`, and `ANNUAL_PUBLIC_CUTOVER_APPROVED_SHA`',
+      'snapshotted when the run was queued',
+      '`deploy-web-standalone.yml`, `deploy-web.yml`, and `annual-only-public-cutover.yml`',
+      'confirm each has completed',
+      'let it finish',
+      'until this restoration has been verified',
+      'cannot make the check and the replacement atomic',
+    ]) expect(section, requirement).toContain(requirement)
   }, 30000)
 
   it('standalone Web remote identity parser admits only the exact single-key publicSha object (after-edit characterization)', () => {
