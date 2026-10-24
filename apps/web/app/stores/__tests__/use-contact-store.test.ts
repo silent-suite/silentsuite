@@ -132,6 +132,64 @@ describe('useContactStore', () => {
     expect(updatedContent).not.toContain('UID:remote-contact-item')
   })
 
+  it('keeps unsupported properties through import, name/phone edits and a favorite, with the exact stored witness (#865)', async () => {
+    const extras = ['X-TESTA:testA', 'X-TestB:testB', 'X-testC:testC', 'X-testd:testD']
+    const customLinesOf = (content: string) => content.split('\r\n').filter((line) => /^X-test/i.test(line))
+    const stored = new Map<string, string>()
+    const createItemsBatch = vi.fn(async (_type: string, items: { content: string; tempId: string }[], _collectionUid?: string, onCommitted?: (tempId: string, item: any) => void) =>
+      items.map((item, index) => {
+        const uid = `remote-865-${index}`
+        stored.set(uid, item.content)
+        onCommitted?.(item.tempId, { etag: `rev-${uid}`, encryptedItem: { lastEtag: `rev-${uid}` } })
+        return uid
+      }))
+    let sequence = 0
+    const updateItem = vi.fn(async (_type: string, id: string, content: string, options?: { onSaved?: (etag: string) => void }) => {
+      stored.set(id, content)
+      options?.onSaved?.(`etag-865-${++sequence}`)
+      return 'remote'
+    })
+    useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map(), createItemsBatch, updateItem } as any)
+
+    await useContactStore.getState().importContacts([{
+      displayName: 'John Doe', phones: [{ type: 'cell', value: '+1 234 567890' }], unknownProperties: extras, listId: 'contacts-1',
+    }])
+    const imported = createItemsBatch.mock.calls[0]![1][0]!.content
+    expect(customLinesOf(imported)).toEqual(extras)
+
+    const witnessOf = (call: number) => (updateItem.mock.calls[call]![3] as unknown as { contactBase: { witness: string } }).contactBase.witness
+    await useContactStore.getState().updateContact('remote-865-0', { displayName: 'John Q. Doe' })
+    expect(witnessOf(0)).toBe(imported)
+    expect(customLinesOf(updateItem.mock.calls[0]![2])).toEqual(extras)
+
+    const afterName = stored.get('remote-865-0')!
+    await useContactStore.getState().updateContact('remote-865-0', { phones: [{ type: 'cell', value: '+1 234 000000' }] })
+    expect(witnessOf(1)).toBe(afterName)
+    expect(customLinesOf(updateItem.mock.calls[1]![2])).toEqual(extras)
+
+    const afterPhone = stored.get('remote-865-0')!
+    await useContactStore.getState().setContactFavorite('remote-865-0', true)
+    expect(witnessOf(2)).toBe(afterPhone)
+    expect(updateItem.mock.calls[2]![2]).toContain('X-SILENTSUITE-FAVORITE:1')
+    expect(customLinesOf(updateItem.mock.calls[2]![2])).toEqual(extras)
+  })
+
+  it('keeps unsupported properties of a remotely reloaded contact through a known-field edit (#865)', async () => {
+    const { deserializeContact } = await import('@silentsuite/core')
+    const remote = ['BEGIN:VCARD', 'VERSION:3.0', 'UID:reload-865', 'FN:John Doe', 'X-TESTA:testA', 'item4.URL:https://example.invalid', 'item4.X-ABLabel:Site', 'REV:20261024T000000Z', 'END:VCARD'].join('\r\n')
+    const updateItem = vi.fn(async (_type: string, _id: string, _content: string, options?: { onSaved?: (etag: string) => void }) => {
+      options?.onSaved?.('etag-reload')
+      return 'remote'
+    })
+    useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map([['reload-item', {}]]), updateItem } as any)
+    // The same mapping as the authoritative reload and cache hydrate paths.
+    useContactStore.getState().syncFromRemote([{ ...deserializeContact(remote), id: 'reload-item', listId: 'contacts-1', revision: 'rev-1' }])
+    await useContactStore.getState().updateContact('reload-item', { displayName: 'John Q. Doe' })
+    const content = updateItem.mock.calls[0]![2] as string
+    expect(content).toContain('FN:John Q. Doe')
+    expect(content.split('\r\n').filter((line) => /^(X-TESTA|item4\.)/.test(line))).toEqual(['X-TESTA:testA', 'item4.URL:https://example.invalid', 'item4.X-ABLabel:Site'])
+  })
+
   describe('getFilteredContacts', () => {
     const mockContacts: Contact[] = [
       {

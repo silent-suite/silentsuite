@@ -45,8 +45,10 @@ vi.mock('@/app/stores/use-task-store', () => ({
   useTaskStore: { getState: () => ({ syncFromRemote: vi.fn() }) },
 }))
 
+const contactStoreMock = vi.hoisted(() => ({ syncFromRemote: vi.fn() }))
+
 vi.mock('@/app/stores/use-contact-store', () => ({
-  useContactStore: { getState: () => ({ syncFromRemote: vi.fn() }) },
+  useContactStore: { getState: () => contactStoreMock },
 }))
 
 vi.mock('@/app/stores/use-note-store', () => ({
@@ -230,6 +232,30 @@ describe('useSyncStore', () => {
     const reconcileOrder = etebaseMock.state.reconcileCollections.mock.invocationCallOrder[0]!
     const firstRefreshOrder = etebaseMock.state.refreshCollection.mock.invocationCallOrder[0]!
     expect(reconcileOrder).toBeLessThan(firstRefreshOrder)
+  })
+
+  it('publishes reloaded contacts with their unsupported properties through the real deserializer (#865)', async () => {
+    // Contacts deserialize through the real core parser, so the mock cannot fabricate preservation.
+    const actual = await vi.importActual<typeof import('@silentsuite/core')>('@silentsuite/core')
+    const { serializeContact } = actual
+    const core = await import('@silentsuite/core')
+    vi.mocked(core.deserializeContact).mockImplementation(actual.deserializeContact)
+    const extras = ['X-TESTA:testA', 'X-TestB:testB', 'item4.URL:https://example.invalid', 'item4.X-ABLabel:Site']
+    const content = ['BEGIN:VCARD', 'VERSION:3.0', 'UID:reload-865', 'FN:John Doe', 'TEL;TYPE=cell:+1 234 567890', ...extras, 'REV:20261024T000000Z', 'END:VCARD'].join('\r\n')
+    contactStoreMock.syncFromRemote.mockClear()
+    etebaseMock.state.refreshCollection.mockImplementation(async (type: string) =>
+      type === 'contacts' ? [{ uid: 'reload-item', collectionUid: 'contacts-1', revision: 'rev-1', content }] : [])
+
+    useSyncStore.getState().simulateSyncCycle()
+    await vi.waitFor(() => expect(contactStoreMock.syncFromRemote).toHaveBeenCalledTimes(1))
+
+    const published = contactStoreMock.syncFromRemote.mock.calls[0]![0] as import('@silentsuite/core').Contact[]
+    expect(published).toHaveLength(1)
+    expect(published[0]).toMatchObject({ id: 'reload-item', listId: 'contacts-1', revision: 'rev-1', displayName: 'John Doe', unknownProperties: extras })
+    const edited = serializeContact({ ...published[0]!, displayName: 'John Q. Doe' })
+    expect(edited).toContain('FN:John Q. Doe')
+    expect(edited.split('\r\n').filter((line) => extras.includes(line))).toEqual(extras)
+    vi.mocked(core.deserializeContact).mockReset()
   })
 
   it('does not replace a domain store when that domain refresh failed', async () => {

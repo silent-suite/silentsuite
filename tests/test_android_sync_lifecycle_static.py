@@ -508,7 +508,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
     ledger_size = sum(len(methods) for methods in ledger["classes"].values())
-    assert len(canonical) == len(runtime_methods) == ledger_size == 165
+    assert len(canonical) == len(runtime_methods) == ledger_size == 168
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
@@ -527,8 +527,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 163, 165)
-    assert tuple(len(api36[key]) for key in api36) == (32, 19, 67, 47)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 166, 168)
+    assert tuple(len(api36[key]) for key in api36) == (32, 19, 70, 47)
     assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
     assert all(
         left.isdisjoint(right)
@@ -590,8 +590,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':164,'35:all':165,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':47,'36:status-routes':67}" in assertion
-    assert '"21:remaining": 163' in script
+    assert "expected_sizes={'21:mixed':1,'21:remaining':167,'35:all':168,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':47,'36:status-routes':70}" in assertion
+    assert '"21:remaining": 166' in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper

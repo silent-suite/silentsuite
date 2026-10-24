@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { generateVCard, parseVCard } from './vcard-parser.js';
 import { deserializeContact, serializeContact } from '../models/contact.js';
@@ -208,5 +210,164 @@ describe('exporter-added X- type prefixes', () => {
       expect(current.tel?.[0]?.type).toBe('home,Mary');
       expect(current).toEqual(first);
     }
+  });
+});
+
+// ── #865: legacy no-extras wire goldens (captured from the unmodified base parser) ──
+
+describe('legacy no-extras wire goldens (#865)', () => {
+  const goldens: { cases: { name: string; input: string; wire: string; utf8_wire_base64: string; sha256: string }[] } =
+    JSON.parse(readFileSync(new URL('../../fixtures/contact-preservation-legacy-wire.json', import.meta.url), 'utf8'));
+
+  it.each(goldens.cases.map((c) => [c.name, c] as const))('%s: wire bytes and witness round-trip are unchanged', (_name, golden) => {
+    const bytes = Buffer.from(golden.wire, 'utf8');
+    expect(bytes.toString('base64')).toBe(golden.utf8_wire_base64);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(golden.sha256);
+    expect(serializeContact(deserializeContact(golden.wire))).toBe(golden.wire);
+    const fromInput = serializeContact(deserializeContact(golden.input)).replace(/\r\nREV:\d{8}T\d{6}Z\r\n/, '\r\nREV:20261024T072232Z\r\n');
+    expect(fromInput).toBe(golden.wire);
+    const decoded = bytes.toString('utf8');
+    expect(serializeContact(deserializeContact(decoded))).toBe(decoded);
+  });
+});
+
+// ── #865: unsupported property preservation matrix ──
+
+describe('unsupported property preservation matrix (#865)', () => {
+  /** Logical lines of a generated card; preserved QP lines are emitted unfolded. */
+  const logical = (wire: string) => wire.replace(/\r\n[ \t]/g, '').split('\r\n');
+  const roundTrip = (raw: string, strict = false) => generateVCard(parseVCard(raw, { strictTextEncoding: strict }));
+  const kept = (wire: string, expected: string[]) => logical(wire).filter((line) => expected.includes(line));
+
+  it('keeps mixed-case and repeated properties in order without growth over cycles', () => {
+    const extras = ['X-FOO:1', 'x-foo:2', 'X-Foo:3', 'X-BAR:only'];
+    let wire = roundTrip(card(...extras));
+    for (let cycle = 0; cycle < 3; cycle++) wire = roundTrip(wire);
+    expect(kept(wire, extras)).toEqual(extras);
+  });
+
+  it('keeps unsupported standard text properties', () => {
+    const extras = [
+      'URL:https://example.invalid/a',
+      'NICKNAME:Jo',
+      'IMPP:xmpp:jo@example.invalid',
+      'RELATED;TYPE=friend:urn:uuid:synthetic',
+      'ANNIVERSARY:20000101',
+      'X-PHONETIC-FIRST-NAME:Jo',
+      'X-SIP:sip:jo@example.invalid',
+      'LOGO;VALUE=uri:https://example.invalid/logo.png',
+    ];
+    expect(kept(roundTrip(card(...extras), true), extras)).toEqual(extras);
+  });
+
+  it('keeps grouped parameters and opaque labels while consumed TEL labels stay modelled', () => {
+    const extras = ['item7.X-FOO;TYPE=a,b;X-P="q;r:s":v', 'item7.X-ABLabel:Lbl'];
+    const raw = card('item1.TEL:111', 'item1.X-ABLabel:Custom', ...extras);
+    const parsed = parseVCard(raw, { strictTextEncoding: true });
+    expect(parsed.tel?.[0]?.type).toBe('Custom');
+    const wire = generateVCard(parsed);
+    expect(kept(wire, extras)).toEqual(extras);
+    expect(logical(wire).filter((line) => /X-ABLabel:Custom$/.test(line))).toHaveLength(1);
+    expect(parseVCard(wire).tel?.[0]?.type).toBe('Custom');
+  });
+
+  it('does not reuse a preserved group for a generated custom label', () => {
+    const extras = ['item1.X-FOO:v', 'item1.X-ABLabel:Kept'];
+    const parsed = parseVCard(card('TEL;TYPE=X-Two Words:111', ...extras));
+    const wire = generateVCard(parsed);
+    expect(kept(wire, extras)).toEqual(extras);
+    const telLine = logical(wire).find((line) => /\.TEL:111$/.test(line));
+    expect(telLine).toBeDefined();
+    expect(telLine!.startsWith('item1.')).toBe(false);
+    const reparsed = parseVCard(wire);
+    expect(reparsed.tel?.map((t) => t.type)).toEqual(['Two Words']);
+  });
+
+  it('keeps an opaque label with an unsupported charset under strict import', () => {
+    const extras = ['item9.X-FOO:v', 'item9.X-ABLabel;CHARSET=x-unsupported;ENCODING=QUOTED-PRINTABLE:=FF'];
+    expect(kept(roundTrip(card(...extras), true), extras)).toEqual(extras);
+  });
+
+  it('still rejects a consumed TEL label with an unsupported charset under strict import', () => {
+    expect(() => parseVCard(card('item2.TEL:111', 'item2.X-ABLabel;CHARSET=x-unsupported;ENCODING=QUOTED-PRINTABLE:=FF'), { strictTextEncoding: true }))
+      .toThrow();
+  });
+
+  it('keeps long escaped Unicode values logically identical with safe folding', () => {
+    const value = `${'é中🙂 a\\,b\\;c\\n '.repeat(14)}end`;
+    const line = `X-LONG:${value}`;
+    const folded = Array.from(line).reduce((parts, ch, i) => parts + (i > 0 && i % 31 === 0 ? '\r\n ' : '') + ch, '');
+    const wire = roundTrip(card(folded));
+    expect(kept(wire, [line])).toEqual([line]);
+    for (const physical of wire.split('\r\n')) {
+      expect(Buffer.byteLength(physical, 'utf8')).toBeLessThanOrEqual(75);
+      expect(Buffer.from(physical, 'utf8').toString('utf8')).toBe(physical);
+    }
+  });
+
+  it('keeps folding stable across parameter padding, including QP and bare encoding tokens', () => {
+    for (let pad = 0; pad <= 80; pad++) {
+      const extras = [
+        `X-PAD;X-P=${'a'.repeat(pad)}:${'v=é中🙂='.repeat(12)}`,
+        `X-QP;ENCODING=QUOTED-PRINTABLE;X-P=${'b'.repeat(pad)}:${'=C3=A9'.repeat(20)}`,
+        `X-BARE;QUOTED-PRINTABLE;X-P=${'c'.repeat(pad)}:${'x='.repeat(40)}`,
+      ];
+      const wire = roundTrip(card(...extras));
+      expect(kept(roundTrip(wire), extras)).toEqual(extras);
+    }
+  });
+
+  it('emits a single quoted mixed-case QP property unfolded', () => {
+    const line = `X-Q;encoding="Quoted-Printable":${'=C3=A9'.repeat(30)}`;
+    expect(roundTrip(card(line)).split('\r\n')).toContain(line);
+  });
+
+  it('drops ambiguous duplicate or list encodings', () => {
+    const wire = roundTrip(card(
+      'X-D1;ENCODING=QUOTED-PRINTABLE;ENCODING=8BIT:x',
+      'X-D2;encoding="quoted-printable";Encoding=8bit:x',
+      'X-D3;ENCODING=QUOTED-PRINTABLE,8BIT:x',
+      'X-OK:y',
+    ));
+    expect(wire).not.toMatch(/X-D\d/);
+    expect(logical(wire)).toContain('X-OK:y');
+  });
+
+  it('drops malformed and injection-shaped lines and keeps one card frame', () => {
+    const wire = roundTrip(card(
+      'X-CR:a\rEND:VCARD',
+      'item1.BEGIN:VCARD',
+      'end:vcard',
+      'X FOO:bar',
+      'X-NOCOLON',
+      'X-Q;X-P="unbalanced:v',
+      'X-CTL:a\u0001b',
+      'X-OK:y',
+    ));
+    expect(wire.match(/BEGIN:VCARD/gi)).toHaveLength(1);
+    expect(wire.match(/END:VCARD/gi)).toHaveLength(1);
+    expect(wire).not.toMatch(/\r(?!\n)/);
+    expect(wire).not.toMatch(/X-CR|X FOO|X-NOCOLON|unbalanced|X-CTL/);
+    expect(logical(wire)).toContain('X-OK:y');
+  });
+
+  it('keeps favorite, PRODID and oversized lines out of the preserved set', () => {
+    const wire = roundTrip(card(
+      'x-silentsuite-favorite:1',
+      'item3.X-SILENTSUITE-FAVORITE;TYPE=pref:1',
+      'PRODID:-//Other//EN',
+      `X-HUGE:${'a'.repeat(1_000_001)}`,
+      'X-OK:y',
+    ));
+    expect(parseVCard(wire).favorite).toBe(true);
+    expect(wire.split('\r\n').filter((line) => /SILENTSUITE-FAVORITE/i.test(line))).toEqual(['X-SILENTSUITE-FAVORITE:1']);
+    expect(wire).not.toMatch(/PRODID|X-HUGE/);
+    expect(logical(wire)).toContain('X-OK:y');
+  });
+
+  it('carries preserved properties through the contact model and leaves older records without any', () => {
+    const contact = deserializeContact(card('X-OK:y'));
+    expect(logical(serializeContact({ ...contact, notes: 'edited' }))).toContain('X-OK:y');
+    expect(deserializeContact(card()).unknownProperties).toBeUndefined();
   });
 });

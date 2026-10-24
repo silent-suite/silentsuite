@@ -378,3 +378,43 @@ describe('edge cases', () => {
     expect(contact.photoUrl).toBeNull();
   });
 });
+
+// ── Unsupported property preservation (#865) ──
+
+describe('unsupported property preservation (#865)', () => {
+  // Exact sample from issue #865.
+  const issueSample = [
+    'BEGIN:VCARD',
+    'VERSION:4.0',
+    'UID:20261023T213116Z1949487429',
+    'FN:John Doe',
+    'N:Doe;John;;;',
+    'TEL;TYPE=cell:+1 234 567890',
+    'X-TESTA:testA',
+    'X-TestB:testB',
+    'X-testC:testC',
+    'X-testd:testD',
+    'END:VCARD',
+  ].join('\r\n');
+  const customLines = ['X-TESTA:testA', 'X-TestB:testB', 'X-testC:testC', 'X-testd:testD'];
+  const customLinesOf = (card: string) => card.split('\r\n').filter((l) => /^X-test/i.test(l));
+
+  it('keeps the four custom properties through deserialize/serialize', () => {
+    expect(customLinesOf(serializeContact(deserializeContact(issueSample)))).toEqual(customLines);
+  });
+
+  it('keeps them after name and phone edits, a favorite toggle and reload', () => {
+    const stored = deserializeContact(issueSample);
+    const edited = {
+      ...stored,
+      displayName: 'John Q. Doe',
+      phones: [{ type: 'cell', value: '+1 234 000000' }],
+      favorite: true,
+    };
+    const reloaded = deserializeContact(serializeContact(edited));
+    expect(reloaded.displayName).toBe('John Q. Doe');
+    expect(reloaded.phones).toEqual([{ type: 'cell', value: '+1 234 000000' }]);
+    expect(reloaded.favorite).toBe(true);
+    expect(customLinesOf(serializeContact(reloaded))).toEqual(customLines);
+  });
+});

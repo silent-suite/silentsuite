@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { toVEvent, toVTodo, toVCard } from '@silentsuite/core'
 import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
+import JSZip from 'jszip'
 import ExportPage from '../page'
 
 // Mutable mock data so individual tests can configure collections + items.
@@ -364,6 +365,31 @@ describe('ExportPage', () => {
     const blobCall = (URL.createObjectURL as ReturnType<typeof vi.fn>).mock
       .calls[0][0] as Blob
     expect(blobCall.type).toBe('text/vcard')
+  })
+
+  it('keeps unsupported contact properties in the downloaded VCF and ZIP entry bytes (#865)', async () => {
+    const extras = ['X-TESTA:testA', 'X-TestB:testB', 'X-testC:testC', 'X-testd:testD']
+    Object.assign(mockData.contacts[0]!, { unknownProperties: extras })
+    const readBytes = (blob: Blob) => new Promise<Uint8Array>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(blob)
+    })
+    const customLinesOf = (bytes: Uint8Array) => new TextDecoder().decode(bytes.slice(3)).split('\r\n').filter((line) => /^X-test/i.test(line))
+
+    render(<ExportPage />)
+    fireEvent.click(screen.getByText(/Export Contacts/))
+    const vcfBytes = await readBytes((URL.createObjectURL as ReturnType<typeof vi.fn>).mock.calls[0][0] as Blob)
+    expect([...vcfBytes.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+    expect(customLinesOf(vcfBytes)).toEqual(extras)
+
+    fireEvent.click(screen.getByText(/Export All Data/))
+    const zip = vi.mocked(JSZip).mock.results.at(-1)!.value as { file: ReturnType<typeof vi.fn> }
+    await vi.waitFor(() => expect(zip.file).toHaveBeenCalledWith('silentsuite-contacts.vcf', expect.anything()))
+    const entry = zip.file.mock.calls.find((call) => call[0] === 'silentsuite-contacts.vcf')![1] as Uint8Array
+    expect([...entry.slice(0, 3)]).toEqual([0xef, 0xbb, 0xbf])
+    expect(customLinesOf(entry)).toEqual(extras)
   })
 
   it('exports favorite contacts through the canonical contact serializer', () => {
