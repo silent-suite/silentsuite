@@ -46,7 +46,7 @@
     "react-markdown": "^10.1.0",
     "tailwind-merge": "^2.3.0",
     "temporal-polyfill": "^0.3.2",
-    "zod": "^4.3.6",
+    "zod": "4.6.6",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
