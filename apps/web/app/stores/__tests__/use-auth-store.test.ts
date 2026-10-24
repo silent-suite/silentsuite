@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
 import { secureClear, secureSet } from '@/app/lib/secure-storage'
 import { logger } from '@/app/lib/logger'
@@ -82,9 +82,12 @@ vi.mock('@/app/lib/etebase-auth', () => ({
   issueBillingLinkProof: vi.fn().mockResolvedValue('mock-link-proof-value-with-at-least-43-characters'),
 }))
 
-// Mock self-hosted checks
+// Mock self-hosted checks. `isSelfHosted` stays false except inside the
+// self-hosted newsletter test, which flips it in place: resetting the module
+// registry instead would hand later dynamic imports a second store instance.
+const selfHostedMode = vi.hoisted(() => ({ enabled: false }))
 vi.mock('@/app/lib/self-hosted', () => ({
-  isSelfHosted: false,
+  get isSelfHosted() { return selfHostedMode.enabled },
   isCustomServer: (serverUrl?: string) => Boolean(serverUrl && serverUrl !== 'https://server.silentsuite.io'),
 }))
 
@@ -158,6 +161,30 @@ function persistedPaidSignupIdentities() {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const RECOVERY_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
+
+// C1 W3: self-hosted signup subscribes only for a stored historical opt-in;
+// new drafts (no checkbox: absent or explicit false) never call the newsletter.
+describe('self-hosted signup newsletter consent', () => {
+  it.each([
+    ['an absent preference', undefined, 0],
+    ['an explicit false', false, 0],
+    ['a stored historical opt-in', true, 1],
+  ] as const)('%s sends %i newsletter requests', async (_label, wantsProductUpdates, expected) => {
+    selfHostedMode.enabled = true
+    try {
+      resetStore()
+      vi.mocked(fetch).mockReset()
+      vi.mocked(fetch).mockImplementation(async () => new Response('{}'))
+      useAuthStore.setState({ pendingSignup: { email: 'selfhost@example.com', ...(wantsProductUpdates === undefined ? {} : { wantsProductUpdates }) } })
+      await useAuthStore.getState().signup('self-hosted', '')
+      expect(vi.mocked(fetch).mock.calls.filter(([input]) => String(input).endsWith('/newsletter/subscribe'))).toHaveLength(expected)
+    } finally {
+      selfHostedMode.enabled = false
+      resetStore()
+      vi.mocked(fetch).mockReset()
+    }
+  })
+})
 
 describe('useAuthStore', () => {
   beforeEach(() => {
@@ -607,6 +634,30 @@ describe('useAuthStore', () => {
       expect(optedOut.wantsProductUpdates).toBe(false)
       expect(optedOut.requestKey).not.toBe(optedIn.requestKey)
       expect(optedOut.recoverySecret).not.toBe(optedIn.recoverySecret)
+    })
+
+    // C1 W3: with the opt-in removed, a draft never becomes an implicit opt-in
+    // on the wire, while paidSignupRecoveryScope stays byte-identical (an
+    // absent preference keeps its historical `true` scope).
+    it('never sends an implicit product-updates opt-in and keeps the historical recovery scope', async () => {
+      vi.mocked(fetch).mockImplementation(async (_input, init) => {
+        const body = JSON.parse(String(init?.body))
+        return new Response(JSON.stringify(stripePayment(body.recoverySecret)))
+      })
+      useAuthStore.getState().prepareSignupDraft('implicit@example.com')
+      await startAnnualPayment()
+      useAuthStore.getState().prepareSignupDraft('explicit@example.com', false, false)
+      await startAnnualPayment()
+      useAuthStore.getState().prepareSignupDraft('historical@example.com', true, false)
+      await startAnnualPayment()
+
+      expect([0, 1, 2].map(index => paidSignupRequestBody(index).wantsProductUpdates)).toEqual([false, false, true])
+      const scopes = Object.keys(JSON.parse(sessionStorage.getItem('silentsuite-paid-signup-recovery')!).identities).map(scope => JSON.parse(scope))
+      expect(scopes).toEqual(expect.arrayContaining([
+        { email: 'implicit@example.com', contractVersion: 2, wantsProductUpdates: true, rememberDevice: false },
+        { email: 'explicit@example.com', contractVersion: 2, wantsProductUpdates: false, rememberDevice: false },
+        { email: 'historical@example.com', contractVersion: 2, wantsProductUpdates: true, rememberDevice: false },
+      ]))
     })
 
     it('clears a completed payment recovery capability before a new signup attempt', async () => {
@@ -1958,6 +2009,443 @@ describe('useAuthStore', () => {
 
       expect(result).toBe(false)
       expect(useAuthStore.getState().user).toBeNull()
+    })
+  })
+
+  describe('restoreSession refresh-unconfirmed compatibility', () => {
+    const problemType =
+      'https://api.silentsuite.io/errors/refresh-unconfirmed'
+    const originalUser = {
+      id: 'u1',
+      email: 'session@example.invalid',
+      planId: 'early_annual',
+      rememberDevice: true,
+      isAdmin: false,
+    }
+    const replacementUser = {
+      id: 'u2',
+      email: 'replacement@example.invalid',
+      planId: 'standard_annual',
+      rememberDevice: true,
+      isAdmin: false,
+    }
+
+    beforeEach(() => {
+      contactLifecycleReset.mockClear()
+      noteLifecycleReset.mockClear()
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-10-23T12:00:00Z'))
+    })
+
+    afterEach(() => {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    })
+
+    function transient(
+      retryAfter: string | null = '1',
+      type = problemType,
+    ): Response {
+      const body = { type, status: 503 }
+      const response = new Response(JSON.stringify(body), {
+        status: 503,
+        headers: retryAfter === null ? {} : { 'Retry-After': retryAfter },
+      })
+      // Keep body parsing deterministic under fake timers without stream tasks.
+      response.clone = () => ({
+        json: async () => body,
+      }) as Response
+      return response
+    }
+
+    function success() {
+      return new Response(JSON.stringify({
+        ...originalUser,
+        emailVerified: true,
+        onboardedAt: null,
+      }))
+    }
+
+    function startWarm() {
+      useAuthStore.setState({
+        user: originalUser,
+        isAuthenticated: true,
+        subscriptionStatus: 'active',
+      })
+    }
+
+    function storageBytes(storage: Storage) {
+      return JSON.stringify(Object.keys(storage).sort()
+        .map(key => [key, storage.getItem(key)]))
+    }
+
+    function expectNoAccountCleanup() {
+      expect(secureClear).not.toHaveBeenCalled()
+      expect(dataCacheClearAll).not.toHaveBeenCalled()
+      expect(offlineQueueClearAll).not.toHaveBeenCalled()
+      expect(calendarSetState).not.toHaveBeenCalled()
+      expect(taskSetState).not.toHaveBeenCalled()
+      expect(contactLifecycleReset).not.toHaveBeenCalled()
+      expect(noteLifecycleReset).not.toHaveBeenCalled()
+      expect(preferencesSyncDestroy).not.toHaveBeenCalled()
+      expect(vi.mocked(fetch).mock.calls.some(([, init]) =>
+        init?.method === 'DELETE')).toBe(false)
+    }
+
+    it('retries with browser-managed current cookies and clears the retry error on success', async () => {
+      startWarm()
+      useAuthStore.setState({ error: 'an earlier retry failure' })
+      let browserCookie = 'original-cookie'
+      const attachedAtDispatch: string[] = []
+
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        expect(String(input)).toContain('/auth/refresh')
+        expect(init?.method).toBe('POST')
+        expect(init?.credentials).toBe('include')
+        expect(new Headers(init?.headers).get('cookie')).toBeNull()
+        attachedAtDispatch.push(browserCookie)
+        return attachedAtDispatch.length === 1 ? transient() : success()
+      })
+
+      const pending = useAuthStore.getState().restoreSession()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(useAuthStore.getState().isLoading).toBe(true)
+      expect(useAuthStore.getState().user).toBe(originalUser)
+
+      // Simulate the winner's browser-cookie update between dispatches.
+      browserCookie = 'winner-cookie'
+      await vi.advanceTimersByTimeAsync(999)
+      expect(fetch).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(1)
+      await pending
+
+      expect(attachedAtDispatch)
+        .toEqual(['original-cookie', 'winner-cookie'])
+      expect(useAuthStore.getState()).toMatchObject({
+        user: { id: 'u1', emailVerified: true },
+        isAuthenticated: true,
+        isLoading: false,
+        error: null,
+        subscriptionStatus: 'active',
+      })
+      expectNoAccountCleanup()
+    })
+
+    it.each(['warm', 'cold'] as const)(
+      'exhausts after three requests and retains material for a %s tab',
+      async mode => {
+        secureStore.etebase_session = 'retained-encrypted-session'
+        secureStore.account_key = 'retained-account-material'
+        localStorage.setItem(
+          'silentsuite-hosted-validation-remembered',
+          JSON.stringify({
+            userId: 'u1',
+            rememberDevice: true,
+            validatedAt: Date.now(),
+          }),
+        )
+        sessionStorage.setItem('retained-checkpoint', 'retain-this')
+        if (mode === 'warm') startWarm()
+
+        const beforeLocal = storageBytes(localStorage)
+        const beforeSession = storageBytes(sessionStorage)
+        const beforeSecure = { ...secureStore }
+        vi.mocked(fetch).mockImplementation(async () => transient())
+
+        const pending = useAuthStore.getState().restoreSession()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(fetch).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1_000)
+        expect(fetch).toHaveBeenCalledTimes(2)
+        await vi.advanceTimersByTimeAsync(1_000)
+        await pending
+
+        expect(fetch).toHaveBeenCalledTimes(3)
+        expect(useAuthStore.getState().isLoading).toBe(false)
+        expect(useAuthStore.getState().error).toMatch(/retry/i)
+        expect(useAuthStore.getState().user)
+          .toBe(mode === 'warm' ? originalUser : null)
+        expect(useAuthStore.getState().isAuthenticated)
+          .toBe(mode === 'warm')
+        expect(useAuthStore.getState().subscriptionStatus)
+          .toBe(mode === 'warm' ? 'active' : null)
+        expect(secureStore).toEqual(beforeSecure)
+        expect(storageBytes(localStorage)).toBe(beforeLocal)
+        expect(storageBytes(sessionStorage)).toBe(beforeSession)
+        expectNoAccountCleanup()
+
+        await vi.advanceTimersByTimeAsync(10_000)
+        expect(fetch).toHaveBeenCalledTimes(3)
+      },
+    )
+
+    it.each([
+      ['large delay', '999999', 2_000],
+      ['zero delay', '0', 250],
+      ['missing delay', null, 1_000],
+      ['invalid delay', 'nonsense', 1_000],
+      ['negative delay', '-1', 1_000],
+      ['fractional delay', '0.1', 1_000],
+      ['HTTP date', 'Fri, 23 Oct 2026 12:00:02 GMT', 2_000],
+    ] as const)(
+      'bounds Retry-After for %s',
+      async (_label, header, expectedDelay) => {
+        startWarm()
+        vi.mocked(fetch)
+          .mockResolvedValueOnce(transient(header))
+          .mockResolvedValueOnce(success())
+
+        const pending = useAuthStore.getState().restoreSession()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(fetch).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(expectedDelay - 1)
+        expect(fetch).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+        await pending
+
+        expect(fetch).toHaveBeenCalledTimes(2)
+        expect(useAuthStore.getState().isAuthenticated).toBe(true)
+        expectNoAccountCleanup()
+      },
+    )
+
+    it.each(['replacement', 'logout'] as const)(
+      'does not dispatch a retry after %s changes the account boundary',
+      async transition => {
+        startWarm()
+        vi.mocked(fetch).mockImplementation(async (input, init) => {
+          if (String(input).endsWith('/auth/refresh')) return transient()
+          expect(init?.method).toBe('DELETE')
+          return new Response(null, { status: 204 })
+        })
+
+        const pending = useAuthStore.getState().restoreSession()
+        await vi.advanceTimersByTimeAsync(0)
+        expect(vi.mocked(fetch).mock.calls.filter(([input]) =>
+          String(input).endsWith('/auth/refresh'))).toHaveLength(1)
+
+        if (transition === 'logout') {
+          await useAuthStore.getState().logout()
+        } else {
+          bumpAccountEpoch()
+          useAuthStore.setState({
+            user: replacementUser,
+            isAuthenticated: true,
+            subscriptionStatus: 'cancelled',
+            isLoading: false,
+            error: 'replacement owns this state',
+          })
+        }
+        const afterTransition = useAuthStore.getState()
+        const callsAfterTransition = vi.mocked(fetch).mock.calls.length
+        const clearsAfterTransition = vi.mocked(secureClear).mock.calls.length
+
+        await vi.advanceTimersByTimeAsync(2_000)
+        await pending
+        expect(fetch).toHaveBeenCalledTimes(callsAfterTransition)
+        expect(secureClear).toHaveBeenCalledTimes(clearsAfterTransition)
+        expect(useAuthStore.getState().user).toBe(afterTransition.user)
+        expect(useAuthStore.getState().isAuthenticated)
+          .toBe(afterTransition.isAuthenticated)
+        expect(useAuthStore.getState().subscriptionStatus)
+          .toBe(afterTransition.subscriptionStatus)
+        expect(useAuthStore.getState().error).toBe(afterTransition.error)
+      },
+    )
+
+    it.each([200, 401] as const)(
+      'ignores a late retry response with status %s after replacement',
+      async status => {
+        startWarm()
+        let release!: (response: Response) => void
+        const delayed = new Promise<Response>(resolve => { release = resolve })
+        vi.mocked(fetch)
+          .mockResolvedValueOnce(transient())
+          .mockReturnValueOnce(delayed)
+
+        const pending = useAuthStore.getState().restoreSession()
+        await vi.advanceTimersByTimeAsync(1_000)
+        expect(fetch).toHaveBeenCalledTimes(2)
+
+        bumpAccountEpoch()
+        useAuthStore.setState({
+          user: replacementUser,
+          isAuthenticated: true,
+          subscriptionStatus: 'active',
+          isLoading: false,
+          error: 'replacement state',
+        })
+        release(status === 200
+          ? success()
+          : new Response('{}', { status }))
+        await pending
+
+        expect(useAuthStore.getState()).toMatchObject({
+          user: replacementUser,
+          isAuthenticated: true,
+          subscriptionStatus: 'active',
+          isLoading: false,
+          error: 'replacement state',
+        })
+        expect(fetch).toHaveBeenCalledTimes(2)
+        expectNoAccountCleanup()
+      },
+    )
+
+    it('rechecks account ownership after parsing the transient problem', async () => {
+      startWarm()
+      let release!: (value: unknown) => void
+      const body = new Promise<unknown>(resolve => { release = resolve })
+      const response = transient()
+      response.clone = () => ({ json: () => body }) as Response
+      vi.mocked(fetch).mockResolvedValueOnce(response)
+
+      const pending = useAuthStore.getState().restoreSession()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetch).toHaveBeenCalledTimes(1)
+
+      bumpAccountEpoch()
+      useAuthStore.setState({
+        user: replacementUser,
+        isAuthenticated: true,
+        isLoading: false,
+        error: 'new boundary',
+      })
+      release({ type: problemType, status: 503 })
+      await pending
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(useAuthStore.getState().user).toBe(replacementUser)
+      expect(useAuthStore.getState().error).toBe('new boundary')
+      expectNoAccountCleanup()
+    })
+
+    it('preserves cold-tab material when the retry transport fails', async () => {
+      secureStore.etebase_session = 'retained-cold-session'
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(transient())
+        .mockRejectedValueOnce(new TypeError('retry transport failed'))
+
+      const pending = useAuthStore.getState().restoreSession()
+      await vi.advanceTimersByTimeAsync(1_000)
+      await pending
+
+      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(useAuthStore.getState()).toMatchObject({
+        user: null,
+        isAuthenticated: false,
+        isLoading: false,
+        subscriptionStatus: null,
+      })
+      expect(useAuthStore.getState().error).toMatch(/retry/i)
+      expect(secureStore.etebase_session).toBe('retained-cold-session')
+      expectNoAccountCleanup()
+    })
+
+    it.each(['warm', 'marked-cold', 'unmarked-cold'] as const)(
+      'preserves state and material after interrupted retry body: %s',
+      async mode => {
+        secureStore.etebase_session = 'retained-encrypted-session'
+        secureStore.account_key = 'retained-account-material'
+        sessionStorage.setItem('retained-checkpoint', 'retain-this')
+
+        if (mode !== 'unmarked-cold') {
+          localStorage.setItem(
+            'silentsuite-hosted-validation-remembered',
+            JSON.stringify({
+              userId: originalUser.id,
+              rememberDevice: true,
+              validatedAt: Date.now(),
+            }),
+          )
+        }
+        if (mode === 'warm') startWarm()
+
+        const before = useAuthStore.getState()
+        const beforeSecure = { ...secureStore }
+        const beforeLocal = storageBytes(localStorage)
+        const beforeSession = storageBytes(sessionStorage)
+        const beforeEpoch = getAccountEpoch()
+
+        let rejectBody!: (error: unknown) => void
+        const interruptedBody = new Promise<never>((_resolve, reject) => {
+          rejectBody = reject
+        })
+
+        // Headers succeed. Body consumption remains pending until interrupted.
+        const retryResponse = success()
+        const readBody = vi.fn(() => interruptedBody)
+        retryResponse.json = readBody
+
+        vi.mocked(fetch)
+          .mockResolvedValueOnce(transient())
+          .mockResolvedValueOnce(retryResponse)
+
+        const pending = useAuthStore.getState().restoreSession()
+        await vi.advanceTimersByTimeAsync(1_000)
+
+        expect(fetch).toHaveBeenCalledTimes(2)
+        expect(readBody).toHaveBeenCalledTimes(1)
+        expect(useAuthStore.getState().isLoading).toBe(true)
+        expect(useAuthStore.getState().user).toBe(before.user)
+        expect(useAuthStore.getState().isAuthenticated)
+          .toBe(before.isAuthenticated)
+
+        rejectBody(new TypeError('response body transport interrupted'))
+        await pending
+
+        const after = useAuthStore.getState()
+        expect(after.user).toBe(before.user)
+        expect(after.isAuthenticated).toBe(before.isAuthenticated)
+        expect(after.subscriptionStatus).toBe(before.subscriptionStatus)
+        expect(after.pendingSignup).toBe(before.pendingSignup)
+        expect(after.isLoading).toBe(false)
+        expect(after.error).toMatch(/retry/i)
+        expect(getAccountEpoch()).toBe(beforeEpoch)
+
+        expect(secureStore).toEqual(beforeSecure)
+        expect(storageBytes(localStorage)).toBe(beforeLocal)
+        expect(storageBytes(sessionStorage)).toBe(beforeSession)
+        expectNoAccountCleanup()
+
+        if (mode !== 'warm') {
+          expect(after.user).toBeNull()
+          expect(after.isAuthenticated).toBe(false)
+          expect(after.subscriptionStatus).toBeNull()
+        }
+
+        await vi.advanceTimersByTimeAsync(5_000)
+        expect(fetch).toHaveBeenCalledTimes(2)
+      },
+    )
+
+    it('does not retry an unrelated 503 problem', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        transient('1', 'https://api.silentsuite.io/errors/unrelated'),
+      )
+      const pending = useAuthStore.getState().restoreSession()
+      await vi.advanceTimersByTimeAsync(0)
+      await pending
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(useAuthStore.getState().isAuthenticated).toBe(false)
+      expect(useAuthStore.getState().isLoading).toBe(false)
+      expect(useAuthStore.getState().error).toBeNull()
+    })
+
+    it('keeps refreshSession cookie-neutral 503 handling without adding retries', async () => {
+      startWarm()
+      vi.mocked(fetch).mockResolvedValueOnce(transient())
+
+      expect(await useAuthStore.getState().refreshSession()).toBe(false)
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(useAuthStore.getState().user).toBe(originalUser)
+      expect(useAuthStore.getState().isAuthenticated).toBe(true)
+      expectNoAccountCleanup()
     })
   })
 

@@ -426,6 +426,31 @@ const AUTH_RATE_LIMIT_MESSAGE =
 const AUTH_TEMPORARY_UNAVAILABLE_MESSAGE =
   'Sign-in is temporarily unavailable. Please wait a minute and try again. Your encrypted data is safe.'
 
+const AUTH_REFRESH_RETRY_MESSAGE =
+  'Your session could not be confirmed. Please retry restoring your session. Your encrypted data is safe.'
+
+function refreshRetryDelayMs(value: string | null): number {
+  const fallback = 1_000
+  if (!value) return fallback
+  const raw = value.trim()
+  if (!raw) return fallback
+
+  let delay: number
+  if (/^\d+$/.test(raw)) {
+    delay = Number(raw) * 1_000
+  } else {
+    // Reject signed/fractional numeric values rather than Date.parse's
+    // permissive interpretation of them as calendar dates.
+    if (/^[+-]?\d/.test(raw)) return fallback
+    const deadline = Date.parse(raw)
+    if (!Number.isFinite(deadline)) return fallback
+    delay = deadline - Date.now()
+  }
+
+  if (!Number.isFinite(delay)) return fallback
+  return Math.min(2_000, Math.max(250, delay))
+}
+
 const PAID_SIGNUP_RECOVERY_KEY = 'silentsuite-paid-signup-recovery'
 const RECOVERY_SECRET_BYTES = 32
 
@@ -1768,13 +1793,65 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       return
     }
 
-    set({ isLoading: true })
+    set({ isLoading: true, error: null })
+    let confirmedRefreshRetrySequence = false
     try {
-      const res = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      let res = await fetch(`${BILLING_API_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      })
+
+      // Three total requests; only this exact transient problem retries.
+      for (let attempt = 1; ; attempt += 1) {
+        if (!current()) return
+        if (res.status !== 503) break
+
+        const problem: unknown = await res.clone().json().catch(error => {
+          if (confirmedRefreshRetrySequence) throw error
+          return null
+        })
+        if (!current()) return
+        if (!isRecord(problem)
+          || problem.type !== 'https://api.silentsuite.io/errors/refresh-unconfirmed'
+          || problem.status !== 503) {
+          break
+        }
+
+        // Enter only after parsing confirmed this problem and ownership
+        // remained current. Retain this through subsequent response reads.
+        confirmedRefreshRetrySequence = true
+
+        if (attempt === 3) {
+          set({ isLoading: false, error: AUTH_REFRESH_RETRY_MESSAGE })
+          return
+        }
+
+        const delay = refreshRetryDelayMs(res.headers.get('retry-after'))
+        await new Promise<void>(resolve => setTimeout(resolve, delay))
+        if (!current()) return
+
+        try {
+          // Do not capture or replay a Cookie header. The browser attaches
+          // whichever cookies it currently owns when each request starts.
+          res = await fetch(`${BILLING_API_URL}/auth/refresh`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+          })
+        } catch {
+          if (!current()) return
+          set({ isLoading: false, error: AUTH_REFRESH_RETRY_MESSAGE })
+          return
+        }
+      }
+
       if (!current()) return
+      if (!res.ok) confirmedRefreshRetrySequence = false
       if (res.ok) {
         const data = await res.json()
         if (!current()) return
+        confirmedRefreshRetrySequence = false
         const rememberDevice = data.rememberDevice === true
         if (!rememberDevice) {
           const marker = readHostedValidationMarker()
@@ -1795,7 +1872,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (get().user?.id !== data.id && (!(await resetInMemoryAccountState('login', current, owner)) || !current())) return
         syncAdminCookie(isAdmin, rememberDevice)
         markHostedValidation(data.id, rememberDevice)
-        set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, isLoading: false })
+        set({
+          user: {
+            id: data.id,
+            email: data.email ?? '',
+            planId: data.planId ?? 'free',
+            isAdmin,
+            emailVerified: data.emailVerified ?? false,
+            rememberDevice,
+            onboardedAt: data.onboardedAt ?? null,
+          },
+          isAuthenticated: true,
+          isLoading: false,
+          error: null,
+        })
       } else if (res.status === 401 || res.status === 403) {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
@@ -1821,6 +1911,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ user: null, isAuthenticated: false, isLoading: false })
       }
     } catch (err) {
+      if (confirmedRefreshRetrySequence) {
+        if (!current()) return
+        set({ isLoading: false, error: AUTH_REFRESH_RETRY_MESSAGE })
+        return
+      }
       // Network error — billing API is unreachable.
       logger.warn('[auth-store] Session restore failed (network):', err)
       // If a valid Etebase session exists, enter degraded mode instead of kicking the user out.

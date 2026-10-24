@@ -100,6 +100,9 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
   const [switching, setSwitching] = useState(false)
   const [released, setReleased] = useState(false)
   const backOpener = useRef<HTMLElement | null>(null)
+  // A refused (429) Back cancellation's deadline outlives the dialog, bound to
+  // the recovery identity whose request was refused; memory only.
+  const [cancelCooldown, setCancelCooldown] = useState<{ identity: string; until: number } | null>(null)
   const releaseCallback = useRef(onReleased)
   releaseCallback.current = onReleased
   useEffect(() => {
@@ -122,9 +125,14 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
   const redirectRestorationAttempted = useRef(false)
   const activePendingSignup = (pendingSignup ?? restoredContinuation) as SignupPaymentContinuation | null
 
-  const recoveryIdentity = JSON.stringify(readPaymentSessionRecoveryContext(activePendingSignup))
+  const recoveryContext = readPaymentSessionRecoveryContext(activePendingSignup)
+  const recoveryIdentity = JSON.stringify(recoveryContext)
   const identityRef = useRef(recoveryIdentity)
   identityRef.current = recoveryIdentity
+  // The capability that is current when a cancellation reply arrives, which
+  // may be later than the render that sent the request.
+  const currentRequestKey = useRef(recoveryContext?.requestKey ?? null)
+  currentRequestKey.current = recoveryContext?.requestKey ?? null
   const payable = ownedPayable?.identity === recoveryIdentity ? ownedPayable.value : undefined
   const setPayable = useCallback((value: AnonymousPaymentSessionRecovery['continuation']) => {
     setOwnedPayable(value ? { identity: recoveryIdentity, value } : undefined)
@@ -147,6 +155,7 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
     setOwnedPayable(undefined)
     setOwnedProvider(null)
     setSwitching(false)
+    setCancelCooldown(null)
     setState('pending')
   }, [recoveryIdentity])
   useEffect(() => {
@@ -463,7 +472,13 @@ export default function PendingPaymentRecovery({ onReleased }: { onReleased?: ()
   return (
     <>
     {switching && backProvider && <PaymentBackModal provider={backProvider} restoreFocusTo={backOpener.current} onStay={() => setSwitching(false)}
-      onReleased={() => { setSwitching(false); setPayable(undefined); setReleased(true) }} />}
+      cooldownUntil={cancelCooldown?.identity === recoveryIdentity ? cancelCooldown.until : undefined}
+      onRateLimited={(until, requestKey) => {
+        // A late reply for a capability that is no longer current neither
+        // applies to nor replaces the current capability's deadline.
+        if (requestKey === currentRequestKey.current) setCancelCooldown({ identity: identityRef.current, until })
+      }}
+      onReleased={() => { setCancelCooldown(null); setSwitching(false); setPayable(undefined); setReleased(true) }} />}
     <div aria-hidden={switching ? true : undefined} inert={switching} className="mx-auto flex min-h-[60vh] max-w-md flex-col justify-center space-y-6 text-center">
       <SignupRecoveryWarning />
       <CheckoutReturnAnalytics outcome="pending" paymentMethod="btcpay" />

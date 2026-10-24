@@ -93,3 +93,74 @@ it('routes a same-attempt Bitcoin retry refused as in progress to the existing r
   expect(starts).toHaveLength(2)
   expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/activate'))).toHaveLength(1)
 })
+
+// C1 review CR-1: with the opt-in checkbox removed, a restored historical
+// `true` stays on its own lineage. After an exact release whose email proof has
+// expired, "Verify email again" starts a fresh signup, and a fresh different
+// email must be an explicit `false`, never the invisible retained preference.
+it('keeps historical consent on its own lineage but submits a fresh email as an explicit false after an expired-proof release', async () => {
+  const starts: Record<string, unknown>[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined
+    // Billing's proof expiry is a whole-second UTC timestamp (`isUtcTimestamp`
+    // rejects fractional seconds), so the near-future expiry drops milliseconds.
+    if (url.endsWith('/consume')) return new Response(JSON.stringify({ contractVersion: 2, emailOwnershipToken, expiresAt: new Date(Date.now() + 5 * 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z') }))
+    if (url.endsWith('/activate')) return new Response(JSON.stringify({ contractVersion: 2, checkoutIntentToken, expiresAt: '2099-01-01T00:00:00Z', disclosure: prepaidDisclosure }))
+    if (url.endsWith('/auth/signup/payment-session/v2')) {
+      starts.push(body)
+      if (starts.length === 1) throw new TypeError('Failed to fetch')
+      return new Response(JSON.stringify(flowInProgress), { status: 409, headers: { 'Content-Type': 'application/problem+json' } })
+    }
+    if (url.endsWith('/auth/signup/payment-session/v2/cancel')) {
+      return new Response(JSON.stringify({ contractVersion: 2, state: 'released', flow: { provider: 'btcpay', status: 'reconciliation_required' }, release: { requestKey: body.requestKey, provider: 'btcpay', providerObjectId: 'invoice_exact' } }))
+    }
+    if (/\/auth\/signup\/payment-session\/v2\/(current|reconcile)$/.test(url)) {
+      return new Response(JSON.stringify({ contractVersion: 2, state: 'open', flow: { provider: 'btcpay', status: 'provider_pending' } }))
+    }
+    return new Response(JSON.stringify(offer))
+  }))
+  localStorage.setItem('silentsuite-signup-email-proof', JSON.stringify({
+    [requestId]: { email, requestId, wantsProductUpdates: true, rememberDevice: false, returnTo: null, expiresAt: Date.now() + 60_000 },
+  }))
+  window.history.replaceState({}, '', `/signup?token=link-token&request_id=${requestId}`)
+  render(<SignupPage />)
+  await screen.findByRole('heading', { name: 'Choose your password' })
+  fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'ValidPass1' } })
+  const next = screen.getByRole('button', { name: /continue to trial options/i })
+  await waitFor(() => expect(next).toBeEnabled())
+  fireEvent.click(next)
+  fireEvent.click(await screen.findByRole('button', { name: /30-day free trial/i }))
+  fireEvent.click(screen.getByRole('button', { name: /^continue$/i }))
+  fireEvent.click(await screen.findByRole('button', { name: /^pay .* with bitcoin, lightning and monero for/i }))
+  fireEvent.click(await screen.findByRole('button', { name: /^retry cryptocurrency payment$/i }))
+  await screen.findByText(/Use its payment recovery for the current state/)
+  // Historical guard: the restored lineage keeps its stored consent on the wire.
+  expect(starts.map(start => start.wantsProductUpdates)).toEqual([true, true])
+  expect(useAuthStore.getState().pendingSignup?.wantsProductUpdates).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: "Check this payment's status" }))
+  const back = await screen.findByRole('button', { name: 'Back' })
+  await waitFor(() => expect(back).toBeEnabled())
+
+  // The email proof (five minutes) has expired by the time the payment is released.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  try {
+    vi.setSystemTime(Date.now() + 10 * 60_000)
+    fireEvent.click(back)
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel and go back' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Verify email again' }))
+    const emailField = await screen.findByLabelText(/^email$/i)
+    fireEvent.change(emailField, { target: { value: 'fresh@example.test' } })
+    const freshContinue = screen.getByRole('button', { name: /^continue$/i })
+    await waitFor(() => expect(freshContinue).toBeEnabled())
+    fireEvent.click(freshContinue)
+    await waitFor(() => expect(useAuthStore.getState().pendingSignup?.email).toBe('fresh@example.test'))
+    expect(useAuthStore.getState().pendingSignup?.wantsProductUpdates).toBe(false)
+    const contexts = Object.values(JSON.parse(localStorage.getItem('silentsuite-signup-email-proof') ?? '{}') as Record<string, Record<string, unknown>>)
+    const fresh = contexts.filter(context => context.email === 'fresh@example.test')
+    expect(fresh).toHaveLength(1)
+    expect(fresh[0]!.wantsProductUpdates).toBe(false)
+  } finally {
+    vi.useRealTimers()
+  }
+})

@@ -18,11 +18,21 @@ export type PaymentFlowCancellationFailure =
   | 'invalid-cancellation-request'
   | 'payment-reconciliation-required'
   | 'provider-cancellation-failed'
+  | 'rate-limited'
   | 'unavailable'
 
 export type PaymentFlowCancellationResult =
   | { cancelled: true; flowKind: string | null }
-  | { cancelled: false; failure: PaymentFlowCancellationFailure; message: string }
+  | { cancelled: false; failure: Exclude<PaymentFlowCancellationFailure, 'rate-limited'>; message: string }
+  | { cancelled: false; failure: 'rate-limited'; message: string; retryAfterMs: number }
+
+/**
+ * Fixed copy for a refused (429) cancellation while its wait is running. The
+ * payment stays active; neither limiter body is ever rendered.
+ */
+export function rateLimitedCancellationCopy(minutes: number): string {
+  return `Too many attempts. Wait ${minutes} minutes, then retry cancellation. This payment is still active; do not start another payment.`
+}
 
 /**
  * The exact neutral Bitcoin cancellation warning. It states the irreversible
@@ -38,11 +48,12 @@ export const PAYMENT_FLOW_CANCELLATION_MESSAGES: Record<PaymentFlowCancellationF
   'invalid-cancellation-request': 'This payment could not be cancelled. Reload the page and try again.',
   'payment-reconciliation-required': 'This payment could not be cancelled. Contact support if cancellation remains blocked.',
   'provider-cancellation-failed': 'The payment provider would not cancel this payment. It may already have been paid. Wait for the provider update or contact support.',
+  'rate-limited': 'Too many attempts. Wait, then retry cancellation. This payment is still active; do not start another payment.',
   unavailable: 'Could not cancel the pending payment flow.',
 }
 
 /** Known (status, problem slug) pairs. Anything else uses the single generic fallback. */
-const KNOWN_FAILURES: ReadonlyArray<readonly [number, string, PaymentFlowCancellationFailure]> = [
+const KNOWN_FAILURES: ReadonlyArray<readonly [number, string, Exclude<PaymentFlowCancellationFailure, 'rate-limited'>]> = [
   [400, 'bitcoin-cancellation-acknowledgement-required', 'bitcoin-acknowledgement-required'],
   [400, 'invalid-cancellation-request', 'invalid-cancellation-request'],
   [409, 'payment-reconciliation-required', 'payment-reconciliation-required'],
@@ -54,8 +65,20 @@ const KNOWN_FAILURES: ReadonlyArray<readonly [number, string, PaymentFlowCancell
   [502, 'provider-cancellation-failed', 'provider-cancellation-failed'],
 ]
 
-function failed(failure: PaymentFlowCancellationFailure): PaymentFlowCancellationResult {
+function failed(failure: Exclude<PaymentFlowCancellationFailure, 'rate-limited'>): PaymentFlowCancellationResult {
   return { cancelled: false, failure, message: PAYMENT_FLOW_CANCELLATION_MESSAGES[failure] }
+}
+
+/**
+ * The wait for a 429, derived exactly as billing-v2's `jsonOrThrow` derives
+ * it (that module is not shared here): integer seconds or an HTTP date when
+ * readable, otherwise a 15-minute fallback.
+ */
+function retryAfterMs(response: Response): number {
+  const retryHeader = response.headers?.get('retry-after') ?? null
+  const retryDelay = retryHeader === null ? NaN : /^\d+$/.test(retryHeader.trim())
+    ? Number(retryHeader) * 1000 : Date.parse(retryHeader) - Date.now()
+  return Number.isFinite(retryDelay) ? Math.max(0, retryDelay) : 15 * 60_000
 }
 
 /**
@@ -106,7 +129,6 @@ export async function cancelPaymentFlow(params: {
   const { fetcher } = params
 
   let response: Response
-  let body: unknown
   try {
     response = await fetcher(`${params.billingApiUrl.replace(/\/$/, '')}/subscription/payment-flows/cancel`, {
       method: 'POST',
@@ -114,6 +136,16 @@ export async function cancelPaymentFlow(params: {
       headers: { 'content-type': 'application/json' },
       body: cancellationBody(params.provider, params.confirmNoBitcoinSent, params.expectedAuthorityId),
     })
+  } catch {
+    return failed('unavailable')
+  }
+  // Classified on HTTP status alone: the fine limiter's Problem body, the
+  // coarse limiter's Error body and an unparseable body are all the same refusal.
+  if (response.status === 429) {
+    return { cancelled: false, failure: 'rate-limited', message: PAYMENT_FLOW_CANCELLATION_MESSAGES['rate-limited'], retryAfterMs: retryAfterMs(response) }
+  }
+  let body: unknown
+  try {
     body = await response.json()
   } catch {
     // Transport loss and unparseable replies are indistinguishable from the
@@ -127,6 +159,11 @@ export async function cancelPaymentFlow(params: {
     return failed(known ? known[2] : 'unavailable')
   }
 
-  if (!isObject(body) || body.cancelled !== true) return failed('unavailable')
+  if (!isObject(body)) return failed('unavailable')
+  // Superseded draft #854: nothing is pending any more (an earlier attempt or
+  // a provider webhook already retired it). The caller re-proves the current
+  // flow and offer before any new payment can start, so this is resolved.
+  if (response.status === 200 && body.cancelled === false && body.reason === 'no_active_flow') return { cancelled: true, flowKind: null }
+  if (body.cancelled !== true) return failed('unavailable')
   return { cancelled: true, flowKind: typeof body.flowKind === 'string' ? body.flowKind : null }
 }
