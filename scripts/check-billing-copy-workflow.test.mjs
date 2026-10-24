@@ -28,6 +28,14 @@ test('the standalone Docs production workflow enforces the root guard', () => {
   assert.match(workflow, /pnpm run check:billing-copy/, 'deploy-docs-standalone.yml must run the root copy guard')
 })
 
+test('the standalone Web production workflow enforces the root guard before building the image', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/deploy-web-standalone.yml', import.meta.url), 'utf8')
+  const guard = workflow.search(/run: "?pnpm run check:billing-copy"?\n/)
+  const build = workflow.indexOf('uses: "docker/build-push-action@')
+  assert.ok(guard >= 0, 'deploy-web-standalone.yml must run the root copy guard')
+  assert.ok(build > guard, 'the copy guard must run before the production image build')
+})
+
 test('public CI workflows trigger only from main while protected release and manual paths remain available', () => {
   const root = new URL('../', import.meta.url)
   const workflows = new Map(

@@ -133,6 +133,10 @@ jobs:
       - name: Test the dormant Zapstore publication lane
         run: pnpm run check:zapstore-automation
 
+      # Run directly: these tests read workflow and runbook files outside the Turbo cache inputs.
+      - name: Test production deployment workflow contracts
+        run: pnpm --filter @silentsuite/web test app/lib/__tests__/production-deploy-workflows.test.ts
+
       - name: Run tests
         run: pnpm run test
 

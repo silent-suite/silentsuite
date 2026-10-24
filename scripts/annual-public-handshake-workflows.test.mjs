@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash, createHmac } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -215,6 +215,17 @@ test('standalone Docs deploy never contains a public-served key, artifact path, 
   const text = source('.github/workflows/deploy-docs-standalone.yml')
   assert.doesNotMatch(text, /ANNUAL_PUBLIC_SERVED_HMAC_KEY|annual-only-public-served-attestation/)
   assert.doesNotMatch(text, /ANNUAL_|annual-only|verify-annual-pre-public-admission|create-github-app-token|private_admission/)
+})
+test('standalone Web deploy carries no annual admission material and no workflow can call it', () => {
+  const name = 'deploy-web-standalone.yml'
+  const text = source(`.github/workflows/${name}`)
+  assert.doesNotMatch(text, /ANNUAL_PUBLIC_SERVED_HMAC_KEY|annual-only-public-served-attestation/)
+  assert.doesNotMatch(text, /ANNUAL_|annual-only|verify-annual-pre-public-admission|create-github-app-token|private_admission|workflow_call|secrets:\s*inherit/)
+  assert.match(text, /vars\.WEB_STANDALONE_DEPLOY_APPROVED_SHA/)
+  for (const other of readdirSync(resolve('.github/workflows')).filter(file => /\.ya?ml$/.test(file) && file !== name)) {
+    assert.doesNotMatch(source(`.github/workflows/${other}`), /deploy-web-standalone\.yml|WEB_STANDALONE_DEPLOY_APPROVED_SHA/, `${other} must not invoke or arm standalone Web`)
+  }
+  assert.match(source('.github/workflows/annual-only-public-cutover.yml'), /uses: \.\/\.github\/workflows\/deploy-web\.yml/)
 })
 test('Stage B signs before upload, uses the exact pinned official artifact action, and exposes finalized outputs', () => {
   const workflow = source('.github/workflows/annual-only-public-cutover.yml')

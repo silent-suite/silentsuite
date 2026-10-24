@@ -1,0 +1,484 @@
+name: "Deploy Web standalone (production, no annual Stage A)"
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Exact reviewed live main commit to build and deploy"
+        required: true
+        type: "string"
+concurrency:
+  group: "deploy-web-production"
+  cancel-in-progress: false
+env:
+  IMAGE_NAME: "ghcr.io/silent-suite/silentsuite-web"
+jobs:
+  admission:
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      EXPECTED_SHA: "${{ inputs.expected_sha }}"
+      WEB_STANDALONE_DEPLOY_APPROVED_SHA: "${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}"
+    steps:
+      - name: "Refuse an unarmed or mismatched standalone Web dispatch"
+        shell: "bash"
+        run: |
+          set -uo pipefail
+          refused=0
+          fail() { echo "::error::$1"; refused=1; }
+          if [ "${GITHUB_EVENT_NAME:-}" != workflow_dispatch ]; then fail "standalone Web requires manual dispatch"; fi
+          if [ "${GITHUB_REPOSITORY:-}" != silent-suite/silentsuite ] ||
+             [ "${GITHUB_WORKFLOW_REF:-}" != silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main ]; then
+            fail "standalone Web requires its exact main workflow"
+          fi
+          if [ "${GITHUB_REF:-}" != refs/heads/main ]; then fail "standalone Web requires refs/heads/main"; fi
+          EXPECTED_SHA="${EXPECTED_SHA:-}"
+          if [ "${#EXPECTED_SHA}" -ne 40 ] || ! printf '%s' "$EXPECTED_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            fail "expected_sha must be exactly 40 lowercase hexadecimal characters"
+          fi
+          if [ "${GITHUB_SHA:-}" != "$EXPECTED_SHA" ] ||
+             [ "${GITHUB_WORKFLOW_SHA:-}" != "$EXPECTED_SHA" ]; then fail "dispatch and workflow source must equal expected_sha"; fi
+          if [ -z "${WEB_STANDALONE_DEPLOY_APPROVED_SHA:-}" ]; then
+            fail "WEB_STANDALONE_DEPLOY_APPROVED_SHA is unarmed"
+          elif [ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            fail "WEB_STANDALONE_DEPLOY_APPROVED_SHA differs from expected_sha"
+          fi
+          if [ "$refused" -ne 0 ]; then exit 1; fi
+          echo "Standalone Web dispatch admitted; protected jobs must independently verify live main."
+  build-and-push:
+    if: "needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha"
+    needs: "admission"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 35
+    environment: "web-production"
+    permissions:
+      contents: "read"
+      packages: "write"
+    outputs:
+      image-digest: "${{ steps.publish.outputs.image-digest }}"
+      image-config-id: "${{ steps.publish.outputs.image-config-id }}"
+      image-revision: "${{ steps.publish.outputs.image-revision }}"
+    env:
+      WEB_STANDALONE_DEPLOY_APPROVED_SHA: "${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}"
+      DOCKER_BUILD_SUMMARY: "false"
+      DOCKER_BUILD_RECORD_UPLOAD: "false"
+      DOCKER_BUILD_CHECKS_ANNOTATIONS: "false"
+    steps:
+      - name: "Checkout exact standalone Web commit for build"
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+        with:
+          ref: "${{ inputs.expected_sha }}"
+          fetch-depth: 0
+          persist-credentials: false
+      - name: "Assert this is the live main commit"
+        shell: "bash"
+        env:
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${EXPECTED_SHA:-}"
+          WEB_STANDALONE_DEPLOY_APPROVED_SHA="${WEB_STANDALONE_DEPLOY_APPROVED_SHA:-}"
+          [[ "${#EXPECTED_SHA}" -eq 40 && "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" = "$EXPECTED_SHA" ]]
+          [[ "$GITHUB_EVENT_NAME" = workflow_dispatch ]]
+          [[ "$GITHUB_REPOSITORY" = silent-suite/silentsuite ]]
+          [[ "$GITHUB_WORKFLOW_REF" = silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main ]]
+          [[ "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA" ]]
+          [[ -n "${GH_TOKEN:-}" ]]
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing standalone Web operation: exact approved live main identity is required" >&2
+            exit 1
+          fi
+      - name: "Setup pnpm"
+        uses: "pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86"
+      - name: "Setup Node.js"
+        uses: "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020"
+        with:
+          node-version: "22"
+          cache: "pnpm"
+      - name: "Install frozen dependencies"
+        shell: "bash"
+        run: "pnpm install --frozen-lockfile"
+      - name: "Enforce billing copy"
+        shell: "bash"
+        run: "pnpm run check:billing-copy"
+      - name: "Verify public analytics and privacy boundary"
+        shell: "bash"
+        run: "pnpm run check:public-analytics"
+      - name: "Audit dependencies"
+        shell: "bash"
+        run: "pnpm run audit:security"
+      - name: "Test source and deployment boundaries"
+        shell: "bash"
+        run: |-
+          pnpm run test
+          pnpm --filter @silentsuite/web test app/lib/__tests__/production-deploy-workflows.test.ts
+          node --test scripts/verify-web-image.test.mjs
+      - name: "Validate production arguments before build"
+        shell: "bash"
+        env:
+          WEB_BUILD_ARGS: |-
+            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
+            NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true
+            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
+            NEXT_PUBLIC_SELF_HOSTED=false
+            NEXT_PUBLIC_OWNER_REGISTRATION=false
+            VCS_REF=${{ inputs.expected_sha }}
+          NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY: "${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}"
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          import { verifyStandaloneBuildArgs } from './scripts/verify-web-image.mjs'
+          try {
+            const publishableKey = process.env.NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY
+            if (typeof publishableKey !== 'string' || !/^pk_live_[A-Za-z0-9_]+$/.test(publishableKey)) throw new Error('invalid production key kind')
+            verifyStandaloneBuildArgs(readFileSync('Dockerfile.web', 'utf8'), process.env.WEB_BUILD_ARGS, { testedSha: process.env.EXPECTED_SHA, publishableKey })
+            console.log('Canonical production arguments and live publishable-key binding verified')
+          } catch {
+            console.error('Production build arguments or key kind invalid (values withheld)')
+            process.exitCode = 1
+          }
+          NODE
+      - name: "Setup Docker Buildx"
+        uses: "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c"
+      - name: "Build Web image once"
+        id: "image"
+        uses: "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a"
+        env:
+          WEB_BUILD_ARGS: |-
+            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
+            NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true
+            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
+            NEXT_PUBLIC_SELF_HOSTED=false
+            NEXT_PUBLIC_OWNER_REGISTRATION=false
+            VCS_REF=${{ inputs.expected_sha }}
+        with:
+          context: "."
+          file: "Dockerfile.web"
+          platforms: "linux/amd64"
+          push: false
+          load: true
+          tags: "${{ env.IMAGE_NAME }}:standalone-${{ inputs.expected_sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+          provenance: false
+          sbom: false
+          build-args: "${{ env.WEB_BUILD_ARGS }}"
+      - name: "Verify exact production image before publication"
+        shell: "bash"
+        env:
+          WEB_BUILD_ARGS: |-
+            NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io
+            NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
+            NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true
+            NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true
+            NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
+            NEXT_PUBLIC_SELF_HOSTED=false
+            NEXT_PUBLIC_OWNER_REGISTRATION=false
+            VCS_REF=${{ inputs.expected_sha }}
+          NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY: "${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}"
+          TESTED_SHA: "${{ inputs.expected_sha }}"
+          PR_HEAD_SHA: ""
+          EVENT_NAME: "${{ github.event_name }}"
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+          WEB_IMAGE_ID: "${{ steps.image.outputs.imageid }}"
+        run: "node scripts/verify-web-image.mjs"
+      - name: "Login to GHCR"
+        uses: "docker/login-action@dbcb813823bdd20940b903addbd779551569679f"
+        with:
+          registry: "ghcr.io"
+          username: "${{ github.actor }}"
+          password: "${{ secrets.GITHUB_TOKEN }}"
+      - name: "Re-assert live main immediately before publication"
+        shell: "bash"
+        env:
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${EXPECTED_SHA:-}"
+          WEB_STANDALONE_DEPLOY_APPROVED_SHA="${WEB_STANDALONE_DEPLOY_APPROVED_SHA:-}"
+          [[ "${#EXPECTED_SHA}" -eq 40 && "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" = "$EXPECTED_SHA" ]]
+          [[ "$GITHUB_EVENT_NAME" = workflow_dispatch ]]
+          [[ "$GITHUB_REPOSITORY" = silent-suite/silentsuite ]]
+          [[ "$GITHUB_WORKFLOW_REF" = silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main ]]
+          [[ "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA" ]]
+          [[ -n "${GH_TOKEN:-}" ]]
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing standalone Web operation: exact approved live main identity is required" >&2
+            exit 1
+          fi
+      - name: "Publish verified image and bind registry identity"
+        id: "publish"
+        shell: "bash"
+        env:
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+          VERIFIED_IMAGE_ID: "${{ steps.image.outputs.imageid }}"
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict'
+          import { execFileSync } from 'node:child_process'
+          import { createHash } from 'node:crypto'
+          import { appendFileSync } from 'node:fs'
+          try {
+            const sha = process.env.EXPECTED_SHA, imageId = process.env.VERIFIED_IMAGE_ID
+            assert.ok(/^[a-f0-9]{40}$/.test(sha) && sha.length === 40)
+            assert.ok(/^sha256:[a-f0-9]{64}$/.test(imageId) && imageId.length === 71)
+            const imageName = 'ghcr.io/silent-suite/silentsuite-web'
+            const imageRef = imageName + ':standalone-' + sha + '-' + process.env.GITHUB_RUN_ID + '-' + process.env.GITHUB_RUN_ATTEMPT
+            const docker = args => execFileSync('docker', args, { timeout: 180000, maxBuffer: 16 * 1024 * 1024 })
+            const inspect = ref => JSON.parse(docker(['image', 'inspect', ref]).toString('utf8'))[0]
+            const local = inspect(imageId)
+            assert.equal(local.Id, imageId)
+            assert.equal(local.Config.Labels['org.opencontainers.image.revision'], sha)
+            assert.equal(inspect(imageRef).Id, imageId)
+            const pushed = docker(['push', imageRef]).toString('utf8')
+            const digests = [...pushed.matchAll(/\bdigest: (sha256:[a-f0-9]{64})\b/g)].map(match => match[1])
+            assert.equal(digests.length, 1, 'publication must return one final manifest digest')
+            const digest = digests[0], exact = imageName + '@' + digest
+            const raw = docker(['buildx', 'imagetools', 'inspect', '--raw', exact])
+            // Some CLI renderers append one framing newline; admit only bytes hashing to the digest.
+            const candidates = raw.at(-1) === 10 ? [raw, raw.subarray(0, -1)] : [raw]
+            const bytes = candidates.find(value => 'sha256:' + createHash('sha256').update(value).digest('hex') === digest)
+            assert.ok(bytes, 'immutable manifest bytes must match the publication digest')
+            const manifest = JSON.parse(bytes.toString('utf8'))
+            assert.equal(manifest.schemaVersion, 2)
+            assert.ok(['application/vnd.oci.image.manifest.v1+json', 'application/vnd.docker.distribution.manifest.v2+json'].includes(manifest.mediaType))
+            const configId = manifest.config?.digest
+            assert.equal(configId, imageId, 'manifest configuration must equal the verified local image ID')
+            docker(['pull', exact])
+            const pulled = inspect(exact)
+            assert.equal(pulled.Id, configId, 'immutable pull must have the admitted config ID')
+            assert.equal(pulled.Config.Labels['org.opencontainers.image.revision'], sha)
+            appendFileSync(process.env.GITHUB_OUTPUT, 'image-digest=' + digest + '\nimage-config-id=' + configId + '\nimage-revision=' + sha + '\n')
+            console.log(JSON.stringify({ imageDigest: digest, imageConfigId: configId, revision: sha }))
+          } catch {
+            console.error('Standalone Web publication or registry identity verification failed')
+            process.exitCode = 1
+          }
+          NODE
+  deploy:
+    if: "needs['build-and-push'].result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha"
+    needs: "build-and-push"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+    environment: "web-production"
+    permissions:
+      contents: "read"
+    env:
+      WEB_STANDALONE_DEPLOY_APPROVED_SHA: "${{ vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA }}"
+    steps:
+      - name: "Checkout exact standalone Web commit for deployment"
+        uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+        with:
+          ref: "${{ inputs.expected_sha }}"
+          fetch-depth: 0
+          persist-credentials: false
+      - name: "Validate immutable build handoff"
+        shell: "bash"
+        env:
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+          IMAGE_DIGEST: "${{ needs.build-and-push.outputs.image-digest }}"
+          IMAGE_CONFIG_ID: "${{ needs.build-and-push.outputs.image-config-id }}"
+          IMAGE_REVISION: "${{ needs.build-and-push.outputs.image-revision }}"
+        run: |
+          set -euo pipefail
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_DIGEST}" -eq 71 ]]
+          [[ "$IMAGE_CONFIG_ID" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_CONFIG_ID}" -eq 71 ]]
+          [ "$IMAGE_REVISION" = "$EXPECTED_SHA" ]
+      - name: "Require protected SSH host-key fingerprint before final authorization"
+        shell: "bash"
+        env:
+          VPS_SSH_FINGERPRINT: "${{ secrets.VPS_SSH_FINGERPRINT }}"
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          pattern='^SHA256:[A-Za-z0-9+/]{42}[AEIMQUYcgkosw048]$'
+          if [[ ! "${VPS_SSH_FINGERPRINT:-}" =~ $pattern ]]; then
+            echo "Refusing deploy: VPS_SSH_FINGERPRINT is missing or is not one strict unpadded SHA256 host-key fingerprint" >&2
+            exit 1
+          fi
+          echo "Protected SSH host-key fingerprint custody is present and well formed"
+      - name: "Re-assert live main immediately before deployment"
+        shell: "bash"
+        env:
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          set -euo pipefail
+          EXPECTED_SHA="${EXPECTED_SHA:-}"
+          WEB_STANDALONE_DEPLOY_APPROVED_SHA="${WEB_STANDALONE_DEPLOY_APPROVED_SHA:-}"
+          [[ "${#EXPECTED_SHA}" -eq 40 && "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" = "$EXPECTED_SHA" ]]
+          [[ "$GITHUB_EVENT_NAME" = workflow_dispatch ]]
+          [[ "$GITHUB_REPOSITORY" = silent-suite/silentsuite ]]
+          [[ "$GITHUB_WORKFLOW_REF" = silent-suite/silentsuite/.github/workflows/deploy-web-standalone.yml@refs/heads/main ]]
+          [[ "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_SHA" ]]
+          [[ -n "${GH_TOKEN:-}" ]]
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          LIVE_MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$GITHUB_REF" != "refs/heads/main" ] ||
+             [ "$GITHUB_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$(git rev-parse HEAD)" != "$EXPECTED_SHA" ] ||
+             [ "$EXPECTED_SHA" != "$LIVE_MAIN_SHA" ] ||
+             [ "$WEB_STANDALONE_DEPLOY_APPROVED_SHA" != "$EXPECTED_SHA" ]; then
+            echo "Refusing standalone Web operation: exact approved live main identity is required" >&2
+            exit 1
+          fi
+      - name: "Deploy via SSH"
+        uses: "appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2"
+        env:
+          IMAGE_NAME: "${{ env.IMAGE_NAME }}"
+          DEPLOY_SHA: "${{ inputs.expected_sha }}"
+          IMAGE_DIGEST: "${{ needs.build-and-push.outputs.image-digest }}"
+          IMAGE_CONFIG_ID: "${{ needs.build-and-push.outputs.image-config-id }}"
+        with:
+          host: "${{ secrets.VPS_HOST }}"
+          username: "${{ secrets.VPS_USER }}"
+          key: "${{ secrets.VPS_SSH_KEY }}"
+          fingerprint: "${{ secrets.VPS_SSH_FINGERPRINT }}"
+          timeout: "30s"
+          command_timeout: "15m"
+          envs: "IMAGE_NAME,DEPLOY_SHA,IMAGE_DIGEST,IMAGE_CONFIG_ID"
+          script: |
+            bash -se <<'BASH'
+            set -Eeuo pipefail
+            for name in docker timeout curl python3; do command -v "$name" >/dev/null; done
+            [[ "${DEPLOY_SHA:-}" =~ ^[0-9a-f]{40}$ && "${#DEPLOY_SHA}" -eq 40 ]]
+            [[ "${IMAGE_DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_DIGEST}" -eq 71 ]]
+            [[ "${IMAGE_CONFIG_ID:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_CONFIG_ID}" -eq 71 ]]
+            [ "$IMAGE_NAME" = ghcr.io/silent-suite/silentsuite-web ]
+            cd ~/etebase
+            docker() { command timeout 15s docker "$@"; }
+            PREVIOUS_CONTAINER=$(docker compose ps -q web)
+            PREVIOUS_IMAGE_ID=$(docker inspect "$PREVIOUS_CONTAINER" --format '{{.Image}}')
+            PREVIOUS_REVISION=$(docker inspect "$PREVIOUS_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            [[ "$PREVIOUS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "${#PREVIOUS_IMAGE_ID}" -eq 71 ]]
+            [[ "$PREVIOUS_REVISION" =~ ^[0-9a-f]{40}$ && "${#PREVIOUS_REVISION}" -eq 40 ]]
+            # Non-secret identities consumed by the runbook's post-SSH restoration.
+            echo "Predecessor receipt: image-config-id=${PREVIOUS_IMAGE_ID} revision=${PREVIOUS_REVISION}"
+            DEPLOY_OVERRIDE=$(mktemp)
+            ROLLBACK_OVERRIDE=$(mktemp)
+            HEALTH_HEADERS=$(mktemp)
+            HEALTH_BODY=$(mktemp)
+            cleanup() { rm -f "$DEPLOY_OVERRIDE" "$ROLLBACK_OVERRIDE" "$HEALTH_HEADERS" "$HEALTH_BODY"; }
+            trap cleanup EXIT
+            check_web() {
+              local expected="$1" status
+              status=$(curl --proto '=https' --connect-timeout 3 --max-time 5 -fsS -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' https://app.silentsuite.io/) || return 1
+              [ "$status" = 200 ] || return 1
+              status=$(curl --proto '=https' --connect-timeout 3 --max-time 5 -fsS -H 'Cache-Control: no-cache' -D "$HEALTH_HEADERS" -o "$HEALTH_BODY" -w '%{http_code}' https://app.silentsuite.io/api/deployment-identity) || return 1
+              [ "$status" = 200 ] || return 1
+              grep -Eiq '^cache-control:.*[[:space:],]no-store([[:space:],;]|$)' "$HEALTH_HEADERS" || return 1
+              # Uses the host's python3 only. Objects decode to ordered key/value pairs, so duplicate or
+              # extra keys, arrays, non-string values and malformed JSON all fail closed.
+              python3 -I -c 'import json, sys; body = json.loads(open(sys.argv[1], encoding="utf-8").read(), object_pairs_hook=lambda pairs: pairs); sys.exit(0 if body == [("publicSha", sys.argv[2])] else 1)' "$HEALTH_BODY" "$expected" >/dev/null 2>&1
+            }
+            wait_for_web() {
+              for attempt in 1 2 3 4 5 6; do
+                if check_web "$1"; then return 0; fi
+                sleep 5
+              done
+              return 1
+            }
+            # Refuse an unidentifiable or unhealthy predecessor before any replacement.
+            wait_for_web "$PREVIOUS_REVISION"
+            command timeout 120s docker pull "${IMAGE_NAME}@${IMAGE_DIGEST}"
+            PULLED_IMAGE_ID=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{.Id}}')
+            PULLED_REVISION=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            [ "$PULLED_IMAGE_ID" = "$IMAGE_CONFIG_ID" ]
+            [ "$PULLED_REVISION" = "$DEPLOY_SHA" ]
+            docker tag "$PREVIOUS_IMAGE_ID" "${IMAGE_NAME}:rollback-${DEPLOY_SHA}"
+            cat > "$DEPLOY_OVERRIDE" <<EOF
+            services:
+              web:
+                image: ${IMAGE_NAME}@${IMAGE_DIGEST}
+            EOF
+            cat > "$ROLLBACK_OVERRIDE" <<EOF
+            services:
+              web:
+                image: ${IMAGE_NAME}:rollback-${DEPLOY_SHA}
+            EOF
+            rollback() {
+              failure_status=$?
+              trap - ERR
+              set +e
+              echo "Standalone Web replacement failed; restoring captured predecessor"
+              restored=0
+              if command timeout 90s docker compose -f docker-compose.yml -f "$ROLLBACK_OVERRIDE" up -d --force-recreate --no-deps --no-build web; then
+                ROLLED_BACK_CONTAINER=$(docker compose ps -q web)
+                ROLLED_BACK_ID=$(docker inspect "$ROLLED_BACK_CONTAINER" --format '{{.Image}}')
+                ROLLED_BACK_REVISION=$(docker inspect "$ROLLED_BACK_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+                if [ "$ROLLED_BACK_ID" = "$PREVIOUS_IMAGE_ID" ] &&
+                   [ "$ROLLED_BACK_REVISION" = "$PREVIOUS_REVISION" ] &&
+                   wait_for_web "$PREVIOUS_REVISION"; then restored=1; fi
+              fi
+              if [ "$restored" = 1 ]; then
+                echo "Captured predecessor image, revision and public served identity restored"
+              else
+                echo "Automatic Web rollback failed; operator intervention is required" >&2
+              fi
+              exit "$failure_status"
+            }
+            trap rollback ERR
+            command timeout 90s docker compose -f docker-compose.yml -f "$DEPLOY_OVERRIDE" up -d --force-recreate --no-deps --no-build web
+            RUNNING_CONTAINER=$(docker compose ps -q web)
+            RUNNING_IMAGE_ID=$(docker inspect "$RUNNING_CONTAINER" --format '{{.Image}}')
+            RUNNING_REVISION=$(docker inspect "$RUNNING_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+            [ "$RUNNING_IMAGE_ID" = "$IMAGE_CONFIG_ID" ]
+            [ "$RUNNING_REVISION" = "$DEPLOY_SHA" ]
+            wait_for_web "$DEPLOY_SHA"
+            trap - ERR
+            echo "Standalone Web config ID, revision and public served identity verified"
+            BASH
+      - name: "Verify public served identity from the runner"
+        shell: "bash"
+        env:
+          EXPECTED_SHA: "${{ inputs.expected_sha }}"
+        run: |
+          set -euo pipefail
+          HEALTH_HEADERS=$(mktemp)
+          HEALTH_BODY=$(mktemp)
+          for attempt in 1 2 3 4 5; do
+            if status=$(curl --proto '=https' --connect-timeout 5 --max-time 10 -fsS -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' https://app.silentsuite.io/) &&
+               [ "$status" = 200 ] &&
+               status=$(curl --proto '=https' --connect-timeout 5 --max-time 10 -fsS -H 'Cache-Control: no-cache' -D "$HEALTH_HEADERS" -o "$HEALTH_BODY" -w '%{http_code}' https://app.silentsuite.io/api/deployment-identity) &&
+               [ "$status" = 200 ] &&
+               grep -Eiq '^cache-control:.*[[:space:],]no-store([[:space:],;]|$)' "$HEALTH_HEADERS" &&
+               jq -e --arg sha "$EXPECTED_SHA" 'type == "object" and keys == ["publicSha"] and .publicSha == $sha' "$HEALTH_BODY" >/dev/null; then
+              echo "Public root and exact served identity verified from the runner"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Public served identity does not match expected_sha after deployment; follow the runbook Rollback section" >&2
+          exit 1

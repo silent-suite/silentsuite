@@ -84,6 +84,98 @@ A standalone Docs deployment is a component deployment, not an annual cutover; i
 
 The variable is snapshotted when the workflow run is queued, so clearing it does not revoke a queued run. To withdraw approval before mutation, cancel the run before the deployment job reaches `Deploy to production Worker`; once that step has started, do not cancel it as a substitute for rollback. Docs has no automatic rollback: restore earlier content through a reviewed revert PR to `main` and a fresh standalone authorization of the resulting live `main` SHA, as described under Rollback.
 
+## Standalone Web admission (no annual Stage A)
+
+`Deploy Web standalone (production, no annual Stage A)` (`.github/workflows/deploy-web-standalone.yml`) deploys a Web component change without the annual Billing-dependent Stage A. It does not read, create, or require Stage A, a private App token, or any private HMAC key; it does not touch Billing, Server, or Docs; and the annual public cutover cannot call it. It reuses the `web-production` environment, the existing Web secrets, and the `deploy-web-production` concurrency group, so it serializes with the annual Web deployment. Its repository approval variable is `WEB_STANDALONE_DEPLOY_APPROVED_SHA`, separate from `WEB_DEPLOY_APPROVED_SHA`; arming one never authorizes the other path. Merging this workflow, or any change it would deploy, starts no deployment.
+
+A standalone Web deployment is a component deployment, not an annual cutover; it produces no Stage A, Stage B, or final manifest and must never be cited as annual proof. Re-read the live `web-production` protection and branch-policy APIs before each dispatch; do not assume required reviewers or other protections that the live response does not show.
+
+1. Confirm the commit is the live head of `main`, its required checks (including the image verification and dependency audit) are green at that exact SHA, and the required independent reviews cover that exact SHA.
+2. Confirm `VPS_SSH_FINGERPRINT` is commissioned as described above, no annual, Billing, or other Web deployment is queued or running against the shared host, and record the currently served Web SHA, running image, and the Billing identity, so you can show afterwards that Billing was unchanged.
+3. Set the repository variable `WEB_STANDALONE_DEPLOY_APPROVED_SHA` to the exact 40-character live `main` SHA, without a same-named environment variable, and dispatch the workflow from `main` with `expected_sha` equal to the same SHA. Its secretless `admission` job names every unmet condition and fails before any protected environment, secret, or build starts.
+4. The build job re-checks the live `main` identity, runs the frozen install, billing copy, public analytics, dependency audit, and tests, validates the production build arguments without printing them, and builds the image once with the existing hosted flags. The Docker build summary and build-record upload are disabled in this lane. It runs `scripts/verify-web-image.mjs` against that single image, re-asserts live `main` immediately before publication, pushes a run-specific tag, and binds the registry manifest digest to the verified image configuration ID. These are two different identities, and both are passed to deployment.
+5. The deployment job validates that handoff and the host-key fingerprint, re-asserts live `main` as the step immediately before `Deploy via SSH`, and replaces only the Compose `web` service by manifest digest with `--no-deps --no-build`. The remote script requires `docker`, `timeout`, `curl`, and `python3` on the host (python3 checks the identity JSON in isolated mode; the host does not need jq) and refuses before any replacement if they are missing or the predecessor is not healthy and identifiable. Automatic rollback stays armed until the running configuration ID, revision, public root, and exact no-store `publicSha` match; on any failure it restores and verifies the predecessor image, revision, and served SHA, and the run still fails. A final runner-side check then re-verifies the public root and served SHA. A failure there happens after the SSH step has finished, so there is no automatic rollback: verify production and follow "Restore the captured predecessor after a post-SSH failure" below. Do not rely on a revert and fresh dispatch for this state; the fresh dispatch refuses before replacement while the running Web is unhealthy.
+6. Clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA` after the run reaches a terminal state, and confirm Billing and Docs still serve their recorded identities.
+
+The variable is snapshotted when the workflow run is queued, so clearing it does not revoke a queued run. To withdraw approval before mutation, cancel the run before the deployment job reaches `Deploy via SSH`; once that step has started, do not cancel it as a substitute for rollback. A successful deployment or synthetic smoke check does not by itself prove a customer-reported behavior is resolved.
+
+### Restore the captured predecessor after a post-SSH failure
+
+Use this only when `Deploy via SSH` succeeded and the Web service then fails, for example at the runner-side check. Automatic rollback is already disarmed at that point. A revert and fresh dispatch cannot help either, because a fresh dispatch first requires a healthy, identifiable running predecessor. This restoration does not require the current service to be healthy. It falls under the documented rollback of the authorized deployment, not a new deployment: get the owner's go-ahead for the specific restoration, and do not touch any service other than Compose `web`.
+
+The block runs outside GitHub workflow concurrency, so it is safe only inside an exclusive restoration window:
+
+1. Clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA`, `WEB_DEPLOY_APPROVED_SHA`, and `ANNUAL_PUBLIC_CUTOVER_APPROVED_SHA` and read back their absence. New Web runs then fail admission. Clearing does not stop a run that already exists, because its approval was snapshotted when the run was queued.
+2. List every queued, waiting, or in-progress run of `deploy-web-standalone.yml`, `deploy-web.yml`, and `annual-only-public-cutover.yml`. Cancel each run whose deployment job has not started `Deploy via SSH`, and confirm each has completed. If a run is already inside `Deploy via SSH`, let it finish, then restart this procedure from step 1, because it may have changed the running Web.
+3. Get the Billing coordinator's explicit confirmation that nothing will operate on the shared host until this restoration has been verified, and record it. Do not re-arm any approval or dispatch any deployment until then.
+
+The block re-reads the `web` container immediately before replacing it and refuses if it changed after validation. That check detects a breach of the window; it cannot make the check and the replacement atomic, so the window is what prevents the race.
+
+4. From the failed run's `Deploy via SSH` log, copy the line `Predecessor receipt: image-config-id=<sha256:…> revision=<40-hex SHA>`. Cross-check it against the served SHA and running image recorded in the pre-deployment ledger (step 2 above). If the receipt is missing or disagrees with the ledger, stop: there is no trusted restoration target.
+5. Take `DEPLOY_SHA` (the failed `expected_sha`) and `IMAGE_CONFIG_ID` (the failed run's `image-config-id` build output) from the same run. Never use a mutable tag or the currently served identity as a restoration source.
+6. Connect only through the trusted host-key custody described above (strict host-key checking against the commissioned fingerprint). Run the block below on the host with `IMAGE_NAME=ghcr.io/silent-suite/silentsuite-web` and the four values exported, for example by piping it to `bash -se`. Before any change, it refuses unless Compose has exactly one `web` container in any state (running or exited) and it is exactly the failed candidate (config ID and revision), and the predecessor image is still cached locally with the recorded revision. It then retags that exact image, replaces only `web` with `--no-deps --no-build`, and verifies the running config ID, revision, public root and exact no-store `publicSha`.
+
+```bash
+set -Eeuo pipefail
+for name in docker timeout curl python3; do command -v "$name" >/dev/null; done
+[[ "${DEPLOY_SHA:-}" =~ ^[0-9a-f]{40}$ && "${#DEPLOY_SHA}" -eq 40 ]]
+[[ "${IMAGE_CONFIG_ID:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_CONFIG_ID}" -eq 71 ]]
+[[ "${PREVIOUS_IMAGE_ID:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#PREVIOUS_IMAGE_ID}" -eq 71 ]]
+[[ "${PREVIOUS_REVISION:-}" =~ ^[0-9a-f]{40}$ && "${#PREVIOUS_REVISION}" -eq 40 ]]
+[ "$PREVIOUS_IMAGE_ID" != "$IMAGE_CONFIG_ID" ]
+[ "$IMAGE_NAME" = ghcr.io/silent-suite/silentsuite-web ]
+cd ~/etebase
+docker() { command timeout 15s docker "$@"; }
+revision_format='{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+# Refuse unless the single web container (running or exited) is the failed candidate and the exact predecessor is cached.
+CURRENT_CONTAINER=$(docker compose ps -a -q web)
+[[ "$CURRENT_CONTAINER" =~ ^[0-9a-f]{64}$ ]]
+CURRENT_IMAGE_ID=$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')
+CURRENT_REVISION=$(docker inspect "$CURRENT_CONTAINER" --format "$revision_format")
+[ "$CURRENT_IMAGE_ID" = "$IMAGE_CONFIG_ID" ]
+[ "$CURRENT_REVISION" = "$DEPLOY_SHA" ]
+CACHED_IMAGE_ID=$(docker inspect "$PREVIOUS_IMAGE_ID" --format '{{.Id}}')
+CACHED_REVISION=$(docker inspect "$PREVIOUS_IMAGE_ID" --format "$revision_format")
+[ "$CACHED_IMAGE_ID" = "$PREVIOUS_IMAGE_ID" ]
+[ "$CACHED_REVISION" = "$PREVIOUS_REVISION" ]
+RESTORE_TAG="${IMAGE_NAME}:rollback-${DEPLOY_SHA}"
+docker tag "$PREVIOUS_IMAGE_ID" "$RESTORE_TAG"
+[ "$(docker inspect "$RESTORE_TAG" --format '{{.Id}}')" = "$PREVIOUS_IMAGE_ID" ]
+RESTORE_OVERRIDE=$(mktemp)
+HEALTH_HEADERS=$(mktemp)
+HEALTH_BODY=$(mktemp)
+trap 'rm -f "$RESTORE_OVERRIDE" "$HEALTH_HEADERS" "$HEALTH_BODY"' EXIT
+cat > "$RESTORE_OVERRIDE" <<EOF
+services:
+  web:
+    image: ${RESTORE_TAG}
+EOF
+# Last check before the only mutation: refuse if anything replaced web since validation.
+[ "$(docker compose ps -a -q web)" = "$CURRENT_CONTAINER" ]
+[ "$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')" = "$IMAGE_CONFIG_ID" ]
+command timeout 90s docker compose -f docker-compose.yml -f "$RESTORE_OVERRIDE" up -d --force-recreate --no-deps --no-build web
+RESTORED_CONTAINER=$(docker compose ps -q web)
+[ "$(docker inspect "$RESTORED_CONTAINER" --format '{{.Image}}')" = "$PREVIOUS_IMAGE_ID" ]
+[ "$(docker inspect "$RESTORED_CONTAINER" --format "$revision_format")" = "$PREVIOUS_REVISION" ]
+check_web() {
+  local status
+  status=$(curl --proto '=https' --connect-timeout 3 --max-time 5 -fsS -H 'Cache-Control: no-cache' -o /dev/null -w '%{http_code}' https://app.silentsuite.io/) || return 1
+  [ "$status" = 200 ] || return 1
+  status=$(curl --proto '=https' --connect-timeout 3 --max-time 5 -fsS -H 'Cache-Control: no-cache' -D "$HEALTH_HEADERS" -o "$HEALTH_BODY" -w '%{http_code}' https://app.silentsuite.io/api/deployment-identity) || return 1
+  [ "$status" = 200 ] || return 1
+  grep -Eiq '^cache-control:.*[[:space:],]no-store([[:space:],;]|$)' "$HEALTH_HEADERS" || return 1
+  python3 -I -c 'import json, sys; body = json.loads(open(sys.argv[1], encoding="utf-8").read(), object_pairs_hook=lambda pairs: pairs); sys.exit(0 if body == [("publicSha", sys.argv[2])] else 1)' "$HEALTH_BODY" "$PREVIOUS_REVISION" >/dev/null 2>&1
+}
+for attempt in 1 2 3 4 5 6; do
+  if check_web; then echo "Predecessor ${PREVIOUS_REVISION} restored and serving its exact identity"; exit 0; fi
+  sleep 5
+done
+echo "Predecessor container restored but public identity not verified; operator intervention is required" >&2
+exit 1
+```
+
+7. Record the restoration, its verification output and the restored identities on the deployment record, then tell the Billing coordinator the window is closed. Keep the approvals cleared until a new, separately authorized deployment. A failed refusal check leaves Compose `web` unchanged: investigate it rather than editing the block or its values, and treat a changed container as a breach of the window.
+
 ## Annual-only private/public handshake
 
 The annual-only production path is deliberately a three-stage sequence. The public repository owns Stage B only; it never creates the final cutover manifest.
