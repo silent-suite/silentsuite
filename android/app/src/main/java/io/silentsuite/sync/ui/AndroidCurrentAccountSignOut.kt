@@ -15,10 +15,17 @@ import androidx.lifecycle.MutableLiveData
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.EtebaseLocalCache
+import io.silentsuite.sync.notes.edit.PendingNotesStore
+import io.silentsuite.sync.notes.edit.UnsyncedNotes
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.utils.AndroidCompat
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 fun interface ExactAccountStatusCleanup {
     fun clear(identity: ExactAccountIdentity): Boolean
@@ -111,6 +118,22 @@ internal class AndroidCurrentAccountSignOut(
 
     override fun clearStatus(main: ExactAccountIdentity) = runCatching { statusCleanup.clear(main) }.getOrDefault(false)
 
+    private fun pendingNotes(main: ExactAccountIdentity) =
+        PendingNotesStore.forIdentity(context, main.type, main.name, main.creationId)
+
+    override fun unsyncedNotes(main: ExactAccountIdentity): UnsyncedNotes = pendingNotes(main).unsynced()
+
+    /**
+     * Keyed by the exact generation, so a same-name account that replaced this one has a store of its own,
+     * which this never touches. A cleared instance stays registered for the rest of the process, unless the
+     * removal then fails and [reopenPendingNotes] drops it, so a save or a run that reaches the store of a
+     * removed account later is refused and does not bring the directory back.
+     */
+    override fun discardPendingNotes(main: ExactAccountIdentity, confirmed: UnsyncedNotes?) =
+        pendingNotes(main).discardStore(confirmed)
+
+    override fun reopenPendingNotes(main: ExactAccountIdentity) = pendingNotes(main).unregister()
+
     override fun close() {
         runCatching { manager.removeOnAccountsUpdatedListener(accountListener) }
     }
@@ -153,6 +176,37 @@ class CurrentAccountSignOutViewModel(application: Application) : AndroidViewMode
     private var exactAccount: ExactAccountIdentity? = null
     private var coordinator: CurrentAccountSignOutCoordinator? = null
 
+    /**
+     * Where the coordinator's store steps run: on IO, each handing its result back on the main thread. The scope
+     * is not the view model's own and is never canceled, so a sign-out past its count runs to its end after the
+     * screen is gone, as the removal's answer always did.
+     */
+    private val steps = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** Steps started and not ended. Main thread only. */
+    private var inFlight = 0
+
+    /** Whether [onCleared] ran. The seams are closed once no step is in flight. Main thread only. */
+    private var cleared = false
+
+    private val offMain = object : CurrentAccountSignOutCoordinator.OffMain {
+        override fun <T> run(work: () -> T, then: (T) -> Unit) {
+            inFlight++
+            steps.launch {
+                try {
+                    then(withContext(Dispatchers.IO) { work() })
+                } finally {
+                    inFlight--
+                    if (cleared && inFlight == 0) coordinator?.close()
+                }
+            }
+        }
+
+        override fun onMain(block: () -> Unit) {
+            steps.launch { block() }
+        }
+    }
+
     fun initialize(account: Account, creationId: String) {
         val identity = ExactAccountIdentity(account.type, account.name, creationId)
         if (exactAccount == identity) return
@@ -161,14 +215,17 @@ class CurrentAccountSignOutViewModel(application: Application) : AndroidViewMode
         val appContext = getApplication<Application>().applicationContext
         coordinator = CurrentAccountSignOutCoordinator(
             seamsFactory?.invoke(appContext, account, creationId)
-                ?: AndroidCurrentAccountSignOut(appContext, account, creationId)
+                ?: AndroidCurrentAccountSignOut(appContext, account, creationId),
+            offMain,
         ) { mutableState.postValue(it) }
     }
 
     fun owns(account: Account, creationId: String) =
         exactAccount == ExactAccountIdentity(account.type, account.name, creationId)
 
-    fun hasStarted() = coordinator?.state?.let { it !is CurrentAccountSignOutState.Idle } == true
+    fun hasStarted() = coordinator?.state?.let {
+        it !is CurrentAccountSignOutState.Idle && it !is CurrentAccountSignOutState.Refused
+    } == true
 
     fun ownsCurrentGeneration() = exactAccount?.let { identity ->
         coordinator?.isMainGenerationPresent(identity)
@@ -178,10 +235,39 @@ class CurrentAccountSignOutViewModel(application: Application) : AndroidViewMode
     internal fun hasObservedMainGenerationInvalidation() =
         coordinator?.hasObservedMainGenerationInvalidation() == true
 
+    /** The coordinator's store steps in flight. Main thread only. */
+    @VisibleForTesting
+    internal fun stepsInFlight() = inFlight
+
     fun begin() = coordinator?.begin()
 
+    /** The exact account this owner was initialized for, or null before that. */
+    internal fun identity(): ExactAccountIdentity? = exactAccount
+
+    /**
+     * The coordinator's state right now, or null before [initialize]. [state] is set with postValue, so it can be
+     * behind this.
+     */
+    internal fun currentState(): CurrentAccountSignOutState? = coordinator?.state
+
+    /**
+     * What this account's pending Notes store holds that has not synced, as the coordinator answers it. Nothing
+     * before [initialize]. It reads the store, so the screen asks it on IO.
+     */
+    internal fun unsyncedNotes(): UnsyncedNotes =
+        exactAccount?.let { coordinator?.unsyncedNotes(it) } ?: UnsyncedNotes.NOTHING
+
+    /** Passes the separate discard confirmation for [shown] on to the coordinator. Does nothing before [initialize]. */
+    internal fun confirmNotesDiscard(shown: UnsyncedNotes) {
+        exactAccount?.let { coordinator?.confirmNotesDiscard(it, shown) }
+    }
+
+    internal fun acknowledgeRefusal() { coordinator?.acknowledgeRefusal() }
+
+    /** A step in flight still uses the seams, so they are closed only once the last one ends. */
     override fun onCleared() {
-        coordinator?.close()
+        cleared = true
+        if (inFlight == 0) coordinator?.close()
         super.onCleared()
     }
 }

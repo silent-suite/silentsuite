@@ -188,7 +188,7 @@ class LoginLifecycleContractTest {
         assertTrue(navigationWrapper.contains("settings get secure navigation_mode"))
         assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
-            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 166",
+            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 167",
             "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
             "-PrequireEtebase16Kb=true", "--no-daemon"
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
@@ -266,12 +266,12 @@ class LoginLifecycleContractTest {
     fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         assertTrue(runtimeScript.contains("focused-runtime-ledger-v1.json"))
-        assertTrue(runtimeScript.contains("if len(tests) != 166 or len(set(tests)) != 166"))
+        assertTrue(runtimeScript.contains("if len(tests) != 167 or len(set(tests)) != 167"))
         listOf(
-            "\"29:mixed\": 1", "\"29:requested\": 1", "\"29:account-dashboard\": 30",
-            "\"35:all\": 166", "\"36:account-dashboard\": 32",
+            "\"29:mixed\": 1", "\"29:requested\": 1", "\"29:account-dashboard\": 31",
+            "\"35:all\": 167", "\"36:account-dashboard\": 33",
             "\"36:first-run-setup\": 19", "\"36:sibling-routes\": 48", "\"36:status-routes\": 67",
-            "[1, 1, 30, 19, 48, 67]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
+            "[1, 1, 31, 19, 48, 67]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
         ).forEach { assertTrue(runtimeScript.contains(it)) }
         assertTrue(runtimeScript.contains("api29_account_dashboard_selectors=\"\$(ledger_selectors '29:account-dashboard')\""))
         assertFalse(runtimeScript.contains("remaining_selectors"))

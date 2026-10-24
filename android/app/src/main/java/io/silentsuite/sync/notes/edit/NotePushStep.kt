@@ -27,6 +27,9 @@ import java.io.IOException
  * - a rebase or a new note that cannot be built (a pending change with no readable title, metadata
  *   that cannot be written into, a result that does not read back as written or is larger than the
  *   pending store keeps) holds the text with that reason instead of being tried again;
+ * - a 409 that needs a rebase or a new note while a discard that has not finished keeps the pending store from a
+ *   new version ([PendingNotesStore.HeldBack]) is the entry's storage failure, with backoff and one line in the
+ *   log, and the note waits as it is;
  * - a notebook gets one confirming fetch per run after a 403 or 404, and its result is reused;
  * - a connection error, a temporary server error, or a 403 on the confirming fetch ends the step, so a
  *   run waits out at most one timeout here.
@@ -199,6 +202,14 @@ internal class NotePushStep(
         val snapshot = store.snapshot { false }
         // A file that cannot be read is kept and reported, and the run never records success over it.
         if (snapshot.unreadable.isNotEmpty()) noteFailure(FailureKind.LOCAL)
+        // Text a discard that has not finished was confirmed for is never sent ([PendingNotesStore.startSend]),
+        // and the run does not record success while it is there, also when the listing came back short without it.
+        // One line in the log gives the reason, also while a permit that cannot be read, or one recorded as for an
+        // answer that could not be counted, holds back every note, so that each is refused before any upload.
+        if (snapshot.discardUnfinished) {
+            noteFailure(FailureKind.LOCAL)
+            Logger.log.warning("Notes changes wait: a discard that has not finished holds them back")
+        }
         // Design 3.3 step 1: a notebook that takes no pushes gets none. The server would accept writes
         // into a deleted notebook that no client shows. Every notebook is looked up before anything is
         // held, so a cache that cannot be read fails the pass before it has written anything.
@@ -250,9 +261,10 @@ internal class NotePushStep(
                     // Design 3.4: while the original's removal keeps failing, neither note is sent, and
                     // the run records a storage failure for the original.
                     Refusal.UNFINISHED_ORIGINAL -> unfinishedOriginal(uid)
-                    // A copy still waiting on its original, or on the write that clears its link, and a
-                    // file that cannot be read: the run does not record success over either.
-                    Refusal.LINKED_COPY, Refusal.UNREADABLE -> noteFailure(FailureKind.LOCAL)
+                    // A copy still waiting on its original, or on the write that clears its link, a file
+                    // that cannot be read, and text confirmed for a discard that has not finished: the run
+                    // does not record success over any of them.
+                    Refusal.LINKED_COPY, Refusal.UNREADABLE, Refusal.DISCARD_CONFIRMED -> noteFailure(FailureKind.LOCAL)
                     Refusal.NOTHING -> Unit
                 }
                 settled += uid
@@ -295,6 +307,7 @@ internal class NotePushStep(
      */
     private fun storageFailed(uid: String, error: IOException) {
         classified(error)
+        logIfHeldBack(error)
         noteFailure(FailureKind.LOCAL)
         settled += uid
         try {
@@ -495,6 +508,7 @@ internal class NotePushStep(
             // The original records a storage failure, and neither note is sent in this run. If the
             // copy's file is there, the text has its new note and recovery finishes the rest, so the
             // conflict is reported now; a later run would push the copy without knowing it was one.
+            logIfHeldBack(e)
             fail(latest, FailureKind.LOCAL)
             settled += note.noteUid
             if (store.read(note.noteUid) is Read.Present) countConflict(latest.notebookUid)
@@ -530,6 +544,15 @@ internal class NotePushStep(
         Logger.log.warning("A Notes change could not be built for upload ($reason): " +
             if (error is NotBuilt) error.message else error.javaClass.simpleName)
         hold(entry.noteUid, reason, sentVersion = entry.version)
+    }
+
+    /**
+     * One line in the log for a note that waits because the pending store declined its new version
+     * ([PendingNotesStore.HeldBack]): a storage failure of the run, which would otherwise leave no trace of its cause.
+     * The reason only, never a title, a notebook name or text: HeldBack's message is a constant.
+     */
+    private fun logIfHeldBack(error: IOException) {
+        if (error is PendingNotesStore.HeldBack) Logger.log.warning("A Notes change waits as it is: ${error.message}")
     }
 
     /**

@@ -8,4 +8,12 @@
         <item quantity="one">Recent activity: %d item</item>
         <item quantity="other">Recent activity: %d items</item>
     </plurals>
+    <plurals name="notes_sign_out_unsynced">
+        <item quantity="one">%d Notes change on this device has not synced. Sync now tries to send it first, and it can fail. If you sign out without syncing, it is removed from this device and cannot be recovered.</item>
+        <item quantity="other">%d Notes changes on this device have not synced. Sync now tries to send them first, and it can fail. If you sign out without syncing, they are removed from this device and cannot be recovered.</item>
+    </plurals>
+    <plurals name="notes_discard_text">
+        <item quantity="one">%d unsynced Notes change will be deleted from this device when you sign out. This cannot be undone.</item>
+        <item quantity="other">%d unsynced Notes changes will be deleted from this device when you sign out. This cannot be undone.</item>
+    </plurals>
 </resources>

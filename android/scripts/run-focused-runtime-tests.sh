@@ -39,7 +39,7 @@ tests = sorted(
     for class_name, methods in ledger["classes"].items()
     for method in methods
 )
-if len(tests) != 166 or len(set(tests)) != 166:
+if len(tests) != 167 or len(set(tests)) != 167:
     raise SystemExit(f"bad canonical runtime ledger size: {len(tests)}")
 
 mixed = [tuple(pair) for pair in ledger["shards"]["29:mixed"]]
@@ -60,7 +60,7 @@ api29_partition = [mixed, requested, api29_account_dashboard] + [owned(api29_gro
 api29_pairs = [pair for part in api29_partition for pair in part]
 if ledger["shards"]["29:remaining"] != "canonical-minus-mixed":
     raise SystemExit("unsupported API 29 coverage contract")
-if [len(part) for part in api29_partition] != [1, 1, 30, 19, 48, 67]:
+if [len(part) for part in api29_partition] != [1, 1, 31, 19, 48, 67]:
     raise SystemExit(f"bad API 29 partition sizes: {[len(part) for part in api29_partition]}")
 if len(api29_pairs) != len(set(api29_pairs)) or set(api29_pairs) != set(tests):
     raise SystemExit("API 29 execution shards are not a disjoint cover of the canonical runtime ledger")
@@ -82,9 +82,9 @@ else:
 expected = {
     "29:mixed": 1,
     "29:requested": 1,
-    "29:account-dashboard": 30,
-    "35:all": 166,
-    "36:account-dashboard": 32,
+    "29:account-dashboard": 31,
+    "35:all": 167,
+    "36:account-dashboard": 33,
     "36:first-run-setup": 19,
     "36:sibling-routes": 48,
     "36:status-routes": 67,

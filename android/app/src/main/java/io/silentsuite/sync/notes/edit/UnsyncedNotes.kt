@@ -22,7 +22,8 @@ package io.silentsuite.sync.notes.edit
  * file's name ("<uid>.note", which a first write takes when recovery commits it), and in an answer that could
  * not be counted, each entry file and first write by that name and each file of a kind this build does not
  * know by its own. A listing can come back short, so a count can be low (see [PendingNotesStore.unsynced]);
- * a confirmation covers only what it names all the same.
+ * a confirmation covers only what it names all the same. A recorded permit also names what its confirmation and
+ * an earlier permit named ([PendingNotesDiscardPermits]), which the user confirmed as well.
  */
 internal data class UnsyncedNotes(
     val count: Int,

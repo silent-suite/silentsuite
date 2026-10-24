@@ -10,7 +10,14 @@ import java.io.IOException
  * [PendingNotesStore.unsynced] that the discard deletes, with the notes it names, and covers the store for as
  * long as [UnsyncedNotes.covers] holds for what the store holds now. So a discard that stopped halfway, also across
  * a restart, can be finished under the same confirmation while the permit still covers what is left;
- * otherwise the user is asked again.
+ * otherwise the user is asked again. Its names also hold what the user confirmed that a listing which came back
+ * short left out of that answer: that text stays held back, and the discard deletes only what its count listed
+ * ([PendingNotesStore.discardStore]). A permit that may be there but cannot be read holds back every note of its
+ * store, and so does one recorded for an answer that could not be counted, whose names come only from listings,
+ * which can come back short, while the user confirmed all of the store; a damaged one names nothing ([lookup]).
+ * A permit recorded in place of either of these is recorded as for an answer that could not be counted, whatever
+ * its own count showed ([PendingNotesStore.discardStore], step 3), so it holds back every note as well and covers
+ * no counted answer ([UnsyncedNotes.covers]).
  *
  * Permits live in a root of their own (noBackupFilesDir/notes-discard, one "<store>.permit" per store
  * directory name). Not in the store, which the discard deletes, and not beside the stores in
@@ -46,14 +53,41 @@ internal class PendingNotesDiscardPermits(
      * so the store it was for is not covered. An acknowledgement is never read as one: it is in a file and a
      * record kind of its own.
      */
-    fun read(store: String): UnsyncedNotes? {
+    fun read(store: String): UnsyncedNotes? = (lookup(store) as? Lookup.Found)?.permit
+
+    /**
+     * What [read] found, told apart for the store's hold-back ([PendingNotesStore.startSend]). Only a read that
+     * fails on a path its presence check shows not there is [Lookup.Absent]. A read that fails on a file that is
+     * there, or whose check fails, is [Lookup.Unknown]. Bytes that were read but are cut short, fail their
+     * checksum, are in a newer format or name another store are [Lookup.Damaged].
+     */
+    fun lookup(store: String): Lookup {
+        val file = file(store)
         val bytes = try {
-            file(store).readBytes()
+            onReadForTesting?.invoke(file)
+            file.readBytes()
         } catch (e: IOException) {
-            return null
+            return if (presenceOf(file) == PendingNotesStore.Presence.ABSENT) Lookup.Absent else Lookup.Unknown
         }
-        val (named, shown) = (PendingCodec.decodePermit(bytes) as? PendingCodec.Decoded.Ok)?.value ?: return null
-        return shown.takeIf { named == store }
+        val (named, shown) = (PendingCodec.decodePermit(bytes) as? PendingCodec.Decoded.Ok)?.value
+            ?: return Lookup.Damaged
+        return if (named == store) Lookup.Found(shown) else Lookup.Damaged
+    }
+
+    sealed class Lookup {
+        data class Found(val permit: UnsyncedNotes) : Lookup()
+
+        object Absent : Lookup()
+
+        /**
+         * Read, but no permit of this store: it names nothing and holds nothing back. That is a choice, made since
+         * a newer build's permit read after a downgrade is one of these; the store could hold back every note for
+         * it instead, as for [Unknown].
+         */
+        object Damaged : Lookup()
+
+        /** There, or not shown absent, and its read failed: the store holds back every note while it is. */
+        object Unknown : Lookup()
     }
 
     /**
@@ -79,7 +113,9 @@ internal class PendingNotesDiscardPermits(
     /**
      * Whether a permit of the store in directory [store] may be there: false only when its presence check shows
      * it not there, so a check that fails answers true. It reads nothing and covers nothing; the store asks it
-     * only to decide whether to make its directory's removal durable before the permit goes.
+     * only to decide whether to make the removals a discard made durable, in the store's directory and in the
+     * directory above it, before the permit goes, and whether a permit from before is there when a new one
+     * cannot be recorded ([PendingNotesStore.discardStore]).
      */
     fun mayHold(store: String): Boolean = presenceOf(file(store)) != PendingNotesStore.Presence.ABSENT
 
@@ -90,6 +126,7 @@ internal class PendingNotesDiscardPermits(
      * ([PendingNotesStore.acknowledged]), and it is never a permit.
      */
     fun acknowledgement(store: String): PendingNotesStore.DirectoryIdentity? {
+        onReadForTesting?.invoke(acknowledgementFile(store))
         val bytes = try {
             acknowledgementFile(store).readBytes()
         } catch (e: IOException) {
@@ -197,5 +234,11 @@ internal class PendingNotesDiscardPermits(
 
         /** Test seam: a failure point before a permit or acknowledgement is deleted, which leaves it as it is. */
         @Volatile internal var beforeDeleteForTesting: ((File) -> Unit)? = null
+
+        /**
+         * Test seam: called with the file before a permit ([lookup]) or an acknowledgement is read. For a permit, an
+         * IOException it throws is a read that failed.
+         */
+        @Volatile internal var onReadForTesting: ((File) -> Unit)? = null
     }
 }

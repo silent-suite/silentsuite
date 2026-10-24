@@ -53,6 +53,7 @@ class NotePushStepTest {
         PendingNotesStore.beforeRemoveForTesting = null
         PendingNotesStore.beforeRenameForTesting = null
         PendingNotesStore.listFilesForTesting = null
+        PendingNotesDiscardPermits.onReadForTesting = null
         PendingNotesStore.resetForTesting()
         Thread.interrupted()
     }
@@ -318,6 +319,178 @@ class NotePushStepTest {
         assertTrue(run().succeeded)
         assertEquals(listOf("a", "b"), uploaded())
         assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `text a discard that has not finished was confirmed for is not sent, and the run is a storage failure`() {
+        save("n1", "confirmed for discard")
+        save("n2", "not named")
+        // As after a restart: the discard permit, which a discard that stopped keeps, names n1 alone.
+        PendingNotesDiscardPermits(File(dir.parentFile, PendingNotesDiscardPermits.ROOT), {}, atomicMove,
+            PendingNotesStore.nioPresence).record(dir.name, UnsyncedNotes(1, 2, false, names = setOf("n1.note")))
+        PendingNotesStore.resetForTesting()
+        val s = PendingNotesStore.open(dir, rename = atomicMove)
+        val kept = File(dir, "n1.note").readBytes()
+        val result = NotePushStep(s, remote, memory, true, { true }) { now }.pass()
+        assertEquals(listOf("n2"), uploaded())
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertFalse(result.succeeded)
+        assertTrue("n1 is kept as it was", kept.contentEquals(File(dir, "n1.note").readBytes()))
+    }
+
+    @Test fun `held text a discard that has not finished was confirmed for still keeps the run from success`() {
+        save("n1", "confirmed for discard")
+        store.hold("n1", HeldReason.LOST_ACCESS, now)
+        PendingNotesDiscardPermits(File(dir.parentFile, PendingNotesDiscardPermits.ROOT), {}, atomicMove,
+            PendingNotesStore.nioPresence).record(dir.name, UnsyncedNotes(1, 1, false, names = setOf("n1.note")))
+        PendingNotesStore.resetForTesting()
+        val s = PendingNotesStore.open(dir, rename = atomicMove)
+        val result = NotePushStep(s, remote, memory, true, { true }) { now }.pass()
+        assertTrue(uploaded().isEmpty())
+        assertEquals(FailureKind.LOCAL, result.failure)
+    }
+
+    /** The discard permits beside the store, read and written as after a restart. */
+    private fun permits() = PendingNotesDiscardPermits(File(dir.parentFile, PendingNotesDiscardPermits.ROOT), {},
+        atomicMove, PendingNotesStore.nioPresence)
+
+    /**
+     * A new store instance, as after a restart, under a discard permit that names [names]. Every save is made
+     * before: the old instance withdrew its permit at its first save and does not ask again.
+     */
+    private fun restartedUnderPermit(vararg names: String): PendingNotesStore {
+        permits().record(dir.name, UnsyncedNotes(names.size, 1, false, names = names.toSet()))
+        PendingNotesStore.resetForTesting()
+        return PendingNotesStore.open(dir, rename = atomicMove)
+    }
+
+    private fun permitBytes() = File(permits().root, "${dir.name}.permit").readBytes()
+
+    @Test fun `after a restart, a note the permit does not name is not rebased, so what the permit names is never sent`() {
+        landedWithoutAnswerThenSaved()
+        save("n2", "confirmed for discard")
+        val s = restartedUnderPermit("n2.note")
+        val permit = permitBytes()
+        val n2 = File(dir, "n2.note").readBytes()
+        val n1 = (s.read("n1") as Read.Present).entry
+        val uploads = server.uploads.size
+        val fetches = server.fetches.size
+        repeat(2) {
+            val result = NotePushStep(s, remote, NotePushStep.Memory(), true, { true }) { now }.pass()
+            assertEquals("pass $it", FailureKind.LOCAL, result.failure)
+            assertFalse(result.succeeded)
+        }
+        assertEquals("one upload of n1 per pass, and none of n2", listOf("n1", "n1"), uploaded().drop(uploads))
+        assertEquals(listOf("n1", "n1"), server.fetches.drop(fetches))
+        assertTrue("the permit stays as it was", permit.contentEquals(permitBytes()))
+        assertTrue("n2 is kept as it was", n2.contentEquals(File(dir, "n2.note").readBytes()))
+        val kept = (s.read("n1") as Read.Present).entry
+        assertEquals("n1 is not rebased", n1.version, kept.version)
+        assertEquals("one, two", item(kept.blob).text)
+        assertEquals("and backs off", 2, kept.failureCount)
+    }
+
+    @Test fun `after a restart, a conflict on a note the permit does not name makes no copy, so what the permit names is never sent`() {
+        editedElsewhere()
+        save("n2", "confirmed for discard")
+        val s = restartedUnderPermit("n2.note")
+        val permit = permitBytes()
+        val n2 = File(dir, "n2.note").readBytes()
+        val version = (s.read("n1") as Read.Present).entry.version
+        val result = NotePushStep(s, remote, memory, true, { true }) { now }.pass()
+        assertEquals(listOf("n1"), uploaded())
+        assertTrue("no conflict is reported", result.conflicts.isEmpty())
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertFalse(result.succeeded)
+        assertTrue("no copy on the server", server.items.keys.none { it.startsWith("copy-") })
+        assertTrue("and none in the store", dir.list()!!.none { it.startsWith("copy-") })
+        val kept = (s.read("n1") as Read.Present).entry
+        assertEquals(PendingEntry.State.UPSERT, kept.state)
+        assertEquals("mine", item(kept.blob).text)
+        assertEquals(version, kept.version)
+        assertEquals("and backs off", 1, kept.failureCount)
+        assertEquals(FailureKind.LOCAL.name, kept.lastFailureCategory)
+        assertTrue("the permit stays as it was", permit.contentEquals(permitBytes()))
+        assertTrue("n2 is kept as it was", n2.contentEquals(File(dir, "n2.note").readBytes()))
+    }
+
+    @Test fun `after a restart, a pass whose listing comes back short is still a storage failure while what the permit names is there`() {
+        save("n1", "confirmed for discard")
+        save("n2", "confirmed for discard too")
+        val s = restartedUnderPermit("n1.note", "n2.note")
+        // A listing of the store that comes back with nothing, and says nothing.
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == dir.name) emptyArray() else d.listFiles() }
+        val result = NotePushStep(s, remote, memory, true, { true }) { now }.pass()
+        assertTrue(uploaded().isEmpty())
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertFalse(result.succeeded)
+    }
+
+    @Test fun `a permit that names only files that are gone lets a 409 rebase as before, which withdraws it`() {
+        landedWithoutAnswerThenSaved()
+        val s = restartedUnderPermit("gone.note")
+        val uploads = server.uploads.size
+        val result = NotePushStep(s, remote, memory, true, { true }) { now }.pass()
+        assertTrue(result.succeeded)
+        assertEquals("the stale upload and the rebased one", listOf("n1", "n1"), uploaded().drop(uploads))
+        assertNull(permits().read(dir.name))
+    }
+
+    /** The messages logged while [block] runs. */
+    private fun logged(block: () -> Unit): List<String> {
+        val lines = mutableListOf<String>()
+        val handler = object : java.util.logging.Handler() {
+            override fun publish(record: java.util.logging.LogRecord) { lines += record.message }
+            override fun flush() = Unit
+            override fun close() = Unit
+        }
+        io.silentsuite.sync.log.Logger.log.addHandler(handler)
+        try {
+            block()
+        } finally {
+            io.silentsuite.sync.log.Logger.log.removeHandler(handler)
+        }
+        return lines
+    }
+
+    private val heldBackPass = "Notes changes wait: a discard that has not finished holds them back"
+
+    @Test fun `after a restart, a permit that cannot be read holds back every note, and the pass is a storage failure`() {
+        save("n1", "confirmed for discard")
+        save("n2", "not named")
+        val s = restartedUnderPermit("n1.note")
+        val permit = permitBytes()
+        PendingNotesDiscardPermits.onReadForTesting = {
+            if (it.name.endsWith(".permit")) throw IOException("the read fails")
+        }
+        var result: NotePushStep.Result? = null
+        val lines = logged { result = NotePushStep(s, remote, memory, true, { true }) { now }.pass() }
+        assertTrue("nothing is uploaded", uploaded().isEmpty())
+        assertEquals(FailureKind.LOCAL, result!!.failure)
+        assertFalse(result!!.succeeded)
+        assertTrue("the permit stays as it was", permit.contentEquals(permitBytes()))
+        assertEquals("one line gives the reason", listOf(heldBackPass), lines.filter { "discard" in it })
+        assertTrue("and no text", lines.none { "confirmed for discard" in it || "not named" in it })
+        // Once it reads again, the next pass sends what the permit does not name, and still holds back what it does.
+        PendingNotesDiscardPermits.onReadForTesting = null
+        val next = NotePushStep(s, remote, memory, true, { true }) { now }.pass()
+        assertEquals(listOf("n2"), uploaded())
+        assertEquals(FailureKind.LOCAL, next.failure)
+        assertTrue("n1 waits", s.read("n1") is Read.Present)
+    }
+
+    @Test fun `a rebase and a conflict copy declined while a discard has not finished leave one line in the log each, with the reason and no text`() {
+        landedWithoutAnswerThenSaved()
+        server.writeElsewhere("m", "web-1")
+        save("m", "mine", seen = "srv-0")
+        save("n2", "confirmed for discard")
+        val s = restartedUnderPermit("n2.note")
+        val lines = logged { NotePushStep(s, remote, memory, true, { true }) { now }.pass() }
+        assertEquals("the rebase of n1 and the copy of m",
+            List(2) { "A Notes change waits as it is: a discard that has not finished holds back new versions" },
+            lines.filter { it.startsWith("A Notes change waits") })
+        assertEquals("and one line for the pass", listOf(heldBackPass), lines.filter { it == heldBackPass })
+        assertTrue("no text", lines.none { "mine" in it || "one, two" in it || "confirmed for discard" in it })
+        assertTrue("no copy was made", dir.list()!!.none { it.startsWith("copy-") })
     }
 
     @Test fun `a store listing that fails while a notebook's entries are held is a storage failure, not a pass`() {
