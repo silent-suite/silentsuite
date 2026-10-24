@@ -522,3 +522,37 @@ describe('X-SILENTSUITE-FAVORITE generation', () => {
     );
   });
 });
+
+// ── Unsupported property preservation (#865) ──
+
+describe('unsupported property preservation (#865)', () => {
+  // Exact sample from issue #865.
+  const issueSample = [
+    'BEGIN:VCARD',
+    'VERSION:4.0',
+    'UID:20261023T213116Z1949487429',
+    'FN:John Doe',
+    'N:Doe;John;;;',
+    'TEL;TYPE=cell:+1 234 567890',
+    'X-TESTA:testA',
+    'X-TestB:testB',
+    'X-testC:testC',
+    'X-testd:testD',
+    'END:VCARD',
+  ].join('\r\n');
+  const customLines = ['X-TESTA:testA', 'X-TestB:testB', 'X-testC:testC', 'X-testd:testD'];
+  const customLinesOf = (card: string) => card.split('\r\n').filter((l) => /^X-test/i.test(l));
+
+  it('keeps the four custom properties with original case and order through strict parse/generate', () => {
+    const generated = generateVCard(parseVCard(issueSample, { strictTextEncoding: true }));
+    expect(customLinesOf(generated)).toEqual(customLines);
+  });
+
+  it('keeps them after a known-field edit and a second round-trip', () => {
+    const parsed = parseVCard(issueSample, { strictTextEncoding: true });
+    parsed.fn = 'John Q. Doe';
+    const regenerated = generateVCard(parseVCard(generateVCard(parsed)));
+    expect(regenerated).toContain('FN:John Q. Doe');
+    expect(customLinesOf(regenerated)).toEqual(customLines);
+  });
+});

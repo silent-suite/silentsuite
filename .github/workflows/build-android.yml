@@ -645,8 +645,8 @@ jobs:
             expected={pair for pair in canonical if pair[0] in owners}
           else:
             raise SystemExit(f'unsupported API/shard {key}')
-          expected_sizes={'21:mixed':1,'21:remaining':164,'35:all':165,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':47,'36:status-routes':67}
-          if len(canonical) != 165 or len(expected) != expected_sizes[key]:
+          expected_sizes={'21:mixed':1,'21:remaining':167,'35:all':168,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':47,'36:status-routes':70}
+          if len(canonical) != 168 or len(expected) != expected_sizes[key]:
             raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):

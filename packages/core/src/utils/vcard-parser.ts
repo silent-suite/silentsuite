@@ -48,10 +48,24 @@ export interface VCard {
    *  `true` means favorite; absence means not favorite. Only `true` is ever
    *  emitted, so a false/absent value is represented as `undefined`. */
   favorite?: boolean;
+  /** Unsupported properties kept opaque (#865): raw unfolded logical lines in
+   *  their original order and spelling, never decoded. Absent when none. */
+  unknownProperties?: string[];
 }
 
 /** Canonical SilentSuite favorite extension property name (uppercased). */
 export const FAVORITE_PROPERTY = 'X-SILENTSUITE-FAVORITE';
+
+/** Properties the model owns or deliberately drops; never kept opaque.
+ *  PRODID names the producer, which is no longer true after a rewrite. */
+const OWNED_PROPERTIES = new Set([
+  'BEGIN', 'END', 'VERSION', 'UID', 'FN', 'N', 'TEL', 'EMAIL', 'ADR', 'ORG', 'TITLE',
+  'CATEGORIES', 'NOTE', 'BDAY', 'PHOTO', 'REV', 'PRODID', FAVORITE_PROPERTY,
+]);
+/** Properties whose grouped X-ABLabel the model consumes. */
+const LABELED_PROPERTIES = new Set(['TEL', 'EMAIL', 'ADR']);
+/** Same bound as PHOTO. */
+const MAX_RETAINED_LINE = 1_000_000;
 
 // ── Escaping ──
 
@@ -273,6 +287,55 @@ function normalizeTelephoneValue(value: string): string {
   }
 }
 
+/** Whether a raw logical line may be kept opaque. Fails closed on anything that
+ *  could alter card framing, owned fields or folding on re-parse. */
+function isRetainable(line: string, prop: ParsedProperty, consumedLabelGroups: Set<string>): boolean {
+  if (line.length > MAX_RETAINED_LINE) return false;
+  // TAB is the only control character allowed; a lone CR could split the line elsewhere.
+  if (/[\u0000-\u0008\u000a-\u001f\u007f]/.test(line)) return false;
+  if (OWNED_PROPERTIES.has(prop.name)) return false;
+  if (prop.name === 'X-ABLABEL' && prop.group && consumedLabelGroups.has(prop.group)) return false;
+  const colonIdx = findPropertyColon(line);
+  if (colonIdx === line.length) return false;
+  const left = line.slice(0, colonIdx);
+  if ((left.match(/"/g) ?? []).length % 2 !== 0) return false;
+  const semiIdx = left.indexOf(';');
+  const rawName = semiIdx === -1 ? left : left.slice(0, semiIdx);
+  if (!/^(?:[A-Za-z0-9-]+\.)?[A-Za-z0-9-]+$/.test(rawName)) return false;
+  // Duplicate or list encodings are ambiguous and would defeat the QP fold rule.
+  const encodings = semiIdx === -1
+    ? []
+    : splitParams(left.slice(semiIdx + 1)).filter((part) => part.slice(0, part.indexOf('=')).toUpperCase() === 'ENCODING');
+  if (encodings.length > 1) return false;
+  if (encodings.length === 1 && (prop.params['ENCODING'] ?? '').includes(',')) return false;
+  return true;
+}
+
+/** Fold a kept line at code-point boundaries. The legacy foldLine stays in use
+ *  for owned fields so their wire bytes are unchanged. QP lines, and any fold our
+ *  own unfolding would not restore exactly, are emitted unfolded. */
+function foldRetainedLine(line: string): string {
+  if (parseProperty(line).params['ENCODING']?.toUpperCase() === 'QUOTED-PRINTABLE') return line;
+  const parts: string[] = [];
+  let current = '';
+  let bytes = 0;
+  let limit = 75;
+  for (const ch of line) {
+    const charBytes = Buffer.byteLength(ch, 'utf8');
+    if (current && bytes + charBytes > limit) {
+      parts.push(current);
+      current = '';
+      bytes = 0;
+      limit = 74;
+    }
+    current += ch;
+    bytes += charBytes;
+  }
+  parts.push(current);
+  const folded = parts.join('\r\n ');
+  return unfoldLines(folded) === line ? folded : line;
+}
+
 function splitStructuredValue(value: string): string[] {
   const parts: string[] = [];
   let current = '';
@@ -308,9 +371,16 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
   const emails: VCardEmail[] = [];
   const adrs: VCardAddress[] = [];
   const labels = new Map<string, string>();
+  const retained: string[] = [];
+  // Only labels of modelled TEL/EMAIL/ADR groups are decoded; others stay opaque.
+  const consumedLabelGroups = new Set<string>();
   for (const line of lines) {
     const prop = parseProperty(line);
-    if (prop.group && prop.name === 'X-ABLABEL') {
+    if (prop.group && LABELED_PROPERTIES.has(prop.name)) consumedLabelGroups.add(prop.group);
+  }
+  for (const line of lines) {
+    const prop = parseProperty(line);
+    if (prop.group && prop.name === 'X-ABLABEL' && consumedLabelGroups.has(prop.group)) {
       const label = propertyText(prop, prop.value, strict);
       const wrapped = /^_\$!<(.*)>!\$_$/.exec(label);
       const unwrapped = wrapped ? wrapped[1]! : label;
@@ -420,9 +490,12 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
           vcard.favorite = true;
         }
         break;
+      default:
+        if (isRetainable(line, prop, consumedLabelGroups)) retained.push(line);
     }
   }
 
+  if (retained.length > 0) vcard.unknownProperties = retained;
   if (tels.length > 0) vcard.tel = tels;
   if (emails.length > 0) vcard.email = emails;
   if (adrs.length > 0) vcard.adr = adrs;
@@ -446,6 +519,9 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
 export function generateVCard(vcard: VCard): string {
   const lines: string[] = [];
   let labelIndex = 0;
+  const retained = (vcard.unknownProperties ?? []).filter((line) => isRetainable(line, parseProperty(line), new Set()));
+  // Generated label groups never reuse a group held by a kept line.
+  const reservedGroups = new Set(retained.map((line) => parseProperty(line).group).filter(Boolean));
   // Free-form labels are TEXT, not parameter tokens: preserve spelling safely.
   const typedProperty = (name: string, type: string, value: string) => {
     // A leading `X-` marks an exporter-added custom type, so such a value must
@@ -455,7 +531,8 @@ export function generateVCard(vcard: VCard): string {
     if (typeToken) {
       lines.push(foldLine(`${name};TYPE=${type}:${value}`));
     } else {
-      const group = `item${++labelIndex}`;
+      let group = `item${++labelIndex}`;
+      while (reservedGroups.has(group.toUpperCase())) group = `item${++labelIndex}`;
       lines.push(foldLine(`${group}.${name}:${value}`));
       lines.push(foldLine(`${group}.X-ABLabel:${escapeText(type)}`));
     }
@@ -524,6 +601,7 @@ export function generateVCard(vcard: VCard): string {
     }
   }
   if (vcard.rev) lines.push(foldLine(`REV:${vcard.rev}`));
+  for (const line of retained) lines.push(foldRetainedLine(line));
 
   lines.push('END:VCARD');
   return lines.join('\r\n');

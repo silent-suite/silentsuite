@@ -34,6 +34,9 @@ export interface Contact {
    *  `X-SILENTSUITE-FAVORITE:1` vCard extension. Optional so existing callers
    *  keep compiling; deserialize paths default to false. */
   favorite?: boolean;
+  /** Unsupported vCard properties kept opaque across edits and export (#865).
+   *  Absent when the card has none, so older records are unchanged. */
+  unknownProperties?: string[];
   listId?: string;
   created_at: Date;
   updated_at: Date;
@@ -60,6 +63,7 @@ export function toVCard(contact: Contact): string {
     photo: contact.photoUrl ?? undefined,
     favorite: contact.favorite === true ? true : undefined,
     rev: formatRevTimestamp(contact.updated_at),
+    unknownProperties: contact.unknownProperties && contact.unknownProperties.length > 0 ? contact.unknownProperties : undefined,
   };
 
   if (contact.phones.length > 0) {
@@ -104,6 +108,7 @@ export function fromVCard(vcardStr: string): Contact {
     categories: vcard.categories ?? [],
     // Preserve favorite state; legacy/absent cards deserialize to false
     favorite: vcard.favorite ?? false,
+    ...(vcard.unknownProperties ? { unknownProperties: vcard.unknownProperties } : {}),
     created_at: now,
     updated_at: vcard.rev ? parseRevTimestamp(vcard.rev) : now,
   };

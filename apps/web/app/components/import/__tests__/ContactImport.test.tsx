@@ -104,6 +104,25 @@ describe('ContactImport categories normalization', () => {
     }
   })
 
+  it('carries unsupported properties of the exact #865 sample into the import payload and its stored vCard', async () => {
+    const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
+    const extras = ['X-TESTA:testA', 'X-TestB:testB', 'X-testC:testC', 'X-testd:testD']
+    const source = [
+      'BEGIN:VCARD', 'VERSION:4.0', 'UID:20261023T213116Z1949487429', 'FN:John Doe', 'N:Doe;John;;;',
+      'TEL;TYPE=cell:+1 234 567890', ...extras, 'END:VCARD',
+    ].join('\n')
+    fireEvent.change(container.querySelector('input[type="file"]')!, {
+      target: { files: [new File([source], 'issue-865.vcf', { type: 'text/vcard' })] },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: /Import 1 contacts/ }))
+    await waitFor(() => expect(mocks.importContacts).toHaveBeenCalledTimes(1))
+    const payload = mocks.importContacts.mock.calls[0]![0] as Contact[]
+    expect(payload[0]!.unknownProperties).toEqual(extras)
+    // NewContact may omit empty lists; the store's buildContact supplies them.
+    const wire = serializeContact({ ...payload[0]!, emails: payload[0]!.emails ?? [], addresses: payload[0]!.addresses ?? [], id: 'synthetic', uid: 'synthetic', created_at: new Date(), updated_at: new Date() })
+    expect(wire.split('\r\n').filter((line) => /^X-test/i.test(line))).toEqual(extras)
+  })
+
   it('imports sample-shaped legacy cards without losing unlabeled numbers, photos, or the following duplicate-name card', async () => {
     const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
     // Synthetic values reproduce both reports without committing customer contact data.
