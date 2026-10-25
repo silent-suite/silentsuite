@@ -763,4 +763,22 @@
     <string name="notes_edited">Edited %1$s</string>
     <string name="notes_refresh">Refresh</string>
     <string name="notes_loading_failed">Could not load notes. Sync and try again.</string>
+    <!-- Sign-out while Notes changes have not synced: the count, the separate discard confirmation, what Sync now says, and the message when the account stays after its Notes changes were cleared, a clear of them stopped, or nothing was deleted because the store could not be listed. -->
+    <string name="notes_sign_out_unsynced_title">Notes changes have not synced</string>
+    <string name="notes_sign_out_unsynced_unreadable">This device may hold Notes changes that have not synced, and they could not be counted. Sync now tries to send them first, and it can fail. If you sign out without syncing, they are removed from this device and cannot be recovered.</string>
+    <string name="notes_sign_out_without_syncing">Sign out without syncing</string>
+    <string name="notes_discard_title">Discard unsynced notes?</string>
+    <string name="notes_discard_unreadable">The unsynced Notes changes on this device could not be counted. All of them will be deleted from this device when you sign out. This cannot be undone.</string>
+    <string name="notes_discard_and_sign_out">Discard and sign out</string>
+    <string name="notes_sync_now_notes_off">Notes is off for this account. Turn it on in Settings to sync these changes.</string>
+    <string name="notes_sign_out_sync_asked">Asked for a Notes sync. Check the count again before you sign out.</string>
+    <string name="notes_sign_out_stopped">Couldn’t sign out. Notes changes you chose to discard may already be deleted.</string>
+    <string name="notes_sign_out_stopped_kept">Couldn’t sign out. Your account was kept.</string>
+    <string name="notes_sign_out_stopped_nothing_deleted">Sign-out stopped. Nothing was deleted. Unsynced Notes text may remain on this device and may no longer sync.</string>
+    <!-- Both sign-out dialogs for a Notes store that could not be listed, where a confirmation deletes nothing and is only an acknowledgement: never "discard", never that anything is deleted or removed, and no sign-out on a button. Placeholder wording, pending review. -->
+    <string name="notes_sign_out_unsynced_unlisted">This device may hold Notes changes that have not synced, and they could not be read. Sync now may not be able to send them. While they cannot be read, going on without syncing deletes nothing, and your account stays signed in. Unsynced Notes text may remain on this device and may no longer sync.</string>
+    <string name="notes_continue_without_syncing">Continue without syncing</string>
+    <string name="notes_acknowledge_title">Continue without deleting?</string>
+    <string name="notes_acknowledge_text">The Notes changes on this device could not be read. Nothing will be deleted while they cannot be read, and your account stays signed in. Unsynced Notes text may remain on this device and may no longer sync.</string>
+    <string name="notes_acknowledge_continue">Continue</string>
 </resources>

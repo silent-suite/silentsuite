@@ -218,8 +218,8 @@ internal object NotesSyncRunner {
 
     /**
      * The push step (design 3.3): the changes waiting in the account's pending store are sent, one note
-     * per request, before the fetch. Null when the store holds no entry and nothing unreadable, in which
-     * case no request is made.
+     * per request, before the fetch. Null when there is nothing to push ([nothingToPush]), or the store was
+     * cleared in full ([waitingIn]), in which case no request is made.
      */
     private fun pushPending(
         context: Context,
@@ -231,8 +231,8 @@ internal object NotesSyncRunner {
         guard: SyncRunGuard,
     ): NotePushStep.Result? {
         val store = PendingNotesStore.forIdentity(context, account.type, account.name, creationId)
-        val waiting = store.snapshot { false }
-        if (waiting.headers.isEmpty() && waiting.unreadable.isEmpty()) {
+        val waiting = waitingIn(store) ?: return null
+        if (nothingToPush(waiting)) {
             // A copy whose last entry went outside a run (held text discarded), or whose removal failed
             // before, goes here. Nothing is written when there is none.
             pruneNotebookCopies(store)
@@ -247,6 +247,40 @@ internal object NotesSyncRunner {
         Logger.log.info("Notes push ${result.ended}: pushed ${result.pushed}, held ${result.held}, " +
             "conflicts ${result.conflicts.values.sum()}, failure ${result.failure}, carried ${result.carriedFailure}")
         return result
+    }
+
+    /**
+     * Whether [waiting] gives a run nothing to push, so it makes no request: no entry, nothing unreadable, and no
+     * file there that a discard that has not finished was confirmed for, or a permit that may be there and cannot
+     * be read or was recorded as for an answer that could not be counted
+     * ([PendingNotesStore.Snapshot.discardUnfinished]). While one is, the push step runs, also over a listing that
+     * showed nothing, and records a storage failure.
+     */
+    internal fun nothingToPush(waiting: PendingNotesStore.Snapshot): Boolean =
+        waiting.headers.isEmpty() && waiting.unreadable.isEmpty() && !waiting.discardUnfinished
+
+    /**
+     * What waits in [store] to be pushed, or null for a store that was cleared in full. A cleared instance
+     * refuses every read and write from then on ([PendingNotesStore.Cleared]), so nothing in it is pushed, and
+     * without this that refusal would end every run of the account as an unknown failure before its fetch.
+     * Cleared in full is told by the instance's state alone ([PendingNotesStore.clearedInFull]): its clear returned,
+     * or its discard finished, and an instance dropped since ([PendingNotesStore.unregister]) had. Any other cleared
+     * instance stopped partway, also one that lists and counts nothing, since a listing can come back short and an
+     * unlink whose sync failed can come back: that throws IOException, which the run records as a storage failure,
+     * never as a success, for the rest of the process or until another confirmed sign-out finishes the clear, and
+     * the fetch still runs. This instance never pushes what a clear that stopped left. After a restart a new
+     * instance sends none of the notes the clear's discard permit names
+     * ([PendingNotesStore.Snapshot.discardConfirmed]), every note counting as named while the permit cannot be
+     * read or was recorded as for an answer that could not be counted, makes no rebase or conflict copy while a file it
+     * names is there ([PendingNotesStore.HeldBack]), and the push step records a storage failure while one is
+     * ([PendingNotesStore.Snapshot.discardUnfinished]), until another confirmed sign-out finishes the clear, or a
+     * save or a release from holding withdraws the permit. A listing that fails still throws IOException, as before.
+     */
+    internal fun waitingIn(store: PendingNotesStore): PendingNotesStore.Snapshot? = try {
+        store.snapshot { false }
+    } catch (e: PendingNotesStore.Cleared) {
+        if (!store.clearedInFull()) throw IOException("a clear of the pending store has not finished")
+        null
     }
 
     private fun pruneNotebookCopies(store: PendingNotesStore) {

@@ -94,28 +94,47 @@ class PendingNotesDiscardPermitsTest {
         assertEquals(listOf("notes-discard"), root.list()!!.toList())
     }
 
-    @Test fun `a permit cut short, failing its checksum, in a newer format or naming another store is no permit`() {
+    @Test fun `a damaged permit and one whose read fails while it may be there are told apart, and neither is a permit`() {
+        val damaged = PendingNotesDiscardPermits.Lookup.Damaged
+        val unknown = PendingNotesDiscardPermits.Lookup.Unknown
+        assertEquals("none before one is recorded", PendingNotesDiscardPermits.Lookup.Absent, permits.lookup("store-a"))
         val bytes = PendingCodec.encodePermit("store-a", UnsyncedNotes(2, 7, false))
         val file = File(permits.root.also { assertTrue(it.mkdirs()) }, "store-a.permit")
         for (length in 0 until bytes.size) {
             file.writeBytes(bytes.copyOf(length))
+            assertEquals("cut to $length", damaged, permits.lookup("store-a"))
             assertNull("cut to $length", permits.read("store-a"))
         }
         for (i in bytes.indices) {
             file.writeBytes(bytes.copyOf().also { it[i] = (it[i].toInt() xor 0x40).toByte() })
+            assertEquals("byte $i", damaged, permits.lookup("store-a"))
             assertNull("byte $i", permits.read("store-a"))
         }
         file.writeBytes(withFormatVersion(bytes, 2))
+        assertEquals("a newer format", damaged, permits.lookup("store-a"))
         assertNull("a newer format", permits.read("store-a"))
         file.writeBytes(PendingCodec.encodePermit("store-b", UnsyncedNotes(2, 7, false)))
+        assertEquals("another store's permit under this store's name", damaged, permits.lookup("store-a"))
         assertNull("another store's permit under this store's name", permits.read("store-a"))
         assertTrue(file.delete() && file.mkdir())
+        assertEquals("one that is there and cannot be read", unknown, permits.lookup("store-a"))
         assertNull("one that cannot be read", permits.read("store-a"))
+        assertTrue(file.delete())
+        // Not there, but its check fails: it may be there.
+        PendingNotesStore.presenceForTesting = { f ->
+            if (f.name == "store-a.permit") PendingNotesStore.Presence.UNKNOWN else null
+        }
+        assertEquals("one whose check fails", unknown, permits.lookup("store-a"))
+        assertNull(permits.read("store-a"))
+        PendingNotesStore.presenceForTesting = null
+        assertEquals("shown not there", PendingNotesDiscardPermits.Lookup.Absent, permits.lookup("store-a"))
     }
 
     @Test fun `a permit covers the store as shown across a restart, and a change pushed since does not end it`() {
         store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
         store.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        // n1's upload starts before the permit is recorded.
+        val sent = store.beginSend("n1")!!
         val shown = store.unsynced()
         permits.record(store.dir.name, shown)
 
@@ -123,18 +142,24 @@ class PendingNotesDiscardPermitsTest {
         val permit = freshPermits().read(again.dir.name)!!
         assertTrue(permit.covers(again.unsynced()))
         assertTrue("asking does not use it up", permit.covers(again.unsynced()))
-        // A push hands out no new version, so the permit stays, and what is left is still covered.
-        val sent = again.beginSend("n1")!!
+        assertEquals("what the permit names is not sent",
+            PendingNotesStore.SendStart.Refused(PendingNotesStore.Refusal.DISCARD_CONFIRMED), again.startSend("n2"))
+        // An upload that lands hands out no new version, so the permit stays, and what is left is still covered.
         assertEquals(SendOutcome.Done, again.completeSend("n1", sent.version, "r1", blob("landed")))
         assertEquals(UnsyncedNotes(1, shown.sequence, false, names = setOf("n2.note")), again.unsynced())
         assertEquals(shown, freshPermits().read(again.dir.name))
         assertTrue(permit.covers(again.unsynced()))
     }
 
-    @Test fun `every new version withdraws the permit first, from a save, a rebase, a release and a conflict copy`() {
+    @Test fun `a save and a release withdraw the permit first, and a rebase and a conflict copy only once what it names is gone`() {
         store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
         // Each step runs on a new instance, since an instance asks once, at its first new version.
         fun permitted(): PendingNotesStore = restarted().also { permits.record(it.dir.name, it.unsynced()) }
+        // A permit whose files are all gone, as one a discard that removed them and then stopped leaves.
+        fun permittedGone(): PendingNotesStore = restarted().also {
+            permits.record(it.dir.name, UnsyncedNotes(1, 1, false, names = setOf("gone.note")))
+        }
+        fun version(s: PendingNotesStore) = (s.read("n1") as Read.Present).entry.version
 
         var s = permitted()
         val shown = s.unsynced()
@@ -143,8 +168,14 @@ class PendingNotesDiscardPermitsTest {
         assertEquals("the count did not change", shown.count, s.unsynced().count)
         assertFalse("and the answer shown no longer covers the store", shown.covers(s.unsynced()))
 
+        // A rebase and a conflict copy are a run's, which makes no new version while what the permit names is there.
         s = permitted()
-        assertTrue(s.rebase("n1", (s.read("n1") as Read.Present).entry.version, "r2", "r3", blob("rebased")))
+        assertThrows("a rebase while n1 is named", PendingNotesStore.HeldBack::class.java) {
+            s.rebase("n1", version(s), "r2", "r3", blob("rebased"))
+        }
+        assertNotNull("keeps the permit", permits.read(s.dir.name))
+        s = permittedGone()
+        assertTrue(s.rebase("n1", version(s), "r2", "r3", blob("rebased")))
         assertNull("a rebase", permits.read(s.dir.name))
 
         s = permitted()
@@ -153,9 +184,14 @@ class PendingNotesDiscardPermitsTest {
         assertTrue(s.release("n1"))
         assertNull("a release from holding", permits.read(s.dir.name))
 
-        s = permitted()
         val copy = PendingEntry("copy1", "b1", PendingEntry.State.UPSERT, 0, "c1", true, blob = blob("mine as copy"))
-        assertTrue(s.replaceWithNewNote("n1", (s.read("n1") as Read.Present).entry.version, "srv", copy))
+        s = permitted()
+        assertThrows("a conflict copy while n1 is named", PendingNotesStore.HeldBack::class.java) {
+            s.replaceWithNewNote("n1", version(s), "srv", copy)
+        }
+        assertNotNull("keeps the permit", permits.read(s.dir.name))
+        s = permittedGone()
+        assertTrue(s.replaceWithNewNote("n1", version(s), "srv", copy))
         assertNull("a conflict copy", permits.read(s.dir.name))
     }
 
