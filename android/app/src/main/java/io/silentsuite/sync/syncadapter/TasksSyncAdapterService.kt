@@ -13,7 +13,6 @@ import android.content.ContentProviderClient
 import android.content.ContentResolver
 import android.content.Context
 import android.content.SyncResult
-import android.os.Build
 import android.os.Bundle
 import at.bitfire.ical4android.AndroidTaskList
 import at.bitfire.ical4android.TaskProvider
@@ -50,8 +49,7 @@ class TasksSyncAdapterService: SyncAdapterService() {
             val taskProvider = TaskProvider.fromProviderClient(context, name, provider)
 
             // make sure account can be seen by OpenTasks
-            if (Build.VERSION.SDK_INT >= 26)
-                AccountManager.get(context).setAccountVisibility(account, taskProvider.name.packageName, AccountManager.VISIBILITY_VISIBLE)
+            AccountManager.get(context).setAccountVisibility(account, taskProvider.name.packageName, AccountManager.VISIBILITY_VISIBLE)
 
             val accountSettings = AccountSettings(context, account)
             /* don't run sync if

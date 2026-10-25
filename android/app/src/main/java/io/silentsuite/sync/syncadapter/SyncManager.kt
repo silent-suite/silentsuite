@@ -9,7 +9,6 @@ package io.silentsuite.sync.syncadapter
 
 import android.accounts.Account
 import android.accounts.AccountManager
-import android.annotation.TargetApi
 import android.content.Context
 import android.content.Intent
 import android.content.SyncResult
@@ -117,7 +116,6 @@ constructor(protected val context: Context, protected val account: Account, prot
         httpClient.close()
     }
 
-    @TargetApi(21)
     enum class ProviderOutcome { SUCCESS, SKIPPED, FAILURE, CANCELLED }
 
     fun performSync(): ProviderOutcome {

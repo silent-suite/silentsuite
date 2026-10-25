@@ -13,8 +13,8 @@ android {
     compileSdkVersion rootProject.ext.compileSdkVersion
 
     defaultConfig {
-        // cert4android is consumed only by this API-21 application.
-        minSdkVersion 21            // Android 5.0
+        // cert4android is consumed only by this API-29 application.
+        minSdkVersion 29            // Android 10
         targetSdkVersion 33
     }
 

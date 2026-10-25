@@ -39,17 +39,38 @@ tests = sorted(
     for class_name, methods in ledger["classes"].items()
     for method in methods
 )
-if len(tests) != 168 or len(set(tests)) != 168:
+if len(tests) != 169 or len(set(tests)) != 169:
     raise SystemExit(f"bad canonical runtime ledger size: {len(tests)}")
 
-mixed = [tuple(pair) for pair in ledger["shards"]["21:mixed"]]
+mixed = [tuple(pair) for pair in ledger["shards"]["29:mixed"]]
 requested = [pair for pair in tests if pair[1] == "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"]
-if mode == "21:mixed":
+
+def owned(key):
+    owners = set(ledger["shards"][key])
+    return [pair for pair in tests if pair[0] in owners]
+
+# API 29 runs canonical-minus-mixed on fresh emulators split by the API 36 class owners.
+api29_groups = {
+    "29:first-run-setup": "36:first-run-setup",
+    "29:sibling-routes": "36:sibling-routes",
+    "29:status-routes": "36:status-routes",
+}
+api29_account_dashboard = [pair for pair in owned("36:account-dashboard") if pair not in set(mixed + requested)]
+api29_partition = [mixed, requested, api29_account_dashboard] + [owned(api29_groups[key]) for key in sorted(api29_groups)]
+api29_pairs = [pair for part in api29_partition for pair in part]
+if ledger["shards"]["29:remaining"] != "canonical-minus-mixed":
+    raise SystemExit("unsupported API 29 coverage contract")
+if [len(part) for part in api29_partition] != [1, 1, 30, 19, 48, 70]:
+    raise SystemExit(f"bad API 29 partition sizes: {[len(part) for part in api29_partition]}")
+if len(api29_pairs) != len(set(api29_pairs)) or set(api29_pairs) != set(tests):
+    raise SystemExit("API 29 execution shards are not a disjoint cover of the canonical runtime ledger")
+
+if mode == "29:mixed":
     selected = mixed
-elif mode == "21:requested":
+elif mode == "29:requested":
     selected = requested
-elif mode == "21:remaining":
-    selected = [pair for pair in tests if pair not in set(mixed + requested)]
+elif mode == "29:account-dashboard":
+    selected = api29_account_dashboard
 elif mode == "35:all":
     selected = tests
 elif mode in {"36:account-dashboard", "36:first-run-setup", "36:sibling-routes", "36:status-routes"}:
@@ -59,13 +80,13 @@ else:
     raise SystemExit(f"unsupported ledger selector mode: {mode}")
 
 expected = {
-    "21:mixed": 1,
-    "21:requested": 1,
-    "21:remaining": 166,
-    "35:all": 168,
+    "29:mixed": 1,
+    "29:requested": 1,
+    "29:account-dashboard": 30,
+    "35:all": 169,
     "36:account-dashboard": 32,
     "36:first-run-setup": 19,
-    "36:sibling-routes": 47,
+    "36:sibling-routes": 48,
     "36:status-routes": 70,
 }[mode]
 if len(selected) != expected:
@@ -74,9 +95,9 @@ print(",".join(f"{class_name}#{method}" for class_name, method in selected))
 PY
 }
 
-mixed_selector="$(ledger_selectors '21:mixed')"
-requested_selector="$(ledger_selectors '21:requested')"
-remaining_selectors="$(ledger_selectors '21:remaining')"
+mixed_selector="$(ledger_selectors '29:mixed')"
+requested_selector="$(ledger_selectors '29:requested')"
+api29_account_dashboard_selectors="$(ledger_selectors '29:account-dashboard')"
 all_selectors="$(ledger_selectors '35:all')"
 api36_account_dashboard_selectors="$(ledger_selectors '36:account-dashboard')"
 api36_first_run_setup_selectors="$(ledger_selectors '36:first-run-setup')"
@@ -111,10 +132,14 @@ import json, pathlib, re, subprocess, sys
 ledger_path, mode, nonce, output, run, attempt, job, checkout = sys.argv[1:]
 ledger=json.loads(pathlib.Path(ledger_path).read_text(encoding="utf-8"))
 tests=sorted((c,m) for c, methods in ledger["classes"].items() for m in methods)
-mixed=[tuple(pair) for pair in ledger["shards"]["21:mixed"]]
+mixed=[tuple(pair) for pair in ledger["shards"]["29:mixed"]]
 requested=[pair for pair in tests if pair[1] == "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"]
-if mode == "21:mixed": selected=mixed
-elif mode == "21:remaining": selected=[pair for pair in tests if pair not in set(mixed + requested)]
+api29_groups={"29:first-run-setup":"36:first-run-setup","29:sibling-routes":"36:sibling-routes","29:status-routes":"36:status-routes"}
+if mode == "29:mixed": selected=mixed
+elif mode == "29:account-dashboard":
+    owners=set(ledger["shards"]["36:account-dashboard"]); selected=[pair for pair in tests if pair[0] in owners and pair not in set(mixed + requested)]
+elif mode in api29_groups:
+    owners=set(ledger["shards"][api29_groups[mode]]); selected=[pair for pair in tests if pair[0] in owners]
 elif mode == "35:all": selected=tests
 elif mode in {"36:account-dashboard", "36:first-run-setup", "36:sibling-routes", "36:status-routes"}:
     owners=set(ledger["shards"][mode]); selected=[pair for pair in tests if pair[0] in owners]
@@ -211,13 +236,13 @@ print(f"validated {len(expected)} focused runtime scenario records")
 PY
 }
 
-if [[ "${api_level}:${shard}" == "21:mixed" ]]; then
+if [[ "${api_level}:${shard}" == "29:mixed" ]]; then
   timeout --signal=TERM --kill-after=10s 600s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${mixed_selector}" "${scenario_args[@]}"
-elif [[ "${api_level}:${shard}" == "21:remaining" ]]; then
+elif [[ "${api_level}:${shard}" == "29:account-dashboard" ]]; then
   temp_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
   mkdir -p "${temp_root}"
-  requested_results="$(mktemp -d "${temp_root%/}/pr567-api21-requested.XXXXXX")"
+  requested_results="$(mktemp -d "${temp_root%/}/pr567-api29-requested.XXXXXX")"
   requested_saved=0
 
   save_requested_results() {
@@ -238,12 +263,12 @@ elif [[ "${api_level}:${shard}" == "21:remaining" ]]; then
         status="${save_status}"
       fi
     fi
-    mkdir -p "app/build/outputs/androidTest-results/connected/api21-requested"
+    mkdir -p "app/build/outputs/androidTest-results/connected/api29-requested"
     mkdir_status=$?
     if [[ "${status}" -eq 0 && "${mkdir_status}" -ne 0 ]]; then
       status="${mkdir_status}"
     fi
-    cp -R "${requested_results}/." "app/build/outputs/androidTest-results/connected/api21-requested/"
+    cp -R "${requested_results}/." "app/build/outputs/androidTest-results/connected/api29-requested/"
     restore_status=$?
     if [[ "${status}" -eq 0 && "${restore_status}" -ne 0 ]]; then
       status="${restore_status}"
@@ -257,7 +282,16 @@ elif [[ "${api_level}:${shard}" == "21:remaining" ]]; then
   save_requested_results
 
   timeout --signal=TERM --kill-after=10s 1500s \
-    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${remaining_selectors}" "${scenario_args[@]}"
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api29_account_dashboard_selectors}" "${scenario_args[@]}"
+elif [[ "${api_level}:${shard}" == "29:first-run-setup" ]]; then
+  timeout --signal=TERM --kill-after=10s 1500s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_first_run_setup_selectors}" "${scenario_args[@]}"
+elif [[ "${api_level}:${shard}" == "29:status-routes" ]]; then
+  timeout --signal=TERM --kill-after=10s 1500s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_status_routes_selectors}" "${scenario_args[@]}"
+elif [[ "${api_level}:${shard}" == "29:sibling-routes" ]]; then
+  timeout --signal=TERM --kill-after=10s 1500s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_sibling_routes_selectors}" "${scenario_args[@]}"
 elif [[ "${api_level}:${shard}" == "35:all" ]]; then
   timeout --signal=TERM --kill-after=10s 2400s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${all_selectors}" "${scenario_args[@]}"

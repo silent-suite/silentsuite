@@ -180,12 +180,7 @@ class LocalGroup : AndroidGroup, LocalAddress {
         val addressBook = this.addressBook as LocalAddressBook
         Constants.log.fine("Assigning members to group $id")
 
-        // required for workaround for Android 7 which sets DIRTY flag when only meta-data is changed
-        val changeContactIDs = HashSet<Long>()
-
         // delete all memberships and cached memberships for this group; a member's rows for other groups stay
-        for (contact in addressBook.getByGroupMembership(id))
-            changeContactIDs += contact.id!!
         batch.enqueue(BatchOperation.CpoBuilder.newDelete(addressBook.syncAdapterURI(ContactsContract.Data.CONTENT_URI))
                         .withSelection(
                                 "(${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID}=?) OR " +
@@ -199,15 +194,9 @@ class LocalGroup : AndroidGroup, LocalAddress {
             Constants.log.fine("Assigning member: $memberId")
             addressBook.findContactByID(memberId).let { member ->
                 member.addToGroup(batch, id)
-                changeContactIDs += member.id!!
             } ?: Constants.log.warning("Group member not found: $memberId")
         }
 
-        if (LocalContact.HASH_HACK)
-        // workaround for Android 7 which sets DIRTY flag when only meta-data is changed
-            changeContactIDs
-                    .map { addressBook.findContactByID(it) }
-                    .forEach { it.updateHashCode(batch) }
 
         // remove pending memberships
         batch.enqueue(BatchOperation.CpoBuilder.newUpdate(addressBook.syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, id)))
@@ -290,11 +279,6 @@ class LocalGroup : AndroidGroup, LocalAddress {
             batch.enqueue(BatchOperation.CpoBuilder.newDelete(dataUri)
                     .withSelection("${GroupMembership.RAW_CONTACT_ID}=? AND ${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID}=?",
                             arrayOf(rawId.toString(), GroupMembership.CONTENT_ITEM_TYPE, id.toString())))
-        if (LocalContact.HASH_HACK)
-        // workaround for Android 7 which sets DIRTY flag when only meta-data is changed
-            ((target - current) + (current - target - pendingDeletion))
-                    .map { addressBook.findContactByID(it) }
-                    .forEach { it.updateHashCode(batch) }
 
         // B: cached rows only, toward the server's list
         for (rawId in server - cached)

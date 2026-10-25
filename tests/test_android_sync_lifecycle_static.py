@@ -475,8 +475,9 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert navigation_wrapper.rstrip().endswith('exec bash "$(dirname "$0")/run-focused-runtime-tests.sh" "$api_level" "$shard"')
     rows = re.findall(r"- api-level: (\d+)\n\s+arch: (\S+)\n\s+shard: (\S+)", job)
     assert rows == [
-        ("21", "x86", "mixed"), ("21", "x86", "remaining"),
-        ("35", "x86_64", "all"), ("36", "x86_64", "account-dashboard"),
+        ("29", "x86", "mixed"), ("29", "x86", "account-dashboard"),
+        ("29", "x86", "first-run-setup"), ("29", "x86", "status-routes"),
+        ("29", "x86", "sibling-routes"), ("35", "x86_64", "all"), ("36", "x86_64", "account-dashboard"),
         ("36", "x86_64", "first-run-setup"), ("36", "x86_64", "status-routes"),
         ("36", "x86_64", "sibling-routes"),
     ]
@@ -490,7 +491,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     canonical_bytes = (json.dumps(ledger, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
     assert raw == canonical_bytes
     assert ledger["schema"] == 1
-    assert ledger["shards"]["21:remaining"] == "canonical-minus-mixed"
+    assert ledger["shards"]["29:remaining"] == "canonical-minus-mixed"
     assert ledger["shards"]["35:all"] == "canonical"
     assert list(ledger["classes"]) == sorted(ledger["classes"])
     assert all(methods == sorted(methods) and len(methods) == len(set(methods)) for methods in ledger["classes"].values())
@@ -508,10 +509,10 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
     ledger_size = sum(len(methods) for methods in ledger["classes"].values())
-    assert len(canonical) == len(runtime_methods) == ledger_size == 168
+    assert len(canonical) == len(runtime_methods) == ledger_size == 169
     assert canonical == runtime_methods
 
-    mixed = {tuple(pair) for pair in ledger["shards"]["21:mixed"]}
+    mixed = {tuple(pair) for pair in ledger["shards"]["29:mixed"]}
     requested = {
         pair for pair in canonical
         if pair[1] == "requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention"
@@ -527,8 +528,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 166, 168)
-    assert tuple(len(api36[key]) for key in api36) == (32, 19, 70, 47)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 167, 169)
+    assert tuple(len(api36[key]) for key in api36) == (32, 19, 70, 48)
     assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
     assert all(
         left.isdisjoint(right)
@@ -546,26 +547,52 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert set(ledger["wrappers"]) == wrappers
     assert all(ledger["wrappers"][wrapper] == sorted(ledger["wrappers"][wrapper]) for wrapper in wrappers)
 
+    # API 29 executes canonical-minus-mixed as fresh-emulator subpartitions of the API 36 owners.
+    api29 = {
+        "29:mixed": mixed,
+        "29:account-dashboard": api36["36:account-dashboard"] - mixed,
+        "29:first-run-setup": api36["36:first-run-setup"],
+        "29:status-routes": api36["36:status-routes"],
+        "29:sibling-routes": api36["36:sibling-routes"],
+    }
+    assert requested <= api29["29:account-dashboard"]
+    assert tuple(len(part) for part in api29.values()) == (1, 31, 19, 70, 48)
+    assert len(api29["29:account-dashboard"] - requested) == 30
+    assert sum(len(part) for part in api29.values()) == len(set().union(*api29.values())) == len(canonical)
+    assert set().union(*api29.values()) == canonical
+    wrapper_pairs = {tuple(wrapper.split("#", 1)) for wrapper in wrappers}
+    assert wrapper_pairs <= canonical
+    executed = {**api29, "35:all": canonical, **api36}
+    assert {key for key, part in executed.items() if wrapper_pairs & part} == {
+        "29:first-run-setup", "35:all", "36:first-run-setup"
+    }
+    assert all(wrapper_pairs <= executed[key] for key in ("29:first-run-setup", "35:all", "36:first-run-setup"))
+
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     subprocess.run(["bash", "-n", FOCUSED_RUNTIME_SCRIPT], check=True)
-    subprocess.run(["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "21" "mixed"'], check=True)
-    assert script.count("app:connectedDebugAndroidTest") == 8
+    subprocess.run(["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "29" "mixed"'], check=True)
+    assert script.count("app:connectedDebugAndroidTest") == 11
     assert "focused-runtime-ledger-v1.json" in script
     assert "object_pairs_hook=reject_duplicate_keys" in script
     assert "canonical compact sorted UTF-8/LF JSON" in script
     assert "other77" not in script
-    assert "remaining_selectors" in script
+    assert "api29_account_dashboard_selectors" in script and "remaining_selectors" not in script
+    for mode in ("29:account-dashboard", "29:first-run-setup", "29:status-routes", "29:sibling-routes"):
+        assert f'elif [[ "${{api_level}}:${{shard}}" == "{mode}" ]]; then' in script
+    assert "API 29 execution shards are not a disjoint cover of the canonical runtime ledger" in script
     assert "mktemp -d" in script and '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
     assert "app/build/outputs/androidTest-results/connected/." in script
-    assert "api21-requested" in script and "api21_batch_" not in script
+    assert "api29-requested" in script and "api21_batch_" not in script
     assert 'command -v timeout >/dev/null 2>&1' in script
     assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == [
-        "600", "600", "1500", "2400", "1800", "1800", "1800", "1800"
+        "600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800"
     ]
     requested_run = script.index('class="${requested_selector}"')
     save = script.index("\n  save_requested_results", requested_run)
-    remaining_run = script.index('class="${remaining_selectors}"')
-    assert script.index("trap restore_requested_results EXIT") < requested_run < save < remaining_run
+    account_dashboard_run = script.index('class="${api29_account_dashboard_selectors}"')
+    assert script.index("trap restore_requested_results EXIT") < requested_run < save < account_dashboard_run
+    assert script.index('== "29:account-dashboard" ]]') < script.index("trap restore_requested_results EXIT")
+    assert account_dashboard_run < script.index('== "29:first-run-setup" ]]')
     assert "status=$?" in script and "set +e" in script and "restore_status=$?" in script
     assert script.count('if [[ "${status}" -eq 0 && "') >= 3
     assert script.index("trap - EXIT") < script.index('exit "${status}"')
@@ -590,8 +617,10 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'21:mixed':1,'21:remaining':167,'35:all':168,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':47,'36:status-routes':70}" in assertion
-    assert '"21:remaining": 166' in script
+    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':31,'29:first-run-setup':19,'29:status-routes':70,'29:sibling-routes':48,'35:all':169,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':70}" in assertion
+    assert "API 29 execution shards are not a disjoint cover of the canonical runtime ledger" in assertion
+    assert "elif key == '29:remaining'" not in assertion
+    assert '"29:account-dashboard": 30' in script and '"29:remaining":' not in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper

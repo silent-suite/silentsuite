@@ -11,7 +11,6 @@ package io.silentsuite.sync.resource
 import android.content.ContentProviderOperation
 import android.content.ContentValues
 import android.net.Uri
-import android.os.Build
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.GroupMembership
 import android.provider.ContactsContract.RawContacts.Data
@@ -38,10 +37,6 @@ class LocalContact : AndroidContact, LocalAddress {
         init {
             Contact.productID = Constants.PRODID_BASE + " ez-vcard/" + Ezvcard.VERSION
         }
-
-        internal const val COLUMN_HASHCODE = ContactsContract.RawContacts.SYNC3
-
-        internal val HASH_HACK = Build.VERSION_CODES.N <= Build.VERSION.SDK_INT && Build.VERSION.SDK_INT < Build.VERSION_CODES.O
     }
 
     private var saveAsDirty = false // When true, the resource will be saved as dirty
@@ -93,13 +88,6 @@ class LocalContact : AndroidContact, LocalAddress {
             values.put(AndroidContact.COLUMN_ETAG, eTag)
         }
         values.put(ContactsContract.RawContacts.DIRTY, 0)
-
-        if (LocalContact.HASH_HACK) {
-            // workaround for Android 7 which sets DIRTY flag when only meta-data is changed
-            val hashCode = dataHashCode()
-            values.put(COLUMN_HASHCODE, hashCode)
-            Logger.log.finer("Clearing dirty flag for contact resource")
-        }
 
         addressBook.provider?.update(rawContactSyncURI(), values, null, null)
 
@@ -159,56 +147,6 @@ class LocalContact : AndroidContact, LocalAddress {
         super.buildContact(builder, update)
         builder.withValue(ContactsContract.RawContacts.DIRTY, if (saveAsDirty) 1 else 0)
     }
-
-    /**
-     * Calculates a hash code from the contact's data (VCard) and group memberships.
-     * Attention: re-reads {@link #contact} from the database, discarding all changes in memory
-     * @return hash code of contact data (including group memberships)
-     */
-    internal fun dataHashCode(): Int {
-        if (!LocalContact.HASH_HACK)
-            throw IllegalStateException("dataHashCode() should not be called on Android != 7")
-
-        // reset contact so that getContact() reads from database
-        contact = null
-
-        // groupMemberships is filled by getContact()
-        val dataHash = contact!!.hashCode()
-        val groupHash = groupMemberships.hashCode()
-        Logger.log.finest("Calculated contact data hash for dirty workaround")
-        return dataHash xor groupHash
-    }
-
-    fun updateHashCode(batch: BatchOperation?) {
-        if (!LocalContact.HASH_HACK)
-            throw IllegalStateException("updateHashCode() should not be called on Android != 7")
-
-        val values = ContentValues(1)
-        val hashCode = dataHashCode()
-        Logger.log.fine("Storing contact hash for dirty workaround")
-        values.put(COLUMN_HASHCODE, hashCode)
-
-        if (batch == null)
-            addressBook.provider!!.update(rawContactSyncURI(), values, null, null)
-        else {
-            val builder = BatchOperation.CpoBuilder
-                    .newUpdate(rawContactSyncURI())
-                    .withValue(COLUMN_HASHCODE, hashCode)
-            batch.enqueue(builder)
-        }
-    }
-
-    fun getLastHashCode(): Int {
-        if (!LocalContact.HASH_HACK)
-            throw IllegalStateException("getLastHashCode() should not be called on Android != 7")
-
-        addressBook.provider!!.query(rawContactSyncURI(), arrayOf(COLUMN_HASHCODE), null, null, null)?.use { c ->
-            if (c.moveToNext() && !c.isNull(0))
-                return c.getInt(0)
-        }
-        return 0
-    }
-
 
 
     fun addToGroup(batch: BatchOperation, groupID: Long) {

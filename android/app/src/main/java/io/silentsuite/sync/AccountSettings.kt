@@ -10,12 +10,10 @@ package io.silentsuite.sync
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.annotation.SuppressLint
-import android.annotation.TargetApi
 import android.content.BroadcastReceiver
 import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import at.bitfire.vcard4android.ContactsStorageException
 import at.bitfire.vcard4android.GroupMethod
@@ -25,7 +23,7 @@ import java.net.URISyntaxException
 import java.util.logging.Level
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 
-class AccountSettings @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+class AccountSettings
 @Throws(InvalidAccountException::class)
 constructor(internal val context: Context, internal val account: Account) {
     internal val accountManager: AccountManager

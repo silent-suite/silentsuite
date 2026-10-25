@@ -342,12 +342,10 @@ class CustomCertService: Service() {
         val nm = NotificationUtils.createChannels(this)
         if (!nm.areNotificationsEnabled())
             return false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
-                .getNotificationChannel(NotificationUtils.CHANNEL_CERTIFICATES)
-            if (channel == null || channel.importance == NotificationManager.IMPORTANCE_NONE)
-                return false
-        }
+        val channel = (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .getNotificationChannel(NotificationUtils.CHANNEL_CERTIFICATES)
+        if (channel == null || channel.importance == NotificationManager.IMPORTANCE_NONE)
+            return false
 
         // Extras do not form PendingIntent identity. Include the generation in data so an old
         // PendingIntent cannot be updated to point at a later decision for the same certificate.

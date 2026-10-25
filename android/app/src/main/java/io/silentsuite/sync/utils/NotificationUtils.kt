@@ -8,7 +8,7 @@
 
 package io.silentsuite.sync.utils
 
-import android.annotation.TargetApi
+
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -21,7 +21,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 
 object NotificationUtils {
@@ -49,40 +48,28 @@ object NotificationUtils {
 
 
     fun createChannels(context: Context) {
-        @TargetApi(Build.VERSION_CODES.O)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-            nm.createNotificationChannelGroup(NotificationChannelGroup(CHANNEL_SYNC, context.getString(R.string.notification_channel_sync)))
-
-            nm.createNotificationChannels(listOf(
-                    NotificationChannel(CHANNEL_DEBUG, context.getString(R.string.notification_channel_debugging), NotificationManager.IMPORTANCE_HIGH),
-                    NotificationChannel(CHANNEL_GENERAL, context.getString(R.string.notification_channel_general), NotificationManager.IMPORTANCE_DEFAULT),
-
-                    NotificationChannel(CHANNEL_SYNC_ERRORS, context.getString(R.string.notification_channel_sync_errors), NotificationManager.IMPORTANCE_DEFAULT).apply {
-                        description = context.getString(R.string.notification_channel_sync_errors_desc)
-                        group = CHANNEL_SYNC
-                    },
-                    NotificationChannel(CHANNEL_SYNC_WARNINGS, context.getString(R.string.notification_channel_sync_warnings), NotificationManager.IMPORTANCE_LOW).apply {
-                        description = context.getString(R.string.notification_channel_sync_warnings_desc)
-                        group = CHANNEL_SYNC
-                    },
-                    NotificationChannel(CHANNEL_SYNC_STATUS, context.getString(R.string.notification_channel_sync_status), NotificationManager.IMPORTANCE_LOW).apply {
-                        description = context.getString(R.string.notification_channel_sync_status_desc)
-                        group = CHANNEL_SYNC
-                    }
-            ))
-        }
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannelGroup(NotificationChannelGroup(CHANNEL_SYNC, context.getString(R.string.notification_channel_sync)))
+        nm.createNotificationChannels(listOf(
+                NotificationChannel(CHANNEL_DEBUG, context.getString(R.string.notification_channel_debugging), NotificationManager.IMPORTANCE_HIGH),
+                NotificationChannel(CHANNEL_GENERAL, context.getString(R.string.notification_channel_general), NotificationManager.IMPORTANCE_DEFAULT),
+                NotificationChannel(CHANNEL_SYNC_ERRORS, context.getString(R.string.notification_channel_sync_errors), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = context.getString(R.string.notification_channel_sync_errors_desc)
+                    group = CHANNEL_SYNC
+                },
+                NotificationChannel(CHANNEL_SYNC_WARNINGS, context.getString(R.string.notification_channel_sync_warnings), NotificationManager.IMPORTANCE_LOW).apply {
+                    description = context.getString(R.string.notification_channel_sync_warnings_desc)
+                    group = CHANNEL_SYNC
+                },
+                NotificationChannel(CHANNEL_SYNC_STATUS, context.getString(R.string.notification_channel_sync_status), NotificationManager.IMPORTANCE_LOW).apply {
+                    description = context.getString(R.string.notification_channel_sync_status_desc)
+                    group = CHANNEL_SYNC
+                }
+        ))
     }
 
-    fun newBuilder(context: Context, channel: String): NotificationCompat.Builder {
-        val builder = NotificationCompat.Builder(context, channel)
-
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N)
-            builder.setLargeIcon(App.getLauncherBitmap(context))
-
-        return builder
-    }
+    fun newBuilder(context: Context, channel: String): NotificationCompat.Builder =
+            NotificationCompat.Builder(context, channel)
 
     /** True only for Android 13+ applications which have not yet been asked. */
     fun shouldRequestPermission(context: Context): Boolean {

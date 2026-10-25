@@ -12,7 +12,6 @@ import android.accounts.Account
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.os.RemoteException
 import at.bitfire.ical4android.AndroidTaskList
 import at.bitfire.ical4android.AndroidTaskListFactory
@@ -20,7 +19,6 @@ import at.bitfire.ical4android.CalendarStorageException
 import at.bitfire.ical4android.TaskProvider
 import at.bitfire.ical4android.TaskProvider.ProviderName
 import io.silentsuite.sync.CachedCollection
-
 import org.dmfs.tasks.contract.TaskContract.TaskLists
 import org.dmfs.tasks.contract.TaskContract.Tasks
 
@@ -32,20 +30,8 @@ class LocalTaskList private constructor(
     companion object {
         val defaultColor = -0x743cb6     // light green 500
 
-        fun tasksProviderAvailable(context: Context, provider: ProviderName): Boolean {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-                return context.packageManager.resolveContentProvider(provider.authority, 0) != null
-            else {
-                try {
-                    TaskProvider.acquire(context, provider)?.use {
-                        return true
-                    }
-                } catch (e: Exception) {
-                    // couldn't acquire task provider
-                }
-                return false
-            }
-        }
+        fun tasksProviderAvailable(context: Context, provider: ProviderName): Boolean =
+                context.packageManager.resolveContentProvider(provider.authority, 0) != null
 
         fun create(account: Account, provider: TaskProvider, cachedCollection: CachedCollection): Uri {
             val values = valuesFromCachedCollection(cachedCollection, true)

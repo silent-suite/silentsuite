@@ -10,12 +10,10 @@ package io.silentsuite.sync
 
 import android.accounts.AccountManager
 import android.annotation.SuppressLint
-import android.annotation.TargetApi
 import android.app.Application
 import android.content.*
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
-import android.os.Build
 import android.os.StrictMode
 import android.provider.CalendarContract
 import android.provider.ContactsContract
@@ -204,7 +202,6 @@ class App : Application() {
         lateinit var addressBooksAuthority: String
             private set
 
-        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
         fun getLauncherBitmap(context: Context): Bitmap? {
             var bitmapLogo: Bitmap? = null
             val drawableLogo = ContextCompat.getDrawable(context, R.mipmap.ic_launcher)

@@ -540,7 +540,7 @@ class SettingsRuntimeTest {
                 requestId,
                 System.currentTimeMillis() - 5 * 60_000L
             ))
-            val before = settledSchedulingEvidence { schedulingEvidence(context, manager, account, store) }
+            val before = settledSchedulingEvidence(account) { schedulingEvidence(context, manager, account, store) }
             var shown = ""
             var shared = ""
             var opened = false
@@ -634,7 +634,7 @@ class SettingsRuntimeTest {
             fun evidence() = schedulingEvidence(context, manager, account, store) +
                 listOf(app.all.toMap(), defaults.all.toMap())
             fun readOnlyReport(): String {
-                val before = settledSchedulingEvidence(::evidence)
+                val before = settledSchedulingEvidence(account, ::evidence)
                 val report = SchedulingDiagnostics.report(context)
                 assertEquals(before, evidence())
                 assertSchedulingReportIsContentFree(report, requestId, "scheduling-marker-old", "scheduling-marker-new")
@@ -660,7 +660,7 @@ class SettingsRuntimeTest {
                     override fun getApplicationContext(): Context = this
                     override fun getSystemService(name: String): Any? = systemService(name)
                 }
-                val before = settledSchedulingEvidence(::evidence)
+                val before = settledSchedulingEvidence(account, ::evidence)
                 val report = SchedulingDiagnostics.report(restricted)
                 assertEquals(before, evidence())
                 assertSchedulingReportIsContentFree(report, requestId)
@@ -695,16 +695,18 @@ class SettingsRuntimeTest {
         }
     )
 
-    /** Waits out the app's own asynchronous account bookkeeping before a read-only comparison. */
-    private fun settledSchedulingEvidence(read: () -> List<Any?>): List<Any?> {
+    /** Native always-syncable initialization must finish before a read-only comparison. */
+    private fun settledSchedulingEvidence(account: Account, read: () -> List<Any?>): List<Any?> {
+        val authorities = listOf(android.provider.CalendarContract.AUTHORITY, App.addressBooksAuthority)
         var previous = read()
         repeat(20) {
             Thread.sleep(250)
+            val initialized = authorities.all { android.content.ContentResolver.getIsSyncable(account, it) >= 0 }
             val current = read()
-            if (current == previous) return current
+            if (initialized && current == previous) return current
             previous = current
         }
-        return previous
+        throw AssertionError("Scheduling fixture initialization or bookkeeping did not settle")
     }
 
     private fun assertSchedulingReportIsContentFree(report: String, vararg markers: String) {

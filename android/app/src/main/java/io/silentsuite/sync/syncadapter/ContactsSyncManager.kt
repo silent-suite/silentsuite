@@ -123,17 +123,7 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
     override fun prepare(): Boolean {
         if (!super.prepare())
             return false
-        val localAddressBook = localAddressBook()
-
-        if (LocalContact.HASH_HACK) {
-            // workaround for Android 7 which sets DIRTY flag when only meta-data is changed
-            val reallyDirty = localAddressBook.verifyDirty()
-            val deleted = localAddressBook.findDeleted().size
-            if (extras.containsKey(ContentResolver.SYNC_EXTRAS_UPLOAD) && reallyDirty == 0 && deleted == 0) {
-                Logger.log.info("This sync was called to up-sync dirty/deleted contacts, but no contacts have been changed")
-                return false
-            }
-        }
+        localAddressBook()
 
         return true
     }
@@ -424,9 +414,6 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             syncResult.stats.numInserts++
         }
 
-        if (LocalContact.HASH_HACK && local is LocalContact)
-        // workaround for Android 7 which sets DIRTY flag when only meta-data is changed
-            local.updateHashCode(null)
 
         return local
     }

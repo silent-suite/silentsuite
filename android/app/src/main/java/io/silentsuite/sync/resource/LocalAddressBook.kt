@@ -9,9 +9,7 @@ package io.silentsuite.sync.resource
 
 import android.accounts.Account
 import android.accounts.AccountManager
-import android.annotation.TargetApi
 import android.content.*
-import android.os.Build
 import android.os.Bundle
 import android.os.RemoteException
 import android.provider.ContactsContract
@@ -28,7 +26,6 @@ import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.putSyncMainIdentity
-
 import java.io.FileNotFoundException
 import java.util.*
 import java.util.logging.Level
@@ -67,14 +64,6 @@ class LocalAddressBook(
             Logger.log.info("Creating local address book")
             if (!accountManager.addAccountExplicitly(account, null, userData))
                 throw IllegalStateException("Couldn't create address book account")
-
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-                // Android < 7 seems to lose the initial user data sometimes, so set it a second time
-                // https://forums.bitfire.at/post/11644
-                userData.keySet().forEach { key ->
-                    accountManager.setUserData(account, key, userData.getString(key))
-                }
-            }
 
 
             val addressBook = LocalAddressBook(context, account, provider)
@@ -209,8 +198,7 @@ class LocalAddressBook(
         val col = cachedCollection.col
         val newAccountName = accountName(mainAccount, cachedCollection)
 
-        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
-        if (account.name != newAccountName && Build.VERSION.SDK_INT >= 21) {
+        if (account.name != newAccountName) {
             val accountManager = AccountManager.get(context)
             val future = accountManager.renameAccount(account, newAccountName, {
                 try {
@@ -272,15 +260,7 @@ class LocalAddressBook(
             Unit
         }
 
-        @Suppress("DEPRECATION")
-        @TargetApi(Build.VERSION_CODES.LOLLIPOP_MR1)
-        if (Build.VERSION.SDK_INT >= 22) {
-            onConfirmedAddressBookRemoval(accountManager.removeAccountExplicitly(account), recordConfirmedRemoval)
-        } else {
-            accountManager.removeAccount(account, { future ->
-                onConfirmedAddressBookRemoval(runCatching { future.result }.getOrDefault(false), recordConfirmedRemoval)
-            }, null)
-        }
+        onConfirmedAddressBookRemoval(accountManager.removeAccountExplicitly(account), recordConfirmedRemoval)
     }
 
     override fun findAll(): List<LocalAddress> =
@@ -330,36 +310,6 @@ class LocalAddressBook(
     fun findWithoutFileNameContacts() = queryContacts("${AndroidContact.COLUMN_FILENAME} IS NULL", null)
     fun findWithoutFileNameGroups() = queryGroups("${AndroidGroup.COLUMN_FILENAME} IS NULL", null)
 
-    /**
-     * Queries all contacts with DIRTY flag and checks whether their data checksum has changed, i.e.
-     * if they're "really dirty" (= data has changed, not only metadata, which is not hashed).
-     * The DIRTY flag is removed from contacts which are not "really dirty", i.e. from contacts
-     * whose contact data checksum has not changed.
-     * @return number of "really dirty" contacts
-     */
-    fun verifyDirty(): Int {
-        if (!LocalContact.HASH_HACK)
-            throw IllegalStateException("verifyDirty() should not be called on Android != 7")
-
-        var reallyDirty = 0
-        for (contact in findDirtyContacts()) {
-            val lastHash = contact.getLastHashCode()
-            val currentHash = contact.dataHashCode()
-            if (lastHash == currentHash) {
-                // hash is code still the same, contact is not "really dirty" (only metadata been have changed)
-                Logger.log.log(Level.FINE, "Contact data hash has not changed, resetting dirty flag")
-                contact.resetDirty()
-            } else {
-                Logger.log.log(Level.FINE, "Contact data hash has changed")
-                reallyDirty++
-            }
-        }
-
-        if (includeGroups)
-            reallyDirty += findDirtyGroups().size
-
-        return reallyDirty
-    }
 
     override fun findByUid(uid: String): LocalAddress? {
         val found = findContactByUID(uid)

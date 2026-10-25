@@ -182,7 +182,7 @@ def test_registry_process_boundary_lane_is_wired_with_an_exact_inventory():
     job = workflow.split("\n  registry-process-boundary:\n", 1)[1]
     assert "timeout-minutes: 60" in job and "contents: read" in job and "needs: conscrypt-r28" in job
     assert re.findall(r"api-level: (\d+)\n\s+image-required: (true|false)", job) == [
-        ("21", "true"), ("34", "true"), ("35", "true"), ("36", "true"), ("37", "false"),
+        ("29", "true"), ("34", "true"), ("35", "true"), ("36", "true"), ("37", "false"),
     ]
     assert 'script: bash android/scripts/run-registry-process-boundary.sh "${{ matrix.api-level }}"' in job
     # A lane that did not run says exactly why; a broken probe is never reported as a missing image.

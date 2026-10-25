@@ -118,7 +118,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - api-level: '21'
+          - api-level: '29'
             arch: x86
           - api-level: '36'
             arch: x86_64
@@ -288,7 +288,7 @@ jobs:
       - name: Run debug unit tests, lint, and assemble instrumentation APKs
         # Assemble each Android module's androidTest APK so AGP merges and
         # validates its instrumentation manifest. Runtime coverage stays
-        # focused on the app test below (API 21, API 35, and API 36).
+        # focused on the app test below (API 29, API 35, and API 36).
         run: >-
           ./gradlew
           app:testDebugUnitTest
@@ -351,8 +351,8 @@ jobs:
           [[ ${#release_apks[@]} -eq 1 ]] || { echo "expected exactly one unsigned release APK, found ${#release_apks[@]}" >&2; exit 1; }
           for apk in "${debug_apks[@]}" "${release_apks[@]}"; do
             badging="$("$aapt" dump badging "$apk")"
-            [[ $(grep -Fxc "sdkVersion:'21'" <<<"$badging" || true) -eq 1 ]] || {
-              echo "$apk does not report exactly one min SDK 21 entry" >&2
+            [[ $(grep -Fxc "sdkVersion:'29'" <<<"$badging" || true) -eq 1 ]] || {
+              echo "$apk does not report exactly one min SDK 29 entry" >&2
               exit 1
             }
             [[ $(grep -Fxc "targetSdkVersion:'36'" <<<"$badging" || true) -eq 1 ]] || {
@@ -477,12 +477,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - api-level: 21
+          - api-level: 29
             arch: x86
             shard: mixed
-          - api-level: 21
+          - api-level: 29
             arch: x86
-            shard: remaining
+            shard: account-dashboard
+          - api-level: 29
+            arch: x86
+            shard: first-run-setup
+          - api-level: 29
+            arch: x86
+            shard: status-routes
+          - api-level: 29
+            arch: x86
+            shard: sibling-routes
           - api-level: 35
             arch: x86_64
             shard: all
@@ -630,14 +639,23 @@ jobs:
           if raw != canonical_bytes: raise SystemExit('focused runtime ledger is not canonical compact sorted UTF-8/LF JSON')
           if ledger.get('schema') != 1: raise SystemExit('unsupported focused runtime ledger schema')
           canonical={(class_name,method) for class_name,methods in ledger['classes'].items() for method in methods}
-          mixed={tuple(pair) for pair in ledger['shards']['21:mixed']}
+          mixed={tuple(pair) for pair in ledger['shards']['29:mixed']}
+          requested={pair for pair in canonical if pair[1] == 'requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention'}
+          owned=lambda group: {pair for pair in canonical if pair[0] in set(ledger['shards'][group])}
+          api29={
+            '29:mixed':mixed,
+            '29:account-dashboard':owned('36:account-dashboard')-mixed,
+            '29:first-run-setup':owned('36:first-run-setup'),
+            '29:status-routes':owned('36:status-routes'),
+            '29:sibling-routes':owned('36:sibling-routes'),
+          }
+          if ledger['shards']['29:remaining'] != 'canonical-minus-mixed' or not requested <= api29['29:account-dashboard'] or sum(len(part) for part in api29.values()) != len(canonical) or set().union(*api29.values()) != canonical:
+            raise SystemExit('API 29 execution shards are not a disjoint cover of the canonical runtime ledger')
           shard='${{ matrix.shard }}'
           api='${{ matrix.api-level }}'
           key=f'{api}:{shard}'
-          if key == '21:mixed':
-            expected=mixed
-          elif key == '21:remaining':
-            expected=canonical-mixed
+          if key in api29:
+            expected=api29[key]
           elif key == '35:all':
             expected=canonical
           elif key in {'36:account-dashboard','36:first-run-setup','36:sibling-routes','36:status-routes'}:
@@ -645,8 +663,8 @@ jobs:
             expected={pair for pair in canonical if pair[0] in owners}
           else:
             raise SystemExit(f'unsupported API/shard {key}')
-          expected_sizes={'21:mixed':1,'21:remaining':167,'35:all':168,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':47,'36:status-routes':70}
-          if len(canonical) != 168 or len(expected) != expected_sizes[key]:
+          expected_sizes={'29:mixed':1,'29:account-dashboard':31,'29:first-run-setup':19,'29:status-routes':70,'29:sibling-routes':48,'35:all':169,'36:account-dashboard':32,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':70}
+          if len(canonical) != 169 or len(expected) != expected_sizes[key]:
             raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
@@ -814,7 +832,7 @@ jobs:
       matrix:
         include:
           - arch: x86
-            api-level: 21
+            api-level: 29
             image-required: true
           - arch: x86_64
             api-level: 34

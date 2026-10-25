@@ -1,12 +1,10 @@
 package io.silentsuite.sync.ui
 
 import android.annotation.SuppressLint
-import android.annotation.TargetApi
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.webkit.*
@@ -49,9 +47,7 @@ class WebViewActivity : BaseActivity() {
         mWebView!!.settings.javaScriptEnabled = true
         mWebView!!.settings.allowFileAccess = false
         mWebView!!.settings.allowContentAccess = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            mWebView!!.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-        }
+        mWebView!!.settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (mWebView!!.canGoBack()) {
@@ -99,7 +95,6 @@ class WebViewActivity : BaseActivity() {
             return shouldOverrideUrl(Uri.parse(url))
         }
 
-        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             return shouldOverrideUrl(request.url)
         }
@@ -108,7 +103,6 @@ class WebViewActivity : BaseActivity() {
             loadErrorPage(failingUrl)
         }
 
-        @TargetApi(Build.VERSION_CODES.LOLLIPOP)
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
             loadErrorPage(request.url.toString())
         }

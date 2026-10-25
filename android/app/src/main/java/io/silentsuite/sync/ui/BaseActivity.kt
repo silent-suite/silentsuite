@@ -54,9 +54,7 @@ open class BaseActivity : AppCompatActivity() {
     private fun applyReadableSystemBars() {
         val systemBarColor = ContextCompat.getColor(this, R.color.semantic_system_bar)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
-        }
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
 
         if (Build.VERSION.SDK_INT >= 35) {
             window.statusBarColor = android.graphics.Color.TRANSPARENT
@@ -71,12 +69,8 @@ open class BaseActivity : AppCompatActivity() {
         // Navy system bars require light clock/battery/connectivity icons. Explicitly
         // clear light-system-bar flags so Android 15+ edge-to-edge
         // defaults or theme inheritance cannot leave dark icons on a dark bar.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            window.clearLightStatusBar()
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.clearLightNavigationBar()
-        }
+        window.clearLightStatusBar()
+        window.clearLightNavigationBar()
     }
 
     private fun installSystemBarScrims(color: Int) {

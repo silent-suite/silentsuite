@@ -9,12 +9,10 @@
 package io.silentsuite.sync.ui
 
 import android.annotation.SuppressLint
-import android.annotation.TargetApi
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -34,7 +32,6 @@ class StartupDialogFragment : DialogFragment() {
         VENDOR_SPECIFIC_BUGS
     }
 
-    @TargetApi(Build.VERSION_CODES.M)
     @SuppressLint("BatteryLife")
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         isCancelable = false

@@ -227,12 +227,18 @@ class EditCollectionFragment : Fragment() {
             try {
                 val deleted = withContext(Dispatchers.IO) {
                     if (!identity.validate(applicationContext)) return@withContext false
-                    val col = cachedCollection.col
+                    // Delete a copy, so a delete that fails leaves the screen's collection as it was for a Save.
+                    val onScreen = cachedCollection.col
+                    val colMgr = model.value!!.colMgr
+                    val col = colMgr.cacheLoad(colMgr.cacheSave(onScreen))
                     val meta = col.meta
                     meta.mtime = System.currentTimeMillis()
                     col.meta = meta
                     col.delete()
                     if (!uploadCollection(identity, applicationContext, col)) return@withContext false
+                    // The server has the delete. A screen that outlives this call (after a rotation) keeps
+                    // onScreen, so it is marked deleted too and a Save there cannot bring the collection back.
+                    onScreen.delete()
                     if (!identity.validate(applicationContext)) return@withContext false
                     requestSync(applicationContext, model.value!!.account)
                     true

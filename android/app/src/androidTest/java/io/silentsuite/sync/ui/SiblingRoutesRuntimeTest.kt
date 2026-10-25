@@ -107,6 +107,21 @@ class SiblingRoutesRuntimeTest {
         }
     }
 
+    // Action-completion fixtures use the real button listener, not touch-injection acceptance.
+    private fun activateDialogButton(buttonId: Int) {
+        onView(androidx.test.espresso.matcher.ViewMatchers.withId(buttonId)).inRoot(isDialog())
+            .perform(object : androidx.test.espresso.ViewAction {
+                override fun getConstraints(): org.hamcrest.Matcher<View> = isDisplayed()
+                override fun getDescription() = "activate the real dialog button $buttonId"
+                override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+                    assertEquals(buttonId, view.id)
+                    assertTrue("Dialog button must be enabled", view.isEnabled)
+                    assertTrue("Dialog button must handle the click", view.performClick())
+                    controller.loopMainThreadUntilIdle()
+                }
+            })
+    }
+
     private fun waitUntil(description: String, timeoutMillis: Long = 10_000, predicate: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + timeoutMillis
         while (SystemClock.uptimeMillis() < deadline) {
@@ -228,7 +243,26 @@ class SiblingRoutesRuntimeTest {
                 }
                 onView(withText(context.getString(R.string.change_encryption_password_are_you_sure)))
                     .check(matches(isDisplayed()))
-                onView(withText(android.R.string.yes)).perform(click())
+                assertEquals("password change needs confirmation", 0, passwordCalls.get())
+                // The listener can show the success dialog before window focus settles, so the old
+                // confirmation's absence is witnessed on its own views rather than a picked root.
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(android.R.id.button1)).inRoot(isDialog())
+                    .perform(object : androidx.test.espresso.ViewAction {
+                        override fun getConstraints(): org.hamcrest.Matcher<View> = isDisplayed()
+                        override fun getDescription() = "activate the real password confirmation button"
+                        override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+                            val confirmation = requireNotNull(view.rootView.findViewById<TextView>(android.R.id.message))
+                            assertEquals(context.getString(R.string.change_encryption_password_are_you_sure),
+                                confirmation.text.toString())
+                            assertEquals(android.R.id.button1, view.id)
+                            assertEquals(context.getString(android.R.string.yes), (view as TextView).text.toString())
+                            assertTrue("Dialog button must be enabled", view.isEnabled)
+                            assertTrue("Dialog button must handle the click", view.performClick())
+                            controller.loopMainThreadUntilIdle()
+                            assertFalse("the confirmation must no longer exist", confirmation.isAttachedToWindow)
+                            assertFalse("the confirmation button must no longer exist", view.isAttachedToWindow)
+                        }
+                    })
                 assertTrue("Timed out waiting for password success dialog",
                     successDialogShown.await(10, TimeUnit.SECONDS))
                 // The password work uses Dispatchers.IO, which Espresso does not own.  Wait for
@@ -244,7 +278,9 @@ class SiblingRoutesRuntimeTest {
                 }
                 onView(withText(context.getString(R.string.change_encryption_password_success_title))).check(matches(isDisplayed()))
                 onView(withText(context.getString(R.string.change_encryption_password_success_body))).check(matches(isDisplayed()))
-                onView(withText(android.R.string.ok)).perform(click())
+                onView(withText(context.getString(R.string.change_encryption_password_are_you_sure)))
+                    .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                activateDialogButton(android.R.id.button1)
                 waitUntil("password caller return") { scenario.state == Lifecycle.State.DESTROYED }
                 assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
             }
@@ -948,6 +984,25 @@ class SiblingRoutesRuntimeTest {
                 return s
             }
             fun dialogButton(id: Int) = onView(androidx.test.espresso.matcher.ViewMatchers.withId(id)).inRoot(isDialog())
+            // The Restore confirmation tests action completion, not touch injection: activate its
+            // actual button and witness that the listener ran and closed this exact confirmation.
+            fun answerRestoreConfirmation(id: Int, label: String) = dialogButton(id)
+                .perform(object : androidx.test.espresso.ViewAction {
+                    override fun getConstraints(): org.hamcrest.Matcher<View> = isDisplayed()
+                    override fun getDescription() = "activate the real contact Restore confirmation button $id"
+                    override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+                        val confirmation = requireNotNull(view.rootView.findViewById<TextView>(android.R.id.message))
+                        assertEquals(context.getString(R.string.contact_restore_confirm_body), confirmation.text.toString())
+                        assertEquals(id, view.id)
+                        assertEquals(label, (view as TextView).text.toString())
+                        assertTrue("Restore confirmation button must be enabled", view.isEnabled)
+                        assertTrue("Restore confirmation button must handle the click", view.performClick())
+                        controller.loopMainThreadUntilIdle()
+                        assertFalse("the Restore confirmation must be closed by its listener", confirmation.isAttachedToWindow)
+                    }
+                })
+            val restoreLabel = context.getString(R.string.journal_item_restore_action)
+            val cancelLabel = context.getString(android.R.string.cancel)
             val child = childOf.getValue(book)
 
             openDeletedContact(book, "Deleted Person").use { s ->
@@ -971,14 +1026,14 @@ class SiblingRoutesRuntimeTest {
                 // Cancelling the confirmation writes nothing.
                 s.onActivity { a -> itemScreen(a)!!.onOptionsItemSelected(restoreMenuItem(a)) }
                 onView(withText(R.string.contact_restore_confirm_body)).inRoot(isDialog()).check(matches(isDisplayed()))
-                dialogButton(android.R.id.button2).perform(click())
+                answerRestoreConfirmation(android.R.id.button2, cancelLabel)
                 assertEquals(emptyList<Int>(), dirtyFlags(child))
 
                 // A generation replaced while the confirmation is open gets nothing written.
                 s.onActivity { a -> itemScreen(a)!!.onOptionsItemSelected(restoreMenuItem(a)) }
                 onView(withText(R.string.contact_restore_confirm_body)).inRoot(isDialog()).check(matches(isDisplayed()))
                 check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "contacts-recovery-replaced"))
-                dialogButton(android.R.id.button1).perform(click())
+                answerRestoreConfirmation(android.R.id.button1, restoreLabel)
                 assertEquals(emptyList<Int>(), dirtyFlags(child))
                 check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
 
@@ -993,7 +1048,7 @@ class SiblingRoutesRuntimeTest {
                         manager.setUserData(child, ownerKey, staleOwner)
                         s.onActivity { a -> itemScreen(a)!!.onOptionsItemSelected(restoreMenuItem(a)) }
                         onView(withText(R.string.contact_restore_confirm_body)).inRoot(isDialog()).check(matches(isDisplayed()))
-                        dialogButton(android.R.id.button1).perform(click())
+                        answerRestoreConfirmation(android.R.id.button1, restoreLabel)
                         onView(withText(R.string.journal_item_restore_dialog_body))
                             .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
                         assertEquals("owner $staleOwner", emptyList<Int>(), dirtyFlags(child))
@@ -1005,7 +1060,9 @@ class SiblingRoutesRuntimeTest {
 
                 // Confirming writes the contact into its exact address book, marked for upload.
                 s.onActivity { a -> itemScreen(a)!!.onOptionsItemSelected(restoreMenuItem(a)) }
-                dialogButton(android.R.id.button1).perform(click())
+                onView(withText(R.string.contact_restore_confirm_body)).inRoot(isDialog()).check(matches(isDisplayed()))
+                assertEquals("restore needs confirmation", emptyList<Int>(), dirtyFlags(child))
+                answerRestoreConfirmation(android.R.id.button1, restoreLabel)
                 onView(withText(R.string.journal_item_restore_dialog_body)).inRoot(isDialog()).check(matches(isDisplayed()))
                 dialogButton(android.R.id.button1).perform(click())
                 assertEquals(listOf(1), dirtyFlags(child))
@@ -1047,6 +1104,146 @@ class SiblingRoutesRuntimeTest {
         }
     }
 
+    /**
+     * For a calendar, a task list, an address book and a notebook in turn: a collection delete whose upload
+     * fails, then a rename and Save on the same edit screen, then a delete that goes through, over the real
+     * Etebase binding against the in-process stand-in server and the account's real cache. Each kind gets its
+     * own collection and screen, and only that collection's uploads are counted or dropped. A kind that fails
+     * is recorded under its name and the next kind still runs, so one run shows every kind that fails.
+     */
+    @Test
+    fun collectionSaveAfterAFailedDeleteRenamesAndKeepsEachKindOfCollection() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val generation = "delete-then-save-generation"
+        val fake = io.silentsuite.sync.notes.FakeEtebaseServer()
+        val client = com.etebase.client.Client.create(
+            okhttp3.OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl)
+        val session = com.etebase.client.Account.signup(client,
+            com.etebase.client.User("delete-then-save-${System.nanoTime()}", "delete-then-save@example.invalid"),
+            "stand-in-server-only").save(null)
+        val colMgr = com.etebase.client.Account.restore(client, session, null).collectionManager
+        val account = addAccount(manager, "delete-then-save", generation)
+        io.silentsuite.sync.HttpClient.testInterceptor = fake
+        io.silentsuite.sync.syncadapter.requestSyncDispatchOverride = { _, _, _ -> }
+        try {
+            (at.bitfire.ical4android.TaskProvider.TASK_PROVIDERS.map { it.authority } +
+                listOf(android.provider.CalendarContract.AUTHORITY, App.addressBooksAuthority)).forEach {
+                android.content.ContentResolver.setIsSyncable(account, it, 0)
+            }
+            AccountSettings.setUserData(manager, account, java.net.URI(fake.baseUrl), account.name)
+            check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+            AccountSettings(context, account).etebaseSession = session
+            // Notes stays off, so the requestSync after a notebook's Save or delete starts no Notes run.
+            assertFalse("Notes is off", AccountSettings.notesEnabled(manager, account))
+            val cache = io.silentsuite.sync.EtebaseLocalCache.getInstance(context, account.name)
+            fun screen(a: CollectionActivity) = a.supportFragmentManager.findFragmentById(R.id.fragment_container)
+            fun showing(s: ActivityScenario<CollectionActivity>, type: Class<*>): Boolean {
+                var shown = false
+                s.onActivity { shown = type.isInstance(screen(it)) }
+                return shown
+            }
+            fun select(s: ActivityScenario<CollectionActivity>, id: Int) = s.onActivity {
+                val item = MenuBuilder(it).add(0, id, 0, "")
+                when (val shown = screen(it)) {
+                    is ViewCollectionFragment -> shown.onOptionsItemSelected(item)
+                    is EditCollectionFragment -> shown.onOptionsItemSelected(item)
+                    else -> throw AssertionError("menu item $id with ${shown?.javaClass?.simpleName} shown")
+                }
+            }
+            fun dialogShown(title: Int) =
+                runCatching { onView(withText(title)).inRoot(isDialog()).check(matches(isDisplayed())) }.isSuccess
+            fun dialogButton(id: Int) =
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(id)).inRoot(isDialog())
+
+            /** One kind of collection; [color] is null for the address book, whose edit screen has no color. */
+            class Kind(val label: String, val type: String, val color: String?)
+
+            fun deleteFailsThenSave(kind: Kind) {
+                val created = colMgr.create(kind.type, com.etebase.client.ItemMetadata().apply {
+                    name = "Delete then save ${kind.label}"
+                    kind.color?.let { color = it }
+                }, "")
+                colMgr.upload(created)
+                val uid = created.uid
+                synchronized(cache) { cache.collectionSet(colMgr, colMgr.fetch(uid)) }
+                val renamed = "Renamed ${kind.label} after a failed delete"
+                // This collection's uploads only, so an answer a failed kind left unused never reaches the next kind.
+                val uploadPath = Regex("collection/${Regex.escape(uid)}/item/(batch|transaction)/")
+                fun uploads() = fake.requests.count { it.startsWith("POST ") && uploadPath.containsMatchIn(it) }
+
+                val intent = CollectionActivity.newIntent(context, account, generation, uid)
+                ActivityScenario.launch<CollectionActivity>(intent).use { s ->
+                    waitUntil("collection view") { showing(s, ViewCollectionFragment::class.java) }
+                    s.onActivity {
+                        val loaded = androidx.lifecycle.ViewModelProvider(it)[CollectionViewModel::class.java].value
+                        assertEquals("the kind on the screen", kind.type, loaded?.collectionType)
+                    }
+                    select(s, R.id.on_edit)
+                    waitUntil("edit screen") { showing(s, EditCollectionFragment::class.java) }
+
+                    // Delete, confirm with the upload dropped once: the error shows and the server copy is untouched.
+                    val before = uploads()
+                    fake.answer("POST", uploadPath, null)
+                    select(s, R.id.on_delete)
+                    waitUntil("delete confirmation") { dialogShown(R.string.delete_collection_confirm_title) }
+                    dialogButton(android.R.id.button1).perform(click())
+                    waitUntil("delete error", 20_000) { dialogShown(R.string.exception) }
+                    assertEquals("one delete upload was tried", before + 1, uploads())
+                    assertFalse("the failed delete deleted nothing on the server", colMgr.fetch(uid).isDeleted)
+                    dialogButton(android.R.id.button1).perform(click())
+
+                    // The edit screen stays; rename and Save.
+                    assertTrue("the edit screen stays", showing(s, EditCollectionFragment::class.java))
+                    s.onActivity { it.findViewById<android.widget.EditText>(R.id.display_name).setText(renamed) }
+                    select(s, R.id.on_save)
+                    waitUntil("collection view after Save", 20_000) { showing(s, ViewCollectionFragment::class.java) }
+                    assertEquals("the Save made one more upload", before + 2, uploads())
+                    val onServer = colMgr.fetch(uid)
+                    assertFalse("the Save after a failed delete deleted the collection on the server",
+                        onServer.isDeleted)
+                    assertEquals("the new name on the server", renamed, onServer.meta.name)
+                    if (kind.color != null) assertEquals("the color on the server", kind.color, onServer.meta.color)
+                    else assertTrue("no color on the server", onServer.meta.color.isNullOrEmpty())
+                    assertFalse("the cache marks the collection deleted",
+                        synchronized(cache) { cache.collectionGet(colMgr, uid) }.col.isDeleted)
+
+                    // A delete that goes through still deletes it, and closes the screen.
+                    select(s, R.id.on_edit)
+                    waitUntil("edit screen again") { showing(s, EditCollectionFragment::class.java) }
+                    select(s, R.id.on_delete)
+                    waitUntil("delete confirmation again") { dialogShown(R.string.delete_collection_confirm_title) }
+                    dialogButton(android.R.id.button1).perform(click())
+                    waitUntil("the screen to close after the delete", 20_000) { s.state == Lifecycle.State.DESTROYED }
+                    assertEquals("the delete made one more upload", before + 3, uploads())
+                }
+                assertTrue("the delete reached the server", colMgr.fetch(uid).isDeleted)
+                assertTrue("the cache marks it deleted",
+                    synchronized(cache) { cache.collectionGet(colMgr, uid) }.col.isDeleted)
+            }
+
+            val failures = listOf(
+                Kind("calendar", Constants.ETEBASE_TYPE_CALENDAR, "#3366CC"),
+                Kind("task list", Constants.ETEBASE_TYPE_TASKS, "#339966"),
+                Kind("address book", Constants.ETEBASE_TYPE_ADDRESS_BOOK, null),
+                Kind("notebook", Constants.ETEBASE_TYPE_NOTES, "#996633"),
+            ).mapNotNull { kind ->
+                runCatching { deleteFailsThenSave(kind) }.exceptionOrNull()
+                    ?.let { AssertionError("${kind.label}: ${it.toString().lineSequence().first()}", it) }
+            }
+            // One failure names every kind that failed; each kind's own failure and stack trace stay attached.
+            if (failures.isNotEmpty()) {
+                throw AssertionError(failures.joinToString("; ") { it.message.orEmpty() })
+                    .apply { failures.forEach { addSuppressed(it) } }
+            }
+        } finally {
+            io.silentsuite.sync.HttpClient.testInterceptor = null
+            io.silentsuite.sync.syncadapter.requestSyncDispatchOverride = null
+            removeAccountAndWait(manager, account)
+            io.silentsuite.sync.EtebaseLocalCache.clearUserCache(context, account.name)
+        }
+    }
+
     @Test
     fun collectionCreateCompletionRendersCreatedCollectionAndPreservesReturn() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-create","ac41-create-generation");val state=AtomicReference(fixture("created-uid",""));val calls=AtomicInteger()
@@ -1065,21 +1262,160 @@ class SiblingRoutesRuntimeTest {
     fun collectionMembersRenderRemoveAndReturnToExactCollection() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-members","ac41-members-generation");val initialState=fixture(members=listOf(RuntimeMember("admin",com.etebase.client.CollectionAccessLevel.Admin),RuntimeMember("writer",com.etebase.client.CollectionAccessLevel.ReadWrite)));val state=AtomicReference(initialState);val calls=AtomicInteger()
         runtimeFixtureOverride=exactFixture(account,"ac41-members-generation",initialState.uid,null) { state.get() };memberRemoveOverride={ _,id,user -> assertEquals(account,id.account);assertEquals("ac41-members-generation",id.creationId);assertEquals(initialState.uid,id.collectionUid);assertEquals(initialState.type,id.collectionType);assertEquals("writer",user);state.set(state.get().copy(members=state.get().members.filter {it.username!=user}));calls.incrementAndGet();true }
-        try { ActivityScenario.launchActivityForResult<CollectionActivity>(CollectionActivity.newIntent(context,account,"ac41-members-generation",initialState.uid)).use { s -> waitUntil("view") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment};ok};s.onActivity { (it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment).onOptionsItemSelected(MenuBuilder(it).add(0, R.id.on_manage_members, 0, "Members")) };waitUntil("members") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is CollectionMembersFragment};ok};waitUntil("member rows laid out") { var ok=false;s.onActivity { val list=memberListView(it);ok=list!=null&&list.adapter?.count==2&&list.childCount>=2&&list.getChildAt(0)!=null&&list.getChildAt(1)!=null&&it.findViewById<TextView>(R.id.display_name).text.toString()==initialState.name };ok };s.recreate();waitUntil("recreated member rows laid out") { var ok=false;s.onActivity { val list=memberListView(it);ok=list!=null&&list.adapter?.count==2&&list.childCount>=2&&list.getChildAt(0)!=null&&list.getChildAt(1)!=null };ok };s.onActivity { val list=requireNotNull(memberListView(it));assertTrue(list.performItemClick(requireNotNull(list.getChildAt(0)),0,0)) };onView(withText(android.R.string.ok)).inRoot(isDialog()).perform(click());s.onActivity { val list=requireNotNull(memberListView(it));assertTrue(list.performItemClick(requireNotNull(list.getChildAt(1)),1,1)) };onView(withText(android.R.string.yes)).inRoot(isDialog()).perform(click());waitUntil("writer absent") {var ok=false;s.onActivity { val list=memberListView(it);ok=list?.adapter?.let { adapter -> adapter.count==1&&(adapter.getItem(0) as RuntimeMember).username=="admin" }==true };ok};assertEquals(1,calls.get());s.onActivity {it.onBackPressedDispatcher.onBackPressed()};waitUntil("parent collection") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment};ok};s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment;assertEquals(account,f.arguments!!.getParcelable("collection.identity.account"));assertEquals("ac41-members-generation",f.arguments!!.getString("collection.identity.creationId"));assertEquals(initialState.uid,f.arguments!!.getString("collection.identity.uid"));assertEquals(initialState.type,f.arguments!!.getString("collection.identity.type"));it.onBackPressedDispatcher.onBackPressed()};assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally {memberRemoveOverride=null;runtimeFixtureOverride=null;removeAccountAndWait(manager,account)}
+        try { ActivityScenario.launchActivityForResult<CollectionActivity>(CollectionActivity.newIntent(context,account,"ac41-members-generation",initialState.uid)).use { s -> waitUntil("view") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment};ok};s.onActivity { (it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment).onOptionsItemSelected(MenuBuilder(it).add(0, R.id.on_manage_members, 0, "Members")) };waitUntil("members") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is CollectionMembersFragment};ok};waitUntil("member rows laid out") { var ok=false;s.onActivity { val list=memberListView(it);ok=list!=null&&list.adapter?.count==2&&list.childCount>=2&&list.getChildAt(0)!=null&&list.getChildAt(1)!=null&&it.findViewById<TextView>(R.id.display_name).text.toString()==initialState.name };ok };s.recreate();waitUntil("recreated member rows laid out") { var ok=false;s.onActivity { val list=memberListView(it);ok=list!=null&&list.adapter?.count==2&&list.childCount>=2&&list.getChildAt(0)!=null&&list.getChildAt(1)!=null };ok };s.onActivity { val list=requireNotNull(memberListView(it));assertTrue(list.performItemClick(requireNotNull(list.getChildAt(0)),0,0)) };onView(withText(R.string.collection_members_remove_admin)).inRoot(isDialog()).check(matches(isDisplayed()));activateDialogButton(android.R.id.button2);onView(withText(R.string.collection_members_remove_admin)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist());assertEquals("admin cannot be removed",0,calls.get());assertEquals(initialState.members,state.get().members);s.onActivity { val list=requireNotNull(memberListView(it));assertTrue(list.performItemClick(requireNotNull(list.getChildAt(1)),1,1)) };onView(withText(context.getString(R.string.collection_members_remove,"writer"))).inRoot(isDialog()).check(matches(isDisplayed()));assertEquals("writer removal needs confirmation",0,calls.get());activateDialogButton(android.R.id.button1);onView(withText(context.getString(R.string.collection_members_remove,"writer"))).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist());waitUntil("writer absent") {var ok=false;s.onActivity { val list=memberListView(it);ok=list?.adapter?.let { adapter -> adapter.count==1&&(adapter.getItem(0) as RuntimeMember).username=="admin" }==true };ok};assertEquals(1,calls.get());s.onActivity {it.onBackPressedDispatcher.onBackPressed()};waitUntil("parent collection") {var ok=false;s.onActivity {ok=it.supportFragmentManager.findFragmentById(R.id.fragment_container) is ViewCollectionFragment};ok};s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment;assertEquals(account,f.arguments!!.getParcelable("collection.identity.account"));assertEquals("ac41-members-generation",f.arguments!!.getString("collection.identity.creationId"));assertEquals(initialState.uid,f.arguments!!.getString("collection.identity.uid"));assertEquals(initialState.type,f.arguments!!.getString("collection.identity.type"));it.onBackPressedDispatcher.onBackPressed()};assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally {memberRemoveOverride=null;runtimeFixtureOverride=null;removeAccountAndWait(manager,account)}
     }
 
     @Test
     fun invitationAcceptCompletionReturnsToCallerForExactGeneration() {
-        val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-accept","ac41-accept-generation");val row=RuntimeInvitation("invite-a","alice",com.etebase.client.CollectionAccessLevel.ReadWrite,"AA:BB");val calls=AtomicInteger()
-        invitationsOverride={ listOf(row) };invitationActionOverride={ _,id,key,action -> assertEquals(account,id.account);assertEquals("ac41-accept-generation",id.creationId);assertEquals("invite-a",key);assertEquals(RuntimeInvitationAction.ACCEPT,action);calls.incrementAndGet();Result.success(Unit) }
-        try { ActivityScenario.launchActivityForResult<InvitationsActivity>(InvitationsActivity.newIntent(context,account,"ac41-accept-generation")).use { s -> s.recreate();waitUntil("invitation row laid out") {var ok=false;s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? InvitationsListFragment;ok=f?.listAdapter?.count==1&&f.listView.getChildAt(0)!=null };ok};s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals("ac41-accept-generation",f.arguments!!.getString("invitation.identity.creationId"));assertEquals("Invitation from alice",(f.listAdapter!!.getItem(0) as InvitationRow).let { row -> context.getString(R.string.invitations_from,row.runtime.fromUsername) });f.onItemClick(f.listView,requireNotNull(f.listView.getChildAt(0)),0,0) };onView(withText("AA:BB")).inRoot(isDialog()).check(matches(isDisplayed()));onView(withText(R.string.invitations_accept)).inRoot(isDialog()).perform(click());waitUntil("accept return") {s.state==Lifecycle.State.DESTROYED};assertEquals(1,calls.get());assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode) }} finally { invitationActionOverride=null;invitationsOverride=null;removeAccountAndWait(manager,account) }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = addAccount(manager, "ac41-accept", "ac41-accept-generation")
+        val row = RuntimeInvitation("invite-a", "alice", com.etebase.client.CollectionAccessLevel.ReadWrite, "AA:BB")
+        val calls = AtomicInteger()
+        invitationsOverride = { listOf(row) }
+        invitationActionOverride = { _, identity, key, action ->
+            assertEquals(account, identity.account)
+            assertEquals("ac41-accept-generation", identity.creationId)
+            assertEquals("invite-a", key)
+            assertEquals(RuntimeInvitationAction.ACCEPT, action)
+            calls.incrementAndGet()
+            Result.success(Unit)
+        }
+        try {
+            ActivityScenario.launchActivityForResult<InvitationsActivity>(
+                InvitationsActivity.newIntent(context, account, "ac41-accept-generation")
+            ).use { scenario ->
+                scenario.recreate()
+                waitUntil("invitation row laid out") {
+                    var ready = false
+                    scenario.onActivity { activity ->
+                        val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container)
+                            as? InvitationsListFragment
+                        ready = fragment?.listAdapter?.count == 1 && fragment.listView.getChildAt(0) != null
+                    }
+                    ready
+                }
+                scenario.onActivity { activity ->
+                    val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container)
+                        as InvitationsListFragment
+                    assertEquals("ac41-accept-generation", fragment.arguments!!.getString("invitation.identity.creationId"))
+                    assertEquals("Invitation from alice", (fragment.listAdapter!!.getItem(0) as InvitationRow)
+                        .let { row -> context.getString(R.string.invitations_from, row.runtime.fromUsername) })
+                    fragment.onItemClick(fragment.listView, requireNotNull(fragment.listView.getChildAt(0)), 0, 0)
+                }
+                onView(withText("AA:BB")).inRoot(isDialog()).check(matches(isDisplayed()))
+                // Opening the confirmation accepts nothing and keeps the exact caller open.
+                assertEquals("accept needs confirmation", 0, calls.get())
+                assertEquals(Lifecycle.State.RESUMED, scenario.state)
+                // This tests action completion, not touch injection during window recreation.
+                // Activate the actual dialog button and witness its listener, never invoke the
+                // invitation override directly or dismiss the dialog on the fixture's behalf.
+                onView(withText(R.string.invitations_accept)).inRoot(isDialog())
+                    .perform(object : androidx.test.espresso.ViewAction {
+                        override fun getConstraints(): org.hamcrest.Matcher<View> = isDisplayed()
+                        override fun getDescription() = "activate the real Accept dialog button"
+                        override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+                            assertEquals(android.R.id.button1, view.id)
+                            assertTrue("Accept button must be enabled", view.isEnabled)
+                            assertTrue("Accept button must handle the click", view.performClick())
+                            controller.loopMainThreadUntilIdle()
+                            // The dialog's own button handler dismisses it only after running the listener.
+                            assertFalse("Accept listener must dismiss its dialog", view.isAttachedToWindow)
+                        }
+                    })
+                waitUntil("accept return") { scenario.state == Lifecycle.State.DESTROYED }
+                assertEquals(1, calls.get())
+                assertEquals(Lifecycle.State.DESTROYED, scenario.state)
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
+            }
+        } finally {
+            invitationActionOverride = null
+            invitationsOverride = null
+            removeAccountAndWait(manager, account)
+        }
     }
 
     @Test
     fun invitationRejectCompletionUpdatesListAndReturnsForExactGeneration() {
-        val context=InstrumentationRegistry.getInstrumentation().targetContext;val manager=AccountManager.get(context);val account=addAccount(manager,"ac41-reject","ac41-reject-generation");val rows=AtomicReference(listOf(RuntimeInvitation("invite-r","bob",com.etebase.client.CollectionAccessLevel.ReadOnly,"CC:DD")));val calls=AtomicInteger()
-        invitationsOverride={rows.get()};invitationActionOverride={ _,id,key,action -> assertEquals(account,id.account);assertEquals("ac41-reject-generation",id.creationId);assertEquals("invite-r",key);assertEquals(RuntimeInvitationAction.REJECT,action);rows.set(emptyList());calls.incrementAndGet();Result.success(Unit) }
-        try { ActivityScenario.launchActivityForResult<InvitationsActivity>(InvitationsActivity.newIntent(context,account,"ac41-reject-generation")).use { s -> s.recreate();waitUntil("invitation row laid out") {var ok=false;s.onActivity { val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? InvitationsListFragment;ok=f?.listAdapter?.count==1&&f.listView.getChildAt(0)!=null };ok};s.onActivity {val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals("ac41-reject-generation",f.arguments!!.getString("invitation.identity.creationId"));f.onItemClick(f.listView,requireNotNull(f.listView.getChildAt(0)),0,0)};onView(withText("CC:DD")).inRoot(isDialog()).check(matches(isDisplayed()));onView(withText(R.string.invitations_reject)).inRoot(isDialog()).perform(click());waitUntil("rendered rejection") {var ok=false;s.onActivity {val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? InvitationsListFragment;ok=calls.get()==1&&f?.listAdapter?.count==0};ok};s.onActivity {val f=it.supportFragmentManager.findFragmentById(R.id.fragment_container) as InvitationsListFragment;assertEquals(0,f.listAdapter!!.count);assertEquals(Lifecycle.State.RESUMED,it.lifecycle.currentState);it.onBackPressedDispatcher.onBackPressed()};waitUntil("reject return") {s.state==Lifecycle.State.DESTROYED};assertEquals(Lifecycle.State.DESTROYED,s.state);assertEquals(android.app.Activity.RESULT_CANCELED,s.result.resultCode)}} finally {invitationActionOverride=null;invitationsOverride=null;removeAccountAndWait(manager,account)}
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = addAccount(manager, "ac41-reject", "ac41-reject-generation")
+        val rows = AtomicReference(listOf(RuntimeInvitation("invite-r", "bob",
+            com.etebase.client.CollectionAccessLevel.ReadOnly, "CC:DD")))
+        val calls = AtomicInteger()
+        invitationsOverride = { rows.get() }
+        invitationActionOverride = { _, identity, key, action ->
+            assertEquals(account, identity.account)
+            assertEquals("ac41-reject-generation", identity.creationId)
+            assertEquals("invite-r", key)
+            assertEquals(RuntimeInvitationAction.REJECT, action)
+            rows.set(emptyList())
+            calls.incrementAndGet()
+            Result.success(Unit)
+        }
+        try {
+            ActivityScenario.launchActivityForResult<InvitationsActivity>(
+                InvitationsActivity.newIntent(context, account, "ac41-reject-generation")
+            ).use { scenario ->
+                scenario.recreate()
+                waitUntil("invitation row laid out") {
+                    var ready = false
+                    scenario.onActivity { activity ->
+                        val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container)
+                            as? InvitationsListFragment
+                        ready = fragment?.listAdapter?.count == 1 && fragment.listView.getChildAt(0) != null
+                    }
+                    ready
+                }
+                scenario.onActivity { activity ->
+                    val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container)
+                        as InvitationsListFragment
+                    assertEquals("ac41-reject-generation", fragment.arguments!!.getString("invitation.identity.creationId"))
+                    fragment.onItemClick(fragment.listView, requireNotNull(fragment.listView.getChildAt(0)), 0, 0)
+                }
+                onView(withText("CC:DD")).inRoot(isDialog()).check(matches(isDisplayed()))
+                // This tests action completion, not touch injection during window recreation.
+                // Activate the actual dialog button and witness its listener, never invoke the
+                // invitation override directly or dismiss the dialog on the fixture's behalf.
+                onView(withText(R.string.invitations_reject)).inRoot(isDialog())
+                    .perform(object : androidx.test.espresso.ViewAction {
+                        override fun getConstraints(): org.hamcrest.Matcher<View> = isDisplayed()
+                        override fun getDescription() = "activate the real Reject dialog button"
+                        override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+                            assertEquals(android.R.id.button2, view.id)
+                            assertTrue("Reject button must be enabled", view.isEnabled)
+                            assertTrue("Reject button must handle the click", view.performClick())
+                            controller.loopMainThreadUntilIdle()
+                        }
+                    })
+                onView(withText("CC:DD"))
+                    .check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
+                waitUntil("rendered rejection") {
+                    var rendered = false
+                    scenario.onActivity { activity ->
+                        val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container)
+                            as? InvitationsListFragment
+                        rendered = calls.get() == 1 && fragment?.listAdapter?.count == 0
+                    }
+                    rendered
+                }
+                scenario.onActivity { activity ->
+                    val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container)
+                        as InvitationsListFragment
+                    assertEquals(0, fragment.listAdapter!!.count)
+                    assertEquals(Lifecycle.State.RESUMED, activity.lifecycle.currentState)
+                    activity.onBackPressedDispatcher.onBackPressed()
+                }
+                waitUntil("reject return") { scenario.state == Lifecycle.State.DESTROYED }
+                assertEquals(1, calls.get())
+                assertEquals(Lifecycle.State.DESTROYED, scenario.state)
+                assertEquals(android.app.Activity.RESULT_CANCELED, scenario.result.resultCode)
+            }
+        } finally {
+            invitationActionOverride = null
+            invitationsOverride = null
+            removeAccountAndWait(manager, account)
+        }
     }
 
     // ---- Contacts native-store repopulation ----

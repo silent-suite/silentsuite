@@ -86,6 +86,13 @@ def apk(directory: Path, name: str, *dexes: bytes) -> Path:
     return path
 
 
+def reference_dex(owner, name, result, parameters) -> bytes:
+    """Declare an external method reference without defining its owner or method."""
+    dex = bytearray(synthetic_dex(owner, name, result, parameters, include_method=False))
+    struct.pack_into("<II", dex, 96, 0, 0)
+    return bytes(dex)
+
+
 class DesugarRuntimeVerifierTest(unittest.TestCase):
     def target_dexes(self):
         return (
@@ -119,6 +126,56 @@ class DesugarRuntimeVerifierTest(unittest.TestCase):
             test = apk(directory, "test.apk", synthetic_dex("Lexample/Test;", include_method=False))
             with self.assertRaisesRegex(VERIFIER.VerificationError, "Objects.hash"):
                 VERIFIER.verify_apks(str(target), str(test))
+
+    def test_api29_accepts_platform_calls_without_unused_legacy_backports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            target = apk(directory, "target.apk",
+                         reference_dex("Ljava/util/Collections;", "synchronizedMap", "Ljava/util/Map;", ("Ljava/util/Map;",)),
+                         reference_dex("Ljava/util/Objects;", "hash", "I", ("[Ljava/lang/Object;",)))
+            test = apk(directory, "test.apk", synthetic_dex("Lexample/Test;", include_method=False))
+            VERIFIER.verify_apks(str(target), str(test), min_sdk=29)
+            with self.assertRaisesRegex(VERIFIER.VerificationError, "required desugar ABI"):
+                VERIFIER.verify_apks(str(target), str(test), min_sdk=23)
+
+    def test_api29_still_requires_target_ownership_for_legacy_method_references(self):
+        for owner, name, result, parameters in VERIFIER.REQUIRED_TARGET_METHODS:
+            for consumer in ("target", "test"):
+                with self.subTest(owner=owner, consumer=consumer), tempfile.TemporaryDirectory() as directory:
+                    directory = Path(directory)
+                    ordinary = synthetic_dex("Lexample/Test;", include_method=False)
+                    reference = reference_dex(owner, name, result, parameters)
+                    target = apk(directory, "target.apk", reference if consumer == "target" else ordinary)
+                    test = apk(directory, "test.apk", reference if consumer == "test" else ordinary)
+                    with self.assertRaisesRegex(VERIFIER.VerificationError, "required desugar ABI"):
+                        VERIFIER.verify_apks(str(target), str(test), min_sdk=29)
+
+    def test_api29_accepts_legacy_references_only_when_target_defines_the_abi(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            target = apk(directory, "target.apk", *self.target_dexes())
+            test = apk(directory, "test.apk", *(
+                reference_dex(*signature) for signature in VERIFIER.REQUIRED_TARGET_METHODS))
+            VERIFIER.verify_apks(str(target), str(test), min_sdk=29)
+
+    def test_api29_still_rejects_test_owned_backport_classes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            target = apk(directory, "target.apk", synthetic_dex("Lexample/App;", include_method=False))
+            test = apk(directory, "test.apk", synthetic_dex("Lj$/util/Objects;", include_method=False))
+            with self.assertRaisesRegex(VERIFIER.VerificationError, "defines j\\$ classes"):
+                VERIFIER.verify_apks(str(target), str(test), min_sdk=29)
+
+    def test_invalid_minimum_sdk_fails_closed(self):
+        for invalid in (0, -1, True, "29", None):
+            with self.subTest(min_sdk=invalid), self.assertRaisesRegex(VERIFIER.VerificationError, "minimum SDK"):
+                VERIFIER.verify_apks("unused-target.apk", "unused-test.apk", min_sdk=invalid)
+
+    def test_gradle_passes_the_application_minimum_to_the_packaged_verifier(self):
+        build = (ROOT / "android/build.gradle").read_text(encoding="utf-8")
+        task = build.split("tasks.register('verifyDebugAndroidTestDesugarRuntime', Exec)", 1)[1]
+        task = task.split("project(':app').tasks.matching", 1)[0]
+        self.assertIn("args project(':app').android.defaultConfig.minSdkVersion.apiLevel.toString()", task)
 
     def test_real_dex_mutf8_nul_is_accepted(self):
         self.assertEqual(VERIFIER.decode_mutf8(b"a\xc0\x80b"), "a\0b")

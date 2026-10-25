@@ -133,7 +133,7 @@ def test_conscrypt_provider_runs_on_api_floor_and_target_api():
     assert job["needs"] == "conscrypt-r28"
     assert job["permissions"] == {"contents": "read"}
     assert job["strategy"]["matrix"]["include"] == [
-        {"api-level": "21", "arch": "x86"},
+        {"api-level": "29", "arch": "x86"},
         {"api-level": "36", "arch": "x86_64"},
     ]
     steps = {step["name"]: step for step in job["steps"]}

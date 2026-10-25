@@ -12,10 +12,10 @@ DRAWER_RUNTIME = ROOT / "android/app/src/androidTest/java/io/silentsuite/sync/ui
 WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 
 
-def test_final_app_targets_api_36_without_changing_the_api_21_floor():
+def test_final_app_targets_api_36_with_the_android_10_floor():
     app_build = APP_BUILD.read_text(encoding="utf-8")
 
-    assert "minSdkVersion 21" in app_build
+    assert "minSdkVersion 29" in app_build
     assert "targetSdkVersion 36" in app_build
     assert "targetSdkVersion 35" not in app_build
 
@@ -108,7 +108,7 @@ def test_unsigned_apk_sdk_inspection_uses_pinned_build_tools_aapt():
     assert '"$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS_VERSION/aapt"' in unsigned_build
     assert 'aapt dump badging' not in unsigned_build  # command is invoked through the pinned path
     assert '"$aapt" dump badging "$apk"' in unsigned_build
-    assert "sdkVersion:'21'" in unsigned_build
+    assert "sdkVersion:'29'" in unsigned_build
     assert "targetSdkVersion:'36'" in unsigned_build
     assert 'grep -Fxc "sdkVersion:' in unsigned_build
     assert 'grep -Fxc "targetSdkVersion:' in unsigned_build

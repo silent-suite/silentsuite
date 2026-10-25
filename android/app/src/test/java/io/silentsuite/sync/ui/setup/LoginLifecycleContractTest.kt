@@ -163,14 +163,18 @@ class LoginLifecycleContractTest {
         val runnerReference = Regex("ReactiveCircus/android-emulator-runner@([0-9a-f]{40})").find(job)
 
         assertTrue(job.contains("contents: read"))
-        assertEquals(2, Regex("""api-level: 21\n\s+arch: x86""").findAll(job).count())
+        assertEquals(5, Regex("""api-level: 29\n\s+arch: x86""").findAll(job).count())
+        assertEquals(
+            listOf("mixed", "account-dashboard", "first-run-setup", "status-routes", "sibling-routes"),
+            Regex("""api-level: 29\n\s+arch: x86\n\s+shard: (\S+)""").findAll(job).map { it.groupValues[1] }.toList()
+        )
         assertEquals(1, Regex("""api-level: 35\n\s+arch: x86_64""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: account-dashboard""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: first-run-setup""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: status-routes""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: sibling-routes""").findAll(job).count())
         assertEquals(1, Regex("shard: mixed").findAll(job).count())
-        assertEquals(1, Regex("shard: remaining").findAll(job).count())
+        assertEquals(0, Regex("shard: remaining").findAll(job).count())
         assertEquals(1, Regex("shard: all").findAll(job).count())
         assertTrue(job.contains("""name: Account recreation (API ${'$'}{{ matrix.api-level }}, ${'$'}{{ matrix.arch }}, ${'$'}{{ matrix.shard }})"""))
         assertTrue(runnerReference != null)
@@ -184,7 +188,7 @@ class LoginLifecycleContractTest {
         assertTrue(navigationWrapper.contains("settings get secure navigation_mode"))
         assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
-            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 168",
+            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 169",
             "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
             "-PrequireEtebase16Kb=true", "--no-daemon"
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
@@ -192,7 +196,7 @@ class LoginLifecycleContractTest {
         assertFalse(job.contains("secrets."))
         assertTrue(unsignedBuild.contains("ANDROID_BUILD_TOOLS_VERSION: '36.0.0'"))
         assertTrue(unsignedBuild.contains("\"\$ANDROID_HOME/build-tools/\$ANDROID_BUILD_TOOLS_VERSION/aapt\""))
-        assertTrue(unsignedBuild.contains("sdkVersion:'21'"))
+        assertTrue(unsignedBuild.contains("sdkVersion:'29'"))
         assertTrue(unsignedBuild.contains("targetSdkVersion:'36'"))
         assertTrue(unsignedBuild.contains("grep -Fxc \"sdkVersion:"))
         assertTrue(unsignedBuild.contains("grep -Fxc \"targetSdkVersion:"))
@@ -262,17 +266,19 @@ class LoginLifecycleContractTest {
     fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         assertTrue(runtimeScript.contains("focused-runtime-ledger-v1.json"))
-        assertTrue(runtimeScript.contains("if len(tests) != 168 or len(set(tests)) != 168"))
+        assertTrue(runtimeScript.contains("if len(tests) != 169 or len(set(tests)) != 169"))
         listOf(
-            "\"21:mixed\": 1", "\"21:requested\": 1", "\"21:remaining\": 166",
-            "\"35:all\": 168", "\"36:account-dashboard\": 32",
-            "\"36:first-run-setup\": 19", "\"36:sibling-routes\": 47", "\"36:status-routes\": 70",
+            "\"29:mixed\": 1", "\"29:requested\": 1", "\"29:account-dashboard\": 30",
+            "\"35:all\": 169", "\"36:account-dashboard\": 32",
+            "\"36:first-run-setup\": 19", "\"36:sibling-routes\": 48", "\"36:status-routes\": 70",
+            "[1, 1, 30, 19, 48, 70]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
         ).forEach { assertTrue(runtimeScript.contains(it)) }
-        assertTrue(runtimeScript.contains("remaining_selectors=\"\$(ledger_selectors '21:remaining')\""))
+        assertTrue(runtimeScript.contains("api29_account_dashboard_selectors=\"\$(ledger_selectors '29:account-dashboard')\""))
+        assertFalse(runtimeScript.contains("remaining_selectors"))
         assertTrue(runtimeScript.contains("all_selectors=\"\$(ledger_selectors '35:all')\""))
         assertFalse(runtimeScript.contains("other77_selectors"))
         assertFalse(runtimeScript.contains("focused_classes="))
-        assertEquals(listOf("600", "600", "1500", "2400", "1800", "1800", "1800", "1800"),
+        assertEquals(listOf("600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
         assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)
@@ -280,8 +286,8 @@ class LoginLifecycleContractTest {
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""""))
         assertTrue(runtimeScript.indexOf("\n  save_requested_results",
             runtimeScript.indexOf("""class="${'$'}{requested_selector}""")) <
-            runtimeScript.indexOf("""class="${'$'}{remaining_selectors}""""))
-        assertTrue(runtimeScript.contains("connected/api21-requested"))
+            runtimeScript.indexOf("""class="${'$'}{api29_account_dashboard_selectors}""""))
+        assertTrue(runtimeScript.contains("connected/api29-requested"))
         assertFalse(runtimeScript.contains("api21_batch_"))
         assertTrue(runtimeScript.contains("""if [[ "${'$'}{status}" -eq 0 && "${'$'}{restore_status}" -ne 0 ]]"""))
     }

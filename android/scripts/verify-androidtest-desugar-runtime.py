@@ -20,6 +20,9 @@ REQUIRED_TARGET_METHODS = (
     (DESUGAR_COLLECTIONS, "synchronizedMap", MAP, (MAP,)),
     (OBJECTS, "hash", "I", ("[Ljava/lang/Object;",)),
 )
+# desugar_jdk_libs_configuration 2.1.5 retargets these APIs only through API 23.
+# At higher application floors, D8 can leave the calls on the platform instead.
+LEGACY_RETARGET_MAX_API = 23
 
 
 def fail(message: str) -> None:
@@ -246,6 +249,17 @@ class Dex:
                 return True
         return False
 
+    def references_method(self, owner_descriptor: str, method_name: str, result_descriptor: str,
+                          parameter_descriptors: tuple[str, ...]) -> bool:
+        for owner, proto, name in self.methods:
+            if self._type_descriptor(owner) != owner_descriptor or self.strings[name] != method_name:
+                continue
+            result, parameters = self.protos[proto]
+            if (self._type_descriptor(result) == result_descriptor and
+                    tuple(self._type_descriptor(value) for value in parameters) == parameter_descriptors):
+                return True
+        return False
+
 
 def decode_mutf8(data: bytes) -> str:
     """Decode DEX's modified UTF-8, including its encoded NUL and UTF-16 surrogates."""
@@ -286,21 +300,28 @@ def apk_dexes(path: str) -> list[Dex]:
         fail(f"invalid APK: {error}")
 
 
-def verify_apks(target_path: str, android_test_path: str) -> None:
+def verify_apks(target_path: str, android_test_path: str, min_sdk: int = 21) -> None:
+    if isinstance(min_sdk, bool) or not isinstance(min_sdk, int) or min_sdk < 1:
+        fail("invalid minimum SDK")
     target_dexes = apk_dexes(target_path)
     test_dexes = apk_dexes(android_test_path)
     if any(dex.defines_class_in("Lj$/") for dex in test_dexes):
         fail("androidTest APK defines j$ classes; Keeper must clear its desugar DEX so the target APK is the sole runtime owner")
     for owner, name, result, parameters in REQUIRED_TARGET_METHODS:
+        if min_sdk > LEGACY_RETARGET_MAX_API and not any(
+                dex.references_method(owner, name, result, parameters)
+                for dex in target_dexes + test_dexes):
+            continue
         if not any(dex.owns_method(owner, name, result, parameters) for dex in target_dexes):
             fail(f"target debug APK does not define required desugar ABI {owner[1:-1]}.{name}{parameters}:{result}")
 
 
 def main() -> None:
-    if len(sys.argv) != 3:
-        raise SystemExit("usage: verify-androidtest-desugar-runtime.py <target-debug.apk> <debug-androidTest.apk>")
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit("usage: verify-androidtest-desugar-runtime.py <target-debug.apk> <debug-androidTest.apk> [minimum-sdk]")
     try:
-        verify_apks(sys.argv[1], sys.argv[2])
+        min_sdk = int(sys.argv[3]) if len(sys.argv) == 4 else 21
+        verify_apks(sys.argv[1], sys.argv[2], min_sdk)
     except Exception as error:
         # Every malformed or unexpected input is a verification failure, never a traceback/pass.
         print(f"verification error: {error}", file=sys.stderr)

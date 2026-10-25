@@ -81,24 +81,21 @@ object SchedulingDiagnostics {
         val packageId = context.packageName
         out.append("PLATFORM\n")
         out.append("Battery optimization exemption: ").append(flag {
-            if (Build.VERSION.SDK_INT >= 23) power?.isIgnoringBatteryOptimizations(packageId) else null
+            power?.isIgnoringBatteryOptimizations(packageId)
         }).append("\n")
         out.append("Battery saver: ").append(flag { power?.isPowerSaveMode }).append("\n")
         out.append("Device idle: ").append(flag {
-            if (Build.VERSION.SDK_INT >= 23) power?.isDeviceIdleMode else null
+            power?.isDeviceIdleMode
         }).append("\n")
         out.append("Background restricted: ").append(flag {
-            if (Build.VERSION.SDK_INT >= 28) activity?.isBackgroundRestricted else null
+            activity?.isBackgroundRestricted
         }).append("\n")
         out.append("Standby bucket: ").append(standbyBucket(Build.VERSION.SDK_INT, currentStandbyBucket(context))).append("\n")
         out.append("System-wide automatic sync: ").append(flag { ContentResolver.getMasterSyncAutomatically() }).append("\n")
     }
 
     private fun currentStandbyBucket(context: Context): Int? = try {
-        if (Build.VERSION.SDK_INT >= 28)
-            service<UsageStatsManager>(context, Context.USAGE_STATS_SERVICE)?.appStandbyBucket
-        else
-            null
+        service<UsageStatsManager>(context, Context.USAGE_STATS_SERVICE)?.appStandbyBucket
     } catch (e: Exception) {
         null
     }
@@ -127,10 +124,10 @@ object SchedulingDiagnostics {
 
     private fun appendNetwork(out: StringBuilder, context: Context) {
         val connectivity = service<ConnectivityManager>(context, Context.CONNECTIVITY_SERVICE)
-        val supported = Build.VERSION.SDK_INT >= 23 && connectivity != null
+        val supported = connectivity != null
         var present: Boolean? = null
         var readCapabilities: NetworkCapabilities? = null
-        if (Build.VERSION.SDK_INT >= 23 && connectivity != null)
+        if (connectivity != null)
             try {
                 val network = connectivity.activeNetwork
                 present = network != null
@@ -159,7 +156,7 @@ object SchedulingDiagnostics {
             capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
         })).append("\n")
         out.append("Data Saver: ").append(try {
-            if (Build.VERSION.SDK_INT >= 24 && connectivity != null)
+            if (connectivity != null)
                 when (connectivity.restrictBackgroundStatus) {
                     ConnectivityManager.RESTRICT_BACKGROUND_STATUS_DISABLED -> "off"
                     ConnectivityManager.RESTRICT_BACKGROUND_STATUS_WHITELISTED -> "on_app_exempted"

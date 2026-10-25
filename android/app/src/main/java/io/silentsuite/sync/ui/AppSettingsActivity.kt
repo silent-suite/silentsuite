@@ -11,7 +11,6 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.provider.CalendarContract
 import android.text.TextUtils
@@ -493,14 +492,12 @@ class AppSettingsActivity : BaseActivity() {
 
         private fun setupNotifications() {
             requirePreference<Preference>("notification_settings").apply {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    setOnPreferenceClickListener {
-                        startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, requireContext().packageName)
-                        })
-                        true
-                    }
-                } else isVisible = false
+                setOnPreferenceClickListener {
+                    startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                        putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, requireContext().packageName)
+                    })
+                    true
+                }
             }
             requirePreference<SwitchPreferenceCompat>("show_change_notification").apply {
                 isChecked = appPreferences.showChangeNotification

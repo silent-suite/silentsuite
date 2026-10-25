@@ -17,7 +17,7 @@ ext {
     desugarJdkLibsVersion = '2.1.5'
     keeperVersion = '0.16.1'
 
-    // cert4android is app-internal and shares SilentSuite's API-21 product floor.
+    // cert4android is app-internal and shares SilentSuite's API-29 product floor.
     // Keep the Material 1.13-compatible AndroidX/test cohort explicit so resolved
     // graphs cannot silently drift across app and certificate code paths.
     androidXVersions = [
@@ -39,7 +39,7 @@ ext {
     ]
     // vcard4android is published with minSdk 16. AndroidX Test 1.6/3.6 needs
     // API 19, so keep its instrumentation artifact cohort explicit instead of
-    // incorrectly applying the app/cert4android API-21 verification contract.
+    // incorrectly applying the app/cert4android API-29 verification contract.
     vcardAndroidTestVersions = [runner: '1.5.2', rules: '1.5.0']
 }
 
@@ -159,7 +159,7 @@ allprojects {
 
 tasks.register('verifySlice4DependencyCohort') {
     group = 'verification'
-    description = 'Checks the API-21 AndroidX/Material 1.13 graph and default-preference continuity contracts.'
+    description = 'Checks the API-29 AndroidX/Material 1.13 graph and default-preference continuity contracts.'
 
     doLast {
         def versions = rootProject.ext.androidXVersions
@@ -295,6 +295,9 @@ tasks.register('verifyDebugAndroidTestDesugarRuntime', Exec) {
     commandLine 'python3', 'scripts/verify-androidtest-desugar-runtime.py',
             'app/build/outputs/apk/debug/app-debug.apk',
             'app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk'
+    doFirst {
+        args project(':app').android.defaultConfig.minSdkVersion.apiLevel.toString()
+    }
 }
 
 project(':app').tasks.matching { it.name == 'testDebugUnitTest' }.configureEach {

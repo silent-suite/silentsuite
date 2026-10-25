@@ -44,11 +44,11 @@ def test_root_android_platform_and_jvm_contracts_remain_unchanged():
     ):
         assert compiler_arg in app
     assert "compileSdkVersion = 36" in build
-    assert "minSdkVersion 21" in app
+    assert "minSdkVersion 29" in app
     assert "targetSdkVersion 36" in app
     assert "targetSdkVersion 35" not in app
     assert "JavaVersion.VERSION_17" in app
-    assert "minSdkVersion 21" in cert4android
+    assert "minSdkVersion 29" in cert4android
     assert "minSdkVersion 21" in ical4android
     assert "minSdkVersion 16" in vcard4android
     for library in (cert4android, ical4android, vcard4android):

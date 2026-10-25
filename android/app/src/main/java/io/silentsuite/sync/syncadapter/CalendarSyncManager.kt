@@ -11,7 +11,6 @@ package io.silentsuite.sync.syncadapter
 import android.accounts.Account
 import android.content.Context
 import android.content.SyncResult
-import android.os.Build
 import android.os.Bundle
 import at.bitfire.ical4android.CalendarStorageException
 import at.bitfire.ical4android.Event
@@ -104,9 +103,7 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
     override fun prepareLocal() {
         super.prepareLocal()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            createInviteAttendeesNotification()
-        }
+        createInviteAttendeesNotification()
     }
 
     @Throws(CalendarStorageException::class, ContactsStorageException::class, IOException::class)

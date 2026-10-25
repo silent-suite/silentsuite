@@ -54,8 +54,8 @@ def test_material_113_and_product_floor_are_shared_by_app_and_cert4android():
     assert "1.14." not in root_build
     for build in (app_build, cert_build):
         assert 'implementation "com.google.android.material:material:${androidX.material}"' in build
-    assert "minSdkVersion 21" in app_build
-    assert "minSdkVersion 21" in cert_build
+    assert "minSdkVersion 29" in app_build
+    assert "minSdkVersion 29" in cert_build
     # vcard4android is intentionally API 16, so its androidTest cohort must
     # remain independent from the API-19 AndroidX Test 1.6/3.6 lane.
     assert "vcardAndroidTestVersions = [runner: '1.5.2', rules: '1.5.0']" in root_build

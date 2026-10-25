@@ -155,7 +155,7 @@ class DebugInfoActivity : BaseActivity() {
             report.append("CONFIGURATION\n")
             // power saving
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager?
-            if (powerManager != null && Build.VERSION.SDK_INT >= 23)
+            if (powerManager != null)
                 report.append("Battery optimization exemption: ")
                         .append(if (powerManager.isIgnoringBatteryOptimizations(BuildConfig.APPLICATION_ID)) "yes" else "no")
                         .append("\n")

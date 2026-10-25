@@ -1,5 +1,6 @@
 package io.silentsuite.sync.ui.etebase
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -105,5 +106,25 @@ class CollectionLifecycleContractTest {
         val view = File(etebase, "ViewCollectionFragment.kt").readText()
         val export = view.substringAfter("private fun createExportDocument")
         assertTrue(export.contains("identity.validate(applicationContext)"))
+    }
+
+    @Test
+    fun aFailedCollectionDeleteLeavesTheScreensCollectionForALaterSave() {
+        val edit = File(etebase, "EditCollectionFragment.kt").readText()
+        val delete = edit.substringAfter("private fun doDeleteCollection()")
+            .substringBefore("\n    }\n")
+        val upload = delete.indexOf(
+            "if (!uploadCollection(identity, applicationContext, col)) return@withContext false")
+        assertTrue(upload > 0)
+        val beforeUpload = delete.substring(0, upload)
+
+        // The delete is made on an independent copy; the screen's own collection is not touched before the upload.
+        assertTrue(beforeUpload.contains("val onScreen = cachedCollection.col"))
+        assertTrue(beforeUpload.contains("val col = colMgr.cacheLoad(colMgr.cacheSave(onScreen))"))
+        val deletedBeforeUpload = Regex("""(\w+)\.delete\(\)""").findAll(beforeUpload).map { it.groupValues[1] }
+        assertEquals(listOf("col"), deletedBeforeUpload.toList())
+        assertFalse(delete.contains("cachedCollection.col.delete()"))
+        // Only once the server has the delete is the screen's collection marked deleted too.
+        assertTrue(delete.substring(upload).contains("onScreen.delete()"))
     }
 }

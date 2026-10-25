@@ -2,7 +2,6 @@ package io.silentsuite.sync.utils
 
 import android.content.Context
 import android.content.res.Configuration
-import android.os.Build
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import java.util.*
@@ -42,14 +41,8 @@ object LanguageUtils {
         Locale.setDefault(locale)
         val config = Configuration()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-            config.setLocale(locale)
-            context.createConfigurationContext(config)
-        } else {
-            config.locale = locale
-            context.resources.updateConfiguration(
-                    config, context.resources.displayMetrics)
-        }
+        config.setLocale(locale)
+        context.createConfigurationContext(config)
         context.applicationContext.resources.updateConfiguration(config,
                 context.resources.displayMetrics)
     }
