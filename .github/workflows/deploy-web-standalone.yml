@@ -376,16 +376,45 @@ jobs:
             [[ "${DEPLOY_SHA:-}" =~ ^[0-9a-f]{40}$ && "${#DEPLOY_SHA}" -eq 40 ]]
             [[ "${IMAGE_DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_DIGEST}" -eq 71 ]]
             [[ "${IMAGE_CONFIG_ID:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_CONFIG_ID}" -eq 71 ]]
+            [ "$IMAGE_DIGEST" != "$IMAGE_CONFIG_ID" ]
             [ "$IMAGE_NAME" = ghcr.io/silent-suite/silentsuite-web ]
             cd ~/etebase
             docker() { command timeout 15s docker "$@"; }
+            # Docker's local image handle (inspect .Id, container .Image) depends on the image store:
+            # the containerd snapshotter uses the manifest digest, classic overlay2 the config digest.
+            # Select exactly one from the daemon's own declaration; anything else refuses.
+            STORE_PROGRAM='import json, sys
+            def unique(pairs):
+                if len({key for key, _ in pairs}) != len(pairs): sys.exit(1)
+                return dict(pairs)
+            info = json.loads(sys.stdin.read(), object_pairs_hook=unique)
+            if type(info) is not dict or sorted(info) != ["Driver", "DriverStatus"]: sys.exit(1)
+            driver, status = info["Driver"], info["DriverStatus"]
+            if type(driver) is not str or type(status) is not list: sys.exit(1)
+            if not all(type(entry) is list and len(entry) == 2 and all(type(part) is str for part in entry) for entry in status): sys.exit(1)
+            keys = [entry[0] for entry in status]
+            if len(set(keys)) != len(keys): sys.exit(1)
+            overlay2 = ["Backing Filesystem", "Supports d_type", "Using metacopy", "Native Overlay Diff", "userxattr"]
+            if status == [["driver-type", "io.containerd.snapshotter.v1"]] and driver not in ("", "overlay2"): print("containerd")
+            elif driver == "overlay2" and keys == overlay2 and status[0][1] != "" and all(entry[1] in ("true", "false") for entry in status[1:]): print("classic")
+            else: sys.exit(1)'
+            if ! IMAGE_STORE=$(docker info --format '{"Driver":{{json .Driver}},"DriverStatus":{{json .DriverStatus}}}' | python3 -I -c "$STORE_PROGRAM" 2>/dev/null); then
+              echo "Refusing standalone Web deployment: unsupported or ambiguous Docker image store declaration" >&2
+              exit 1
+            fi
+            case "$IMAGE_STORE" in
+              containerd) EXPECTED_HANDLE=$IMAGE_DIGEST ;;
+              classic) EXPECTED_HANDLE=$IMAGE_CONFIG_ID ;;
+              *) echo "Refusing standalone Web deployment: unsupported Docker image store" >&2; exit 1 ;;
+            esac
             PREVIOUS_CONTAINER=$(docker compose ps -q web)
-            PREVIOUS_IMAGE_ID=$(docker inspect "$PREVIOUS_CONTAINER" --format '{{.Image}}')
+            PREVIOUS_IMAGE_HANDLE=$(docker inspect "$PREVIOUS_CONTAINER" --format '{{.Image}}')
             PREVIOUS_REVISION=$(docker inspect "$PREVIOUS_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
-            [[ "$PREVIOUS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ && "${#PREVIOUS_IMAGE_ID}" -eq 71 ]]
+            [[ "$PREVIOUS_IMAGE_HANDLE" =~ ^sha256:[0-9a-f]{64}$ && "${#PREVIOUS_IMAGE_HANDLE}" -eq 71 ]]
             [[ "$PREVIOUS_REVISION" =~ ^[0-9a-f]{40}$ && "${#PREVIOUS_REVISION}" -eq 40 ]]
+            [ "$(docker inspect "$PREVIOUS_IMAGE_HANDLE" --format '{{.Id}}')" = "$PREVIOUS_IMAGE_HANDLE" ]
             # Non-secret identities consumed by the runbook's post-SSH restoration.
-            echo "Predecessor receipt: image-config-id=${PREVIOUS_IMAGE_ID} revision=${PREVIOUS_REVISION}"
+            echo "Predecessor receipt: image-store=${IMAGE_STORE} image-handle=${PREVIOUS_IMAGE_HANDLE} revision=${PREVIOUS_REVISION}"
             DEPLOY_OVERRIDE=$(mktemp)
             ROLLBACK_OVERRIDE=$(mktemp)
             HEALTH_HEADERS=$(mktemp)
@@ -413,11 +442,14 @@ jobs:
             # Refuse an unidentifiable or unhealthy predecessor before any replacement.
             wait_for_web "$PREVIOUS_REVISION"
             command timeout 120s docker pull "${IMAGE_NAME}@${IMAGE_DIGEST}"
-            PULLED_IMAGE_ID=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{.Id}}')
+            PULLED_IMAGE_HANDLE=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{.Id}}')
             PULLED_REVISION=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
-            [ "$PULLED_IMAGE_ID" = "$IMAGE_CONFIG_ID" ]
+            PULLED_REPO_DIGESTS=$(docker inspect "${IMAGE_NAME}@${IMAGE_DIGEST}" --format '{{json .RepoDigests}}')
+            [ "$PULLED_IMAGE_HANDLE" = "$EXPECTED_HANDLE" ]
             [ "$PULLED_REVISION" = "$DEPLOY_SHA" ]
-            docker tag "$PREVIOUS_IMAGE_ID" "${IMAGE_NAME}:rollback-${DEPLOY_SHA}"
+            printf '%s' "$PULLED_REPO_DIGESTS" | python3 -I -c 'import json, sys; digests = json.loads(sys.stdin.read()); sys.exit(0 if type(digests) is list and all(type(entry) is str for entry in digests) and sys.argv[1] in digests else 1)' "${IMAGE_NAME}@${IMAGE_DIGEST}" >/dev/null 2>&1
+            echo "Candidate receipt: image-store=${IMAGE_STORE} image-handle=${PULLED_IMAGE_HANDLE}"
+            docker tag "$PREVIOUS_IMAGE_HANDLE" "${IMAGE_NAME}:rollback-${DEPLOY_SHA}"
             cat > "$DEPLOY_OVERRIDE" <<EOF
             services:
               web:
@@ -438,7 +470,7 @@ jobs:
                 ROLLED_BACK_CONTAINER=$(docker compose ps -q web)
                 ROLLED_BACK_ID=$(docker inspect "$ROLLED_BACK_CONTAINER" --format '{{.Image}}')
                 ROLLED_BACK_REVISION=$(docker inspect "$ROLLED_BACK_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
-                if [ "$ROLLED_BACK_ID" = "$PREVIOUS_IMAGE_ID" ] &&
+                if [ "$ROLLED_BACK_ID" = "$PREVIOUS_IMAGE_HANDLE" ] &&
                    [ "$ROLLED_BACK_REVISION" = "$PREVIOUS_REVISION" ] &&
                    wait_for_web "$PREVIOUS_REVISION"; then restored=1; fi
               fi
@@ -452,13 +484,13 @@ jobs:
             trap rollback ERR
             command timeout 90s docker compose -f docker-compose.yml -f "$DEPLOY_OVERRIDE" up -d --force-recreate --no-deps --no-build web
             RUNNING_CONTAINER=$(docker compose ps -q web)
-            RUNNING_IMAGE_ID=$(docker inspect "$RUNNING_CONTAINER" --format '{{.Image}}')
+            RUNNING_IMAGE_HANDLE=$(docker inspect "$RUNNING_CONTAINER" --format '{{.Image}}')
             RUNNING_REVISION=$(docker inspect "$RUNNING_CONTAINER" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
-            [ "$RUNNING_IMAGE_ID" = "$IMAGE_CONFIG_ID" ]
+            [ "$RUNNING_IMAGE_HANDLE" = "$EXPECTED_HANDLE" ]
             [ "$RUNNING_REVISION" = "$DEPLOY_SHA" ]
             wait_for_web "$DEPLOY_SHA"
             trap - ERR
-            echo "Standalone Web config ID, revision and public served identity verified"
+            echo "Standalone Web local image handle, revision and public served identity verified"
             BASH
       - name: "Verify public served identity from the runner"
         shell: "bash"

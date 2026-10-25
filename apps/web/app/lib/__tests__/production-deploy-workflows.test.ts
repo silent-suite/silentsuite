@@ -264,7 +264,7 @@ function sshHostVerificationViolations(parsed: ParsedWorkflow): string[] {
 }
 
 // Complete parsed-object binding and separately readable effective controls for standalone Web.
-const standaloneWebWorkflowDigest = 'c30d62b61b238a1c8432c5d5a980f3a8b6902d4cc2500efacfffbf2eb759a1d6'
+const standaloneWebWorkflowDigest = 'a941546b1f834ea13d17692a82d9877148d0f8919e1a40f0524ba18d786d3b48'
 const standaloneWebAuthorizationDigest = 'b7eb5ce5bef0fba7ece1736fee05cbf1b4cfd86b27d3a88ef6320c130774a069'
 const standaloneWebPredicates = {
   "build": "needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha",
@@ -1033,7 +1033,30 @@ type WebCutoverOptions = {
   // The failed candidate's container is retained but exited, so `compose ps -q` omits it.
   failedCandidateExited?: boolean
   concurrentReplacementAtTag?: boolean
+  // Docker's local image handle (inspect .Id / container .Image) depends on the image store:
+  // classic overlay2 uses the configuration digest; the containerd snapshotter uses the
+  // image target (manifest) digest. Registry manifest/config identities are unchanged.
+  imageStore?: 'classic' | 'containerd'
+  storeDeclaration?: string | null
+  pulledHandle?: string
+  pulledRevision?: string
+  repoDigests?: string
+  runningHandle?: string
   env?: Record<string, string>
+}
+
+const dockerStoreFormat = '{"Driver":{{json .Driver}},"DriverStatus":{{json .DriverStatus}}}'
+const dockerStoreDeclarations = {
+  classic: JSON.stringify({ Driver: 'overlay2', DriverStatus: [['Backing Filesystem', 'extfs'], ['Supports d_type', 'true'],
+    ['Using metacopy', 'false'], ['Native Overlay Diff', 'true'], ['userxattr', 'false']] }),
+  containerd: JSON.stringify({ Driver: 'overlayfs', DriverStatus: [['driver-type', 'io.containerd.snapshotter.v1']] }),
+}
+const previousManifestDigest = 'sha256:' + '6'.repeat(64)
+
+function webStoreHandles(store: 'classic' | 'containerd') {
+  return store === 'containerd'
+    ? { candidateHandle: webCutoverIdentities.manifestDigest, previousHandle: previousManifestDigest }
+    : { candidateHandle: webCutoverIdentities.candidateConfigId, previousHandle: webCutoverIdentities.previousConfigId }
 }
 
 function runWebCutoverFixture(script: string, wrongPublicSha: boolean, remoteJq?: 'absent' | 'broken', options: WebCutoverOptions = {}) {
@@ -1044,9 +1067,18 @@ function runWebCutoverFixture(script: string, wrongPublicSha: boolean, remoteJq?
   const fixtureTmp = join(directory, 'tmp')
   const stateFile = join(directory, 'state.json')
   const traceFile = join(directory, 'trace.jsonl')
+  const imageStore = options.imageStore ?? 'classic'
+  const handles = webStoreHandles(imageStore)
+  const exactImageRef = webCutoverIdentities.imageName + '@' + webCutoverIdentities.manifestDigest
   const config = { ...webCutoverIdentities, directory, stateFile, traceFile, wrongPublicSha,
     concurrentReplacementAtTag: options.concurrentReplacementAtTag === true,
-    concurrentConfigId: 'sha256:' + '7'.repeat(64), concurrentSha: '9'.repeat(40) }
+    concurrentConfigId: 'sha256:' + '7'.repeat(64), concurrentSha: '9'.repeat(40),
+    ...handles, storeFormat: dockerStoreFormat,
+    storeDeclaration: options.storeDeclaration === undefined ? dockerStoreDeclarations[imageStore] : options.storeDeclaration,
+    pulledHandle: options.pulledHandle ?? handles.candidateHandle,
+    pulledRevision: options.pulledRevision ?? webCutoverIdentities.candidateSha,
+    repoDigests: options.repoDigests ?? JSON.stringify([exactImageRef]),
+    runningHandle: options.runningHandle ?? handles.candidateHandle }
   const program = String.raw`
 const fs = require('node:fs')
 const path = require('node:path')
@@ -1074,9 +1106,16 @@ try {
     } else if (same(['compose', 'ps', '-a', '-q', 'web'])) {
       record({ operation: 'container-all' })
       process.stdout.write(state.containerId + '\n')
+    } else if (same(['info', '--format', config.storeFormat])) {
+      record({ operation: 'store-declaration' })
+      if (config.storeDeclaration === null) {
+        process.stderr.write('Error: synthetic daemon unavailable\n')
+        process.exit(1)
+      }
+      process.stdout.write(config.storeDeclaration + '\n')
     } else if (same(['pull', exactImage])) {
       record({ operation: 'pull' })
-    } else if (same(['tag', config.previousConfigId, rollbackTag])) {
+    } else if (same(['tag', config.previousHandle, rollbackTag])) {
       state.rollbackTagged = true
       fs.writeFileSync(config.stateFile, JSON.stringify(state))
       record({ operation: 'tag-predecessor' })
@@ -1090,16 +1129,16 @@ try {
     } else if (args.length === 4 && args[0] === 'inspect' && args[2] === '--format') {
       const target = args[1], format = args[3]
       const container = target === state.containerId
-      // Cached predecessor by config ID, or its local restore tag once tagged.
-      const predecessor = target === config.previousConfigId || (target === rollbackTag && state.rollbackTagged)
+      // Cached predecessor by its local handle, or its local restore tag once tagged.
+      const predecessor = target === config.previousHandle || (target === rollbackTag && state.rollbackTagged)
       if (!container && !predecessor && /^sha256:[0-9a-f]{64}$/.test(target)) {
         record({ operation: 'missing-image' })
         process.stderr.write('Error: No such object: ' + target + '\n')
         process.exit(1)
       }
       if (!container && !predecessor && target !== exactImage) refuse()
-      const imageId = container ? state.imageId : predecessor ? config.previousConfigId : config.candidateConfigId
-      const revision = container ? state.revision : predecessor ? config.previousSha : config.candidateSha
+      const imageId = container ? state.imageId : predecessor ? config.previousHandle : config.pulledHandle
+      const revision = container ? state.revision : predecessor ? config.previousSha : config.pulledRevision
       let value, operation
       if (container && format === '{{.Image}}') {
         value = imageId; operation = 'running-config'
@@ -1107,6 +1146,8 @@ try {
         value = imageId; operation = 'pulled-config'
       } else if (format === '{{ index .Config.Labels "org.opencontainers.image.revision" }}') {
         value = revision; operation = container ? 'running-revision' : 'pulled-revision'
+      } else if (!container && !predecessor && format === '{{json .RepoDigests}}') {
+        value = config.repoDigests; operation = 'pulled-repo-digests'
       } else refuse()
       record({ operation, returned: value })
       process.stdout.write(value + '\n')
@@ -1119,7 +1160,7 @@ try {
       if (previous && !state.rollbackTagged) refuse()
       state.containerId = (previous ? '3' : '2').repeat(64)
       state.exited = false
-      state.imageId = previous ? config.previousConfigId : config.candidateConfigId
+      state.imageId = previous ? config.previousHandle : config.runningHandle
       state.revision = previous ? config.previousSha : config.candidateSha
       state.publicSha = previous ? config.previousSha : config.wrongPublicSha ? config.wrongSha : config.candidateSha
       fs.writeFileSync(config.stateFile, JSON.stringify(state))
@@ -1167,11 +1208,11 @@ try {
     mkdirSync(join(fixtureHome, 'etebase'), { recursive: true })
     mkdirSync(fixtureTmp)
     writeFileSync(stateFile, JSON.stringify(options.failedCandidateRunning || options.failedCandidateExited ? {
-      containerId: '2'.repeat(64), imageId: config.candidateConfigId,
+      containerId: '2'.repeat(64), imageId: config.candidateHandle,
       revision: config.candidateSha, publicSha: config.wrongSha, rollbackTagged: false,
       exited: options.failedCandidateExited === true,
     } : {
-      containerId: '1'.repeat(64), imageId: config.previousConfigId,
+      containerId: '1'.repeat(64), imageId: config.previousHandle,
       revision: config.previousSha, publicSha: config.previousSha, rollbackTagged: false,
     }))
     writeFileSync(traceFile, '')
@@ -1928,6 +1969,145 @@ jobs:
       call.operation === 'http-identity' && call.publicSha === ids.previousSha && call.returned === '200')).toBe(true)
   }, 20000)
 
+  it('standalone Web accepts the admitted containerd manifest handle without conflating it with the configuration digest', () => {
+    const ids = webCutoverIdentities
+    const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
+    const mutations = (parsed.jobs.deploy.steps ?? []).filter(step => step.uses === pinnedSshAction && typeof step.with?.script === 'string')
+    expect(mutations).toHaveLength(1)
+    const script = mutations[0].with?.script ?? ''
+    // Registry identities stay distinct; the containerd local handle is the manifest digest, not the config digest.
+    expect(ids.manifestDigest).not.toBe(ids.candidateConfigId)
+    expect(previousManifestDigest).not.toBe(ids.previousConfigId)
+    const run = runWebCutoverFixture(script, false, undefined, { imageStore: 'containerd' })
+    const count = (operation: string) => run.trace.filter(call => call.operation === operation).length
+    const evidence = JSON.stringify({ status: run.result.status, stderr: run.result.stderr,
+      calls: run.trace.map(call => call.returned === undefined ? call.operation : `${call.operation}=${call.returned}`) })
+    expect(run.trace.filter(call => call.operation === 'unsupported'), evidence).toEqual([])
+    expect(run.result.status, 'containerd manifest handle deployment: ' + evidence).toBe(0)
+    expect(count('pull'), evidence).toBe(1)
+    expect(count('tag-predecessor'), evidence).toBe(1)
+    expect(run.trace.filter(call => call.operation === 'recreate').map(call => call.target), evidence).toEqual(['candidate'])
+    expect(run.state).toMatchObject({ imageId: ids.manifestDigest, revision: ids.candidateSha, publicSha: ids.candidateSha })
+    expect(run.result.stdout).toContain(`Predecessor receipt: image-store=containerd image-handle=${previousManifestDigest} revision=${ids.previousSha}\n`)
+    expect(run.result.stdout).toContain(`Candidate receipt: image-store=containerd image-handle=${ids.manifestDigest}\n`)
+  }, 20000)
+
+  describe.each(['classic', 'containerd'] as const)('standalone Web on a %s image store', (imageStore) => {
+    const ids = webCutoverIdentities
+    const handles = webStoreHandles(imageStore)
+    const otherHandle = imageStore === 'containerd' ? ids.candidateConfigId : ids.manifestDigest
+    const exactRef = ids.imageName + '@' + ids.manifestDigest
+    const script = () => (parseWorkflow(workflow('deploy-web-standalone.yml')).jobs.deploy.steps ?? [])
+      .find(step => step.uses === pinnedSshAction)?.with?.script ?? ''
+    const counts = (run: ReturnType<typeof runWebCutoverFixture>) => ({
+      pull: run.trace.filter(call => call.operation === 'pull').length,
+      tag: run.trace.filter(call => call.operation === 'tag-predecessor').length,
+      recreate: run.trace.filter(call => call.operation === 'recreate').length,
+      unsupported: run.trace.filter(call => call.operation === 'unsupported').length,
+    })
+
+    it('deploys the admitted image and rolls back a wrong served SHA by local handle', () => {
+      const deployed = runWebCutoverFixture(script(), false, undefined, { imageStore })
+      expect(deployed.result.status, deployed.result.stderr).toBe(0)
+      expect(counts(deployed)).toEqual({ pull: 1, tag: 1, recreate: 1, unsupported: 0 })
+      expect(deployed.state).toMatchObject({ imageId: handles.candidateHandle, revision: ids.candidateSha })
+      expect(deployed.result.stdout).toContain(`Candidate receipt: image-store=${imageStore} image-handle=${handles.candidateHandle}\n`)
+      const wrong = runWebCutoverFixture(script(), true, undefined, { imageStore })
+      expect(wrong.result.status).not.toBe(0)
+      expect(wrong.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['candidate', 'predecessor'])
+      expect(wrong.state).toMatchObject({ imageId: handles.previousHandle, revision: ids.previousSha, publicSha: ids.previousSha })
+    }, 20000)
+
+    it('accepts an additional legitimate RepoDigests entry alongside the exact manifest reference', () => {
+      const run = runWebCutoverFixture(script(), false, undefined,
+        { imageStore, repoDigests: JSON.stringify([ids.imageName + '@sha256:' + '1'.repeat(64), exactRef]) })
+      expect(run.result.status, run.result.stderr).toBe(0)
+      expect(counts(run)).toEqual({ pull: 1, tag: 1, recreate: 1, unsupported: 0 })
+    })
+
+    it.each([
+      ['a wrong pulled handle', { pulledHandle: 'sha256:' + '5'.repeat(64) }],
+      ['the other namespace\'s identity as the pulled handle', { pulledHandle: otherHandle }],
+      ['a wrong pulled revision', { pulledRevision: ids.wrongSha }],
+      ['RepoDigests without the exact reference', { repoDigests: '[]' }],
+      ['RepoDigests from another repository', { repoDigests: JSON.stringify(['ghcr.io/attacker/silentsuite-web@' + ids.manifestDigest]) }],
+      ['RepoDigests that are not a JSON array', { repoDigests: 'null' }],
+      ['RepoDigests with a non-string entry', { repoDigests: JSON.stringify([exactRef, 1]) }],
+      ['malformed RepoDigests', { repoDigests: '[' + JSON.stringify(exactRef) }],
+    ] as const)('refuses %s after one pull and before any tag or replacement', (_label, fault) => {
+      const run = runWebCutoverFixture(script(), false, undefined, { imageStore, ...fault })
+      expect(run.result.status).not.toBe(0)
+      expect(counts(run)).toEqual({ pull: 1, tag: 0, recreate: 0, unsupported: 0 })
+      expect(run.state).toMatchObject({ imageId: handles.previousHandle, revision: ids.previousSha })
+    })
+
+    it('refuses equal manifest and configuration digests before pulling', () => {
+      const run = runWebCutoverFixture(script(), false, undefined, { imageStore, env: { IMAGE_CONFIG_ID: ids.manifestDigest } })
+      expect(run.result.status).not.toBe(0)
+      expect(counts(run)).toEqual({ pull: 0, tag: 0, recreate: 0, unsupported: 0 })
+    })
+
+    it('restores the predecessor when the running handle differs after replacement', () => {
+      const run = runWebCutoverFixture(script(), false, undefined, { imageStore, runningHandle: otherHandle })
+      expect(run.result.status).not.toBe(0)
+      expect(run.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['candidate', 'predecessor'])
+      expect(run.state).toMatchObject({ imageId: handles.previousHandle, revision: ids.previousSha, publicSha: ids.previousSha })
+    })
+  })
+
+  it.each([
+    ['a failed declaration', null],
+    ['a malformed declaration', 'not-json'],
+    ['a duplicate JSON field', '{"Driver":"overlay2","Driver":"overlayfs","DriverStatus":[["driver-type","io.containerd.snapshotter.v1"]]}'],
+    ['a duplicate status key', JSON.stringify({ Driver: 'overlayfs', DriverStatus: [['driver-type', 'io.containerd.snapshotter.v1'], ['driver-type', 'io.containerd.snapshotter.v1']] })],
+    ['conflicting overlay2 and containerd signals', JSON.stringify({ Driver: 'overlay2', DriverStatus: [['driver-type', 'io.containerd.snapshotter.v1']] })],
+    ['an unsupported snapshotter value', JSON.stringify({ Driver: 'overlayfs', DriverStatus: [['driver-type', 'io.containerd.snapshotter.v2']] })],
+    ['absence of driver-type alone', JSON.stringify({ Driver: 'overlay2', DriverStatus: [] })],
+    ['an unsupported classic driver', JSON.stringify({ Driver: 'vfs', DriverStatus: [] })],
+    ['a malformed overlay2 status value', JSON.stringify({ Driver: 'overlay2', DriverStatus: [['Backing Filesystem', 'extfs'], ['Supports d_type', 'maybe'],
+      ['Using metacopy', 'false'], ['Native Overlay Diff', 'true'], ['userxattr', 'false']] })],
+    ['an extra declaration field', JSON.stringify({ Driver: 'overlayfs', DriverStatus: [['driver-type', 'io.containerd.snapshotter.v1']], Extra: true })],
+  ] as const)('standalone Web refuses %s before pulling or mutating', (_label, storeDeclaration) => {
+    const script = (parseWorkflow(workflow('deploy-web-standalone.yml')).jobs.deploy.steps ?? [])
+      .find(step => step.uses === pinnedSshAction)?.with?.script ?? ''
+    const run = runWebCutoverFixture(script, false, undefined, { storeDeclaration })
+    expect(run.result.status).not.toBe(0)
+    expect(run.trace.some(call => call.operation === 'store-declaration')).toBe(true)
+    expect(run.trace.filter(call => ['pull', 'tag-predecessor', 'recreate', 'unsupported'].includes(call.operation ?? ''))).toEqual([])
+  })
+
+  it('the runbook restoration works by local handle on a containerd host and refuses a store mismatch', () => {
+    const ids = webCutoverIdentities
+    const heading = deployRunbook.indexOf('### Restore the captured predecessor after a post-SSH failure')
+    const restore = [...deployRunbook.slice(heading).matchAll(/```bash\n([\s\S]*?)```/g)][0]?.[1] ?? ''
+    const receipt = { IMAGE_STORE: 'containerd', CANDIDATE_IMAGE_HANDLE: ids.manifestDigest, PREVIOUS_IMAGE_HANDLE: previousManifestDigest, PREVIOUS_REVISION: ids.previousSha }
+    const restoredState = { imageId: previousManifestDigest, revision: ids.previousSha, publicSha: ids.previousSha }
+    for (const start of [{ failedCandidateRunning: true }, { failedCandidateExited: true }]) {
+      const restored = runWebCutoverFixture(restore, false, undefined, { imageStore: 'containerd', ...start, env: receipt })
+      expect(restored.result.status, restored.result.stderr).toBe(0)
+      expect(restored.trace.filter(call => call.operation === 'recreate').map(call => call.target)).toEqual(['predecessor'])
+      expect(restored.state).toMatchObject(restoredState)
+    }
+    const raced = runWebCutoverFixture(restore, false, undefined, { imageStore: 'containerd', failedCandidateRunning: true, concurrentReplacementAtTag: true, env: receipt })
+    expect(raced.result.status).not.toBe(0)
+    expect(raced.trace.filter(call => call.operation === 'recreate')).toEqual([])
+    const refusals: [string, Record<string, string>][] = [
+      ['running image is not the failed candidate', { ...receipt, CANDIDATE_IMAGE_HANDLE: ids.candidateConfigId }],
+      ['running revision is not the failed candidate', { ...receipt, DEPLOY_SHA: ids.wrongSha }],
+      ['predecessor image is not cached', { ...receipt, PREVIOUS_IMAGE_HANDLE: ids.previousConfigId }],
+      ['cached predecessor has another revision', { ...receipt, PREVIOUS_REVISION: ids.wrongSha }],
+      ['predecessor equals the failed candidate', { ...receipt, PREVIOUS_IMAGE_HANDLE: ids.manifestDigest }],
+      ['missing receipt', { IMAGE_STORE: '', CANDIDATE_IMAGE_HANDLE: '', PREVIOUS_IMAGE_HANDLE: '', PREVIOUS_REVISION: '' }],
+      ['receipt from another image store', { ...receipt, IMAGE_STORE: 'classic' }],
+    ]
+    for (const [label, env] of refusals) {
+      const refused = runWebCutoverFixture(restore, false, undefined, { imageStore: 'containerd', failedCandidateRunning: true, env })
+      expect(refused.result.status, label).not.toBe(0)
+      expect(refused.trace.some(call => call.operation === 'recreate' || call.operation === 'tag-predecessor'), label).toBe(false)
+      expect(refused.state, label).toMatchObject({ imageId: ids.manifestDigest, revision: ids.candidateSha })
+    }
+  }, 30000)
+
   it('a post-SSH Web failure is recoverable: re-dispatch refuses, the runbook restoration restores the captured predecessor', () => {
     const ids = webCutoverIdentities
     const parsed = parseWorkflow(workflow('deploy-web-standalone.yml'))
@@ -1942,14 +2122,14 @@ jobs:
     // The deployment log must carry the non-secret predecessor identities the restoration consumes.
     const deployed = runWebCutoverFixture(deployScript, false)
     expect(deployed.result.status, deployed.result.stderr).toBe(0)
-    expect(deployed.result.stdout).toContain(`Predecessor receipt: image-config-id=${ids.previousConfigId} revision=${ids.previousSha}\n`)
+    expect(deployed.result.stdout).toContain(`Predecessor receipt: image-store=classic image-handle=${ids.previousConfigId} revision=${ids.previousSha}\n`)
 
     const heading = deployRunbook.indexOf('### Restore the captured predecessor after a post-SSH failure')
     expect(heading, 'runbook must document an executable post-SSH restoration').toBeGreaterThan(-1)
     const blocks = [...deployRunbook.slice(heading).matchAll(/```bash\n([\s\S]*?)```/g)]
     const restore = blocks[0]?.[1] ?? ''
     expect(restore).toContain('--no-deps --no-build web')
-    const receipt = { PREVIOUS_IMAGE_ID: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
+    const receipt = { IMAGE_STORE: 'classic', CANDIDATE_IMAGE_HANDLE: ids.candidateConfigId, PREVIOUS_IMAGE_HANDLE: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
     const restored = runWebCutoverFixture(restore, false, undefined, { failedCandidateRunning: true, env: receipt })
     expect(restored.result.error).toBeUndefined()
     expect(restored.trace.filter(call => call.operation === 'unsupported')).toEqual([])
@@ -1966,12 +2146,12 @@ jobs:
     expect(restored.state).toMatchObject({ imageId: ids.previousConfigId, revision: ids.previousSha, publicSha: ids.previousSha })
 
     const refusals: [string, Record<string, string>][] = [
-      ['running image is not the failed candidate', { ...receipt, IMAGE_CONFIG_ID: 'sha256:' + '9'.repeat(64) }],
+      ['running image is not the failed candidate', { ...receipt, CANDIDATE_IMAGE_HANDLE: 'sha256:' + '9'.repeat(64) }],
       ['running revision is not the failed candidate', { ...receipt, DEPLOY_SHA: ids.wrongSha }],
-      ['predecessor image is not cached', { ...receipt, PREVIOUS_IMAGE_ID: 'sha256:' + '8'.repeat(64) }],
+      ['predecessor image is not cached', { ...receipt, PREVIOUS_IMAGE_HANDLE: 'sha256:' + '8'.repeat(64) }],
       ['cached predecessor has another revision', { ...receipt, PREVIOUS_REVISION: ids.wrongSha }],
-      ['predecessor equals the failed candidate', { ...receipt, PREVIOUS_IMAGE_ID: ids.candidateConfigId }],
-      ['missing receipt', { PREVIOUS_IMAGE_ID: '', PREVIOUS_REVISION: '' }],
+      ['predecessor equals the failed candidate', { ...receipt, PREVIOUS_IMAGE_HANDLE: ids.candidateConfigId }],
+      ['missing receipt', { IMAGE_STORE: '', CANDIDATE_IMAGE_HANDLE: '', PREVIOUS_IMAGE_HANDLE: '', PREVIOUS_REVISION: '' }],
     ]
     for (const [label, env] of refusals) {
       const refused = runWebCutoverFixture(restore, false, undefined, { failedCandidateRunning: true, env })
@@ -1986,7 +2166,7 @@ jobs:
     const heading = deployRunbook.indexOf('### Restore the captured predecessor after a post-SSH failure')
     expect(heading).toBeGreaterThan(-1)
     const restore = [...deployRunbook.slice(heading).matchAll(/```bash\n([\s\S]*?)```/g)][0]?.[1] ?? ''
-    const receipt = { PREVIOUS_IMAGE_ID: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
+    const receipt = { IMAGE_STORE: 'classic', CANDIDATE_IMAGE_HANDLE: ids.candidateConfigId, PREVIOUS_IMAGE_HANDLE: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
 
     // A retained but exited candidate is invisible to `compose ps -q`; restoration must still find and verify it.
     const exited = runWebCutoverFixture(restore, false, undefined, { failedCandidateExited: true, env: receipt })
@@ -2004,7 +2184,7 @@ jobs:
     const heading = deployRunbook.indexOf('### Restore the captured predecessor after a post-SSH failure')
     expect(heading).toBeGreaterThan(-1)
     const restore = [...deployRunbook.slice(heading).matchAll(/```bash\n([\s\S]*?)```/g)][0]?.[1] ?? ''
-    const receipt = { PREVIOUS_IMAGE_ID: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
+    const receipt = { IMAGE_STORE: 'classic', CANDIDATE_IMAGE_HANDLE: ids.candidateConfigId, PREVIOUS_IMAGE_HANDLE: ids.previousConfigId, PREVIOUS_REVISION: ids.previousSha }
     // Another deployment replaces web after validation: the last pre-mutation check must refuse and leave it alone.
     const raced = runWebCutoverFixture(restore, false, undefined, { failedCandidateRunning: true, concurrentReplacementAtTag: true, env: receipt })
     expect(raced.trace.some(call => call.operation === 'concurrent-replacement')).toBe(true)

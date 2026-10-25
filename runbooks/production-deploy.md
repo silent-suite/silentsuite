@@ -94,7 +94,7 @@ A standalone Web deployment is a component deployment, not an annual cutover; it
 2. Confirm `VPS_SSH_FINGERPRINT` is commissioned as described above, no annual, Billing, or other Web deployment is queued or running against the shared host, and record the currently served Web SHA, running image, and the Billing identity, so you can show afterwards that Billing was unchanged.
 3. Set the repository variable `WEB_STANDALONE_DEPLOY_APPROVED_SHA` to the exact 40-character live `main` SHA, without a same-named environment variable, and dispatch the workflow from `main` with `expected_sha` equal to the same SHA. Its secretless `admission` job names every unmet condition and fails before any protected environment, secret, or build starts.
 4. The build job re-checks the live `main` identity, runs the frozen install, billing copy, public analytics, dependency audit, and tests, validates the production build arguments without printing them, and builds the image once with the existing hosted flags. The Docker build summary and build-record upload are disabled in this lane. It runs `scripts/verify-web-image.mjs` against that single image, re-asserts live `main` immediately before publication, pushes a run-specific tag, and binds the registry manifest digest to the verified image configuration ID. These are two different identities, and both are passed to deployment.
-5. The deployment job validates that handoff and the host-key fingerprint, re-asserts live `main` as the step immediately before `Deploy via SSH`, and replaces only the Compose `web` service by manifest digest with `--no-deps --no-build`. The remote script requires `docker`, `timeout`, `curl`, and `python3` on the host (python3 checks the identity JSON in isolated mode; the host does not need jq) and refuses before any replacement if they are missing or the predecessor is not healthy and identifiable. Automatic rollback stays armed until the running configuration ID, revision, public root, and exact no-store `publicSha` match; on any failure it restores and verifies the predecessor image, revision, and served SHA, and the run still fails. A final runner-side check then re-verifies the public root and served SHA. A failure there happens after the SSH step has finished, so there is no automatic rollback: verify production and follow "Restore the captured predecessor after a post-SSH failure" below. Do not rely on a revert and fresh dispatch for this state; the fresh dispatch refuses before replacement while the running Web is unhealthy.
+5. The deployment job validates that handoff and the host-key fingerprint, re-asserts live `main` as the step immediately before `Deploy via SSH`, and replaces only the Compose `web` service by manifest digest with `--no-deps --no-build`. The remote script requires `docker`, `timeout`, `curl`, and `python3` on the host (python3 checks the identity JSON in isolated mode; the host does not need jq) and refuses before any replacement if they are missing or the predecessor is not healthy and identifiable. Before any replacement, it selects exactly one Docker local image handle from the daemon's image-store declaration: the manifest digest for the containerd snapshotter, or the configuration ID for classic overlay2. Any other, failed, or ambiguous declaration refuses. It then requires the digest-pulled image's handle, its exact `RepoDigests` entry, and its revision to match. Automatic rollback stays armed until the running local handle, revision, public root, and exact no-store `publicSha` match; on any failure it restores and verifies the predecessor image, revision, and served SHA, and the run still fails. A final runner-side check then re-verifies the public root and served SHA. A failure there happens after the SSH step has finished, so there is no automatic rollback: verify production and follow "Restore the captured predecessor after a post-SSH failure" below. Do not rely on a revert and fresh dispatch for this state; the fresh dispatch refuses before replacement while the running Web is unhealthy.
 6. Clear `WEB_STANDALONE_DEPLOY_APPROVED_SHA` after the run reaches a terminal state, and confirm Billing and Docs still serve their recorded identities.
 
 The variable is snapshotted when the workflow run is queued, so clearing it does not revoke a queued run. To withdraw approval before mutation, cancel the run before the deployment job reaches `Deploy via SSH`; once that step has started, do not cancel it as a substitute for rollback. A successful deployment or synthetic smoke check does not by itself prove a customer-reported behavior is resolved.
@@ -111,36 +111,62 @@ The block runs outside GitHub workflow concurrency, so it is safe only inside an
 
 The block re-reads the `web` container immediately before replacing it and refuses if it changed after validation. That check detects a breach of the window; it cannot make the check and the replacement atomic, so the window is what prevents the race.
 
-4. From the failed run's `Deploy via SSH` log, copy the line `Predecessor receipt: image-config-id=<sha256:…> revision=<40-hex SHA>`. Cross-check it against the served SHA and running image recorded in the pre-deployment ledger (step 2 above). If the receipt is missing or disagrees with the ledger, stop: there is no trusted restoration target.
-5. Take `DEPLOY_SHA` (the failed `expected_sha`) and `IMAGE_CONFIG_ID` (the failed run's `image-config-id` build output) from the same run. Never use a mutable tag or the currently served identity as a restoration source.
-6. Connect only through the trusted host-key custody described above (strict host-key checking against the commissioned fingerprint). Run the block below on the host with `IMAGE_NAME=ghcr.io/silent-suite/silentsuite-web` and the four values exported, for example by piping it to `bash -se`. Before any change, it refuses unless Compose has exactly one `web` container in any state (running or exited) and it is exactly the failed candidate (config ID and revision), and the predecessor image is still cached locally with the recorded revision. It then retags that exact image, replaces only `web` with `--no-deps --no-build`, and verifies the running config ID, revision, public root and exact no-store `publicSha`.
+These receipts use Docker's local image handle, the value of `docker inspect .Id` and of a container's `.Image`. It depends on the host's image store: under the containerd snapshotter it is the image's manifest digest, and under classic overlay2 it is the configuration digest. It is not a registry identity. The workflow's registry manifest digest and configuration ID binding stays in the build job. Earlier records that label a host value `config_id` or `image-config-id` hold this local handle.
+
+4. From the failed run's `Deploy via SSH` log, copy `Predecessor receipt: image-store=<containerd|classic> image-handle=<sha256:…> revision=<40-hex SHA>` and `Candidate receipt: image-store=<same store> image-handle=<sha256:…>`. Both receipts must name the same store. Cross-check the predecessor receipt against the served SHA and running image recorded in the pre-deployment ledger (step 2 above). If either receipt is missing or they disagree with each other or with the ledger, stop: there is no trusted restoration target.
+5. Set `IMAGE_STORE` and `CANDIDATE_IMAGE_HANDLE` from the candidate receipt, `PREVIOUS_IMAGE_HANDLE` and `PREVIOUS_REVISION` from the predecessor receipt, and `DEPLOY_SHA` to the failed `expected_sha`. Never use a mutable tag or the currently served identity as a restoration source.
+6. Connect only through the trusted host-key custody described above (strict host-key checking against the commissioned fingerprint). Run the block below on the host with `IMAGE_NAME=ghcr.io/silent-suite/silentsuite-web` and the five values exported, for example by piping it to `bash -se`. Before any change, it refuses unless:
+   - the host still declares the same image store;
+   - Compose has exactly one `web` container in any state (running or exited), and it is exactly the failed candidate (local handle and revision);
+   - the predecessor image is still cached locally with the recorded revision.
+
+   It then retags that exact image, replaces only `web` with `--no-deps --no-build`, and verifies the running local handle, revision, public root and exact no-store `publicSha`.
 
 ```bash
 set -Eeuo pipefail
 for name in docker timeout curl python3; do command -v "$name" >/dev/null; done
 [[ "${DEPLOY_SHA:-}" =~ ^[0-9a-f]{40}$ && "${#DEPLOY_SHA}" -eq 40 ]]
-[[ "${IMAGE_CONFIG_ID:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#IMAGE_CONFIG_ID}" -eq 71 ]]
-[[ "${PREVIOUS_IMAGE_ID:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#PREVIOUS_IMAGE_ID}" -eq 71 ]]
+[[ "${IMAGE_STORE:-}" = containerd || "${IMAGE_STORE:-}" = classic ]]
+[[ "${CANDIDATE_IMAGE_HANDLE:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#CANDIDATE_IMAGE_HANDLE}" -eq 71 ]]
+[[ "${PREVIOUS_IMAGE_HANDLE:-}" =~ ^sha256:[0-9a-f]{64}$ && "${#PREVIOUS_IMAGE_HANDLE}" -eq 71 ]]
 [[ "${PREVIOUS_REVISION:-}" =~ ^[0-9a-f]{40}$ && "${#PREVIOUS_REVISION}" -eq 40 ]]
-[ "$PREVIOUS_IMAGE_ID" != "$IMAGE_CONFIG_ID" ]
+[ "$PREVIOUS_IMAGE_HANDLE" != "$CANDIDATE_IMAGE_HANDLE" ]
 [ "$IMAGE_NAME" = ghcr.io/silent-suite/silentsuite-web ]
 cd ~/etebase
 docker() { command timeout 15s docker "$@"; }
 revision_format='{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+# The receipts' handles are only comparable on a host that still declares the same image store.
+STORE_PROGRAM='import json, sys
+def unique(pairs):
+    if len({key for key, _ in pairs}) != len(pairs): sys.exit(1)
+    return dict(pairs)
+info = json.loads(sys.stdin.read(), object_pairs_hook=unique)
+if type(info) is not dict or sorted(info) != ["Driver", "DriverStatus"]: sys.exit(1)
+driver, status = info["Driver"], info["DriverStatus"]
+if type(driver) is not str or type(status) is not list: sys.exit(1)
+if not all(type(entry) is list and len(entry) == 2 and all(type(part) is str for part in entry) for entry in status): sys.exit(1)
+keys = [entry[0] for entry in status]
+if len(set(keys)) != len(keys): sys.exit(1)
+overlay2 = ["Backing Filesystem", "Supports d_type", "Using metacopy", "Native Overlay Diff", "userxattr"]
+if status == [["driver-type", "io.containerd.snapshotter.v1"]] and driver not in ("", "overlay2"): print("containerd")
+elif driver == "overlay2" and keys == overlay2 and status[0][1] != "" and all(entry[1] in ("true", "false") for entry in status[1:]): print("classic")
+else: sys.exit(1)'
+HOST_STORE=$(docker info --format '{"Driver":{{json .Driver}},"DriverStatus":{{json .DriverStatus}}}' | python3 -I -c "$STORE_PROGRAM" 2>/dev/null)
+[ "$HOST_STORE" = "$IMAGE_STORE" ]
 # Refuse unless the single web container (running or exited) is the failed candidate and the exact predecessor is cached.
 CURRENT_CONTAINER=$(docker compose ps -a -q web)
 [[ "$CURRENT_CONTAINER" =~ ^[0-9a-f]{64}$ ]]
-CURRENT_IMAGE_ID=$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')
+CURRENT_IMAGE_HANDLE=$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')
 CURRENT_REVISION=$(docker inspect "$CURRENT_CONTAINER" --format "$revision_format")
-[ "$CURRENT_IMAGE_ID" = "$IMAGE_CONFIG_ID" ]
+[ "$CURRENT_IMAGE_HANDLE" = "$CANDIDATE_IMAGE_HANDLE" ]
 [ "$CURRENT_REVISION" = "$DEPLOY_SHA" ]
-CACHED_IMAGE_ID=$(docker inspect "$PREVIOUS_IMAGE_ID" --format '{{.Id}}')
-CACHED_REVISION=$(docker inspect "$PREVIOUS_IMAGE_ID" --format "$revision_format")
-[ "$CACHED_IMAGE_ID" = "$PREVIOUS_IMAGE_ID" ]
+CACHED_IMAGE_HANDLE=$(docker inspect "$PREVIOUS_IMAGE_HANDLE" --format '{{.Id}}')
+CACHED_REVISION=$(docker inspect "$PREVIOUS_IMAGE_HANDLE" --format "$revision_format")
+[ "$CACHED_IMAGE_HANDLE" = "$PREVIOUS_IMAGE_HANDLE" ]
 [ "$CACHED_REVISION" = "$PREVIOUS_REVISION" ]
 RESTORE_TAG="${IMAGE_NAME}:rollback-${DEPLOY_SHA}"
-docker tag "$PREVIOUS_IMAGE_ID" "$RESTORE_TAG"
-[ "$(docker inspect "$RESTORE_TAG" --format '{{.Id}}')" = "$PREVIOUS_IMAGE_ID" ]
+docker tag "$PREVIOUS_IMAGE_HANDLE" "$RESTORE_TAG"
+[ "$(docker inspect "$RESTORE_TAG" --format '{{.Id}}')" = "$PREVIOUS_IMAGE_HANDLE" ]
 RESTORE_OVERRIDE=$(mktemp)
 HEALTH_HEADERS=$(mktemp)
 HEALTH_BODY=$(mktemp)
@@ -152,10 +178,10 @@ services:
 EOF
 # Last check before the only mutation: refuse if anything replaced web since validation.
 [ "$(docker compose ps -a -q web)" = "$CURRENT_CONTAINER" ]
-[ "$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')" = "$IMAGE_CONFIG_ID" ]
+[ "$(docker inspect "$CURRENT_CONTAINER" --format '{{.Image}}')" = "$CANDIDATE_IMAGE_HANDLE" ]
 command timeout 90s docker compose -f docker-compose.yml -f "$RESTORE_OVERRIDE" up -d --force-recreate --no-deps --no-build web
 RESTORED_CONTAINER=$(docker compose ps -q web)
-[ "$(docker inspect "$RESTORED_CONTAINER" --format '{{.Image}}')" = "$PREVIOUS_IMAGE_ID" ]
+[ "$(docker inspect "$RESTORED_CONTAINER" --format '{{.Image}}')" = "$PREVIOUS_IMAGE_HANDLE" ]
 [ "$(docker inspect "$RESTORED_CONTAINER" --format "$revision_format")" = "$PREVIOUS_REVISION" ]
 check_web() {
   local status
