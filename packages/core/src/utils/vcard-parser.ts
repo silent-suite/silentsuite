@@ -312,8 +312,9 @@ function isRetainable(line: string, prop: ParsedProperty, consumedLabelGroups: S
 }
 
 /** Fold a kept line at code-point boundaries. The legacy foldLine stays in use
- *  for owned fields so their wire bytes are unchanged. QP lines, and any fold our
- *  own unfolding would not restore exactly, are emitted unfolded. */
+ *  for owned fields so their wire bytes are unchanged. QP lines, folds whose
+ *  continuation a line-trimming importer would read as a card boundary, and any
+ *  fold our own unfolding would not restore exactly, are emitted unfolded. */
 function foldRetainedLine(line: string): string {
   if (parseProperty(line).params['ENCODING']?.toUpperCase() === 'QUOTED-PRINTABLE') return line;
   const parts: string[] = [];
@@ -332,6 +333,7 @@ function foldRetainedLine(line: string): string {
     bytes += charBytes;
   }
   parts.push(current);
+  if (parts.slice(1).some((part) => /^(?:BEGIN|END):VCARD$/i.test(part.trim()))) return line;
   const folded = parts.join('\r\n ');
   return unfoldLines(folded) === line ? folded : line;
 }

@@ -123,6 +123,52 @@ describe('ContactImport categories normalization', () => {
     expect(wire.split('\r\n').filter((line) => /^X-test/i.test(line))).toEqual(extras)
   })
 
+  describe('re-imports an exported card whose preserved property folds near a card-boundary word (#865)', () => {
+    const exportedContact = (uid: string, displayName: string, unknownProperties?: string[]): Contact => ({
+      id: uid, uid, displayName, name: { prefix: '', given: displayName, family: '', suffix: '' },
+      phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null,
+      categories: [], favorite: false, ...(unknownProperties ? { unknownProperties } : {}),
+      created_at: new Date(Date.UTC(2026, 9, 25)), updated_at: new Date(Date.UTC(2026, 9, 25)),
+    })
+    /** The same bytes Settings Export downloads: BOM, then each serialized card terminated by CRLF. */
+    const exportedFile = (contacts: Contact[]) =>
+      new File([`﻿${contacts.map((contact) => `${serializeContact(contact)}\r\n`).join('')}`], 'silentsuite-contacts.vcf', { type: 'text/vcard' })
+    const cardFrame = (line: string) => /^(BEGIN|END):VCARD$/.test(line.trim().toUpperCase())
+
+    it.each([
+      ['BEGIN:VCARD at the first fold', `X-FOO:${'a'.repeat(69)}BEGIN:VCARD`],
+      ['END:VCARD at the first fold', `X-FOO:${'a'.repeat(69)}END:VCARD`],
+      ['a lowercase boundary word', `X-FOO:${'a'.repeat(69)}begin:vcard`],
+      ['leading whitespace before the word', `X-FOO:${'a'.repeat(69)}  END:VCARD`],
+      ['trailing whitespace after the word', `X-FOO:${'a'.repeat(69)}BEGIN:VCARD  `],
+      ['the word at a later fold', `X-FOO:${'a'.repeat(69)}${'b'.repeat(74)}END:VCARD`],
+      ['an ordinary long folded Unicode value', `X-LONG:${'é中🙂 '.repeat(30)}end`],
+    ])('keeps names, count and property bytes with %s', async (_label, line) => {
+      const contacts = [exportedContact('boundary-1', 'Boundary Person', [line]), exportedContact('boundary-2', 'Second Person')]
+      const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
+      mocks.importContacts.mockResolvedValue(2)
+      fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [exportedFile(contacts)] } })
+      // Wait for whichever outcome the importer reaches, then assert the behaviour itself.
+      await waitFor(() => expect(screen.queryByRole('button', { name: /Import \d+ contacts/ }) ?? screen.queryByText(/Failed to parse the file/)).not.toBeNull())
+      expect(screen.queryByText(/Failed to parse the file/)).toBeNull()
+      expect(screen.getByRole('button', { name: /Import \d+ contacts/ }).textContent).toMatch(/Import 2 contacts/)
+      fireEvent.click(screen.getByRole('button', { name: /Import \d+ contacts/ }))
+      await waitFor(() => expect(mocks.importContacts).toHaveBeenCalledTimes(1))
+
+      const payload = mocks.importContacts.mock.calls[0]![0] as Contact[]
+      expect(payload.map((contact) => contact.displayName)).toEqual(['Boundary Person', 'Second Person'])
+      expect(payload[0]!.unknownProperties).toEqual([line])
+      expect(payload[1]!.unknownProperties).toBeUndefined()
+      // Only the real frame lines may look like a card boundary to a line-trimming splitter.
+      expect(serializeContact(contacts[0]!).split('\r\n').filter(cardFrame)).toEqual(['BEGIN:VCARD', 'END:VCARD'])
+    })
+
+    it('still folds an ordinary long preserved property', () => {
+      const wire = serializeContact(exportedContact('fold-1', 'Fold Person', [`X-LONG:${'é中🙂 '.repeat(30)}end`]))
+      expect(wire.split('\r\n').some((physical) => physical.startsWith(' '))).toBe(true)
+    })
+  })
+
   it('imports sample-shaped legacy cards without losing unlabeled numbers, photos, or the following duplicate-name card', async () => {
     const { container } = renderWithIntl(<ContactImport onImportComplete={mocks.onImportComplete} />)
     // Synthetic values reproduce both reports without committing customer contact data.
