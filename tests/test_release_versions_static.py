@@ -1,8 +1,7 @@
 """Static release-version consistency checks.
 
 These tests guard against stale user-visible versions across the bridge, web
-workspace packages, and Android metadata. They intentionally avoid archived
-prototype code under _archive/.
+workspace packages, and Android metadata.
 """
 
 from pathlib import Path

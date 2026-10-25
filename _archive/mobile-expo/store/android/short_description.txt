@@ -1,1 +1,0 @@
-End-to-end encrypted sync for calendar, contacts, and tasks.
