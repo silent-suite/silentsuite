@@ -333,7 +333,12 @@ function foldRetainedLine(line: string): string {
     bytes += charBytes;
   }
   parts.push(current);
-  if (parts.slice(1).some((part) => /^(?:BEGIN|END):VCARD$/i.test(part.trim()))) return line;
+  // Same predicate as the Web importer's card splitter (trim + toUpperCase), so
+  // Unicode case mappings such as dotless ı → I are covered exactly.
+  if (parts.slice(1).some((part) => {
+    const normalized = part.trim().toUpperCase();
+    return normalized === 'BEGIN:VCARD' || normalized === 'END:VCARD';
+  })) return line;
   const folded = parts.join('\r\n ');
   return unfoldLines(folded) === line ? folded : line;
 }

@@ -142,6 +142,7 @@ describe('ContactImport categories normalization', () => {
       ['leading whitespace before the word', `X-FOO:${'a'.repeat(69)}  END:VCARD`],
       ['trailing whitespace after the word', `X-FOO:${'a'.repeat(69)}BEGIN:VCARD  `],
       ['the word at a later fold', `X-FOO:${'a'.repeat(69)}${'b'.repeat(74)}END:VCARD`],
+      ['a dotless i that uppercases to the boundary word', `X-FOO:${'a'.repeat(69)}begın:vcard`],
       ['an ordinary long folded Unicode value', `X-LONG:${'é中🙂 '.repeat(30)}end`],
     ])('keeps names, count and property bytes with %s', async (_label, line) => {
       const contacts = [exportedContact('boundary-1', 'Boundary Person', [line]), exportedContact('boundary-2', 'Second Person')]
