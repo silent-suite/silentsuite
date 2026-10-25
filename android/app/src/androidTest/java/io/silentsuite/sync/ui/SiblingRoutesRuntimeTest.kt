@@ -1155,13 +1155,31 @@ class SiblingRoutesRuntimeTest {
                 runCatching { onView(withText(title)).inRoot(isDialog()).check(matches(isDisplayed())) }.isSuccess
             fun dialogButton(id: Int) =
                 onView(androidx.test.espresso.matcher.ViewMatchers.withId(id)).inRoot(isDialog())
+            // The delete confirmation tests action completion, not touch injection: activate its actual
+            // Yes button and witness that the listener ran and closed the confirmation for [name].
+            fun answerDeleteConfirmation(name: String) = dialogButton(android.R.id.button1)
+                .perform(object : androidx.test.espresso.ViewAction {
+                    override fun getConstraints(): org.hamcrest.Matcher<View> = isDisplayed()
+                    override fun getDescription() = "activate the real collection delete confirmation Yes button"
+                    override fun perform(controller: androidx.test.espresso.UiController, view: View) {
+                        val confirmation = requireNotNull(view.rootView.findViewById<TextView>(android.R.id.message))
+                        assertEquals(context.getString(R.string.delete_collection_confirm_warning, name),
+                            confirmation.text.toString())
+                        assertEquals(context.getString(android.R.string.yes), (view as TextView).text.toString())
+                        assertTrue("Delete confirmation button must be enabled", view.isEnabled)
+                        assertTrue("Delete confirmation button must handle the click", view.performClick())
+                        controller.loopMainThreadUntilIdle()
+                        assertFalse("the delete confirmation must be closed by its listener", confirmation.isAttachedToWindow)
+                    }
+                })
 
             /** One kind of collection; [color] is null for the address book, whose edit screen has no color. */
             class Kind(val label: String, val type: String, val color: String?)
 
             fun deleteFailsThenSave(kind: Kind) {
+                val original = "Delete then save ${kind.label}"
                 val created = colMgr.create(kind.type, com.etebase.client.ItemMetadata().apply {
-                    name = "Delete then save ${kind.label}"
+                    name = original
                     kind.color?.let { color = it }
                 }, "")
                 colMgr.upload(created)
@@ -1187,11 +1205,13 @@ class SiblingRoutesRuntimeTest {
                     fake.answer("POST", uploadPath, null)
                     select(s, R.id.on_delete)
                     waitUntil("delete confirmation") { dialogShown(R.string.delete_collection_confirm_title) }
-                    dialogButton(android.R.id.button1).perform(click())
+                    answerDeleteConfirmation(original)
+                    waitUntil("the delete upload", 20_000) { uploads() > before }
                     waitUntil("delete error", 20_000) { dialogShown(R.string.exception) }
                     assertEquals("one delete upload was tried", before + 1, uploads())
                     assertFalse("the failed delete deleted nothing on the server", colMgr.fetch(uid).isDeleted)
-                    dialogButton(android.R.id.button1).perform(click())
+                    activateDialogButton(android.R.id.button1)
+                    onView(withText(R.string.exception)).check(androidx.test.espresso.assertion.ViewAssertions.doesNotExist())
 
                     // The edit screen stays; rename and Save.
                     assertTrue("the edit screen stays", showing(s, EditCollectionFragment::class.java))
@@ -1213,7 +1233,8 @@ class SiblingRoutesRuntimeTest {
                     waitUntil("edit screen again") { showing(s, EditCollectionFragment::class.java) }
                     select(s, R.id.on_delete)
                     waitUntil("delete confirmation again") { dialogShown(R.string.delete_collection_confirm_title) }
-                    dialogButton(android.R.id.button1).perform(click())
+                    answerDeleteConfirmation(renamed)
+                    waitUntil("the delete upload again", 20_000) { uploads() > before + 2 }
                     waitUntil("the screen to close after the delete", 20_000) { s.state == Lifecycle.State.DESTROYED }
                     assertEquals("the delete made one more upload", before + 3, uploads())
                 }
