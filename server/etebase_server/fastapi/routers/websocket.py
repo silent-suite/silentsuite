@@ -80,6 +80,9 @@ async def websocket_endpoint(
 ):
     if user is None:
         return
+    if not user.is_active:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await websocket.accept()
     await redis_connector(websocket, ticket_model, user, stoken)
 
