@@ -292,6 +292,8 @@ function DeleteAccountSection() {
   const [confirmText, setConfirmText] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Self-hosted accounts cannot be erased from here; the action only signs out.
+  const confirmToken = isSelfHosted ? 'SIGNOUT' : 'DELETE'
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -330,25 +332,29 @@ function DeleteAccountSection() {
       <section className="rounded-lg border border-red-500/30 bg-red-500/5 p-4 space-y-3">
         <h2 className="text-sm font-semibold text-red-400">Danger Zone</h2>
         <p className="text-xs text-[rgb(var(--muted))]">
-          This action is permanent. All your data will be deleted and cannot be recovered.
+          {isSelfHosted
+            ? "Self-hosted accounts can't be deleted from here. Signing out removes this device's session and locally cached data, including changes not yet synced. Your account and data on your server are not deleted."
+            : 'This action is permanent. All your data will be deleted and cannot be recovered.'}
         </p>
         <Button variant="destructive" size="sm" onClick={() => setDialogOpen(true)}>
-          Delete my account
+          {isSelfHosted ? 'Sign out of this device' : 'Delete my account'}
         </Button>
       </section>
 
       {dialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-6 shadow-xl space-y-4">
-            <h3 className="text-sm font-semibold text-[rgb(var(--foreground))]">Confirm Account Deletion</h3>
+            <h3 className="text-sm font-semibold text-[rgb(var(--foreground))]">
+              {isSelfHosted ? 'Confirm sign out' : 'Confirm Account Deletion'}
+            </h3>
             <p className="text-xs text-[rgb(var(--muted))]">
-              Type <span className="font-mono font-semibold text-red-400">DELETE</span> to confirm.
+              Type <span className="font-mono font-semibold text-red-400">{confirmToken}</span> to confirm.
             </p>
 
             <Input
               value={confirmText}
               onChange={(e) => setConfirmText(e.target.value)}
-              placeholder="Type DELETE"
+              placeholder={`Type ${confirmToken}`}
               autoFocus
             />
 
@@ -369,10 +375,12 @@ function DeleteAccountSection() {
               <Button
                 variant="destructive"
                 size="sm"
-                disabled={confirmText !== 'DELETE' || deleting}
+                disabled={confirmText !== confirmToken || deleting}
                 onClick={handleDelete}
               >
-                {deleting ? 'Deleting...' : 'Confirm Delete'}
+                {isSelfHosted
+                  ? (deleting ? 'Signing out...' : 'Sign out')
+                  : (deleting ? 'Deleting...' : 'Confirm Delete')}
               </Button>
             </div>
           </div>
