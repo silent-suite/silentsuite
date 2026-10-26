@@ -160,6 +160,52 @@ describe('parseTodoistCsv', () => {
     });
   });
 
+  // Quoted fields spanning physical lines must stay within one record
+  describe('quoted fields across line breaks', () => {
+    const LATER = 'completed,Later task,"After, with comma",1,2,me,,Oct 16 2025,,,,';
+    const cases = (['\n', '\r\n'] as const).flatMap((eol) => {
+      const label = eol === '\n' ? 'LF' : 'CRLF';
+      return [
+        {
+          name: `${label}: quoted-comma control`,
+          eol,
+          record: 'task,"Buy eggs, milk","Note, with comma",2,1,me,,2025-10-15,,,,',
+          summary: 'Buy eggs, milk',
+          description: 'Note, with comma',
+        },
+        {
+          name: `${label}: multiline summary`,
+          eol,
+          record: `task,"Line one${eol}Line two",,2,1,me,,2025-10-15,,,,`,
+          summary: `Line one${eol}Line two`,
+          description: undefined,
+        },
+        {
+          name: `${label}: multiline description with escaped quotes`,
+          eol,
+          record: `task,Plain task,"Desc one${eol}Desc ""two""${eol}Desc three",2,1,me,,2025-10-15,,,,`,
+          summary: 'Plain task',
+          description: `Desc one${eol}Desc "two"${eol}Desc three`,
+        },
+      ];
+    });
+
+    it.each(cases)('$name', ({ eol, record, summary, description }) => {
+      const csv = [HEADER, record, LATER].join(eol) + eol;
+      const todos = parseTodoistCsv(csv).map((t) => ({
+        summary: t.summary,
+        description: t.description,
+        priority: t.priority,
+        due: t.due,
+        status: t.status,
+      }));
+      expect(todos).toEqual([
+        { summary, description, priority: 5, due: '20251015', status: 'NEEDS-ACTION' },
+        { summary: '→ Later task', description: 'After, with comma', priority: 1, due: '20251016', status: 'COMPLETED' },
+      ]);
+    });
+  });
+
   // UIDs
   describe('UID generation', () => {
     it('generates unique UIDs for each task', () => {
