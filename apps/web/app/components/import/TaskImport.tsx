@@ -68,7 +68,7 @@ function extractVTodos(ical: string): VTodo[] {
 
 /** Simple Todoist CSV parser (fallback — the core csv-parser is being built separately) */
 function parseTodoistCsv(csv: string): VTodo[] {
-  const lines = csv.split(/\r?\n/)
+  const lines = splitCSVRecords(csv)
   if (lines.length < 2) return []
 
   // Parse header
@@ -127,6 +127,30 @@ function parseTodoistCsv(csv: string): VTodo[] {
   }
 
   return todos
+}
+
+/**
+ * Split CSV text into logical records. Line breaks inside quoted fields stay
+ * in the record verbatim; LF or CRLF outside quotes ends it. Quote state
+ * follows the parity of '"' characters, matching parseCSVLine.
+ */
+function splitCSVRecords(text: string): string[] {
+  const records: string[] = []
+  let start = 0
+  let inQuotes = false
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === '"') {
+      inQuotes = !inQuotes
+    } else if (ch === '\n' && !inQuotes) {
+      const end = i > start && text[i - 1] === '\r' ? i - 1 : i
+      records.push(text.slice(start, end))
+      start = i + 1
+    }
+  }
+  records.push(text.slice(start))
+  return records
 }
 
 /** Parse a single CSV line with basic quote handling */

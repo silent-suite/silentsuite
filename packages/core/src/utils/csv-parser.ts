@@ -69,6 +69,31 @@ function parseCsvLine(line: string): string[] {
 }
 
 /**
+ * Split CSV text into logical records.
+ * Line breaks inside quoted fields stay in the record verbatim; LF or CRLF
+ * outside quotes ends it. Quote state follows the parity of '"' characters,
+ * matching parseCsvLine (an escaped "" toggles twice).
+ */
+function splitCsvRecords(text: string): string[] {
+  const records: string[] = [];
+  let start = 0;
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === '\n' && !inQuotes) {
+      const end = i > start && text[i - 1] === '\r' ? i - 1 : i;
+      records.push(text.slice(start, end));
+      start = i + 1;
+    }
+  }
+  records.push(text.slice(start));
+  return records;
+}
+
+/**
  * Parse a Todoist date string into an iCal date or datetime string.
  * Handles formats like: "Oct 15 2025", "2025-10-15", "Oct 15 2025 14:30"
  */
@@ -122,7 +147,7 @@ function generateUid(): string {
  * Parse a Todoist CSV export string into an array of VTodo objects.
  */
 export function parseTodoistCsv(csvContent: string): VTodo[] {
-  const lines = csvContent.split(/\r?\n/);
+  const lines = splitCsvRecords(csvContent);
   if (lines.length === 0) return [];
 
   // Find and parse header line
