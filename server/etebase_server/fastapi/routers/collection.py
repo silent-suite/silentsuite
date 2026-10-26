@@ -305,16 +305,19 @@ def process_revisions_for_item(item: models.CollectionItem, revision_data: Colle
 
     for chunk in revision_data.chunks:
         uid = chunk[0]
-        chunk_obj = models.CollectionItemChunk.objects.filter(uid=uid).first()
+        # Chunk uids are only unique per collection, so never match another collection's chunk.
+        chunk_obj = item.collection.chunks.filter(uid=uid).first()
         content = chunk[1] if len(chunk) > 1 else None
-        # If the chunk already exists we assume it's fine. Otherwise, we upload it.
+        # If the chunk already exists in this collection we assume it's fine. Otherwise, we upload it.
         if chunk_obj is None:
             if content is not None:
                 chunk_obj = models.CollectionItemChunk(uid=uid, collection=item.collection)
                 chunk_obj.chunkFile.save("IGNORED", ContentFile(content))
                 chunk_obj.save()
             else:
-                raise ValidationError("chunk_no_content", "Tried to create a new chunk without content")
+                raise ValidationError(
+                    "chunk_no_content", "Tried to create a new chunk without content", field=item.uid
+                )
 
         chunks_objs.append(chunk_obj)
 
