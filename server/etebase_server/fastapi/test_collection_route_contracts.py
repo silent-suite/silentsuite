@@ -30,6 +30,7 @@ django.setup()
 
 from django.conf import settings  # noqa: E402
 from django.contrib.auth import get_user_model  # noqa: E402
+from django.db.models import F  # noqa: E402
 from django.test import TransactionTestCase  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
@@ -383,19 +384,17 @@ class CollectionRouteContractTests(TransactionTestCase):
 
     # --- item_router: bare `collection_uid: str` handler parameters ---------
 
-    def _batch_body(self, item_uid: str, revision_uid: str) -> dict:
+    def _item_body(self, item_uid: str, revision_uid: str, chunks=()) -> dict:
         return {
-            "items": [
-                {
-                    "uid": item_uid,
-                    "version": 1,
-                    "encryptionKey": None,
-                    "etag": None,
-                    "content": {"uid": revision_uid, "meta": b"{}", "deleted": False, "chunks": []},
-                }
-            ],
-            "deps": None,
+            "uid": item_uid,
+            "version": 1,
+            "encryptionKey": None,
+            "etag": None,
+            "content": {"uid": revision_uid, "meta": b"{}", "deleted": False, "chunks": list(chunks)},
         }
+
+    def _batch_body(self, item_uid: str, revision_uid: str, chunks=()) -> dict:
+        return {"items": [self._item_body(item_uid, revision_uid, chunks)], "deps": None}
 
     def test_item_batch_writes_into_the_prefix_collection(self):
         new_uid = _uid("item-batch-new")
@@ -447,6 +446,190 @@ class CollectionRouteContractTests(TransactionTestCase):
             self.alice_token,
         )
         assert response.status_code == 404, response.content
+
+    # --- revision chunk references: scoped to the destination collection ----
+    #
+    # A revision may reference an existing chunk by uid alone (no content). That
+    # lookup must only match chunks of the collection being written: a uid that
+    # exists only in another collection is unknown here, so a content-less
+    # reference to it is refused and the whole request leaves nothing behind.
+
+    def _upload_chunk(self, col: models.Collection, chunk_uid: str, content: bytes):
+        response = self._put_raw(
+            f"{COLLECTION_PREFIX}/{col.uid}/item/{self.shared_item_uid}/chunk/{chunk_uid}/",
+            self.alice_token,
+            content,
+        )
+        assert response.status_code == 201, response.content
+
+    def _assert_item_failed_for_missing_chunk_content(self, response):
+        assert response.status_code == 409, response.content
+        data = msgpack_decode(response.content)
+        assert data["code"] == "item_failed"
+        assert [error["code"] for error in data["errors"]] == ["chunk_no_content"]
+
+    def _assert_no_cross_collection_chunk_relations(self):
+        crossing = models.RevisionChunkRelation.objects.exclude(chunk__collection=F("revision__item__collection"))
+        assert not crossing.exists()
+
+    def test_item_writes_reject_a_contentless_reference_to_another_collections_chunk(self):
+        foreign_uid = _uid("chunk-foreign-write")
+        marker = b"\x00foreign-ciphertext-write-col-b"
+        self._upload_chunk(self.col_b, foreign_uid, marker)
+
+        for route in ("batch", "transaction"):
+            item_uids = [_uid(f"item-valid-{route}"), _uid(f"item-foreign-{route}")]
+            revision_uids = [_uid(f"rev-valid-{route}"), _uid(f"rev-foreign-{route}")]
+            body = {
+                "items": [
+                    self._item_body(item_uids[0], revision_uids[0]),
+                    self._item_body(item_uids[1], revision_uids[1], [(foreign_uid, None)]),
+                ],
+                "deps": None,
+            }
+            response = self._post(f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/{route}/", self.alice_token, body)
+            self._assert_item_failed_for_missing_chunk_content(response)
+
+            # The whole request rolls back, including the valid sibling item.
+            assert not self.col_a.items.filter(uid__in=item_uids).exists()
+            assert not models.CollectionItemRevision.objects.filter(uid__in=revision_uids).exists()
+            assert not self.col_a.chunks.filter(uid=foreign_uid).exists()
+            self._assert_no_cross_collection_chunk_relations()
+
+        # The source collection's chunk is untouched.
+        response = self._get(
+            f"{COLLECTION_PREFIX}/{self.col_b.uid}/item/{self.shared_item_uid}/chunk/{foreign_uid}/download/",
+            self.alice_token,
+        )
+        assert response.status_code == 200, response.content
+        assert response.content == marker
+
+    def test_rejected_foreign_chunk_reference_leaves_the_destination_item_unchanged(self):
+        foreign_uid = _uid("chunk-foreign-update")
+        marker = b"\x00foreign-ciphertext-update-col-b"
+        self._upload_chunk(self.col_b, foreign_uid, marker)
+        new_revision_uid = _uid("rev-foreign-update")
+
+        response = self._post(
+            f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/batch/",
+            self.alice_token,
+            self._batch_body(self.shared_item_uid, new_revision_uid, [(foreign_uid, None)]),
+        )
+        self._assert_item_failed_for_missing_chunk_content(response)
+        assert not models.CollectionItemRevision.objects.filter(uid=new_revision_uid).exists()
+        self._assert_no_cross_collection_chunk_relations()
+
+        item_url = f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/{self.shared_item_uid}/"
+        response = self._get(item_url, self.alice_token)
+        assert response.status_code == 200, response.content
+        content = msgpack_decode(response.content)["content"]
+        assert content["uid"] == self.rev_a
+        assert content["chunks"] == []
+
+        response = self._get(f"{item_url}revision/", self.alice_token)
+        assert response.status_code == 200, response.content
+        assert [revision["uid"] for revision in msgpack_decode(response.content)["data"]] == [self.rev_a]
+
+        for url in (item_url, f"{item_url}revision/", f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/"):
+            response = self._get(url, self.alice_token)
+            assert response.status_code == 200, response.content
+            assert marker not in response.content
+
+    def test_item_write_reuses_a_contentless_chunk_from_the_same_collection(self):
+        chunk_uid = _uid("chunk-same-collection")
+        chunk_bytes = b"\x00same-collection-ciphertext"
+        self._upload_chunk(self.col_a, chunk_uid, chunk_bytes)
+        new_uid = _uid("item-same-collection")
+
+        response = self._post(
+            f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/batch/",
+            self.alice_token,
+            self._batch_body(new_uid, _uid("rev-same-collection"), [(chunk_uid, None)]),
+        )
+        assert response.status_code == 200, response.content
+        assert self.col_a.chunks.filter(uid=chunk_uid).count() == 1
+        self._assert_no_cross_collection_chunk_relations()
+
+        response = self._get(f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/{new_uid}/", self.alice_token)
+        assert response.status_code == 200, response.content
+        assert msgpack_decode(response.content)["content"]["chunks"] == [[chunk_uid, chunk_bytes]]
+
+    def test_item_write_with_content_keeps_an_equal_chunk_uid_per_collection(self):
+        chunk_uid = _uid("chunk-equal-uid")
+        foreign_bytes = b"\x00equal-uid-ciphertext-col-b"
+        own_bytes = b"\x00equal-uid-ciphertext-col-a"
+        self._upload_chunk(self.col_b, chunk_uid, foreign_bytes)
+        new_uid = _uid("item-equal-uid")
+
+        response = self._post(
+            f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/batch/",
+            self.alice_token,
+            self._batch_body(new_uid, _uid("rev-equal-uid"), [(chunk_uid, own_bytes)]),
+        )
+        assert response.status_code == 200, response.content
+
+        response = self._get(f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/{new_uid}/", self.alice_token)
+        assert response.status_code == 200, response.content
+        assert foreign_bytes not in response.content
+        assert msgpack_decode(response.content)["content"]["chunks"] == [[chunk_uid, own_bytes]]
+
+        assert self.col_a.chunks.filter(uid=chunk_uid).count() == 1
+        assert self.col_b.chunks.filter(uid=chunk_uid).count() == 1
+        self._assert_no_cross_collection_chunk_relations()
+
+        expected = {self.col_a.uid: own_bytes, self.col_b.uid: foreign_bytes}
+        for col_uid, chunk_bytes in expected.items():
+            response = self._get(
+                f"{COLLECTION_PREFIX}/{col_uid}/item/{self.shared_item_uid}/chunk/{chunk_uid}/download/",
+                self.alice_token,
+            )
+            assert response.status_code == 200, response.content
+            assert response.content == chunk_bytes
+
+    def test_former_member_gets_no_foreign_ciphertext_in_their_own_collection(self):
+        # Bob could see col_b's chunk uids while he was a member.
+        foreign_uid = _uid("chunk-former-member")
+        marker = b"\x00former-member-ciphertext-col-b"
+        self._upload_chunk(self.col_b, foreign_uid, marker)
+        response = self._post(f"{COLLECTION_PREFIX}/{self.col_b.uid}/member/leave/", self.bob_token, None)
+        assert response.status_code == 204, response.content
+
+        col_bob = _make_collection(self.bob, "cccc")
+        new_uid = _uid("item-former-member")
+        response = self._post(
+            f"{COLLECTION_PREFIX}/{col_bob.uid}/item/batch/",
+            self.bob_token,
+            self._batch_body(new_uid, _uid("rev-former-member"), [(foreign_uid, None)]),
+        )
+        self._assert_item_failed_for_missing_chunk_content(response)
+        assert not col_bob.items.filter(uid=new_uid).exists()
+        self._assert_no_cross_collection_chunk_relations()
+
+        response = self._get(f"{COLLECTION_PREFIX}/{col_bob.uid}/item/", self.bob_token)
+        assert response.status_code == 200, response.content
+        assert marker not in response.content
+
+    def test_collection_create_rejects_a_contentless_reference_to_another_collections_chunk(self):
+        foreign_uid = _uid("chunk-foreign-create")
+        self._upload_chunk(self.col_b, foreign_uid, b"\x00foreign-ciphertext-create-col-b")
+        new_col_uid = _uid("col-foreign-create")
+        new_revision_uid = _uid("rev-foreign-create")
+
+        response = self._post(
+            f"{COLLECTION_PREFIX}/",
+            self.bob_token,
+            {
+                "collectionType": _uid("type-foreign-create").encode(),
+                "collectionKey": b"\x03" * 32,
+                "item": self._item_body(new_col_uid, new_revision_uid, [(foreign_uid, None)]),
+            },
+        )
+        assert response.status_code == 400, response.content
+        assert msgpack_decode(response.content)["code"] == "chunk_no_content"
+
+        assert not models.Collection.objects.filter(uid=new_col_uid).exists()
+        assert not models.CollectionItemRevision.objects.filter(uid=new_revision_uid).exists()
+        self._assert_no_cross_collection_chunk_relations()
 
     # --- member_router: dependencies mounted under the same prefix ----------
 
