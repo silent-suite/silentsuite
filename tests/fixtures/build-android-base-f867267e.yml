@@ -1,0 +1,990 @@
+name: Build Android APK and AAB
+
+# Unprivileged Android CI only.
+#
+# Every release-producing Android job moved to .github/workflows/release-android.yml,
+# which is reachable only through the protected-main release controller. This
+# file no longer has a `v*` tag trigger and no longer contains a job that can
+# reach signing material, a repository write, or the release API — so no
+# definition of it loaded from a tag can obtain any of those either.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'tests/test_android_*.py'
+      - 'apps/web/app/globals.css'
+      - 'runbooks/android-release.md'
+      - 'scripts/check-android-signing-boundary.py'
+      - '.github/workflows/**'
+      - 'android/.github/workflows/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'tests/test_android_*.py'
+      - 'apps/web/app/globals.css'
+      - 'runbooks/android-release.md'
+      - 'scripts/check-android-signing-boundary.py'
+      - '.github/workflows/**'
+      - 'android/.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  signing-policy:
+    name: Enforce Android signing boundary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install signing policy dependency
+        run: |
+          printf '%s\n' 'PyYAML==6.0.3 --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc' > "$RUNNER_TEMP/android-signing-policy-requirements.txt"
+          python -m pip install --disable-pip-version-check --only-binary=:all: --require-hashes -r "$RUNNER_TEMP/android-signing-policy-requirements.txt"
+
+      - name: Checkout policy source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          clean: true
+          persist-credentials: false
+
+      - name: Enforce Android signing boundary
+        run: python "$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py"
+
+  conscrypt-r28:
+    name: Build Conscrypt with Android NDK r28
+    needs: signing-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Install Android NDK r28 and CMake
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358" "cmake;3.22.1"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Build Conscrypt with Android NDK r28
+        run: |
+          chmod +x scripts/build-conscrypt-android-r28.sh
+          scripts/build-conscrypt-android-r28.sh
+
+      - name: Verify rebuilt Conscrypt AAR
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libconscrypt_jni.so \
+            --require-android-ndk-major libconscrypt_jni.so=28 \
+            build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar
+
+      - name: Upload rebuilt Conscrypt AAR
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+          if-no-files-found: error
+          retention-days: 1
+
+  conscrypt-runtime:
+    name: Conscrypt runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    needs: conscrypt-r28
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: '29'
+            arch: x86
+          - api-level: '36'
+            arch: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run Conscrypt certificate-service runtime tests
+        id: conscrypt-runtime
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: >-
+            cd android &&
+            ./gradlew cert4android:connectedDebugAndroidTest --no-daemon
+            -PrequireConscryptR28=true
+            -Pandroid.testInstrumentationRunnerArguments.class=at.bitfire.cert4android.ConscryptProviderRuntimeTest
+
+      - name: Assert Conscrypt runtime methods executed
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob
+          import sys
+          import xml.etree.ElementTree as ET
+
+          expected = {
+              "providerLoadsAndCreatesTlsContext",
+          }
+          records = []
+          for path in glob.glob(
+              "android/cert4android/build/outputs/androidTest-results/connected/**/*.xml",
+              recursive=True,
+          ):
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  if case.attrib.get("classname") == "at.bitfire.cert4android.ConscryptProviderRuntimeTest":
+                      records.append(case)
+          names = [case.attrib.get("name", "") for case in records]
+          errors = [
+              name
+              for case, name in zip(records, names)
+              if any(case.find(kind) is not None for kind in ("failure", "error", "skipped"))
+          ]
+          if set(names) != expected or len(names) != len(expected) or errors:
+              print(f"expected={sorted(expected)}", file=sys.stderr)
+              print(f"executed={sorted(names)}", file=sys.stderr)
+              print(f"failed_or_skipped={sorted(errors)}", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"verified {len(names)} Conscrypt certificate-service runtime methods")
+          PY
+
+      - name: Upload Conscrypt runtime reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: conscrypt-runtime-${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            android/cert4android/build/outputs/androidTest-results/connected/
+            android/cert4android/build/reports/androidTests/connected/
+          if-no-files-found: error
+          retention-days: 14
+
+  # ─────────────────────────────────────────────────────────────────────
+  # PR / main builds — unsigned, no signing secrets accessible.
+  # Validates that the Android project compiles and assembles.
+  # ─────────────────────────────────────────────────────────────────────
+  build-pr:
+    name: Build (unsigned, PR/main)
+    needs: conscrypt-r28
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Python for static Android contracts
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Install Android static contract dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pytest PyYAML==6.0.3
+
+      - name: Run Android static Python contracts
+        run: python -m pytest ../tests/test_android_*.py -q
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358" "build-tools;36.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Cache Gradle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # This job assembles the release variant, which is bound to the pinned
+      # reproducible compiler exactly as the release lane is. Provisioning it
+      # here keeps CI building the same bytes a release would.
+      - name: Provision the pinned reproducible JDK
+        run: scripts/reproducible-build-contract.sh provision-jdk
+
+      - name: Build 16 KB-aligned Etebase client AAR
+        run: scripts/build-etebase-client-16kb.sh
+
+      - name: Run debug unit tests, lint, and assemble instrumentation APKs
+        # Assemble each Android module's androidTest APK so AGP merges and
+        # validates its instrumentation manifest. Runtime coverage stays
+        # focused on the app test below (API 29, API 35, and API 36).
+        run: >-
+          ./gradlew
+          app:testDebugUnitTest
+          app:lintDebug
+          app:assembleDebugAndroidTest
+          verifyDebugAndroidTestDesugarRuntime
+          cert4android:assembleDebugAndroidTest
+          ical4android:assembleDebugAndroidTest
+          vcard4android:assembleDebugAndroidTest
+          --continue --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true
+
+      - name: Upload unit test reports and results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-unit-test-results-${{ github.sha }}
+          path: |
+            android/app/build/test-results/testDebugUnitTest/
+            android/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload lint reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-lint-reports-${{ github.sha }}
+          path: |
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/lint-results-debug.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Capture debug and release runtime dependency graphs
+        run: |
+          mkdir -p build/privacy-evidence/dependencies
+          ./gradlew app:dependencies --configuration debugRuntimeClasspath --no-daemon \
+            > build/privacy-evidence/dependencies/debug-runtime.txt
+          ./gradlew app:dependencies --configuration releaseRuntimeClasspath --no-daemon \
+            > build/privacy-evidence/dependencies/release-runtime.txt
+
+      - name: Build debug APK and unsigned release APK/AAB
+        run: |
+          ./gradlew assembleDebug assembleRelease bundleRelease --no-daemon \
+            -PrequireEtebase16Kb=true \
+            -PrequireConscryptR28=true \
+            -PrequireReproducibleJdk=true
+
+      - name: Verify packaged debug and unsigned release APK SDK levels
+        env:
+          ANDROID_BUILD_TOOLS_VERSION: '36.0.0'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          aapt="$ANDROID_HOME/build-tools/$ANDROID_BUILD_TOOLS_VERSION/aapt"
+          test -x "$aapt"
+          debug_apks=(app/build/outputs/apk/debug/*.apk)
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          [[ ${#debug_apks[@]} -eq 1 ]] || { echo "expected exactly one debug APK, found ${#debug_apks[@]}" >&2; exit 1; }
+          [[ ${#release_apks[@]} -eq 1 ]] || { echo "expected exactly one unsigned release APK, found ${#release_apks[@]}" >&2; exit 1; }
+          for apk in "${debug_apks[@]}" "${release_apks[@]}"; do
+            badging="$("$aapt" dump badging "$apk")"
+            [[ $(grep -Fxc "sdkVersion:'29'" <<<"$badging" || true) -eq 1 ]] || {
+              echo "$apk does not report exactly one min SDK 29 entry" >&2
+              exit 1
+            }
+            [[ $(grep -Fxc "targetSdkVersion:'36'" <<<"$badging" || true) -eq 1 ]] || {
+              echo "$apk does not report exactly one target SDK 36 entry" >&2
+              exit 1
+            }
+          done
+
+      - name: Generate universal split set from unsigned AAB
+        env:
+          BUNDLETOOL_VERSION: '1.18.1'
+          BUNDLETOOL_SHA256: '675786493983787ffa11550bdb7c0715679a44e1643f3ff980a529e9c822595c'
+        run: |
+          curl --fail --location --silent --show-error \
+            "https://github.com/google/bundletool/releases/download/${BUNDLETOOL_VERSION}/bundletool-all-${BUNDLETOOL_VERSION}.jar" \
+            --output "$RUNNER_TEMP/bundletool.jar"
+          echo "$BUNDLETOOL_SHA256  $RUNNER_TEMP/bundletool.jar" | sha256sum --check --strict
+          java -jar "$RUNNER_TEMP/bundletool.jar" build-apks \
+            --bundle app/build/outputs/bundle/release/app-release.aab \
+            --output build/privacy-evidence/unsigned-release.apks \
+            --mode universal
+          unzip -q build/privacy-evidence/unsigned-release.apks \
+            -d build/privacy-evidence/unsigned-release-splits
+
+      - name: Scan dependency, manifest, mapping, resources, APK, AAB, splits, DEX, and native payloads
+        run: |
+          set -euo pipefail
+          mkdir -p build/privacy-evidence/build-metadata
+          test -s app/build/outputs/mapping/release/mapping.txt
+          mkdir -p build/privacy-evidence/build-metadata/app/build/outputs/mapping/release
+          cp app/build/outputs/mapping/release/mapping.txt \
+            build/privacy-evidence/build-metadata/app/build/outputs/mapping/release/mapping.txt
+          find app/build/intermediates -type f \
+            \( -iname '*manifest*.xml' -o -iname '*mapping*.txt' -o -iname 'resources*.txt' -o -iname 'resources*.arsc' \) \
+            -exec cp --parents {} build/privacy-evidence/build-metadata/ \;
+          sha256sum app/build/outputs/apk/debug/*.apk \
+            app/build/outputs/apk/release/*.apk \
+            app/build/outputs/bundle/release/*.aab \
+            build/privacy-evidence/unsigned-release.apks \
+            > build/privacy-evidence/artifact-sha256.txt
+          python3 scripts/scan-tracker-signatures.py \
+            --manifest security/tracker-signatures.json \
+            --summary build/privacy-evidence/tracker-scan-summary.json \
+            build/privacy-evidence/dependencies \
+            build/privacy-evidence/build-metadata \
+            app/build/outputs/apk/debug \
+            app/build/outputs/apk/release \
+            app/build/outputs/bundle/release \
+            build/privacy-evidence/unsigned-release.apks \
+            build/privacy-evidence/unsigned-release-splits
+
+      - name: Verify debug native library alignment
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-lib libconscrypt_jni.so \
+            app/build/outputs/apk/debug/*.apk
+
+      - name: Verify unsigned release native libraries
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-lib libconscrypt_jni.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            --require-android-ndk-major libconscrypt_jni.so=28 \
+            app/build/outputs/apk/release/*.apk \
+            app/build/outputs/bundle/release/*.aab
+
+      # libconscrypt_jni.so and the upstream 32-bit libetebase_android.so ship
+      # pre-stripped, so no symbols can be extracted for them; only the locally
+      # rebuilt 64-bit Etebase libraries carry symbol tables. AGP 8.11.1 does
+      # not emit a native-debug-symbols.zip for prebuilt-AAR-only native
+      # libraries, so the ZIP is packaged manually from the rebuilt AAR.
+      - name: Package release native debug symbols
+        run: |
+          python3 scripts/package-native-debug-symbols.py \
+            --etebase-aar app/libs/client-2.3.2-16kb.aar \
+            --output app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+
+      - name: Verify release native debug symbols
+        run: |
+          python3 scripts/verify-native-debug-symbols.py \
+            --require-lib libetebase_android.so \
+            --require-lib libconscrypt_jni.so \
+            --require-symbol arm64-v8a/libetebase_android.so \
+            --require-symbol x86_64/libetebase_android.so \
+            --bundle app/build/outputs/bundle/release/app-release.aab \
+            --symbols app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+
+      - name: Upload unsigned release native debug symbols
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-native-debug-symbols-${{ github.sha }}
+          path: android/app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload tracker verification evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-tracker-scan-${{ github.sha }}
+          path: android/build/privacy-evidence/
+          retention-days: 14
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: silentsuite-debug-${{ github.sha }}
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+  account-recreation-runtime:
+    name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})
+    needs: conscrypt-r28
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 29
+            arch: x86
+            shard: mixed
+          - api-level: 29
+            arch: x86
+            shard: account-dashboard
+          - api-level: 29
+            arch: x86
+            shard: first-run-setup
+          - api-level: 29
+            arch: x86
+            shard: status-routes
+          - api-level: 29
+            arch: x86
+            shard: sibling-routes
+          - api-level: 35
+            arch: x86_64
+            shard: all
+            navigation-mode: 2
+          - api-level: 36
+            arch: x86_64
+            shard: account-dashboard
+          - api-level: 36
+            arch: x86_64
+            shard: first-run-setup
+          - api-level: 36
+            arch: x86_64
+            shard: status-routes
+            navigation-mode: 0
+          - api-level: 36
+            arch: x86_64
+            shard: sibling-routes
+            navigation-mode: 0
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust Android targets
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build 16 KB-aligned Etebase client AAR
+        run: scripts/build-etebase-client-16kb.sh
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run focused launcher and setup recreation contracts
+        id: focused-runtime
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash android/scripts/run-focused-runtime-with-navigation.sh "${{ matrix.api-level }}" "${{ matrix.shard }}" "${{ matrix.navigation-mode }}"
+
+      - name: Initialize focused runtime producer manifest
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, hashlib, json, pathlib, subprocess
+          output=pathlib.Path('app/build/outputs/androidTest-results/scenarios/producer-manifest.json')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          metadata_candidates=[]
+          for path in pathlib.Path('app/build/outputs/apk').glob('**/output-metadata.json'):
+            try: metadata_candidates.append(json.loads(path.read_text(encoding='utf-8')))
+            except (OSError,ValueError): pass
+          metadata=next((item for item in metadata_candidates if item.get('applicationId') == 'io.silentsuite.android'), {})
+          element=(metadata.get('elements') or [{}])[0]
+          evidence_files=sorted(
+            pathlib.Path(path) for path in
+            glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml',recursive=True)+
+            glob.glob('app/build/outputs/androidTest-results/scenarios/**/*.json',recursive=True)
+            if not path.endswith('producer-manifest.json')
+          )
+          producer={
+            'api': ${{ matrix.api-level }},
+            'applicationId': metadata.get('applicationId',''),
+            'arch': '${{ matrix.arch }}',
+            'assertionOutcome': 'INCOMPLETE',
+            'baseSha': '${{ github.event.pull_request.base.sha || github.event.before || github.sha }}',
+            'checkout': '${{ github.sha }}',
+            'event': '${{ github.event_name }}',
+            'evidenceSha256': {str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in evidence_files},
+            'headSha': '${{ github.event.pull_request.head.sha || github.sha }}',
+            'job': '${{ github.job }}',
+            'ledgerSha256': hashlib.sha256(pathlib.Path('scripts/focused-runtime-ledger-v1.json').read_bytes()).hexdigest(),
+            'parents': subprocess.check_output(['git','show','-s','--format=%P','HEAD'],text=True).strip().split(),
+            'pr': '${{ github.event.pull_request.number || 'NOT_APPLICABLE' }}',
+            'ref': '${{ github.ref }}',
+            'run': '${{ github.run_id }}',
+            'runAttempt': '${{ github.run_attempt }}',
+            'schema': 1,
+            'shard': '${{ matrix.api-level }}:${{ matrix.shard }}',
+            'stepOutcomes': {'junitAssertion':'NOT_RUN','runtime':'${{ steps.focused-runtime.outcome }}'},
+            'tree': subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),
+            'versionCode': element.get('versionCode'),
+            'versionName': element.get('versionName'),
+            'workflowSha256': hashlib.sha256(pathlib.Path('../.github/workflows/build-android.yml').read_bytes()).hexdigest(),
+          }
+          output.write_bytes((json.dumps(producer,sort_keys=True,separators=(',',':'))+'\n').encode())
+          PY
+
+      - name: Assert focused runtime methods executed
+        id: focused-assertion
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, hashlib, json, pathlib, subprocess, xml.etree.ElementTree as ET
+          from collections import Counter
+
+          if '${{ steps.focused-runtime.outcome }}' != 'success':
+            raise SystemExit('focused runtime execution or scenario validation did not succeed')
+
+          ledger_path=pathlib.Path('scripts/focused-runtime-ledger-v1.json')
+          raw=ledger_path.read_bytes()
+          def reject_duplicate_keys(pairs):
+            result={}
+            for key,value in pairs:
+              if key in result: raise SystemExit(f'duplicate ledger key: {key}')
+              result[key]=value
+            return result
+          ledger=json.loads(raw.decode('utf-8'), object_pairs_hook=reject_duplicate_keys)
+          canonical_bytes=(json.dumps(ledger,ensure_ascii=False,sort_keys=True,separators=(',',':'))+'\n').encode('utf-8')
+          if raw != canonical_bytes: raise SystemExit('focused runtime ledger is not canonical compact sorted UTF-8/LF JSON')
+          if ledger.get('schema') != 1: raise SystemExit('unsupported focused runtime ledger schema')
+          canonical={(class_name,method) for class_name,methods in ledger['classes'].items() for method in methods}
+          mixed={tuple(pair) for pair in ledger['shards']['29:mixed']}
+          requested={pair for pair in canonical if pair[1] == 'requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention'}
+          owned=lambda group: {pair for pair in canonical if pair[0] in set(ledger['shards'][group])}
+          api29={
+            '29:mixed':mixed,
+            '29:account-dashboard':owned('36:account-dashboard')-mixed,
+            '29:first-run-setup':owned('36:first-run-setup'),
+            '29:status-routes':owned('36:status-routes'),
+            '29:sibling-routes':owned('36:sibling-routes'),
+          }
+          if ledger['shards']['29:remaining'] != 'canonical-minus-mixed' or not requested <= api29['29:account-dashboard'] or sum(len(part) for part in api29.values()) != len(canonical) or set().union(*api29.values()) != canonical:
+            raise SystemExit('API 29 execution shards are not a disjoint cover of the canonical runtime ledger')
+          shard='${{ matrix.shard }}'
+          api='${{ matrix.api-level }}'
+          key=f'{api}:{shard}'
+          if key in api29:
+            expected=api29[key]
+          elif key == '35:all':
+            expected=canonical
+          elif key in {'36:account-dashboard','36:first-run-setup','36:sibling-routes','36:status-routes'}:
+            owners=set(ledger['shards'][key])
+            expected={pair for pair in canonical if pair[0] in owners}
+          else:
+            raise SystemExit(f'unsupported API/shard {key}')
+          expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}
+          if len(canonical) != 172 or len(expected) != expected_sizes[key]:
+            raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
+          seen=[]
+          for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
+            root=ET.parse(path).getroot()
+            for case in root.iter('testcase'):
+              pair=(case.attrib.get('classname'),case.attrib.get('name')); seen.append(pair)
+              if pair in expected and list(case): raise SystemExit(f'failed {pair}')
+          counts=Counter(seen)
+          unexpected=set(counts)-expected
+          if unexpected: raise SystemExit(f'unexpected tests for {key}: {sorted(unexpected)}')
+          missing=expected-set(counts)
+          if missing: raise SystemExit(f'missing {sorted(missing)}')
+          duplicates={pair: counts[pair] for pair in expected if counts[pair] != 1}
+          if duplicates: raise SystemExit(f'expected test count mismatch {duplicates}')
+          workflow_path=pathlib.Path('../.github/workflows/build-android.yml')
+          metadata_paths=list(pathlib.Path('app/build/outputs/apk').glob('**/output-metadata.json'))
+          if not metadata_paths: raise SystemExit('missing APK output metadata')
+          metadata_candidates=[json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=reject_duplicate_keys) for path in metadata_paths]
+          metadata=next((item for item in metadata_candidates if item.get('applicationId') == 'io.silentsuite.android'), None)
+          if metadata is None: raise SystemExit('missing target application output metadata')
+          element=metadata['elements'][0]
+          evidence_files=sorted(
+            pathlib.Path(path) for path in
+            glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml',recursive=True)+
+            glob.glob('app/build/outputs/androidTest-results/scenarios/**/*.json',recursive=True)
+            if not path.endswith('producer-manifest.json')
+          )
+          evidence_hashes={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in evidence_files}
+          producer={
+            'api': int(api),
+            'applicationId': metadata['applicationId'],
+            'arch': '${{ matrix.arch }}',
+            'assertionOutcome': 'PASS',
+            'baseSha': '${{ github.event.pull_request.base.sha || github.event.before || github.sha }}',
+            'checkout': '${{ github.sha }}',
+            'event': '${{ github.event_name }}',
+            'evidenceSha256': evidence_hashes,
+            'executed': len(expected),
+            'headSha': '${{ github.event.pull_request.head.sha || github.sha }}',
+            'job': '${{ github.job }}',
+            'ledgerSha256': hashlib.sha256(raw).hexdigest(),
+            'parents': subprocess.check_output(['git','show','-s','--format=%P','HEAD'], text=True).strip().split(),
+            'pr': '${{ github.event.pull_request.number || 'NOT_APPLICABLE' }}',
+            'ref': '${{ github.ref }}',
+            'run': '${{ github.run_id }}',
+            'runAttempt': '${{ github.run_attempt }}',
+            'schema': 1,
+            'shard': key,
+            'stepOutcomes': {'junitAssertion':'PASS','runtime':'${{ steps.focused-runtime.outcome }}'},
+            'tree': subprocess.check_output(['git','rev-parse','HEAD^{tree}'], text=True).strip(),
+            'versionCode': element['versionCode'],
+            'versionName': element['versionName'],
+            'workflowSha256': hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
+          }
+          producer_path=pathlib.Path('app/build/outputs/androidTest-results/scenarios/producer-manifest.json')
+          producer_path.parent.mkdir(parents=True, exist_ok=True)
+          producer_path.write_bytes((json.dumps(producer,sort_keys=True,separators=(',',':'))+'\n').encode('utf-8'))
+          PY
+
+      - name: Finalize failed focused runtime producer manifest
+        if: always() && steps.focused-assertion.outcome != 'success'
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          path=pathlib.Path('app/build/outputs/androidTest-results/scenarios/producer-manifest.json')
+          producer=json.loads(path.read_text(encoding='utf-8'))
+          producer['assertionOutcome']='FAILED'
+          producer['stepOutcomes']['junitAssertion']='FAILED'
+          path.write_bytes((json.dumps(producer,sort_keys=True,separators=(',',':'))+'\n').encode())
+          PY
+
+      - name: Upload focused androidTest reports and results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected/
+            android/app/build/outputs/androidTest-results/scenarios/
+            android/app/build/reports/androidTests/connected/
+          if-no-files-found: warn
+          retention-days: 14
+
+  color-parity-evidence:
+    name: Android color parity evidence (API 36)
+    needs: conscrypt-r28
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust Android targets
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable and build native client
+        run: |
+          chmod +x gradlew
+          scripts/build-etebase-client-16kb.sh
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then sudo chmod 666 /dev/kvm; fi
+
+      - name: Capture credential-free color parity evidence
+        id: parity-evidence
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash android/scripts/run-color-parity-evidence.sh
+
+      - name: Upload color parity evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-color-parity-evidence-${{ github.sha }}
+          path: android/build/color-parity-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Ownership-registry persistence across a real process boundary on the minified debug build:
+  # separate instrumentation invocations with the app process terminated in between, including the
+  # newline-terminated values earlier builds stored, then an in-place reinstall over that existing
+  # data. Debug-signed only; no release lane and no old-version binary is involved.
+  registry-process-boundary:
+    name: Registry process boundary (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    needs: conscrypt-r28
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86
+            api-level: 29
+            image-required: true
+          - arch: x86_64
+            api-level: 34
+            image-required: true
+          - arch: x86_64
+            api-level: 35
+            image-required: true
+          - arch: x86_64
+            api-level: 36
+            image-required: true
+          # No lane here has booted API 37 yet: an image the runner's catalog does not list is recorded as NOT_RUN, never as a pass.
+          - arch: x86_64
+            api-level: 37
+            image-required: false
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Probe emulator system image availability
+        id: image
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          # A failed or empty listing fails this step with no output: that is a probe failure, which
+          # is reported separately and never as a missing image.
+          "$SDKMANAGER" --list > "$RUNNER_TEMP/sdk-packages.txt" 2> "$RUNNER_TEMP/sdk-packages.err"
+          # Only the whole first column is a package identifier, so x86 never matches x86_64.
+          first_column_has() {
+            awk -F'|' -v wanted="$1" -v mode="$2" '
+              { id = $1; gsub(/^[ \t]+|[ \t\r]+$/, "", id) }
+              mode == "exact" && id == wanted { found = 1 }
+              mode == "prefix" && index(id, wanted) == 1 { found = 1 }
+              END { exit found ? 0 : 1 }
+            ' "$RUNNER_TEMP/sdk-packages.txt"
+          }
+          first_column_has "system-images;android-" prefix
+          IMAGE="system-images;android-${{ matrix.api-level }};google_apis;${{ matrix.arch }}"
+          if first_column_has "$IMAGE" exact; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ matrix.image-required }}" = "true" ]; then
+            # Recorded as absent before failing, so the artifact says NOT_LISTED, not PROBE_FAILED.
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::error::required emulator image is not listed: $IMAGE"
+            exit 1
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Registry process boundary NOT RUN on API ${{ matrix.api-level }}: $IMAGE is not listed by this runner's sdkmanager catalog"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.image.outputs.available == 'true'
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust Android targets
+        if: steps.image.outputs.available == 'true'
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        if: steps.image.outputs.available == 'true'
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable and build native client
+        if: steps.image.outputs.available == 'true'
+        run: |
+          chmod +x gradlew
+          scripts/build-etebase-client-16kb.sh
+
+      - name: Download rebuilt Conscrypt AAR
+        if: steps.image.outputs.available == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+
+      - name: Enable KVM for the emulator
+        if: steps.image.outputs.available == 'true'
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run registry process boundary steps
+        if: steps.image.outputs.available == 'true'
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash android/scripts/run-registry-process-boundary.sh "${{ matrix.api-level }}"
+
+      - name: Assert exact registry process boundary inventory
+        if: steps.image.outputs.available == 'true'
+        run: |
+          python3 - <<'PY'
+          import json, pathlib
+          inventory=json.loads(pathlib.Path('app/build/outputs/androidTest-results/registry-process-boundary/inventory.json').read_text(encoding='utf-8'))
+          steps=[(item['step'],item['outcome']) for item in inventory['steps']]
+          expected=[(step,'PASS') for step in ('empty-write','empty-read','populated-write','populated-read','legacy-empty-write','legacy-empty-read','legacy-populated-write','legacy-populated-read','reinstall-write','reinstall-read','malformed-write','malformed-read')]
+          if inventory['api'] != ${{ matrix.api-level }} or inventory['outcome'] != 'PASS' or steps != expected:
+            raise SystemExit(f'registry process boundary inventory is not an exact pass: {inventory}')
+          if inventory['reinstall']['outcome'] != 'PASS' or inventory['extraFiles']:
+            raise SystemExit(f'registry process boundary reinstall evidence is incomplete: {inventory}')
+          PY
+
+      - name: Record why the registry process boundary did not run
+        if: always()
+        run: |
+          INVENTORY=app/build/outputs/androidTest-results/registry-process-boundary/inventory.json
+          if [ -f "$INVENTORY" ]; then
+            exit 0
+          fi
+          case "${{ steps.image.outputs.available }}" in
+            false) OUTCOME=NOT_RUN_IMAGE_NOT_LISTED ;;
+            # The image was listed, so the fixture may have started; only its inventory is absent.
+            true) OUTCOME=INVENTORY_UNAVAILABLE ;;
+            *) OUTCOME=NOT_RUN_AVAILABILITY_PROBE_FAILED ;;
+          esac
+          mkdir -p "$(dirname "$INVENTORY")"
+          printf '{"api":%s,"catalog":"sdkmanager --list","image":"system-images;android-%s;google_apis;%s","outcome":"%s","schema":1}\n' \
+            "${{ matrix.api-level }}" "${{ matrix.api-level }}" "${{ matrix.arch }}" "$OUTCOME" > "$INVENTORY"
+          {
+            echo "### Registry process boundary, API ${{ matrix.api-level }} (${{ matrix.arch }}): $OUTCOME"
+            echo
+            echo "No pass was produced for this API level. Image queried in the runner's \`sdkmanager --list\`:"
+            echo "\`system-images;android-${{ matrix.api-level }};google_apis;${{ matrix.arch }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload registry process boundary inventory
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: registry-process-boundary-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          path: android/app/build/outputs/androidTest-results/registry-process-boundary/
+          if-no-files-found: warn
+          retention-days: 14
