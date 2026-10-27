@@ -4,7 +4,7 @@ import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Check } from 'lucide-react'
+import { Check, Eye, EyeOff } from 'lucide-react'
 import { Button, Input } from '@silentsuite/ui'
 
 const paidAccountSchema = z
@@ -138,20 +138,30 @@ export function StepCreatePaidAccount({
           <label htmlFor="paid-signup-password" className="block text-sm font-medium text-[rgb(var(--foreground))]/80">
             Password
           </label>
-          <Input
-            id="paid-signup-password"
-            type={showPassword ? "text" : "password"}
-            autoComplete="new-password"
-            aria-invalid={!!errors.password}
-            aria-describedby={errors.password ? 'paid-signup-password-error' : undefined}
-            {...register('password')}
-            className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))]"
-          />
+          <div className="relative">
+            <Input
+              id="paid-signup-password"
+              type={showPassword ? "text" : "password"}
+              autoComplete="new-password"
+              aria-invalid={!!errors.password}
+              aria-describedby={errors.password ? 'paid-signup-password-error' : undefined}
+              {...register('password')}
+              className="bg-[rgb(var(--surface))] text-[rgb(var(--foreground))] border-[rgb(var(--border))] pr-12"
+            />
+            <button
+              type="button"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              aria-pressed={showPassword}
+              aria-controls="paid-signup-password"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-md text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgb(var(--primary))]"
+            >
+              {showPassword ? <Eye aria-hidden="true" className="h-4 w-4" /> : <EyeOff aria-hidden="true" className="h-4 w-4" />}
+            </button>
+          </div>
           {errors.password && <p id="paid-signup-password-error" role="alert" className="text-xs text-red-400">{errors.password.message}</p>}
           <PasswordStrength password={password} />
         </div>
-
-        <button type="button" aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)} className="text-sm underline">{showPassword ? 'Hide password' : 'Show password'}</button>
 
         {continuation !== 'verified-no-card' && <div className="space-y-2">
           <label htmlFor="paid-signup-confirm-password" className="block text-sm font-medium text-[rgb(var(--foreground))]/80">
