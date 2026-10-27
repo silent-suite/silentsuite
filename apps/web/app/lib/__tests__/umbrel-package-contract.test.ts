@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
-// Static contract for the development Umbrel package and its non-publishing CI candidate.
+// Static contract for the released-image Umbrel package and its non-publishing CI candidate.
 // Nothing here starts containers; it checks the declared manifest, Compose, exports and workflow.
 
 const repoRoot = resolve(__dirname, '../../../../..')
@@ -12,6 +12,10 @@ const workflowPath = resolve(repoRoot, '.github/workflows/ci-umbrel-candidate.ym
 
 const POSTGRES_DIGEST = '7c688148e5e156d0e86df7ba8ae5a05a2386aaec1e2ad8e6d11bdf10504b1fb7'
 const NGINX_UNPRIVILEGED_DIGEST = '15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3'
+// Released v0.5.16-beta images: release tag and multi-arch index digest kept together.
+const RELEASE_VERSION = '0.5.16-beta'
+const WEB_IMAGE = 'ghcr.io/silent-suite/silentsuite-web-selfhost:v0.5.16-beta@sha256:999974b2532e65a5c06d81422bd05de3a12664878f46918681c929d547a45a60'
+const SERVER_IMAGE = 'ghcr.io/silent-suite/silentsuite-server:v0.5.16-beta@sha256:6c2c341169d71274348c2872c6e495950e28cd7b4d2e2d6dfa79f89a86826ea6'
 const PINNED_ACTIONS: Record<string, string> = {
   'actions/checkout': '3d3c42e5aac5ba805825da76410c181273ba90b1',
   'docker/setup-buildx-action': 'bb05f3f5519dd87d3ba754cc423b652a5edd6d2c',
@@ -77,7 +81,7 @@ const rules = (value: string | undefined) => (value ?? '').split(',').map((rule)
 
 const RUNTIME_SERVICES = ['postgres', 'router', 'server', 'web']
 
-describe('Umbrel development package', () => {
+describe('Umbrel package', () => {
   it('declares an HTTPS umbrelOS 2.0 manifest with the displayed owner password and honest first-run copy', () => {
     const app = manifest()
     expect(app.id).toBe('silentsuite')
@@ -92,6 +96,14 @@ describe('Umbrel development package', () => {
     expect(copy).toMatch(/encrypt/i)
     expect(copy).toMatch(/password/i)
     expect(copy).not.toMatch(/\bssh\b|docker logs|\.env\b|bootstrap|token/i)
+  })
+
+  it('declares the released upstream version 0.5.16-beta', () => {
+    expect(manifest().version).toBe(RELEASE_VERSION)
+  })
+
+  it('does not describe the store package as a development package', () => {
+    expect(String(manifest().description ?? '')).not.toMatch(/development package/i)
   })
 
   it('routes app_proxy to the router with Umbrel auth kept on', () => {
@@ -159,7 +171,7 @@ describe('Umbrel development package', () => {
     }
   })
 
-  it('pins third-party images and uses truthful development placeholders for SilentSuite images', () => {
+  it('pins third-party images and never gives SilentSuite images a moving tag', () => {
     const { services } = compose()
     expect(services.postgres.image).toMatch(new RegExp(`@sha256:${POSTGRES_DIGEST}$`))
     expect(services.router.image).toMatch(new RegExp(`nginx-unprivileged.*@sha256:${NGINX_UNPRIVILEGED_DIGEST}$`))
@@ -170,6 +182,20 @@ describe('Umbrel development package', () => {
       const placeholder = /\$\{[A-Z0-9_]+\}|\{\{[^}]+\}\}/.test(image)
       expect(pinned || placeholder, `${name} image ${image}`).toBe(true)
     }
+  })
+
+  it('pins web to the released self-host web image tag and index digest', () => {
+    expect(compose().services.web.image).toBe(WEB_IMAGE)
+  })
+
+  it('pins server to the released server image tag and index digest', () => {
+    expect(compose().services.server.image).toBe(SERVER_IMAGE)
+  })
+
+  it('runs init from the same released server image as server', () => {
+    const { services } = compose()
+    expect(services.init.image).toBe(SERVER_IMAGE)
+    expect(services.init.image).toBe(services.server.image)
   })
 
   it('wires independent owner, signing and database secrets without widening trust', () => {

@@ -31,7 +31,40 @@ on:
       - 'android/.github/workflows/**'
   workflow_dispatch:
 
+# A newer push to the same pull request cancels its superseded run. Every other
+# event gets a group of its own run, so main pushes and manual dispatches are
+# never cancelled and never wait behind one another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Early feedback only: build-pr still runs the same suite, so existing
+  # required checks keep gating on it.
+  static-contracts:
+    name: Android static contracts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python for static Android contracts
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.x'
+
+      - name: Install Android static contract dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pytest PyYAML==6.0.3
+
+      - name: Run Android static Python contracts
+        run: python -m pytest ../tests/test_android_*.py -q
+
   signing-policy:
     name: Enforce Android signing boundary
     runs-on: ubuntu-latest
@@ -105,6 +138,67 @@ jobs:
           path: android/build/conscrypt-m2
           if-no-files-found: error
           retention-days: 1
+
+  # Builds the 16 KB-aligned Etebase AAR once per run, in parallel with Conscrypt.
+  # Consumers admit only this run's artifact through etebase-run-artifact.py;
+  # nothing crosses runs. overwrite lets a re-run of this job replace its own
+  # artifact; it is an availability setting, not a trust decision.
+  etebase-16kb:
+    name: Build Etebase 16 KB AAR once per run
+    needs: signing-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Rust Android targets
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+
+      - name: Install Android NDK r28
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Build 16 KB-aligned Etebase client AAR
+        run: scripts/build-etebase-client-16kb.sh
+
+      - name: Verify Etebase 16 KB AAR
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            app/libs/client-2.3.2-16kb.aar
+
+      - name: Record same-run Etebase artifact
+        run: python3 scripts/etebase-run-artifact.py record --staging "$RUNNER_TEMP/etebase-16kb-artifact"
+
+      - name: Upload same-run Etebase artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: etebase-16kb-${{ github.sha }}
+          path: ${{ runner.temp }}/etebase-16kb-artifact
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
 
   conscrypt-runtime:
     name: Conscrypt runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})
@@ -212,8 +306,10 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   build-pr:
     name: Build (unsigned, PR/main)
-    needs: conscrypt-r28
-    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    needs: [static-contracts, conscrypt-r28, etebase-16kb]
+    # Runs unless the run is cancelled, so a failed or skipped dependency fails this
+    # job at its first step instead of leaving a skipped job behind.
+    if: ${{ !cancelled() && (github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -225,11 +321,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Require successful static contracts and native producers
+        env:
+          STATIC_RESULT: ${{ needs.static-contracts.result }}
+          CONSCRYPT_RESULT: ${{ needs.conscrypt-r28.result }}
+          ETEBASE_RESULT: ${{ needs.etebase-16kb.result }}
+        run: |
+          set -euo pipefail
+          for dependency in STATIC_RESULT CONSCRYPT_RESULT ETEBASE_RESULT; do
+            result="${!dependency}"
+            if [ "$result" != success ]; then
+              echo "::error::$dependency is '$result'; build-pr requires every dependency to succeed" >&2
+              exit 1
+            fi
+          done
+
       - name: Download rebuilt Conscrypt AAR
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
           path: android/build/conscrypt-m2
+
+      - name: Download same-run Etebase 16 KB AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: etebase-16kb-${{ github.sha }}
+          path: ${{ runner.temp }}/etebase-16kb-artifact
+
+      - name: Admit same-run Etebase 16 KB AAR
+        run: python3 scripts/etebase-run-artifact.py verify --staging "$RUNNER_TEMP/etebase-16kb-artifact"
+
+      - name: Verify admitted Etebase 16 KB AAR
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            app/libs/client-2.3.2-16kb.aar
 
       - name: Set up JDK 17
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
@@ -245,15 +372,6 @@ jobs:
       - name: Install Android static contract dependencies
         run: |
           python -m pip install --disable-pip-version-check pytest PyYAML==6.0.3
-
-      - name: Run Android static Python contracts
-        run: python -m pytest ../tests/test_android_*.py -q
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
       - name: Install Android NDK r28
         run: |
@@ -281,9 +399,6 @@ jobs:
       # here keeps CI building the same bytes a release would.
       - name: Provision the pinned reproducible JDK
         run: scripts/reproducible-build-contract.sh provision-jdk
-
-      - name: Build 16 KB-aligned Etebase client AAR
-        run: scripts/build-etebase-client-16kb.sh
 
       - name: Run debug unit tests, lint, and assemble instrumentation APKs
         # Assemble each Android module's androidTest APK so AGP merges and
@@ -467,7 +582,7 @@ jobs:
 
   account-recreation-runtime:
     name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})
-    needs: conscrypt-r28
+    needs: [conscrypt-r28, etebase-16kb]
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -524,12 +639,6 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Set up Rust Android targets
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-
       - name: Install Android NDK r28
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -542,14 +651,27 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Build 16 KB-aligned Etebase client AAR
-        run: scripts/build-etebase-client-16kb.sh
-
       - name: Download rebuilt Conscrypt AAR
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
           path: android/build/conscrypt-m2
+
+      - name: Download same-run Etebase 16 KB AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: etebase-16kb-${{ github.sha }}
+          path: ${{ runner.temp }}/etebase-16kb-artifact
+
+      - name: Admit same-run Etebase 16 KB AAR
+        run: python3 scripts/etebase-run-artifact.py verify --staging "$RUNNER_TEMP/etebase-16kb-artifact"
+
+      - name: Verify admitted Etebase 16 KB AAR
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            app/libs/client-2.3.2-16kb.aar
 
       - name: Enable KVM for the emulator
         run: |
@@ -750,7 +872,7 @@ jobs:
 
   color-parity-evidence:
     name: Android color parity evidence (API 36)
-    needs: conscrypt-r28
+    needs: [conscrypt-r28, etebase-16kb]
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -769,27 +891,36 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Set up Rust Android targets
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-
       - name: Install Android NDK r28
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
-      - name: Make gradlew executable and build native client
+      - name: Make gradlew executable
         run: |
           chmod +x gradlew
-          scripts/build-etebase-client-16kb.sh
 
       - name: Download rebuilt Conscrypt AAR
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
         with:
           name: conscrypt-r28-${{ github.sha }}
           path: android/build/conscrypt-m2
+
+      - name: Download same-run Etebase 16 KB AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: etebase-16kb-${{ github.sha }}
+          path: ${{ runner.temp }}/etebase-16kb-artifact
+
+      - name: Admit same-run Etebase 16 KB AAR
+        run: python3 scripts/etebase-run-artifact.py verify --staging "$RUNNER_TEMP/etebase-16kb-artifact"
+
+      - name: Verify admitted Etebase 16 KB AAR
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            app/libs/client-2.3.2-16kb.aar
 
       - name: Enable KVM for the emulator
         run: |
@@ -821,7 +952,7 @@ jobs:
   # data. Debug-signed only; no release lane and no old-version binary is involved.
   registry-process-boundary:
     name: Registry process boundary (API ${{ matrix.api-level }}, ${{ matrix.arch }})
-    needs: conscrypt-r28
+    needs: [conscrypt-r28, etebase-16kb]
     if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -895,13 +1026,6 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Set up Rust Android targets
-        if: steps.image.outputs.available == 'true'
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
-
       - name: Install Android NDK r28
         if: steps.image.outputs.available == 'true'
         run: |
@@ -912,11 +1036,10 @@ jobs:
           yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
-      - name: Make gradlew executable and build native client
+      - name: Make gradlew executable
         if: steps.image.outputs.available == 'true'
         run: |
           chmod +x gradlew
-          scripts/build-etebase-client-16kb.sh
 
       - name: Download rebuilt Conscrypt AAR
         if: steps.image.outputs.available == 'true'
@@ -924,6 +1047,25 @@ jobs:
         with:
           name: conscrypt-r28-${{ github.sha }}
           path: android/build/conscrypt-m2
+
+      - name: Download same-run Etebase 16 KB AAR
+        if: steps.image.outputs.available == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: etebase-16kb-${{ github.sha }}
+          path: ${{ runner.temp }}/etebase-16kb-artifact
+
+      - name: Admit same-run Etebase 16 KB AAR
+        if: steps.image.outputs.available == 'true'
+        run: python3 scripts/etebase-run-artifact.py verify --staging "$RUNNER_TEMP/etebase-16kb-artifact"
+
+      - name: Verify admitted Etebase 16 KB AAR
+        if: steps.image.outputs.available == 'true'
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            app/libs/client-2.3.2-16kb.aar
 
       - name: Enable KVM for the emulator
         if: steps.image.outputs.available == 'true'

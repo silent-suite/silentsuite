@@ -22,13 +22,13 @@ services:
         condition: service_healthy
 
   web:
-    image: ${APP_SILENTSUITE_WEB_IMAGE}
+    image: ghcr.io/silent-suite/silentsuite-web-selfhost:v0.5.16-beta@sha256:999974b2532e65a5c06d81422bd05de3a12664878f46918681c929d547a45a60
     restart: on-failure
 
   init:
     # One-shot preparation of this app's bind-mounted server directories: ownership for the
     # server image's own user and a private INI with the database password. No network.
-    image: ${APP_SILENTSUITE_SERVER_IMAGE}
+    image: ghcr.io/silent-suite/silentsuite-server:v0.5.16-beta@sha256:6c2c341169d71274348c2872c6e495950e28cd7b4d2e2d6dfa79f89a86826ea6
     user: "0:0"
     network_mode: none
     restart: "no"
@@ -41,7 +41,7 @@ services:
       - ${APP_DATA_DIR}/data/server-config:/config
 
   server:
-    image: ${APP_SILENTSUITE_SERVER_IMAGE}
+    image: ghcr.io/silent-suite/silentsuite-server:v0.5.16-beta@sha256:6c2c341169d71274348c2872c6e495950e28cd7b4d2e2d6dfa79f89a86826ea6
     restart: on-failure
     # Package-only startup wrapper: the same collectstatic/migrations/two-worker uvicorn
     # lifecycle as the shared image entrypoint, with access logging disabled and a
