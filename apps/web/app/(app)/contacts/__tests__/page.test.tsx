@@ -177,6 +177,23 @@ describe('ContactsPage mobile reachability', () => {
     expect(storeMock.contactState.contacts[1]!.unknownProperties).toEqual(raw)
   })
 
+  it('reads Other fields parameters only outside quoted values (#865)', () => {
+    const raw = [
+      'X-NOTE;X-META="a;ENCODING=b":one\\ntwo',
+      'X-NOTE;X-META="a;VALUE=text;";VALUE=uri:one\\ntwo',
+    ]
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.contactState.contacts = [{ id: 'q', uid: 'q', displayName: 'Quoted', name: { prefix: '', given: 'Quoted', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, unknownProperties: [...raw], listId: 'book', created_at: new Date(), updated_at: new Date() }]
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('Quoted'))
+
+    const section = screen.getByText('Other fields').parentElement!
+    const values = [...section.querySelectorAll('span.whitespace-pre-wrap')].map((el) => el.textContent)
+    // A quoted ENCODING is not a parameter, so this TEXT value is unescaped; a real VALUE=uri stays raw.
+    expect(values).toEqual(['one\ntwo', 'one\\ntwo'])
+    expect(storeMock.contactState.contacts[0]!.unknownProperties).toEqual(raw)
+  })
+
   it('exposes the primary create action on all widths', () => {
     renderWithIntl(<ContactsPage />)
     const createButton = screen.getByRole('button', { name: 'New Contact' })
