@@ -603,6 +603,26 @@ function DetailSection({
   )
 }
 
+// ── Other fields (#865, display only) ──
+
+/** Splits a retained raw vCard line for display; the stored line is never changed.
+ *  Plain TEXT values are unescaped like the core parser; encoded or non-text values stay raw. */
+function otherFieldRow(line: string): { label: string; value: string } {
+  let colon = -1
+  let quoted = false
+  for (let i = 0; i < line.length && colon === -1; i++) {
+    if (line[i] === '"') quoted = !quoted
+    else if (line[i] === ':' && !quoted) colon = i
+  }
+  const left = colon === -1 ? line : line.slice(0, colon)
+  const raw = colon === -1 ? '' : line.slice(colon + 1)
+  const name = left.split(';')[0]!
+  const label = name.slice(name.lastIndexOf('.') + 1)
+  const isText = !/;ENCODING=/i.test(left) && (!/;VALUE=/i.test(left) || /;VALUE="?text"?(?:;|$)/i.test(left))
+  const value = isText ? raw.replace(/\\([nN,;\\])/g, (_, ch: string) => (/n/i.test(ch) ? '\n' : ch)) : raw
+  return { label, value }
+}
+
 // ── EditableField (auto-save on blur) ──
 
 function EditableField({
@@ -969,6 +989,19 @@ function ContactDetail({
           {contact.categories && contact.categories.length > 0 && (
             <DetailSection icon={<Tag className="h-4 w-4" />} title={t('sectionTitle')}>
               <LabelChips labels={contact.categories} />
+            </DetailSection>
+          )}
+          {contact.unknownProperties && contact.unknownProperties.length > 0 && (
+            <DetailSection icon={<List className="h-4 w-4" />} title="Other fields">
+              {contact.unknownProperties.map((line, i) => {
+                const { label, value } = otherFieldRow(line)
+                return (
+                  <div key={i} className="min-w-0 text-sm text-[rgb(var(--foreground))]">
+                    <span className="text-[rgb(var(--muted))] [overflow-wrap:anywhere]">{label}</span>{' '}
+                    <span className="whitespace-pre-wrap [overflow-wrap:anywhere]">{value}</span>
+                  </div>
+                )
+              })}
             </DetailSection>
           )}
         </div>

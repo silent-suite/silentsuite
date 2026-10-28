@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from '@testing-library/react'
+import { act, fireEvent, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ContactsPage from '../page'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
@@ -127,6 +127,54 @@ describe('ContactsPage mobile reachability', () => {
     expect(storeMock.contactState.updateContact).toHaveBeenCalledWith('custom', expect.objectContaining({ phones: [{ type: 'Desk: west', value: '333' }, { type: 'home,voice', value: '222' }] }))
     fireEvent.change(screen.getByDisplayValue('Desk: west'), { target: { value: 'work' } })
     expect(storeMock.contactState.updateContact).toHaveBeenLastCalledWith('custom', expect.objectContaining({ phones: [{ type: 'work', value: '111' }, { type: 'home,voice', value: '222' }] }))
+  })
+
+  it('shows retained custom properties as read-only Other fields rows (#865)', () => {
+    const raw = ['X-TESTA:testA', 'X-TestB:testB', 'X-testC:testC', 'X-testd:testD']
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.contactState.contacts = [{ id: 'jd', uid: 'jd', displayName: 'John Doe', name: { prefix: '', given: 'John', family: 'Doe', suffix: '' }, phones: [{ type: 'cell', value: '+1 234 567890' }], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, unknownProperties: [...raw], listId: 'book', created_at: new Date(), updated_at: new Date() }]
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('John Doe'))
+
+    const section = screen.getByText('Other fields').parentElement!
+    for (const line of raw) {
+      const [label, value] = line.split(':') as [string, string]
+      expect(within(section).getByText(label)).toBeInTheDocument()
+      expect(within(section).getByText(value)).toBeInTheDocument()
+    }
+    // Display only: the stored raw lines are never rewritten.
+    expect(storeMock.contactState.contacts[0]!.unknownProperties).toEqual(raw)
+  })
+
+  it('shows Other fields as plain text conservatively and hides an empty section (#865)', () => {
+    const raw = [
+      'item1.X-Custom;TYPE="a:b";LANG=en:Line one\\nline two\\, ok\\; yes\\\\',
+      'X-HTML:<b>bold</b> <script>x</script> https://example.invalid',
+      'X-QP;ENCODING=QUOTED-PRINTABLE:Caf=C3=A9\\, x',
+      'X-URI;VALUE=uri:https://example.invalid/a\\,b',
+    ]
+    const base = { name: { prefix: '', given: '', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId: 'book', created_at: new Date(), updated_at: new Date() }
+    storeMock.authState.canWrite.mockReturnValue(false)
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 0 }]
+    storeMock.contactState.contacts = [
+      { ...base, id: 'plain', uid: 'plain', displayName: 'Plain', unknownProperties: [] },
+      { ...base, id: 'edge', uid: 'edge', displayName: 'Edge', unknownProperties: [...raw] },
+    ]
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('Plain'))
+    expect(screen.queryByText('Other fields')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Edge'))
+    const section = screen.getByText('Other fields').parentElement!
+    const exact = (text: string) => within(section).getByText((_, el) => el?.tagName === 'SPAN' && el.textContent === text)
+    expect(exact('X-Custom')).toBeInTheDocument()
+    expect(exact('Line one\nline two, ok; yes\\')).toBeInTheDocument()
+    expect(exact('<b>bold</b> <script>x</script> https://example.invalid')).toBeInTheDocument()
+    // Encoded or non-text values stay visibly raw rather than being decoded as text.
+    expect(exact('Caf=C3=A9\\, x')).toBeInTheDocument()
+    expect(exact('https://example.invalid/a\\,b')).toBeInTheDocument()
+    expect(section.querySelector('a, b, script, button, input, textarea')).toBeNull()
+    expect(storeMock.contactState.contacts[1]!.unknownProperties).toEqual(raw)
   })
 
   it('exposes the primary create action on all widths', () => {
