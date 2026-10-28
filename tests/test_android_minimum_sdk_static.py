@@ -46,7 +46,7 @@ def test_product_floor_runtime_matrix_moves_to_29_and_keeps_modern_scenarios():
     assert not re.search(r"api-level:\s*['\"]?21\b", workflow)
     assert len(re.findall(r"api-level:\s*['\"]?29\b", workflow)) == 7
     ledger = json.loads(read("android/scripts/focused-runtime-ledger-v1.json"))
-    assert {"29:mixed", "29:remaining", "35:all", "36:account-dashboard", "36:first-run-setup", "36:sibling-routes", "36:status-routes"} == set(ledger["shards"])
+    assert {"29:mixed", "29:remaining", "35:all", "36:account-dashboard", "36:first-run-setup", "36:launcher-recovery", "36:sibling-routes", "36:status-routes"} == set(ledger["shards"])
     runner = read("android/scripts/run-focused-runtime-tests.sh")
     assert "21:" not in runner
     assert all(

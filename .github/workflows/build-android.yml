@@ -610,6 +610,9 @@ jobs:
             shard: first-run-setup
           - api-level: 36
             arch: x86_64
+            shard: launcher-recovery
+          - api-level: 36
+            arch: x86_64
             shard: status-routes
             navigation-mode: 0
           - api-level: 36
@@ -757,7 +760,7 @@ jobs:
           owned=lambda group: {pair for pair in canonical if pair[0] in set(ledger['shards'][group])}
           api29={
             '29:mixed':mixed,
-            '29:account-dashboard':owned('36:account-dashboard')-mixed,
+            '29:account-dashboard':(owned('36:account-dashboard')|owned('36:launcher-recovery'))-mixed,
             '29:first-run-setup':owned('36:first-run-setup'),
             '29:status-routes':owned('36:status-routes'),
             '29:sibling-routes':owned('36:sibling-routes'),
@@ -771,13 +774,13 @@ jobs:
             expected=api29[key]
           elif key == '35:all':
             expected=canonical
-          elif key in {'36:account-dashboard','36:first-run-setup','36:sibling-routes','36:status-routes'}:
+          elif key in {'36:account-dashboard','36:first-run-setup','36:launcher-recovery','36:sibling-routes','36:status-routes'}:
             owners=set(ledger['shards'][key])
             expected={pair for pair in canonical if pair[0] in owners}
           else:
             raise SystemExit(f'unsupported API/shard {key}')
-          expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}
-          if len(canonical) != 172 or len(expected) != expected_sizes[key]:
+          expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}
+          if len(canonical) != 179 or len(expected) != expected_sizes[key]:
             raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):

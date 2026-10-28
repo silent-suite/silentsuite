@@ -171,6 +171,7 @@ class LoginLifecycleContractTest {
         assertEquals(1, Regex("""api-level: 35\n\s+arch: x86_64""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: account-dashboard""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: first-run-setup""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: launcher-recovery""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: status-routes""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: sibling-routes""").findAll(job).count())
         assertEquals(1, Regex("shard: mixed").findAll(job).count())
@@ -188,7 +189,7 @@ class LoginLifecycleContractTest {
         assertTrue(navigationWrapper.contains("settings get secure navigation_mode"))
         assertTrue(job.contains("""name: account-recreation-androidTest-api${'$'}{{ matrix.api-level }}-${'$'}{{ matrix.arch }}-${'$'}{{ matrix.shard }}-${'$'}{{ github.sha }}"""))
         listOf(
-            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 172",
+            "app:connectedDebugAndroidTest", "focused-runtime-ledger-v1.json", "len(tests) != 179",
             "-Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true",
             "-PrequireEtebase16Kb=true", "--no-daemon"
         ).forEach { command -> assertTrue(runtimeScript.contains(command)) }
@@ -266,19 +267,19 @@ class LoginLifecycleContractTest {
     fun freshEmulatorShardsAreBoundedDisjointAndExactlyCoverRuntimeMethods() {
         val runtimeScript = File("../scripts/run-focused-runtime-tests.sh").readText()
         assertTrue(runtimeScript.contains("focused-runtime-ledger-v1.json"))
-        assertTrue(runtimeScript.contains("if len(tests) != 172 or len(set(tests)) != 172"))
+        assertTrue(runtimeScript.contains("if len(tests) != 179 or len(set(tests)) != 179"))
         listOf(
-            "\"29:mixed\": 1", "\"29:requested\": 1", "\"29:account-dashboard\": 31",
-            "\"35:all\": 172", "\"36:account-dashboard\": 33",
+            "\"29:mixed\": 1", "\"29:requested\": 1", "\"29:account-dashboard\": 38",
+            "\"35:all\": 179", "\"36:account-dashboard\": 33", "\"36:launcher-recovery\": 7",
             "\"36:first-run-setup\": 19", "\"36:sibling-routes\": 48", "\"36:status-routes\": 72",
-            "[1, 1, 31, 19, 48, 72]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
+            "[1, 1, 38, 19, 48, 72]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
         ).forEach { assertTrue(runtimeScript.contains(it)) }
         assertTrue(runtimeScript.contains("api29_account_dashboard_selectors=\"\$(ledger_selectors '29:account-dashboard')\""))
         assertFalse(runtimeScript.contains("remaining_selectors"))
         assertTrue(runtimeScript.contains("all_selectors=\"\$(ledger_selectors '35:all')\""))
         assertFalse(runtimeScript.contains("other77_selectors"))
         assertFalse(runtimeScript.contains("focused_classes="))
-        assertEquals(listOf("600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800"),
+        assertEquals(listOf("600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
         assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)

@@ -39,7 +39,7 @@ tests = sorted(
     for class_name, methods in ledger["classes"].items()
     for method in methods
 )
-if len(tests) != 172 or len(set(tests)) != 172:
+if len(tests) != 179 or len(set(tests)) != 179:
     raise SystemExit(f"bad canonical runtime ledger size: {len(tests)}")
 
 mixed = [tuple(pair) for pair in ledger["shards"]["29:mixed"]]
@@ -55,12 +55,14 @@ api29_groups = {
     "29:sibling-routes": "36:sibling-routes",
     "29:status-routes": "36:status-routes",
 }
-api29_account_dashboard = [pair for pair in owned("36:account-dashboard") if pair not in set(mixed + requested)]
+# API 36 runs the launcher recovery class on its own fresh emulator; API 29 keeps it with the dashboard.
+api29_dashboard_owners = set(ledger["shards"]["36:account-dashboard"]) | set(ledger["shards"]["36:launcher-recovery"])
+api29_account_dashboard = [pair for pair in tests if pair[0] in api29_dashboard_owners and pair not in set(mixed + requested)]
 api29_partition = [mixed, requested, api29_account_dashboard] + [owned(api29_groups[key]) for key in sorted(api29_groups)]
 api29_pairs = [pair for part in api29_partition for pair in part]
 if ledger["shards"]["29:remaining"] != "canonical-minus-mixed":
     raise SystemExit("unsupported API 29 coverage contract")
-if [len(part) for part in api29_partition] != [1, 1, 31, 19, 48, 72]:
+if [len(part) for part in api29_partition] != [1, 1, 38, 19, 48, 72]:
     raise SystemExit(f"bad API 29 partition sizes: {[len(part) for part in api29_partition]}")
 if len(api29_pairs) != len(set(api29_pairs)) or set(api29_pairs) != set(tests):
     raise SystemExit("API 29 execution shards are not a disjoint cover of the canonical runtime ledger")
@@ -73,7 +75,7 @@ elif mode == "29:account-dashboard":
     selected = api29_account_dashboard
 elif mode == "35:all":
     selected = tests
-elif mode in {"36:account-dashboard", "36:first-run-setup", "36:sibling-routes", "36:status-routes"}:
+elif mode in {"36:account-dashboard", "36:first-run-setup", "36:launcher-recovery", "36:sibling-routes", "36:status-routes"}:
     owners = set(ledger["shards"][mode])
     selected = [pair for pair in tests if pair[0] in owners]
 else:
@@ -82,10 +84,11 @@ else:
 expected = {
     "29:mixed": 1,
     "29:requested": 1,
-    "29:account-dashboard": 31,
-    "35:all": 172,
+    "29:account-dashboard": 38,
+    "35:all": 179,
     "36:account-dashboard": 33,
     "36:first-run-setup": 19,
+    "36:launcher-recovery": 7,
     "36:sibling-routes": 48,
     "36:status-routes": 72,
 }[mode]
@@ -101,6 +104,7 @@ api29_account_dashboard_selectors="$(ledger_selectors '29:account-dashboard')"
 all_selectors="$(ledger_selectors '35:all')"
 api36_account_dashboard_selectors="$(ledger_selectors '36:account-dashboard')"
 api36_first_run_setup_selectors="$(ledger_selectors '36:first-run-setup')"
+api36_launcher_recovery_selectors="$(ledger_selectors '36:launcher-recovery')"
 api36_sibling_routes_selectors="$(ledger_selectors '36:sibling-routes')"
 api36_status_routes_selectors="$(ledger_selectors '36:status-routes')"
 
@@ -137,11 +141,11 @@ requested=[pair for pair in tests if pair[1] == "requestedQueuedRunningSettlingA
 api29_groups={"29:first-run-setup":"36:first-run-setup","29:sibling-routes":"36:sibling-routes","29:status-routes":"36:status-routes"}
 if mode == "29:mixed": selected=mixed
 elif mode == "29:account-dashboard":
-    owners=set(ledger["shards"]["36:account-dashboard"]); selected=[pair for pair in tests if pair[0] in owners and pair not in set(mixed + requested)]
+    owners=set(ledger["shards"]["36:account-dashboard"]) | set(ledger["shards"]["36:launcher-recovery"]); selected=[pair for pair in tests if pair[0] in owners and pair not in set(mixed + requested)]
 elif mode in api29_groups:
     owners=set(ledger["shards"][api29_groups[mode]]); selected=[pair for pair in tests if pair[0] in owners]
 elif mode == "35:all": selected=tests
-elif mode in {"36:account-dashboard", "36:first-run-setup", "36:sibling-routes", "36:status-routes"}:
+elif mode in {"36:account-dashboard", "36:first-run-setup", "36:launcher-recovery", "36:sibling-routes", "36:status-routes"}:
     owners=set(ledger["shards"][mode]); selected=[pair for pair in tests if pair[0] in owners]
 else: raise SystemExit(f"unsupported scenario mode: {mode}")
 selected_keys={f"{c}#{m}" for c,m in selected}
@@ -301,6 +305,9 @@ elif [[ "${api_level}:${shard}" == "36:account-dashboard" ]]; then
 elif [[ "${api_level}:${shard}" == "36:first-run-setup" ]]; then
   timeout --signal=TERM --kill-after=10s 1800s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_first_run_setup_selectors}" "${scenario_args[@]}"
+elif [[ "${api_level}:${shard}" == "36:launcher-recovery" ]]; then
+  timeout --signal=TERM --kill-after=10s 1800s \
+    ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_launcher_recovery_selectors}" "${scenario_args[@]}"
 elif [[ "${api_level}:${shard}" == "36:sibling-routes" ]]; then
   timeout --signal=TERM --kill-after=10s 1800s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api36_sibling_routes_selectors}" "${scenario_args[@]}"
