@@ -1,8 +1,10 @@
 import { checkoutIntentToken as signedCheckoutIntent } from '@/src/__tests__/fixtures/annual-authority'
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { emulateInert, type InertEmulation } from '@/app/lib/__tests__/inert-test-utils'
+import { useAuthStore } from '@/app/stores/use-auth-store'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import SubscriptionPage from '../page'
 
 vi.mock('next/dynamic', () => ({
@@ -734,5 +736,426 @@ describe('SubscriptionPage billing recovery CTAs', () => {
 
     await screen.findByText(/subscription will be cancelled/i)
     expect(screen.queryByRole('button', { name: /reactivate/i })).not.toBeInTheDocument()
+  })
+})
+
+// S2b: the page owns each confirmation attempt and manual operation, and only an
+// owned, latest-started confirmation may refresh the real auth store's tuple.
+type AuthStoreState = ReturnType<typeof useAuthStore.getState>
+const ACCOUNT_A = { id: 'account-a', email: 'a@example.invalid', planId: 'early_monthly', isAdmin: false, onboardedAt: null }
+const ACCOUNT_B = { id: 'account-b', email: 'b@example.invalid', planId: 'early_monthly', isAdmin: false, onboardedAt: null }
+const STRIPE_RETURN = '/settings/subscription?payment_intent=pi_123&redirect_status=processing'
+
+const confirmedEntitled = { ...baseSubscription, status: 'active', hostedAccess: 'entitled' }
+const awaitingCard = {
+  ...baseSubscription,
+  status: 'trialing',
+  trialPath: '7day',
+  renewalDate: null,
+  trial: { active: true, endsAt: '2026-07-17T00:00:00.000Z', daysRemaining: 7 },
+  capabilities: { ...baseSubscription.capabilities, trialActive: true, needsPaymentMethod: true, canSetupCard: true },
+  hostedAccess: 'entitled',
+}
+const cancelScheduled = {
+  ...baseSubscription,
+  cancelAtPeriodEnd: true,
+  capabilities: { ...baseSubscription.capabilities, canResumeCancellation: true },
+  hostedAccess: 'entitled',
+}
+
+// hostedAccess is not declared on the store yet; these casts only seed and read it.
+function seedAccount(user: typeof ACCOUNT_A | null) {
+  useAuthStore.setState({ user, isAuthenticated: user !== null, subscriptionStatus: null, hostedAccess: null } as unknown as Partial<AuthStoreState>)
+}
+
+function storeTuple(): [unknown, unknown] {
+  const state = useAuthStore.getState() as AuthStoreState & { hostedAccess?: unknown }
+  return [state.subscriptionStatus, state.hostedAccess]
+}
+
+/** An account boundary as the store publishes it: a new epoch, then the next user or none. */
+function takeOver(user: typeof ACCOUNT_B | null) {
+  act(() => {
+    bumpAccountEpoch()
+    seedAccount(user)
+  })
+}
+
+function json(body: unknown) {
+  return { ok: true, json: async () => body }
+}
+
+describe('SubscriptionPage S2b confirmation ownership and store refresh', () => {
+  let inert: InertEmulation
+  const openGates: Array<() => void> = []
+  const unsubscribers: Array<() => void> = []
+
+  /** A held value; cleanup releases anything a test left pending with its fallback. */
+  function gate(fallback: unknown) {
+    let resolve!: (value: unknown) => void
+    const promise = new Promise<unknown>(done => { resolve = done })
+    let open = true
+    const release = (value: unknown) => {
+      if (!open) return
+      open = false
+      resolve(value)
+    }
+    openGates.push(() => release(fallback))
+    return { promise, release }
+  }
+
+  /**
+   * The page's reads and the store's refresh share GET /subscription, so every
+   * GET is counted; each takes the next responder and the last one repeats.
+   */
+  function routeBilling(responders: Array<() => unknown>, cancel?: () => unknown) {
+    const calls = { gets: 0, cancels: 0 }
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === 'https://billing.test/subscription' && (!init?.method || init.method === 'GET')) {
+        const responder = responders[Math.min(calls.gets, responders.length - 1)]
+        calls.gets += 1
+        return responder()
+      }
+      if (url === 'https://billing.test/subscription/cancel' && init?.method === 'POST' && cancel) {
+        calls.cancels += 1
+        return cancel()
+      }
+      if (isCurrentFlow(url)) return { ok: true, json: async () => ({ flow: null }) }
+      return { ok: false, status: 404, json: async () => ({}) }
+    }))
+    return calls
+  }
+
+  function recordStoreTuples() {
+    const seen: Array<[unknown, unknown]> = []
+    unsubscribers.push(useAuthStore.subscribe(() => { seen.push(storeTuple()) }))
+    return seen
+  }
+
+  /** Drains the page's and the store's fetch and JSON chains, optionally after advancing fake timers. */
+  async function settle(advanceMs = 0) {
+    await act(async () => {
+      if (advanceMs > 0) vi.advanceTimersByTime(advanceMs)
+      for (let tick = 0; tick < 25; tick += 1) await Promise.resolve()
+    })
+  }
+
+  function startStripeReturn() {
+    vi.useFakeTimers()
+    window.history.replaceState({}, '', STRIPE_RETURN)
+  }
+
+  async function confirmCancellation() {
+    fireEvent.click(await screen.findByRole('button', { name: /cancel subscription/i }))
+    const dialog = await screen.findByRole('dialog', { name: /cancel your subscription/i })
+    fireEvent.click(within(dialog).getByRole('button', { name: /^cancel subscription$/i }))
+  }
+
+  beforeEach(() => {
+    vi.unstubAllGlobals()
+    window.history.replaceState({}, '', '/settings/subscription')
+    localStorage.removeItem('silentsuite-server-url')
+    seedAccount(ACCOUNT_A)
+    inert = emulateInert()
+  })
+
+  afterEach(async () => {
+    cleanup()
+    openGates.splice(0).forEach(release => release())
+    await act(async () => {
+      for (let tick = 0; tick < 25; tick += 1) await Promise.resolve()
+    })
+    unsubscribers.splice(0).forEach(unsubscribe => unsubscribe())
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    seedAccount(null)
+    inert.restore()
+  })
+
+  it('[RED] a confirmed payment for the current account starts one account-bound store refresh that publishes the real tuple', async () => {
+    startStripeReturn()
+    const calls = routeBilling([() => json(confirmedEntitled)])
+    const seen = recordStoreTuples()
+
+    render(<SubscriptionPage />)
+    await settle()
+    await settle(10000)
+
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(storeTuple()).toEqual(['active', 'entitled'])
+    expect(seen).toContainEqual(['active', 'entitled'])
+    expect(seen).not.toContainEqual(['active', null])
+    expect(calls.gets).toBe(2)
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_A)
+  })
+
+  // Supplement: originally [CTRL] on store/dispatch only; strengthened with the page-local
+  // oracle (no A data or confirmation under B), which the unowned page publishes today.
+  it('[RED] a takeover by account B during the poll fetch publishes no A page data, starts no refresh and leaves B unchanged', async () => {
+    startStripeReturn()
+    const first = gate(json(awaitingCard))
+    const calls = routeBilling([() => first.promise, () => json(confirmedEntitled)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+
+    takeOver(ACCOUNT_B)
+    first.release(json(confirmedEntitled))
+    await settle()
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    await settle(10000)
+
+    expect(calls.gets).toBe(1)
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it.each([
+    ['fetch rejection (catch)', (released: Promise<unknown>) => () => released.then(() => { throw new TypeError('synthetic network failure') })],
+    ['JSON rejection', (released: Promise<unknown>) => () => ({ ok: true, json: () => released.then(() => { throw new SyntaxError('synthetic malformed body') }) })],
+  ])('[RED] an ordinary %s after a takeover by account B completes no loading, failure, data, refresh or next dispatch', async (_label, responder) => {
+    startStripeReturn()
+    const first = gate(null)
+    const calls = routeBilling([responder(first.promise), () => json(confirmedEntitled)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+
+    takeOver(ACCOUNT_B)
+    first.release(null)
+    await settle()
+
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/payment needs attention/i)).not.toBeInTheDocument()
+    await settle(10000)
+    expect(calls.gets).toBe(1)
+    expect(screen.queryByText(/payment needs attention/i)).not.toBeInTheDocument()
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[RED] the final poll completing after a takeover by account B publishes no failure or retry action', async () => {
+    startStripeReturn()
+    const final = gate(json(awaitingCard))
+    const calls = routeBilling([() => json(awaitingCard), () => json(awaitingCard), () => json(awaitingCard), () => final.promise])
+
+    render(<SubscriptionPage />)
+    await settle()
+    await settle(5000)
+    expect(calls.gets).toBe(3)
+    await settle(5000)
+    expect(calls.gets).toBe(4)
+
+    takeOver(ACCOUNT_B)
+    final.release(json(awaitingCard))
+    await settle()
+
+    expect(screen.queryByText(/payment needs attention/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /retry payment status/i })).not.toBeInTheDocument()
+    expect(calls.gets).toBe(4)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[RED] a manual "Retry payment status" on A\'s page after a takeover by account B starts no attempt or request', async () => {
+    startStripeReturn()
+    const calls = routeBilling([() => json(awaitingCard)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    await settle(10000)
+    expect(calls.gets).toBe(4)
+    const retry = screen.getByRole('button', { name: /retry payment status/i })
+
+    takeOver(ACCOUNT_B)
+    fireEvent.click(retry)
+    await settle()
+    await settle(10000)
+
+    expect(calls.gets).toBe(4)
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[CTRL] a cancellation request rejected after a takeover by account B reads nothing and starts no refresh', async () => {
+    const cancel = gate(null)
+    const calls = routeBilling([() => json(baseSubscription), () => json(cancelScheduled)], () => cancel.promise.then(() => { throw new TypeError('synthetic network failure') }))
+
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+    await settle()
+    expect(calls.cancels).toBe(1)
+
+    takeOver(ACCOUNT_B)
+    cancel.release(null)
+    await settle()
+
+    expect(calls.gets).toBe(1)
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[RED] a takeover by account B while the poll JSON is pending publishes no A page data, starts no refresh and leaves B unchanged', async () => {
+    startStripeReturn()
+    const body = gate(awaitingCard)
+    let jsonRequested = false
+    const calls = routeBilling([() => ({ ok: true, json: () => { jsonRequested = true; return body.promise } })])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(jsonRequested).toBe(true)
+
+    takeOver(ACCOUNT_B)
+    body.release(confirmedEntitled)
+    await settle()
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    await settle(10000)
+
+    expect(calls.gets).toBe(1)
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[RED] a takeover by account B before a scheduled poll fires dispatches no GET', async () => {
+    startStripeReturn()
+    const calls = routeBilling([() => json(awaitingCard), () => json(confirmedEntitled)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+
+    takeOver(ACCOUNT_B)
+    await settle(2000)
+    expect(calls.gets).toBe(1)
+    await settle(10000)
+
+    expect(calls.gets).toBe(1)
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[RED] logout before a scheduled poll fires dispatches no GET', async () => {
+    startStripeReturn()
+    const calls = routeBilling([() => json(awaitingCard), () => json(confirmedEntitled)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+
+    takeOver(null)
+    await settle(2000)
+    expect(calls.gets).toBe(1)
+    await settle(10000)
+
+    expect(calls.gets).toBe(1)
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[RED] an older poll response while the latest-started poll is pending publishes no data or confirmation', async () => {
+    startStripeReturn()
+    const first = gate(json(awaitingCard))
+    const second = gate(json(awaitingCard))
+    const calls = routeBilling([() => first.promise, () => second.promise, () => json(awaitingCard)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    await settle(2000)
+    expect(calls.gets).toBe(2)
+
+    first.release(json(confirmedEntitled))
+    await settle()
+
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(calls.gets).toBe(2)
+    expect(storeTuple()).toEqual([null, null])
+
+    second.release(json(awaitingCard))
+    await settle()
+
+    expect(screen.getByText('Trialing')).toBeInTheDocument()
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[CTRL] a superseded attempt\'s late confirmed response publishes nothing and starts no refresh', async () => {
+    startStripeReturn()
+    const first = gate(json(awaitingCard))
+    const calls = routeBilling([() => first.promise, () => json(awaitingCard)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    await settle(10000)
+    expect(calls.gets).toBe(4)
+
+    fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
+    await settle()
+    expect(calls.gets).toBe(5)
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+
+    first.release(json(confirmedEntitled))
+    await settle()
+
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+    expect(calls.gets).toBe(5)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[CTRL] unmount with a pending poll dispatches nothing more and leaves the store unchanged', async () => {
+    startStripeReturn()
+    const first = gate(json(awaitingCard))
+    const calls = routeBilling([() => first.promise, () => json(confirmedEntitled)])
+
+    const { unmount } = render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+
+    unmount()
+    first.release(json(confirmedEntitled))
+    await settle()
+    await settle(10000)
+
+    expect(calls.gets).toBe(1)
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_A)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[RED] a cancellation that completes after a takeover by account B reads nothing and starts no refresh', async () => {
+    const cancel = gate({ ok: false, status: 503, json: async () => ({}) })
+    const calls = routeBilling([() => json(baseSubscription), () => json(cancelScheduled)], () => cancel.promise)
+
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+    await settle()
+    expect(calls.cancels).toBe(1)
+    expect(calls.gets).toBe(1)
+
+    takeOver(ACCOUNT_B)
+    cancel.release(json({}))
+    await settle()
+
+    expect(calls.gets).toBe(1)
+    expect(screen.queryByText(/subscription will be cancelled/i)).not.toBeInTheDocument()
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
+  it('[CTRL] a same-account cancellation still re-reads the subscription through the page owner', async () => {
+    const calls = routeBilling([() => json(baseSubscription), () => json(cancelScheduled)], () => json({}))
+
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+
+    expect(await screen.findByText(/subscription will be cancelled/i)).toBeInTheDocument()
+    expect(calls.cancels).toBe(1)
+    expect(calls.gets).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByRole('dialog', { name: /cancel your subscription/i })).not.toBeInTheDocument()
   })
 })

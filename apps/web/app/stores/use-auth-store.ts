@@ -18,6 +18,7 @@ import {
   establishLogoutGeneration,
   getAccountEpoch,
   hasLostLogoutGeneration,
+  isCurrentAccountEpoch,
   onLogoutElsewhere,
   releaseLogoutGeneration,
   writeLogoutGeneration,
@@ -102,6 +103,22 @@ export interface RedirectSignupState {
   savedAt: number
 }
 
+/** Billing's hosted access evidence on GET /subscription. */
+export type HostedAccess = 'entitled' | 'trial_ended' | 'unknown'
+
+/** Closed parser: an absent or unrecognized value is null and never restricts. */
+function parseHostedAccess(value: unknown): HostedAccess | null {
+  return value === 'entitled' || value === 'trial_ended' || value === 'unknown' ? value : null
+}
+
+/** Latest-started account subscription read, shared by fetchSubscription and retryBillingConnection. */
+let subscriptionRequestSequence = 0
+
+/** Publishing a different identity clears the previous account's tuple in the same update. */
+function tupleForIdentity(previous: User | null, nextId: string | undefined) {
+  return previous?.id === nextId ? {} : { subscriptionStatus: null, hostedAccess: null }
+}
+
 interface AuthState {
   user: User | null
   isAuthenticated: boolean
@@ -110,7 +127,9 @@ interface AuthState {
   pendingSignup: PendingSignup | null
   /** Checkpoint durability only, never payment or authenticated-session authority. */
   signupRecoveryDurability: 'none' | 'memory-only' | 'persisted'
+  /** Published together with hostedAccess as one tuple. */
   subscriptionStatus: string | null
+  hostedAccess: HostedAccess | null
   isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
@@ -1146,6 +1165,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   pendingSignup: null,
   signupRecoveryDurability: 'none',
   subscriptionStatus: null,
+  hostedAccess: null,
 
   isDegraded: () => get().subscriptionStatus === 'billing_unavailable',
 
@@ -1155,6 +1175,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const status = get().subscriptionStatus
     // billing_unavailable = degraded mode → full access (our infra problem, not theirs)
     if (status === 'billing_unavailable') return false
+    // Only Billing's explicit trial_ended evidence restricts a trialing account.
+    if (status === 'trialing') return get().hostedAccess === 'trial_ended'
     return status === 'cancelled' || status === 'expired' || status === 'none'
   },
   canWrite: () => !get().isReadOnly(),
@@ -1545,6 +1567,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       isLoading: false,
       pendingSignup: null,
       subscriptionStatus: pending.provisionedSubscriptionStatus ?? null,
+      hostedAccess: null,
     })
   },
 
@@ -1585,6 +1608,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isAuthenticated: true,
           isLoading: false,
           subscriptionStatus: 'active',
+          hostedAccess: null,
         })
         return
       }
@@ -1623,6 +1647,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: { id: data.id, email: data.email ?? email, planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice: data.rememberDevice === true, onboardedAt: data.onboardedAt ?? null },
         isAuthenticated: true,
         isLoading: false,
+        ...tupleForIdentity(get().user, data.id),
       })
     } catch (err) {
       const message = authErrorMessage(err)
@@ -1663,7 +1688,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // Stop rendering protected account data before any network request or
     // asynchronous storage cleanup can yield.
     syncAdminCookie(false)
-    set({ user: null, isAuthenticated: false, pendingSignup: null, isLoading: false, error: null, subscriptionStatus: null })
+    set({ user: null, isAuthenticated: false, pendingSignup: null, isLoading: false, error: null, subscriptionStatus: null, hostedAccess: null })
     // Tell other open tabs, and adopt the write so this tab's own cleanup is not taken for theirs.
     establishLogoutGeneration(writeLogoutGeneration())
     const logoutEpoch = getAccountEpoch()
@@ -1686,7 +1711,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!current()) return false
       if (hasSession) {
         syncAdminCookie(true)
-        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, subscriptionStatus: 'active' })
+        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, subscriptionStatus: 'active', hostedAccess: null })
         return true
       }
       syncAdminCookie(false)
@@ -1696,7 +1721,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     if (typeof window !== 'undefined' && localStorage.getItem(HOSTED_AUTH_INVALIDATED_KEY)) {
       syncAdminCookie(false)
-      set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+      set({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null })
       return false
     }
 
@@ -1709,7 +1734,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // EmailVerificationBanner).
       if (res.status === 401 || res.status === 403) {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+        set({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null })
         await deleteHostedServerSession('refresh auth failure')
         if (get().user !== null || getAccountEpoch() !== epoch) return false
         await clearLocalAuthMaterial('invalid-hosted-auth', boundary => get().user === null && getAccountEpoch() === boundary)
@@ -1728,7 +1753,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (!current()) return false
         if ((!marker || marker.rememberDevice !== false || marker.userId !== data.id) && !otherTab) {
           syncAdminCookie(false)
-          set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+          set({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null })
           await deleteHostedServerSession('invalid-hosted-auth')
           if (get().user !== null || getAccountEpoch() !== epoch) return false
           await clearLocalAuthMaterial('invalid-hosted-auth', boundary => get().user === null && getAccountEpoch() === boundary)
@@ -1744,7 +1769,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(data.id, rememberDevice)
-      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true })
+      set({ user: { id: data.id, email: data.email ?? '', planId: data.planId ?? 'free', isAdmin, emailVerified: data.emailVerified ?? false, rememberDevice, onboardedAt: data.onboardedAt ?? null }, isAuthenticated: true, ...tupleForIdentity(get().user, data.id) })
       return true
     } catch (err) {
       logger.warn('[auth-store] Session refresh failed (network), leaving session intact:', err)
@@ -1779,7 +1804,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!current()) return
       if (hasSession) {
         syncAdminCookie(true)
-        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active' })
+        set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active', hostedAccess: null })
       } else {
         syncAdminCookie(false)
         set({ user: null, isAuthenticated: false, isLoading: false })
@@ -1789,7 +1814,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     if (typeof window !== 'undefined' && localStorage.getItem(HOSTED_AUTH_INVALIDATED_KEY)) {
       syncAdminCookie(false)
-      set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+      set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
       return
     }
 
@@ -1860,7 +1885,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           if (!current()) return
           if (unmarked && !otherTab) {
             syncAdminCookie(false)
-            set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+            set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
             await deleteHostedServerSession('invalid-hosted-auth')
             if (!signedOut()) return
             await clearSignedOut()
@@ -1885,16 +1910,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isAuthenticated: true,
           isLoading: false,
           error: null,
+          ...tupleForIdentity(get().user, data.id),
         })
       } else if (res.status === 401 || res.status === 403) {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
         await deleteHostedServerSession('restore auth failure')
         if (!signedOut()) return
         await clearSignedOut()
       } else if (res.status === 429) {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
         const hasEtebaseSession = !!(await secureGet('etebase_session'))
         if (!signedOut()) return
         const marker = readHostedValidationMarker()
@@ -1902,7 +1928,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (hasEtebaseSession && !marker && !activeTabMarker) await clearSignedOut()
       } else if (res.status >= 400 && res.status < 500) {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
         await deleteHostedServerSession('restore auth failure')
         if (!signedOut()) return
         await clearSignedOut()
@@ -1933,6 +1959,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isAuthenticated: true,
           isLoading: false,
           subscriptionStatus: 'billing_unavailable',
+          hostedAccess: null,
         })
       } else if (hasEtebaseSession && activeTabMarker) {
         set({
@@ -1940,10 +1967,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           isAuthenticated: true,
           isLoading: false,
           subscriptionStatus: 'billing_unavailable',
+          hostedAccess: null,
         })
       } else {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null })
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
         // Subscribers of that publication may establish another account; cleanup
         // invalidates the epoch before its own checks, so recheck first.
         if (hasEtebaseSession && signedOut()) await clearSignedOut()
@@ -1952,18 +1980,29 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   fetchSubscription: async () => {
+    // Only the latest-started read, for the same live user and account boundary, publishes.
+    const sequence = ++subscriptionRequestSequence
+    const originalUser = get().user
+    const epoch = getAccountEpoch()
+    const owned = () => sequence === subscriptionRequestSequence && get().user === originalUser && isCurrentAccountEpoch(epoch)
     const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
-    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) { set({ subscriptionStatus: 'active' }); return }
+    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) { set({ subscriptionStatus: 'active', hostedAccess: null }); return }
 
     try {
       const res = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
-      if (res.ok) { const data = await res.json(); set({ subscriptionStatus: data.status }) }
+      if (!owned()) return
+      if (res.ok) {
+        const data = await res.json()
+        if (!owned()) return
+        set({ subscriptionStatus: data.status, hostedAccess: parseHostedAccess(data.hostedAccess) })
+      }
     } catch (err) {
       // Network error — only enter degraded mode if there's no existing good status
       logger.warn('[auth-store] fetchSubscription failed (network):', err)
+      if (!owned()) return
       const current = get().subscriptionStatus
       if (!current) {
-        set({ subscriptionStatus: 'billing_unavailable' })
+        set({ subscriptionStatus: 'billing_unavailable', hostedAccess: null })
       }
     }
   },
@@ -1977,28 +2016,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // As in restoreSession: only this retry's own reset may replace its boundary token.
     const originalUser = get().user
     const owner: AccountBoundaryOwner = { epoch: getAccountEpoch(), etebaseDestroyed: false }
-    const current = () => get().user === originalUser && getAccountEpoch() === owner.epoch
+    // The live owner L is this retry's original user and boundary (generation-aware); the
+    // refreshed identity S is only staged until both reads are valid.
+    const current = () => get().user === originalUser && isCurrentAccountEpoch(owner.epoch)
     const signedOut = () => get().user === null && getAccountEpoch() === owner.epoch
     const clearSignedOut = () => clearLocalAuthMaterial('invalid-hosted-auth', boundary => get().user === null && getAccountEpoch() === boundary)
 
     try {
-      // Fetch both endpoints — only apply state if BOTH succeed
-      const [refreshRes, subRes] = await Promise.all([
-        fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }),
-        fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' }),
-      ])
+      // Sequential: the refresh is validated before the subscription is read, and state is
+      // applied only if BOTH succeed.
+      const refreshRes = await fetch(`${BILLING_API_URL}/auth/refresh`, { method: 'POST', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } })
       if (!current()) return false
       if (refreshRes.status === 401 || refreshRes.status === 403 || (refreshRes.status >= 400 && refreshRes.status < 500 && refreshRes.status !== 429)) {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+        set({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null })
         await deleteHostedServerSession('retry auth failure')
         if (!signedOut()) return false
         await clearSignedOut()
         return false
       }
-      if (!refreshRes.ok || !subRes.ok) return false
+      if (!refreshRes.ok) return false
       const refreshData = await refreshRes.json()
-      const subData = await subRes.json()
       if (!current()) return false
       const rememberDevice = refreshData.rememberDevice === true
       if (!rememberDevice) {
@@ -2008,22 +2046,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (!current()) return false
         if (unmarked && !otherTab) {
           syncAdminCookie(false)
-          set({ user: null, isAuthenticated: false, subscriptionStatus: null })
+          set({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null })
           await deleteHostedServerSession('invalid-hosted-auth')
           if (!signedOut()) return false
           await clearSignedOut()
           return false
         }
       }
+      const sequence = ++subscriptionRequestSequence
+      const latest = () => sequence === subscriptionRequestSequence
+      const subRes = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
+      if (!current() || !subRes.ok) return false
+      const subData = await subRes.json()
+      if (!current() || !latest()) return false
       const isAdmin = refreshData.isAdmin === true
-      // Recheck after resuming: microtasks queued by the reset run before this continuation.
-      if (get().user?.id !== refreshData.id && (!(await resetInMemoryAccountState('login', current, owner)) || !current())) return false
+      // Only now may a different account replace L. The reset adopts its own epoch into
+      // `owner`; recheck after resuming, since microtasks queued by the reset run first.
+      if (get().user?.id !== refreshData.id && (!(await resetInMemoryAccountState('login', current, owner)) || !current() || !latest())) return false
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(refreshData.id, rememberDevice)
       set({
         user: { id: refreshData.id, email: refreshData.email ?? '', planId: refreshData.planId ?? 'free', isAdmin, emailVerified: refreshData.emailVerified ?? false, rememberDevice, onboardedAt: refreshData.onboardedAt ?? null },
         isAuthenticated: true,
         subscriptionStatus: subData.status,
+        hostedAccess: parseHostedAccess(subData.hostedAccess),
       })
       return true
     } catch (err) {
@@ -2077,7 +2123,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  setUser: (user: User | null) => set({ user, isAuthenticated: user !== null }),
+  setUser: (user: User | null) => set({ user, isAuthenticated: user !== null, ...tupleForIdentity(get().user, user?.id) }),
   clearError: () => set({ error: null }),
 
   saveSignupStateForRedirect: (selectedInterval) => {
@@ -2132,7 +2178,7 @@ function signedOutElsewhere(): void {
 
 function syncSignedOutElsewhereState() {
   stopHostedActiveTabHeartbeat()
-  useAuthStore.setState({ user: null, isAuthenticated: false, subscriptionStatus: null })
+  useAuthStore.setState({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null })
 }
 
 /** Ends this tab's account when another tab logs out; the returned function stops watching. */

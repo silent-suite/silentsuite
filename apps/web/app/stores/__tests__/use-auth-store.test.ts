@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { useAuthStore } from '../use-auth-store'
 import { secureClear, secureSet } from '@/app/lib/secure-storage'
 import { logger } from '@/app/lib/logger'
-import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import { bumpAccountEpoch, establishLogoutGeneration, getAccountEpoch, LOGOUT_GENERATION_KEY, releaseLogoutGeneration, writeLogoutGeneration } from '@/app/lib/account-epoch'
 
 // Mock fetch globally
 vi.stubGlobal('fetch', vi.fn())
@@ -122,15 +122,45 @@ vi.mock('@/app/stores/use-preferences-sync-store', () => ({
   usePreferencesSyncStore: { getState: () => ({ destroy: preferencesSyncDestroy }) },
 }))
 
+// S2b: `hostedAccess` is not declared on the store yet. Test-local casts only
+// seed/read it; no application stub exists for it.
+type StoreState = ReturnType<typeof useAuthStore.getState>
+type WithHostedAccess = Partial<StoreState> & { hostedAccess?: unknown }
+const seedStore = (state: WithHostedAccess) => useAuthStore.setState(state as Partial<StoreState>)
+const readHostedAccess = () => (useAuthStore.getState() as StoreState & { hostedAccess?: unknown }).hostedAccess
+
 function resetStore() {
-  useAuthStore.setState({
+  seedStore({
     user: null,
     isAuthenticated: false,
     isLoading: false,
     error: null,
     pendingSignup: null,
     subscriptionStatus: null,
+    hostedAccess: null,
   })
+}
+
+function deferredValue<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail })
+  return { promise, resolve, reject }
+}
+
+/** A /subscription response whose JSON body is released only when the test says so. */
+function delayedJsonResponse() {
+  const body = deferredValue<unknown>()
+  return { response: { ok: true, status: 200, json: () => body.promise } as unknown as Response, body }
+}
+
+/** Records every store notification's (status, hostedAccess, user id) tuple. */
+function recordTuples() {
+  const seen: Array<[unknown, unknown, unknown]> = []
+  const unsubscribe = useAuthStore.subscribe((state) => {
+    seen.push([state.subscriptionStatus, (state as StoreState & { hostedAccess?: unknown }).hostedAccess, state.user?.id ?? null])
+  })
+  return { seen, unsubscribe }
 }
 
 function mockSignupBillingSession(id: string, email: string, isAdmin = false, emailVerified = true) {
@@ -1788,40 +1818,49 @@ describe('useAuthStore', () => {
     })
 
 
+    // S2b (FINISH-PLAN-v3 §4): these two retry auth-failure tests are rerouted by
+    // endpoint and method instead of call index. Old order: refresh ∥ subscription,
+    // then DELETE as call #3. New order: refresh, then exactly one DELETE /auth/session,
+    // with zero GET /subscription after the refresh is rejected. Business assertions
+    // (result, signed out, session cleared, invalidation marker) are unchanged.
+    function routeRetryAuthFailure(refresh: () => Response) {
+      vi.mocked(fetch).mockImplementation(async (input, init) => {
+        const url = String(input)
+        const method = init?.method ?? 'GET'
+        if (url.endsWith('/auth/refresh') && method === 'POST') return refresh()
+        if (url.endsWith('/subscription') && method === 'GET') return { ok: true, json: async () => ({ status: 'active' }) } as Response
+        if (url.endsWith('/auth/session') && method === 'DELETE') return { ok: true, status: 204 } as Response
+        throw new Error(`unexpected billing request ${method} ${url}`)
+      })
+    }
+    const callsTo = (suffix: string, method: string) => vi.mocked(fetch).mock.calls
+      .filter(([input, init]) => String(input).endsWith(suffix) && (init?.method ?? 'GET') === method)
+
     it('retryBillingConnection rejects non-remembered refresh when the session marker is missing', async () => {
       secureStore['etebase_session'] = 'fake-session-data'
       useAuthStore.setState({ subscriptionStatus: 'billing_unavailable', isAuthenticated: true })
-      vi.mocked(fetch)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ id: 'u1', email: 'test@x.com', planId: 'pro', isAdmin: false, rememberDevice: false }),
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => ({ status: 'active' }),
-        } as Response)
-        .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+      routeRetryAuthFailure(() => ({
+        ok: true,
+        json: async () => ({ id: 'u1', email: 'test@x.com', planId: 'pro', isAdmin: false, rememberDevice: false }),
+      } as Response))
 
       const result = await useAuthStore.getState().retryBillingConnection()
 
       expect(result).toBe(false)
       expect(useAuthStore.getState().isAuthenticated).toBe(false)
       expect(secureStore['etebase_session']).toBeUndefined()
-      expect(fetch).toHaveBeenNthCalledWith(
-        3,
-        expect.stringContaining('/auth/session'),
-        expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
-      )
+      expect(callsTo('/auth/session', 'DELETE')).toEqual([
+        [expect.stringContaining('/auth/session'), expect.objectContaining({ method: 'DELETE', credentials: 'include' })],
+      ])
+      // S2b RED (ordering): the rejected refresh never leads to a subscription request.
+      expect(callsTo('/subscription', 'GET')).toHaveLength(0)
     })
 
 
     it('retryBillingConnection clears local auth on explicit refresh auth failure', async () => {
       secureStore['etebase_session'] = 'fake-session-data'
       useAuthStore.setState({ subscriptionStatus: 'billing_unavailable', isAuthenticated: true })
-      vi.mocked(fetch)
-        .mockResolvedValueOnce({ ok: false, status: 401 } as Response)
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'active' }) } as Response)
-        .mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+      routeRetryAuthFailure(() => ({ ok: false, status: 401 } as Response))
 
       const result = await useAuthStore.getState().retryBillingConnection()
 
@@ -1829,11 +1868,11 @@ describe('useAuthStore', () => {
       expect(useAuthStore.getState().isAuthenticated).toBe(false)
       expect(secureStore['etebase_session']).toBeUndefined()
       expect(localStorage.getItem('silentsuite-hosted-auth-invalidated')).toBeTruthy()
-      expect(fetch).toHaveBeenNthCalledWith(
-        3,
-        expect.stringContaining('/auth/session'),
-        expect.objectContaining({ method: 'DELETE', credentials: 'include' }),
-      )
+      expect(callsTo('/auth/session', 'DELETE')).toEqual([
+        [expect.stringContaining('/auth/session'), expect.objectContaining({ method: 'DELETE', credentials: 'include' })],
+      ])
+      // S2b RED (ordering): the rejected refresh never leads to a subscription request.
+      expect(callsTo('/subscription', 'GET')).toHaveLength(0)
     })
 
     it('retryBillingConnection returns false on continued network failure', async () => {
@@ -1843,6 +1882,152 @@ describe('useAuthStore', () => {
       const result = await useAuthStore.getState().retryBillingConnection()
 
       expect(result).toBe(false)
+    })
+  })
+
+  // --- S2b hostedAccess store contract (FINISH-PLAN-v2 §2 + v3; tests only) ---
+  // [RED] expects behaviour the current store lacks; [CTRL] already holds today.
+
+  describe('S2b hostedAccess (store)', () => {
+    const userU = { id: 'user-u', email: 'u@example.com', planId: 'early_annual', isAdmin: false }
+
+    afterEach(() => {
+      releaseLogoutGeneration()
+      localStorage.removeItem(LOGOUT_GENERATION_KEY)
+    })
+
+    it('[RED] isReadOnly is true for trialing with hostedAccess trial_ended', () => {
+      seedStore({ user: userU, subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+      expect(useAuthStore.getState().isReadOnly()).toBe(true)
+    })
+
+    it.each(['unknown', 'entitled', null, 'unrecognized-value'])('[CTRL] isReadOnly stays false for trialing with hostedAccess %s', (access) => {
+      seedStore({ user: userU, subscriptionStatus: 'trialing', hostedAccess: access })
+      expect(useAuthStore.getState().isReadOnly()).toBe(false)
+    })
+
+    it('[CTRL] self-hosted, admin and billing_unavailable stay writable with trial_ended', () => {
+      seedStore({ user: { ...userU, isAdmin: true }, subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+      expect(useAuthStore.getState().isReadOnly()).toBe(false)
+      seedStore({ user: userU, subscriptionStatus: 'billing_unavailable', hostedAccess: 'trial_ended' })
+      expect(useAuthStore.getState().isReadOnly()).toBe(false)
+      selfHostedMode.enabled = true
+      try {
+        seedStore({ user: userU, subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+        expect(useAuthStore.getState().isReadOnly()).toBe(false)
+      } finally {
+        selfHostedMode.enabled = false
+      }
+    })
+
+    it('[RED] fetchSubscription publishes status and hostedAccess in one store notification', async () => {
+      seedStore({ user: userU, isAuthenticated: true })
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'trialing', hostedAccess: 'trial_ended' }) } as Response)
+      const recorder = recordTuples()
+      try {
+        await useAuthStore.getState().fetchSubscription()
+      } finally {
+        recorder.unsubscribe()
+      }
+      expect(recorder.seen.filter(([status]) => status === 'trialing')).toEqual([['trialing', 'trial_ended', userU.id]])
+    })
+
+    it.each([
+      ['absent', {}],
+      ['unrecognized', { hostedAccess: 'restricted' }],
+    ])('[RED] a response with %s hostedAccess clears an earlier trial_ended', async (_label, extra) => {
+      seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'trialing', ...extra }) } as Response)
+      await useAuthStore.getState().fetchSubscription()
+      expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
+      expect(readHostedAccess()).toBeNull()
+      expect(useAuthStore.getState().isReadOnly()).toBe(false)
+    })
+
+    it('[RED] an older fetchSubscription with delayed JSON cannot overwrite a newer completed one', async () => {
+      seedStore({ user: userU, isAuthenticated: true })
+      const older = delayedJsonResponse()
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(older.response)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'active', hostedAccess: 'entitled' }) } as Response)
+      const first = useAuthStore.getState().fetchSubscription()
+      await useAuthStore.getState().fetchSubscription()
+      older.body.resolve({ status: 'trialing', hostedAccess: 'trial_ended' })
+      await first
+      expect(useAuthStore.getState().subscriptionStatus).toBe('active')
+      expect(readHostedAccess()).toBe('entitled')
+    })
+
+    it('[RED] an older fetchSubscription network error while the newest is still pending publishes nothing', async () => {
+      seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: null })
+      const olderRequest = deferredValue<Response>()
+      const newestRequest = deferredValue<Response>()
+      vi.mocked(fetch)
+        .mockImplementationOnce(() => olderRequest.promise)
+        .mockImplementationOnce(() => newestRequest.promise)
+      const first = useAuthStore.getState().fetchSubscription()
+      const second = useAuthStore.getState().fetchSubscription()
+      olderRequest.reject(new TypeError('Failed to fetch'))
+      await first
+      expect(useAuthStore.getState().subscriptionStatus).toBeNull()
+      newestRequest.resolve({ ok: true, json: async () => ({ status: 'active', hostedAccess: 'entitled' }) } as Response)
+      await second
+      expect(useAuthStore.getState().subscriptionStatus).toBe('active')
+    })
+
+    it('[CTRL] a stale error after a newer success keeps the newer status', async () => {
+      seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: null })
+      const olderRequest = deferredValue<Response>()
+      vi.mocked(fetch)
+        .mockImplementationOnce(() => olderRequest.promise)
+        .mockResolvedValueOnce({ ok: true, json: async () => ({ status: 'active' }) } as Response)
+      const first = useAuthStore.getState().fetchSubscription()
+      await useAuthStore.getState().fetchSubscription()
+      olderRequest.reject(new TypeError('Failed to fetch'))
+      await first
+      expect(useAuthStore.getState().subscriptionStatus).toBe('active')
+    })
+
+    it('[RED] a lost logout generation (another tab) blocks publication with equal user and numeric epoch', async () => {
+      seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: null })
+      establishLogoutGeneration(writeLogoutGeneration())
+      const epoch = getAccountEpoch()
+      const request = deferredValue<Response>()
+      vi.mocked(fetch).mockImplementationOnce(() => request.promise)
+      const run = useAuthStore.getState().fetchSubscription()
+      // Another tab logs out: only the shared generation changes.
+      localStorage.setItem(LOGOUT_GENERATION_KEY, 'synthetic-other-tab-generation')
+      request.resolve({ ok: true, json: async () => ({ status: 'cancelled', hostedAccess: 'unknown' }) } as Response)
+      await run
+      expect(getAccountEpoch()).toBe(epoch)
+      expect(useAuthStore.getState().subscriptionStatus).toBeNull()
+      expect(readHostedAccess()).toBeNull()
+    })
+
+    it('[RED] login as a different account clears the previous tuple in the same notification that publishes the new user', async () => {
+      seedStore({ user: { ...userU, id: 'user-a' }, isAuthenticated: true, subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true, status: 200,
+        json: async () => ({ id: 'user-b', email: 'b@example.com', planId: 'pro', isAdmin: false }),
+      } as Response)
+      const recorder = recordTuples()
+      try {
+        await useAuthStore.getState().login('b@example.com', 'password123')
+      } finally {
+        recorder.unsubscribe()
+      }
+      expect(useAuthStore.getState().user?.id).toBe('user-b')
+      // The first notification that shows account B already carries no tuple of A.
+      expect(recorder.seen.find(([, , id]) => id === 'user-b')).toEqual([null, null, 'user-b'])
+      expect(useAuthStore.getState().isReadOnly()).toBe(false)
+    })
+
+    it('[CTRL] onboarding metadata updates for the same account preserve the tuple', async () => {
+      seedStore({ user: { ...userU, onboardedAt: null }, isAuthenticated: true, subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+      vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ onboardedAt: '2026-10-28T00:00:00.000Z' }) } as Response)
+      expect(await useAuthStore.getState().markOnboarded()).toBe(true)
+      expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
+      expect(readHostedAccess()).toBe('trial_ended')
     })
   })
 

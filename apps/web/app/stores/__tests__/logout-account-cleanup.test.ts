@@ -117,7 +117,8 @@ beforeEach(async () => {
   useEtebaseStore.setState({ syncEngine: null })
   useNoteStore.setState({ notes: [] })
   expect(await persisted()).toEqual(CLEARED)
-  useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false, error: null, pendingSignup: null, subscriptionStatus: null })
+  // S2b: also clear the not-yet-declared hostedAccess field (test-local cast; no app stub).
+  useAuthStore.setState({ user: null, isAuthenticated: false, isLoading: false, error: null, pendingSignup: null, subscriptionStatus: null, ...{ hostedAccess: null } } as Partial<ReturnType<typeof useAuthStore.getState>>)
   await seed(SESSION_A, FP_A, 'note-a')
   expect(await persisted()).toEqual(RETAINED_A)
 })
@@ -758,5 +759,241 @@ describe('restoreSession and retryBillingConnection keep their own cleanup and p
     expect(useAuthStore.getState().subscriptionStatus).toBe('active')
     expect(useEtebaseStore.getState().accountFingerprint).toBeNull()
     expect(await persisted()).toEqual(RETAINED_A)
+  })
+})
+
+// --- S2b hostedAccess account ownership (FINISH-PLAN-v2 §2 + v3; tests only) ---
+// [RED] expects behaviour the current store lacks; [CTRL] already holds today.
+// hostedAccess is not declared on the store yet: test-local casts only seed/read it.
+
+type AuthState = ReturnType<typeof useAuthStore.getState>
+const seedAuth = (state: Partial<AuthState> & { hostedAccess?: unknown }) => useAuthStore.setState(state as Partial<AuthState>)
+const tuple = () => [useAuthStore.getState().subscriptionStatus, (useAuthStore.getState() as AuthState & { hostedAccess?: unknown }).hostedAccess]
+
+/** Records every Auth notification as (status, hostedAccess, user id). */
+function recordAuthTuples() {
+  const seen: Array<[unknown, unknown, unknown]> = []
+  const unsubscribe = useAuthStore.subscribe((state) => {
+    seen.push([state.subscriptionStatus, (state as AuthState & { hostedAccess?: unknown }).hostedAccess, state.user?.id ?? null])
+  })
+  return { seen, unsubscribe }
+}
+
+/** Endpoint/method routing with an ordered queue of /subscription replies and a call log. */
+function routeTupleBilling(input: {
+  refresh?: () => Response | Promise<Response>
+  subscriptions?: Array<() => Response | Promise<Response>>
+}) {
+  const log: string[] = []
+  const subscriptions = [...(input.subscriptions ?? [])]
+  fetchMock.mockImplementation(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(request instanceof Request ? request.url : request)
+    const method = init?.method ?? 'GET'
+    if (url.endsWith('/auth/refresh') && method === 'POST' && input.refresh) { log.push('refresh'); return input.refresh() }
+    if (url.endsWith('/subscription') && method === 'GET') {
+      log.push('subscription')
+      const next = subscriptions.shift()
+      if (!next) throw new Error('synthetic unexpected subscription request')
+      return next()
+    }
+    if (url.endsWith('/auth/session') && method === 'DELETE') { log.push('delete'); return new Response(null, { status: 204 }) }
+    throw new Error(`synthetic unexpected billing request ${method} ${url}`)
+  })
+  return log
+}
+
+const json = (body: unknown) => () => new Response(JSON.stringify(body))
+const SAME_A_REFRESH = () => new Response(JSON.stringify({ id: userA.id, email: userA.email, rememberDevice: true }))
+
+/** A response whose JSON body the test releases; `requested` resolves when fetch is called. */
+function heldSubscription() {
+  const requested = deferred<void>()
+  const body = deferred<unknown>()
+  return {
+    requested: requested.promise,
+    release: (value: unknown) => body.resolve(value),
+    reply: () => { requested.resolve(); return { ok: true, status: 200, json: () => body.promise } as unknown as Response },
+  }
+}
+
+describe('S2b hostedAccess: identity-establishing publications', () => {
+  it('[RED] restoreSession establishing a different user clears the previous tuple with the new user', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+    routeTupleBilling({ refresh: REFRESH['different-user'] })
+    const recorder = recordAuthTuples()
+    try {
+      await useAuthStore.getState().restoreSession()
+    } finally {
+      recorder.unsubscribe()
+    }
+    expect(useAuthStore.getState().user?.id).toBe(USER_C.id)
+    expect(recorder.seen.find(([, , id]) => id === USER_C.id)).toEqual([null, null, USER_C.id])
+  })
+
+  it('[CTRL] restoreSession refreshing the same user keeps the tuple', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+    routeTupleBilling({ refresh: SAME_A_REFRESH })
+    await useAuthStore.getState().restoreSession()
+    expect(useAuthStore.getState().user?.id).toBe(userA.id)
+    expect(tuple()).toEqual(['trialing', 'trial_ended'])
+  })
+
+  it('[RED] completeSignup publishes its provisioned status with hostedAccess null', () => {
+    seedAuth({
+      hostedAccess: 'trial_ended',
+      pendingSignup: {
+        email: 'n@synthetic.invalid',
+        provisionedUser: { id: 'synthetic-user-N', planId: null, isAdmin: false },
+        billingSessionUserId: 'synthetic-user-N',
+        provisionedSubscriptionStatus: 'trialing_no_card',
+      } as never,
+    })
+    useAuthStore.getState().completeSignup()
+    expect(useAuthStore.getState().user?.id).toBe('synthetic-user-N')
+    expect(tuple()).toEqual(['trialing_no_card', null])
+  })
+
+  it('[RED] setUser with a different id clears the tuple', () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+    useAuthStore.getState().setUser(userB)
+    expect(tuple()).toEqual([null, null])
+  })
+
+  it('[CTRL] setUser with the same id keeps the tuple', () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+    useAuthStore.getState().setUser({ ...userA })
+    expect(tuple()).toEqual(['trialing', 'trial_ended'])
+  })
+
+  it('[RED] logout clears hostedAccess together with the status', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    await useAuthStore.getState().logout()
+    expect(tuple()).toEqual([null, null])
+  })
+})
+
+describe('S2b hostedAccess: delayed subscription responses for a departed account', () => {
+  it('[RED] a delayed fetchSubscription success for A is discarded after B is established', async () => {
+    signInA()
+    const held = heldSubscription()
+    routeTupleBilling({ subscriptions: [held.reply] })
+    const run = useAuthStore.getState().fetchSubscription()
+    await held.requested
+    await establishB()
+    held.release({ status: 'cancelled', hostedAccess: 'trial_ended' })
+    await run
+    expect(useAuthStore.getState().user?.id).toBe(userB.id)
+    expect(tuple()).toEqual([null, null])
+  })
+
+  it('[RED] a delayed fetchSubscription success for A is discarded after logout', async () => {
+    signInA()
+    const held = heldSubscription()
+    routeTupleBilling({ subscriptions: [held.reply] })
+    const run = useAuthStore.getState().fetchSubscription()
+    await held.requested
+    await useAuthStore.getState().logout()
+    held.release({ status: 'cancelled', hostedAccess: 'trial_ended' })
+    await run
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(tuple()).toEqual([null, null])
+  })
+
+  it('[RED] a delayed fetchSubscription success is discarded after an epoch bump for the same user', async () => {
+    signInA()
+    const held = heldSubscription()
+    routeTupleBilling({ subscriptions: [held.reply] })
+    const run = useAuthStore.getState().fetchSubscription()
+    await held.requested
+    bumpAccountEpoch()
+    held.release({ status: 'cancelled', hostedAccess: 'trial_ended' })
+    await run
+    expect(tuple()).toEqual([null, null])
+  })
+})
+
+describe('S2b hostedAccess: retryBillingConnection ownership', () => {
+  it('[RED] retry requests /subscription only after the refresh response is read', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'billing_unavailable' })
+    const refreshing = deferred<void>()
+    const refresh = deferred<Response>()
+    const log = routeTupleBilling({
+      refresh: () => { refreshing.resolve(); return refresh.promise },
+      subscriptions: [json({ status: 'active', hostedAccess: 'entitled' })],
+    })
+    const run = useAuthStore.getState().retryBillingConnection()
+    await refreshing.promise
+    expect(log).toEqual(['refresh'])
+    refresh.resolve(SAME_A_REFRESH())
+    expect(await run).toBe(true)
+    expect(log).toEqual(['refresh', 'subscription'])
+  })
+
+  it('[RED] retry refreshing to a different user commits that user with its own fresh tuple in one notification', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'billing_unavailable', hostedAccess: 'entitled' })
+    routeTupleBilling({ refresh: REFRESH['different-user'], subscriptions: [json({ status: 'trialing', hostedAccess: 'unknown' })] })
+    const recorder = recordAuthTuples()
+    let result: boolean
+    try {
+      result = await useAuthStore.getState().retryBillingConnection()
+    } finally {
+      recorder.unsubscribe()
+    }
+    expect(result).toBe(true)
+    expect(recorder.seen.find(([, , id]) => id === USER_C.id)).toEqual(['trialing', 'unknown', USER_C.id])
+  })
+
+  it('[RED] retry refreshing the same user with a fresh user object commits its tuple', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'billing_unavailable' })
+    routeTupleBilling({ refresh: SAME_A_REFRESH, subscriptions: [json({ status: 'active', hostedAccess: 'entitled' })] })
+    expect(await useAuthStore.getState().retryBillingConnection()).toBe(true)
+    expect(useAuthStore.getState().user?.id).toBe(userA.id)
+    expect(tuple()).toEqual(['active', 'entitled'])
+  })
+
+  it('[CTRL] a failed subscription read after a different-user refresh publishes no user and tears down nothing', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'billing_unavailable' })
+    routeTupleBilling({ refresh: REFRESH['different-user'], subscriptions: [() => new Response(null, { status: 500 })] })
+    expect(await useAuthStore.getState().retryBillingConnection()).toBe(false)
+    expect(useAuthStore.getState().user?.id).toBe(userA.id)
+    expect(useAuthStore.getState().subscriptionStatus).toBe('billing_unavailable')
+    expect(useEtebaseStore.getState().accountFingerprint).toBe(FP_A)
+    expect(await persisted()).toEqual(RETAINED_A)
+  })
+
+  it('[RED] retry first, then a newer fetchSubscription: only the newest-started publishes (delayed retry JSON)', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'billing_unavailable' })
+    const retryReply = heldSubscription()
+    routeTupleBilling({ refresh: SAME_A_REFRESH, subscriptions: [retryReply.reply, json({ status: 'active', hostedAccess: 'entitled' })] })
+    const retry = useAuthStore.getState().retryBillingConnection()
+    await retryReply.requested
+    await useAuthStore.getState().fetchSubscription()
+    retryReply.release({ status: 'cancelled', hostedAccess: 'unknown' })
+    await retry
+    expect(tuple()).toEqual(['active', 'entitled'])
+  })
+
+  it('[RED] fetchSubscription first, then a newer retry: only the newest-started publishes (delayed fetch JSON)', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'billing_unavailable' })
+    const fetchReply = heldSubscription()
+    routeTupleBilling({ refresh: SAME_A_REFRESH, subscriptions: [fetchReply.reply, json({ status: 'active', hostedAccess: 'entitled' })] })
+    const fetchRun = useAuthStore.getState().fetchSubscription()
+    await fetchReply.requested
+    expect(await useAuthStore.getState().retryBillingConnection()).toBe(true)
+    fetchReply.release({ status: 'cancelled', hostedAccess: 'unknown' })
+    await fetchRun
+    expect(tuple()).toEqual(['active', 'entitled'])
   })
 })

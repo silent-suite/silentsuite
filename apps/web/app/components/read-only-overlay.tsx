@@ -11,9 +11,10 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
  */
 export function ReadOnlyBanner() {
   const subscriptionStatus = useAuthStore((s) => s.subscriptionStatus)
+  const hostedAccess = useAuthStore((s) => s.hostedAccess)
 
   const title =
-    subscriptionStatus === 'none'
+    subscriptionStatus === 'none' || (subscriptionStatus === 'trialing' && hostedAccess === 'trial_ended')
       ? 'Your trial has ended.'
       : 'Your subscription has ended.'
 
