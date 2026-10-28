@@ -10,7 +10,9 @@ export function parseApksignerOutput(text) {
   for (const raw of lines) {
     const line = raw.trim()
     if (line === 'Verifies') verifies = true
-    const scheme = /^Verified using (v\d)(?:\.\d)? scheme \([^)]*\): (true|false)$/.exec(line)
+    // Keep the full version: build-tools 36 prints v3.1 after v3, and it must
+    // not overwrite the v3 result (#894).
+    const scheme = /^Verified using (v\d+(?:\.\d+)?) scheme \([^)]*\): (true|false)$/.exec(line)
     if (scheme) schemes[scheme[1]] = scheme[2] === 'true'
     const cert = /^Signer #(\d+) certificate SHA-256 digest: ([0-9a-f]{64})$/.exec(line)
     if (cert) certs.push({ signer: Number(cert[1]), sha256: cert[2] })

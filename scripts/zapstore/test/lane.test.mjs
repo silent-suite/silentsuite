@@ -1,6 +1,7 @@
 // Behavioural tests for the dormant Zapstore lane. They use the recorded
 // unsigned zsp output, the recorded relay snapshot (real signatures), fake
-// GitHub and relay transports, and synthetic apksigner text. Nothing here
+// GitHub and relay transports, synthetic apksigner text and one recorded real
+// apksigner printout. Nothing here
 // touches the network, a signer, or a secret.
 
 import assert from 'node:assert/strict'
@@ -295,6 +296,54 @@ test('apksigner output must say Verifies with only the direct-release certificat
   assert.throws(() => requireSignedBy(parseApksignerOutput(`DOES NOT VERIFY\nERROR: No signature\nSigner #1 certificate SHA-256 digest: ${CERT}`), CERT), /Verifies/)
   assert.throws(() => requireSignedBy(good, 'd'.repeat(64)), /not the direct-release certificate/)
   assert.throws(() => requireSignedBy(parseApksignerOutput('Verifies\nVerified using v1 scheme (JAR signing): true\nSigner #1 certificate SHA-256 digest: ' + CERT), CERT), /neither v2 nor v3/)
+})
+
+// Real `apksigner verify --print-certs -v` output from Google build-tools
+// 36.0.0 (the workflow pin) for the published v0.5.16-beta APK (#894).
+const GOOGLE36 = fixture('apksigner-google36.txt')
+const V3_TRUE = 'Verified using v3 scheme (APK Signature Scheme v3): true'
+const V31_FALSE = 'Verified using v3.1 scheme (APK Signature Scheme v3.1): false'
+const SIGNER1 = `Signer #1 certificate SHA-256 digest: ${CERT}\n`
+const google36 = (from, to) => {
+  assert.ok(GOOGLE36.includes(from), from)
+  return GOOGLE36.replace(from, to)
+}
+
+test('apksigner keeps full scheme versions: real build-tools 36 v3=true, v3.1=false passes', () => {
+  const parsed = parseApksignerOutput(GOOGLE36)
+  assert.deepEqual(parsed.schemes, { v1: false, v2: false, v3: true, 'v3.1': false, v4: false })
+  assert.deepEqual(parsed.certs, [{ signer: 1, sha256: CERT }])
+  assert.equal(parsed.verifies, true)
+  assert.equal(parsed.hasError, false)
+  assert.ok(requireSignedBy(parsed, CERT))
+  assert.throws(() => requireSignedBy(parsed, 'd'.repeat(64)), /not the direct-release certificate: signer #1$/)
+  assert.deepEqual(parseApksignerOutput(fixture('apksigner-verifies.txt')).schemes, { v1: false, v2: true, v3: true, 'v3.1': false, v4: false })
+})
+
+test('apksigner v3 and v3.1 results stay separate in either line order', () => {
+  const reordered = parseApksignerOutput(google36(`${V3_TRUE}\n${V31_FALSE}`, `${V31_FALSE}\n${V3_TRUE}`))
+  assert.deepEqual(reordered.schemes, { v1: false, v2: false, v3: true, 'v3.1': false, v4: false })
+  assert.ok(requireSignedBy(reordered, CERT))
+})
+
+test('apksigner v3.1 alone does not satisfy the v2/v3 scheme gate', () => {
+  const V3_FALSE = V3_TRUE.replace(': true', ': false')
+  const V31_TRUE = V31_FALSE.replace(': false', ': true')
+  for (const text of [google36(`${V3_TRUE}\n${V31_FALSE}`, `${V3_FALSE}\n${V31_TRUE}`), google36(`${V3_TRUE}\n${V31_FALSE}`, `${V31_TRUE}\n${V3_FALSE}`)]) {
+    const parsed = parseApksignerOutput(text)
+    assert.equal(parsed.schemes.v3, false)
+    assert.equal(parsed.schemes['v3.1'], true)
+    assert.throws(() => requireSignedBy(parsed, CERT), /neither v2 nor v3/)
+  }
+})
+
+test('apksigner refusals still hold on real build-tools 36 output', () => {
+  assert.throws(() => requireSignedBy(parseApksignerOutput(google36(V3_TRUE, V3_TRUE.replace(': true', ': false'))), CERT), /neither v2 nor v3/)
+  assert.throws(() => requireSignedBy(parseApksignerOutput(google36('Verifies\n', 'DOES NOT VERIFY\nERROR: APK Signature Scheme v3 signer #1: signature over signed-data did not verify\n')), CERT), /Verifies/)
+  assert.throws(() => requireSignedBy(parseApksignerOutput(google36('Verifies\n', '')), CERT), /Verifies/)
+  assert.throws(() => requireSignedBy(parseApksignerOutput(google36(SIGNER1, '')), CERT), /no signer certificates/)
+  const twoForeign = `Signer #1 certificate SHA-256 digest: ${'1'.repeat(64)}\nSigner #2 certificate SHA-256 digest: ${'2'.repeat(64)}\n`
+  assert.throws(() => requireSignedBy(parseApksignerOutput(google36(SIGNER1, twoForeign)), CERT), /signer #1, #2/)
 })
 
 test('template is repository-relative, carries the six approved screenshots and matches zapstore.yaml copy byte for byte', () => {

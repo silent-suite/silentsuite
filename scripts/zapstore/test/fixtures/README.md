@@ -24,3 +24,9 @@ All fixtures are labelled by origin. None of them came from a live publication.
 - `apksigner-verifies.txt` / `apksigner-foreign-signer.txt` — **synthetic**
   samples in the `apksigner verify --print-certs -v` output format. No local
   `apksigner` exists on the development machine; the real tool runs only in CI.
+- `apksigner-google36.txt` — **real**, unedited output of
+  `apksigner verify --print-certs -v` from the official Google build-tools
+  36.0.0 (the workflow pin) against the published v0.5.16-beta APK
+  (sha256 `a7d70385…e263724`). It reports v3 `true` followed by v3.1 `false`,
+  which the parser must keep apart (#894). Tests edit copies of it to build
+  the refusal cases.
