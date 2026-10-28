@@ -278,14 +278,25 @@ export default function SubscriptionPage() {
     return null
   }, [])
 
-  const fetchSubscription = useCallback(async (owner: OperationOwner | null = captureOwner()) => {
-    if (!ownerCurrent(owner)) return null
-    const sequence = ++requestSequenceRef.current
-    const nextData = await requestSubscription()
-    if (!ownerCurrent(owner) || sequence !== requestSequenceRef.current) return null
-    if (nextData) setData(nextData)
-    setLoading(false)
-    return nextData
+  const fetchSubscription = useCallback(async (initialOwner: OperationOwner | null = captureOwner()) => {
+    let owner = initialOwner
+    // A same-account fresh user object rejects the in-flight response; the page's still-current
+    // account then gets one freshly owned read. Another account, logout or unmount gets nothing.
+    for (let read = 0; read < 2 && ownerCurrent(owner); read += 1) {
+      const sequence = ++requestSequenceRef.current
+      const nextData = await requestSubscription()
+      if (sequence !== requestSequenceRef.current) return null
+      if (ownerCurrent(owner)) {
+        if (nextData) setData(nextData)
+        setLoading(false)
+        return nextData
+      }
+      owner = captureOwner()
+    }
+    // Replaced again during the fresh read: end loading for the still-current account only
+    // (existing unavailable view and recovery actions), publishing no stale data.
+    if (owner && captureOwner()) setLoading(false)
+    return null
   }, [captureOwner, ownerCurrent, requestSubscription])
 
   useEffect(() => {

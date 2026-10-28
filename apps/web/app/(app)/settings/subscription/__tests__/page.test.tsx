@@ -1256,6 +1256,44 @@ describe('SubscriptionPage S2b confirmation ownership and store refresh', () => 
     expect(calls.cancels).toBe(2)
   })
 
+  // Second-review correction: the ordinary initial read (no confirmation attempt).
+  it('[RED] a same-account fresh user publication during the held initial read rejects that response and loads through a fresh owned read', async () => {
+    const first = gate(json(baseSubscription))
+    const calls = routeBilling([() => first.promise, () => json(baseSubscription)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+
+    act(() => { useAuthStore.setState({ user: { ...ACCOUNT_A } } as unknown as Partial<AuthStoreState>) })
+    // The stale response would show a different status; it must never be published.
+    first.release(json({ ...baseSubscription, status: 'cancelled', capabilities: { ...baseSubscription.capabilities, canReactivate: true } }))
+    await settle()
+
+    expect(calls.gets).toBe(2)
+    expect(screen.getByText('Active')).toBeInTheDocument()
+    expect(screen.queryByText('Cancelled')).not.toBeInTheDocument()
+  })
+
+  it('[CTRL] a takeover by account B during the held initial read publishes nothing, completes no loading and reads nothing more', async () => {
+    const first = gate(json(baseSubscription))
+    const calls = routeBilling([() => first.promise, () => json(baseSubscription)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+
+    takeOver(ACCOUNT_B)
+    first.release(json(baseSubscription))
+    await settle()
+
+    expect(calls.gets).toBe(1)
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cancel subscription/i })).not.toBeInTheDocument()
+    expect(useAuthStore.getState().user).toBe(ACCOUNT_B)
+    expect(storeTuple()).toEqual([null, null])
+  })
+
   it('[RED] a same-account fresh user publication during a confirmation attempt ends it with the existing retry action', async () => {
     startStripeReturn()
     const calls = routeBilling([() => json(awaitingCard)])
