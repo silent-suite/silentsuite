@@ -610,15 +610,23 @@ function DetailSection({
 function otherFieldRow(line: string): { label: string; value: string } {
   let colon = -1
   let quoted = false
+  // Parameter boundaries, like the colon, count only outside quoted values.
+  const cuts: number[] = []
   for (let i = 0; i < line.length && colon === -1; i++) {
     if (line[i] === '"') quoted = !quoted
+    else if (line[i] === ';' && !quoted) cuts.push(i)
     else if (line[i] === ':' && !quoted) colon = i
   }
   const left = colon === -1 ? line : line.slice(0, colon)
   const raw = colon === -1 ? '' : line.slice(colon + 1)
-  const name = left.split(';')[0]!
+  const name = left.slice(0, cuts[0] ?? left.length)
   const label = name.slice(name.lastIndexOf('.') + 1)
-  const isText = !/;ENCODING=/i.test(left) && (!/;VALUE=/i.test(left) || /;VALUE="?text"?(?:;|$)/i.test(left))
+  const params = cuts.map((at, k) => left.slice(at + 1, cuts[k + 1] ?? left.length))
+  const paramValues = (key: string) => params.flatMap((p) => {
+    const eq = p.indexOf('=')
+    return eq !== -1 && p.slice(0, eq).toUpperCase() === key ? [p.slice(eq + 1)] : []
+  })
+  const isText = paramValues('ENCODING').length === 0 && paramValues('VALUE').every((v) => /^"?text"?$/i.test(v))
   const value = isText ? raw.replace(/\\([nN,;\\])/g, (_, ch: string) => (/n/i.test(ch) ? '\n' : ch)) : raw
   return { label, value }
 }
