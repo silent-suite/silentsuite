@@ -478,8 +478,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         ("29", "x86", "mixed"), ("29", "x86", "account-dashboard"),
         ("29", "x86", "first-run-setup"), ("29", "x86", "status-routes"),
         ("29", "x86", "sibling-routes"), ("35", "x86_64", "all"), ("36", "x86_64", "account-dashboard"),
-        ("36", "x86_64", "first-run-setup"), ("36", "x86_64", "status-routes"),
-        ("36", "x86_64", "sibling-routes"),
+        ("36", "x86_64", "first-run-setup"), ("36", "x86_64", "launcher-recovery"),
+        ("36", "x86_64", "status-routes"), ("36", "x86_64", "sibling-routes"),
     ]
     assert "name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})" in job
     artifact = re.search(r"^\s+name: (account-recreation-androidTest-.+)$", job, re.MULTILINE).group(1)
@@ -519,7 +519,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     }
     api36 = {
         key: {pair for pair in canonical if pair[0] in set(ledger["shards"][key])}
-        for key in ("36:account-dashboard", "36:first-run-setup", "36:status-routes", "36:sibling-routes")
+        for key in ("36:account-dashboard", "36:first-run-setup", "36:launcher-recovery", "36:status-routes", "36:sibling-routes")
     }
     assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (
         1, 1, ledger_size - 2, ledger_size
@@ -529,8 +529,10 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         for key in api36
     )
     assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 177, 179)
-    assert tuple(len(api36[key]) for key in api36) == (40, 19, 72, 48)
+    assert tuple(len(api36[key]) for key in api36) == (33, 19, 7, 72, 48)
     assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
+    # The launcher recovery class runs on its own fresh API 36 emulator (#898).
+    assert ledger["shards"]["36:launcher-recovery"] == ["io.silentsuite.sync.ui.LauncherActiveAccountRuntimeTest"]
     assert all(
         left.isdisjoint(right)
         for index, left in enumerate(api36.values())
@@ -550,7 +552,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     # API 29 executes canonical-minus-mixed as fresh-emulator subpartitions of the API 36 owners.
     api29 = {
         "29:mixed": mixed,
-        "29:account-dashboard": api36["36:account-dashboard"] - mixed,
+        "29:account-dashboard": (api36["36:account-dashboard"] | api36["36:launcher-recovery"]) - mixed,
         "29:first-run-setup": api36["36:first-run-setup"],
         "29:status-routes": api36["36:status-routes"],
         "29:sibling-routes": api36["36:sibling-routes"],
@@ -571,7 +573,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert script.startswith("#!/usr/bin/env bash\nset -euo pipefail\n")
     subprocess.run(["bash", "-n", FOCUSED_RUNTIME_SCRIPT], check=True)
     subprocess.run(["/usr/bin/dash", "-n", "-c", 'bash android/scripts/run-focused-runtime-tests.sh "29" "mixed"'], check=True)
-    assert script.count("app:connectedDebugAndroidTest") == 11
+    assert script.count("app:connectedDebugAndroidTest") == 12
     assert "focused-runtime-ledger-v1.json" in script
     assert "object_pairs_hook=reject_duplicate_keys" in script
     assert "canonical compact sorted UTF-8/LF JSON" in script
@@ -579,13 +581,15 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "api29_account_dashboard_selectors" in script and "remaining_selectors" not in script
     for mode in ("29:account-dashboard", "29:first-run-setup", "29:status-routes", "29:sibling-routes"):
         assert f'elif [[ "${{api_level}}:${{shard}}" == "{mode}" ]]; then' in script
+    assert 'elif [[ "${api_level}:${shard}" == "36:launcher-recovery" ]]; then' in script
+    assert 'class="${api36_launcher_recovery_selectors}"' in script
     assert "API 29 execution shards are not a disjoint cover of the canonical runtime ledger" in script
     assert "mktemp -d" in script and '${RUNNER_TEMP:-${TMPDIR:-/tmp}}' in script
     assert "app/build/outputs/androidTest-results/connected/." in script
     assert "api29-requested" in script and "api21_batch_" not in script
     assert 'command -v timeout >/dev/null 2>&1' in script
     assert re.findall(r"timeout --signal=TERM --kill-after=10s (\d+)s", script) == [
-        "600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800"
+        "600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800", "1800"
     ]
     requested_run = script.index('class="${requested_selector}"')
     save = script.index("\n  save_requested_results", requested_run)
@@ -617,7 +621,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':40,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}" in assertion
+    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}" in assertion
     assert "API 29 execution shards are not a disjoint cover of the canonical runtime ledger" in assertion
     assert "elif key == '29:remaining'" not in assertion
     assert '"29:account-dashboard": 38' in script and '"29:remaining":' not in script

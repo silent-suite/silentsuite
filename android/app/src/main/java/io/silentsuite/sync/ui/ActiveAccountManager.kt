@@ -12,22 +12,56 @@ object ActiveAccountManager {
     private const val KEY_CREATION_ID = "creation_id"
     @JvmField internal var afterExactSetCommitForTest: (() -> Unit)? = null
 
-    fun getActiveAccount(context: Context): Account? {
+    fun getActiveAccount(context: Context): Account? =
+        getActiveIdentity(context)?.let { Account(it.name, it.type) }
+
+    /** The selected account with the generation captured at selection; callers must not re-read it. */
+    fun getActiveIdentity(context: Context): ExactAccountIdentity? {
         val accountManager = AccountManager.get(context)
         val accounts = accountManager.getAccountsByType(App.accountType)
         if (accounts.isEmpty()) return null
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val savedName = prefs.getString(KEY_NAME, null)
         val savedCreationId = prefs.getString(KEY_CREATION_ID, null)
+        // Raw membership, before generation filtering: a same-name row with any generation, or none, is present.
+        val savedNamePresent = accounts.any { it.name == savedName }
         val eligible = accounts.mapNotNull { account ->
             accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID)
-                ?.takeIf { it.isNotBlank() }?.let { ActiveAccountRoutingPolicy.Candidate(account.name, it) to account }
+                ?.takeIf { it.isNotBlank() }?.let { ActiveAccountRoutingPolicy.Candidate(account.name, it) }
         }
-        val selected = ActiveAccountRoutingPolicy.select(savedName, savedCreationId, eligible.map { it.first })
-        val account = eligible.firstOrNull { it.first == selected }?.second
-        if (account != null && savedName == account.name && savedCreationId == null && !setActiveAccount(context, account))
+        val selected = ActiveAccountRoutingPolicy.select(savedName, savedCreationId, savedNamePresent, eligible)
+            ?: return null
+        val identity = ExactAccountIdentity(App.accountType, selected.name, selected.creationId)
+        if (ActiveAccountRoutingPolicy.savedNameAbsent(savedName, savedCreationId, savedNamePresent)) {
+            val saved = ExactAccountIdentity(App.accountType, requireNotNull(savedName), requireNotNull(savedCreationId))
+            return identity.takeIf { replaceAbsentSaved(context, saved, identity) }
+        }
+        if (savedName == identity.name && savedCreationId == null && !setActiveAccount(context, identity))
             return null
-        return account
+        return identity
+    }
+
+    /**
+     * Moves the preference from [saved], whose name has no row any more, to the selected [chosen] generation.
+     * A concurrent writer's value is kept, and a [chosen] row replaced after the commit is never adopted:
+     * only the identity this attempt wrote is cleared then.
+     */
+    private fun replaceAbsentSaved(context: Context, saved: ExactAccountIdentity, chosen: ExactAccountIdentity): Boolean {
+        if (!replaceIfActive(context, saved, chosen)) return false
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.getString(KEY_NAME, null) != chosen.name || prefs.getString(KEY_CREATION_ID, null) != chosen.creationId)
+            return false
+
+        afterExactSetCommitForTest?.invoke()
+        val manager = AccountManager.get(context)
+        val account = Account(chosen.name, chosen.type)
+        val stillExact = account in manager.getAccountsByType(App.accountType) &&
+            manager.getUserData(account, AccountSettings.KEY_CREATION_ID) == chosen.creationId
+        if (!stillExact) {
+            clearIfActive(context, chosen.name, chosen.creationId)
+            return false
+        }
+        return true
     }
 
     fun setActiveAccount(context: Context, account: Account): Boolean {

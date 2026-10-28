@@ -171,6 +171,7 @@ class LoginLifecycleContractTest {
         assertEquals(1, Regex("""api-level: 35\n\s+arch: x86_64""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: account-dashboard""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: first-run-setup""").findAll(job).count())
+        assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: launcher-recovery""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: status-routes""").findAll(job).count())
         assertEquals(1, Regex("""api-level: 36\n\s+arch: x86_64\n\s+shard: sibling-routes""").findAll(job).count())
         assertEquals(1, Regex("shard: mixed").findAll(job).count())
@@ -269,7 +270,7 @@ class LoginLifecycleContractTest {
         assertTrue(runtimeScript.contains("if len(tests) != 179 or len(set(tests)) != 179"))
         listOf(
             "\"29:mixed\": 1", "\"29:requested\": 1", "\"29:account-dashboard\": 38",
-            "\"35:all\": 179", "\"36:account-dashboard\": 40",
+            "\"35:all\": 179", "\"36:account-dashboard\": 33", "\"36:launcher-recovery\": 7",
             "\"36:first-run-setup\": 19", "\"36:sibling-routes\": 48", "\"36:status-routes\": 72",
             "[1, 1, 38, 19, 48, 72]", "API 29 execution shards are not a disjoint cover of the canonical runtime ledger",
         ).forEach { assertTrue(runtimeScript.contains(it)) }
@@ -278,7 +279,7 @@ class LoginLifecycleContractTest {
         assertTrue(runtimeScript.contains("all_selectors=\"\$(ledger_selectors '35:all')\""))
         assertFalse(runtimeScript.contains("other77_selectors"))
         assertFalse(runtimeScript.contains("focused_classes="))
-        assertEquals(listOf("600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800"),
+        assertEquals(listOf("600", "600", "1500", "1500", "1500", "1500", "2400", "1800", "1800", "1800", "1800", "1800"),
             Regex("""timeout --signal=TERM --kill-after=10s (\d+)s""")
                 .findAll(runtimeScript).map { it.groupValues[1] }.toList())
         assertTrue(600 + 1500 < 45 * 60 && 2400 < 45 * 60)

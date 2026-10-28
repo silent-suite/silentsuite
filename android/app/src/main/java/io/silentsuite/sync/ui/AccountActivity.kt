@@ -179,11 +179,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             attachRetainedSignOut()
             return
         }
+        // Without an explicit route, the saved account's generation is the one captured at selection.
+        val implicit = if (explicit == null) ActiveAccountManager.getActiveIdentity(this) else null
         val resolved = io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
             explicit, expectedCreationId, App.accountType, accountManager)
-            ?: if (explicit == null) ActiveAccountManager.getActiveAccount(this) else null
+            ?: implicit?.let { Account(it.name, it.type) }
         if (resolved == null) {
-                // Safety net — should not happen since we checked above
+                // A stale explicit route, or a saved account that is ambiguous, replaced or unpersistable,
+                // never falls back to another account.
                 val intent = Intent(this, LoginActivity::class.java)
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
@@ -194,7 +197,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         val creationId = (if (explicit != null)
             expectedCreationId
         else
-            accountManager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            implicit?.creationId)
             ?.takeIf { it.isNotBlank() }
         if (creationId == null || io.silentsuite.sync.ui.setup.ExactAccountRouting.validate(
                 account, creationId, App.accountType, accountManager) == null) {
