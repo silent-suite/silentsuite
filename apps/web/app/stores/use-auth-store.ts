@@ -1715,7 +1715,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         return true
       }
       syncAdminCookie(false)
-      set({ user: null, isAuthenticated: false })
+      set({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null })
       return false
     }
 
@@ -1794,7 +1794,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     // do NOT restore the session — the user must complete the signup flow first.
     const signupInProgress = typeof window !== 'undefined' && sessionStorage.getItem('silentsuite-signup-in-progress')
     if (signupInProgress) {
-      set({ user: null, isAuthenticated: false, isLoading: false })
+      set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
       return
     }
 
@@ -1807,7 +1807,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         set({ user: { id: 'self-hosted', email: '', planId: 'self-hosted', isAdmin: true, onboardedAt: null }, isAuthenticated: true, isLoading: false, subscriptionStatus: 'active', hostedAccess: null })
       } else {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, isLoading: false })
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
       }
       return
     }
@@ -1934,7 +1934,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         await clearSignedOut()
       } else {
         syncAdminCookie(false)
-        set({ user: null, isAuthenticated: false, isLoading: false })
+        set({ user: null, isAuthenticated: false, isLoading: false, subscriptionStatus: null, hostedAccess: null })
       }
     } catch (err) {
       if (confirmedRefreshRetrySequence) {
@@ -2061,8 +2061,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       if (!current() || !latest()) return false
       const isAdmin = refreshData.isAdmin === true
       // Only now may a different account replace L. The reset adopts its own epoch into
-      // `owner`; recheck after resuming, since microtasks queued by the reset run first.
-      if (get().user?.id !== refreshData.id && (!(await resetInMemoryAccountState('login', current, owner)) || !current() || !latest())) return false
+      // `owner` and checks request ownership at every checkpoint, so a newer read stops it
+      // before any teardown; recheck after resuming, since microtasks queued by the reset run first.
+      const ownedLatest = () => current() && latest()
+      if (get().user?.id !== refreshData.id && (!(await resetInMemoryAccountState('login', ownedLatest, owner)) || !ownedLatest())) return false
       syncAdminCookie(isAdmin, rememberDevice)
       markHostedValidation(refreshData.id, rememberDevice)
       set({

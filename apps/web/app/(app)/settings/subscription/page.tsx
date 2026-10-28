@@ -164,6 +164,7 @@ function CancelDialog({
 }
 
 const PAYMENT_CONFIRMATION_POLL_DELAYS_MS = [2000, 5000, 10000] as const
+const PAYMENT_CONFIRMATION_DELAYED = 'Payment confirmation is taking longer than expected. Retry the payment status or choose another payment method.'
 
 /** The live user object and boundary that started one operation. */
 interface OperationOwner {
@@ -328,12 +329,25 @@ export default function SubscriptionPage() {
     // This attempt acts only while it is current, unsettled and its own origin is still live.
     const owner = captureOwner()
     const live = () => !cancelled && !settled && ownerCurrent(owner)
+    // An invalidated origin ends this attempt's own work. Only while the page's account is still
+    // current does it clear this attempt's local confirming state, offering the existing retry;
+    // it never publishes data, and a superseded attempt (cancelled) or another account gets nothing.
+    const endInvalidated = () => {
+      if (cancelled || settled) return
+      settled = true
+      clearTimers()
+      if (!captureOwner()) return
+      setLoading(false)
+      setPaymentConfirmationPending(false)
+      setPaymentReturnFailure(PAYMENT_CONFIRMATION_DELAYED)
+    }
 
     const pollSubscription = async (finalAttempt = false) => {
-      if (!live()) return
+      if (!live()) { endInvalidated(); return }
       const sequence = ++requestSequenceRef.current
       const nextData = await requestSubscription()
-      if (!live() || sequence !== requestSequenceRef.current) return
+      if (cancelled || settled || sequence !== requestSequenceRef.current) return
+      if (!ownerCurrent(owner)) { endInvalidated(); return }
       setLoading(false)
       if (nextData) setData(nextData)
       const capabilities = nextData ? getCapabilities(nextData) : null
@@ -353,7 +367,7 @@ export default function SubscriptionPage() {
       }
       if (finalAttempt && !settled) {
         setPaymentConfirmationPending(false)
-        setPaymentReturnFailure('Payment confirmation is taking longer than expected. Retry the payment status or choose another payment method.')
+        setPaymentReturnFailure(PAYMENT_CONFIRMATION_DELAYED)
       }
     }
 
@@ -361,6 +375,7 @@ export default function SubscriptionPage() {
     PAYMENT_CONFIRMATION_POLL_DELAYS_MS.forEach((delayMs, index) => {
       timers.push(window.setTimeout(() => {
         if (live()) void pollSubscription(index === PAYMENT_CONFIRMATION_POLL_DELAYS_MS.length - 1)
+        else endInvalidated()
       }, delayMs))
     })
 
@@ -397,6 +412,8 @@ export default function SubscriptionPage() {
   }
 
   function openPaymentRecovery() {
+    // A retained page never opens a payment panel for an account other than its own.
+    if (!captureOwner()) return
     captureModalOpener()
     setPaymentConfirmationPending(false)
     setPaymentReturnFailure(null)
@@ -425,7 +442,9 @@ export default function SubscriptionPage() {
     } catch {
       // API may not be running in dev
     } finally {
-      if (ownerCurrent(owner)) setCancelling(false)
+      // Neutral local cleanup for the page's still-current account, so a same-account fresh user
+      // object never wedges the dialog; nothing is reset for another account.
+      if (captureOwner()) setCancelling(false)
     }
   }
 

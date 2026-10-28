@@ -996,4 +996,26 @@ describe('S2b hostedAccess: retryBillingConnection ownership', () => {
     await fetchRun
     expect(tuple()).toEqual(['active', 'entitled'])
   })
+
+  // Final-review correction (C): request ownership spans the reset's own checkpoints.
+  it('[RED] a newer subscription read started during the retry\'s different-account reset prevents the old retry\'s teardown', async () => {
+    signInA()
+    seedAuth({ subscriptionStatus: 'billing_unavailable' })
+    const retryReply = heldSubscription()
+    routeTupleBilling({ refresh: REFRESH['different-user'], subscriptions: [retryReply.reply, json({ status: 'active', hostedAccess: 'entitled' })] })
+    const retry = useAuthStore.getState().retryBillingConnection()
+    await retryReply.requested
+    const before = getAccountEpoch()
+    retryReply.release({ status: 'trialing', hostedAccess: 'unknown' })
+    // The reset bumps the epoch synchronously, then awaits its store imports.
+    for (let tick = 0; tick < 50 && getAccountEpoch() === before; tick += 1) await Promise.resolve()
+    expect(getAccountEpoch()).toBe(before + 1)
+    const newer = useAuthStore.getState().fetchSubscription()
+
+    expect(await retry).toBe(false)
+    await newer
+    expect(useAuthStore.getState().user?.id).toBe(userA.id)
+    expect(useEtebaseStore.getState().accountFingerprint).toBe(FP_A)
+    expect(await persisted()).toEqual(RETAINED_A)
+  })
 })

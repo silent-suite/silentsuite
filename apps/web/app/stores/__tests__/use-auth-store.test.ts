@@ -2029,6 +2029,57 @@ describe('useAuthStore', () => {
       expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
       expect(readHostedAccess()).toBe('trial_ended')
     })
+
+    // Final-review correction (D): every identity-ending publication clears the tuple in the same update.
+    describe('identity-ending publications', () => {
+      const seededTuple = () => seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', hostedAccess: 'trial_ended' })
+      async function firstSignedOutTuple(run: () => Promise<unknown>) {
+        const recorder = recordTuples()
+        try {
+          await run()
+        } finally {
+          recorder.unsubscribe()
+        }
+        expect(useAuthStore.getState().user).toBeNull()
+        return recorder.seen.find(([, , id]) => id === null)
+      }
+
+      it('[RED] restoreSession with a signup in progress clears the tuple with the user', async () => {
+        seededTuple()
+        sessionStorage.setItem('silentsuite-signup-in-progress', 'true')
+        try {
+          expect(await firstSignedOutTuple(() => useAuthStore.getState().restoreSession())).toEqual([null, null, null])
+        } finally {
+          sessionStorage.removeItem('silentsuite-signup-in-progress')
+        }
+      })
+
+      it('[RED] restoreSession on a self-hosted build without a session clears the tuple with the user', async () => {
+        seededTuple()
+        selfHostedMode.enabled = true
+        try {
+          expect(await firstSignedOutTuple(() => useAuthStore.getState().restoreSession())).toEqual([null, null, null])
+        } finally {
+          selfHostedMode.enabled = false
+        }
+      })
+
+      it('[RED] restoreSession after a non-auth refresh server error clears the tuple with the user', async () => {
+        seededTuple()
+        vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 500 } as Response)
+        expect(await firstSignedOutTuple(() => useAuthStore.getState().restoreSession())).toEqual([null, null, null])
+      })
+
+      it('[RED] refreshSession on a self-hosted build without a session clears the tuple with the user', async () => {
+        seededTuple()
+        selfHostedMode.enabled = true
+        try {
+          expect(await firstSignedOutTuple(() => useAuthStore.getState().refreshSession())).toEqual([null, null, null])
+        } finally {
+          selfHostedMode.enabled = false
+        }
+      })
+    })
   })
 
   // --- refreshSession non-destructive on transient errors ---

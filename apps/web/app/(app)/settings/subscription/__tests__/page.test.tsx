@@ -1209,4 +1209,71 @@ describe('SubscriptionPage S2b confirmation ownership and store refresh', () => 
     expect(calls.gets).toBe(1)
     expect(storeTuple()).toEqual([null, null])
   })
+
+  // Final-review corrections (A, B).
+  it('[RED] "Review payment options" on A\'s page after a takeover by account B mounts no payment panel and reads nothing for B', async () => {
+    startStripeReturn()
+    const calls = routeBilling([() => json(awaitingCard)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    await settle(10000)
+    const review = screen.getByRole('button', { name: /review payment options/i })
+    const before = vi.mocked(fetch).mock.calls.length
+
+    takeOver(ACCOUNT_B)
+    fireEvent.click(review)
+    await settle()
+
+    expect(screen.queryByRole('dialog', { name: /continue with silentsuite\.io/i })).not.toBeInTheDocument()
+    expect(vi.mocked(fetch).mock.calls.length).toBe(before)
+    expect(calls.gets).toBe(4)
+  })
+
+  it('[RED] a same-account fresh user publication during the cancellation POST leaves the dialog usable for a new cancellation', async () => {
+    const firstCancel = gate({ ok: false, status: 503, json: async () => ({}) })
+    let cancelRequests = 0
+    const calls = routeBilling([() => json(baseSubscription), () => json(cancelScheduled)],
+      () => (++cancelRequests === 1 ? firstCancel.promise : json({})))
+
+    render(<SubscriptionPage />)
+    await confirmCancellation()
+    await settle()
+    expect(calls.cancels).toBe(1)
+
+    act(() => { useAuthStore.setState({ user: { ...ACCOUNT_A } } as unknown as Partial<AuthStoreState>) })
+    firstCancel.release(json({}))
+    await settle()
+
+    // The old operation publishes and re-reads nothing, but the current account's dialog is not wedged.
+    expect(calls.gets).toBe(1)
+    const dialog = screen.getByRole('dialog', { name: /cancel your subscription/i })
+    expect(within(dialog).queryByRole('button', { name: /cancelling/i })).not.toBeInTheDocument()
+    const confirm = within(dialog).getByRole('button', { name: /^cancel subscription$/i })
+    expect(confirm).not.toBeDisabled()
+    fireEvent.click(confirm)
+    expect(await screen.findByText(/subscription will be cancelled/i)).toBeInTheDocument()
+    expect(calls.cancels).toBe(2)
+  })
+
+  it('[RED] a same-account fresh user publication during a confirmation attempt ends it with the existing retry action', async () => {
+    startStripeReturn()
+    const calls = routeBilling([() => json(awaitingCard)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    expect(calls.gets).toBe(1)
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+
+    act(() => { useAuthStore.setState({ user: { ...ACCOUNT_A } } as unknown as Partial<AuthStoreState>) })
+    await settle(2000)
+
+    // The old attempt dispatches nothing more and is not left confirming forever.
+    expect(calls.gets).toBe(1)
+    expect(screen.queryByText(/confirming your payment/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
+    await settle()
+    expect(calls.gets).toBe(2)
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+  })
 })
