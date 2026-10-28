@@ -1158,4 +1158,55 @@ describe('SubscriptionPage S2b confirmation ownership and store refresh', () => 
     expect(calls.gets).toBeGreaterThanOrEqual(2)
     expect(screen.queryByRole('dialog', { name: /cancel your subscription/i })).not.toBeInTheDocument()
   })
+
+  // Same account, fresh user object (e.g. onboarding metadata or a same-id retry publication),
+  // with no epoch or account transition: a NEW explicit operation is the current account's.
+  it('[RED] a new manual cancellation after a same-account fresh user publication still cancels and re-reads', async () => {
+    const calls = routeBilling([() => json(baseSubscription), () => json(cancelScheduled)], () => json({}))
+
+    render(<SubscriptionPage />)
+    expect(await screen.findByText('Active')).toBeInTheDocument()
+    act(() => { useAuthStore.setState({ user: { ...ACCOUNT_A, onboardedAt: '2026-10-28T00:00:00.000Z' } } as unknown as Partial<AuthStoreState>) })
+
+    await confirmCancellation()
+    await settle()
+
+    expect(calls.cancels).toBe(1)
+    expect(await screen.findByText(/subscription will be cancelled/i)).toBeInTheDocument()
+    expect(calls.gets).toBe(2)
+  })
+
+  it('[RED] a new manual "Retry payment status" after a same-account fresh user publication starts a new attempt', async () => {
+    startStripeReturn()
+    const calls = routeBilling([() => json(awaitingCard)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    await settle(10000)
+    expect(calls.gets).toBe(4)
+    act(() => { useAuthStore.setState({ user: { ...ACCOUNT_A } } as unknown as Partial<AuthStoreState>) })
+
+    fireEvent.click(screen.getByRole('button', { name: /retry payment status/i }))
+    await settle()
+
+    expect(calls.gets).toBe(5)
+    expect(screen.getByText(/confirming your payment/i)).toBeInTheDocument()
+  })
+
+  it('[CTRL] a poll in flight before a same-account fresh user publication stays bound to its origin and publishes nothing', async () => {
+    startStripeReturn()
+    const first = gate(json(awaitingCard))
+    const calls = routeBilling([() => first.promise, () => json(confirmedEntitled)])
+
+    render(<SubscriptionPage />)
+    await settle()
+    act(() => { useAuthStore.setState({ user: { ...ACCOUNT_A } } as unknown as Partial<AuthStoreState>) })
+    first.release(json(confirmedEntitled))
+    await settle()
+    await settle(10000)
+
+    expect(screen.queryByText('Active')).not.toBeInTheDocument()
+    expect(calls.gets).toBe(1)
+    expect(storeTuple()).toEqual([null, null])
+  })
 })
