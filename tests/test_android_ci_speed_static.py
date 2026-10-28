@@ -3,9 +3,12 @@
 * superseded pull_request runs are cancelled per workflow and PR; every other run
   has its own group and is never cancelled;
 * the static contract suite runs once, in its own unconditional read-only job;
-  build-pr no longer repeats it, but needs that job and starts with a
-  dependency-result gate, so a failed, skipped or cancelled static job (or native
-  producer) fails build-pr instead of skipping it;
+  build-pr no longer repeats it or provisions its Python and packages, but needs
+  that job and starts with a dependency-result gate, so a failed, skipped or
+  cancelled static job (or native producer) fails build-pr instead of skipping it;
+* build-pr runs its helper scripts on the runner's preinstalled python3, the same
+  strategy as the release build. That is not a pinned interpreter version, so
+  hosted CI running every helper is what shows they are compatible;
 * Etebase is built once per run by one producer, and every native consumer admits
   that same-run artifact before its first Gradle or emulator step, keeping its
   NDK provisioning and every later gate.
@@ -32,6 +35,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/build-android.yml"
+RELEASE_WORKFLOW = ROOT / ".github/workflows/release-android.yml"
 BASE_FIXTURE = ROOT / "tests/fixtures/build-android-base-f867267e.yml"
 BASE_FIXTURE_SHA256 = "c429134d85718a265b5366c0cbe4aef32298c0addb0d7487a50b6854e2ffa4d8"
 
@@ -88,6 +92,10 @@ EXPECTED_DEPENDENCY_INSTALL = {
     "run": "python -m pip install --disable-pip-version-check pytest PyYAML==6.0.3\n",
 }
 EXPECTED_STATIC_RUN_STEP = {"name": "Run Android static Python contracts", "run": STATIC_RUN}
+# Only the static job needs them; build-pr dropped both with the repeated suite.
+STATIC_PROVISIONING = (EXPECTED_PYTHON_SETUP, EXPECTED_DEPENDENCY_INSTALL)
+SETUP_PYTHON = "actions/setup-python@"
+STATIC_PROVISIONING_MARKERS = ("pip install", "python -m", "pytest", "PyYAML")
 
 # build-pr waits for the static job, and runs (unless the run is cancelled) even
 # when a dependency did not succeed, so that its first step fails it closed rather
@@ -105,12 +113,14 @@ GATE_ENV = {
 # candidate code and download or admit nothing.
 REPORT_UPLOAD_NAMES = ("Upload unit test reports and results", "Upload lint reports")
 
+PYTHON_PROVISIONING_VIOLATION = "build-pr: must not provision the static contract suite's Python environment"
 DEDUP_VIOLATIONS = sorted(
     [
         "build-pr: must not repeat the static contract suite",
         "build-pr: must also need static-contracts",
         "build-pr: must run unless cancelled and fail closed on dependency results",
         "build-pr: missing dependency-result gate",
+        PYTHON_PROVISIONING_VIOLATION,
     ]
 )
 GATE_KEYS_VIOLATION = "build-pr: dependency-result gate must have only name, env and run"
@@ -118,7 +128,6 @@ GATE_ENV_VIOLATION = "build-pr: dependency-result gate must bind exactly the thr
 GATE_PLACEMENT_VIOLATION = "build-pr: dependency-result gate must immediately follow checkout"
 REPORT_CONDITION_VIOLATION = "build-pr: only the two report uploads may carry a step condition"
 BUILD_PR_CONTINUE_VIOLATION = "build-pr: must not continue on error"
-PYTHON_PROVISIONING_VIOLATION = "build-pr: must keep Python setup and static dependency installation"
 
 CONCURRENCY_VIOLATION = "concurrency: must cancel only superseded pull_request runs in workflow-and-PR groups"
 EXPECTED_BASE_VIOLATIONS = sorted(
@@ -196,7 +205,7 @@ def _build_pr_gating_violations(job: dict) -> list[str]:
         violations.append(REPORT_CONDITION_VIOLATION)
     if "continue-on-error" in job or any("continue-on-error" in step for step in steps):
         violations.append(BUILD_PR_CONTINUE_VIOLATION)
-    if EXPECTED_PYTHON_SETUP not in steps or EXPECTED_DEPENDENCY_INSTALL not in steps:
+    if any(_uses(step).startswith(SETUP_PYTHON) or "pip install" in _run(step) for step in steps):
         violations.append(PYTHON_PROVISIONING_VIOLATION)
     return violations
 
@@ -337,9 +346,31 @@ def _without_static_dedup(job: dict) -> dict:
     return job
 
 
+def _without_static_provisioning(job: dict) -> dict:
+    """A predecessor build-pr minus exactly its static-suite Python setup and install."""
+    job = copy.deepcopy(job)
+    steps = job.get("steps") or []
+    for expected in STATIC_PROVISIONING:
+        assert steps.count(expected) == 1, f"predecessor build-pr must contain {expected['name']!r} exactly once"
+    job["steps"] = [step for step in steps if step not in STATIC_PROVISIONING]
+    return job
+
+
+def _python_invocations(job: dict) -> list[str]:
+    """Every operative run line, comments aside, that invokes a Python interpreter."""
+    return [
+        line.strip()
+        for step in job.get("steps") or []
+        for line in _run(step).splitlines()
+        if not line.strip().startswith("#")
+        and any(token.rstrip("0123456789.") == "python" for token in line.split())
+    ]
+
+
 def _expected_build_pr(predecessor_job: dict, gate_run: str) -> dict:
-    """The 8cb81b42 build-pr with exactly the four admitted edits applied."""
-    job = copy.deepcopy(predecessor_job)
+    """The 8cb81b42 build-pr with exactly the admitted edits applied: needs, if, the
+    gate, and the removed static suite with its Python setup and install."""
+    job = _without_static_provisioning(predecessor_job)
     job["needs"] = list(BUILD_PR_NEEDS)
     job["if"] = BUILD_PR_IF
     steps = [step for step in job["steps"] if _run(step).strip() != STATIC_RUN]
@@ -397,12 +428,14 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
     # the admission steps: NDK, build-tools, JDKs, matrices, runtime scripts,
     # ledgers, producer manifests and every final gate are otherwise identical.
-    # build-pr additionally differs only by its static-suite gating.
+    # build-pr additionally differs only by its static-suite gating and by dropping
+    # the suite's Python setup and install.
     for name in CONSUMERS:
         current = _without_admission(candidate["jobs"][name])
         original = _without_native_compile(base["jobs"][name])
         if name == "build-pr":
-            current, original = _without_static_dedup(current), _without_static_dedup(original)
+            current = _without_static_dedup(current)
+            original = _without_static_provisioning(_without_static_dedup(original))
         assert current == original, name
 
 
@@ -417,7 +450,7 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
     assert candidate["jobs"]["build-pr"] == expected, (
         "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate "
-        "and the removed static suite"
+        "and the removed static suite with its Python setup and install"
     )
 
 
@@ -441,6 +474,36 @@ def test_dependency_gate_is_exactly_specified(candidate):
     assert job["steps"].index(gate) == 1 and _uses(job["steps"][0]).startswith("actions/checkout@")
     assert _needs(job) == BUILD_PR_NEEDS
     assert job["if"] == BUILD_PR_IF
+
+
+def test_build_pr_uses_the_preinstalled_python_strategy(candidate):
+    """build-pr sets up no Python and installs no packages; its helpers run as
+    `python3 scripts/...` on the runner's preinstalled interpreter. This does not
+    pin or prove one interpreter version: hosted CI must run every helper."""
+    job = candidate["jobs"]["build-pr"]
+    steps = job["steps"]
+    assert [step.get("name") for step in steps if _uses(step).startswith(SETUP_PYTHON)] == []
+    operative = [
+        line.strip()
+        for step in steps
+        for line in _run(step).splitlines()
+        if not line.strip().startswith("#")
+    ]
+    assert [line for line in operative if any(marker in line for marker in STATIC_PROVISIONING_MARKERS)] == []
+    invocations = _python_invocations(job)
+    assert invocations and all(line.startswith("python3 scripts/") for line in invocations), invocations
+
+
+def test_release_unsigned_build_shares_the_preinstalled_python_strategy():
+    """The same strategy as build-pr, not a guarantee of the same interpreter version."""
+    job = _load(RELEASE_WORKFLOW)["jobs"]["build-unsigned-release"]
+    assert [
+        step.get("name")
+        for step in job["steps"]
+        if _uses(step).startswith(SETUP_PYTHON) or "pip install" in _run(step)
+    ] == []
+    invocations = _python_invocations(job)
+    assert invocations and all(line.startswith("python3 scripts/") for line in invocations), invocations
 
 
 def test_only_report_uploads_are_conditional_in_build_pr(candidate):
@@ -539,8 +602,11 @@ def _mutation(workflow: dict, case: str) -> None:
         jobs["build-pr"]["if"] = EVENT_CONDITION
     elif case == "build-pr-always-condition":
         jobs["build-pr"]["if"] = f"${{{{ always() && ({EVENT_CONDITION}) }}}}"
-    elif case == "build-pr-drops-python":
-        _remove_step(jobs["build-pr"], lambda step: step == EXPECTED_DEPENDENCY_INSTALL)
+    elif case == "build-pr-sets-up-python":
+        steps = jobs["build-pr"]["steps"]
+        steps.insert(steps.index(_step_named(jobs["build-pr"], GATE_NAME)) + 1, copy.deepcopy(EXPECTED_PYTHON_SETUP))
+    elif case == "build-pr-installs-static-dependencies":
+        jobs["build-pr"]["steps"].append(copy.deepcopy(EXPECTED_DEPENDENCY_INSTALL))
     elif case == "build-pr-job-continue-on-error":
         jobs["build-pr"]["continue-on-error"] = True
     elif case == "gate-removed":
@@ -600,7 +666,8 @@ MUTATIONS = {
     "build-pr-drops-static-need": "build-pr: must also need static-contracts",
     "build-pr-plain-event-condition": "build-pr: must run unless cancelled and fail closed on dependency results",
     "build-pr-always-condition": "build-pr: must run unless cancelled and fail closed on dependency results",
-    "build-pr-drops-python": PYTHON_PROVISIONING_VIOLATION,
+    "build-pr-sets-up-python": PYTHON_PROVISIONING_VIOLATION,
+    "build-pr-installs-static-dependencies": PYTHON_PROVISIONING_VIOLATION,
     "build-pr-job-continue-on-error": BUILD_PR_CONTINUE_VIOLATION,
     "gate-removed": "build-pr: missing dependency-result gate",
     "gate-after-download": GATE_PLACEMENT_VIOLATION,

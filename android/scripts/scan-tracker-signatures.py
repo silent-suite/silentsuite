@@ -3,6 +3,7 @@
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import re
 import sys
@@ -13,6 +14,7 @@ from pathlib import Path
 
 MAX_MEMBER_BYTES = 128 * 1024 * 1024
 MAX_ARCHIVE_MEMBERS = 100_000
+MAX_REMEMBERED_RESULTS = 65_536
 ARCHIVE_SUFFIXES = {".apk", ".aab", ".apks", ".zip", ".jar", ".aar"}
 
 
@@ -94,8 +96,12 @@ def iter_payloads(path: Path, location: str | None = None, depth: int = 0):
         raw = path.read_bytes()
     except OSError as exc:
         raise ManifestError(f"cannot read scan target {path}: {exc}") from exc
+    yield from iter_bytes(raw, location, depth, path.suffix.lower() in ARCHIVE_SUFFIXES)
+
+
+def iter_bytes(raw: bytes, location: str, depth: int, archive_suffix: bool = False):
     yield location, raw
-    if path.suffix.lower() in ARCHIVE_SUFFIXES or zipfile.is_zipfile(BytesIO(raw)):
+    if archive_suffix or zipfile.is_zipfile(BytesIO(raw)):
         try:
             with zipfile.ZipFile(BytesIO(raw)) as archive:
                 members = archive.infolist()
@@ -110,28 +116,11 @@ def iter_payloads(path: Path, location: str | None = None, depth: int = 0):
                     nested_location = f"{location}!{member.filename}"
                     yield nested_location, payload
                     if Path(member.filename).suffix.lower() in ARCHIVE_SUFFIXES or zipfile.is_zipfile(BytesIO(payload)):
-                        with tempfile_payload(payload) as nested:
-                            yield from iter_payloads(nested, nested_location, depth + 1)
+                        if depth + 1 > 4:
+                            raise ManifestError(f"archive nesting limit exceeded: {nested_location}")
+                        yield from iter_bytes(payload, nested_location, depth + 1)
         except (zipfile.BadZipFile, RuntimeError) as exc:
             raise ManifestError(f"cannot inspect archive {location}: {exc}") from exc
-
-
-class tempfile_payload:
-    def __init__(self, payload: bytes):
-        self.payload = payload
-        self.path = None
-
-    def __enter__(self):
-        import tempfile
-        handle = tempfile.NamedTemporaryFile(delete=False)
-        handle.write(self.payload)
-        handle.close()
-        self.path = Path(handle.name)
-        return self.path
-
-    def __exit__(self, *_):
-        if self.path:
-            self.path.unlink(missing_ok=True)
 
 
 def is_excepted(manifest: dict, signature_id: str, location: str) -> bool:
@@ -143,16 +132,25 @@ def is_excepted(manifest: dict, signature_id: str, location: str) -> bool:
 
 def scan(manifest: dict, signatures, targets: list[Path]) -> list[Finding]:
     findings = []
+    # Identical payloads recur across APK, AAB, APKS and split outputs; search each once while remembered.
+    remembered = {}
     for target in targets:
         if not target.exists():
             raise ManifestError(f"scan target does not exist: {target}")
         for location, payload in iter_payloads(target):
-            for entry, pattern in signatures:
-                match = pattern.search(payload)
-                if match:
-                    excerpt = match.group(0).decode("ascii", errors="replace")[:160]
-                    findings.append(Finding(entry["id"], entry["category"], entry["description"], location, excerpt,
-                                            is_excepted(manifest, entry["id"], location)))
+            key = (len(payload), hashlib.sha256(payload).digest())
+            matches = remembered.get(key)
+            if matches is None:
+                matches = []
+                for entry, pattern in signatures:
+                    match = pattern.search(payload)
+                    if match:
+                        matches.append((entry, match.group(0).decode("ascii", errors="replace")[:160]))
+                if len(remembered) < MAX_REMEMBERED_RESULTS:
+                    remembered[key] = matches
+            for entry, excerpt in matches:
+                findings.append(Finding(entry["id"], entry["category"], entry["description"], location, excerpt,
+                                        is_excepted(manifest, entry["id"], location)))
     return findings
 
 
