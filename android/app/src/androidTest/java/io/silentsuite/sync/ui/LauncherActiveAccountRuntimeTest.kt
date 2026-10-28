@@ -155,7 +155,7 @@ class LauncherActiveAccountRuntimeTest {
 
         withMonitors { login, setup ->
             ActivityScenario.launch<AccountActivity>(
-                AccountActivity.newIntent(context, saved.account, saved.generation)
+                AccountActivity.newIntent(context, saved.account, requireNotNull(saved.generation))
             ).use { scenario ->
                 instrumentation.waitForIdleSync()
                 assertEquals("A stale explicit route must not open any dashboard", Lifecycle.State.DESTROYED, scenario.state)

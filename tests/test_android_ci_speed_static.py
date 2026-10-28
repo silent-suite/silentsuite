@@ -333,6 +333,38 @@ def _without_admission(job: dict) -> dict:
     return job
 
 
+# The one approved change since both predecessors: the focused runtime ledger grew from 172 to 179
+# methods (#898), seven of them in the API 36 account-dashboard shard. Only these two exact lines of
+# the runtime job's final assertion are carried forward; every other byte must still match.
+RUNTIME_LEDGER_JOB = "account-recreation-runtime"
+RUNTIME_LEDGER_COUNT_LINES = (
+    (
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':40,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
+    ),
+    (
+        "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
+        "if len(canonical) != 179 or len(expected) != expected_sizes[key]:\n",
+    ),
+)
+
+
+def _with_approved_runtime_ledger_counts(job: dict) -> dict:
+    """A predecessor runtime job with only the approved ledger count lines replaced, each exactly once."""
+    job = copy.deepcopy(job)
+    owners = [
+        step for step in job.get("steps") or []
+        if isinstance(step.get("run"), str) and RUNTIME_LEDGER_COUNT_LINES[0][0] in step["run"]
+    ]
+    assert len(owners) == 1, "exactly one predecessor step must own the runtime ledger counts"
+    run = owners[0]["run"]
+    for old, new in RUNTIME_LEDGER_COUNT_LINES:
+        assert run.count(old) == 1 and new not in run, old
+        run = run.replace(old, new)
+    owners[0]["run"] = run
+    return job
+
+
 def _without_static_dedup(job: dict) -> dict:
     """build-pr minus the gating edits: its condition, gate and repeated static suite."""
     job = copy.deepcopy(job)
@@ -433,6 +465,8 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
     for name in CONSUMERS:
         current = _without_admission(candidate["jobs"][name])
         original = _without_native_compile(base["jobs"][name])
+        if name == RUNTIME_LEDGER_JOB:
+            original = _with_approved_runtime_ledger_counts(original)
         if name == "build-pr":
             current = _without_static_dedup(current)
             original = _without_static_provisioning(_without_static_dedup(original))
@@ -445,6 +479,8 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
     }
     assert set(candidate["jobs"]) == set(predecessor["jobs"])
     for name, job in predecessor["jobs"].items():
+        if name == RUNTIME_LEDGER_JOB:
+            job = _with_approved_runtime_ledger_counts(job)
         if name != "build-pr":
             assert candidate["jobs"][name] == job, name
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
@@ -452,6 +488,26 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
         "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate "
         "and the removed static suite with its Python setup and install"
     )
+
+
+def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecessor, candidate):
+    carried = _with_approved_runtime_ledger_counts(predecessor["jobs"][RUNTIME_LEDGER_JOB])
+    current = candidate["jobs"][RUNTIME_LEDGER_JOB]
+    assert carried == current
+    # The transport applies once, to the old lines only.
+    with pytest.raises(AssertionError):
+        _with_approved_runtime_ledger_counts(current)
+    # Any other change to the same step, including another count, still fails the comparison.
+    for old, new in (
+        ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
+        ("'36:account-dashboard':40", "'36:account-dashboard':41"),
+        ("if len(canonical) != 179 or", "if len(canonical) < 179 or"),
+    ):
+        mutated = copy.deepcopy(current)
+        owners = [step for step in mutated["steps"] if isinstance(step.get("run"), str) and old in step["run"]]
+        assert len(owners) == 1 and owners[0]["run"].count(old) == 1, old
+        owners[0]["run"] = owners[0]["run"].replace(old, new)
+        assert carried != mutated, old
 
 
 def test_static_job_runs_the_suite_build_pr_ran_before(predecessor, candidate):
