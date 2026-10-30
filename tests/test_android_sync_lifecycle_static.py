@@ -558,8 +558,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         "29:sibling-routes": api36["36:sibling-routes"],
     }
     assert requested <= api29["29:account-dashboard"]
-    assert tuple(len(part) for part in api29.values()) == (1, 39, 19, 72, 48)
-    assert len(api29["29:account-dashboard"] - requested) == 38
+    assert tuple(len(part) for part in api29.values()) == (1, 44, 19, 72, 48)
+    assert len(api29["29:account-dashboard"] - requested) == 43
     assert sum(len(part) for part in api29.values()) == len(set().union(*api29.values())) == len(canonical)
     assert set().union(*api29.values()) == canonical
     wrapper_pairs = {tuple(wrapper.split("#", 1)) for wrapper in wrappers}
