@@ -617,6 +617,16 @@
     <string name="subscription_manage">Manage Subscription</string>
     <string name="subscription_reactivate">Reactivate</string>
     <string name="subscription_loading">Loading subscription status…</string>
+    <plurals name="subscription_notice_trial_days_left">
+        <item quantity="one">Free trial: %d day left</item>
+        <item quantity="other">Free trial: %d days left</item>
+    </plurals>
+    <string name="subscription_notice_trial_ends">Ends %s</string>
+    <string name="subscription_notice_trial_ended">Your trial has ended</string>
+    <string name="subscription_notice_access_ended">Your subscription has ended</string>
+    <string name="subscription_notice_ended_on">Ended %s</string>
+    <string name="subscription_notice_view">View subscription</string>
+    <string name="subscription_notice_details">Subscription details</string>
     <!-- Theme mode arrays -->
     <string name="settings_theme_light">Light</string>
     <string name="settings_theme_dark">Dark</string>

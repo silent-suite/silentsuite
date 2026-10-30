@@ -160,6 +160,7 @@
                             <TextView android:id="@+id/subscription_status" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textAppearance="@style/TextAppearance.Material3.BodyMedium" />
                             <TextView android:id="@+id/subscription_trial" android:layout_width="match_parent" android:layout_height="wrap_content" android:visibility="gone" />
                             <com.google.android.material.button.MaterialButton android:id="@+id/subscription_action" style="@style/Widget.Material3.Button.TextButton" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="@dimen/spacing_8" android:minHeight="@dimen/touch_target_min" android:visibility="gone" />
+                            <ImageButton android:id="@+id/subscription_info" android:layout_width="@dimen/touch_target_min" android:layout_height="@dimen/touch_target_min" android:layout_marginTop="@dimen/spacing_8" android:minWidth="@dimen/touch_target_min" android:minHeight="@dimen/touch_target_min" android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/subscription_notice_details" android:src="@drawable/ic_info_dark" android:visibility="gone" />
                         </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 

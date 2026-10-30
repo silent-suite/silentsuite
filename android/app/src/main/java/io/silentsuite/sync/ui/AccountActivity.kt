@@ -52,6 +52,7 @@ import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_NOTES
 import io.silentsuite.sync.Constants.KEY_ACCOUNT
+import io.silentsuite.sync.billing.AccountNoticeClient
 import io.silentsuite.sync.billing.BillingManager
 import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.dataexport.AndroidExportKind
@@ -115,6 +116,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var swipeRefreshLayout: SwipeRefreshLayout? = null
     private var accountListExpanded = false
     private var pendingExportKind: AndroidExportKind? = null
+    private var subscriptionNoticeSeq = 0
+    private var subscriptionNoticeJob: Job? = null
+    private var subscriptionPageOpened = false
+    private var subscriptionStatusDefaultColors: android.content.res.ColorStateList? = null
+    private val subscriptionNoticeTimer = android.os.Handler(android.os.Looper.getMainLooper())
+    private val subscriptionNoticeTick = Runnable { onSubscriptionNoticeTick() }
     private var signOutOnly = false
     private var renderedSignOutErrorId = 0L
     private var signOutCompletionHandled = false
@@ -492,10 +499,12 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         accountInfo?.let { info ->
             if (info.notesEnabled != AccountSettings.notesEnabled(AccountManager.get(this), account)) model.loadAccount()
         }
+        refreshSubscriptionNoticeOnResume()
     }
 
     override fun onPause() {
         super.onPause()
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
         if (syncStatusObserver != null) {
             ContentResolver.removeStatusChangeListener(syncStatusObserver)
             syncStatusObserver = null
@@ -1866,39 +1875,187 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         return authorities.any { ContentResolver.isSyncActive(account, it) }
     }
 
-    private fun loadSubscriptionStatus() {
-        val subscriptionCard = findViewById<View>(R.id.subscription_card)
-        val planView = findViewById<TextView>(R.id.subscription_plan)
-        val statusView = findViewById<TextView>(R.id.subscription_status)
-        val trialView = findViewById<TextView>(R.id.subscription_trial)
-        val actionButton = findViewById<com.google.android.material.button.MaterialButton>(R.id.subscription_action)
-
-        // Unknown, healthy and routine plan state never occupies the sync overview.
-        subscriptionCard.visibility = View.GONE
-
-        lifecycleScope.launch {
-            val status = withContext(Dispatchers.IO) {
-                if (!exactAccountStillCurrent()) return@withContext null
-                val loaded = billingStatusOverride?.invoke(this@AccountActivity, account, accountCreationId)
-                    ?: BillingManager.getInstance().getSubscriptionStatus(
-                        this@AccountActivity, account, accountCreationId)
-                loaded?.takeIf { exactAccountStillCurrent() }
+    /**
+     * Reads the informational subscription notice for this exact generation (plan v3 A4).
+     *
+     * Ordinary reads join an in-flight read and otherwise use a last-confirmed in-memory snapshot of
+     * at most [SUBSCRIPTION_NOTICE_TTL_MS]. A forced read (return from the subscription page, or a
+     * running trial's end) supersedes any in-flight read. Only the latest read of the current
+     * generation publishes; an older completion, success or failure, changes nothing. The notice
+     * never reaches BillingManager or sync eligibility.
+     */
+    private fun loadSubscriptionStatus(forced: Boolean = false) {
+        if (!exactAccountStillCurrent()) {
+            hideSubscriptionNotice()
+            return
+        }
+        val key = subscriptionNoticeKey()
+        if (!forced) {
+            if (subscriptionNoticeJob?.isActive == true) return
+            val cached = subscriptionNoticeCache[key]
+            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < SUBSCRIPTION_NOTICE_TTL_MS) {
+                renderSubscriptionNotice(cached.status)
+                return
             }
-            if (!exactAccountStillCurrent() || status == null) return@launch
-
-            if (status.isUnknown || (!status.isPastDue && !status.isExpiredOrCancelled)) {
+        }
+        val seq = ++subscriptionNoticeSeq
+        subscriptionNoticeJob = lifecycleScope.launch {
+            val loaded = try {
+                withContext(Dispatchers.IO) {
+                    if (!exactAccountStillCurrent()) null
+                    else billingStatusOverride?.invoke(this@AccountActivity, account, accountCreationId)
+                        ?: AccountNoticeClient.load(this@AccountActivity, account)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            if (seq != subscriptionNoticeSeq) return@launch
+            if (loaded == null || !exactAccountStillCurrent()) {
+                subscriptionNoticeCache.remove(key)
+                hideSubscriptionNotice()
                 return@launch
             }
-
-            if (!exactAccountStillCurrent()) return@launch
-            updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
-            if (!exactAccountStillCurrent()) return@launch
-            subscriptionCard.visibility = View.VISIBLE
+            subscriptionNoticeCache[key] = CachedSubscriptionNotice(loaded, System.currentTimeMillis())
+            renderSubscriptionNotice(loaded)
         }
     }
 
     @VisibleForTesting
     internal fun reloadSubscriptionStatusForTesting() = loadSubscriptionStatus()
+
+    private fun subscriptionNoticeKey() = "${account.name}\u0000$accountCreationId"
+
+    private fun hideSubscriptionNotice() {
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
+        findViewById<View>(R.id.subscription_card)?.visibility = View.GONE
+    }
+
+    private fun renderSubscriptionNotice(status: BillingManager.SubscriptionStatus) {
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
+        if (!exactAccountStillCurrent()) {
+            hideSubscriptionNotice()
+            return
+        }
+        val planView = findViewById<TextView>(R.id.subscription_plan)
+        val statusView = findViewById<TextView>(R.id.subscription_status)
+        val trialView = findViewById<TextView>(R.id.subscription_trial)
+        val actionButton = findViewById<com.google.android.material.button.MaterialButton>(R.id.subscription_action)
+        val infoButton = findViewById<View>(R.id.subscription_info)
+        if (subscriptionStatusDefaultColors == null) subscriptionStatusDefaultColors = statusView.textColors
+        when {
+            status.isPastDue -> {
+                infoButton.visibility = View.GONE
+                updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
+            }
+            status.status == "trialing" && status.plan == "trial" -> {
+                if (!renderRunningTrial(status, planView, statusView, trialView, actionButton, infoButton)) {
+                    hideSubscriptionNotice()
+                    return
+                }
+            }
+            status.status == "expired" || status.status == "cancelled" ->
+                renderEndedNotice(status, planView, statusView, trialView, actionButton, infoButton)
+            else -> {
+                hideSubscriptionNotice()
+                return
+            }
+        }
+        findViewById<View>(R.id.subscription_card).visibility = View.VISIBLE
+    }
+
+    /** False when nothing is shown: the trial has ended by this device's clock, or no count is known. */
+    private fun renderRunningTrial(
+        status: BillingManager.SubscriptionStatus,
+        planView: TextView,
+        statusView: TextView,
+        trialView: TextView,
+        actionButton: View,
+        infoButton: View,
+    ): Boolean {
+        val now = System.currentTimeMillis()
+        val endsAt = status.renewalDate?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+        if (endsAt != null && endsAt <= now) {
+            // Hide the countdown and ask once; never conclude "ended" from this device's clock.
+            claimTrialEndRefresh(status.renewalDate)
+            return false
+        }
+        val days = endsAt?.let { ((it - now + DAY_MS - 1) / DAY_MS).toInt() } ?: status.trialDaysRemaining
+        if (days == null || days < 1) return false
+        planView.text = resources.getQuantityString(R.plurals.subscription_notice_trial_days_left, days, days)
+        if (endsAt != null) {
+            statusView.visibility = View.VISIBLE
+            statusView.text = getString(R.string.subscription_notice_trial_ends, mediumDate(endsAt))
+        } else {
+            statusView.visibility = View.GONE
+        }
+        subscriptionStatusDefaultColors?.let { statusView.setTextColor(it) }
+        trialView.visibility = View.GONE
+        actionButton.visibility = View.GONE
+        infoButton.visibility = View.VISIBLE
+        infoButton.setOnClickListener { openSubscriptionPage() }
+        if (endsAt != null && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+            val nextBoundary = endsAt - (days - 1) * DAY_MS
+            subscriptionNoticeTimer.postDelayed(subscriptionNoticeTick, (nextBoundary - now).coerceAtLeast(250L))
+        }
+        return true
+    }
+
+    private fun renderEndedNotice(
+        status: BillingManager.SubscriptionStatus,
+        planView: TextView,
+        statusView: TextView,
+        trialView: TextView,
+        actionButton: com.google.android.material.button.MaterialButton,
+        infoButton: View,
+    ) {
+        planView.setText(if (status.plan == "trial") R.string.subscription_notice_trial_ended
+            else R.string.subscription_notice_access_ended)
+        val endedAt = status.renewalDate?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+        if (endedAt != null) {
+            statusView.visibility = View.VISIBLE
+            statusView.text = getString(R.string.subscription_notice_ended_on, mediumDate(endedAt))
+        } else {
+            statusView.visibility = View.GONE
+        }
+        subscriptionStatusDefaultColors?.let { statusView.setTextColor(it) }
+        trialView.visibility = View.GONE
+        infoButton.visibility = View.GONE
+        actionButton.visibility = View.VISIBLE
+        actionButton.setText(R.string.subscription_notice_view)
+        actionButton.setOnClickListener { openSubscriptionPage() }
+    }
+
+    private fun mediumDate(millis: Long): String =
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(millis))
+
+    private fun openSubscriptionPage() {
+        if (!exactAccountStillCurrent()) return
+        subscriptionPageOpened = true
+        launchExactAccountRoute(Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL)))
+    }
+
+    /** At most one forced read per account generation and trial end instant. */
+    private fun claimTrialEndRefresh(trialEndsAt: String?) {
+        if (trialEndsAt == null || !subscriptionNoticeEndClaims.add("${subscriptionNoticeKey()}\u0000$trialEndsAt")) return
+        subscriptionNoticeCache.remove(subscriptionNoticeKey())
+        loadSubscriptionStatus(forced = true)
+    }
+
+    private fun onSubscriptionNoticeTick() {
+        val cached = subscriptionNoticeCache[subscriptionNoticeKey()]
+        if (cached == null) hideSubscriptionNotice() else renderSubscriptionNotice(cached.status)
+    }
+
+    private fun refreshSubscriptionNoticeOnResume() {
+        if (subscriptionPageOpened) {
+            subscriptionPageOpened = false
+            loadSubscriptionStatus(forced = true)
+        } else {
+            loadSubscriptionStatus()
+        }
+    }
 
     private fun updateSubscriptionUi(
         status: BillingManager.SubscriptionStatus,
@@ -1979,6 +2136,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         @JvmField internal var permissionRemediationLauncherOverride: ((Intent) -> Unit)? = null
         @VisibleForTesting
         @JvmField internal var masterSyncEnableOverride: (() -> Unit)? = null
+
+        /** In-memory only, keyed by account name and creation ID; nothing is persisted. */
+        private const val SUBSCRIPTION_NOTICE_TTL_MS = 15 * 60 * 1000L
+        private const val DAY_MS = 24 * 60 * 60 * 1000L
+        private class CachedSubscriptionNotice(val status: BillingManager.SubscriptionStatus, val fetchedAt: Long)
+        private val subscriptionNoticeCache = java.util.concurrent.ConcurrentHashMap<String, CachedSubscriptionNotice>()
+        private val subscriptionNoticeEndClaims: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
 
 }
