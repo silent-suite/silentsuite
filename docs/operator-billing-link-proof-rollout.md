@@ -26,3 +26,7 @@ Prepare cleanup under issue `silent-suite/silentsuite#621`, but do not merge or 
 If any condition is missing, preserve the rollback-compatible code and verifier. Do not reinterpret elapsed time, disabled flags, or a healthy current image as implicit cleanup approval.
 
 Missing machine-key configuration intentionally makes proof consumption fail closed; it does not prevent a self-hosted Etebase server from starting.
+
+## Status proofs
+
+The server also issues a second, purpose-specific proof for the Android subscription notice: `POST /api/v1/billing/status-proof/` (Etebase-authenticated, returns `{statusProof}`) and `POST /api/v1/billing/status-proof/consume/` (same machine key, accepts only `{statusProof}`, returns `{username}`). Status proofs use the `billing_status` purpose: they are rate limited, replaced and consumed separately from login proofs, can never be exchanged at the login consume route, and are removed by the same cleanup command. A server that predates these routes answers 404, and Billing and Android then show no notice; neither falls back to a login proof or a bearer token. No migration or new configuration is needed.
