@@ -533,6 +533,8 @@ class AccountDashboardRuntimeTest {
     private val syncRequests = mutableListOf<Pair<Account, String?>>()
     private val DAY_MS = 24 * 60 * 60 * 1000L
     private val HOUR_MS = 60 * 60 * 1000L
+    /** The plan's 15-minute maximum age of a visible subscription-notice snapshot (v3 A4). */
+    private val NOTICE_MAX_AGE_MS = 15 * 60 * 1000L
 
     @Test
     fun truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation() {
@@ -989,7 +991,7 @@ class AccountDashboardRuntimeTest {
     fun ordinaryCreateAndResumeReadsCoalesceIntoOneHeldRequest() {
         val end = System.currentTimeMillis() + 3 * DAY_MS - HOUR_MS
         val seam = NoticeSeam { trialNotice(end, 3) }.apply { hold(1) }
-        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(mutableListOf()) }) { _, _, scenario ->
+        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(mutableListOf()) }) { _, account, scenario ->
             seam.awaitCall(1)
             repeat(2) {
                 scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
@@ -999,6 +1001,27 @@ class AccountDashboardRuntimeTest {
             waitForNoticeText(scenario, "Free trial: 3 days left")
             android.os.SystemClock.sleep(500)
             assertEquals("ordinary create/resume reads were not coalesced", 1, seam.calls.get())
+
+            // Review finding 2 (visible maximum age): the snapshot is 3 s short of its 15-minute
+            // limit when the screen resumes, and the next day boundary is days away. While the screen
+            // stays resumed, a scheduled check must hide it at its maximum age and recheck once.
+            seam.hold(2)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+            ageCachedNotice(account, NOTICE_MAX_AGE_MS - 3_000)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            scenario.onActivity { activity ->
+                assertTrue("a snapshot within its maximum age was not shown on resume",
+                    noticeTexts(activity)?.contains("Free trial: 3 days left") == true)
+            }
+            assertEquals("a snapshot within its maximum age was reread on resume", 1, seam.calls.get())
+            waitUntil("visible snapshot rechecked at its maximum age", 10_000) { seam.calls.get() >= 2 }
+            scenario.onActivity { activity ->
+                assertEquals("a snapshot past its maximum age stayed visible while rechecking", null, noticeTexts(activity))
+            }
+            seam.release(2)
+            waitForNoticeText(scenario, "Free trial: 3 days left")
+            android.os.SystemClock.sleep(1_000)
+            assertEquals("the maximum-age recheck ran more than once", 2, seam.calls.get())
         }
     }
 
@@ -1044,6 +1067,44 @@ class AccountDashboardRuntimeTest {
                 var hidden = false
                 scenario.onActivity { hidden = noticeTexts(it) == null }
                 hidden
+            }
+        }
+
+        // Review finding 2 (held resume): an ordinary read is held while the screen is paused past
+        // the trial end. On resume the old countdown must hide even though that read is still in
+        // flight, and the end may cause exactly one owned forced refresh.
+        val heldEnd = java.util.concurrent.atomic.AtomicLong(0)
+        val held = NoticeSeam { call ->
+            when (call) {
+                1 -> {
+                    heldEnd.compareAndSet(0, System.currentTimeMillis() + 6_000)
+                    trialNotice(heldEnd.get(), 1)
+                }
+                2 -> trialNotice(heldEnd.get(), 1)
+                else -> io.silentsuite.sync.billing.BillingManager.SubscriptionStatus.unreachable()
+            }
+        }.apply { hold(2) }
+        withDashboardAccount(beforeLaunch = { _, _ -> held.install(mutableListOf()) }) { _, account, scenario ->
+            waitForNoticeText(scenario, "Free trial: 1 day left")
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+            ageCachedNotice(account, NOTICE_MAX_AGE_MS + 60_000)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            held.awaitCall(2)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+            val untilPastEnd = heldEnd.get() + 750 - System.currentTimeMillis()
+            if (untilPastEnd > 0) android.os.SystemClock.sleep(untilPastEnd)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            waitUntil("old countdown hidden on resume after the trial end while a read is held", 2_000) {
+                var hidden = false
+                scenario.onActivity { hidden = noticeTexts(it) == null }
+                hidden
+            }
+            held.release(2)
+            waitUntil("one owned refresh after the trial end", 5_000) { held.calls.get() >= 3 }
+            android.os.SystemClock.sleep(1_500)
+            assertEquals("the trial end caused more or fewer than one forced refresh", 3, held.calls.get())
+            scenario.onActivity { activity ->
+                assertEquals("an ended countdown came back", null, noticeTexts(activity))
             }
         }
     }
@@ -1135,6 +1196,22 @@ class AccountDashboardRuntimeTest {
                 answer(call)
             }
         }
+    }
+
+    /**
+     * Test-only view of AccountActivity's in-memory notice snapshot: replaces this generation's entry
+     * with the same status fetched [ageMillis] ago. Observation/reflection only; no production hook.
+     */
+    private fun ageCachedNotice(account: Account, ageMillis: Long) {
+        val field = AccountActivity::class.java.getDeclaredField("subscriptionNoticeCache").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val cache = field.get(null) as MutableMap<String, Any>
+        val key = "${account.name}\u0000$generation"
+        val entry = checkNotNull(cache[key]) { "no cached subscription notice to age" }
+        val status = entry.javaClass.getDeclaredField("status").apply { isAccessible = true }.get(entry)
+        val constructor = entry.javaClass.declaredConstructors.single { it.parameterTypes.size == 2 }
+            .apply { isAccessible = true }
+        cache[key] = constructor.newInstance(status, System.currentTimeMillis() - ageMillis)
     }
 
     private fun trialNotice(endMillis: Long, days: Int) =

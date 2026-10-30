@@ -89,13 +89,25 @@ class EtebaseTokenCaptureFeasibilityTest {
         }
     }
 
+    /** Parks one stage's request until the test releases it, so a test can act while it is in flight. */
+    private class Gate {
+        val arrived = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+
+        fun pass() {
+            arrived.countDown()
+            release.await(20, java.util.concurrent.TimeUnit.SECONDS)
+        }
+    }
+
     /** Answers the dashboard request the way the project's server can (`authentication.py` dashboard_url). */
-    private class DashboardStandIn(private val answer: Answer) : Interceptor {
+    private class DashboardStandIn(private val answer: Answer, private val gate: Gate? = null) : Interceptor {
         enum class Answer { NOT_SUPPORTED, URL, REDIRECT }
 
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
             if (request.url.encodedPath != DASHBOARD_PATH) return chain.proceed(request)
+            gate?.pass()
             val builder = Response.Builder().request(request).protocol(Protocol.HTTP_1_1)
             return when (answer) {
                 Answer.NOT_SUPPORTED -> builder.code(400).message("Error").body(msgpack(linkedMapOf(
@@ -111,13 +123,14 @@ class EtebaseTokenCaptureFeasibilityTest {
     }
 
     /** The server's status-proof route, as the new server answers it; absent on an old server. */
-    private class StatusProofStandIn : Interceptor {
+    private class StatusProofStandIn(private val gate: Gate? = null) : Interceptor {
         val authorizations: MutableList<String?> = CopyOnWriteArrayList()
 
         override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
             if (request.method != "POST" || request.url.encodedPath != AccountNoticeClient.STATUS_PROOF_PATH) return chain.proceed(request)
             authorizations += request.header("Authorization")
+            gate?.pass()
             return Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
                 .body(JSONObject().put("statusProof", SYNTHETIC_PROOF).toString().toResponseBody("application/json".toMediaType()))
                 .build()
@@ -147,18 +160,24 @@ class EtebaseTokenCaptureFeasibilityTest {
         }
     }
 
-    private class Fixture(answer: DashboardStandIn.Answer, statusRoute: Boolean = false, summary: String = TRIAL_SUMMARY) {
+    private class Fixture(
+        answer: DashboardStandIn.Answer,
+        statusRoute: Boolean = false,
+        summary: String = TRIAL_SUMMARY,
+        dashboardGate: Gate? = null,
+        proofGate: Gate? = null,
+    ) {
         val guard = ObservedGuard(AccountNoticeClient.OriginGuard(AccountNoticeClient.ETEBASE_HOST))
         val capture = CountingCapture(AccountNoticeClient.TokenCapture())
         val server = FakeEtebaseServer(APPROVED_ROOT)
-        val statusProofs = StatusProofStandIn()
+        val statusProofs = StatusProofStandIn(proofGate)
         val client: OkHttpClient = OkHttpClient.Builder()
             .followRedirects(false)
             .followSslRedirects(false)
             .retryOnConnectionFailure(false)
             .addInterceptor(guard)
             .addInterceptor(capture)
-            .addInterceptor(DashboardStandIn(answer))
+            .addInterceptor(DashboardStandIn(answer, dashboardGate))
             .apply { if (statusRoute) addInterceptor(statusProofs) }
             .addInterceptor(server)
             .build()
@@ -278,6 +297,67 @@ class EtebaseTokenCaptureFeasibilityTest {
             "not json",
         ).forEachIndexed { index, malformed ->
             assertNull("CLIENT: the parser accepted malformed case $index", AccountNoticeClient.parseSummary(malformed))
+        }
+
+        // Review finding 3: the account generation disappears while the dashboard request (stage 1)
+        // or the status-proof request (stage 2) is in flight. The production sequence must not go on
+        // to the next credential/request boundary: no status proof after a held dashboard request, and
+        // no Billing exchange after either.
+        for (stage in listOf("dashboard", "proof")) {
+            val gate = Gate()
+            val held = Fixture(DashboardStandIn.Answer.URL, statusRoute = true,
+                dashboardGate = gate.takeIf { stage == "dashboard" }, proofGate = gate.takeIf { stage == "proof" })
+            val (heldSession, _) = restoredAccount(held)
+            val current = java.util.concurrent.atomic.AtomicBoolean(true)
+            val returned = java.util.concurrent.atomic.AtomicReference<Any?>()
+            val worker = Thread {
+                returned.set(runCatching { requestNoticeWithWitness(held, heldSession) { current.get() } }.getOrElse { it })
+            }.apply { start() }
+            assertTrue("HARNESS: the held $stage request never arrived",
+                gate.arrived.await(20, java.util.concurrent.TimeUnit.SECONDS))
+            current.set(false)
+            gate.release.countDown()
+            worker.join(20_000)
+            assertFalse("HARNESS: requestNotice did not return after the held $stage request", worker.isAlive)
+            val outcome = returned.get()
+            assertTrue("HARNESS: requestNotice threw after the held $stage request (${(outcome as? Throwable)?.javaClass?.simpleName})",
+                outcome is Pair<*, *>)
+            if (stage == "dashboard") {
+                assertTrue("CLIENT: a status proof was issued after the generation was lost during the dashboard request",
+                    held.statusProofs.authorizations.isEmpty())
+            }
+            assertTrue("CLIENT: Billing was called after the generation was lost during the $stage request",
+                held.billing.requests.isEmpty())
+            assertFalse("CLIENT: a lost generation still produced an OK outcome ($stage)",
+                (outcome as Pair<*, *>).first == AccountNoticeClient.Outcome.OK)
+            assertNull("CLIENT: a lost generation still produced a notice ($stage)", outcome.second)
+            assertNull("CLIENT: the captured header outlived the call ($stage)", held.capture.captured)
+        }
+    }
+
+    /**
+     * Calls the production [AccountNoticeClient.requestNotice]. When its signature accepts a
+     * generation witness (a trailing `() -> Boolean`), [stillCurrent] is passed; on a signature
+     * without one, the same real sequence runs unaware of the witness, which is exactly the
+     * behaviour review finding 3 reports. Reflection only selects the overload; it adds no path.
+     */
+    private fun requestNoticeWithWitness(fixture: Fixture, session: String, stillCurrent: () -> Boolean): Pair<*, *> {
+        val candidates = AccountNoticeClient::class.java.declaredMethods
+            .filter { it.name == "requestNotice" || it.name.startsWith("requestNotice$") }
+        val withWitness = candidates.firstOrNull { method ->
+            method.parameterTypes.size == 5 && method.parameterTypes.last() == kotlin.jvm.functions.Function0::class.java
+        }
+        val target = withWitness ?: candidates.single { it.parameterTypes.size == 4 }
+        target.isAccessible = true
+        val args: Array<Any> = if (withWitness != null) {
+            arrayOf(session, fixture.client, fixture.capture.capture, fixture.billingClient, stillCurrent)
+        } else {
+            arrayOf(session, fixture.client, fixture.capture.capture, fixture.billingClient)
+        }
+        return try {
+            target.invoke(AccountNoticeClient, *args) as Pair<*, *>
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            throw e.targetException
         }
     }
 
