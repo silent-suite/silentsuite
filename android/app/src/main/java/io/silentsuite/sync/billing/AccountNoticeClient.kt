@@ -54,7 +54,7 @@ object AccountNoticeClient {
     private val JSON = "application/json".toMediaType()
 
     /** Fixed, content-free outcome codes; the only thing ever logged. */
-    enum class Outcome { OK, NOT_HOSTED, NO_SESSION, NO_TOKEN, UNSUPPORTED, UNAVAILABLE, PARSE }
+    enum class Outcome { OK, NOT_HOSTED, NO_SESSION, NO_TOKEN, UNSUPPORTED, UNAVAILABLE, PARSE, STALE }
 
     /** Scheme, exact host, effective port 443 and no user info. */
     internal fun approvedOrigin(url: HttpUrl, host: String): Boolean =
@@ -142,23 +142,34 @@ object AccountNoticeClient {
     /**
      * The informational notice as a display-only [BillingManager.SubscriptionStatus]:
      * [BillingManager.SubscriptionStatus.unreachable] when there is nothing to show, null when it
-     * could not be read.
+     * could not be read or [stillCurrent] stopped holding.
+     *
+     * [stillCurrent] is the caller's witness for the exact account generation (name and creation
+     * ID) this read belongs to. The account's settings are keyed by name only, so it is checked
+     * before and after they are read and at every later credential/request boundary; a lost
+     * generation stops the read there.
      */
-    fun load(context: Context, account: Account): BillingManager.SubscriptionStatus? {
+    fun load(context: Context, account: Account, stillCurrent: () -> Boolean): BillingManager.SubscriptionStatus? {
+        if (!stillCurrent()) return log(Outcome.STALE, null)
         val settings = try {
             AccountSettings(context, account)
         } catch (e: Exception) {
             return log(Outcome.UNAVAILABLE, null)
         }
-        preflight(settings.uri?.toString(), BuildConfig.DEBUG_REMOTE_URL)
+        val uri = settings.uri?.toString()
+        if (!stillCurrent()) return log(Outcome.STALE, null)
+        preflight(uri, BuildConfig.DEBUG_REMOTE_URL)
             ?: return log(Outcome.NOT_HOSTED, BillingManager.SubscriptionStatus.unreachable())
-        val session = settings.etebaseSession ?: return log(Outcome.NO_SESSION, null)
+        val session = settings.etebaseSession
+        if (!stillCurrent()) return log(Outcome.STALE, null)
+        if (session == null) return log(Outcome.NO_SESSION, null)
         val capture = TokenCapture()
         val (outcome, status) = requestNotice(
             session,
             etebaseTransport(HttpClient.sharedClient, capture),
             capture,
             billingTransport(HttpClient.sharedClient),
+            stillCurrent,
         )
         return log(outcome, status)
     }
@@ -172,48 +183,62 @@ object AccountNoticeClient {
      * Restores [session] over [etebase], lets the native client make its dashboard request (its
      * result or error is ignored), then requires the captured header, issues one status proof on the
      * same origin and exchanges it at Billing over [billing]. Never falls back to a login proof or
-     * bearer. The captured header and the proof are dropped before returning.
+     * bearer. [stillCurrent] is checked before the restore and after every stage (restore, dashboard
+     * request, proof issuance, Billing exchange); once it fails, nothing further is sent and the
+     * outcome is [Outcome.STALE]. The captured header and the proof are dropped before returning.
      */
     internal fun requestNotice(
         session: String,
         etebase: OkHttpClient,
         capture: TokenCapture,
         billing: OkHttpClient,
+        stillCurrent: () -> Boolean,
     ): Pair<Outcome, BillingManager.SubscriptionStatus?> {
+        var header: String? = null
+        var proof: String? = null
         try {
+            if (!stillCurrent()) return Outcome.STALE to null
             val account = com.etebase.client.Account.restore(
                 com.etebase.client.Client.create(etebase, ETEBASE_ROOT), session, null)
+            if (!stillCurrent()) return Outcome.STALE to null
             try {
                 account.fetchDashboardUrl()
             } catch (e: Exception) {
                 // Only the request matters; the dashboard answer is not used.
             }
-            val header = capture.captured ?: return Outcome.NO_TOKEN to null
+            if (!stillCurrent()) return Outcome.STALE to null
+            header = capture.captured
             val issue = Request.Builder()
                 .url(ETEBASE_ROOT + STATUS_PROOF_PATH.removePrefix("/"))
-                .header("Authorization", header)
+                .header("Authorization", header ?: return Outcome.NO_TOKEN to null)
                 .post(ByteArray(0).toRequestBody(null))
                 .build()
-            val proof = etebase.newCall(issue).execute().use { response ->
+            header = null
+            capture.clear()
+            proof = etebase.newCall(issue).execute().use { response ->
                 when {
                     response.code == 404 -> return Outcome.UNSUPPORTED to null
                     response.code != 200 -> return Outcome.UNAVAILABLE to null
                     else -> parseStatusProof(response.body?.string()) ?: return Outcome.PARSE to null
                 }
             }
+            if (!stillCurrent()) return Outcome.STALE to null
             val body = JSONObject().put("contractVersion", 1).put("statusProof", proof).toString()
+            proof = null
             val summary = Request.Builder().url(SUMMARY_URL).post(body.toRequestBody(JSON)).build()
-            return billing.newCall(summary).execute().use { response ->
+            val result = billing.newCall(summary).execute().use { response ->
                 when {
                     response.code == 404 || response.code == 503 -> Outcome.UNSUPPORTED to null
                     response.code != 200 -> Outcome.UNAVAILABLE to null
                     else -> parseSummary(response.body?.string())?.let { Outcome.OK to it } ?: (Outcome.PARSE to null)
                 }
             }
+            return if (stillCurrent()) result else Outcome.STALE to null
         } catch (e: Exception) {
             return Outcome.UNAVAILABLE to null
         } finally {
-            // The proof is local to this call and goes out of scope here.
+            header = null
+            proof = null
             capture.clear()
         }
     }

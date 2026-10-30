@@ -193,7 +193,10 @@ class EtebaseTokenCaptureFeasibilityTest {
             .build()
 
         fun requestNotice(session: String) =
-            AccountNoticeClient.requestNotice(session, client, capture.capture, billingClient)
+            AccountNoticeClient.requestNotice(session, client, capture.capture, billingClient) { generationLive.get() }
+
+        /** The positive scenarios' explicit generation witness: this synthetic generation stays current. */
+        val generationLive = java.util.concurrent.atomic.AtomicBoolean(true)
     }
 
     /** Signs a synthetic user up with the real native client, saves the session, and restores it over [fixture]. */

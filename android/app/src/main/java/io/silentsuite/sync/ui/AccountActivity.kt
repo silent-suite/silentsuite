@@ -119,6 +119,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var subscriptionNoticeSeq = 0
     private var subscriptionNoticeJob: Job? = null
     private var subscriptionPageOpened = false
+    /** True from this Activity's onResume to its onPause; the lifecycle still reports STARTED inside onResume. */
+    private var subscriptionNoticeResumed = false
     private var subscriptionStatusDefaultColors: android.content.res.ColorStateList? = null
     private val subscriptionNoticeTimer = android.os.Handler(android.os.Looper.getMainLooper())
     private val subscriptionNoticeTick = Runnable { onSubscriptionNoticeTick() }
@@ -504,6 +506,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     override fun onPause() {
         super.onPause()
+        subscriptionNoticeResumed = false
         subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
         if (syncStatusObserver != null) {
             ContentResolver.removeStatusChangeListener(syncStatusObserver)
@@ -1890,21 +1893,22 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             return
         }
         val key = subscriptionNoticeKey()
-        if (!forced) {
-            if (subscriptionNoticeJob?.isActive == true) return
-            val cached = subscriptionNoticeCache[key]
-            if (cached != null && System.currentTimeMillis() - cached.fetchedAt < SUBSCRIPTION_NOTICE_TTL_MS) {
-                renderSubscriptionNotice(cached.status)
-                return
-            }
-        }
+        // Recompute what is shown before joining or starting a read: a snapshot past its maximum age
+        // is hidden, and a running trial whose end has passed is hidden and claims its one forced read.
+        val seqBefore = subscriptionNoticeSeq
+        val cached = subscriptionNoticeCache[key]
+        val fresh = cached != null && isFreshSubscriptionNotice(cached)
+        if (cached != null && fresh) renderSubscriptionNotice(cached) else hideSubscriptionNotice()
+        if (subscriptionNoticeSeq != seqBefore) return  // the render claimed the trial end's forced read
+        if (!forced && (subscriptionNoticeJob?.isActive == true || fresh)) return
         val seq = ++subscriptionNoticeSeq
         subscriptionNoticeJob = lifecycleScope.launch {
+            val stillCurrent = { exactAccountStillCurrent() }
             val loaded = try {
                 withContext(Dispatchers.IO) {
-                    if (!exactAccountStillCurrent()) null
+                    if (!stillCurrent()) null
                     else billingStatusOverride?.invoke(this@AccountActivity, account, accountCreationId)
-                        ?: AccountNoticeClient.load(this@AccountActivity, account)
+                        ?: AccountNoticeClient.load(this@AccountActivity, account, stillCurrent)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -1917,10 +1921,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 hideSubscriptionNotice()
                 return@launch
             }
-            subscriptionNoticeCache[key] = CachedSubscriptionNotice(loaded, System.currentTimeMillis())
-            renderSubscriptionNotice(loaded)
+            val entry = CachedSubscriptionNotice(loaded, System.currentTimeMillis())
+            subscriptionNoticeCache[key] = entry
+            renderSubscriptionNotice(entry)
         }
     }
+
+    private fun isFreshSubscriptionNotice(entry: CachedSubscriptionNotice) =
+        System.currentTimeMillis() - entry.fetchedAt < SUBSCRIPTION_NOTICE_TTL_MS
 
     @VisibleForTesting
     internal fun reloadSubscriptionStatusForTesting() = loadSubscriptionStatus()
@@ -1932,12 +1940,18 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         findViewById<View>(R.id.subscription_card)?.visibility = View.GONE
     }
 
-    private fun renderSubscriptionNotice(status: BillingManager.SubscriptionStatus) {
+    /**
+     * Shows [entry] if it is still within its maximum age, and arms the next check at the earliest of
+     * its maximum age and, for a running trial, the next day boundary or the trial end.
+     */
+    private fun renderSubscriptionNotice(entry: CachedSubscriptionNotice) {
         subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
-        if (!exactAccountStillCurrent()) {
+        if (!exactAccountStillCurrent() || !isFreshSubscriptionNotice(entry)) {
             hideSubscriptionNotice()
             return
         }
+        val status = entry.status
+        var deadline: Long? = null
         val planView = findViewById<TextView>(R.id.subscription_plan)
         val statusView = findViewById<TextView>(R.id.subscription_status)
         val trialView = findViewById<TextView>(R.id.subscription_trial)
@@ -1950,7 +1964,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
             }
             status.status == "trialing" && status.plan == "trial" -> {
-                if (!renderRunningTrial(status, planView, statusView, trialView, actionButton, infoButton)) {
+                deadline = renderRunningTrial(status, planView, statusView, trialView, actionButton, infoButton)
+                if (deadline == null) {
                     hideSubscriptionNotice()
                     return
                 }
@@ -1963,9 +1978,26 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             }
         }
         findViewById<View>(R.id.subscription_card).visibility = View.VISIBLE
+        armSubscriptionNoticeTimer(entry, deadline)
     }
 
-    /** False when nothing is shown: the trial has ended by this device's clock, or no count is known. */
+    /**
+     * Only while resumed (tracked by [subscriptionNoticeResumed], because the lifecycle still reports
+     * STARTED inside onResume). A timer armed for an older render is always replaced or removed.
+     */
+    private fun armSubscriptionNoticeTimer(entry: CachedSubscriptionNotice, deadline: Long?) {
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
+        if (!subscriptionNoticeResumed) return
+        val maxAge = entry.fetchedAt + SUBSCRIPTION_NOTICE_TTL_MS
+        val next = if (deadline != null) minOf(deadline, maxAge) else maxAge
+        subscriptionNoticeTimer.postDelayed(subscriptionNoticeTick, (next - System.currentTimeMillis()).coerceAtLeast(250L))
+    }
+
+    /**
+     * The next time this countdown changes (day boundary or trial end; [Long.MAX_VALUE] when no end
+     * is known), or null when nothing is shown: the trial has ended by this device's clock, or no
+     * count is known.
+     */
     private fun renderRunningTrial(
         status: BillingManager.SubscriptionStatus,
         planView: TextView,
@@ -1973,16 +2005,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         trialView: TextView,
         actionButton: View,
         infoButton: View,
-    ): Boolean {
+    ): Long? {
         val now = System.currentTimeMillis()
         val endsAt = status.renewalDate?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
         if (endsAt != null && endsAt <= now) {
             // Hide the countdown and ask once; never conclude "ended" from this device's clock.
             claimTrialEndRefresh(status.renewalDate)
-            return false
+            return null
         }
         val days = endsAt?.let { ((it - now + DAY_MS - 1) / DAY_MS).toInt() } ?: status.trialDaysRemaining
-        if (days == null || days < 1) return false
+        if (days == null || days < 1) return null
         planView.text = resources.getQuantityString(R.plurals.subscription_notice_trial_days_left, days, days)
         if (endsAt != null) {
             statusView.visibility = View.VISIBLE
@@ -1995,11 +2027,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         actionButton.visibility = View.GONE
         infoButton.visibility = View.VISIBLE
         infoButton.setOnClickListener { openSubscriptionPage() }
-        if (endsAt != null && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
-            val nextBoundary = endsAt - (days - 1) * DAY_MS
-            subscriptionNoticeTimer.postDelayed(subscriptionNoticeTick, (nextBoundary - now).coerceAtLeast(250L))
-        }
-        return true
+        return if (endsAt != null) endsAt - (days - 1) * DAY_MS else Long.MAX_VALUE
     }
 
     private fun renderEndedNotice(
@@ -2043,12 +2071,17 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         loadSubscriptionStatus(forced = true)
     }
 
+    /**
+     * A scheduled check: re-renders the current snapshot, or, once it is past its maximum age, hides
+     * it and starts one ordinary read (joining any read already in flight).
+     */
     private fun onSubscriptionNoticeTick() {
-        val cached = subscriptionNoticeCache[subscriptionNoticeKey()]
-        if (cached == null) hideSubscriptionNotice() else renderSubscriptionNotice(cached.status)
+        if (!subscriptionNoticeResumed) return
+        loadSubscriptionStatus()
     }
 
     private fun refreshSubscriptionNoticeOnResume() {
+        subscriptionNoticeResumed = true
         if (subscriptionPageOpened) {
             subscriptionPageOpened = false
             loadSubscriptionStatus(forced = true)
@@ -2140,7 +2173,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         /** In-memory only, keyed by account name and creation ID; nothing is persisted. */
         private const val SUBSCRIPTION_NOTICE_TTL_MS = 15 * 60 * 1000L
         private const val DAY_MS = 24 * 60 * 60 * 1000L
-        private class CachedSubscriptionNotice(val status: BillingManager.SubscriptionStatus, val fetchedAt: Long)
+        internal class CachedSubscriptionNotice(val status: BillingManager.SubscriptionStatus, val fetchedAt: Long)
         private val subscriptionNoticeCache = java.util.concurrent.ConcurrentHashMap<String, CachedSubscriptionNotice>()
         private val subscriptionNoticeEndClaims: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
