@@ -121,7 +121,20 @@ function tupleForIdentity(previous: User | null, nextId: string | undefined) {
 }
 
 /** The informational notice and its expiry claim belong to one account generation. */
-const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null, subscriptionResponse: null }
+const clearedAccountNotice = { accountNotice: null, accountNoticeCheckedAt: null, trialExpiryRefreshClaim: null }
+
+/**
+ * One expiry refresh for an account generation and trial-end instant. `readSequence` is the
+ * subscription read the claim started; `response` is the newest owned GET /subscription body
+ * from that read or a later one, so every consumer, however late, can adopt the same result.
+ */
+export interface TrialExpiryRefreshClaim {
+  epoch: number
+  userId: string
+  trialEndsAt: string
+  readSequence: number
+  response: unknown
+}
 
 /** A visible countdown older than this is re-read when the tab becomes visible again. */
 const ACCOUNT_NOTICE_MAX_AGE_MS = 15 * 60 * 1000
@@ -142,12 +155,7 @@ interface AuthState {
   /** When the current account's notice was last read or a refresh was claimed. */
   accountNoticeCheckedAt: number | null
   /** One expiry refresh per account generation and trial-end instant, shared by every countdown. */
-  trialExpiryRefreshClaim: { epoch: number; userId: string; trialEndsAt: string } | null
-  /**
-   * The latest owned GET /subscription body, in memory only, so a mounted subscription page can
-   * adopt the one shared expiry read instead of issuing its own. Cleared with the notice.
-   */
-  subscriptionResponse: { userId: string; epoch: number; body: unknown } | null
+  trialExpiryRefreshClaim: TrialExpiryRefreshClaim | null
   isDegraded: () => boolean
   isReadOnly: () => boolean
   canWrite: () => boolean
@@ -1179,6 +1187,69 @@ async function establishSignupBillingSession(
   }
 }
 
+type SubscriptionReadOutcome = 'published' | 'same-account-replaced' | 'not-published'
+
+/**
+ * GET /subscription for the store. Only the latest-started read, for the same live user object
+ * and account boundary, publishes. It reports a discard caused solely by a fresh user object
+ * for the same account and boundary, so the expiry claim can make its single continuation.
+ */
+async function readSubscription(
+  set: (partial: Partial<AuthState>) => void,
+  get: () => AuthState,
+): Promise<SubscriptionReadOutcome> {
+  const sequence = ++subscriptionRequestSequence
+  const originalUser = get().user
+  const epoch = getAccountEpoch()
+  const owned = () => sequence === subscriptionRequestSequence && get().user === originalUser && isCurrentAccountEpoch(epoch)
+  const discarded = (): SubscriptionReadOutcome => {
+    const user = get().user
+    return sequence === subscriptionRequestSequence && isCurrentAccountEpoch(epoch)
+      && !!originalUser && !!user && user !== originalUser && user.id === originalUser.id
+      ? 'same-account-replaced'
+      : 'not-published'
+  }
+  const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
+  if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) {
+    set({ subscriptionStatus: 'active', hostedAccess: null, ...clearedAccountNotice })
+    return 'not-published'
+  }
+
+  try {
+    const res = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
+    if (!owned()) return discarded()
+    if (res.ok) {
+      const data = await res.json()
+      if (!owned()) return discarded()
+      // A read started at or after the expiry claim's own read carries the claim's result.
+      const claim = get().trialExpiryRefreshClaim
+      const settlesClaim = !!claim && !!originalUser && claim.userId === originalUser.id
+        && claim.epoch === epoch && sequence >= claim.readSequence
+      set({
+        subscriptionStatus: data.status,
+        hostedAccess: parseHostedAccess(data.hostedAccess),
+        accountNotice: parseAccountNotice(data.accountNotice),
+        accountNoticeCheckedAt: Date.now(),
+        ...(settlesClaim ? { trialExpiryRefreshClaim: { ...claim, response: data } } : {}),
+      })
+      return 'published'
+    }
+    // An owned failure hides the notice only; status and hostedAccess behave as before.
+    set({ accountNotice: null })
+  } catch (err) {
+    // Network error — only enter degraded mode if there's no existing good status
+    logger.warn('[auth-store] fetchSubscription failed (network):', err)
+    if (!owned()) return discarded()
+    const current = get().subscriptionStatus
+    if (!current) {
+      set({ subscriptionStatus: 'billing_unavailable', hostedAccess: null, ...clearedAccountNotice })
+    } else {
+      set({ accountNotice: null })
+    }
+  }
+  return 'not-published'
+}
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isAuthenticated: false,
@@ -2002,42 +2073,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   fetchSubscription: async () => {
-    // Only the latest-started read, for the same live user and account boundary, publishes.
-    const sequence = ++subscriptionRequestSequence
-    const originalUser = get().user
-    const epoch = getAccountEpoch()
-    const owned = () => sequence === subscriptionRequestSequence && get().user === originalUser && isCurrentAccountEpoch(epoch)
-    const storedServerUrl = typeof window !== 'undefined' ? localStorage.getItem('silentsuite-server-url') : null
-    if (isSelfHosted || isCustomServer(storedServerUrl ?? undefined)) { set({ subscriptionStatus: 'active', hostedAccess: null, ...clearedAccountNotice }); return }
-
-    try {
-      const res = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
-      if (!owned()) return
-      if (res.ok) {
-        const data = await res.json()
-        if (!owned()) return
-        set({
-          subscriptionStatus: data.status,
-          hostedAccess: parseHostedAccess(data.hostedAccess),
-          accountNotice: parseAccountNotice(data.accountNotice),
-          accountNoticeCheckedAt: Date.now(),
-          subscriptionResponse: originalUser ? { userId: originalUser.id, epoch, body: data } : null,
-        })
-      } else {
-        // An owned failure hides the notice only; status and hostedAccess behave as before.
-        set({ accountNotice: null, subscriptionResponse: null })
-      }
-    } catch (err) {
-      // Network error — only enter degraded mode if there's no existing good status
-      logger.warn('[auth-store] fetchSubscription failed (network):', err)
-      if (!owned()) return
-      const current = get().subscriptionStatus
-      if (!current) {
-        set({ subscriptionStatus: 'billing_unavailable', hostedAccess: null, ...clearedAccountNotice })
-      } else {
-        set({ accountNotice: null, subscriptionResponse: null })
-      }
-    }
+    await readSubscription(set, get)
   },
 
   claimTrialExpiryRefresh: (trialEndsAt: string) => {
@@ -2046,8 +2082,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     if (!user || !isCurrentAccountEpoch(epoch)) return false
     const claimed = get().trialExpiryRefreshClaim
     if (claimed && claimed.epoch === epoch && claimed.userId === user.id && claimed.trialEndsAt === trialEndsAt) return false
-    set({ trialExpiryRefreshClaim: { epoch, userId: user.id, trialEndsAt }, accountNoticeCheckedAt: Date.now() })
-    void get().fetchSubscription()
+    const claim: TrialExpiryRefreshClaim = { epoch, userId: user.id, trialEndsAt, readSequence: subscriptionRequestSequence + 1, response: null }
+    set({ trialExpiryRefreshClaim: claim, accountNoticeCheckedAt: Date.now() })
+    void (async () => {
+      if (await readSubscription(set, get) !== 'same-account-replaced') return
+      // A fresh user object for the same account and boundary discarded the read: exactly one
+      // freshly owned continuation, only if no read has started since. Sign-out, another account,
+      // a reset (which clears the claim) and a newer read (which settles the claim itself) get none.
+      if (get().trialExpiryRefreshClaim !== claim || subscriptionRequestSequence !== claim.readSequence) return
+      await readSubscription(set, get)
+    })()
     return true
   },
 

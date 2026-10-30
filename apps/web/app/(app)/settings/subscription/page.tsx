@@ -9,7 +9,7 @@ import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
 import { fetchAuthenticatedAccountOffer } from '@/app/lib/billing-v2'
 import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
-import { formatDaysLeft, useTrialCountdown } from '@/app/hooks/use-trial-countdown'
+import { formatDaysLeft, isHostedBillingAccount, useEligibleAccountNotice, useTrialCountdown } from '@/app/hooks/use-trial-countdown'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import AddCardBanner from '@/app/components/add-card-banner'
 import { ModalDialog } from '@/app/components/modal-dialog'
@@ -274,7 +274,7 @@ export default function SubscriptionPage() {
   ))
   const [data, setData] = useState<SubscriptionData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [offerPrice, setOfferPrice] = useState<string | null>(null)
+  const [offerQuote, setOfferQuote] = useState<{ price: string; owner: OperationOwner; sequence: number } | null>(null)
   const [showCancelDialog, setShowCancelDialog] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [showPlanSelection, setShowPlanSelection] = useState(false)
@@ -351,40 +351,38 @@ export default function SubscriptionPage() {
     void fetchSubscription()
   }, [fetchSubscription, stripePaymentReturn])
 
-  const notice = data ? parseAccountNotice(data.accountNotice) : null
+  // Admins, self-host builds and custom-server accounts get no notice here either, exactly as in
+  // navigation; the raw status badge and the date rows remain.
+  const notice = useEligibleAccountNotice(data ? parseAccountNotice(data.accountNotice) : null)
   const countdown = useTrialCountdown(notice)
+  const expiredTrialEndsAt = notice?.kind === 'trial_days_left' && !countdown ? notice.trialEndsAt : null
 
-  // Once this page's own countdown passes its end instant, the store makes the one shared expiry
-  // read. The page adopts the next owned store response for its own account and boundary, rather
-  // than issuing a second read, and invalidates any older in-flight page read.
-  const sharedResponse = useAuthStore((state) => state.subscriptionResponse)
-  const awaitingExpiryRefresh = notice?.kind === 'trial_days_left' && !countdown
-  const expiryBaselineRef = useRef<{ response: typeof sharedResponse } | null>(null)
+  // Once this page's countdown has passed its end instant, its data is the pre-expiry view. The
+  // store's expiry claim for this account, boundary and instant carries the one shared result,
+  // whenever it completed; the page adopts it instead of reading again, and an older in-flight
+  // page read can no longer overwrite it. Capabilities come only from that server body.
+  const expiryClaim = useAuthStore((state) => state.trialExpiryRefreshClaim)
   useEffect(() => {
-    if (!awaitingExpiryRefresh) {
-      expiryBaselineRef.current = null
-      return
-    }
-    if (!expiryBaselineRef.current) {
-      expiryBaselineRef.current = { response: sharedResponse }
-      return
-    }
-    if (!sharedResponse || sharedResponse === expiryBaselineRef.current.response) return
-    if (sharedResponse.userId !== principal.id || sharedResponse.epoch !== principal.epoch || !captureOwner()) return
-    if (!isSubscriptionData(sharedResponse.body)) return
+    if (!expiredTrialEndsAt || !expiryClaim || expiryClaim.response === null) return
+    if (expiryClaim.trialEndsAt !== expiredTrialEndsAt || expiryClaim.userId !== principal.id || expiryClaim.epoch !== principal.epoch) return
+    if (!captureOwner() || !isSubscriptionData(expiryClaim.response) || expiryClaim.response === data) return
     requestSequenceRef.current += 1
-    setData(sharedResponse.body)
-  }, [awaitingExpiryRefresh, sharedResponse, principal, captureOwner])
-  const purchaseAction = data ? getCardActions(data, paymentConfirmationPending, paymentReturnFailure).isPurchase : false
+    setData(expiryClaim.response)
+  }, [expiredTrialEndsAt, expiryClaim, data, principal, captureOwner])
+  // The price and the reason to subscribe are hosted-only additions; self-host and custom-server
+  // accounts keep their existing actions but get neither, and no offer read.
+  const purchaseAction = data && isHostedBillingAccount()
+    ? getCardActions(data, paymentConfirmationPending, paymentReturnFailure).isPurchase
+    : false
 
   // The signed account offer supplies the price, read only while a purchase action is shown.
-  // A failed or refused read, a newer read, or another account leaves no price behind.
+  // A quote belongs to the live owner and read that produced it: a newer read, a fresh user
+  // object or another account hides it at once, and a failed or refused read leaves none.
+  const liveUser = useAuthStore((state) => state.user)
   useEffect(() => {
     const sequence = ++offerSequenceRef.current
-    if (!purchaseAction) {
-      setOfferPrice(null)
-      return
-    }
+    setOfferQuote(null)
+    if (!purchaseAction) return
     const owner = captureOwner()
     if (!owner) return
     const live = () => sequence === offerSequenceRef.current && ownerCurrent(owner)
@@ -392,10 +390,13 @@ export default function SubscriptionPage() {
       fetcher: (input, init) => fetch(input, { ...init, credentials: 'include' }),
       billingApiUrl: BILLING_API_URL,
     }).then(
-      (account) => { if (live()) setOfferPrice(`${formatAnnualOfferAmount(account.offer.offer)} per year`) },
-      () => { if (live()) setOfferPrice(null) },
+      (account) => { if (live()) setOfferQuote({ price: `${formatAnnualOfferAmount(account.offer.offer)} per year`, owner, sequence }) },
+      () => { if (live()) setOfferQuote(null) },
     )
-  }, [purchaseAction, data, captureOwner, ownerCurrent])
+  }, [purchaseAction, data, liveUser, captureOwner, ownerCurrent])
+  const offerPrice = offerQuote && offerQuote.sequence === offerSequenceRef.current && ownerCurrent(offerQuote.owner)
+    ? offerQuote.price
+    : null
 
   useEffect(() => {
     const { hasStripeParameters, paymentIntent, redirectStatus } = stripePaymentReturn
@@ -602,7 +603,7 @@ export default function SubscriptionPage() {
   }
 
   const capabilities = getCapabilities(data)
-  const { showAddCard, showPaidRecovery, isPurchase } = getCardActions(data, paymentConfirmationPending, paymentReturnFailure)
+  const { showAddCard, showPaidRecovery } = getCardActions(data, paymentConfirmationPending, paymentReturnFailure)
   const dateRow = getDateRow(data)
   const showBillingRow = !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
   const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
@@ -726,7 +727,7 @@ export default function SubscriptionPage() {
           )}
         </div>
 
-        {isPurchase && (
+        {purchaseAction && (
           <div className="space-y-1 border-t border-[rgb(var(--border))] pt-4">
             <p className="text-sm text-[rgb(var(--foreground))]">{SUBSCRIBE_REASON}</p>
             {offerPrice && <p className="text-sm font-medium text-[rgb(var(--foreground))]">{offerPrice}</p>}

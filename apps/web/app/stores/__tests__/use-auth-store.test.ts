@@ -2855,7 +2855,7 @@ describe('accountNotice (store)', () => {
 
   beforeEach(() => {
     resetStore()
-    seedStore({ accountNotice: null } as WithHostedAccess)
+    seedStore({ accountNotice: null, trialExpiryRefreshClaim: null } as WithHostedAccess)
     vi.mocked(fetch).mockReset()
     localStorage.clear()
   })
@@ -2889,6 +2889,37 @@ describe('accountNotice (store)', () => {
     await useAuthStore.getState().fetchSubscription()
     expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
     expect(readNotice()).toBeNull()
+  })
+
+  it.each([
+    ['non-leap February 29', '2026-02-29T12:00:00Z'],
+    ['February 30', '2026-02-30T12:00:00Z'],
+    ['April 31', '2026-04-31T12:00:00.000Z'],
+    ['month 13', '2026-13-01T12:00:00Z'],
+    ['hour 24', '2026-11-02T24:00:00Z'],
+  ])('rejects an impossible calendar date (%s) in every notice date field', async (_label, date) => {
+    seedStore({ user: userU, isAuthenticated: true })
+    for (const notice of [
+      { kind: 'trial_days_left', trialEndsAt: date, daysRemaining: 3 },
+      { kind: 'trial_ended', endedAt: date },
+      { kind: 'access_ended', endedAt: date },
+    ]) {
+      seedStore({ accountNotice: daysLeft } as WithHostedAccess)
+      vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', accountNotice: notice }))
+      await useAuthStore.getState().fetchSubscription()
+      expect(readNotice()).toBeNull()
+    }
+  })
+
+  it.each([
+    ['leap day', '2028-02-29T12:00:00Z'],
+    ['one fractional digit', '2026-11-02T12:00:00.5Z'],
+    ['three fractional digits', '2026-11-02T12:00:00.123Z'],
+  ])('accepts a real UTC date with %s', async (_label, date) => {
+    seedStore({ user: userU, isAuthenticated: true })
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', accountNotice: { kind: 'trial_ended', endedAt: date } }))
+    await useAuthStore.getState().fetchSubscription()
+    expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: date })
   })
 
   it('[RED] accepts the ended notices, including access_ended without a date', async () => {
@@ -2968,6 +2999,31 @@ describe('accountNotice (store)', () => {
     await useAuthStore.getState().fetchSubscription()
     expect(readNotice()).toBeNull()
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('makes no expiry continuation when a newer read started after the discarded one', async () => {
+    seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    const claimRead = deferredValue<Response>()
+    const newerRead = deferredValue<Response>()
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => claimRead.promise)
+      .mockImplementationOnce(() => newerRead.promise)
+      .mockResolvedValue(ok({ status: 'trialing', accountNotice: daysLeft }))
+    expect(claim(trialEndsAt)).toBe(true)
+    // A fresh user object for the same account discards the claim's read...
+    useAuthStore.getState().setUser({ ...userU })
+    claimRead.resolve(ok({ status: 'trialing', accountNotice: daysLeft }))
+    // ...and a newer read starts before the claim's continuation would resume.
+    queueMicrotask(() => { void useAuthStore.getState().fetchSubscription() })
+    await vi.waitFor(() => expect(subscriptionCalls()).toBeGreaterThanOrEqual(2))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(subscriptionCalls()).toBe(2)
+
+    newerRead.resolve(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }))
+    await vi.waitFor(() => expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt }))
+    const settled = (useAuthStore.getState() as unknown as { trialExpiryRefreshClaim: { response: unknown } | null }).trialExpiryRefreshClaim
+    expect(settled?.response).toMatchObject({ hostedAccess: 'trial_ended' })
+    expect(subscriptionCalls()).toBe(2)
   })
 
   it('[RED] one expiry claim per account generation and trial end; a replacement account claims afresh', async () => {

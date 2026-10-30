@@ -73,7 +73,7 @@ describe('seven-day trial status near Settings', () => {
     state.selfHosted = false
     localStorage.clear()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ status: 'trialing', accountNotice: null }) })))
-    useAuthStore.setState({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null, trialExpiryRefreshClaim: null, subscriptionResponse: null } as unknown as Partial<ReturnType<typeof useAuthStore.getState>>)
+    useAuthStore.setState({ user: null, isAuthenticated: false, subscriptionStatus: null, hostedAccess: null, trialExpiryRefreshClaim: null } as unknown as Partial<ReturnType<typeof useAuthStore.getState>>)
   })
 
   afterEach(() => {
@@ -280,6 +280,207 @@ describe('seven-day trial status near Settings', () => {
       expect(screen.queryByText('Your trial has ended.')).not.toBeInTheDocument()
       expect(useAuthStore.getState().hostedAccess).toBeNull()
       expect((useAuthStore.getState() as unknown as { accountNotice?: unknown }).accountNotice).toBeNull()
+    })
+
+    const endedCard = () => {
+      const section = card()
+      expect(within(section).getByText('Your trial has ended.')).toBeInTheDocument()
+      expect(within(section).getByRole('button', { name: 'Subscribe' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /choose payment/i })).not.toBeInTheDocument()
+      expect(document.body).not.toHaveTextContent(countdownText)
+    }
+    const pastEnd = () => act(async () => { vi.advanceTimersByTime(2 * HOUR + 1000) })
+
+    it('adopts a shared expiry result that completed before an older page read arrived', async () => {
+      let releasePage!: (value: unknown) => void
+      const pageRead = new Promise(resolve => { releasePage = resolve })
+      routeBilling([() => pageRead, () => json(ended)])
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      await pastEnd()
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+
+      releasePage(json(running))
+      await flush()
+      await flush()
+      endedCard()
+      expect(subscriptionReads()).toBe(2)
+    })
+
+    it('adopts a shared expiry result for a page mounted after it completed', async () => {
+      routeBilling([() => json(ended), () => json(running)])
+      seed(running.accountNotice)
+      const view = render(<Sidebar />)
+      await pastEnd()
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(1)
+
+      view.rerender(<><Sidebar /><SubscriptionPage /></>)
+      await flush()
+      await flush()
+      endedCard()
+      expect(subscriptionReads()).toBe(2)
+    })
+
+    it('continues the expiry read once when the same account gets a fresh user object mid-read', async () => {
+      let releaseClaim!: (value: unknown) => void
+      const claimRead = new Promise(resolve => { releaseClaim = resolve })
+      routeBilling([() => json(running), () => claimRead, () => json(ended)])
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      await pastEnd()
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+
+      act(() => { useAuthStore.getState().setUser({ ...userU }) })
+      releaseClaim(json(ended))
+      await flush()
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(3)
+      expect(useAuthStore.getState().hostedAccess).toBe('trial_ended')
+      endedCard()
+
+      await act(async () => { vi.advanceTimersByTime(DAY) })
+      await flush()
+      expect(subscriptionReads()).toBe(3)
+    })
+
+    it('makes no expiry continuation after sign-out', async () => {
+      let releaseClaim!: (value: unknown) => void
+      const claimRead = new Promise(resolve => { releaseClaim = resolve })
+      routeBilling([() => json(running), () => claimRead, () => json(ended)])
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      await pastEnd()
+      await flush()
+      act(() => { useAuthStore.getState().setUser(null) })
+      releaseClaim(json(ended))
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+      expect(useAuthStore.getState().hostedAccess).toBeNull()
+    })
+
+    it('settles the expiry result from a newer owned read without continuing the superseded one', async () => {
+      let releaseClaim!: (value: unknown) => void
+      const claimRead = new Promise(resolve => { releaseClaim = resolve })
+      routeBilling([() => json(running), () => claimRead, () => json(ended)])
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      await pastEnd()
+      await flush()
+      await act(async () => { await useAuthStore.getState().fetchSubscription() })
+      expect(subscriptionReads()).toBe(3)
+      releaseClaim(json(running))
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(3)
+      endedCard()
+    })
+
+    it('makes exactly one expiry read when a stale tab becomes visible after the trial ended', async () => {
+      routeBilling([() => json(running), () => json(ended)])
+      seed(running.accountNotice, userU, NOW.getTime() - 16 * 60 * 1000)
+      renderWithPage()
+      await flush()
+      expect(subscriptionReads()).toBe(1)
+
+      await act(async () => {
+        vi.setSystemTime(new Date(NOW.getTime() + 2 * HOUR + 1000))
+        document.dispatchEvent(new Event('visibilitychange'))
+      })
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+      endedCard()
+    })
+
+    it('drops the page countdown when the same account becomes admin, keeping the status and date', async () => {
+      routeBilling([() => json(running)])
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      expect(within(card()).getByText('Free trial: 1 day left')).toBeInTheDocument()
+
+      act(() => { useAuthStore.getState().setUser({ ...userU, isAdmin: true }) })
+      expect(document.body).not.toHaveTextContent(countdownText)
+      expect(within(card()).getByText('Trialing')).toBeInTheDocument()
+      expect(within(card()).getByText('Free trial ends')).toBeInTheDocument()
+    })
+
+    it('gives a custom-server account no page notice, price read or expiry read, even when Billing answers', async () => {
+      localStorage.setItem('silentsuite-server-url', 'https://dav.example.test')
+      const reads = routeBilling([() => json(running), () => json(ended)])
+      seed(null)
+      render(<><Sidebar /><SubscriptionPage /></>)
+      await flush()
+      await flush()
+      const section = card()
+      expect(document.body).not.toHaveTextContent(countdownText)
+      expect(within(section).queryByText(/free trial:/i)).not.toBeInTheDocument()
+      expect(within(section).getByText('Trialing')).toBeInTheDocument()
+      expect(within(section).getByText('Free trial ends')).toBeInTheDocument()
+      expect(screen.queryByText(/per year/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/keep your calendar, contacts and tasks syncing/i)).not.toBeInTheDocument()
+      expect(reads.offerReads()).toBe(0)
+
+      await pastEnd()
+      await flush()
+      expect(subscriptionReads()).toBe(1)
+    })
+
+    it('shows no page countdown on a self-hosted build', async () => {
+      state.selfHosted = true
+      routeBilling([() => json(running)])
+      seed(running.accountNotice)
+      render(<SubscriptionPage />)
+      await flush()
+      expect(document.body).not.toHaveTextContent(countdownText)
+      expect(within(card()).getByText('Trialing')).toBeInTheDocument()
+    })
+
+    it('hides an already shown price once another account replaces the owner', async () => {
+      routeBilling([() => json(ended)], [() => json(offerBody('early_annual'))])
+      seed(null)
+      render(<SubscriptionPage />)
+      await flush()
+      await flush()
+      expect(within(card()).getByText('€36.00 per year')).toBeInTheDocument()
+
+      act(() => {
+        bumpAccountEpoch()
+        useAuthStore.getState().setUser(userV)
+      })
+      expect(screen.queryByText('€36.00 per year')).not.toBeInTheDocument()
+    })
+
+    it('hides the old price while a same-account refresh reads the offer again', async () => {
+      let releaseNewer!: (value: unknown) => void
+      const newerOffer = new Promise(resolve => { releaseNewer = resolve })
+      const reads = routeBilling([() => json(ended)], [() => json(offerBody('early_annual')), () => newerOffer])
+      seed(null)
+      render(<SubscriptionPage />)
+      await flush()
+      await flush()
+      expect(within(card()).getByText('€36.00 per year')).toBeInTheDocument()
+
+      act(() => { useAuthStore.getState().setUser({ ...userU }) })
+      await flush()
+      expect(reads.offerReads()).toBe(2)
+      expect(screen.queryByText('€36.00 per year')).not.toBeInTheDocument()
+
+      releaseNewer(json(offerBody('standard_annual')))
+      await flush()
+      await flush()
+      expect(within(card()).getByText('€48.00 per year')).toBeInTheDocument()
     })
 
     it('keeps the newer offer price when an older offer read for the same account finishes last', async () => {

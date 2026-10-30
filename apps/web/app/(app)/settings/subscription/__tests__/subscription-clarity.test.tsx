@@ -125,6 +125,26 @@ describe('subscription card clarity', () => {
     expect(document.body).not.toHaveTextContent(numericalCountdown)
   })
 
+  it.each([
+    ['2026-02-29T12:00:00Z'],
+    ['2026-02-30T12:00:00Z'],
+    ['2026-04-31T12:00:00.000Z'],
+    ['2026-11-02T24:00:00Z'],
+  ])('shows no date row for the impossible billingDate %s', async (at) => {
+    route({ billingDate: { kind: 'renews', at } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(screen.queryByText('Renews on')).not.toBeInTheDocument()
+  })
+
+  it('shows a real leap-day billingDate', async () => {
+    route({ billingDate: { kind: 'renews', at: '2028-02-29T12:00:00.25Z' } })
+    render(<SubscriptionPage />)
+    await screen.findByText('Plan')
+    expect(within(card()).getByText('Renews on')).toBeInTheDocument()
+    expect(within(card()).getByText('2028-02-29')).toBeInTheDocument()
+  })
+
   it('keeps the access date and Reactivate for a cancelled subscription with time left', async () => {
     const until = future(20)
     route({

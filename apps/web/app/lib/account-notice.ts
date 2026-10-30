@@ -21,11 +21,20 @@ function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
   return own.length === keys.length && keys.every(key => Object.hasOwn(value, key))
 }
 
-/** Billing serializes with toISOString(): UTC, `Z` suffix, optional milliseconds. */
+/**
+ * Billing serializes with toISOString(): UTC, `Z` suffix, optional milliseconds. The parsed
+ * instant must round-trip to the same calendar fields, so rolled-over dates (Feb 30, hour 24)
+ * are rejected instead of silently moving to another day.
+ */
 function isIsoDate(value: unknown): value is string {
-  return typeof value === 'string'
-    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)
-    && Number.isFinite(Date.parse(value))
+  if (typeof value !== 'string') return false
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?Z$/.exec(value)
+  if (!match) return false
+  const date = new Date(value)
+  if (!Number.isFinite(date.getTime())) return false
+  const [, year, month, day, hour, minute, second] = match.map(Number)
+  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day
+    && date.getUTCHours() === hour && date.getUTCMinutes() === minute && date.getUTCSeconds() === second
 }
 
 /** Closed parser: anything absent, unknown or malformed is null and shows nothing. */
