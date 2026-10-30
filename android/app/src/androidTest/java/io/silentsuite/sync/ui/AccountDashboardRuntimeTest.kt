@@ -531,6 +531,8 @@ class AccountDashboardRuntimeTest {
     private val generation = "dashboard-generation"
     private val launchedCollectionIntents = mutableListOf<Intent>()
     private val syncRequests = mutableListOf<Pair<Account, String?>>()
+    private val DAY_MS = 24 * 60 * 60 * 1000L
+    private val HOUR_MS = 60 * 60 * 1000L
 
     @Test
     fun truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation() {
@@ -907,6 +909,287 @@ class AccountDashboardRuntimeTest {
                 AccountActivity.exportWriterOverride = null
             }
         }
+    }
+
+    // ---- Subscription notice (plan v2 §9.4 A-2, amended by v3 A4/A6). Display values reach the
+    // dashboard only through the existing billingStatusOverride seam; nothing here touches sync.
+
+    @Test
+    fun sevenDayTrialNoticeShowsDaysEndDateAndAccessibleInfoRoute() {
+        val end = System.currentTimeMillis() + 3 * DAY_MS - HOUR_MS
+        val seam = NoticeSeam { trialNotice(end, 3) }
+        val routes = mutableListOf<Intent>()
+        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(routes) }) { _, _, scenario ->
+            waitForNoticeText(scenario, "Free trial: 3 days left")
+            scenario.onActivity { activity ->
+                val texts = noticeTexts(activity)!!
+                assertTrue("trial end date missing", "Ends ${mediumDate(end)}" in texts)
+                val info = infoButton(activity)
+                assertTrue("info button is not shown for the running seven-day trial", info?.isShown == true)
+                assertEquals("Subscription details", info!!.contentDescription?.toString())
+                val min = (48 * activity.resources.displayMetrics.density).toInt()
+                assertTrue("info button is smaller than a 48dp target", info.width >= min && info.height >= min)
+                info.performClick()
+            }
+            waitUntil("subscription route from the info button") { routes.isNotEmpty() }
+            assertSubscriptionRoute(routes.single())
+        }
+    }
+
+    /** Control: green on baseline, and must stay green — only the running seven-day trial counts down. */
+    @Test
+    fun cardBonusHealthyAndUnknownStatesShowNoSubscriptionNotice() {
+        val future = System.currentTimeMillis() + 20 * DAY_MS
+        listOf(
+            io.silentsuite.sync.billing.BillingManager.SubscriptionStatus("trialing", "personal", "annual", iso(future), 20),
+            io.silentsuite.sync.billing.BillingManager.SubscriptionStatus("active", "personal", "annual", iso(future), null),
+            io.silentsuite.sync.billing.BillingManager.SubscriptionStatus("active", "founding", "annual", iso(future), null),
+            io.silentsuite.sync.billing.BillingManager.SubscriptionStatus.unreachable(),
+        ).forEachIndexed { index, status ->
+            val seam = NoticeSeam { status }
+            withDashboardAccount(beforeLaunch = { _, _ -> seam.install(mutableListOf()) }) { _, _, scenario ->
+                seam.awaitCall(1)
+                android.os.SystemClock.sleep(500)
+                scenario.onActivity { activity ->
+                    assertEquals("case $index rendered a subscription notice", null, noticeTexts(activity))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun endedTrialAndEndedSubscriptionOfferExactlyOneViewSubscriptionAction() {
+        val ended = System.currentTimeMillis() - 2 * DAY_MS
+        listOf(
+            io.silentsuite.sync.billing.BillingManager.SubscriptionStatus("expired", "trial", null, iso(ended), null) to "Your trial has ended",
+            io.silentsuite.sync.billing.BillingManager.SubscriptionStatus("expired", null, null, iso(ended), null) to "Your subscription has ended",
+        ).forEach { (status, title) ->
+            val seam = NoticeSeam { status }
+            val routes = mutableListOf<Intent>()
+            withDashboardAccount(beforeLaunch = { _, _ -> seam.install(routes) }) { _, _, scenario ->
+                waitForNoticeText(scenario, title)
+                scenario.onActivity { activity ->
+                    val texts = noticeTexts(activity)!!
+                    assertTrue("ended date missing for '$title'", "Ended ${mediumDate(ended)}" in texts)
+                    assertFalse("Android must not claim read-only or sync effects",
+                        texts.any { it.contains("read-only", true) || it.contains("read only", true) || it.contains("sync", true) })
+                    assertEquals("ended notices must not show the info button", false, infoButton(activity)?.isShown ?: false)
+                    val actions = noticeActions(activity)
+                    assertEquals("ended notice must offer exactly one action", 1, actions.size)
+                    assertEquals("View subscription", (actions.single() as TextView).text.toString())
+                    actions.single().performClick()
+                }
+                waitUntil("subscription route from View subscription") { routes.isNotEmpty() }
+                assertSubscriptionRoute(routes.single())
+            }
+        }
+    }
+
+    @Test
+    fun ordinaryCreateAndResumeReadsCoalesceIntoOneHeldRequest() {
+        val end = System.currentTimeMillis() + 3 * DAY_MS - HOUR_MS
+        val seam = NoticeSeam { trialNotice(end, 3) }.apply { hold(1) }
+        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(mutableListOf()) }) { _, _, scenario ->
+            seam.awaitCall(1)
+            repeat(2) {
+                scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+                scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            }
+            seam.release(1)
+            waitForNoticeText(scenario, "Free trial: 3 days left")
+            android.os.SystemClock.sleep(500)
+            assertEquals("ordinary create/resume reads were not coalesced", 1, seam.calls.get())
+        }
+    }
+
+    @Test
+    fun forcedPaymentReturnRefreshSupersedesLateOlderSuccessAndFailure() {
+        for (lateOldFails in listOf(false, true)) {
+            val now = System.currentTimeMillis()
+            val seam = NoticeSeam { call ->
+                when (call) {
+                    1 -> trialNotice(now + 5 * DAY_MS - HOUR_MS, 5)
+                    2 -> if (lateOldFails) throw java.io.IOException("synthetic late failure") else trialNotice(now + 7 * DAY_MS - HOUR_MS, 7)
+                    else -> trialNotice(now + 2 * DAY_MS - HOUR_MS, 2)
+                }
+            }.apply { hold(2) }
+            val routes = mutableListOf<Intent>()
+            withDashboardAccount(beforeLaunch = { _, _ -> seam.install(routes) }) { _, _, scenario ->
+                waitForNoticeText(scenario, "Free trial: 5 days left")
+                returnFromSubscriptionPage(scenario)
+                seam.awaitCall(2)
+                returnFromSubscriptionPage(scenario)
+                seam.awaitCall(3)
+                waitForNoticeText(scenario, "Free trial: 2 days left")
+                seam.release(2)
+                android.os.SystemClock.sleep(1_000)
+                scenario.onActivity { activity ->
+                    val texts = noticeTexts(activity)
+                    assertTrue("late older ${if (lateOldFails) "failure" else "success"} replaced the newer result",
+                        texts != null && "Free trial: 2 days left" in texts)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun ownedRefreshFailureHidesTheTrialNotice() {
+        val end = System.currentTimeMillis() + 3 * DAY_MS - HOUR_MS
+        val seam = NoticeSeam { call -> if (call == 1) trialNotice(end, 3) else throw java.io.IOException("synthetic owned failure") }
+        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(mutableListOf()) }) { _, _, scenario ->
+            waitForNoticeText(scenario, "Free trial: 3 days left")
+            returnFromSubscriptionPage(scenario)
+            seam.awaitCall(2)
+            waitUntil("owned failure hides the notice") {
+                var hidden = false
+                scenario.onActivity { hidden = noticeTexts(it) == null }
+                hidden
+            }
+        }
+    }
+
+    @Test
+    fun trialEndTimerHidesTheNoticeAndForcesExactlyOneRefresh() {
+        val end = System.currentTimeMillis() + 2_500
+        val seam = NoticeSeam { call ->
+            if (call == 1) trialNotice(end, 1) else io.silentsuite.sync.billing.BillingManager.SubscriptionStatus.unreachable()
+        }
+        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(mutableListOf()) }) { _, _, scenario ->
+            waitForNoticeText(scenario, "Free trial: 1 day left")
+            waitUntil("countdown hidden at the trial end", 10_000) {
+                var hidden = false
+                scenario.onActivity { hidden = noticeTexts(it) == null }
+                hidden && System.currentTimeMillis() >= end
+            }
+            waitUntil("one forced refresh at the trial end", 5_000) { seam.calls.get() >= 2 }
+            android.os.SystemClock.sleep(1_500)
+            assertEquals("trial end forced more or fewer than one refresh", 2, seam.calls.get())
+        }
+    }
+
+    /** Control: green on baseline, and must stay green — a replaced generation never renders or rereads. */
+    @Test
+    fun replacedGenerationNeverRendersOrRereadsTheOldNotice() {
+        val end = System.currentTimeMillis() + 3 * DAY_MS - HOUR_MS
+        val seam = NoticeSeam { trialNotice(end, 3) }.apply { hold(1) }
+        val routes = mutableListOf<Intent>()
+        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(routes) }) { context, account, scenario ->
+            seam.awaitCall(1)
+            val manager = AccountManager.get(context)
+            removeAccountAndWait(manager, account)
+            waitForRetainedGenerationInvalidation(scenario)
+            assertTrue(manager.addAccountExplicitly(account, null, null))
+            assertTrue(AccountSettings.writeVerified(manager, account,
+                AccountSettings.KEY_CREATION_ID, "subscription-notice-replacement"))
+            seam.release(1)
+            android.os.SystemClock.sleep(1_000)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            android.os.SystemClock.sleep(500)
+            scenario.onActivity { activity ->
+                assertEquals("stale generation rendered a subscription notice", null, noticeTexts(activity))
+            }
+            assertEquals("stale generation reread billing state", 1, seam.calls.get())
+            assertTrue("stale generation launched a route", routes.isEmpty())
+        }
+    }
+
+    /** Control: green on baseline, and must stay green — an ended notice never changes sync eligibility. */
+    @Test
+    fun renderedEndedNoticeLeavesSyncAllowedAndBillingCacheEmpty() {
+        val ended = System.currentTimeMillis() - 2 * DAY_MS
+        val seam = NoticeSeam { io.silentsuite.sync.billing.BillingManager.SubscriptionStatus("expired", "trial", null, iso(ended), null) }
+        withDashboardAccount(beforeLaunch = { _, _ -> seam.install(mutableListOf()) }) { context, account, scenario ->
+            waitUntil("ended state rendered") {
+                var shown = false
+                scenario.onActivity { shown = noticeTexts(it) != null }
+                shown
+            }
+            assertTrue("an informational notice blocked sync",
+                io.silentsuite.sync.billing.BillingManager.getInstance().isSyncAllowed(context, account))
+            assertFalse("an informational notice reached the billing cache",
+                context.getSharedPreferences("billing_cache_${account.name}", 0).contains("status"))
+        }
+    }
+
+    /** Scripted billingStatusOverride: call n answers [answer] (n starts at 1); a held call waits for release. */
+    private class NoticeSeam(private val answer: (Int) -> io.silentsuite.sync.billing.BillingManager.SubscriptionStatus) {
+        val calls = AtomicInteger(0)
+        private val holds = java.util.concurrent.ConcurrentHashMap<Int, CountDownLatch>()
+        private val arrivals = java.util.concurrent.ConcurrentHashMap<Int, CountDownLatch>()
+
+        fun hold(call: Int) { holds[call] = CountDownLatch(1) }
+        fun release(call: Int) { holds[call]?.countDown() }
+        private fun arrival(call: Int) = arrivals.getOrPut(call) { CountDownLatch(1) }
+
+        fun awaitCall(call: Int) {
+            assertTrue("billing seam call $call never arrived", arrival(call).await(10, TimeUnit.SECONDS))
+        }
+
+        fun install(routes: MutableList<Intent>) {
+            AccountActivity.accountRouteLauncherOverride = { routes += Intent(it) }
+            AccountActivity.billingStatusOverride = { _, _, _ ->
+                val call = calls.incrementAndGet()
+                arrival(call).countDown()
+                holds[call]?.await(20, TimeUnit.SECONDS)
+                answer(call)
+            }
+        }
+    }
+
+    private fun trialNotice(endMillis: Long, days: Int) =
+        io.silentsuite.sync.billing.BillingManager.SubscriptionStatus("trialing", "trial", null, iso(endMillis), days)
+
+    private fun iso(millis: Long) = java.time.Instant.ofEpochMilli(millis).toString()
+
+    private fun mediumDate(millis: Long): String =
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(millis))
+
+    private fun infoButton(activity: AccountActivity): View? {
+        val id = activity.resources.getIdentifier("subscription_info", "id", activity.packageName)
+        return if (id == 0) null else activity.findViewById(id)
+    }
+
+    private fun shownDescendants(view: View): List<View> =
+        if (!view.isShown) emptyList()
+        else listOf(view) + ((view as? android.view.ViewGroup)?.let { group ->
+            (0 until group.childCount).flatMap { shownDescendants(group.getChildAt(it)) }
+        } ?: emptyList())
+
+    /** The visible texts of the subscription card, or null while it is not shown. */
+    private fun noticeTexts(activity: AccountActivity): List<String>? {
+        val card = activity.findViewById<View>(R.id.subscription_card)
+        if (!card.isShown) return null
+        return shownDescendants(card).filterIsInstance<TextView>().map { it.text.toString() }.filter { it.isNotEmpty() }
+    }
+
+    private fun noticeActions(activity: AccountActivity): List<View> {
+        val card = activity.findViewById<View>(R.id.subscription_card)
+        return shownDescendants(card).filter { it !== card && it.isClickable }
+    }
+
+    private fun waitForNoticeText(scenario: ActivityScenario<AccountActivity>, text: String) {
+        waitUntil("subscription notice '$text'") {
+            var found = false
+            scenario.onActivity { found = noticeTexts(it)?.contains(text) == true }
+            found
+        }
+    }
+
+    /** Opens the subscription page from the notice, then returns to the dashboard (forced refresh). */
+    private fun returnFromSubscriptionPage(scenario: ActivityScenario<AccountActivity>) {
+        scenario.onActivity { activity ->
+            val info = infoButton(activity)
+            assertTrue("info button is not available to open the subscription page", info?.isShown == true)
+            info!!.performClick()
+        }
+        scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+        scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+    }
+
+    private fun assertSubscriptionRoute(intent: Intent) {
+        assertEquals(Intent.ACTION_VIEW, intent.action)
+        assertEquals("https://app.silentsuite.io/settings/subscription", intent.dataString)
     }
 
     private fun withDashboardAccount(
