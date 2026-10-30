@@ -3001,6 +3001,24 @@ describe('accountNotice (store)', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
+  it('never settles an account expiry claim from a billing retry that identifies another account', async () => {
+    seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    const claimRead = deferredValue<Response>()
+    const endedBody = { status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const path = String(url)
+      if (path.endsWith('/auth/refresh')) return ok({ id: userV.id, email: userV.email, planId: userV.planId, isAdmin: false, rememberDevice: true })
+      if (path.endsWith('/subscription')) return subscriptionCalls() === 1 ? claimRead.promise : ok(endedBody)
+      return new Response(null, { status: 204 })
+    })
+    expect(claim(trialEndsAt)).toBe(true)
+    await useAuthStore.getState().retryBillingConnection()
+    claimRead.resolve(ok({ status: 'trialing', accountNotice: daysLeft }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const current = (useAuthStore.getState() as unknown as { trialExpiryRefreshClaim: { userId: string; response: unknown } | null }).trialExpiryRefreshClaim
+    expect(current === null || (current.userId === userU.id && current.response === null)).toBe(true)
+  })
+
   it('makes no expiry continuation when a newer read started after the discarded one', async () => {
     seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
     const claimRead = deferredValue<Response>()

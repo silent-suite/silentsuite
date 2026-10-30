@@ -203,12 +203,17 @@ describe('seven-day trial status near Settings', () => {
     const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body })
 
     /** Billing GET /subscription answers in order; offer reads use `offers`. */
-    function routeBilling(subscriptions: Array<() => unknown>, offers: Array<() => unknown> = [() => json(offerBody('early_annual'))]) {
+    function routeBilling(
+      subscriptions: Array<() => unknown>,
+      offers: Array<() => unknown> = [() => json(offerBody('early_annual'))],
+      refresh: () => unknown = () => ({ ok: false, status: 404, json: async () => ({}) }),
+    ) {
       let subscriptionIndex = 0
       let offerIndex = 0
       vi.mocked(fetch).mockImplementation((async (url: string) => {
         if (url === 'https://billing.test/subscription') return subscriptions[Math.min(subscriptionIndex++, subscriptions.length - 1)]()
         if (url === 'https://billing.test/subscription/offers/v2?preview=1') return offers[Math.min(offerIndex++, offers.length - 1)]()
+        if (url === 'https://billing.test/auth/refresh') return refresh()
         return { ok: false, status: 404, json: async () => ({}) }
       }) as unknown as typeof fetch)
       return { offerReads: () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === 'https://billing.test/subscription/offers/v2?preview=1').length }
@@ -346,6 +351,37 @@ describe('seven-day trial status near Settings', () => {
       expect(useAuthStore.getState().hostedAccess).toBe('trial_ended')
       endedCard()
 
+      await act(async () => { vi.advanceTimersByTime(DAY) })
+      await flush()
+      expect(subscriptionReads()).toBe(3)
+    })
+
+    it('updates the page from a billing retry whose newer read supersedes the pending expiry read', async () => {
+      let releaseClaim!: (value: unknown) => void
+      const claimRead = new Promise(resolve => { releaseClaim = resolve })
+      routeBilling(
+        [() => json(running), () => claimRead, () => json(ended)],
+        undefined,
+        () => json({ id: userU.id, email: userU.email, planId: userU.planId, isAdmin: false, rememberDevice: true }),
+      )
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      await pastEnd()
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+
+      let retried: boolean | undefined
+      await act(async () => { retried = await useAuthStore.getState().retryBillingConnection() })
+      expect(retried).toBe(true)
+      expect(subscriptionReads()).toBe(3)
+      releaseClaim(json(running))
+      await flush()
+      await flush()
+
+      endedCard()
+      expect(within(card()).getByText('Ended on')).toBeInTheDocument()
+      expect(subscriptionReads()).toBe(3)
       await act(async () => { vi.advanceTimersByTime(DAY) })
       await flush()
       expect(subscriptionReads()).toBe(3)

@@ -1187,6 +1187,24 @@ async function establishSignupBillingSession(
   }
 }
 
+/**
+ * Settlement for an owned, latest-started GET /subscription publication. Both sequenced
+ * publishers (readSubscription and retryBillingConnection) pass the account, boundary and read
+ * sequence they verified; only a matching claim whose own read started at or before this one
+ * takes this server body. Merge the result into the same `set` as the tuple.
+ */
+function settleExpiryClaim(
+  claim: TrialExpiryRefreshClaim | null,
+  userId: string | undefined,
+  epoch: number,
+  sequence: number,
+  body: unknown,
+): { trialExpiryRefreshClaim: TrialExpiryRefreshClaim } | Record<string, never> {
+  return claim && userId && claim.userId === userId && claim.epoch === epoch && sequence >= claim.readSequence
+    ? { trialExpiryRefreshClaim: { ...claim, response: body } }
+    : {}
+}
+
 type SubscriptionReadOutcome = 'published' | 'same-account-replaced' | 'not-published'
 
 /**
@@ -1222,15 +1240,12 @@ async function readSubscription(
       const data = await res.json()
       if (!owned()) return discarded()
       // A read started at or after the expiry claim's own read carries the claim's result.
-      const claim = get().trialExpiryRefreshClaim
-      const settlesClaim = !!claim && !!originalUser && claim.userId === originalUser.id
-        && claim.epoch === epoch && sequence >= claim.readSequence
       set({
         subscriptionStatus: data.status,
         hostedAccess: parseHostedAccess(data.hostedAccess),
         accountNotice: parseAccountNotice(data.accountNotice),
         accountNoticeCheckedAt: Date.now(),
-        ...(settlesClaim ? { trialExpiryRefreshClaim: { ...claim, response: data } } : {}),
+        ...settleExpiryClaim(get().trialExpiryRefreshClaim, originalUser?.id, epoch, sequence, data),
       })
       return 'published'
     }
@@ -2170,6 +2185,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         hostedAccess: parseHostedAccess(subData.hostedAccess),
         accountNotice: parseAccountNotice(subData.accountNotice),
         accountNoticeCheckedAt: Date.now(),
+        // After every ownership, reset and latest-read check above: this retry's own verified
+        // account, current boundary and read sequence. Another account never matches the claim.
+        ...settleExpiryClaim(get().trialExpiryRefreshClaim, refreshData.id, owner.epoch, sequence, subData),
       })
       return true
     } catch (err) {
