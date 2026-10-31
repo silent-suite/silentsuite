@@ -461,7 +461,10 @@ object BirthdayCalendar {
                             't' -> b.append('\t')
                             'u' -> {
                                 if (i + 4 > s.length) throw Invalid()
-                                val code = s.substring(i, i + 4).toIntOrNull(16) ?: throw Invalid()
+                                val hex = s.substring(i, i + 4)
+                                // Exactly four ASCII hex digits: toIntOrNull alone also accepts a sign.
+                                if (!hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) throw Invalid()
+                                val code = hex.toInt(16)
                                 b.append(code.toChar())
                                 i += 4
                             }
