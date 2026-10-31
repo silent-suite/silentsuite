@@ -212,6 +212,40 @@ class BirthdayReconciliationRuntimeTest {
         assertTrue("nothing is reported written", result.written.isEmpty())
     }
 
+    /**
+     * Added after the first reconcile pass (an update regression, not part of the original tracer):
+     * a generated event that already has the contact's stable UID but stale content, seeded directly
+     * through the SDK, is rewritten in place to the current shared-v1 fields: the same storage item,
+     * no delete and recreate, no second copy, in one transaction fenced on the calendar root.
+     */
+    @Test fun aStaleGeneratedEventIsUpdatedInPlaceToTheContactsCurrentBirthday() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val stale = uploadItem(calendar, uid, BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Byron", 1, 1)))
+        val expected = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10))
+        assertFalse("the seeded event is stale", expected == BirthdayCalendar.eventFields(
+            String(freshItemManager(calendar.uid).fetch(stale.uid).content, Charsets.UTF_8)))
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+
+        val result = BirthdayReconciler.reconcile(server, username)
+
+        val events = liveItems(calendar.uid)
+        assertEquals("no second copy is made", 1, events.size)
+        assertEquals("the same storage item is kept, not deleted and recreated", stale.uid, events.single().uid)
+        assertEquals("FEATURE_UPDATE: the event now has the contact's current shared-v1 fields", expected,
+            BirthdayCalendar.eventFields(String(events.single().content, Charsets.UTF_8)))
+        assertEquals("FEATURE_UPDATE: in one transaction whose only dependency is the calendar root",
+            listOf(listOf(calendar.uid)), fake.uploadDeps.drop(since))
+        assertEquals("FEATURE_UPDATE: into the calendar only", listOf("POST collection/${calendar.uid}/item/transaction/"),
+            uploadLines(requestsBefore))
+        assertEquals(BirthdayReconciler.RunStatus.DONE, result.status)
+        assertEquals(listOf(calendar.uid), result.written)
+        assertEquals("the contact itself is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+    }
+
     // ---- fixture ----
 
     private fun uploadCollection(type: String, name: String, content: String): Collection {
