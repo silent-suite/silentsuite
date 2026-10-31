@@ -406,6 +406,60 @@ jobs:
           vcard4android:assembleDebugAndroidTest
           --continue --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true
 
+      # Runs the full ical4android JVM suite even when the step above failed; that
+      # failure still fails the job because no step here continues on error.
+      - name: Run ical4android JVM unit tests
+        if: ${{ !cancelled() }}
+        run: >-
+          ./gradlew
+          ical4android:testDebugUnitTest
+          --continue --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true
+
+      - name: Upload ical4android unit test reports and results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ical4android-unit-test-results-${{ github.sha }}
+          path: |
+            android/ical4android/build/test-results/testDebugUnitTest/
+            android/ical4android/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Verify required ical4android tests executed
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          import pathlib, sys
+          import xml.etree.ElementTree as ET
+          # Required methods must appear in the JUnit XML and must not be skipped.
+          # Failures are already reported by the test step above.
+          required = [
+            ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_UtcTime'),
+            ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_TwoTimesWithSameTimezone'),
+            ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_TwoTimesWithDifferentTimezone'),
+            ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_TwoTimesWithOneUtc'),
+          ]
+          reports = sorted(pathlib.Path('ical4android/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
+          if not reports:
+            print('::error::no ical4android JUnit XML reports were produced')
+            sys.exit(1)
+          executed, skipped = set(), set()
+          for report in reports:
+            for case in ET.parse(report).getroot().iter('testcase'):
+              key = (case.get('classname'), case.get('name'))
+              (skipped if case.find('skipped') is not None else executed).add(key)
+          if not executed and not skipped:
+            print('::error::ical4android JUnit XML contains no test cases')
+            sys.exit(1)
+          print(f'ical4android JUnit: {len(reports)} reports, {len(executed)} executed, {len(skipped)} skipped')
+          problems = [f'{c}#{n} ' + ('skipped' if (c, n) in skipped else 'missing') for c, n in required if (c, n) not in executed]
+          for problem in problems:
+            print(f'::error::required ical4android test {problem}')
+          if problems:
+            sys.exit(1)
+          PY
+
       - name: Upload unit test reports and results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
