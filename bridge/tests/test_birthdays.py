@@ -15,7 +15,7 @@ No network, no real accounts.
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 from etebase import CollectionAccessLevel
@@ -29,6 +29,7 @@ from silentsuite_bridge.local_cache import (
     db,
     models,
 )
+import silentsuite_bridge.web as web_module
 from silentsuite_bridge.local_cache.models import CollectionEntity
 from silentsuite_bridge.web import Web, _dashboard_csrf_token
 from tests.conftest import _make_mock_collection
@@ -73,8 +74,8 @@ def test_identity_vectors(vector):
 # ---------------------------------------------------------------------------
 
 
-def _response(data, *, stoken="token-1"):
-    return MagicMock(data=list(data), done=True, stoken=stoken, iterator=None, removed_memberships=[])
+def _response(data, *, stoken="token-1", done=True):
+    return MagicMock(data=list(data), done=done, stoken=stoken, iterator=None, removed_memberships=[])
 
 
 def _sdk_collection(uid, col_type, *, content=b"", access=CollectionAccessLevel.Admin):
@@ -100,10 +101,12 @@ def _sdk_item(uid, content):
 class FakeAccount:
     """One account's collections, items and members, with every write recorded."""
 
-    def __init__(self, collections, items, members):
+    def __init__(self, collections, items, members, *, inventory_done=True, incomplete=()):
         self.collections = collections
         self.items = items
         self.members = members
+        self.inventory_done = inventory_done
+        self.incomplete = set(incomplete)
         self.created = []
         self.item_managers = {}
         self.col_mgr = MagicMock(name="collection-manager")
@@ -116,12 +119,14 @@ class FakeAccount:
 
     def _list_collections(self, col_type, fetch_options=None):
         types = [col_type] if isinstance(col_type, str) else list(col_type)
-        return _response(c for c in self.collections if c.collection_type in types)
+        return _response((c for c in self.collections if c.collection_type in types), done=self.inventory_done)
 
     def _item_manager(self, collection):
         if collection.uid not in self.item_managers:
             manager = MagicMock(name=f"item-manager:{collection.uid}")
-            manager.list.side_effect = lambda fetch_options=None, uid=collection.uid: _response(self.items.get(uid, []))
+            manager.list.side_effect = lambda fetch_options=None, uid=collection.uid: _response(
+                self.items.get(uid, []), done=uid not in self.incomplete
+            )
 
             def create(meta, content, uid=collection.uid):
                 created = _sdk_item(f"created-{len(self.created) + 1}", content)
@@ -259,6 +264,123 @@ def test_turn_off_retires_first_then_removes_only_generated_items():
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint 2: fenced update, complete-source authority (SDK boundary)
+#
+# A listing page with done=False that repeats its stoken is an incomplete listing
+# (as core listCollections treats a repeated stoken); it must never authorize a write.
+# ---------------------------------------------------------------------------
+
+ALEX_GENERATED_ICS = (
+    "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:" + ALEX_FIELDS["uid"]
+    + "\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\n"
+    + "SUMMARY:\U0001F382 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+ALEX_STALE_ICS = ALEX_GENERATED_ICS.replace("19720315", "19720314").replace("DTEND;VALUE=DATE:19720316", "DTEND;VALUE=DATE:19720315")
+
+
+def test_stale_generated_event_is_rewritten_in_one_fenced_transaction():
+    """INTENDED-RED (primary assertion: the missing fenced transaction): a stale generated event
+    is updated in place, in one transaction whose deps are exactly [calendar.item]."""
+    stale = _sdk_item("gen-1", ALEX_STALE_ICS)
+    calendar, account = _account(calendar_items=[stale])
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert account.transactions("cal-birthdays") == [([stale], [calendar.item])]
+    assert _semantic_fields(stale.content) == ALEX_FIELDS
+    assert account.created == []
+
+
+def test_last_address_book_removed_deletes_only_generated_events():
+    """INTENDED-RED: a complete inventory with no address books is an empty source; the generated
+    event is deleted (fenced), the user's own event and an unparseable item are kept."""
+    generated = _sdk_item("gen-1", ALEX_GENERATED_ICS)
+    user_event = _sdk_item("user-1", "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\nDTSTART;VALUE=DATE:20261031\r\nSUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+    garbage = _sdk_item("junk-1", "not a calendar")
+    calendar = _sdk_collection("cal-birthdays", "etebase.vevent", content=ACTIVE)
+    account = FakeAccount([calendar], {"cal-birthdays": [generated, user_event, garbage]}, {"cal-birthdays": [USERNAME]})
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert account.transactions("cal-birthdays") == [([generated], [calendar.item])]
+    generated.delete.assert_called_once()
+    user_event.delete.assert_not_called()
+    garbage.delete.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", ["incomplete-inventory", "incomplete-book", "unreadable-contact"])
+def test_partial_or_failed_source_reads_write_and_delete_nothing(failure):
+    """CONTROL (passes on the neutral scaffold; must stay green): a partial or failed read is
+    never treated as an absence, so the existing generated event survives."""
+    generated = _sdk_item("gen-1", ALEX_STALE_ICS)
+    calendar, account = _account(calendar_items=[generated])
+    if failure == "incomplete-inventory":
+        account.inventory_done = False
+    elif failure == "incomplete-book":
+        account.incomplete.add(BOOK)
+    else:
+        type(account.items[BOOK][0]).content = PropertyMock(side_effect=RuntimeError("decrypt"))
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert account.created == []
+    assert account.transactions("cal-birthdays") == []
+    generated.delete.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint 2: pure event text and planner (shared vectors; scaffolds neutral)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("vector", VECTORS["events"], ids=lambda v: v["case"])
+def test_event_fields_vectors(vector):
+    """INTENDED-RED: the fields a generated event must have."""
+    assert birthdays.birthday_event_fields(vector["event"]) == vector["fields"]
+
+
+@pytest.mark.parametrize("vector", VECTORS["events"], ids=lambda v: v["case"])
+def test_event_text_variants_parse_to_fields(vector):
+    """INTENDED-RED: every client's text variant parses to the same fields."""
+    assert [birthdays.parse_birthday_event_fields(text) for text in vector["ics"]] == [vector["fields"]] * len(vector["ics"])
+
+
+@pytest.mark.parametrize("vector", VECTORS["events"], ids=lambda v: v["case"])
+def test_own_event_text_parses_back_folds_and_is_current(vector):
+    """INTENDED-RED: Bridge's own output parses back, folds within 75 octets and counts as current."""
+    content = birthdays.birthday_event_content(vector["event"])
+    assert isinstance(content, str)
+    assert birthdays.parse_birthday_event_fields(content) == vector["fields"]
+    assert content.endswith("\r\n")
+    assert [len(line.encode("utf-8")) <= 75 for line in content.split("\r\n")] == [True] * len(content.split("\r\n"))
+    assert [birthdays.is_current_birthday_event(text, vector["event"]) for text in [content, *vector["ics"]]] == [True] * (1 + len(vector["ics"]))
+
+
+@pytest.mark.parametrize("vector", VECTORS["eventMismatches"], ids=lambda v: v["case"])
+def test_event_mismatches_are_not_current(vector):
+    """CONTROL (neutral returns False): a renamed/moved/timed/non-yearly/non-event text is not current."""
+    assert birthdays.is_current_birthday_event(vector["ics"], vector["event"]) is False
+
+
+@pytest.mark.parametrize("vector", VECTORS["sources"], ids=lambda v: v["case"])
+def test_source_vectors(vector):
+    """INTENDED-RED: complete-source authority, including the authoritative empty inventory."""
+    assert birthdays.birthday_events_from_source(vector["snapshot"]) == vector["expected"]
+
+
+@pytest.mark.parametrize("vector", VECTORS["plans"], ids=lambda v: v["case"])
+def test_plan_vectors(vector):
+    """INTENDED-RED: canonical choice, duplicate retirement, generated-only cleanup, skips."""
+    assert birthdays.plan_birthday_calendar(vector["events"], vector["calendars"]) == vector["expected"]
+
+
+@pytest.mark.parametrize("vector", VECTORS["postChecks"], ids=lambda v: v["case"])
+def test_post_check_vectors(vector):
+    """INTENDED-RED: post-commit source check decides done, rerun (bounded) or pending."""
+    assert birthdays.decide_after_birthday_run(vector["check"], vector["rerunsSoFar"]) == vector["decision"]
+
+
+# ---------------------------------------------------------------------------
 # DAV read-only follows the active marker in the cached collection
 # ---------------------------------------------------------------------------
 
@@ -381,13 +503,37 @@ def test_birthday_failure_does_not_fail_the_sync(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _post(body, csrf=True):
+def _post(body, csrf=True, path="/.web/api/accounts/birthdays"):
     from tests.test_web_dashboard import _post_environ
 
     raw = json.dumps(body).encode("utf-8")
     environ = _post_environ(raw, csrf_token=_dashboard_csrf_token if csrf else None)
     web = Web.__new__(Web)
-    return web.post(environ, "", "/.web/api/accounts/birthdays", None)
+    return web.post(environ, "", path, None)
+
+
+def test_dashboard_fixture_reaches_an_existing_csrf_protected_route(monkeypatch):
+    """CONTROL: the same POST/local-access/CSRF fixture works on the existing /.web/api/sync route,
+    so a failure of the birthdays route below is about the route, not the fixture."""
+    from silentsuite_bridge import accounts
+    from silentsuite_bridge.radicale import storage
+
+    status, _headers, body = _post({}, csrf=False, path="/.web/api/sync")
+    assert status == 403
+    assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
+
+    web_module._sync_requests.clear()
+    monkeypatch.setattr(accounts, "list_accounts", lambda: [USERNAME])
+    thread = MagicMock()
+    thread.is_alive.return_value = True
+    thread.force_sync.return_value = 1
+    thread.generation_status.return_value = {
+        "generation": 1, "state": "pending", "started_at": None, "completed_at": None, "error_code": None,
+    }
+    monkeypatch.setattr(storage, "_sync_threads", {USERNAME: thread})
+    status, _headers, body = _post({}, path="/.web/api/sync")
+    assert status == 202
+    assert json.loads(body)["ok"] is True
 
 
 @pytest.mark.parametrize("action", ["on", "off"])
@@ -396,9 +542,10 @@ def test_dashboard_turns_birthdays_on_and_off(monkeypatch, action):
     calls = []
     monkeypatch.setattr(birthdays, "set_dashboard_birthdays", lambda username, act: calls.append((username, act)) or {"status": "done"})
 
-    status, headers, body = _post({"username": USERNAME, "action": action})
+    status, _headers, body = _post({"username": USERNAME, "action": action})
 
-    assert (status, json.loads(body)) == (200, {"ok": True, "status": "done"})
+    assert status == 200
+    assert json.loads(body) == {"ok": True, "status": "done"}
     assert calls == [(USERNAME, action)]
 
 
@@ -409,7 +556,8 @@ def test_dashboard_birthdays_requires_csrf(monkeypatch):
 
     status, _headers, body = _post({"username": USERNAME, "action": "on"}, csrf=False)
 
-    assert (status, json.loads(body)["error"]) == (403, "Invalid dashboard CSRF token")
+    assert status == 403
+    assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
     assert calls == []
 
 

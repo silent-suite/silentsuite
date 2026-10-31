@@ -21,7 +21,7 @@ import msgpack
 import peewee as pw
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
 
-from .. import config
+from .. import birthdays, config
 from ..privacy_logging import BoundedDiagnosticError, bounded_exception_class
 from . import db, models
 
@@ -897,6 +897,21 @@ class Etebase:
             logger.warning("Sync completed with unresolved DAV conflicts")
             raise DavUnresolvedItemsError("DAV synchronization is incomplete")
         logger.info("=== Full sync cycle complete ===")
+        self._after_successful_sync()
+
+    def _after_successful_sync(self):
+        """Birthdays generation after a clean cycle (also an empty inventory).
+
+        Runs outside any cache transaction. Called through the module attribute so
+        tests and callers see the live hook; a failure never changes the sync result.
+        """
+        try:
+            birthdays.reconcile_after_sync(self)
+        except Exception as exc:  # noqa: BLE001 - birthdays must never fail a sync
+            logger.warning(
+                "Birthdays calendar update skipped (%s)",
+                bounded_exception_class(exc),
+            )
 
     def sync_collection_list(self):
         """Sync the list of collections (push then pull)."""
@@ -1708,7 +1723,10 @@ class Collection:
 
     @property
     def read_only(self):
-        return self.col.access_level == CollectionAccessLevel.ReadOnly
+        # Shared read-only access, or an active Birthdays calendar: its events are
+        # generated from contacts, so DAV clients must not write it. The marker is read
+        # from the collection content kept by the existing with-content cache envelope.
+        return self.col.access_level == CollectionAccessLevel.ReadOnly or birthdays.is_managed_collection(self.col)
 
     @property
     def stoken(self):
