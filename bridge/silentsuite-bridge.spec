@@ -116,6 +116,20 @@ def find_radicale_data():
 etebase_binaries, etebase_datas = find_etebase_binaries()
 radicale_datas = find_radicale_data()
 
+
+# TEMPORARY: manual packaged update-check diagnostic. Remove with
+# tests/packaged_update_diagnostics.py once the frozen catch-all is identified.
+# Only a separate, unstamped diagnostic build opts in; release builds never do.
+def diagnostic_runtime_hooks():
+    if os.environ.get("SILENTSUITE_BRIDGE_DIAGNOSTIC_BUILD") != "1":
+        return []
+    if os.environ.get("SILENTSUITE_BRIDGE_VERSION", "").strip():
+        raise SystemExit("Refusing a diagnostic hook in a release-stamped build.")
+    spec_dir = Path(globals().get("SPECPATH", os.getcwd()))
+    hook = spec_dir / "tests" / "packaged_update_diagnostics.py"
+    print(f"[spec] DIAGNOSTIC BUILD: bundling runtime hook {hook.name}")
+    return [str(hook)]
+
 # Tray/PIL excluded — requires Xlib/display, incompatible with headless CI.
 # tray.py handles ImportError gracefully at runtime.
 
@@ -269,7 +283,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=diagnostic_runtime_hooks(),
     excludes=[
         # Unnecessary large packages
         "tkinter",
