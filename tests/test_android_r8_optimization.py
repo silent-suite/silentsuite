@@ -178,3 +178,17 @@ def test_release_r8_inspection_step_fails_closed(tmp_path):
         missing = tmp_path / f"missing-{report}"
         write_reports(missing, "-keep class a.B { *; }\n", omit=report)
         assert run_inspection(missing).returncode != 0, f"missing {report} was accepted"
+
+
+def test_release_r8_inspection_rejects_dontoptimize_after_another_directive(tmp_path):
+    # R8 copies each merged rules file verbatim into configuration.txt, and options
+    # are whitespace-separated, so a later option on the same line is still active.
+    for index, line in enumerate(("-dontobfuscate -dontoptimize", "-keep class a.B { *; }\t-dontoptimize")):
+        inline = tmp_path / f"inline-{index}"
+        write_reports(inline, f"-keep class a.C {{ *; }}\n{line}\n")
+        assert run_inspection(inline).returncode != 0, f"an active inline -dontoptimize was accepted: {line!r}"
+
+    commented = tmp_path / "inline-comment"
+    write_reports(commented, "-dontobfuscate    # optimisation stays on; no -dontoptimize here\n")
+    result = run_inspection(commented)
+    assert result.returncode == 0, result.stderr
