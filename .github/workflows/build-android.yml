@@ -445,6 +445,11 @@ jobs:
             ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_AllDayDate_PositiveOffset'),
             ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_AllDayFloatingDateTime_NewYork'),
             ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testAndroidStringToRecurrenceSet_AllDayDate_ReadPath_NewYork'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_RoutedPropertyFamilies_RoundTrip'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_ClazzForms_RoundTrip'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_DefaultParameterFamilies_RoundTrip'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_DateTimeValueShapes_RoundTrip'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_ParsedEventUnknownProperties_RoundTrip'),
           ]
           reports = sorted(pathlib.Path('ical4android/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
           if not reports:
