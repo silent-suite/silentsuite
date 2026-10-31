@@ -7,7 +7,9 @@ import type { VTodo } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
-import { isCompletedVTodo, parseICalDate } from './import-mappers'
+import { isCompletedVTodo } from './import-mappers'
+import { taskICalDateFromProperty } from '@silentsuite/core'
+import type { TaskICalDate } from '@silentsuite/core'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
@@ -194,6 +196,13 @@ function parseCSVLine(line: string): string[] {
   return fields
 }
 
+/** A DTSTART/DUE value as the same date and source identity the sync path reads. */
+function importedDate(value: string | undefined, params?: Record<string, string>): { date: Date | null; source?: TaskICalDate } {
+  if (!value) return { date: null }
+  const { date, source } = taskICalDateFromProperty(value, params)
+  return isNaN(date.getTime()) ? { date: null } : { date, source }
+}
+
 function mapPriorityToStore(icalPriority?: number): Priority {
   if (icalPriority === undefined || icalPriority === 0) return 'medium'
   if (icalPriority <= 1) return 'urgent'
@@ -258,15 +267,22 @@ export default function TaskImport({ onImportComplete, heading }: TaskImportProp
     setIsImporting(true)
     setError(null)
     try {
-      const newTasks = tasks.map((task) => ({
-        title: task.summary || 'Untitled Task',
-        description: task.description ?? '',
-        due_date: task.due ? parseICalDate(task.due) : null,
-        priority: mapPriorityToStore(task.priority),
-        completed: isCompletedVTodo(task),
-        categories: normalizeLabels(task.categories ?? []),
-        listId: selectedListId,
-      }))
+      const newTasks = tasks.map((task) => {
+        const start = importedDate(task.dtstart, task.dtstartParams)
+        const due = importedDate(task.due, task.dueParams)
+        return {
+          title: task.summary || 'Untitled Task',
+          description: task.description ?? '',
+          start_date: start.date,
+          start_ical: start.source,
+          due_date: due.date,
+          due_ical: due.source,
+          priority: mapPriorityToStore(task.priority),
+          completed: isCompletedVTodo(task),
+          categories: normalizeLabels(task.categories ?? []),
+          listId: selectedListId,
+        }
+      })
       const count = await importTasks(newTasks)
       setImportedCount(count)
       onImportComplete(count)

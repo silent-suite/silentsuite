@@ -81,24 +81,6 @@ export function vEventToImportEvent(
   }
 }
 
-// Date-only on import: the Task model has no timezone field, so a TZID-bearing
-// or UTC datetime would otherwise be parsed in the importer's local zone and
-// land on the wrong instant. Take the wall-clock date from the source value.
-// Full TZID parity for VTODO is tracked in #66.
-export function parseICalDate(d: string): Date | null {
-  if (!d) return null
-  const digits = d.replace(/[^0-9]/g, '')
-  if (digits.length < 8) {
-    const parsed = new Date(d)
-    return isNaN(parsed.getTime()) ? null : parsed
-  }
-  return new Date(
-    parseInt(digits.slice(0, 4)),
-    parseInt(digits.slice(4, 6)) - 1,
-    parseInt(digits.slice(6, 8)),
-  )
-}
-
 export function isCompletedVTodo(task: Pick<VTodo, 'status' | 'completed' | 'percentComplete'>): boolean {
   const status = task.status?.toUpperCase()
   return status === 'COMPLETED'

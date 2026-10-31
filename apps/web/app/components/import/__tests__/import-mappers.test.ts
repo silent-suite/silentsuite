@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { vEventToImportEvent, parseICalDate, isCompletedVTodo } from '../import-mappers'
+import { vEventToImportEvent, isCompletedVTodo } from '../import-mappers'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
 
 describe('vEventToImportEvent', () => {
@@ -171,34 +171,8 @@ describe('vEventToImportEvent', () => {
   })
 })
 
-describe('parseICalDate', () => {
-  it('returns null for empty input', () => {
-    expect(parseICalDate('')).toBeNull()
-  })
-
-  // Locale-resilience: assert on date components, not epoch ms — getFullYear /
-  // getMonth / getDate reflect the constructor args regardless of TZ.
-  it('extracts the wall-clock date from a TZID-stripped datetime', () => {
-    const d = parseICalDate('20260601T090000')!
-    expect(d.getFullYear()).toBe(2026)
-    expect(d.getMonth()).toBe(5)
-    expect(d.getDate()).toBe(1)
-  })
-
-  it('extracts the wall-clock date from a UTC-suffixed datetime', () => {
-    const d = parseICalDate('20260601T090000Z')!
-    expect(d.getFullYear()).toBe(2026)
-    expect(d.getMonth()).toBe(5)
-    expect(d.getDate()).toBe(1)
-  })
-
-  it('extracts the wall-clock date from a date-only value', () => {
-    const d = parseICalDate('20260601')!
-    expect(d.getFullYear()).toBe(2026)
-    expect(d.getMonth()).toBe(5)
-    expect(d.getDate()).toBe(1)
-  })
-})
+// Task DTSTART/DUE import dates now use the core classifier shared with sync;
+// date-only coverage lives in task.test.ts and TaskImport.test.tsx (#66).
 
 describe('isCompletedVTodo', () => {
   it('treats completed status as completed', () => {
