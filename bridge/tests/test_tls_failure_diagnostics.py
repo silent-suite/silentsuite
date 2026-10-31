@@ -514,3 +514,188 @@ def test_pre_http_tls_failure_output_is_bounded_and_canary_free(
         assert _https_dashboard_status(listener["port"]) == 200, (
             f"{probe_name}: HTTPS listener stopped serving after the probe"
         )
+
+
+# ---------------------------------------------------------------------------
+# Acceptance: rate limit, closed categories, per-listener scope
+# ---------------------------------------------------------------------------
+
+# Upper bound on TLS lines one listener may emit for a quick burst of
+# failures. The implementation's burst must not exceed it.
+MAX_TLS_LINES_PER_BURST = 5
+REPEATED_PROBES = 3 * MAX_TLS_LINES_PER_BURST
+
+
+def _tls_lines(entries, stdio):
+    return [e for e in entries if TLS_LINE.fullmatch(e["message"])], [
+        line for line in stdio if TLS_LINE.fullmatch(line)
+    ]
+
+
+def _assert_private_and_bounded(entries, stdio, forbidden, label):
+    output = "\n".join([e["message"] for e in entries] + stdio)
+    lowered = output.lower()
+    for fragment in forbidden:
+        assert fragment not in output, f"{label}: private value reached output"
+    for fragment in _RAW_PROTOCOL_FRAGMENTS:
+        assert fragment not in lowered, f"{label}: raw protocol detail reached output"
+    for entry in entries:
+        if TLS_LINE.fullmatch(entry["message"]):
+            # The whole message is the closed line; nothing else rides along.
+            assert entry["args"] in ((), None)
+            assert entry["exc_info"] is None
+            assert entry["exc_text"] is None
+            assert entry["stack_info"] is None
+        if entry["name"] == "radicale" or entry["name"].startswith("radicale."):
+            assert entry["args"] == ()
+            assert entry["exc_info"] is None
+            assert _BOUNDED_RADICALE_LINE.fullmatch(entry["message"])
+
+
+def test_repeated_pre_http_tls_failures_are_rate_limited_per_listener(
+    monkeypatch, tmp_path, capfd
+):
+    """A burst of failures yields bounded closed-category output, no generic
+    duplicates and no private values; the listener keeps serving; and a fresh
+    listener run is not suppressed by an earlier run's limiter."""
+    with _capture_logs() as sink:
+        with _https_bridge_listener(monkeypatch, tmp_path) as listener:
+            capfd.readouterr()
+            start = len(sink.entries)
+            client_ports = [
+                _probe_plaintext_http(listener["port"])
+                for _ in range(REPEATED_PROBES)
+            ]
+            entries, stdio = _observe_window(sink, capfd, start)
+            _assert_private_and_bounded(
+                entries,
+                stdio,
+                (
+                    *listener["canaries"],
+                    *(str(p) for p in client_ports),
+                    PATH_CANARY,
+                    USER_CANARY,
+                    PASSWORD_CANARY,
+                    CREDENTIAL_B64,
+                ),
+                "repeated plaintext",
+            )
+            assert _https_dashboard_status(listener["port"]) == 200
+
+        logged, printed = _tls_lines(entries, stdio)
+        lines = [e["message"] for e in logged] + printed
+        observed = [e["message"] for e in entries] + stdio
+        assert 1 <= len(lines) <= MAX_TLS_LINES_PER_BURST < REPEATED_PROBES, (
+            f"expected bounded TLS output for {REPEATED_PROBES} failures; "
+            f"observed output: {observed!r}"
+        )
+        for line in lines:
+            match = TLS_LINE.fullmatch(line)
+            assert match.group("kind") == "loopback"
+            assert match.group("category") in TLS_CATEGORIES
+        assert not [
+            m for m in observed
+            if m.startswith(("Radicale server request failed", "DAV request"))
+        ], f"generic duplicate for a handled handshake: {observed!r}"
+
+        # A new listener run starts with its own limiter.
+        with _https_bridge_listener(monkeypatch, tmp_path) as fresh:
+            capfd.readouterr()
+            start = len(sink.entries)
+            _probe_plaintext_http(fresh["port"])
+            entries, stdio = _observe_window(sink, capfd, start)
+        logged, printed = _tls_lines(entries, stdio)
+        assert len(logged) + len(printed) == 1, (
+            "a fresh listener must not inherit an earlier run's suppression; "
+            f"observed output: {[e['message'] for e in entries] + stdio!r}"
+        )
+
+
+def _ssl_error(reason, cls=ssl.SSLError):
+    # The raw message carries canaries and reason-like text; classification
+    # must never consult it.
+    error = cls(1, f"raw {CERT_DNS_CANARY} 127.0.0.1 HTTP_REQUEST TLSV1_ALERT_X")
+    if reason is not _NO_REASON:
+        error.reason = reason
+    return error
+
+
+_NO_REASON = object()
+
+
+@pytest.mark.parametrize(
+    "error, expected",
+    [
+        (_ssl_error("HTTP_REQUEST"), "plaintext_http"),
+        (_ssl_error("HTTPS_PROXY_REQUEST"), "plaintext_http"),
+        (_ssl_error("TLSV1_ALERT_UNKNOWN_CA"), "client_alert"),
+        (_ssl_error("SSLV3_ALERT_BAD_CERTIFICATE"), "client_alert"),
+        (_ssl_error("TLSV13_ALERT_CERTIFICATE_REQUIRED"), "client_alert"),
+        (_ssl_error("UNEXPECTED_EOF_WHILE_READING"), "client_closed"),
+        (_ssl_error(_NO_REASON, ssl.SSLEOFError), "client_closed"),
+        (_ssl_error(_NO_REASON, ssl.SSLZeroReturnError), "client_closed"),
+        (ConnectionResetError(104, "reset"), "client_closed"),
+        (BrokenPipeError(32, "pipe"), "client_closed"),
+        (socket.timeout("The handshake operation timed out"), "timeout"),
+        (_ssl_error("WRONG_VERSION_NUMBER"), "unknown"),
+        (_ssl_error("NO_SHARED_CIPHER"), "unknown"),
+        (_ssl_error("http_request"), "unknown"),
+        (_ssl_error(f"HTTP_REQUEST {CERT_DNS_CANARY}"), "unknown"),
+        (_ssl_error("TLSV1_ALERT_" + "X" * 80), "unknown"),
+        (_ssl_error(42), "unknown"),
+        (_ssl_error(_NO_REASON), "unknown"),
+        (RuntimeError("SSL handshake failed: [SSL: HTTP_REQUEST] http request"), "unknown"),
+        (OSError(0, "Error"), "unknown"),
+    ],
+)
+def test_tls_failure_category_uses_fixed_codes_with_unknown_fallback(error, expected):
+    from silentsuite_bridge.radicale.server import _tls_failure_category
+
+    category = _tls_failure_category(error)
+    assert category == expected
+    assert category in TLS_CATEGORIES
+
+
+def test_tls_failure_lines_are_a_closed_set_matching_the_contract():
+    from silentsuite_bridge.radicale.server import _TLS_FAILURE_LINES
+
+    assert set(_TLS_FAILURE_LINES) == {
+        (kind, category)
+        for kind in ("loopback", "remote", "wildcard")
+        for category in TLS_CATEGORIES
+    }
+    for (kind, category), line in _TLS_FAILURE_LINES.items():
+        match = TLS_LINE.fullmatch(line)
+        assert match and match.group("kind") == kind
+        assert match.group("category") == category
+
+
+def test_tls_failure_limiter_is_windowed_bounded_and_thread_safe():
+    from silentsuite_bridge.radicale.server import _TlsFailureLimiter
+
+    now = [0.0]
+    limiter = _TlsFailureLimiter(burst=3, window_seconds=60.0, clock=lambda: now[0])
+    assert [limiter.allow() for _ in range(5)] == [True, True, True, False, False]
+    now[0] = 59.9
+    assert limiter.allow() is False
+    now[0] = 60.0
+    assert limiter.allow() is True
+    # Fixed-size state regardless of how many failures were seen.
+    assert not hasattr(limiter, "__dict__")
+
+    shared = _TlsFailureLimiter(burst=4, window_seconds=3600.0, clock=lambda: 0.0)
+    results: list[bool] = []
+    barrier = threading.Barrier(16)
+
+    def _worker():
+        barrier.wait()
+        for _ in range(25):
+            results.append(shared.allow())
+
+    workers = [threading.Thread(target=_worker) for _ in range(16)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+    assert len(results) == 16 * 25
+    assert sum(results) == 4
