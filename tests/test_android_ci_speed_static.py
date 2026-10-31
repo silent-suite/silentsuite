@@ -11,7 +11,11 @@
   hosted CI running every helper is what shows they are compatible;
 * Etebase is built once per run by one producer, and every native consumer admits
   that same-run artifact before its first Gradle or emulator step, keeping its
-  NDK provisioning and every later gate.
+  NDK provisioning and every later gate;
+* right after the unchanged debug unit-test step, build-pr runs the exact admitted
+  ical4android JVM evidence unless cancelled: the full suite, a fail-when-missing
+  upload of its JUnit XML and HTML, and an inline python3 check that every required
+  method executed and was not skipped.
 
 The checker runs against byte copies of the original predecessor (immutable base
 f867267e) and of the immediate predecessor (8cb81b42) to show the exact violations
@@ -113,6 +117,78 @@ GATE_ENV = {
 # candidate code and download or admit nothing.
 REPORT_UPLOAD_NAMES = ("Upload unit test reports and results", "Upload lint reports")
 
+# The admitted ical4android JVM evidence (CI-A0): immediately after the unchanged debug
+# unit-test step, the full ical4android JVM suite runs unless the run is cancelled, so an
+# earlier failure still fails the job; its JUnit XML and HTML are uploaded, failing when
+# missing; and an inline verifier on the preinstalled python3 fails unless every
+# required method executed without being skipped. Each step must match exactly.
+DEBUG_STEP_NAME = "Run debug unit tests, lint, and assemble instrumentation APKs"
+UNLESS_CANCELLED = "${{ !cancelled() }}"
+JVM_SUITE_TASK = "ical4android:testDebugUnitTest"
+JVM_TEST_STEP = {
+    "name": "Run ical4android JVM unit tests",
+    "if": UNLESS_CANCELLED,
+    "run": f"./gradlew {JVM_SUITE_TASK} --continue --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true",
+}
+JVM_UPLOAD_STEP = {
+    "name": "Upload ical4android unit test reports and results",
+    "if": UNLESS_CANCELLED,
+    "uses": UPLOAD,
+    "with": {
+        "name": "ical4android-unit-test-results-${{ github.sha }}",
+        "path": (
+            "android/ical4android/build/test-results/testDebugUnitTest/\n"
+            "android/ical4android/build/reports/tests/testDebugUnitTest/\n"
+        ),
+        "if-no-files-found": "error",
+        "retention-days": 14,
+    },
+}
+JVM_VERIFY_INVOCATION = "python3 - <<'PY'"
+JVM_REQUIRED_SKIP_TRACKING = "(skipped if case.find('skipped') is not None else executed).add(key)"
+JVM_VERIFY_STEP = {
+    "name": "Verify required ical4android tests executed",
+    "if": UNLESS_CANCELLED,
+    "run": "\n".join([
+        JVM_VERIFY_INVOCATION,
+        "import pathlib, sys",
+        "import xml.etree.ElementTree as ET",
+        "# Required methods must appear in the JUnit XML and must not be skipped.",
+        "# Failures are already reported by the test step above.",
+        "required = [",
+        "  ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_UtcTime'),",
+        "  ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_TwoTimesWithSameTimezone'),",
+        "  ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_TwoTimesWithDifferentTimezone'),",
+        "  ('at.bitfire.ical4android.AndroidTimeUtilsTest', 'testRecurrenceSetsToAndroidString_TwoTimesWithOneUtc'),",
+        "]",
+        "reports = sorted(pathlib.Path('ical4android/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))",
+        "if not reports:",
+        "  print('::error::no ical4android JUnit XML reports were produced')",
+        "  sys.exit(1)",
+        "executed, skipped = set(), set()",
+        "for report in reports:",
+        "  for case in ET.parse(report).getroot().iter('testcase'):",
+        "    key = (case.get('classname'), case.get('name'))",
+        f"    {JVM_REQUIRED_SKIP_TRACKING}",
+        "if not executed and not skipped:",
+        "  print('::error::ical4android JUnit XML contains no test cases')",
+        "  sys.exit(1)",
+        "print(f'ical4android JUnit: {len(reports)} reports, {len(executed)} executed, {len(skipped)} skipped')",
+        "problems = [f'{c}#{n} ' + ('skipped' if (c, n) in skipped else 'missing') for c, n in required if (c, n) not in executed]",
+        "for problem in problems:",
+        "  print(f'::error::required ical4android test {problem}')",
+        "if problems:",
+        "  sys.exit(1)",
+        "PY",
+    ]) + "\n",
+}
+JVM_EVIDENCE_STEPS = (JVM_TEST_STEP, JVM_UPLOAD_STEP, JVM_VERIFY_STEP)
+DEBUG_STEP_VIOLATION = "build-pr: the debug unit-test step must appear exactly once"
+JVM_TEST_VIOLATION = "build-pr: the full ical4android JVM suite must run unless cancelled right after the debug unit-test step"
+JVM_UPLOAD_VIOLATION = "build-pr: ical4android JVM results must be uploaded unless cancelled and fail when missing"
+JVM_VERIFY_VIOLATION = "build-pr: required ical4android JVM tests must be verified as executed and not skipped"
+JVM_SUITE_ONCE_VIOLATION = "build-pr: the ical4android JVM suite must run in exactly one step"
+
 PYTHON_PROVISIONING_VIOLATION = "build-pr: must not provision the static contract suite's Python environment"
 DEDUP_VIOLATIONS = sorted(
     [
@@ -198,7 +274,9 @@ def _build_pr_gating_violations(job: dict) -> list[str]:
         checkout = _index(steps, lambda step: _uses(step).startswith("actions/checkout@"))
         if checkout is None or steps.index(gate) != checkout + 1:
             violations.append(GATE_PLACEMENT_VIOLATION)
-    conditional = [step for step in steps if "if" in step]
+    # The exact admitted JVM evidence steps run unless cancelled; jvm_evidence_violations
+    # enforces their presence and position. Any other conditional step must be a report upload.
+    conditional = [step for step in steps if "if" in step and step not in JVM_EVIDENCE_STEPS]
     if sorted(step.get("name") for step in conditional) != sorted(REPORT_UPLOAD_NAMES) or any(
         step.get("if") != "always()" or _uses(step) != UPLOAD or "run" in step for step in conditional
     ):
@@ -293,6 +371,25 @@ def ci_speed_violations(workflow: dict) -> list[str]:
             violations.append(f"{name}: Etebase admission after first Gradle or emulator step")
         if not any(NDK in _run(step) for step in steps[:first]):
             violations.append(f"{name}: NDK provisioning removed")
+    return sorted(violations)
+
+
+def jvm_evidence_violations(workflow: dict) -> list[str]:
+    """The admitted ical4android JVM evidence steps, exact and in order, right after the debug step."""
+    steps = ((workflow.get("jobs") or {}).get("build-pr") or {}).get("steps") or []
+    debug = [index for index, step in enumerate(steps) if step.get("name") == DEBUG_STEP_NAME]
+    if len(debug) != 1:
+        return [DEBUG_STEP_VIOLATION]
+    following = steps[debug[0] + 1 : debug[0] + 1 + len(JVM_EVIDENCE_STEPS)]
+    violations = [
+        message
+        for offset, (expected, message) in enumerate(
+            zip(JVM_EVIDENCE_STEPS, (JVM_TEST_VIOLATION, JVM_UPLOAD_VIOLATION, JVM_VERIFY_VIOLATION))
+        )
+        if offset >= len(following) or following[offset] != expected
+    ]
+    if sum(JVM_SUITE_TASK in _run(step) for step in steps) != 1:
+        violations.append(JVM_SUITE_ONCE_VIOLATION)
     return sorted(violations)
 
 
@@ -402,6 +499,19 @@ def _without_static_provisioning(job: dict) -> dict:
     return job
 
 
+def _with_approved_jvm_evidence(job: dict) -> dict:
+    """A predecessor build-pr with exactly the admitted JVM evidence steps inserted, once,
+    immediately after its unchanged debug unit-test step."""
+    job = copy.deepcopy(job)
+    steps = job.get("steps") or []
+    debug = [index for index, step in enumerate(steps) if step.get("name") == DEBUG_STEP_NAME]
+    assert len(debug) == 1, f"predecessor build-pr must contain {DEBUG_STEP_NAME!r} exactly once"
+    assert not any(step in steps for step in JVM_EVIDENCE_STEPS), "the JVM evidence transport applies once"
+    steps[debug[0] + 1 : debug[0] + 1] = copy.deepcopy(list(JVM_EVIDENCE_STEPS))
+    job["steps"] = steps
+    return job
+
+
 def _python_invocations(job: dict) -> list[str]:
     """Every operative run line, comments aside, that invokes a Python interpreter."""
     return [
@@ -415,8 +525,8 @@ def _python_invocations(job: dict) -> list[str]:
 
 def _expected_build_pr(predecessor_job: dict, gate_run: str) -> dict:
     """The 8cb81b42 build-pr with exactly the admitted edits applied: needs, if, the
-    gate, and the removed static suite with its Python setup and install."""
-    job = _without_static_provisioning(predecessor_job)
+    gate, the removed static suite with its Python setup and install, and the JVM evidence."""
+    job = _with_approved_jvm_evidence(_without_static_provisioning(predecessor_job))
     job["needs"] = list(BUILD_PR_NEEDS)
     job["if"] = BUILD_PR_IF
     steps = [step for step in job["steps"] if _run(step).strip() != STATIC_RUN]
@@ -474,8 +584,8 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
     # the admission steps: NDK, build-tools, JDKs, matrices, runtime scripts,
     # ledgers, producer manifests and every final gate are otherwise identical.
-    # build-pr additionally differs only by its static-suite gating and by dropping
-    # the suite's Python setup and install.
+    # build-pr additionally differs only by its static-suite gating, by dropping
+    # the suite's Python setup and install, and by the exact JVM evidence steps.
     for name in CONSUMERS:
         current = _without_admission(candidate["jobs"][name])
         original = _without_native_compile(base["jobs"][name])
@@ -483,7 +593,7 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
             original = _with_approved_runtime_ledger_changes(original)
         if name == "build-pr":
             current = _without_static_dedup(current)
-            original = _without_static_provisioning(_without_static_dedup(original))
+            original = _with_approved_jvm_evidence(_without_static_provisioning(_without_static_dedup(original)))
         assert current == original, name
 
 
@@ -499,8 +609,8 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
             assert candidate["jobs"][name] == job, name
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
     assert candidate["jobs"]["build-pr"] == expected, (
-        "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate "
-        "and the removed static suite with its Python setup and install"
+        "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate, "
+        "the removed static suite with its Python setup and install, and the exact JVM evidence steps"
     )
 
 
@@ -559,8 +669,10 @@ def test_dependency_gate_is_exactly_specified(candidate):
 
 def test_build_pr_uses_the_preinstalled_python_strategy(candidate):
     """build-pr sets up no Python and installs no packages; its helpers run as
-    `python3 scripts/...` on the runner's preinstalled interpreter. This does not
-    pin or prove one interpreter version: hosted CI must run every helper."""
+    `python3 scripts/...` on the runner's preinstalled interpreter. The one other
+    invocation is the exact admitted inline JVM-evidence verifier on that same
+    python3, which uses only the standard library. This does not pin or prove one
+    interpreter version: hosted CI must run every helper."""
     job = candidate["jobs"]["build-pr"]
     steps = job["steps"]
     assert [step.get("name") for step in steps if _uses(step).startswith(SETUP_PYTHON)] == []
@@ -571,7 +683,9 @@ def test_build_pr_uses_the_preinstalled_python_strategy(candidate):
         if not line.strip().startswith("#")
     ]
     assert [line for line in operative if any(marker in line for marker in STATIC_PROVISIONING_MARKERS)] == []
-    invocations = _python_invocations(job)
+    assert steps.count(JVM_VERIFY_STEP) == 1
+    assert _python_invocations({"steps": [JVM_VERIFY_STEP]}) == [JVM_VERIFY_INVOCATION]
+    invocations = _python_invocations({**job, "steps": [step for step in steps if step != JVM_VERIFY_STEP]})
     assert invocations and all(line.startswith("python3 scripts/") for line in invocations), invocations
 
 
@@ -587,12 +701,25 @@ def test_release_unsigned_build_shares_the_preinstalled_python_strategy():
     assert invocations and all(line.startswith("python3 scripts/") for line in invocations), invocations
 
 
-def test_only_report_uploads_are_conditional_in_build_pr(candidate):
+def test_only_report_uploads_and_jvm_evidence_are_conditional_in_build_pr(candidate):
     conditional = [step for step in candidate["jobs"]["build-pr"]["steps"] if "if" in step]
-    assert sorted(step["name"] for step in conditional) == sorted(REPORT_UPLOAD_NAMES)
-    for step in conditional:
+    reports = [step for step in conditional if step not in JVM_EVIDENCE_STEPS]
+    assert sorted(step["name"] for step in reports) == sorted(REPORT_UPLOAD_NAMES)
+    for step in reports:
         assert step["if"] == "always()", step["name"]
         assert _uses(step) == UPLOAD and "run" not in step, step["name"]
+    assert [step for step in conditional if step in JVM_EVIDENCE_STEPS] == list(JVM_EVIDENCE_STEPS)
+
+
+def test_candidate_runs_the_exact_ical4android_jvm_evidence(candidate):
+    assert jvm_evidence_violations(candidate) == []
+
+
+def test_predecessors_lack_the_ical4android_jvm_evidence(base, predecessor):
+    # The evidence is new in CI-A0; the frozen predecessor fixtures must not already satisfy it.
+    for workflow in (base, predecessor):
+        assert JVM_TEST_VIOLATION in jvm_evidence_violations(workflow)
+        assert JVM_SUITE_ONCE_VIOLATION in jvm_evidence_violations(workflow)
 
 
 def _execute_gate(script: str, results: dict, cwd: Path) -> subprocess.CompletedProcess:
@@ -720,6 +847,10 @@ def _mutation(workflow: dict, case: str) -> None:
         _step_named(jobs["build-pr"], "Make gradlew executable")["if"] = "always()"
     elif case == "report-upload-condition-changed":
         _step_named(jobs["build-pr"], REPORT_UPLOAD_NAMES[0])["if"] = "success()"
+    elif case == "jvm-test-condition-always":
+        _step_named(jobs["build-pr"], JVM_TEST_STEP["name"])["if"] = "always()"
+    elif case == "jvm-verify-continue-on-error":
+        _step_named(jobs["build-pr"], JVM_VERIFY_STEP["name"])["continue-on-error"] = True
     else:
         raise AssertionError(case)
 
@@ -763,6 +894,8 @@ MUTATIONS = {
     "gate-missing-binding": GATE_ENV_VIOLATION,
     "extra-conditional-step": REPORT_CONDITION_VIOLATION,
     "report-upload-condition-changed": REPORT_CONDITION_VIOLATION,
+    "jvm-test-condition-always": REPORT_CONDITION_VIOLATION,
+    "jvm-verify-continue-on-error": BUILD_PR_CONTINUE_VIOLATION,
 }
 
 
@@ -774,3 +907,90 @@ def test_candidate_mutations_are_rejected(candidate, case, expected):
     mutated = copy.deepcopy(candidate)
     _mutation(mutated, case)
     assert expected in ci_speed_violations(mutated)
+
+
+def _replace_in_step(job: dict, name: str, key: str, old: str, new: str) -> None:
+    step = _step_named(job, name)
+    assert step[key].count(old) == 1, (name, old)
+    step[key] = step[key].replace(old, new)
+
+
+def _jvm_mutation(workflow: dict, case: str) -> None:
+    job = workflow["jobs"]["build-pr"]
+    if case == "debug-step-removed":
+        _remove_step(job, lambda step: step.get("name") == DEBUG_STEP_NAME)
+    elif case == "jvm-test-removed":
+        _remove_step(job, lambda step: step.get("name") == JVM_TEST_STEP["name"])
+    elif case == "jvm-test-filtered":
+        _replace_in_step(job, JVM_TEST_STEP["name"], "run", JVM_SUITE_TASK, f"{JVM_SUITE_TASK} --tests at.bitfire.ical4android.AndroidTimeUtilsTest")
+    elif case == "jvm-test-stops-at-first-failure":
+        _replace_in_step(job, JVM_TEST_STEP["name"], "run", " --continue", "")
+    elif case == "jvm-test-skipped-after-failure":
+        del _step_named(job, JVM_TEST_STEP["name"])["if"]
+    elif case == "jvm-test-disabled":
+        _step_named(job, JVM_TEST_STEP["name"])["if"] = "${{ false }}"
+    elif case == "jvm-test-continue-on-error":
+        _step_named(job, JVM_TEST_STEP["name"])["continue-on-error"] = True
+    elif case == "jvm-test-before-debug-step":
+        step = _step_named(job, JVM_TEST_STEP["name"])
+        job["steps"].remove(step)
+        job["steps"].insert(job["steps"].index(_step_named(job, DEBUG_STEP_NAME)), step)
+    elif case == "jvm-suite-repeated-filtered":
+        job["steps"].append({"name": "Extra filtered ical4android run", "run": f"./gradlew {JVM_SUITE_TASK} --tests 'at.bitfire.*'"})
+    elif case == "jvm-upload-removed":
+        _remove_step(job, lambda step: step.get("name") == JVM_UPLOAD_STEP["name"])
+    elif case == "jvm-upload-skipped-after-failure":
+        del _step_named(job, JVM_UPLOAD_STEP["name"])["if"]
+    elif case == "jvm-upload-tolerates-missing-results":
+        _step_named(job, JVM_UPLOAD_STEP["name"])["with"]["if-no-files-found"] = "warn"
+    elif case == "jvm-upload-drops-junit-xml":
+        upload = _step_named(job, JVM_UPLOAD_STEP["name"])["with"]
+        assert upload["path"].count("android/ical4android/build/test-results/testDebugUnitTest/\n") == 1
+        upload["path"] = upload["path"].replace("android/ical4android/build/test-results/testDebugUnitTest/\n", "")
+    elif case == "jvm-verify-removed":
+        _remove_step(job, lambda step: step.get("name") == JVM_VERIFY_STEP["name"])
+    elif case == "jvm-verify-skipped-after-failure":
+        del _step_named(job, JVM_VERIFY_STEP["name"])["if"]
+    elif case == "jvm-verify-requires-nothing":
+        step = _step_named(job, JVM_VERIFY_STEP["name"])
+        start = step["run"].index("required = [\n")
+        end = step["run"].index("]\n", start) + 2
+        step["run"] = step["run"][:start] + "required = []\n" + step["run"][end:]
+    elif case == "jvm-verify-counts-skipped-as-executed":
+        _replace_in_step(job, JVM_VERIFY_STEP["name"], "run", JVM_REQUIRED_SKIP_TRACKING, "executed.add(key)")
+    elif case == "jvm-verify-accepts-missing-reports":
+        _replace_in_step(job, JVM_VERIFY_STEP["name"], "run", "  print('::error::no ical4android JUnit XML reports were produced')\n  sys.exit(1)\n", "  pass\n")
+    else:
+        raise AssertionError(case)
+
+
+JVM_MUTATIONS = {
+    "debug-step-removed": DEBUG_STEP_VIOLATION,
+    "jvm-test-removed": JVM_TEST_VIOLATION,
+    "jvm-test-filtered": JVM_TEST_VIOLATION,
+    "jvm-test-stops-at-first-failure": JVM_TEST_VIOLATION,
+    "jvm-test-skipped-after-failure": JVM_TEST_VIOLATION,
+    "jvm-test-disabled": JVM_TEST_VIOLATION,
+    "jvm-test-continue-on-error": JVM_TEST_VIOLATION,
+    "jvm-test-before-debug-step": JVM_TEST_VIOLATION,
+    "jvm-suite-repeated-filtered": JVM_SUITE_ONCE_VIOLATION,
+    "jvm-upload-removed": JVM_UPLOAD_VIOLATION,
+    "jvm-upload-skipped-after-failure": JVM_UPLOAD_VIOLATION,
+    "jvm-upload-tolerates-missing-results": JVM_UPLOAD_VIOLATION,
+    "jvm-upload-drops-junit-xml": JVM_UPLOAD_VIOLATION,
+    "jvm-verify-removed": JVM_VERIFY_VIOLATION,
+    "jvm-verify-skipped-after-failure": JVM_VERIFY_VIOLATION,
+    "jvm-verify-requires-nothing": JVM_VERIFY_VIOLATION,
+    "jvm-verify-counts-skipped-as-executed": JVM_VERIFY_VIOLATION,
+    "jvm-verify-accepts-missing-reports": JVM_VERIFY_VIOLATION,
+}
+
+
+@pytest.mark.parametrize(("case", "expected"), JVM_MUTATIONS.items(), ids=JVM_MUTATIONS.keys())
+def test_jvm_evidence_mutations_are_rejected(candidate, case, expected):
+    assert jvm_evidence_violations(candidate) == [], (
+        "the unmutated candidate must be clean for this mutation to be meaningful"
+    )
+    mutated = copy.deepcopy(candidate)
+    _jvm_mutation(mutated, case)
+    assert expected in jvm_evidence_violations(mutated)
