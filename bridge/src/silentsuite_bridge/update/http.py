@@ -24,8 +24,15 @@ _ALLOWED_HOSTS = frozenset({
     "codeload.github.com",
 })
 
-# Release JSON max size
+# Release JSON max size, per response
 _MAX_RELEASE_JSON = 512 * 1024
+
+# Release listing: the same 100-release search window as a single
+# per_page=100 request, fetched in pages small enough that each response stays
+# under _MAX_RELEASE_JSON (umbrella releases measured about 32 KB each).
+_RELEASES_URL = "https://api.github.com/repos/silent-suite/silentsuite/releases"
+RELEASES_PER_PAGE = 10
+MAX_RELEASES = 100
 
 # Binary download max size
 _MAX_BINARY = 128 * 1024 * 1024
@@ -75,18 +82,35 @@ class SilentSuiteHttpAdapter:
         self._clock = clock or time.monotonic
 
     def fetch_releases(self) -> list[dict]:
-        """Fetch GitHub Releases JSON. Returns list of release dicts."""
-        url = "https://api.github.com/repos/silent-suite/silentsuite/releases?per_page=100"
-        body = self.download(url, max_size=_MAX_RELEASE_JSON)
-        try:
-            data = json.loads(body)
-        except (json.JSONDecodeError, ValueError):
-            raise HttpError("GitHub Releases API returned invalid JSON.")
+        """Fetch up to MAX_RELEASES releases, newest first, in bounded pages.
 
-        if not isinstance(data, list):
-            raise HttpError("GitHub Releases API response is not a list.")
-
-        return data
+        Each page is its own request held to _MAX_RELEASE_JSON. All pages
+        share one total deadline, so listing takes no longer than a single
+        request was allowed. Page URLs are built here; pagination links from
+        responses are never followed. Any failed page fails the whole fetch.
+        """
+        deadline = self._clock() + self._total_timeout
+        releases: list = []
+        page = 1
+        while len(releases) < MAX_RELEASES:
+            url = f"{_RELEASES_URL}?per_page={RELEASES_PER_PAGE}&page={page}"
+            body = _bounded_download(
+                url=url,
+                transport=self._transport,
+                timeout=self._timeout,
+                max_redirects=self._max_redirects,
+                max_size=_MAX_RELEASE_JSON,
+                deadline=deadline,
+                clock=self._clock,
+            )
+            items = _parse_release_page(body)
+            releases.extend(items)
+            # A short or empty page is the last one. Every full page adds
+            # RELEASES_PER_PAGE items, so the loop is bounded by MAX_RELEASES.
+            if len(items) < RELEASES_PER_PAGE:
+                break
+            page += 1
+        return releases[:MAX_RELEASES]
 
     def download(self, url: str, max_size: int | None = None) -> bytes:
         """Download `url` with bounded redirects, time, and size."""
@@ -189,6 +213,18 @@ def _bounded_download(
         raise HttpError("Unexpected response format.")
     else:
         return _read_streamed(resp, max_size, deadline=deadline, clock=clock)
+
+
+def _parse_release_page(body: bytes) -> list:
+    try:
+        data = json.loads(body)
+    except (json.JSONDecodeError, ValueError):
+        raise HttpError("GitHub Releases API returned invalid JSON.")
+
+    if not isinstance(data, list):
+        raise HttpError("GitHub Releases API response is not a list.")
+
+    return data
 
 
 def _extract_location(resp) -> str | None:
