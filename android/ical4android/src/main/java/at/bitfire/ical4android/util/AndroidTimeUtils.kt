@@ -124,7 +124,8 @@ object AndroidTimeUtils {
      * @return RDATE with the DTSTART date as its only entry
      */
     fun dtStartRecurrenceCarrier(dtStart: DateProperty): RDate {
-        val listWithDtStart = DateList()
+        // an all-day DTSTART stays a DATE, so it is formatted like the other all-day DATE values
+        val listWithDtStart = if (DateUtils.isDate(dtStart)) DateList(Value.DATE) else DateList()
         listWithDtStart.add(dtStart.date)
         return RDate(listWithDtStart)
     }
@@ -147,6 +148,11 @@ object AndroidTimeUtils {
             event with time     (undefined)                         store as ...ThhmmssZ
         */
         val dateFormatUtcMidnight = SimpleDateFormat("yyyyMMdd'T'000000'Z'", Locale.ROOT)
+        // DATE values are midnight in ical4j's date time zone (UTC unless floating dates are configured),
+        // so they must be formatted in that zone, not in the device default zone
+        val dateFormatDateMidnight = SimpleDateFormat("yyyyMMdd'T'000000'Z'", Locale.ROOT).apply {
+            timeZone = TimeZones.getDateTimeZone()
+        }
         val strDates = LinkedList<String>()
 
         // use time zone of first entry for the whole set; null for UTC
@@ -173,7 +179,7 @@ object AndroidTimeUtils {
                 Value.DATE ->
                     // DATE values have to be converted to DATE-TIME <date>T000000Z for Android
                     dateListProp.dates.mapTo(strDates) {
-                        dateFormatUtcMidnight.format(it)
+                        dateFormatDateMidnight.format(it)
                     }
             }
         }
