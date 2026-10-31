@@ -135,6 +135,7 @@ class AccountDashboardRuntimeTest {
 
     @Test fun missingTaskProviderOutranksTaskLifecycleWithoutChangingSiblingsOrEvidence() {
         assertMaintenanceDoesNotBackdateNewerRequests()
+        assertMaintenancePreservesRollbackInterruptionWindow()
         val phase = AtomicInteger(0)
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
             SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
@@ -958,6 +959,50 @@ class AccountDashboardRuntimeTest {
                 assertEquals("maintenance must not backdate the newer $service request",
                     admitted.getValue(service), store.status(account, service))
             }
+        }
+    }
+
+    private fun assertMaintenancePreservesRollbackInterruptionWindow() {
+        val clock = AtomicLong(System.currentTimeMillis())
+        val rollBack = AtomicBoolean(false)
+        val rolledBackOnThisThread = ThreadLocal<Boolean>()
+        val maintenanceFinished = CountDownLatch(1)
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            if (rolledBackOnThisThread.get() == true) {
+                rolledBackOnThisThread.remove()
+                maintenanceFinished.countDown()
+            }
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            val store = SyncStatusStore(context)
+            assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.NOTES),
+                "after-clock-rollback", clock.get() - 1))
+            AccountActivity.AccountInfoViewModel.lifecycleNowOverride = {
+                val observed = clock.get()
+                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() &&
+                    rollBack.compareAndSet(true, false)) {
+                    // The wall clock moves back after the pass's first observation. Rebase
+                    // must still grant its full interruption window, not expire against that old time.
+                    rolledBackOnThisThread.set(true)
+                    clock.addAndGet(-TimeUnit.HOURS.toMillis(1))
+                }
+                observed
+            }
+            rollBack.set(true)
+            scenario.onActivity { it.refresh() }
+            assertTrue("the rollback maintenance pass did not finish",
+                maintenanceFinished.await(10, TimeUnit.SECONDS))
+            val status = store.status(account, SyncStatusStore.Service.NOTES)
+            assertEquals("clock rollback must keep the newly rebased request active",
+                "after-clock-rollback", status.activeRequestId)
+            assertEquals(clock.get(), requireNotNull(status.requestedAt))
+            assertFalse("rebasing must not consume the interruption window",
+                status.lastFailureCategory == SyncStatusStore.FailureCategory.INTERRUPTED)
         }
     }
 
