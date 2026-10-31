@@ -4,9 +4,7 @@ How to run and write tests for SilentSuite.
 
 ## Test Framework
 
-The monorepo uses [Vitest](https://vitest.dev/) as the test framework. There are currently 189+ core tests across the monorepo packages and apps.
-
-Note: The Etebase server (Django) does not have test coverage yet. Contributions welcome.
+The monorepo uses [Vitest](https://vitest.dev/) as the test framework.
 
 ## Running Tests
 
@@ -19,8 +17,8 @@ pnpm test
 Run tests for a specific app or package:
 
 ```bash
-pnpm test --filter=landing
-pnpm test --filter=web
+pnpm --filter @silentsuite/web test
+pnpm --filter @silentsuite/core test
 ```
 
 ## Type Checking
