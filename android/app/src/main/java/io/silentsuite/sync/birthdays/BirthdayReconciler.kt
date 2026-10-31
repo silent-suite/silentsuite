@@ -43,4 +43,21 @@ object BirthdayReconciler {
             WriteOutcome.UNKNOWN
         }
     }
+
+    /** How a reconcile run ended; only [DONE] means the calendar matched the source at its end. */
+    enum class RunStatus { DONE, SKIPPED, PENDING, FAILED }
+
+    /** A run's outcome, as Bridge reports it: the status, every calendar uid written or possibly written, and why. */
+    data class RunResult(val status: RunStatus, val written: List<String>, val reason: String? = null)
+
+    /**
+     * Fresh-read reconcile of the generated Birthdays calendar for the account [etebase] signed in
+     * as the SDK user [username].
+     *
+     * NEUTRAL SCAFFOLD (tests-only checkpoint): makes no SDK call, reads and writes nothing, and
+     * reports [RunStatus.SKIPPED]. The run follows only after its hosted test RED is observed.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun reconcile(etebase: com.etebase.client.Account, username: String): RunResult =
+        RunResult(RunStatus.SKIPPED, emptyList(), "not-implemented")
 }
