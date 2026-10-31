@@ -16,6 +16,7 @@ import android.os.Bundle
 import androidx.fragment.app.DialogFragment
 import io.silentsuite.sync.*
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.utils.AccountRowChanges
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.setup.BaseConfigurationFinder.Configuration
 import io.silentsuite.sync.ui.ActiveAccountManager
@@ -215,7 +216,10 @@ class CreateAccountFragment : DialogFragment() {
                 override fun rowExists() = accountManager.getAccountsByType(App.accountType).contains(account)
                 override fun prepare(id: String) = registry.prepare(AccountCreationRegistry.Record(accountName, id,
                     AccountCreationRegistry.Phase.PREPARED, System.currentTimeMillis(), App.accountType))
-                override fun add() = accountManager.addAccountExplicitly(account, null, null)
+                override fun add(): Boolean {
+                    AccountRowChanges.mainType.before()
+                    return accountManager.addAccountExplicitly(account, null, null)
+                }
                 override fun writeAndReadBack(key: String, value: String?) =
                     AccountSettings.writeVerified(accountManager, account, key, value)
                 override fun phase(id: String, phase: AccountCreationRegistry.Phase) = registry.updateOwned(
