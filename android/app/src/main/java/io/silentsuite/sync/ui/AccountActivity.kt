@@ -1620,7 +1620,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         /** Cold-load lifecycle maintenance is explicit, IO-bound, and never a rendering effect. */
         private fun lifecycleStatus(store: SyncStatusStore, service: SyncStatusStore.Service, active: Boolean, pending: Boolean): SyncStatusStore.Status {
             val now = lifecycleNow()
-            store.rebaseFutureLifecycle(statusIdentity, service, now)
+            store.rebaseFutureLifecycle(statusIdentity, service, ::lifecycleNow)
             store.expireStale(statusIdentity, service, now, active, pending, lifecycleWindows.interruptionAfterMillis)
             return store.status(statusIdentity, service)
         }
@@ -1652,7 +1652,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             )
             val now = lifecycleNow()
             facts.forEach { (service, fact) ->
-                store.rebaseFutureLifecycle(statusIdentity, service, now)
+                store.rebaseFutureLifecycle(statusIdentity, service, ::lifecycleNow)
                 store.expireStale(statusIdentity, service, now, fact.first, fact.second, lifecycleWindows.interruptionAfterMillis)
             }
         }

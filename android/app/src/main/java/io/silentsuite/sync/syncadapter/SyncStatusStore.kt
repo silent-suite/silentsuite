@@ -452,8 +452,9 @@ class SyncStatusStore internal constructor(
     }
 
     @Synchronized
-    internal fun rebaseFutureLifecycle(identity: MainIdentity, service: Service, now: Long): Boolean = synchronized(STORE_LOCK) {
-        return@synchronized rebaseFutureLifecycleResult(identity, service, now) == MutationResult.RECORDED
+    internal fun rebaseFutureLifecycle(identity: MainIdentity, service: Service, clock: () -> Long): Boolean = synchronized(STORE_LOCK) {
+        // Sample under the record lock: a newer request must not look like a clock rollback.
+        return@synchronized rebaseFutureLifecycleResult(identity, service, clock()) == MutationResult.RECORDED
     }
 
     private fun rebaseFutureLifecycleResult(identity: MainIdentity, service: Service, now: Long): MutationResult {
