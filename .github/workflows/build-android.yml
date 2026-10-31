@@ -450,6 +450,9 @@ jobs:
             ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_DefaultParameterFamilies_RoundTrip'),
             ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_DateTimeValueShapes_RoundTrip'),
             ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyRecorder_ParsedEventUnknownProperties_RoundTrip'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyReader_HostileTopLevelPayload_DeniedBeforeHook'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyReader_HostileNestedContainer_DeniedBeforeHook'),
+            ('at.bitfire.ical4android.UnknownPropertyLegacyTest', 'testLegacyReader_HostileParameterSubclass_DeniedBeforeHook'),
           ]
           reports = sorted(pathlib.Path('ical4android/build/test-results/testDebugUnitTest').glob('TEST-*.xml'))
           if not reports:

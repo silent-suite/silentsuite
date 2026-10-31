@@ -34,9 +34,7 @@ import net.fortuna.ical4j.model.component.VAlarm
 import net.fortuna.ical4j.model.parameter.*
 import net.fortuna.ical4j.model.property.*
 import net.fortuna.ical4j.util.TimeZones
-import java.io.ByteArrayInputStream
 import java.io.FileNotFoundException
-import java.io.ObjectInputStream
 import java.net.URI
 import java.net.URISyntaxException
 import java.time.*
@@ -422,10 +420,8 @@ abstract class AndroidEvent(
 
                 EXT_UNKNOWN_PROPERTY -> {
                     // deserialize unknown property (deprecated format)
-                    val stream = ByteArrayInputStream(Base64.decode(row.getAsString(ExtendedProperties.VALUE), Base64.NO_WRAP))
-                    ObjectInputStream(stream).use {
-                        event.unknownProperties += it.readObject() as Property
-                    }
+                    val bytes = Base64.decode(row.getAsString(ExtendedProperties.VALUE), Base64.NO_WRAP)
+                    event.unknownProperties += UnknownProperty.fromLegacySerialized(bytes)
                 }
 
                 EXT_UNKNOWN_PROPERTY2, UnknownProperty.CONTENT_ITEM_TYPE ->

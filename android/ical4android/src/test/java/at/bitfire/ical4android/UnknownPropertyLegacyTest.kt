@@ -6,21 +6,29 @@ import net.fortuna.ical4j.model.Date
 import net.fortuna.ical4j.model.DateTime
 import net.fortuna.ical4j.model.Parameter
 import net.fortuna.ical4j.model.ParameterBuilder
+import net.fortuna.ical4j.model.ParameterList
 import net.fortuna.ical4j.model.Property
 import net.fortuna.ical4j.model.PropertyBuilder
+import net.fortuna.ical4j.model.parameter.XParameter
 import net.fortuna.ical4j.model.property.Clazz
 import net.fortuna.ical4j.model.property.Due
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.io.InvalidClassException
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.io.ObjectStreamClass
+import java.io.Serializable
 import java.io.StringReader
+import java.security.MessageDigest
+import java.util.LinkedList
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Test-only inventory of the Java serialization descriptors of legitimate unknown-property graphs
@@ -29,8 +37,18 @@ import java.io.StringReader
  *
  * This is evidence collection only: it is neither the production legacy reader nor an allowlist, and
  * the recorder's own proxy rejection proves nothing about production rejection.
+ *
+ * The D2-T2/T3/T4 hostile tests (testLegacyReader_*) instead call the production-called seam
+ * [UnknownProperty.fromLegacySerialized]. They first assert that the hostile serialization callback did
+ * not run, then require the exact descriptor-denial [InvalidClassException] carrying [LEGACY_DENIAL_MARKER]
+ * for the expected denied descriptor. They are tests-first: the seam is still unrestricted.
  */
 class UnknownPropertyLegacyTest {
+
+    companion object {
+        /** Predeclared reason the restricted legacy reader must pass as `InvalidClassException(desc.name, reason)`. */
+        const val LEGACY_DENIAL_MARKER = "D2-LEGACY-DESCRIPTOR-DENIED"
+    }
 
     private class RecordingObjectInputStream(input: InputStream) : ObjectInputStream(input) {
         val descriptors = sortedSetOf<String>()
@@ -42,6 +60,30 @@ class UnknownPropertyLegacyTest {
 
         override fun resolveProxyClass(interfaces: Array<out String>): Class<*> =
                 throw InvalidClassException("test recorder does not admit proxy classes: ${interfaces.joinToString()}")
+    }
+
+    /** Hook flags of the hostile fixtures; reset and verified before every seam invocation. */
+    private object HostileHookFlags {
+        @Volatile var payloadHookRan = false
+        @Volatile var parameterHookRan = false
+    }
+
+    /** D2-T2/T3 test-only hostile payload: its private serialization callback only records that it ran. */
+    private class HostileLegacyPayload : Serializable {
+        @Suppress("unused")
+        private fun readObject(input: ObjectInputStream) {
+            input.defaultReadObject()
+            HostileHookFlags.payloadHookRan = true
+        }
+    }
+
+    /** D2-T4 test-only hostile subclass of the admitted XParameter: private serialization callback, no override. */
+    private class HostileParameter : XParameter("X-SILENTSUITE-HOSTILE", "1") {
+        @Suppress("unused")
+        private fun readObject(input: ObjectInputStream) {
+            input.defaultReadObject()
+            HostileHookFlags.parameterHookRan = true
+        }
     }
 
     private class Fixture(val family: String, val variant: String, val make: () -> Property, val check: ((Property, Property) -> Unit)? = null)
@@ -147,6 +189,41 @@ class UnknownPropertyLegacyTest {
         println("D2-RECORDER provenance group=$group java.version=${System.getProperty("java.version")} " +
                 "java.vendor=${System.getProperty("java.vendor")} java.vm.name=${System.getProperty("java.vm.name")} " +
                 "java.runtime.version=${System.getProperty("java.runtime.version")} ical4j.jar=$ical4jJar")
+        for (line in dependencyProvenance)
+            println("D2-RECORDER provenance-dependency group=$group $line")
+    }
+
+    /** Diagnostic only (N4 support): artifact identity of already-present dependency classes; never fails a test. */
+    private val dependencyProvenance: List<String> by lazy {
+        listOf(
+                "javax.mail.internet.InternetAddress",
+                "org.slf4j.LoggerFactory",
+                "org.apache.commons.lang3.builder.HashCodeBuilder"
+        ).map { describeArtifact(it) }
+    }
+
+    private fun describeArtifact(className: String): String = try {
+        val cls = Class.forName(className, false, javaClass.classLoader)
+        val location = cls.protectionDomain?.codeSource?.location
+        val file = location?.takeIf { it.protocol == "file" }?.let { File(it.toURI()) }?.takeIf { it.isFile }
+        val sha256 = file?.let { jar ->
+            val digest = MessageDigest.getInstance("SHA-256")
+            jar.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        }
+        "class=$className artifact=${file?.name ?: "unavailable"} location=${location ?: "unavailable"} " +
+                "implementationVersion=${cls.`package`?.implementationVersion ?: "unavailable"} sha256=${sha256 ?: "unavailable"}"
+    } catch (e: Exception) {
+        "class=$className status=UNAVAILABLE error=${e.javaClass.name}"
+    } catch (e: LinkageError) {
+        "class=$className status=UNAVAILABLE error=${e.javaClass.name}"
     }
 
     /** Round-trips every fixture (none is skipped on an earlier failure) and fails at the end if any failed. */
@@ -256,6 +333,86 @@ class UnknownPropertyLegacyTest {
         record("parsed-event", event.unknownProperties.mapIndexed { index, property ->
             Fixture(property.name, "parsed-$index", { property })
         })
+    }
+
+
+    /** Test-only serialization of hostile graphs; unlike [serialize] it accepts a non-Property payload, uncast. */
+    private fun serializeHostile(graph: Serializable): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        ObjectOutputStream(bytes).use { it.writeObject(graph) }
+        return bytes.toByteArray()
+    }
+
+    /** Final D2 GREEN requirement: descriptor-denial InvalidClassException with the exact predeclared marker. */
+    private fun assertDescriptorDenied(outcome: Result<Property>, expectedDescriptor: String) {
+        val error = outcome.exceptionOrNull()
+        if (error !is InvalidClassException)
+            throw AssertionError("expected descriptor-denial InvalidClassException for $expectedDescriptor, got " +
+                    (error?.let { "${it.javaClass.name}: ${it.message}" } ?: "success: ${outcome.getOrNull()?.javaClass?.name}"), error)
+        assertEquals("denied descriptor", expectedDescriptor, error.classname)
+        assertEquals("descriptor-denial marker", "$expectedDescriptor; $LEGACY_DENIAL_MARKER", error.message)
+    }
+
+    @Test
+    fun testLegacyReader_HostileTopLevelPayload_DeniedBeforeHook() {
+        // D2-T2: a top-level non-Property payload, serialized without any Property cast.
+        val bytes = serializeHostile(HostileLegacyPayload())
+
+        HostileHookFlags.payloadHookRan = false
+        assertFalse("fixture: payload hook flag must be reset before invocation", HostileHookFlags.payloadHookRan)
+        val outcome = runCatching { UnknownProperty.fromLegacySerialized(bytes) }
+
+        // Asserted first: a later Property ClassCastException earns no credit.
+        assertFalse("D2-T2 hostile top-level payload hook must not execute", HostileHookFlags.payloadHookRan)
+        assertDescriptorDenied(outcome, HostileLegacyPayload::class.java.name)
+    }
+
+    @Test
+    fun testLegacyReader_HostileNestedContainer_DeniedBeforeHook() {
+        // D2-T3: java.util.LinkedList is absent from the observed 233-descriptor union (java.util.HashMap is present via
+        // Recur and therefore unsuitable). It is inserted into the admitted XProperty's ParameterList backing list.
+        val property = prop("X-SILENTSUITE-TEST", "value")
+        val backing = try {
+            ParameterList::class.java.getDeclaredField("parameters").apply { isAccessible = true }.get(property.parameters)
+        } catch (e: Exception) {
+            throw AssertionError("fixture: cannot reflect ParameterList.parameters: ${e.javaClass.name}: ${e.message}", e)
+        }
+        if (backing !is CopyOnWriteArrayList<*>)
+            throw AssertionError("fixture: ParameterList.parameters backing is ${backing?.javaClass?.name}, expected mutable java.util.concurrent.CopyOnWriteArrayList")
+        val container = LinkedList<Any>().apply { add(HostileLegacyPayload()) }
+        @Suppress("UNCHECKED_CAST")
+        (backing as CopyOnWriteArrayList<Any>).add(container)
+        if (backing.none { it === container })
+            throw AssertionError("fixture: LinkedList container was not inserted into the ParameterList backing list")
+        val bytes = serializeHostile(property)
+
+        HostileHookFlags.payloadHookRan = false
+        assertFalse("fixture: payload hook flag must be reset before invocation", HostileHookFlags.payloadHookRan)
+        val outcome = runCatching { UnknownProperty.fromLegacySerialized(bytes) }
+
+        assertFalse("D2-T3 hostile payload nested in a non-admitted container must not execute", HostileHookFlags.payloadHookRan)
+        assertDescriptorDenied(outcome, LinkedList::class.java.name)
+    }
+
+    @Test
+    fun testLegacyReader_HostileParameterSubclass_DeniedBeforeHook() {
+        // D2-T4: hostile subclass of the admitted XParameter, nested in an admitted XProperty.
+        val property = prop("X-SILENTSUITE-TEST", "value")
+        try {
+            property.parameters.add(HostileParameter())
+        } catch (e: Exception) {
+            throw AssertionError("fixture: cannot add HostileParameter to the XProperty: ${e.javaClass.name}: ${e.message}", e)
+        }
+        if (property.parameters.none { it is HostileParameter })
+            throw AssertionError("fixture: HostileParameter is not part of the serialized XProperty graph")
+        val bytes = serializeHostile(property)
+
+        HostileHookFlags.parameterHookRan = false
+        assertFalse("fixture: parameter hook flag must be reset before invocation", HostileHookFlags.parameterHookRan)
+        val outcome = runCatching { UnknownProperty.fromLegacySerialized(bytes) }
+
+        assertFalse("D2-T4 hostile XParameter subclass hook must not execute", HostileHookFlags.parameterHookRan)
+        assertDescriptorDenied(outcome, HostileParameter::class.java.name)
     }
 
 }

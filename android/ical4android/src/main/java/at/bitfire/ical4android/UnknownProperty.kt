@@ -6,6 +6,8 @@ import net.fortuna.ical4j.data.DefaultPropertyFactorySupplier
 import net.fortuna.ical4j.model.*
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayInputStream
+import java.io.ObjectInputStream
 
 /**
  * Helpers to (de)serialize unknown properties as JSON to store it in an Android ExtendedProperty row.
@@ -81,6 +83,25 @@ object UnknownProperty {
         }
 
         return json.toString()
+    }
+
+    /**
+     * Deserializes an unknown property stored in the deprecated legacy Java-serialization format
+     * (extended property name [AndroidEvent.EXT_UNKNOWN_PROPERTY]); [bytes] are the already
+     * Base64-decoded row value.
+     *
+     * This is the reader previously inlined in [AndroidEvent.populateExtended], extracted
+     * unchanged. The stream is NOT restricted; this is not a security boundary.
+     *
+     * @param bytes Java-serialized ical4j property
+     * @return deserialized property
+     * @throws Exception whatever the unrestricted stream or the cast throws (handled by the caller)
+     */
+    fun fromLegacySerialized(bytes: ByteArray): Property {
+        val stream = ByteArrayInputStream(bytes)
+        ObjectInputStream(stream).use {
+            return it.readObject() as Property
+        }
     }
 
 }
