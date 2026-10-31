@@ -43,6 +43,8 @@ android {
 
     sourceSets {
         main.java.srcDirs = [ "src/main/java", "opentasks-contract/src/main/java" ]
+        // D2 positive recorder floor: test-only source shared with :app androidTest (never a production source set)
+        test.java.srcDirs += "src/sharedTest/java"
     }
     lint {
         disable 'AllowBackup', 'InvalidPackage'

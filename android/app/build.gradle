@@ -84,6 +84,11 @@ android {
         testInstrumentationRunner "io.silentsuite.sync.SilentSuiteTestRunner"
     }
 
+    sourceSets {
+        // D2 positive recorder floor: test-only source shared from :ical4android (androidTest only, never main)
+        androidTest.java.srcDirs += rootProject.file('ical4android/src/sharedTest/java')
+    }
+
     /*
      * To sign release build, create file gradle.properties in ~/.gradle/ with this content:
      *
