@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sidebar } from '../sidebar'
 import { SettingsNav } from '@/app/(app)/settings/settings-nav'
@@ -385,6 +385,67 @@ describe('seven-day trial status near Settings', () => {
       await act(async () => { vi.advanceTimersByTime(DAY) })
       await flush()
       expect(subscriptionReads()).toBe(3)
+    })
+
+    // The retained page's notice and expiry dispatch belong to the account it was opened for.
+    it('drops a retained page notice and makes no expiry read when another account replaces the owner', async () => {
+      routeBilling([() => json(running)])
+      seed(running.accountNotice)
+      render(<SubscriptionPage />)
+      await flush()
+      expect(within(card()).getByText('Free trial: 1 day left')).toBeInTheDocument()
+
+      act(() => {
+        bumpAccountEpoch()
+        useAuthStore.getState().setUser(userV)
+      })
+      expect(document.body).not.toHaveTextContent(countdownText)
+
+      await pastEnd()
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(1)
+    })
+
+    // A failed shared expiry read leaves an owned recovery path and no automatic retries.
+    it('offers an owned retry after the shared expiry read fails, without retrying on its own', async () => {
+      routeBilling([() => json(running), () => ({ ok: false, status: 503, json: async () => ({}) }), () => json(ended)])
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      await pastEnd()
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+      expect(document.body).not.toHaveTextContent(countdownText)
+      expect(screen.queryByText('Your trial has ended.')).not.toBeInTheDocument()
+
+      await act(async () => { vi.advanceTimersByTime(DAY) })
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+
+      fireEvent.click(within(card()).getByRole('button', { name: 'Try again' }))
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(3)
+      endedCard()
+    })
+
+    it('lets a returning tab claim the expiry read again after it failed', async () => {
+      routeBilling([() => json(running), () => ({ ok: false, status: 503, json: async () => ({}) }), () => json(ended)])
+      seed(running.accountNotice)
+      renderWithPage()
+      await flush()
+      await pastEnd()
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(2)
+
+      await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
+      await flush()
+      await flush()
+      expect(subscriptionReads()).toBe(3)
+      endedCard()
     })
 
     it('makes no expiry continuation after sign-out', async () => {

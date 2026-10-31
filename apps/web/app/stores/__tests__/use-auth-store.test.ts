@@ -3019,6 +3019,28 @@ describe('accountNotice (store)', () => {
     expect(current === null || (current.userId === userU.id && current.response === null)).toBe(true)
   })
 
+  it('re-admits an expiry claim only after its owned read failed, and still coalesces while it is in flight', async () => {
+    seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', accountNotice: daysLeft } as WithHostedAccess)
+    const claimRead = deferredValue<Response>()
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => claimRead.promise)
+      .mockResolvedValue(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }))
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(claim(trialEndsAt)).toBe(false)
+    claimRead.resolve({ ok: false, status: 503, json: async () => ({}) } as Response)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    // The failure is not expiry: status stays, the notice is only hidden.
+    expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
+    expect(readNotice()).toBeNull()
+    expect(subscriptionCalls()).toBe(1)
+
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(claim(trialEndsAt)).toBe(false)
+    await vi.waitFor(() => expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt }))
+    expect(subscriptionCalls()).toBe(2)
+    expect(claim(trialEndsAt)).toBe(false)
+  })
+
   it('makes no expiry continuation when a newer read started after the discarded one', async () => {
     seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
     const claimRead = deferredValue<Response>()

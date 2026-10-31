@@ -134,6 +134,8 @@ export interface TrialExpiryRefreshClaim {
   trialEndsAt: string
   readSequence: number
   response: unknown
+  /** The read meant to settle this claim failed while still owned; an explicit trigger may claim again. */
+  failed: boolean
 }
 
 /** A visible countdown older than this is re-read when the tab becomes visible again. */
@@ -1201,7 +1203,24 @@ function settleExpiryClaim(
   body: unknown,
 ): { trialExpiryRefreshClaim: TrialExpiryRefreshClaim } | Record<string, never> {
   return claim && userId && claim.userId === userId && claim.epoch === epoch && sequence >= claim.readSequence
-    ? { trialExpiryRefreshClaim: { ...claim, response: body } }
+    ? { trialExpiryRefreshClaim: { ...claim, response: body, failed: false } }
+    : {}
+}
+
+/**
+ * An owned failure of a read that would have settled the matching claim. The failure is not
+ * expiry: the claim stays unsettled and is marked failed, so a later explicit trigger (a
+ * returning tab, a newly mounted consumer, the page's Try again) can claim once more. Nothing
+ * retries on its own.
+ */
+function failExpiryClaim(
+  claim: TrialExpiryRefreshClaim | null,
+  userId: string | undefined,
+  epoch: number,
+  sequence: number,
+): { trialExpiryRefreshClaim: TrialExpiryRefreshClaim } | Record<string, never> {
+  return claim && userId && claim.userId === userId && claim.epoch === epoch && sequence >= claim.readSequence && claim.response === null
+    ? { trialExpiryRefreshClaim: { ...claim, failed: true } }
     : {}
 }
 
@@ -1250,7 +1269,7 @@ async function readSubscription(
       return 'published'
     }
     // An owned failure hides the notice only; status and hostedAccess behave as before.
-    set({ accountNotice: null })
+    set({ accountNotice: null, ...failExpiryClaim(get().trialExpiryRefreshClaim, originalUser?.id, epoch, sequence) })
   } catch (err) {
     // Network error — only enter degraded mode if there's no existing good status
     logger.warn('[auth-store] fetchSubscription failed (network):', err)
@@ -1259,7 +1278,7 @@ async function readSubscription(
     if (!current) {
       set({ subscriptionStatus: 'billing_unavailable', hostedAccess: null, ...clearedAccountNotice })
     } else {
-      set({ accountNotice: null })
+      set({ accountNotice: null, ...failExpiryClaim(get().trialExpiryRefreshClaim, originalUser?.id, epoch, sequence) })
     }
   }
   return 'not-published'
@@ -2096,8 +2115,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const epoch = getAccountEpoch()
     if (!user || !isCurrentAccountEpoch(epoch)) return false
     const claimed = get().trialExpiryRefreshClaim
-    if (claimed && claimed.epoch === epoch && claimed.userId === user.id && claimed.trialEndsAt === trialEndsAt) return false
-    const claim: TrialExpiryRefreshClaim = { epoch, userId: user.id, trialEndsAt, readSequence: subscriptionRequestSequence + 1, response: null }
+    // In-flight and settled claims coalesce; only a claim whose owned read failed is re-admitted.
+    if (claimed && claimed.epoch === epoch && claimed.userId === user.id && claimed.trialEndsAt === trialEndsAt && !claimed.failed) return false
+    const claim: TrialExpiryRefreshClaim = { epoch, userId: user.id, trialEndsAt, readSequence: subscriptionRequestSequence + 1, response: null, failed: false }
     set({ trialExpiryRefreshClaim: claim, accountNoticeCheckedAt: Date.now() })
     void (async () => {
       if (await readSubscription(set, get) !== 'same-account-replaced') return

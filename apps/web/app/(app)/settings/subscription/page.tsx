@@ -351,9 +351,13 @@ export default function SubscriptionPage() {
     void fetchSubscription()
   }, [fetchSubscription, stripePaymentReturn])
 
-  // Admins, self-host builds and custom-server accounts get no notice here either, exactly as in
-  // navigation; the raw status badge and the date rows remain.
-  const notice = useEligibleAccountNotice(data ? parseAccountNotice(data.accountNotice) : null)
+  // The notice, its countdown and its expiry dispatch belong to the account this page was opened
+  // for: another account or boundary never sees or triggers them (a same-account fresh user object
+  // stays the owner). Admins, self-host builds and custom-server accounts get no notice here either,
+  // exactly as in navigation; the raw status badge and the date rows remain.
+  const liveUser = useAuthStore((state) => state.user)
+  const pageOwned = (liveUser?.id ?? null) === principal.id && getAccountEpoch() === principal.epoch
+  const notice = useEligibleAccountNotice(data && pageOwned ? parseAccountNotice(data.accountNotice) : null)
   const countdown = useTrialCountdown(notice)
   const expiredTrialEndsAt = notice?.kind === 'trial_days_left' && !countdown ? notice.trialEndsAt : null
 
@@ -369,6 +373,13 @@ export default function SubscriptionPage() {
     requestSequenceRef.current += 1
     setData(expiryClaim.response)
   }, [expiredTrialEndsAt, expiryClaim, data, principal, captureOwner])
+  // The shared expiry read for this page's own account and instant failed: offer one owned retry.
+  const expiryRefreshFailed = !!expiredTrialEndsAt && !!expiryClaim && expiryClaim.failed
+    && expiryClaim.trialEndsAt === expiredTrialEndsAt && expiryClaim.userId === principal.id && expiryClaim.epoch === principal.epoch
+  const retryExpiryRefresh = () => {
+    if (!expiredTrialEndsAt || !captureOwner()) return
+    useAuthStore.getState().claimTrialExpiryRefresh(expiredTrialEndsAt)
+  }
   // The price and the reason to subscribe are hosted-only additions; self-host and custom-server
   // accounts keep their existing actions but get neither, and no offer read.
   const purchaseAction = data && isHostedBillingAccount()
@@ -378,7 +389,6 @@ export default function SubscriptionPage() {
   // The signed account offer supplies the price, read only while a purchase action is shown.
   // A quote belongs to the live owner and read that produced it: a newer read, a fresh user
   // object or another account hides it at once, and a failed or refused read leaves none.
-  const liveUser = useAuthStore((state) => state.user)
   useEffect(() => {
     const sequence = ++offerSequenceRef.current
     setOfferQuote(null)
@@ -651,6 +661,15 @@ export default function SubscriptionPage() {
             </span>
           )}
         </div>
+
+        {expiryRefreshFailed && (
+          <div className="space-y-3">
+            <p className="text-sm text-[rgb(var(--muted))]">We couldn&apos;t check your trial status.</p>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto min-h-11" onClick={retryExpiryRefresh}>
+              Try again
+            </Button>
+          </div>
+        )}
 
         {headline && (
           <div className="space-y-1">
