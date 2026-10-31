@@ -10,8 +10,10 @@ unauthenticated read of the public GitHub releases list. It never runs
 
 It records only bounded evidence: source SHA, binary version, binary
 architecture, exit code and an outcome category. Raw command output, network
-errors and paths are never printed. A rate limit is its own category and is
-never counted as a successful check. Any other failure stays a failure.
+errors and paths are never printed. Every outcome other than a fetched and
+compared release is a failure. After a failure, whether the GitHub quota was
+exhausted is recorded separately; it never replaces the outcome and is not
+treated as its cause.
 """
 
 import json
@@ -153,8 +155,12 @@ def test_packaged_check_update_fetches_and_compares_a_release(tmp_path):
         exit_code = None
         outcome = "timeout"
 
-    if outcome not in SUCCESSFUL_OUTCOMES and _rate_limit_exhausted():
-        outcome = "rate_limited"
+    # Quota is recorded beside the outcome, never instead of it. An exhausted
+    # quota observed afterwards does not show it caused this failure, and a
+    # pre-network failure must stay visible as itself.
+    quota_exhausted = None
+    if outcome not in SUCCESSFUL_OUTCOMES:
+        quota_exhausted = _rate_limit_exhausted()
 
     evidence = {
         "source_sha": source_sha,
@@ -163,6 +169,7 @@ def test_packaged_check_update_fetches_and_compares_a_release(tmp_path):
         "expected_arch": expected_arch,
         "exit_code": exit_code,
         "outcome": outcome,
+        "quota_exhausted_after": quota_exhausted,
     }
     line = json.dumps(evidence, sort_keys=True)
     print(f"PACKAGED_UPDATE_CHECK {line}")
@@ -176,5 +183,7 @@ def test_packaged_check_update_fetches_and_compares_a_release(tmp_path):
     if expected_version:
         assert version == expected_version, "binary version differs from the stamped release"
     assert version != "unknown", "binary version could not be read"
-    assert outcome != "rate_limited", "GitHub rate limit reached; check is unverified"
-    assert outcome in SUCCESSFUL_OUTCOMES, f"packaged check outcome: {outcome}"
+    assert outcome in SUCCESSFUL_OUTCOMES, (
+        f"packaged check outcome: {outcome}; "
+        f"quota exhausted afterwards: {quota_exhausted} (recorded, not a cause)"
+    )
