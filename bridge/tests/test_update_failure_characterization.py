@@ -747,3 +747,97 @@ def test_release_listing_pages_share_one_total_deadline():
         adapter.fetch_releases()
 
     assert len(transport.urls) == 3
+
+
+# ---------------------------------------------------------------------------
+# Default platform detection (no injected platform), as the CLI calls it
+# ---------------------------------------------------------------------------
+#
+# The packaged probe (run 41244648840, Intel) failed at _detect_platform with
+# AttributeError. Every earlier test injected `platform=`, so the real default
+# path was never exercised. These tests call it unmocked.
+
+TEST_MACHINE_ENV = "SILENTSUITE_BRIDGE_TEST_MACHINE"
+
+
+def _expected_host_platform(machine):
+    os_name = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
+        sys.platform, sys.platform
+    )
+    return os_name, machine
+
+
+@pytest.mark.parametrize("override", [None, "x86_64"], ids=["host", "env_override"])
+def test_default_platform_detection_uses_the_host_machine(monkeypatch, override):
+    import platform as stdlib_platform
+
+    from silentsuite_bridge.update import _detect_platform
+
+    if override is None:
+        monkeypatch.delenv(TEST_MACHINE_ENV, raising=False)
+        expected_machine = stdlib_platform.machine()
+    else:
+        monkeypatch.setenv(TEST_MACHINE_ENV, override)
+        expected_machine = override
+
+    detected = _detect_platform()
+
+    assert (detected.os_name, detected.arch) == _expected_host_platform(expected_machine)
+
+
+def _host_asset():
+    import platform as stdlib_platform
+
+    from silentsuite_bridge.update.platform import PlatformMapping
+
+    os_name, machine = _expected_host_platform(stdlib_platform.machine())
+    return PlatformMapping.asset_name(os_name, machine)
+
+
+def test_check_wrapper_default_platform_path_does_not_raise(monkeypatch):
+    from silentsuite_bridge.update import check_for_update
+    from silentsuite_bridge.update.types import UpdateStatus
+
+    monkeypatch.delenv(TEST_MACHINE_ENV, raising=False)
+    asset = _host_asset()
+    http = MagicMock()
+    http.fetch_releases.return_value = (
+        [_release(NEWER, [asset, f"{asset}.sha256"])] if asset else []
+    )
+
+    result = check_for_update(http=http, current_version=CURRENT)
+
+    expected = UpdateStatus.AVAILABLE if asset else UpdateStatus.UNSUPPORTED
+    assert result.status == expected
+
+
+def test_self_update_wrapper_default_platform_path_does_not_raise(monkeypatch):
+    from silentsuite_bridge.update import perform_update
+
+    monkeypatch.delenv(TEST_MACHINE_ENV, raising=False)
+    asset = _host_asset()
+    exe = Path("/opt/silentsuite/silentsuite-bridge")
+    data = b"new bridge binary"
+    http = MagicMock()
+    http.fetch_releases.return_value = (
+        [_release(NEWER, [asset, f"{asset}.sha256"])] if asset else []
+    )
+    if asset:
+        http.download.side_effect = [
+            _checksum_line(hashlib.sha256(data).hexdigest(), asset), data,
+        ]
+    fs, restart = _fs(), _restart()
+
+    if not asset:
+        with pytest.raises(RuntimeError, match="Update not available"):
+            perform_update(http=http, fs=fs, restart=restart,
+                           admission=_admission(exe), current_version=CURRENT)
+        return
+
+    result = perform_update(http=http, fs=fs, restart=restart,
+                            admission=_admission(exe), current_version=CURRENT)
+
+    assert result.success is True
+    if sys.platform != "win32":
+        # POSIX swaps in-process; Windows hands off to its helper instead.
+        fs.replace.assert_called_once_with(fs.stage.return_value, str(exe))

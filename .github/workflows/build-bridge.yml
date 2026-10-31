@@ -40,11 +40,6 @@ on:
         required: false
         default: false
         type: boolean
-      packaged_update_diagnostic:
-        description: TEMPORARY. Build a separate unstamped diagnostic binary on macOS lanes and run the bounded update-check probe. Requires blank release_tag.
-        required: false
-        default: false
-        type: boolean
 
 permissions: {}
 
@@ -264,44 +259,6 @@ jobs:
           export SILENTSUITE_PACKAGED_VERSION="${SILENTSUITE_BRIDGE_VERSION#v}"
           export SILENTSUITE_PACKAGED_SOURCE_SHA="$(git rev-parse HEAD)"
           python -m pytest tests/test_update_macos_packaged.py -v --tb=short -s
-
-      # -----------------------------------------------------------------------
-      # 8c. TEMPORARY packaged update-check diagnostic (macOS, manual)
-      # -----------------------------------------------------------------------
-      # Off unless dispatched with packaged_update_diagnostic=true; workflow_call
-      # never defines it. Builds a SEPARATE binary from the same spec with one
-      # gated runtime hook (tests/packaged_update_diagnostics.py) into
-      # dist-diagnostic/, which is never renamed, checksummed or uploaded. Runs
-      # even if the packaged check above failed, and prints only the bounded
-      # PACKAGED_UPDATE_PROBE line. Remove once the catch-all is identified.
-      - name: TEMPORARY packaged update-check diagnostic (macOS, manual)
-        if: ${{ !cancelled() && runner.os == 'macOS' && inputs.packaged_update_diagnostic == true }}
-        timeout-minutes: 20
-        working-directory: bridge
-        shell: bash
-        env:
-          SILENTSUITE_BRIDGE_DIAGNOSTIC_BUILD: "1"
-        run: |
-          set -euo pipefail
-          echo "source_sha=$(git rev-parse HEAD)"
-          pyinstaller silentsuite-bridge.spec --clean --noconfirm \
-            --distpath dist-diagnostic/ \
-            --workpath build-diagnostic/
-          PROBE_HOME="$(mktemp -d "$RUNNER_TEMP/probe-home.XXXXXX")"
-          PROBE_TMP="$(mktemp -d "$RUNNER_TEMP/probe-tmp.XXXXXX")"
-          set +e
-          OUT="$(env -i PATH=/usr/bin:/bin HOME="$PROBE_HOME" TMPDIR="$PROBE_TMP" LANG=C LC_ALL=C \
-            SILENTSUITE_PACKAGED_UPDATE_PROBE=1 \
-            dist-diagnostic/silentsuite-bridge --check-update 2>/dev/null)"
-          CODE=$?
-          set -e
-          echo "probe_exit=$CODE binary_arch=$(lipo -archs dist-diagnostic/silentsuite-bridge 2>/dev/null || echo unknown)"
-          LINE="$(printf '%s\n' "$OUT" | grep -m1 '^PACKAGED_UPDATE_PROBE ' || true)"
-          if [[ -z "$LINE" ]]; then
-            echo "ERROR: diagnostic probe produced no bounded result line." >&2
-            exit 1
-          fi
-          printf '%s\n' "$LINE"
 
       # -----------------------------------------------------------------------
       # 9. QEMU arm64 container build (Linux arm64 only)
