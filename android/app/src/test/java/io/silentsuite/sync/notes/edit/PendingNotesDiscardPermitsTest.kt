@@ -61,6 +61,7 @@ class PendingNotesDiscardPermitsTest {
     @After fun reset() {
         PendingNotesDiscardPermits.beforeRecordForTesting = null
         PendingNotesDiscardPermits.beforeDeleteForTesting = null
+        PendingNotesDiscardPermits.onReadForTesting = null
         PendingNotesStore.listFilesForTesting = null
         PendingNotesStore.presenceForTesting = null
         PendingNotesStore.resetForTesting()
@@ -324,6 +325,43 @@ class PendingNotesDiscardPermitsTest {
         assertEquals(UnsyncedNotes(1, 1, false), permits.read("store-a"))
         assertEquals(listOf("store-a.permit"), permits.root.list()!!.toList())
         assertThrows(IllegalArgumentException::class.java) { permits.acknowledge("../x", identity) }
+    }
+
+    @Test fun `listNames gives each store folder with a record once, from all four kinds, and reads no record`() {
+        val (a, b, c, d) = listOf("a", "b", "c", "d").map { it.repeat(64) }
+        assertEquals("a root never made holds none", emptySet<String>(), permits.listNames())
+        assertEquals("and asking made nothing", emptyList<String>(), root.list()!!.toList())
+        val identity = PendingNotesStore.DirectoryIdentity(device = 7, inode = 42)
+        permits.record(a, UnsyncedNotes(1, 1, false))
+        permits.acknowledge(a, identity)
+        permits.acknowledge(b, identity)
+        // Writes never committed, of either kind.
+        File(permits.root, "$c.permit.new").writeBytes(blob("cut short"))
+        File(permits.root, "$d.acknowledgement.new").writeBytes(blob("cut short"))
+        // Records not of a store folder, and names of no record kind, are left out.
+        val others = listOf("store-a.permit", "E".repeat(64) + ".permit", "$a.permit.old", a, "$a.new",
+            "x.acknowledgement")
+        for (other in others) File(permits.root, other).writeBytes(blob("other"))
+        val reads = ArrayList<String>()
+        PendingNotesDiscardPermits.onReadForTesting = { reads += it.name }
+        assertEquals(setOf(a, b, c, d), permits.listNames())
+        assertEquals("by name alone", emptyList<String>(), reads)
+
+        // A root that cannot be listed answers null, never none.
+        PendingNotesStore.listFilesForTesting = { f -> if (f.name == "notes-discard") null else f.listFiles() }
+        assertNull(permits.listNames())
+        // Not there, but the folder above cannot show it, or its own check fails: null too.
+        PendingNotesStore.listFilesForTesting = null
+        assertTrue(permits.root.deleteRecursively())
+        PendingNotesStore.listFilesForTesting = { f -> if (f.name == "no_backup") null else f.listFiles() }
+        assertNull(permits.listNames())
+        PendingNotesStore.listFilesForTesting = null
+        PendingNotesStore.presenceForTesting = { f ->
+            if (f.name == "notes-discard") PendingNotesStore.Presence.UNKNOWN else null
+        }
+        assertNull(permits.listNames())
+        PendingNotesStore.presenceForTesting = null
+        assertEquals(emptySet<String>(), permits.listNames())
     }
 
     @Test fun `a permit is written in full and synced into place, or not at all, and its removal is synced`() {

@@ -5,6 +5,7 @@ import android.content.Context
 import android.system.ErrnoException
 import android.system.Os
 import android.system.OsConstants
+import androidx.annotation.VisibleForTesting
 import io.silentsuite.sync.log.Logger
 import java.io.DataInputStream
 import java.io.File
@@ -39,10 +40,10 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * A store folder that is a symbolic link is never followed: [open] keeps the link's own path and name, and lstat(2),
  * which does not follow it, tells a link apart ([followable]). Nothing is read, written or deleted through it. While
- * the folder is a link, or lstat cannot tell, it cannot be counted and is not listed ([unsynced]), every read and
- * write of it fails at its start, also in an instance that recovered before the link came ([locked]), and [clearAll]
- * deletes nothing. Its only step is an acknowledgement ([discardStore]), bound to the link's own identity under its
- * own name, which deletes nothing. Removing the link itself is not offered.
+ * the folder is a link, or lstat cannot tell, it cannot be counted and is not listed ([unsynced], [removalCheck]),
+ * every read and write of it fails at its start, also in an instance that recovered before the link came ([locked]),
+ * and [clearAll] deletes nothing. Its only step is an acknowledgement ([discardStore]), bound to the link's own
+ * identity under its own name, which deletes nothing. Removing the link itself is not offered.
  *
  * A confirmed discard of the whole store ([discardStore]) runs under the same lock and, when the store holds
  * anything a removal would lose ([UnsyncedNotes.anything]), records a permit outside the store before any
@@ -243,10 +244,10 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * What every operation but [unsynced], [discardStore], [acknowledged], [clearedInFull], [clearStopped],
-     * [unregister], [unregisterIfFinishedOnce] and [clearAll] throws once [clearAll], or a [discardStore] that got as
-     * far as deleting, has closed the store: nothing in it is read, pushed, pruned or written from then on. An
-     * IllegalStateException, as before it had a type of its own.
+     * What every operation but [unsynced], [removalCheck], [discardStore], [acknowledged], [clearedInFull],
+     * [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll] throws once [clearAll], or a
+     * [discardStore] that got as far as deleting, has closed the store: nothing in it is read, pushed, pruned or
+     * written from then on. An IllegalStateException, as before it had a type of its own.
      */
     class Cleared : IllegalStateException("the pending store was cleared")
 
@@ -860,10 +861,15 @@ internal class PendingNotesStore private constructor(
      * ([uncountedSequence]).
      *
      * A listing that works can still come back short: File.listFiles returns what it read so far, or nothing,
-     * when reading the directory fails partway, and does not say so. So a count can be low, and an answer of
-     * nothing can come from such a listing: a caller must not take it for proof that nothing would be lost. A
-     * discard stays within what was confirmed all the same, since an answer names what it counted
-     * ([UnsyncedNotes.names]) and a confirmation covers no name it does not hold.
+     * when reading the directory fails partway, and does not say so. A listing that lacks the store's counter
+     * while its presence check, by path, does not show it absent is taken for such a listing, and the answer is
+     * "could not be counted" ([shortOfCounter]): every version is written to the counter before its entry, so a
+     * store that holds an entry lists its counter unless the counter was lost. That catches a listing that came
+     * back empty or stopped before the counter, and no other: a count can still be low, and an answer of nothing
+     * can still come from a listing that skipped an entry and listed the counter, or from a store whose counter
+     * was lost, so a caller must not take it for proof that nothing would be lost. A discard stays within what
+     * was confirmed all the same, since an answer names what it counted ([UnsyncedNotes.names]) and a
+     * confirmation covers no name it does not hold.
      *
      * A listing that works, or a directory shown gone, withdraws the store's acknowledgement, which holds only
      * while the store cannot be listed ([acknowledged]); while that cannot be shown, the store is listed but
@@ -891,20 +897,187 @@ internal class PendingNotesStore private constructor(
         val names = listed.orEmpty().map { it.name }
         val answer = try {
             withdrawAcknowledgement()
-            val unknown = names.firstOrNull { !isKnownKind(it) }
-            if (unknown != null) throw IOException("$unknown is of a kind this build does not know")
-            // Each note by its entry's name, which a first write takes when it is committed.
-            val committed = names.filterTo(HashSet()) { it.endsWith(NOTE) }
-            val stranded = names.filter { it.endsWith(NOTE + NEW) }.map { it.removeSuffix(NEW) }
-                .filter { it !in committed && PendingCodec.isIntact(File(dir, it + NEW).readBytes()) }
-            val counted = committed + stranded
-            if (counted.isEmpty()) UnsyncedNotes.NOTHING
-            else UnsyncedNotes(counted.size, currentSequence(strict = true), unreadable = false, names = counted)
+            countOf(names)
         } catch (e: IOException) {
-            val files = names.count { it.endsWith(NOTE) || it.endsWith(NOTE + NEW) }
-            UnsyncedNotes(files, uncountedSequence(), unreadable = true, names = uncountedNames(names))
+            uncountedOf(names)
         }
         return Count(answer, names)
+    }
+
+    /**
+     * What [names], from a listing of the store that worked, hold that has not synced; throws when it cannot count,
+     * a listing that came back short by the store's own counter included ([shortOfCounter], or [short] when the
+     * caller asked it already).
+     */
+    private fun countOf(names: List<String>, short: Boolean = shortOfCounter(names)): UnsyncedNotes {
+        if (short) throw IOException("the listing of the store left out its counter")
+        val unknown = names.firstOrNull { !isKnownKind(it) }
+        if (unknown != null) throw IOException("$unknown is of a kind this build does not know")
+        // Each note by its entry's name, which a first write takes when it is committed.
+        val committed = names.filterTo(HashSet()) { it.endsWith(NOTE) }
+        val stranded = names.filter { it.endsWith(NOTE + NEW) }.map { it.removeSuffix(NEW) }
+            .filter { it !in committed && PendingCodec.isIntact(File(dir, it + NEW).readBytes()) }
+        val counted = committed + stranded
+        return if (counted.isEmpty()) UnsyncedNotes.NOTHING
+        else UnsyncedNotes(counted.size, currentSequence(strict = true), unreadable = false, names = counted)
+    }
+
+    /** The answer for [names], a listing of the store that worked, when what they hold could not be counted. */
+    private fun uncountedOf(names: List<String>): UnsyncedNotes {
+        val files = names.count { it.endsWith(NOTE) || it.endsWith(NOTE + NEW) }
+        return UnsyncedNotes(files, uncountedSequence(), unreadable = true, names = uncountedNames(names))
+    }
+
+    /**
+     * Whether [names], from a listing of the store that worked, came back short by the store's own counter: they lack
+     * [SEQUENCE] while its presence check, by path, does not show it absent. Every version is written to the counter
+     * before its entry ([nextVersion]), and a discard removes the counter last ([deleteAll]), so a store that holds an
+     * entry lists its counter unless the counter was lost. A lost one is absent by lstat, and nothing is refused for
+     * it, nor for a store never made or an empty folder; a check that fails counts the counter as there. One check by
+     * path: it catches a listing that came back empty, or stopped before it reached the counter, not one that skipped
+     * an entry and still listed the counter.
+     */
+    private fun shortOfCounter(names: List<String>): Boolean =
+        SEQUENCE !in names && presenceOf(File(dir, SEQUENCE)) != Presence.ABSENT
+
+    /**
+     * What [removalCheck] found. Only [Clean], [Covered] and [Acknowledged] say that a removal of the account loses
+     * nothing that was not confirmed; the guard that asks decides what the others mean. Like an answer of nothing
+     * from [unsynced], [Clean] and [Covered] rest on one listing of the store, checked against the store's counter by
+     * path, which can still come back short without saying so: they are the most one check can show, not proof that
+     * nothing would be lost.
+     */
+    sealed class RemovalCheck {
+        /** The store listed, or is shown gone, and holds nothing a count counts; its acknowledgement is shown gone. */
+        object Clean : RemovalCheck()
+
+        /** The store holds something, and the permit of a confirmed discard covers all of it. */
+        object Covered : RemovalCheck()
+
+        /** The store cannot be listed, or is a link, and an acknowledgement of that holds ([acknowledged]). */
+        object Acknowledged : RemovalCheck()
+
+        /**
+         * The store holds [answer], or that cannot be ruled out, and no permit covers it, or a listing that lacks the
+         * store's counter lists a note ([removalCheck], step 4).
+         */
+        data class Blocks(val answer: UnsyncedNotes) : RemovalCheck()
+
+        /**
+         * The store cannot be listed, is not shown gone, and is there or its presence cannot be told, or its folder is
+         * a link, or lstat cannot tell ([followable]).
+         */
+        object Unlisted : RemovalCheck()
+
+        /**
+         * The store cannot be listed and is not shown gone, but its presence check answers [Presence.ABSENT], which is
+         * ENOENT alone, asked in the same hold of the store lock as the failed listing: one check, not the two that
+         * show a directory gone ([shownGone]). The folders above do not show it gone, as while notes-pending is there
+         * but cannot be listed; a notes-pending or no_backup that is missing under a folder that lists shows it gone,
+         * and the store is counted ([Clean] or [NothingUnwithdrawn]). A removal guard may take this answer as nothing
+         * to lose for one removal of the account whose creation id names this store. [clearAll], [discardStore] and
+         * any sweep never take it for gone.
+         */
+        object UnlistedAbsent : RemovalCheck()
+
+        /**
+         * The store listed, or is shown gone, and holds nothing a count counts, but its acknowledgement could not be
+         * shown gone, as while notes-discard is there but cannot be listed.
+         */
+        object NothingUnwithdrawn : RemovalCheck()
+    }
+
+    /**
+     * What a removal of this identity's account would lose, decided in one hold of the store lock, for a guard of
+     * account removals. Like [unsynced], it runs no recovery, writes nothing in the store, and answers on a cleared
+     * instance too; it calls no function of the caller's.
+     *
+     * 1. When the folder is a link, or lstat cannot tell ([followable]), it is not listed and nothing in it is read:
+     *    [RemovalCheck.Acknowledged] when an acknowledgement holds for the link's own identity, else
+     *    [RemovalCheck.Unlisted], never [RemovalCheck.UnlistedAbsent] or [RemovalCheck.Clean]. No permit is read, and
+     *    the acknowledgement is not withdrawn.
+     * 2. When the directory cannot be listed and is not shown gone, nothing is counted: [RemovalCheck.Acknowledged]
+     *    when an acknowledgement holds, asked right after that listing as [acknowledged] asks it, else
+     *    [RemovalCheck.UnlistedAbsent] when the directory's own presence check answers [Presence.ABSENT] (ENOENT
+     *    alone, one check, in the same hold of the lock), else [RemovalCheck.Unlisted]. A presence check that fails is
+     *    no absence, and leaves no identity to bind an acknowledgement to. A guard may take
+     *    [RemovalCheck.UnlistedAbsent] as nothing to lose for one removal of the account this store is for;
+     *    [clearAll], [discardStore] and any sweep never take it for gone.
+     * 3. Otherwise the store's acknowledgement is withdrawn, as a count withdraws it. When that cannot be shown, this
+     *    instance takes none for valid from then on, and the store is counted all the same, unless a note needs its
+     *    counter rebuilt ([currentSequence]): the rebuild's own listing then fails at the same withdrawal, and the
+     *    store could not be counted.
+     * 4. The store is counted as [unsynced] counts it, from that one listing, which can come back short. A listing
+     *    that lacks the store's counter while lstat does not show the counter gone counts as short, and the store as
+     *    one that could not be counted ([shortOfCounter]); one that skipped an entry and still listed the counter is
+     *    taken as it comes. Holding nothing, it answers [RemovalCheck.Clean], or [RemovalCheck.NothingUnwithdrawn]
+     *    when step 3 failed, and no permit is read. A listing that lacks the counter and lists a note answers
+     *    [RemovalCheck.Blocks], and no permit is read either: before the counter check such a listing gave a counted
+     *    answer, unless a file of a kind this build does not know stopped the count, and a permit recorded as for an
+     *    answer that could not be counted, also one recorded so while the user confirmed a counted answer (step 5),
+     *    never covers a counted answer.
+     * 5. Holding anything else, it answers [RemovalCheck.Covered] when the store's permit, read by path, covers the
+     *    answer ([UnsyncedNotes.covers]), else [RemovalCheck.Blocks]. A permit that cannot be read is none. A permit
+     *    recorded as for an answer that could not be counted covers no counted answer, and a discard records its permit
+     *    so in place of such a permit or of one that cannot be read, whatever its own count showed ([discardStore],
+     *    step 3): while what a discard that stopped under such a permit left counts, the answer is
+     *    [RemovalCheck.Blocks]. Such a permit does cover an answer that could not be counted at its sequence, with no
+     *    more files and no name it lacks, such as a listing that lacks the counter and lists no note: the answer is
+     *    then [RemovalCheck.Covered], whatever that listing left out, also for a permit recorded so in place of another
+     *    while the user confirmed a counted answer.
+     */
+    fun removalCheck(): RemovalCheck = synchronized(lock) {
+        checkNotDropped()
+        if (!followable()) {
+            return@synchronized if (holdsAcknowledgement()) RemovalCheck.Acknowledged else RemovalCheck.Unlisted
+        }
+        val listed = listDirectory(dir)
+        if (listed == null && !shownGone(dir)) {
+            return@synchronized when {
+                holdsAcknowledgement() -> RemovalCheck.Acknowledged
+                presenceOf(dir) == Presence.ABSENT -> RemovalCheck.UnlistedAbsent
+                else -> RemovalCheck.Unlisted
+            }
+        }
+        val names = listed.orEmpty().map { it.name }
+        val withdrawn = try {
+            withdrawAcknowledgement()
+            true
+        } catch (e: IOException) {
+            false
+        }
+        val short = shortOfCounter(names)
+        val answer = try {
+            countOf(names, short)
+        } catch (e: IOException) {
+            uncountedOf(names)
+        }
+        when {
+            !answer.anything -> if (withdrawn) RemovalCheck.Clean else RemovalCheck.NothingUnwithdrawn
+            // Before the counter check such a listing gave a counted answer, unless a file of an unknown kind stopped
+            // the count, and a permit recorded as for an answer that could not be counted never covered that: a note
+            // it lists is not taken as covered now either.
+            short && answer.count > 0 -> RemovalCheck.Blocks(answer)
+            permits.read(dir.name)?.covers(answer) == true -> RemovalCheck.Covered
+            else -> RemovalCheck.Blocks(answer)
+        }
+    }
+
+    /**
+     * Test seam: records a permit for what the store holds now, by its count alone, and deletes nothing and leaves the
+     * store open; the next new version withdraws it, as it withdraws a discard's. A confirmed discard ([discardStore],
+     * step 3) also names what its confirmation and a permit from before named, and records its permit as for an answer
+     * that could not be counted in place of such a permit or of one that cannot be read; this seam does neither, so it
+     * is for a store with no permit. Unit tests call it to cover a store before they check a removal. It covers the
+     * store with no confirmation, so no main code may call it.
+     */
+    @VisibleForTesting
+    internal fun coverForTesting(): UnsyncedNotes = synchronized(lock) {
+        checkNotDropped()
+        permitWithdrawn = false
+        val now = countUnsynced().answer
+        if (now.anything) permits.record(dir.name, now)
+        now
     }
 
     /**
@@ -1026,8 +1199,8 @@ internal class PendingNotesStore private constructor(
      *    version to withdraw, and a permit from before stays unless its presence check shows it not there
      *    ([PendingNotesDiscardPermits.mayHold]), read or not.
      * 4. The instance is closed for the rest of the process, as by [clearAll]: every operation but [unsynced],
-     *    [discardStore], [unregister], [unregisterIfFinishedOnce], [acknowledged], [clearedInFull], [clearStopped]
-     *    and [clearAll] is refused.
+     *    [removalCheck], [discardStore], [unregister], [unregisterIfFinishedOnce], [acknowledged], [clearedInFull],
+     *    [clearStopped] and [clearAll] is refused.
      * 5. The files the count listed go ([deleteAll]), each of a kind this build writes with its write beside it, in
      *    this order: entries and first writes, landed records, then, once a second listing works (or the directory
      *    is shown gone) and shows no note and nothing the count's listing did not hold, notebook copies and anything
@@ -1204,9 +1377,14 @@ internal class PendingNotesStore private constructor(
      */
     fun acknowledged(): Boolean = synchronized(lock) {
         checkNotDropped()
-        if (acknowledgementVoid) return@synchronized false
-        val recorded = permits.acknowledgement(dir.name) ?: return@synchronized false
-        recorded == identityOf(dir)
+        holdsAcknowledgement()
+    }
+
+    /** [acknowledged], under the store lock. */
+    private fun holdsAcknowledgement(): Boolean {
+        if (acknowledgementVoid) return false
+        val recorded = permits.acknowledgement(dir.name) ?: return false
+        return recorded == identityOf(dir)
     }
 
     /**
@@ -1233,9 +1411,9 @@ internal class PendingNotesStore private constructor(
     /**
      * Drops this instance from the registry once [discardStore] has finished, so the next [open] of the
      * directory gets a new instance, over a directory that is not there, which takes saves again. This one
-     * refuses every operation from then on, [unsynced], [discardStore], [acknowledged] and [clearAll] included,
-     * since the new instance may own the directory by then. Only [clearedInFull] and [clearStopped] still answer,
-     * from memory. A second call does nothing, and so does [unregisterIfFinishedOnce].
+     * refuses every operation from then on, [unsynced], [removalCheck], [discardStore], [acknowledged] and [clearAll]
+     * included, since the new instance may own the directory by then. Only [clearedInFull] and [clearStopped] still
+     * answer, from memory. A second call does nothing, and so does [unregisterIfFinishedOnce].
      */
     fun unregister() {
         synchronized(lock) {
@@ -1265,15 +1443,15 @@ internal class PendingNotesStore private constructor(
     // ---- internals ----
 
     /**
-     * Every public operation except [unsynced], [discardStore], [acknowledged], [clearedInFull], [clearStopped],
-     * [unregister], [unregisterIfFinishedOnce], [clearAll] and [pruneNotebooks]: refuse ([Cleared]) once [clearAll],
-     * or a [discardStore] that got as far as deleting, has closed the store, and finish any interrupted work first.
-     * Recovery runs again before the next operation for as long as anything in it did not work out, including a
-     * write or removal inside recovery itself, or a listing it works from. A recovery whose listing fails throws, so
-     * the operation fails with it and the recovery is not taken for done: a first write it did not see may be the
-     * only copy of a note's text, and an original it did not see may still wait for its conflict copy. A listing
-     * also fails while the store's acknowledgement cannot be shown gone ([listing]), so a new instance does nothing
-     * while notes-discard is there but cannot be listed.
+     * Every public operation except [unsynced], [removalCheck], [discardStore], [acknowledged], [clearedInFull],
+     * [clearStopped], [unregister], [unregisterIfFinishedOnce], [clearAll] and [pruneNotebooks]: refuse ([Cleared])
+     * once [clearAll], or a [discardStore] that got as far as deleting, has closed the store, and finish any
+     * interrupted work first. Recovery runs again before the next operation for as long as anything in it did not
+     * work out, including a write or removal inside recovery itself, or a listing it works from. A recovery whose
+     * listing fails throws, so the operation fails with it and the recovery is not taken for done: a first write it
+     * did not see may be the only copy of a note's text, and an original it did not see may still wait for its
+     * conflict copy. A listing also fails while the store's acknowledgement cannot be shown gone ([listing]), so a
+     * new instance does nothing while notes-discard is there but cannot be listed.
      *
      * While the store's folder is a link, or lstat cannot tell ([followable]), every such operation throws
      * IOException at its start, before recovery and on every call, also in an instance that recovered before the
@@ -1928,10 +2106,10 @@ internal class PendingNotesStore private constructor(
         private val floors = ConcurrentHashMap<String, Long>()
 
         /** The folder in noBackupFilesDir that holds one store folder per exact identity ([identityDir]). */
-        private const val PENDING = "notes-pending"
+        internal const val PENDING = "notes-pending"
 
         /** The name of a store folder: [identityDir]'s SHA-256 digest, in lowercase hex. */
-        private val STORE_DIRECTORY = Regex("^[0-9a-f]{64}$")
+        internal val STORE_DIRECTORY = Regex("^[0-9a-f]{64}$")
 
         /** Test seams: crash points inside the write, conflict, and sign-out sequences. */
         @Volatile internal var beforeOriginalRemovedForTesting: (() -> Unit)? = null
@@ -1944,38 +2122,51 @@ internal class PendingNotesStore private constructor(
          * null is a listing that failed. It answers every listing the store makes itself: of its own
          * directory, and of the directories above it that [knownAbsent] lists, after a listing of it fails or
          * when [clearAll] or [discardStore] checks that the directory is gone, but not the deletion in
-         * [clearAll]. It answers the listings of the discard permits' root too ([PendingNotesDiscardPermits.remove]).
+         * [clearAll]. It answers the listings of the discard permits' root too ([PendingNotesDiscardPermits.remove],
+         * [PendingNotesDiscardPermits.listNames]).
          */
         @Volatile internal var listFilesForTesting: ((File) -> Array<File>?)? = null
 
         /**
          * The files in [d], or null when the listing fails, as File.listFiles answers: [d] is not there, is
-         * not a directory, or the check failed.
+         * not a directory, or the check failed. A listing of notes-pending or notes-discard that works moves
+         * that folder's counter ([NotesFolderListings]).
          */
         internal fun listDirectory(d: File): Array<File>? =
-            listFilesForTesting.let { if (it != null) it(d) else d.listFiles() }
+            listFilesForTesting.let { if (it != null) it(d) else d.listFiles() }?.also { NotesFolderListings.listed(d) }
 
         /**
          * Whether [d] is shown not to be there: the nearest directory above it that can be listed does not
          * hold the next name on the way down to it. When that directory does hold the name, or no directory
          * above can be listed, it is unknown. File.exists() is not asked, for the reason [listing] gives.
+         * Shown not to be there, notes-pending or notes-discard on the way moves that folder's counter
+         * ([NotesFolderListings]).
          */
         internal fun knownAbsent(d: File): Boolean {
             var below = d
             while (true) {
                 val above = below.parentFile ?: return false
                 val names = listDirectory(above)?.map { it.name }
-                if (names != null) return below.name !in names
+                if (names != null) {
+                    val absent = below.name !in names
+                    if (absent) NotesFolderListings.shownAbsent(d, below)
+                    return absent
+                }
                 below = above
             }
         }
 
         /**
-         * The store folders in notes-pending, by name in sorted order ([stores]), and whether notes-pending holds a
-         * name of any other kind ([unknown]). Only store folders are ever made there, so another name is of a kind
-         * this build does not know, which may hold unsynced text a newer build wrote: it is never read as nothing.
+         * The store folders in notes-pending, by name in sorted order ([stores]), and every other name it holds, in
+         * sorted order too ([others]). A store folder is a name of exactly 64 lowercase hex characters, whatever the
+         * entry is; any other name, of a file, a folder or a link, is of a kind this build does not know ([unknown]).
+         * Only store folders are ever made there, so another name may hold unsynced text a newer build wrote: it is
+         * never read as nothing.
          */
-        internal class StoreFolders(val stores: List<String>, val unknown: Boolean)
+        internal class StoreFolders(val stores: List<String>, val others: List<String>) {
+            /** Whether notes-pending holds a name of a kind this build does not know. */
+            val unknown: Boolean get() = others.isNotEmpty()
+        }
 
         /**
          * The folders of notes-pending in [noBackup], chosen by name alone from one listing: nothing is asked of each
@@ -1991,11 +2182,11 @@ internal class PendingNotesStore private constructor(
             val listed = listDirectory(root)
             if (listed == null) {
                 val gone = knownAbsent(root) && (presenceForTesting?.invoke(root) ?: presence(root)) == Presence.ABSENT
-                if (gone) return StoreFolders(emptyList(), unknown = false)
+                if (gone) return StoreFolders(emptyList(), emptyList())
                 throw IOException("could not list the pending stores")
             }
             val (stores, others) = listed.map { it.name }.partition { STORE_DIRECTORY.matches(it) }
-            return StoreFolders(stores.sorted(), unknown = others.isNotEmpty())
+            return StoreFolders(stores.sorted(), others.sorted())
         }
 
         /** [storeDirectories] in noBackupFilesDir, with the presence check [forDirectory] gives a store on a device. */
@@ -2055,6 +2246,13 @@ internal class PendingNotesStore private constructor(
         }
 
         /**
+         * The presence check a store on a device gets ([lstatPresence]), for a caller outside the store that decides
+         * from one path, such as a list that leaves out a store folder lstat shows not to be there. The test seam
+         * [presenceForTesting] answers first, as it does for the store's own checks.
+         */
+        internal fun presenceOnDevice(path: File): Presence = presenceForTesting?.invoke(path) ?: lstatPresence(path)
+
+        /**
          * Test seam: what a read of the identity of the directory it is given answers in place of the store's
          * own; null is an identity that cannot be read. JVM tests on Windows have no inode numbers to read.
          */
@@ -2066,7 +2264,7 @@ internal class PendingNotesStore private constructor(
          * A store on a device gets [lstatIdentity] through [forIdentity] or [forDirectory].
          */
         @SuppressLint("NewApi")
-        private val nioIdentity: (File) -> DirectoryIdentity? = { path ->
+        internal val nioIdentity: (File) -> DirectoryIdentity? = { path ->
             try {
                 val read = Files.readAttributes(path.toPath(), "unix:dev,ino", LinkOption.NOFOLLOW_LINKS)
                 val device = read["dev"] as? Long
