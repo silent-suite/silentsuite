@@ -23,6 +23,7 @@ import { TaskListPanel } from '@/app/components/TaskListPanel'
 import { ContactListPanel } from '@/app/components/ContactListPanel'
 import { NotebookListPanel } from '@/app/components/NotebookListPanel'
 import { OnboardingChecklist } from '@/app/components/OnboardingChecklist'
+import { TrialStatusLink } from '@/app/components/trial-status-link'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
 
@@ -131,6 +132,7 @@ export function Sidebar() {
             )}
           </Link>
         )}
+        <TrialStatusLink expanded={isExpanded} />
         <Link
           href="/settings"
           className={`group relative flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${
