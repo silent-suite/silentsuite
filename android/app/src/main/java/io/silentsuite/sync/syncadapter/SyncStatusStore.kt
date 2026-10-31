@@ -483,9 +483,10 @@ class SyncStatusStore internal constructor(
     }
 
     @Synchronized
-    internal fun expireStale(identity: MainIdentity, service: Service, now: Long, platformActive: Boolean, platformPending: Boolean,
+    internal fun expireStale(identity: MainIdentity, service: Service, clock: () -> Long, platformActive: Boolean, platformPending: Boolean,
         interruptionAfterMillis: Long = DEFAULT_INTERRUPTION_AFTER_MILLIS): Boolean = synchronized(STORE_LOCK) {
-        return@synchronized expireStaleResult(identity, service, now, platformActive, platformPending, interruptionAfterMillis) == MutationResult.RECORDED
+        // Expiry must also observe time alongside the current record after a clock rollback.
+        return@synchronized expireStaleResult(identity, service, clock(), platformActive, platformPending, interruptionAfterMillis) == MutationResult.RECORDED
     }
 
     private fun expireStaleResult(identity: MainIdentity, service: Service, now: Long, platformActive: Boolean, platformPending: Boolean,
