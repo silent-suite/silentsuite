@@ -182,6 +182,11 @@ class FirstRunSignInRuntimeTest {
 
     private fun assertImeKeepsPrimaryActionVisible(scenario: ActivityScenario<LoginActivity>) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        // Exercise the actual input gesture after dialog dismissal/recreation, rather
+        // than relying only on a one-shot programmatic request during window setup.
+        androidx.test.espresso.Espresso.onView(
+            androidx.test.espresso.matcher.ViewMatchers.withId(R.id.login_password),
+        ).perform(androidx.test.espresso.action.ViewActions.click())
         scenario.onActivity { activity ->
             val password = activity.findViewById<View>(requiredId(activity, "login_password"))
             password.requestFocus()
