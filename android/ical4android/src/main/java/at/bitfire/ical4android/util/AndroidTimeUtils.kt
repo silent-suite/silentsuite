@@ -116,6 +116,20 @@ object AndroidTimeUtils {
     // recurrence sets
 
     /**
+     * RDATE entry that carries the event's DTSTART, because the Calendar provider drops the
+     * DTSTART instance when RDATE is used [https://code.google.com/p/android/issues/detail?id=171292].
+     *
+     * @param dtStart   DTSTART of the event
+     *
+     * @return RDATE with the DTSTART date as its only entry
+     */
+    fun dtStartRecurrenceCarrier(dtStart: DateProperty): RDate {
+        val listWithDtStart = DateList()
+        listWithDtStart.add(dtStart.date)
+        return RDate(listWithDtStart)
+    }
+
+    /**
      * Concatenates, if necessary, multiple RDATE/EXDATE lists and converts them to
      * a formatted string which Android calendar provider can process.
      * Android expects this format: "[TZID;]date1,date2,date3" where date is "yyyymmddThhmmss" (when

@@ -750,9 +750,7 @@ abstract class AndroidEvent(
                     AndroidTimeUtils.androidifyTimeZone(rDate)
 
                 // Calendar provider drops DTSTART instance when using RDATE [https://code.google.com/p/android/issues/detail?id=171292]
-                val listWithDtStart = DateList()
-                listWithDtStart.add(dtStart.date)
-                event.rDates.addFirst(RDate(listWithDtStart))
+                event.rDates.addFirst(AndroidTimeUtils.dtStartRecurrenceCarrier(dtStart))
 
                 builder.withValue(Events.RDATE, AndroidTimeUtils.recurrenceSetsToAndroidString(event.rDates, allDay))
             } else

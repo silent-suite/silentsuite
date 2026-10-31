@@ -269,6 +269,58 @@ class AndroidTimeUtilsTest {
         assertEquals("20150103T113030Z,20150704T093040Z", AndroidTimeUtils.recurrenceSetsToAndroidString(list, false))
     }
 
+    // All-day recurrence dates must keep their calendar date whatever the device default time zone is.
+    private fun withDefaultTimeZone(id: String, block: () -> Unit) {
+        val previous = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(id))
+        try {
+            block()
+        } finally {
+            java.util.TimeZone.setDefault(previous)
+        }
+    }
+
+    @Test
+    fun testRecurrenceSetsToAndroidString_AllDayDateRDate_NewYork() = withDefaultTimeZone("America/New_York") {
+        val list = listOf<DateListProperty>(RDate(DateList("20230105", Value.DATE)))
+        assertEquals("20230105T000000Z", AndroidTimeUtils.recurrenceSetsToAndroidString(list, true))
+    }
+
+    @Test
+    fun testRecurrenceSetsToAndroidString_AllDayDateExDate_NewYork() = withDefaultTimeZone("America/New_York") {
+        val list = listOf<DateListProperty>(ExDate(DateList("20230105", Value.DATE)))
+        assertEquals("20230105T000000Z", AndroidTimeUtils.recurrenceSetsToAndroidString(list, true))
+    }
+
+    @Test
+    fun testRecurrenceSetsToAndroidString_AllDayDtStartCarrier_NewYork() = withDefaultTimeZone("America/New_York") {
+        val list = listOf<DateListProperty>(
+                AndroidTimeUtils.dtStartRecurrenceCarrier(DtStart(Date("20230101"))),
+                RDate(DateList("20230105", Value.DATE))
+        )
+        assertEquals("20230101T000000Z,20230105T000000Z", AndroidTimeUtils.recurrenceSetsToAndroidString(list, true))
+    }
+
+    @Test
+    fun testRecurrenceSetsToAndroidString_AllDayDate_PositiveOffset() = withDefaultTimeZone("Asia/Tokyo") {
+        val list = listOf<DateListProperty>(RDate(DateList("20230105", Value.DATE)))
+        assertEquals("20230105T000000Z", AndroidTimeUtils.recurrenceSetsToAndroidString(list, true))
+    }
+
+    @Test
+    fun testRecurrenceSetsToAndroidString_AllDayFloatingDateTime_NewYork() = withDefaultTimeZone("America/New_York") {
+        val list = listOf<DateListProperty>(RDate(DateList("20220601T120030", Value.DATE_TIME)))
+        assertEquals("20220601T000000Z", AndroidTimeUtils.recurrenceSetsToAndroidString(list, true))
+    }
+
+    @Test
+    fun testAndroidStringToRecurrenceSet_AllDayDate_ReadPath_NewYork() = withDefaultTimeZone("America/New_York") {
+        val dates = AndroidTimeUtils.androidStringToRecurrenceSet("20230105T000000Z", true) { RDate(it) }.dates
+        assertEquals(Value.DATE, dates.type)
+        assertEquals(1, dates.size)
+        assertEquals("20230105", dates[0].toString())
+    }
+
     @Test
     fun testRecurrenceSetsToOpenTasksString_UtcTimes() {
         val list = ArrayList<DateListProperty>(1)
