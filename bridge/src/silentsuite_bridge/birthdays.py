@@ -3,12 +3,12 @@
 Shared contract: contracts/birthday-calendar/v1-vectors.json (also implemented by
 packages/core for web and by the Android client).
 
-Implemented (hosted-RED qualified): marker parsing, contact birthdays, event
-identity, the active-marker check behind DAV read-only, the pure event/source/
-planner/post-check helpers, and the SDK engine reconcile_birthdays/disable_birthdays.
-
-Still NEUTRAL until their own hosted RED is qualified: reconcile_after_sync (the
-sync-service integration) and set_dashboard_birthdays (account loading / turn-on).
+Implemented: marker parsing, contact birthdays, event identity, the active-marker
+check behind DAV read-only, the pure event/source/planner/post-check helpers, the SDK
+engine (reconcile_birthdays, enable_birthdays, disable_birthdays), the post-sync
+service hook (reconcile_after_sync) and the dashboard entry point
+(set_dashboard_birthdays). Tests run against stateful SDK fakes; real Python SDK
+transport and post-check token semantics are not proven by them.
 """
 
 import hashlib
