@@ -37,6 +37,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -133,6 +134,7 @@ class AccountDashboardRuntimeTest {
     }
 
     @Test fun missingTaskProviderOutranksTaskLifecycleWithoutChangingSiblingsOrEvidence() {
+        assertMaintenanceDoesNotBackdateNewerRequests()
         val phase = AtomicInteger(0)
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
             SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
@@ -905,6 +907,56 @@ class AccountDashboardRuntimeTest {
             } finally {
                 AccountActivity.exportDocumentLauncherOverride = null
                 AccountActivity.exportWriterOverride = null
+            }
+        }
+    }
+
+    private fun assertMaintenanceDoesNotBackdateNewerRequests() {
+        val clock = AtomicLong(System.currentTimeMillis())
+        val injectRequest = AtomicBoolean(false)
+        val injectedOnThisThread = ThreadLocal<Boolean>()
+        val maintenanceFinished = CountDownLatch(1)
+        val expected = AtomicReference<Map<SyncStatusStore.Service, SyncStatusStore.Status>>()
+        val writeSucceeded = AtomicBoolean(false)
+        AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
+            SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            // doLoad invokes this seam only after its production maintenance pass.
+            if (injectedOnThisThread.get() == true) {
+                injectedOnThisThread.remove()
+                maintenanceFinished.countDown()
+            }
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            val store = SyncStatusStore(context)
+            val services = SyncStatusStore.Service.values().toSet()
+            AccountActivity.AccountInfoViewModel.lifecycleNowOverride = {
+                val observed = clock.get()
+                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() &&
+                    injectRequest.compareAndSet(true, false)) {
+                    // Model a request admitted after an older clock observation, before the
+                    // maintenance pass acquires its per-service store locks. Time only advances.
+                    injectedOnThisThread.set(true)
+                    val requestedAt = clock.addAndGet(100)
+                    writeSucceeded.set(store.recordRequested(account, services, "after-clock-sample", requestedAt))
+                    expected.set(services.associateWith { store.status(account, it) })
+                }
+                observed
+            }
+            injectRequest.set(true)
+            scenario.onActivity { it.refresh() }
+            assertTrue("the injected production maintenance pass did not finish",
+                maintenanceFinished.await(10, TimeUnit.SECONDS))
+            assertTrue("the newer request must commit before testing preservation", writeSucceeded.get())
+            val admitted = requireNotNull(expected.get())
+            services.forEach { service ->
+                assertEquals("maintenance must not backdate the newer $service request",
+                    admitted.getValue(service), store.status(account, service))
             }
         }
     }
