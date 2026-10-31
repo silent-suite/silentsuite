@@ -7,11 +7,11 @@ functions through their existing injected seams (http, fs, restart, admission,
 platform, current version) and record which message and exit code each
 failure class reaches today.
 
-They are passing characterization controls on current source, except the
-final availability regression, which is expected to fail until the release
-fetch fits the unchanged response bound. None of them reproduces a customer
-incident, and they say nothing about frozen packages or published release
-assets. No real network, filesystem replacement,
+The final section covers the paged release listing: the availability
+regression (red on base ef763dec, run 41242271081) plus bounded-paging,
+fail-closed and shared-deadline checks. None of these tests reproduces a
+customer incident, and they say nothing about frozen packages or published
+release assets. No real network, filesystem replacement,
 launchd or process mutation happens here.
 """
 
@@ -570,15 +570,20 @@ class _GitHubReleasesTransport:
     the adapter's unchanged 512 KiB bound applies to each one.
     """
 
-    def __init__(self, releases):
+    def __init__(self, releases, *, fail_page=None, now=None, step=0.0):
         self.releases = releases
         self.urls = []
+        self._fail_page = fail_page
+        self._now = now
+        self._step = step
 
     def get(self, url, timeout):
         import json
         from urllib.parse import parse_qs, urlparse
 
         self.urls.append(url)
+        if self._now is not None:
+            self._now[0] += self._step
         parsed = urlparse(url)
         if parsed.hostname != "api.github.com":
             return _Response(b"", status=404)
@@ -591,6 +596,8 @@ class _GitHubReleasesTransport:
         query = parse_qs(parsed.query)
         per_page = min(max(int(query.get("per_page", ["30"])[0]), 1), 100)
         page = max(int(query.get("page", ["1"])[0]), 1)
+        if page == self._fail_page:
+            return _Response(b"server error", status=500)
         chunk = self.releases[(page - 1) * per_page:page * per_page]
         response = _Response(json.dumps(chunk, separators=(",", ":")).encode())
         if page * per_page < len(self.releases):
@@ -636,3 +643,107 @@ def test_check_finds_newest_release_when_full_release_list_exceeds_bound():
     )
     assert result.tag_name == "v0.5.17-beta"
     assert result.release.asset_name == MAC_ASSET
+
+
+# ---------------------------------------------------------------------------
+# Paged release listing: same 100-release window, bounded and fail-closed
+# ---------------------------------------------------------------------------
+
+def _small_releases(count):
+    """Small valid releases, newest first, each with the macOS asset pair."""
+    return [
+        _release(f"1.{n}.0", [MAC_ASSET, f"{MAC_ASSET}.sha256"])
+        for n in range(count - 1, -1, -1)
+    ]
+
+
+def test_check_finds_compatible_release_beyond_the_first_page():
+    from silentsuite_bridge.update import check_for_update
+    from silentsuite_bridge.update.http import RELEASES_PER_PAGE
+    from silentsuite_bridge.update.types import UpdateStatus
+
+    versions = _release_versions()
+    per_release = _MEASURED_LIST_BYTES // len(versions)
+    releases = [
+        _github_release(index, version, per_release)
+        for index, version in enumerate(versions)
+    ]
+    # The newest twelve releases carry no macOS Bridge asset (component-only
+    # releases), so the newest compatible one sits on a later page.
+    for release in releases[:12]:
+        release["assets"] = [
+            asset for asset in release["assets"]
+            if not asset["name"].startswith(MAC_ASSET)
+        ]
+    transport = _GitHubReleasesTransport(releases)
+
+    result = check_for_update(
+        http=_real_http(transport),
+        platform=_mac(),
+        current_version="0.5.4-beta",
+    )
+
+    assert result.status == UpdateStatus.AVAILABLE
+    assert result.tag_name == f"v{versions[12]}"
+    # Page URLs come only from the fixed base; response links are not followed.
+    base = f"https://api.github.com{_RELEASES_PATH}"
+    pages = -(-len(releases) // RELEASES_PER_PAGE)
+    assert transport.urls == [
+        f"{base}?per_page={RELEASES_PER_PAGE}&page={page}"
+        for page in range(1, pages + 1)
+    ]
+
+
+@pytest.mark.parametrize("count", [0, 20, 25, 150])
+def test_release_listing_stops_at_short_page_or_the_100_release_window(count):
+    from silentsuite_bridge.update.http import MAX_RELEASES, RELEASES_PER_PAGE
+
+    releases = _small_releases(count)
+    transport = _GitHubReleasesTransport(releases)
+
+    fetched = _real_http(transport).fetch_releases()
+
+    full_pages = min(count, MAX_RELEASES) // RELEASES_PER_PAGE
+    complete = full_pages * RELEASES_PER_PAGE >= MAX_RELEASES
+    assert MAX_RELEASES == 100
+    assert len(transport.urls) == full_pages + (0 if complete else 1)
+    assert fetched == releases[:MAX_RELEASES]
+
+
+def test_check_failure_on_a_later_page_is_failure_not_current():
+    from silentsuite_bridge.update import check_for_update
+    from silentsuite_bridge.update.types import UpdateStatus
+
+    releases = _small_releases(30)
+    newest = releases[0]["tag_name"].lstrip("v")
+    transport = _GitHubReleasesTransport(releases, fail_page=2)
+
+    result = check_for_update(
+        http=_real_http(transport),
+        platform=_mac(),
+        current_version=newest,
+    )
+
+    # Page 1 alone would report CURRENT; a failed page must not.
+    assert result.status == UpdateStatus.FAILURE
+    assert len(transport.urls) == 2
+
+
+def test_release_listing_pages_share_one_total_deadline():
+    from silentsuite_bridge.update.http import HttpError, SilentSuiteHttpAdapter
+
+    now = [0.0]
+    transport = _GitHubReleasesTransport(_small_releases(50), now=now, step=1.0)
+    adapter = SilentSuiteHttpAdapter(
+        transport=transport,
+        timeout=2,
+        total_timeout=3,
+        clock=lambda: now[0],
+    )
+
+    # Each page takes 1 s, well inside the per-request timeout, but the
+    # listing as a whole must stop once the shared 3 s budget is spent.
+    with pytest.raises(HttpError, match="timed out"):
+        adapter.fetch_releases()
+
+    assert len(transport.urls) == 3
