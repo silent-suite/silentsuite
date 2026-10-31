@@ -450,7 +450,7 @@ jobs:
           set -euo pipefail
           out=app/build/outputs/mapping/release
           for f in configuration.txt seeds.txt usage.txt; do test -s "$out/$f"; done
-          if sed 's/#.*//' "$out/configuration.txt" | grep -nE '^[[:space:]]*-dontoptimize([[:space:]]|$)'; then
+          if sed 's/#.*//' "$out/configuration.txt" | grep -nE '(^|[[:space:]])-dontoptimize([[:space:]]|$)'; then
             echo "::error::merged release R8 configuration contains -dontoptimize" >&2
             exit 1
           fi
