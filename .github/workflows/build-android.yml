@@ -300,6 +300,151 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # D2 N2: runs the shared positive legacy unknown-property recorder floor inside the
+  # product debug APK on a fresh dedicated emulator (no account fixtures) and keeps the
+  # validated schema-1 carriers. Evidence collection only; it restricts nothing.
+  ical4android-legacy-recorder-runtime:
+    name: Legacy unknown-property recorder runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    needs: [conscrypt-r28, etebase-16kb]
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: 29
+            arch: x86
+          - api-level: 36
+            arch: x86_64
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Install Android NDK r28
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager)"
+          fi
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Download rebuilt Conscrypt AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: conscrypt-r28-${{ github.sha }}
+          path: android/build/conscrypt-m2
+
+      - name: Download same-run Etebase 16 KB AAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: etebase-16kb-${{ github.sha }}
+          path: ${{ runner.temp }}/etebase-16kb-artifact
+
+      - name: Admit same-run Etebase 16 KB AAR
+        run: python3 scripts/etebase-run-artifact.py verify --staging "$RUNNER_TEMP/etebase-16kb-artifact"
+
+      - name: Verify admitted Etebase 16 KB AAR
+        run: |
+          python3 scripts/verify-native-16kb.py \
+            --require-lib libetebase_android.so \
+            --require-android-ndk-major libetebase_android.so=28 \
+            app/libs/client-2.3.2-16kb.aar
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run legacy unknown-property recorder floor on the emulator
+        id: legacy-recorder-runtime
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: bash android/scripts/run-legacy-recorder-runtime.sh "${{ matrix.api-level }}" "${{ matrix.arch }}"
+
+      - name: Assert legacy recorder runtime methods executed
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, sys
+          import xml.etree.ElementTree as ET
+          test_class = 'io.silentsuite.sync.resource.LegacyUnknownPropertyRecorderRuntimeTest'
+          expected = sorted([
+            'testLegacyRecorder_RoutedPropertyFamilies_RoundTrip',
+            'testLegacyRecorder_ClazzForms_RoundTrip',
+            'testLegacyRecorder_DefaultParameterFamilies_RoundTrip',
+            'testLegacyRecorder_DateTimeValueShapes_RoundTrip',
+            'testLegacyRecorder_ParsedEventUnknownProperties_RoundTrip',
+          ])
+          executed, bad = [], []
+          for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
+            for case in ET.parse(path).getroot().iter('testcase'):
+              if case.get('classname') != test_class:
+                continue
+              executed.append(case.get('name', ''))
+              if any(case.find(kind) is not None for kind in ('failure', 'error', 'skipped')):
+                bad.append(case.get('name', ''))
+          if sorted(executed) != expected or bad:
+            print(f'::error::expected={expected} executed={sorted(executed)} failed_errored_or_skipped={sorted(bad)}')
+            sys.exit(1)
+          print(f'verified {len(executed)} legacy recorder runtime methods')
+          PY
+
+      - name: Assert legacy recorder validation matches the matrix platform
+        if: always()
+        run: |
+          python3 - "${{ matrix.api-level }}" "${{ matrix.arch }}" <<'PY'
+          import glob, json, sys
+          api, arch = int(sys.argv[1]), sys.argv[2]
+          reports = glob.glob('app/build/outputs/androidTest-results/d2-legacy-recorder/*/validation.json')
+          if len(reports) != 1:
+            print(f'::error::expected exactly one legacy recorder validation report, found {len(reports)}')
+            sys.exit(1)
+          with open(reports[0], encoding='utf-8') as handle:
+            report = json.load(handle)
+          print(f"legacy recorder validation expected={report.get('expected')} classification={report.get('classification')} exit={report.get('exit')}")
+          if report.get('expected') != {'api': api, 'arch': arch}:
+            print(f'::error::validation platform {report.get("expected")} != matrix {api}/{arch}')
+            sys.exit(1)
+          if report.get('classification') != 'PASS' or report.get('exit') != 0:
+            print('::error::legacy recorder validation did not pass')
+            sys.exit(1)
+          PY
+
+      - name: Upload legacy recorder runtime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: legacy-recorder-runtime-${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            android/app/build/outputs/androidTest-results/connected/
+            android/app/build/outputs/androidTest-results/d2-legacy-recorder/
+            android/app/build/reports/androidTests/connected/
+          if-no-files-found: error
+          retention-days: 14
+
   # ─────────────────────────────────────────────────────────────────────
   # PR / main builds — unsigned, no signing secrets accessible.
   # Validates that the Android project compiles and assembles.

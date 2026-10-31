@@ -15,7 +15,12 @@
 * right after the unchanged debug unit-test step, build-pr runs the exact admitted
   ical4android JVM evidence unless cancelled: the full suite, a fail-when-missing
   upload of its JUnit XML and HTML, and an inline python3 check that every required
-  method executed and was not skipped.
+  method executed and was not skipped;
+* one standalone ical4android-legacy-recorder-runtime job (D2 N2) runs the shared positive
+  legacy-recorder floor on API 29/x86 and API 36/x86_64 after the same Etebase admission and
+  native checks as account-recreation-runtime, verifies its exact five methods and the
+  matrix platform of its validation report, and always uploads the evidence; the pinned
+  104-key floor is checked only from its two checked-in copies (Kotlin and the run script).
 
 The checker runs against byte copies of the original predecessor (immutable base
 f867267e) and of the immediate predecessor (8cb81b42) to show the exact violations
@@ -29,6 +34,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,6 +53,7 @@ PRODUCER = "etebase-16kb"
 STATIC_JOB = "static-contracts"
 CONSUMERS = ("build-pr", "account-recreation-runtime", "color-parity-evidence", "registry-process-boundary")
 UNCHANGED_JOBS = ("signing-policy", "conscrypt-r28", "conscrypt-runtime")
+LEGACY_RECORDER_JOB = "ical4android-legacy-recorder-runtime"
 ARTIFACT = "etebase-16kb-${{ github.sha }}"
 STAGING = "${{ runner.temp }}/etebase-16kb-artifact"
 BUILD_SCRIPT = "scripts/build-etebase-client-16kb.sh"
@@ -592,7 +599,9 @@ def test_candidate_workflow_satisfies_every_speed_contract(candidate):
 def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candidate):
     assert candidate["name"] == base["name"]
     assert _triggers(candidate) == _triggers(base)
-    assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER}
+    # The standalone D2 N2 recorder job is the only other addition; it is checked on its own below.
+    assert LEGACY_RECORDER_JOB in candidate["jobs"]
+    assert set(candidate["jobs"]) - {LEGACY_RECORDER_JOB} == set(base["jobs"]) | {STATIC_JOB, PRODUCER}
     for name in UNCHANGED_JOBS:
         assert candidate["jobs"][name] == base["jobs"][name], name
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
@@ -615,7 +624,8 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
     assert {key: value for key, value in candidate.items() if key != "jobs"} == {
         key: value for key, value in predecessor.items() if key != "jobs"
     }
-    assert set(candidate["jobs"]) == set(predecessor["jobs"])
+    # Only the standalone D2 N2 recorder job is new; every predecessor job is compared below.
+    assert set(candidate["jobs"]) == set(predecessor["jobs"]) | {LEGACY_RECORDER_JOB}
     for name, job in predecessor["jobs"].items():
         if name == RUNTIME_LEDGER_JOB:
             job = _with_approved_runtime_ledger_changes(job)
@@ -1008,3 +1018,392 @@ def test_jvm_evidence_mutations_are_rejected(candidate, case, expected):
     mutated = copy.deepcopy(candidate)
     _jvm_mutation(mutated, case)
     assert expected in jvm_evidence_violations(mutated)
+
+
+# --- D2 N2: standalone legacy-recorder runtime job and its self-contained pinned floor ---
+
+LEGACY_RECORDER_JOB_YAML = r"""
+name: Legacy unknown-property recorder runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+needs: [conscrypt-r28, etebase-16kb]
+if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+runs-on: ubuntu-latest
+timeout-minutes: 45
+permissions:
+  contents: read
+strategy:
+  fail-fast: false
+  matrix:
+    include:
+      - api-level: 29
+        arch: x86
+      - api-level: 36
+        arch: x86_64
+defaults:
+  run:
+    working-directory: android
+
+steps:
+  - name: Checkout
+    uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+  - name: Set up JDK 17
+    uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+    with:
+      java-version: '17'
+      distribution: 'temurin'
+
+  - name: Install Android NDK r28
+    run: |
+      SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+      if [ ! -x "$SDKMANAGER" ]; then
+        SDKMANAGER="$(command -v sdkmanager)"
+      fi
+      yes | "$SDKMANAGER" --install "ndk;28.2.13676358"
+      echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+  - name: Make gradlew executable
+    run: chmod +x gradlew
+
+  - name: Download rebuilt Conscrypt AAR
+    uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+    with:
+      name: conscrypt-r28-${{ github.sha }}
+      path: android/build/conscrypt-m2
+
+  - name: Download same-run Etebase 16 KB AAR
+    uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+    with:
+      name: etebase-16kb-${{ github.sha }}
+      path: ${{ runner.temp }}/etebase-16kb-artifact
+
+  - name: Admit same-run Etebase 16 KB AAR
+    run: python3 scripts/etebase-run-artifact.py verify --staging "$RUNNER_TEMP/etebase-16kb-artifact"
+
+  - name: Verify admitted Etebase 16 KB AAR
+    run: |
+      python3 scripts/verify-native-16kb.py \
+        --require-lib libetebase_android.so \
+        --require-android-ndk-major libetebase_android.so=28 \
+        app/libs/client-2.3.2-16kb.aar
+
+  - name: Enable KVM for the emulator
+    run: |
+      if [ -e /dev/kvm ]; then
+        sudo chmod 666 /dev/kvm
+      fi
+
+  - name: Run legacy unknown-property recorder floor on the emulator
+    id: legacy-recorder-runtime
+    uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+    with:
+      api-level: ${{ matrix.api-level }}
+      arch: ${{ matrix.arch }}
+      target: google_apis
+      emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+      disable-animations: true
+      script: bash android/scripts/run-legacy-recorder-runtime.sh "${{ matrix.api-level }}" "${{ matrix.arch }}"
+
+  - name: Assert legacy recorder runtime methods executed
+    if: always()
+    run: |
+      python3 - <<'PY'
+      import glob, sys
+      import xml.etree.ElementTree as ET
+      test_class = 'io.silentsuite.sync.resource.LegacyUnknownPropertyRecorderRuntimeTest'
+      expected = sorted([
+        'testLegacyRecorder_RoutedPropertyFamilies_RoundTrip',
+        'testLegacyRecorder_ClazzForms_RoundTrip',
+        'testLegacyRecorder_DefaultParameterFamilies_RoundTrip',
+        'testLegacyRecorder_DateTimeValueShapes_RoundTrip',
+        'testLegacyRecorder_ParsedEventUnknownProperties_RoundTrip',
+      ])
+      executed, bad = [], []
+      for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
+        for case in ET.parse(path).getroot().iter('testcase'):
+          if case.get('classname') != test_class:
+            continue
+          executed.append(case.get('name', ''))
+          if any(case.find(kind) is not None for kind in ('failure', 'error', 'skipped')):
+            bad.append(case.get('name', ''))
+      if sorted(executed) != expected or bad:
+        print(f'::error::expected={expected} executed={sorted(executed)} failed_errored_or_skipped={sorted(bad)}')
+        sys.exit(1)
+      print(f'verified {len(executed)} legacy recorder runtime methods')
+      PY
+
+  - name: Assert legacy recorder validation matches the matrix platform
+    if: always()
+    run: |
+      python3 - "${{ matrix.api-level }}" "${{ matrix.arch }}" <<'PY'
+      import glob, json, sys
+      api, arch = int(sys.argv[1]), sys.argv[2]
+      reports = glob.glob('app/build/outputs/androidTest-results/d2-legacy-recorder/*/validation.json')
+      if len(reports) != 1:
+        print(f'::error::expected exactly one legacy recorder validation report, found {len(reports)}')
+        sys.exit(1)
+      with open(reports[0], encoding='utf-8') as handle:
+        report = json.load(handle)
+      print(f"legacy recorder validation expected={report.get('expected')} classification={report.get('classification')} exit={report.get('exit')}")
+      if report.get('expected') != {'api': api, 'arch': arch}:
+        print(f'::error::validation platform {report.get("expected")} != matrix {api}/{arch}')
+        sys.exit(1)
+      if report.get('classification') != 'PASS' or report.get('exit') != 0:
+        print('::error::legacy recorder validation did not pass')
+        sys.exit(1)
+      PY
+
+  - name: Upload legacy recorder runtime evidence
+    if: always()
+    uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+    with:
+      name: legacy-recorder-runtime-${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+      path: |
+        android/app/build/outputs/androidTest-results/connected/
+        android/app/build/outputs/androidTest-results/d2-legacy-recorder/
+        android/app/build/reports/androidTests/connected/
+      if-no-files-found: error
+      retention-days: 14
+"""
+LEGACY_RECORDER_PREREQUISITES = 9  # checkout .. KVM, copied from account-recreation-runtime
+EMULATOR_RUNNER = "ReactiveCircus/android-emulator-runner@"
+LEGACY_RECORDER_EXACT_VIOLATION = f"{LEGACY_RECORDER_JOB}: must equal the admitted standalone job exactly"
+LEGACY_RECORDER_PREREQ_VIOLATION = (
+    f"{LEGACY_RECORDER_JOB}: prerequisite steps must equal account-recreation-runtime's admission and native steps"
+)
+LEGACY_RECORDER_EMULATOR_VIOLATION = (
+    f"{LEGACY_RECORDER_JOB}: emulator inputs must equal conscrypt-runtime's apart from the script"
+)
+
+
+def _emulator_step(job: dict) -> dict:
+    found = [step for step in job.get("steps") or [] if _uses(step).startswith(EMULATOR_RUNNER)]
+    return found[0] if len(found) == 1 else {}
+
+
+def legacy_recorder_job_violations(workflow: dict) -> list[str]:
+    jobs = workflow.get("jobs") or {}
+    job = jobs.get(LEGACY_RECORDER_JOB)
+    if job is None:
+        return [f"{LEGACY_RECORDER_JOB}: missing standalone recorder job"]
+    violations = []
+    if job != yaml.safe_load(LEGACY_RECORDER_JOB_YAML):
+        violations.append(LEGACY_RECORDER_EXACT_VIOLATION)
+    source = (jobs.get(RUNTIME_LEDGER_JOB) or {}).get("steps") or []
+    steps = job.get("steps") or []
+    if len(source) < LEGACY_RECORDER_PREREQUISITES or steps[:LEGACY_RECORDER_PREREQUISITES] != source[:LEGACY_RECORDER_PREREQUISITES]:
+        violations.append(LEGACY_RECORDER_PREREQ_VIOLATION)
+    ours, theirs = _emulator_step(job), _emulator_step(jobs.get("conscrypt-runtime") or {})
+    strip = lambda step: {key: value for key, value in (step.get("with") or {}).items() if key != "script"}  # noqa: E731
+    if not ours or not theirs or _uses(ours) != _uses(theirs) or strip(ours) != strip(theirs):
+        violations.append(LEGACY_RECORDER_EMULATOR_VIOLATION)
+    return sorted(violations)
+
+
+def test_candidate_runs_the_exact_standalone_legacy_recorder_job(candidate):
+    assert legacy_recorder_job_violations(candidate) == []
+
+
+def test_predecessors_lack_the_legacy_recorder_job(base, predecessor):
+    for workflow in (base, predecessor):
+        assert legacy_recorder_job_violations(workflow) == [f"{LEGACY_RECORDER_JOB}: missing standalone recorder job"]
+
+
+def _legacy_job_mutation(workflow: dict, case: str) -> None:
+    jobs = workflow["jobs"]
+    job = jobs[LEGACY_RECORDER_JOB]
+    if case == "drop-api-29":
+        job["strategy"]["matrix"]["include"] = [row for row in job["strategy"]["matrix"]["include"] if row["api-level"] != 29]
+    elif case == "write-permission":
+        job["permissions"] = {"contents": "write"}
+    elif case == "needs-unsigned-build":
+        job["needs"] = ["conscrypt-r28", "etebase-16kb", "build-pr"]
+    elif case == "drop-native-verify":
+        _remove_step(job, lambda step: step.get("name") == "Verify admitted Etebase 16 KB AAR")
+    elif case == "drop-admission":
+        _remove_step(job, lambda step: step.get("name") == "Admit same-run Etebase 16 KB AAR")
+    elif case == "verifier-continues-on-error":
+        _step_named(job, "Assert legacy recorder runtime methods executed")["continue-on-error"] = True
+    elif case == "upload-only-on-success":
+        _step_named(job, "Upload legacy recorder runtime evidence")["if"] = "success()"
+    elif case == "upload-tolerates-missing":
+        _step_named(job, "Upload legacy recorder runtime evidence")["with"]["if-no-files-found"] = "warn"
+    elif case == "script-ignores-arch":
+        _emulator_step(job)["with"]["script"] = 'bash android/scripts/run-legacy-recorder-runtime.sh "${{ matrix.api-level }}"'
+    elif case == "emulator-arch-fixed":
+        _emulator_step(job)["with"]["arch"] = "x86_64"
+    elif case == "identity-check-removed":
+        _remove_step(job, lambda step: step.get("name") == "Assert legacy recorder validation matches the matrix platform")
+    else:
+        raise AssertionError(case)
+
+
+LEGACY_JOB_MUTATIONS = {
+    "drop-api-29": [LEGACY_RECORDER_EXACT_VIOLATION],
+    "write-permission": [LEGACY_RECORDER_EXACT_VIOLATION],
+    "needs-unsigned-build": [LEGACY_RECORDER_EXACT_VIOLATION],
+    "drop-native-verify": [LEGACY_RECORDER_EXACT_VIOLATION, LEGACY_RECORDER_PREREQ_VIOLATION],
+    "drop-admission": [LEGACY_RECORDER_EXACT_VIOLATION, LEGACY_RECORDER_PREREQ_VIOLATION],
+    "verifier-continues-on-error": [LEGACY_RECORDER_EXACT_VIOLATION],
+    "upload-only-on-success": [LEGACY_RECORDER_EXACT_VIOLATION],
+    "upload-tolerates-missing": [LEGACY_RECORDER_EXACT_VIOLATION],
+    "script-ignores-arch": [LEGACY_RECORDER_EXACT_VIOLATION],
+    "emulator-arch-fixed": [LEGACY_RECORDER_EXACT_VIOLATION, LEGACY_RECORDER_EMULATOR_VIOLATION],
+    "identity-check-removed": [LEGACY_RECORDER_EXACT_VIOLATION],
+}
+
+
+@pytest.mark.parametrize(("case", "expected"), LEGACY_JOB_MUTATIONS.items(), ids=LEGACY_JOB_MUTATIONS.keys())
+def test_legacy_recorder_job_mutations_are_rejected(candidate, case, expected):
+    assert legacy_recorder_job_violations(candidate) == [], (
+        "the unmutated candidate must be clean for this mutation to be meaningful"
+    )
+    mutated = copy.deepcopy(candidate)
+    _legacy_job_mutation(mutated, case)
+    violations = legacy_recorder_job_violations(mutated)
+    for message in expected:
+        assert message in violations, (case, violations)
+
+
+# The pinned 104-key positive floor (D2-ART-CHECKPOINT-SPEC-v4 §2). Only the two checked-in copies are read;
+# the generation provenance (projection/receipt) is never a CI input.
+FLOOR_KOTLIN = ROOT / "android/ical4android/src/sharedTest/java/at/bitfire/ical4android/LegacyRecorderFloor.kt"
+FLOOR_SCRIPT = ROOT / "android/scripts/run-legacy-recorder-runtime.sh"
+FLOOR_KOTLIN_MARKERS = ("// D2-FLOOR-KEYS-BEGIN", "// D2-FLOOR-KEYS-END")
+FLOOR_PYTHON_MARKERS = ("# D2-FLOOR-KEYS-BEGIN", "# D2-FLOOR-KEYS-END")
+FLOOR_KOTLIN_ENTRY = re.compile(r'^\s*Triple\("([^"\\]+)", "([^"\\]+)", "([^"\\]+)"\),$')
+FLOOR_PYTHON_ENTRY = re.compile(r'^\s*\("([^"\\]+)", "([^"\\]+)", "([^"\\]+)"\),$')
+FLOOR_GROUP_COUNTS = {"routed-properties": 44, "clazz": 3, "default-parameters": 30, "date-time-shapes": 11, "parsed-event": 16}
+FLOOR_KEY_COUNT = 104
+FLOOR_CANONICAL_SHA256 = "3c98b7fbae9451bdd81710fdcf1fd00487258c1fe5409a2c2a3c10b6c00ba43c"
+FLOOR_KOTLIN_BLOCK_VIOLATION = "floor: Kotlin EXPECTED_FLOOR_KEYS needs one marker pair enclosing only exact entries"
+FLOOR_PYTHON_BLOCK_VIOLATION = "floor: Python FLOOR_KEYS needs one marker pair enclosing only exact entries"
+FLOOR_SEQUENCE_VIOLATION = "floor: Kotlin and Python key sequences must be identical"
+FLOOR_COUNT_VIOLATION = "floor: must have exactly 104 unique keys"
+FLOOR_GROUPS_VIOLATION = "floor: group counts must be routed-properties 44, clazz 3, default-parameters 30, date-time-shapes 11, parsed-event 16"
+FLOOR_ORDER_VIOLATION = "floor: keys must be in canonical unsigned-byte order"
+FLOOR_HASH_VIOLATION = "floor: canonical key hash must equal the immutable literal"
+
+
+def _floor_block(text: str, markers: tuple[str, str], entry: re.Pattern):
+    lines = text.splitlines()
+    begins = [index for index, line in enumerate(lines) if line.strip() == markers[0]]
+    ends = [index for index, line in enumerate(lines) if line.strip() == markers[1]]
+    if len(begins) != 1 or len(ends) != 1 or begins[0] >= ends[0]:
+        return None
+    keys = []
+    for line in lines[begins[0] + 1 : ends[0]]:
+        match = entry.fullmatch(line)
+        if match is None:
+            return None
+        keys.append(match.groups())
+    return keys
+
+
+def _canonical(keys) -> list[bytes]:
+    return ["\t".join(key).encode("utf-8") for key in keys]
+
+
+def floor_violations(kotlin_text: str, script_text: str) -> list[str]:
+    kotlin = _floor_block(kotlin_text, FLOOR_KOTLIN_MARKERS, FLOOR_KOTLIN_ENTRY)
+    python = _floor_block(script_text, FLOOR_PYTHON_MARKERS, FLOOR_PYTHON_ENTRY)
+    violations = []
+    if kotlin is None:
+        violations.append(FLOOR_KOTLIN_BLOCK_VIOLATION)
+    if python is None:
+        violations.append(FLOOR_PYTHON_BLOCK_VIOLATION)
+    if violations:
+        return sorted(violations)
+    if kotlin != python:
+        violations.append(FLOOR_SEQUENCE_VIOLATION)
+    for keys in (kotlin, python):
+        encoded = _canonical(keys)
+        if len(keys) != FLOOR_KEY_COUNT or len(set(keys)) != len(keys):
+            violations.append(FLOOR_COUNT_VIOLATION)
+        counts = {}
+        for key in keys:
+            counts[key[0]] = counts.get(key[0], 0) + 1
+        if counts != FLOOR_GROUP_COUNTS:
+            violations.append(FLOOR_GROUPS_VIOLATION)
+        if encoded != sorted(encoded):
+            violations.append(FLOOR_ORDER_VIOLATION)
+        if hashlib.sha256(b"".join(item + b"\n" for item in sorted(encoded))).hexdigest() != FLOOR_CANONICAL_SHA256:
+            violations.append(FLOOR_HASH_VIOLATION)
+    return sorted(set(violations))
+
+
+def test_checked_in_floor_copies_are_identical_canonical_and_pinned():
+    assert floor_violations(FLOOR_KOTLIN.read_text(encoding="utf-8"), FLOOR_SCRIPT.read_text(encoding="utf-8")) == []
+
+
+def _swap(text: str, first: str, second: str) -> str:
+    return text.replace(first + second, second + first, 1)
+
+
+FLOOR_MUTATIONS = {
+    "changed-key-kotlin": (
+        lambda k, p: (k.replace('Triple("clazz", "CLASS", "custom-value"),', 'Triple("clazz", "CLASS", "custom-valuf"),', 1), p),
+        FLOOR_SEQUENCE_VIOLATION,
+    ),
+    "changed-key-python": (
+        lambda k, p: (k, p.replace('("clazz", "CLASS", "custom-value"),', '("clazz", "CLASS", "custom-valuf"),', 1)),
+        FLOOR_SEQUENCE_VIOLATION,
+    ),
+    "changed-key-both-consistently": (
+        lambda k, p: (
+            k.replace('Triple("clazz", "CLASS", "custom-value"),', 'Triple("clazz", "CLASS", "custom-valuf"),', 1),
+            p.replace('("clazz", "CLASS", "custom-value"),', '("clazz", "CLASS", "custom-valuf"),', 1),
+        ),
+        FLOOR_HASH_VIOLATION,
+    ),
+    "removed-key": (
+        lambda k, p: (
+            k.replace('    Triple("routed-properties", "TEL", "text"),\n', "", 1),
+            p.replace('    ("routed-properties", "TEL", "text"),\n', "", 1),
+        ),
+        FLOOR_COUNT_VIOLATION,
+    ),
+    "duplicated-key": (
+        lambda k, p: (
+            k.replace('    Triple("routed-properties", "TEL", "text"),\n', '    Triple("routed-properties", "TEL", "text"),\n' * 2, 1),
+            p.replace('    ("routed-properties", "TEL", "text"),\n', '    ("routed-properties", "TEL", "text"),\n' * 2, 1),
+        ),
+        FLOOR_COUNT_VIOLATION,
+    ),
+    "renamed-group": (
+        lambda k, p: (k.replace('Triple("clazz", ', 'Triple("clazz2", '), p.replace('    ("clazz", ', '    ("clazz2", ')),
+        FLOOR_GROUPS_VIOLATION,
+    ),
+    "reordered-keys": (
+        lambda k, p: (
+            _swap(k, '    Triple("routed-properties", "ATTACH", "binary"),\n', '    Triple("routed-properties", "ATTACH", "uri"),\n'),
+            _swap(p, '    ("routed-properties", "ATTACH", "binary"),\n', '    ("routed-properties", "ATTACH", "uri"),\n'),
+        ),
+        FLOOR_ORDER_VIOLATION,
+    ),
+    "missing-kotlin-marker": (
+        lambda k, p: (k.replace("// D2-FLOOR-KEYS-END\n", "", 1), p),
+        FLOOR_KOTLIN_BLOCK_VIOLATION,
+    ),
+    "missing-python-marker": (
+        lambda k, p: (k, p.replace("# D2-FLOOR-KEYS-BEGIN\n", "", 1)),
+        FLOOR_PYTHON_BLOCK_VIOLATION,
+    ),
+    "invalid-kotlin-entry": (
+        lambda k, p: (k.replace("// D2-FLOOR-KEYS-BEGIN\n", '// D2-FLOOR-KEYS-BEGIN\n    Triple("clazz", "CLASS"),\n', 1), p),
+        FLOOR_KOTLIN_BLOCK_VIOLATION,
+    ),
+    "invalid-python-entry": (
+        lambda k, p: (k, p.replace("# D2-FLOOR-KEYS-BEGIN\n", '# D2-FLOOR-KEYS-BEGIN\n    ("clazz", "CLASS"),\n', 1)),
+        FLOOR_PYTHON_BLOCK_VIOLATION,
+    ),
+}
+
+
+@pytest.mark.parametrize(("case", "mutation"), FLOOR_MUTATIONS.items(), ids=FLOOR_MUTATIONS.keys())
+def test_floor_mutations_are_rejected(case, mutation):
+    kotlin, script = FLOOR_KOTLIN.read_text(encoding="utf-8"), FLOOR_SCRIPT.read_text(encoding="utf-8")
+    assert floor_violations(kotlin, script) == [], "the unmutated floor copies must be clean"
+    mutate, expected = mutation
+    mutated_kotlin, mutated_script = mutate(kotlin, script)
+    assert (mutated_kotlin, mutated_script) != (kotlin, script), f"{case}: mutation did not apply"
+    assert expected in floor_violations(mutated_kotlin, mutated_script), case

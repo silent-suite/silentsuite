@@ -44,7 +44,7 @@ def test_android_7_contact_hash_workaround_is_retired_without_data_reset():
 def test_product_floor_runtime_matrix_moves_to_29_and_keeps_modern_scenarios():
     workflow = read(".github/workflows/build-android.yml")
     assert not re.search(r"api-level:\s*['\"]?21\b", workflow)
-    assert len(re.findall(r"api-level:\s*['\"]?29\b", workflow)) == 7
+    assert len(re.findall(r"api-level:\s*['\"]?29\b", workflow)) == 8
     ledger = json.loads(read("android/scripts/focused-runtime-ledger-v1.json"))
     assert {"29:mixed", "29:remaining", "35:all", "36:account-dashboard", "36:first-run-setup", "36:launcher-recovery", "36:sibling-routes", "36:status-routes"} == set(ledger["shards"])
     runner = read("android/scripts/run-focused-runtime-tests.sh")
