@@ -1191,6 +1191,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     'Remove {account}? This deletes local bridge credentials and that account\\'s local decrypted bridge cache on this computer. Other accounts are not affected.'
                 );
             }
+            function setBirthdays(button) {
+                var account = button.getAttribute('data-birthdays-account');
+                var action = button.getAttribute('data-birthdays-action');
+                if (!account || (action !== 'on' && action !== 'off')) return;
+                if (action === 'off' && !confirm('Turn off the Birthdays calendar for ' + account + '? Generated birthdays are removed; your own events are kept.')) return;
+                button.disabled = true;
+                setAccountStatus('Updating the Birthdays calendar for ' + account + '...', false);
+                fetch('/.web/api/accounts/birthdays', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF},
+                    body: JSON.stringify({username: account, action: action})
+                })
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        if (data && data.ok === true && data.status === 'done') {
+                            setAccountStatus('Birthdays calendar turned ' + action + ' for ' + account + '.', false);
+                        } else {
+                            var status = (data && data.status) ? data.status : 'failed';
+                            setAccountStatus('Birthdays calendar for ' + account + ' was not changed yet (' + status + '). Try again after the next sync.', true);
+                        }
+                        button.disabled = false;
+                    })
+                    .catch(function(error) {
+                        setAccountStatus(error.message || ('Birthdays calendar update failed for ' + account + '.'), true);
+                        button.disabled = false;
+                    });
+            }
             function toggleFingerprint(id, button) {
                 var el = document.getElementById(id);
                 if (!el) return;
@@ -1665,6 +1692,10 @@ def _render_dashboard():
                 'onclick="logoutAccount(this)">Log out</button>'
                 f'<button class="account-action-btn danger" data-account="{account_attr}" '
                 'onclick="removeAccount(this)">Remove account</button>'
+                f'<button class="account-action-btn" data-birthdays-account="{account_attr}" '
+                'data-birthdays-action="on" onclick="setBirthdays(this)">Turn on Birthdays calendar</button>'
+                f'<button class="account-action-btn" data-birthdays-account="{account_attr}" '
+                'data-birthdays-action="off" onclick="setBirthdays(this)">Turn off Birthdays calendar</button>'
                 '</div>'
                 '</div>'
             )

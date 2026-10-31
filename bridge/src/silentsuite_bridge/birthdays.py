@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import re
+import threading
 import time
 from datetime import date, timedelta
 
@@ -579,21 +580,24 @@ def _commit(item_mgr, items, root):
         item_mgr.transaction(items[start:start + CHUNK], [root])
 
 
-def _retire(col_mgr, entry):
+def _retire(col_mgr, entry, written):
     collection = entry["collection"]
     collection.content = marker_content("retired")
+    # Recorded before the write: an uncertain write still needs a cache refresh.
+    written.add(collection.uid)
     col_mgr.transaction(collection)
     # This run's own commit: the calendar's new root is the one later writes must name.
     entry["root"] = collection.item
     entry["state"] = "retired"
 
 
-def _delete_items(col_mgr, entry, item_uids):
+def _delete_items(col_mgr, entry, item_uids, written):
     items = [entry["items"][uid] for uid in item_uids if uid in entry["items"]]
     if not items:
         return
     for item in items:
         item.delete()
+    written.add(entry["collection"].uid)
     _commit(col_mgr.get_item_manager(entry["collection"]), items, entry["root"])
 
 
@@ -601,15 +605,18 @@ def _new_meta(event_uid):
     return {"name": event_uid, "mtime": int(time.time() * 1000)}
 
 
-def _apply(col_mgr, state, plan):
-    """Write a plan. Returns True when anything was written. Raises on any write error."""
+def _apply(col_mgr, state, plan, written):
+    """Write a plan; each touched calendar uid joins `written` before its write.
+
+    Returns True when anything was written. Raises on any write error.
+    """
     wrote = False
     calendars = state["calendars"]
     for uid in plan["retire"]:
-        _retire(col_mgr, calendars[uid])
+        _retire(col_mgr, calendars[uid], written)
         wrote = True
     for cleanup in plan["cleanup"]:
-        _delete_items(col_mgr, calendars[cleanup["calendarUid"]], cleanup["itemUids"])
+        _delete_items(col_mgr, calendars[cleanup["calendarUid"]], cleanup["itemUids"], written)
         wrote = True
     canonical = calendars.get(plan["canonical"]) if plan["canonical"] else None
     if canonical is None:
@@ -627,9 +634,18 @@ def _apply(col_mgr, state, plan):
     for event in plan["create"]:
         changed.append(item_mgr.create(_new_meta(event["uid"]), birthday_event_content(event).encode("utf-8")))
     if changed:
+        written.add(canonical["collection"].uid)
         _commit(item_mgr, changed, canonical["root"])
         wrote = True
     return wrote
+
+
+def _result(status, written, reason=None, **extra):
+    result = {"status": status, "written": sorted(written)}
+    if reason is not None:
+        result["reason"] = reason
+    result.update(extra)
+    return result
 
 
 def _post_check(col_mgr, state):
@@ -663,9 +679,11 @@ def _post_check(col_mgr, state):
 def reconcile_birthdays(account, username):
     """Fresh-read reconcile of the generated calendar for one account. Never raises.
 
-    Returns {"status": "done" | "skipped" | "pending" | "failed", ...}; only "done" means the
-    calendar matched the source at the end of the run.
+    Returns {"status": "done" | "skipped" | "pending" | "failed", "written": [...], ...}; only
+    "done" means the calendar matched the source at the end of the run. "written" lists every
+    calendar uid this call wrote or may have written (an uncertain write counts), across retries.
     """
+    written = set()
     try:
         col_mgr = account.get_collection_manager()
         reruns = 0
@@ -673,32 +691,32 @@ def reconcile_birthdays(account, username):
         while True:
             state, reason = _read_state(col_mgr, username)
             if state is None:
-                return {"status": "skipped", "reason": reason}
+                return _result("skipped", written, reason)
             source = birthday_events_from_source(state["source"])
             if not source["ok"]:
-                return {"status": "skipped", "reason": source["reason"]}
+                return _result("skipped", written, source["reason"])
             planned = plan_birthday_calendar(source["events"], _planner_calendars(state))
             if planned["kind"] == "skip":
-                return {"status": "skipped", "reason": planned["reason"]}
+                return _result("skipped", written, planned["reason"])
             try:
-                wrote = _apply(col_mgr, state, planned["plan"])
+                wrote = _apply(col_mgr, state, planned["plan"], written)
             except Exception as exc:  # noqa: BLE001 - unknown outcome: re-read, never resend blindly
                 _logger.info("Birthdays write outcome unknown (%s)", bounded_exception_class(exc))
                 if restarts >= MAX_RESTARTS:
-                    return {"status": "pending", "reason": "write-outcome-unknown"}
+                    return _result("pending", written, "write-outcome-unknown")
                 restarts += 1
                 continue
             if not wrote:
-                return {"status": "done"}
+                return _result("done", written)
             decision = decide_after_birthday_run(_post_check(col_mgr, state), reruns)
             if decision == "done":
-                return {"status": "done"}
+                return _result("done", written)
             if decision == "pending":
-                return {"status": "pending", "reason": "post-check"}
+                return _result("pending", written, "post-check")
             reruns += 1
     except Exception as exc:  # noqa: BLE001 - birthdays must never raise into their caller
         _logger.warning("Birthdays reconcile failed (%s)", bounded_exception_class(exc))
-        return {"status": "failed", "reason": "error"}
+        return _result("failed", written, "error")
 
 
 def disable_birthdays(account, username):
@@ -707,42 +725,168 @@ def disable_birthdays(account, username):
     Fails closed when the inventory, a calendar or a member list cannot be read completely.
     Calendars are never deleted, and items that are not generated are never touched.
     """
+    written = set()
     try:
         col_mgr = account.get_collection_manager()
         state, reason = _read_state(col_mgr, username, with_source=False)
         if state is None:
-            return {"status": "failed", "reason": reason}
+            return _result("failed", written, reason)
         targets = [entry for entry in state["calendars"].values() if entry["writable"]]
         if any(not entry["complete"] for entry in targets):
-            return {"status": "failed", "reason": "incomplete-calendar"}
+            return _result("failed", written, "incomplete-calendar")
         for entry in targets:
             if any(_read_content(item) is None for item in entry["items"].values()):
-                return {"status": "failed", "reason": "unreadable-calendar-item"}
+                return _result("failed", written, "unreadable-calendar-item")
         try:
             for entry in sorted(targets, key=lambda e: e["collection"].uid):
                 if entry["state"] == "active":
-                    _retire(col_mgr, entry)
+                    _retire(col_mgr, entry, written)
                 generated = [uid for uid, item in entry["items"].items()
                              if is_generated_birthday_uid((parse_birthday_event_fields(_read_content(item)) or {}).get("uid"))]
-                _delete_items(col_mgr, entry, sorted(generated))
+                _delete_items(col_mgr, entry, sorted(generated), written)
         except Exception as exc:  # noqa: BLE001 - unknown outcome; the next run repairs
             _logger.info("Birthdays turn-off outcome unknown (%s)", bounded_exception_class(exc))
-            return {"status": "pending", "reason": "write-outcome-unknown"}
-        return {"status": "done"}
+            return _result("pending", written, "write-outcome-unknown")
+        return _result("done", written)
     except Exception as exc:  # noqa: BLE001
         _logger.warning("Birthdays turn-off failed (%s)", bounded_exception_class(exc))
-        return {"status": "failed", "reason": "error"}
+        return _result("failed", written, "error")
+
+
+BIRTHDAYS_CALENDAR_NAME = "Birthdays"
+
+
+def _qualifying_active(state):
+    return [entry for entry in state["calendars"].values() if entry["writable"] and entry["state"] == "active"]
+
+
+def enable_birthdays(account, username):
+    """Turn on: reuse a qualifying active calendar, or create ONE private marked calendar; then
+    reconcile. Never infers absence from an incomplete read, never adopts an ordinary calendar,
+    and never creates a second calendar after an uncertain create: it re-reads instead.
+    """
+    created = []
+    try:
+        col_mgr = account.get_collection_manager()
+        state, reason = _read_state(col_mgr, username, with_source=False)
+        if state is None:
+            return _result("failed", set(), reason, created=created)
+        if not _qualifying_active(state):
+            collection = col_mgr.create(CALENDAR_TYPE, {"name": BIRTHDAYS_CALENDAR_NAME}, marker_content("active"))
+            try:
+                col_mgr.upload(collection)
+                created.append(collection.uid)
+            except Exception as exc:  # noqa: BLE001 - unknown outcome: look before doing anything else
+                _logger.info("Birthdays calendar create outcome unknown (%s)", bounded_exception_class(exc))
+                state, reason = _read_state(col_mgr, username, with_source=False)
+                if state is None or not _qualifying_active(state):
+                    return _result("pending", set(), "create-outcome-unknown", created=created)
+                created.extend(entry["collection"].uid for entry in _qualifying_active(state))
+        result = reconcile_birthdays(account, username)
+        written = set(result.get("written") or []) | set(created)
+        return {**result, "written": sorted(written), "created": created}
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Birthdays turn-on failed (%s)", bounded_exception_class(exc))
+        return _result("failed", set(created), "error", created=created)
+
+
+def _refresh_cache(service, written):
+    """Publish this run's calendar writes into the local cache through existing service methods.
+
+    The collection list first, so a new calendar (or a retired marker) is known to the cache;
+    then each written calendar, push before pull so ordinary pending DAV edits are kept.
+    """
+    if not written:
+        return
+    try:
+        service._assert_session_current()
+        service.sync_collection_list()
+    except Exception as exc:  # noqa: BLE001 - the next regular sync publishes it
+        _logger.info("Birthdays cache refresh deferred (%s)", bounded_exception_class(exc))
+        return
+    for uid in written:
+        try:
+            service.sync_collection(uid)
+        except Exception as exc:  # noqa: BLE001
+            _logger.info("Birthdays calendar refresh deferred (%s)", bounded_exception_class(exc))
+
+
+_running_accounts = set()
+_running_lock = threading.Lock()
+
+
+def _claim(username):
+    with _running_lock:
+        if username in _running_accounts:
+            return False
+        _running_accounts.add(username)
+        return True
+
+
+def _release(username):
+    with _running_lock:
+        _running_accounts.discard(username)
 
 
 def reconcile_after_sync(service):
     """Called by local_cache.Etebase.sync() after a cycle with no unresolved DAV conflicts.
 
-    Kept neutral: running the engine from the sync service still needs its own hosted RED
-    for re-entrancy, session guards and the canonical-calendar cache refresh.
+    Runs only for the service's current session, at most once at a time per account (a call
+    made while that account's run is active is coalesced), and refreshes only the calendars it
+    wrote. sync_collection never calls this hook, so the refresh cannot recurse. Never raises.
     """
-    return dict(SKIPPED)
+    username = getattr(service, "username", None)
+    if not username:
+        return _result("skipped", set(), "no-account")
+    if not _claim(username):
+        return _result("skipped", set(), "already-running")
+    try:
+        try:
+            service._assert_session_current()
+        except Exception:  # noqa: BLE001 - a replaced session never starts a run
+            return _result("skipped", set(), "session-replaced")
+        result = reconcile_birthdays(service.etebase, username) or {}
+        _refresh_cache(service, result.get("written") or [])
+        return result
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Birthdays after-sync run failed (%s)", bounded_exception_class(exc))
+        return _result("failed", set(), "error")
+    finally:
+        _release(username)
 
 
 def set_dashboard_birthdays(username, action):
-    """Dashboard turn on ('on') or turn off ('off') for one configured account."""
-    return dict(SKIPPED)
+    """Dashboard turn on ('on') or turn off ('off') for one configured account.
+
+    Loads the account through the existing exclusive, writable session (the same per-account
+    serialization the sync thread uses), checks that session is current, runs the turn-on or
+    turn-off, then publishes the written calendars into the cache. Never raises.
+    """
+    if action not in ("on", "off"):
+        return _result("failed", set(), "unknown-action")
+    try:
+        from . import accounts
+
+        if username not in accounts.list_accounts():
+            return _result("skipped", set(), "not-configured")
+        from .radicale import etesync_cache
+
+        with etesync_cache.etesync_for_user(username, exclusive=True, read_only=False) as (service, _created):
+            if not _claim(username):
+                return _result("skipped", set(), "already-running")
+            try:
+                try:
+                    service._assert_session_current()
+                except Exception:  # noqa: BLE001
+                    return _result("skipped", set(), "session-replaced")
+                if action == "on":
+                    result = enable_birthdays(service.etebase, username)
+                else:
+                    result = disable_birthdays(service.etebase, username)
+                _refresh_cache(service, result.get("written") or [])
+                return result
+            finally:
+                _release(username)
+    except Exception as exc:  # noqa: BLE001 - reported as failed, never as done
+        _logger.warning("Birthdays dashboard action failed (%s)", bounded_exception_class(exc))
+        return _result("failed", set(), "error")

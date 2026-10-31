@@ -863,6 +863,95 @@ def test_hook_refreshes_the_written_calendar_without_generating_again(tmp_path, 
     assert order == [("push", "cal-birthdays"), ("pull", "cal-birthdays")]
 
 
+# Added WITH the stage-4 implementation (critical boundaries found while implementing;
+# not original hosted RED). Fakes remain stand-ins, not SDK/server transport proof.
+
+
+def test_turn_on_after_an_uncertain_create_reuses_what_the_server_holds(monkeypatch):
+    """Upload commits but its response is lost: the re-read finds the calendar, so no second
+    calendar is created and generation proceeds into it."""
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    account = FakeAccount([book], {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)]}, {BOOK: [USERNAME]})
+    _allow_calendar_creation(account)
+    real_upload = account.col_mgr.upload.side_effect
+
+    def upload_then_lose_response(collection, fetch_options=None):
+        real_upload(collection, fetch_options)
+        raise FakeLostResponse("upload response lost")
+
+    account.col_mgr.upload.side_effect = upload_then_lose_response
+    _configured_account(monkeypatch, account)
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "on")
+
+    assert account.col_mgr.create.call_count == 1
+    assert len([c for c in account.collections if c.collection_type == "etebase.vevent"]) == 1
+    assert result.get("status") == "done"
+
+
+def test_turn_on_after_an_unconfirmed_create_is_pending_without_a_second_create(monkeypatch):
+    """Upload fails and the calendar is not visible on re-read: pending, never a blind re-create."""
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    account = FakeAccount([book], {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)]}, {BOOK: [USERNAME]})
+    _allow_calendar_creation(account)
+    account.col_mgr.upload.side_effect = FakeLostResponse("no response")
+    _configured_account(monkeypatch, account)
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "on")
+
+    assert account.col_mgr.create.call_count == 1
+    assert result.get("status") == "pending"
+    assert account.created == []
+
+
+def test_turn_on_with_an_incomplete_member_list_creates_nothing(monkeypatch):
+    """An active Admin calendar whose member list cannot be read completely is not evidence that
+    no qualifying calendar exists: no new calendar, failed."""
+    calendar, account = _account()
+    _allow_calendar_creation(account)
+    incomplete = MagicMock()
+    incomplete.list.return_value = MagicMock(data=[], done=False, iterator=None)
+    account.col_mgr.get_member_manager.side_effect = lambda collection: incomplete
+    _configured_account(monkeypatch, account)
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "on")
+
+    account.col_mgr.create.assert_not_called()
+    assert result.get("status") == "failed"
+    assert account.created == []
+
+
+def test_dashboard_action_with_a_replaced_session_writes_nothing(monkeypatch):
+    """The account's session was replaced: no read-modify-write runs."""
+    from silentsuite_bridge.local_cache import SessionSuperseded
+
+    calendar, account = _account()
+    service, _calls = _configured_account(monkeypatch, account)
+    service._assert_session_current.side_effect = SessionSuperseded("replaced")
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "off")
+
+    assert result.get("status") == "skipped"
+    assert calendar.content == ACTIVE
+    account.col_mgr.transaction.assert_not_called()
+
+
+def test_cache_refresh_discovers_collections_before_syncing_the_written_calendar(tmp_path, monkeypatch):
+    """A new or retired calendar must be known to the cache (collection list) before its items
+    are pushed and pulled."""
+    service = _hook_service(tmp_path, "hook-refresh-order")
+    order = []
+    service.sync_collection_list = MagicMock(side_effect=lambda: order.append("collections"))
+    service.push_collection = MagicMock(side_effect=lambda uid: order.append(("push", uid)))
+    service.pull_collection = MagicMock(side_effect=lambda uid: order.append(("pull", uid)))
+    monkeypatch.setattr(birthdays, "reconcile_birthdays",
+                        lambda account, username: {"status": "done", "written": ["cal-birthdays"]})
+
+    birthdays.reconcile_after_sync(service)
+
+    assert order == ["collections", ("push", "cal-birthdays"), ("pull", "cal-birthdays")]
+
+
 def test_dashboard_account_card_offers_birthdays_turn_on_and_off(tmp_path, monkeypatch):
     """INTENDED-RED (GUI wiring; no GUI code in stage 3): each account card carries a Birthdays
     control posting to the CSRF-protected route, and turning off explains what is kept."""
