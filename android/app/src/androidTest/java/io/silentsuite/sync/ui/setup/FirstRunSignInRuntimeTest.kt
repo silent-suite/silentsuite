@@ -166,7 +166,6 @@ class FirstRunSignInRuntimeTest {
     }
 
     private fun assertOutsideSystemBars(activity: LoginActivity, view: View) {
-        if (Build.VERSION.SDK_INT < 35) return
         val insets = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
             .getInsets(WindowInsetsCompat.Type.systemBars())
         val location = IntArray(2)
@@ -182,7 +181,6 @@ class FirstRunSignInRuntimeTest {
     }
 
     private fun assertImeKeepsPrimaryActionVisible(scenario: ActivityScenario<LoginActivity>) {
-        if (Build.VERSION.SDK_INT < 35) return
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         scenario.onActivity { activity ->
             val password = activity.findViewById<View>(requiredId(activity, "login_password"))

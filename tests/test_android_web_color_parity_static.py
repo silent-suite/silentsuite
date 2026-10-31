@@ -1054,3 +1054,20 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}" in workflow
     runner_source = source("android/scripts/run-focused-runtime-tests.sh")
     assert '"29:account-dashboard": 38' in runner_source
+
+
+def test_app_ui_avoids_deprecated_edge_to_edge_window_apis():
+    # Android 15 deprecates window bar colours and the legacy system-UI flags. App code
+    # draws bar protection with scrims and clears light icons via WindowInsetsControllerCompat.
+    deprecated = re.compile(
+        r"\b(?:statusBarColor|navigationBarColor)\s*="
+        r"|setStatusBarColor\(|setNavigationBarColor\("
+        r"|systemUiVisibility|SYSTEM_UI_FLAG_|navigationBarDividerColor|LAYOUT_IN_DISPLAY_CUTOUT_MODE_"
+    )
+    findings = []
+    for module in ("app", "cert4android"):
+        for path in sorted((ROOT / "android" / module / "src/main/java").rglob("*.kt")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if deprecated.search(line):
+                    findings.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+    assert not findings, "deprecated edge-to-edge window APIs:\n" + "\n".join(findings)
