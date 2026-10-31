@@ -105,15 +105,80 @@ function addInterval(date: Date, freq: string, interval: number, originalDtstart
       result.setDate(Math.min(originalDay, lastDay));
       break;
     }
-    case 'YEARLY':
-      result.setFullYear(result.getFullYear() + interval);
-      break;
+    // YEARLY is expanded per year from DTSTART by expandYearly.
   }
   return result;
 }
 
 function datesEqual(a: Date, b: Date): boolean {
   return a.getTime() === b.getTime();
+}
+
+/**
+ * The candidate dates of one year of a YEARLY rule, in order, at DTSTART's time of day.
+ * Each year is built from DTSTART rather than from the previous occurrence, so a date
+ * that does not exist in a year (Feb 29) is skipped instead of moving to Mar 1.
+ * With both BYMONTH and BYMONTHDAY, every listed month and day is generated; a negative
+ * BYMONTHDAY counts back from the end of the month (-1 is the last day).
+ */
+function yearlyCandidates(rule: RRuleParts, dtstart: Date, year: number): Date[] {
+  const at = (month: number, day: number) => new Date(
+    year, month, day, dtstart.getHours(), dtstart.getMinutes(), dtstart.getSeconds(), dtstart.getMilliseconds(),
+  );
+  if (rule.bymonth?.length && rule.bymonthday?.length) {
+    const result: Date[] = [];
+    const months = [...new Set(rule.bymonth)].filter((m) => m >= 1 && m <= 12).sort((a, b) => a - b);
+    for (const month of months) {
+      const lastDay = new Date(year, month, 0).getDate();
+      const days = rule.bymonthday
+        .map((day) => (day < 0 ? lastDay + 1 + day : day))
+        .filter((day) => day >= 1 && day <= lastDay);
+      for (const day of [...new Set(days)].sort((a, b) => a - b)) result.push(at(month - 1, day));
+    }
+    return result;
+  }
+  const date = at(dtstart.getMonth(), dtstart.getDate());
+  return date.getMonth() === dtstart.getMonth() ? [date] : [];
+}
+
+function expandYearly(
+  rule: RRuleParts,
+  dtstart: Date,
+  range: DateRange,
+  exdateSet: Set<number>,
+  maxIterations: number,
+): Date[] {
+  const results: Date[] = [];
+  const generated = Boolean(rule.bymonth?.length && rule.bymonthday?.length);
+  const interval = rule.interval >= 1 ? rule.interval : 1;
+  let count = 0;
+
+  for (let year = dtstart.getFullYear(), i = 0; i < maxIterations; year += interval, i++) {
+    if (new Date(year, 0, 1).getTime() > range.end.getTime()) break;
+    for (const current of yearlyCandidates(rule, dtstart, year)) {
+      if (current.getTime() < dtstart.getTime()) continue;
+      if (rule.until && current.getTime() > rule.until.getTime()) return results;
+      if (current.getTime() > range.end.getTime()) return results;
+
+      let matchesRule = true;
+      if (rule.byday && rule.byday.length > 0) matchesRule = matchesByday(current, rule.byday);
+      if (!generated && matchesRule && rule.bymonth && rule.bymonth.length > 0) {
+        matchesRule = rule.bymonth.includes(current.getMonth() + 1);
+      }
+      if (!generated && matchesRule && rule.bymonthday && rule.bymonthday.length > 0) {
+        matchesRule = rule.bymonthday.includes(current.getDate());
+      }
+      if (!matchesRule) continue;
+
+      // As below: COUNT applies to rule-generated candidates before EXDATE removal.
+      count++;
+      if (current.getTime() >= range.start.getTime() && !exdateSet.has(current.getTime())) {
+        results.push(current);
+      }
+      if (rule.count !== undefined && count >= rule.count) return results;
+    }
+  }
+  return results;
 }
 
 /**
@@ -130,6 +195,8 @@ export function expandRecurrence(
   const results: Date[] = [];
   const exdateSet = new Set(exdates?.map((d) => d.getTime()) ?? []);
   const MAX_ITERATIONS = 10000; // safety limit
+
+  if (rule.freq === 'YEARLY') return expandYearly(rule, dtstart, range, exdateSet, MAX_ITERATIONS);
 
   let current = new Date(dtstart.getTime());
   let count = 0;
