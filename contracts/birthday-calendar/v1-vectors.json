@@ -1,0 +1,248 @@
+{
+  "contract": "silentsuite.birthdays",
+  "version": 1,
+  "notes": [
+    "Shared vectors for the Birthdays calendar generator on web (TypeScript), Android (Kotlin) and Bridge (Python).",
+    "marker: collection content of an etebase.vevent collection; anything not listed as active or retired is not a Birthdays calendar.",
+    "birthdays: raw vCard text -> expected name and month/day, or null when the contact gets no birthday event. The year never reaches the event; it only decides whether the date exists.",
+    "identity: event UID = 'ss-bday1-' + first 32 lowercase hex chars of SHA-256(UTF-8(bookUid + '/' + itemUid)), using the Etebase collection and item uids, never the vCard UID.",
+    "events: every client must parse each 'ics' text to exactly 'fields'. Its own output may fold differently but must parse to the same fields, with every line at most 75 octets."
+  ],
+  "marker": [
+    { "content": "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"active\"}", "state": "active" },
+    { "content": "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"retired\"}", "state": "retired" },
+    { "content": "{ \"state\": \"active\", \"v\": 1, \"type\": \"silentsuite.birthdays\" }", "state": "active" },
+    { "content": "", "state": null },
+    { "content": "not json", "state": null },
+    { "content": "[\"silentsuite.birthdays\"]", "state": null },
+    { "content": "{\"type\":\"silentsuite.birthdays\",\"v\":1}", "state": null },
+    { "content": "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"paused\"}", "state": null },
+    { "content": "{\"type\":\"silentsuite.birthdays\",\"v\":2,\"state\":\"active\"}", "state": null },
+    { "content": "{\"type\":\"silentsuite.birthdays\",\"v\":\"1\",\"state\":\"active\"}", "state": null },
+    { "content": "{\"type\":\"other\",\"v\":1,\"state\":\"active\"}", "state": null }
+  ],
+  "birthdays": [
+    { "case": "full date", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c1\r\nFN:Alex Example\r\nBDAY:1985-03-15\r\nEND:VCARD\r\n", "expected": { "name": "Alex Example", "month": 3, "day": 15 } },
+    { "case": "compact full date", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c2\r\nFN:Alex Example\r\nBDAY:19850315\r\nEND:VCARD\r\n", "expected": { "name": "Alex Example", "month": 3, "day": 15 } },
+    { "case": "full date with time", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c3\r\nFN:Alex Example\r\nBDAY:1985-03-15T00:00:00Z\r\nEND:VCARD\r\n", "expected": { "name": "Alex Example", "month": 3, "day": 15 } },
+    { "case": "year-less compact", "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c4\r\nFN:Robin\r\nBDAY:--0704\r\nEND:VCARD\r\n", "expected": { "name": "Robin", "month": 7, "day": 4 } },
+    { "case": "year-less dashed", "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c5\r\nFN:Robin\r\nBDAY:--07-04\r\nEND:VCARD\r\n", "expected": { "name": "Robin", "month": 7, "day": 4 } },
+    { "case": "Apple omit-year marker", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c6\r\nFN:Sam\r\nBDAY;X-APPLE-OMIT-YEAR=1604:1604-12-24\r\nEND:VCARD\r\n", "expected": { "name": "Sam", "month": 12, "day": 24 } },
+    { "case": "bare 1604 is a real date", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c7\r\nFN:Sam\r\nBDAY:1604-12-24\r\nEND:VCARD\r\n", "expected": { "name": "Sam", "month": 12, "day": 24 } },
+    { "case": "year-less leap day", "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c8\r\nFN:Lee\r\nBDAY:--02-29\r\nEND:VCARD\r\n", "expected": { "name": "Lee", "month": 2, "day": 29 } },
+    { "case": "leap day in a leap year", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c9\r\nFN:Lee\r\nBDAY:2000-02-29\r\nEND:VCARD\r\n", "expected": { "name": "Lee", "month": 2, "day": 29 } },
+    { "case": "leap day in a non-leap year", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c10\r\nFN:Lee\r\nBDAY:1990-02-29\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "month 13", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c11\r\nFN:Lee\r\nBDAY:1985-13-01\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "year-less day that never exists", "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c12\r\nFN:Lee\r\nBDAY:--02-30\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "text birthday", "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c13\r\nFN:Lee\r\nBDAY;VALUE=text:circa 1980\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "text birthday that looks like a date", "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c14\r\nFN:Lee\r\nBDAY;VALUE=text:1985-03-15\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "empty birthday", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c15\r\nFN:Lee\r\nBDAY:\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "year and month only", "vcard": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c16\r\nFN:Lee\r\nBDAY:1985-03\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "no birthday", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c17\r\nFN:Lee\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "name from N when FN is empty", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c18\r\nFN:\r\nN:Example;Sam;;;\r\nBDAY:1985-03-15\r\nEND:VCARD\r\n", "expected": { "name": "Sam Example", "month": 3, "day": 15 } },
+    { "case": "no name at all", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c19\r\nFN:\r\nBDAY:1985-03-15\r\nEND:VCARD\r\n", "expected": null },
+    { "case": "multibyte name", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c20\r\nFN:Zoë Ångström 名前\r\nBDAY:1985-03-15\r\nEND:VCARD\r\n", "expected": { "name": "Zoë Ångström 名前", "month": 3, "day": 15 } },
+    { "case": "escaped comma in name", "vcard": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c21\r\nFN:Doe\\, Jane\r\nBDAY:1985-03-15\r\nEND:VCARD\r\n", "expected": { "name": "Doe, Jane", "month": 3, "day": 15 } }
+  ],
+  "identity": [
+    { "bookUid": "bookAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "itemUid": "itemBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4" },
+    { "bookUid": "bookCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", "itemUid": "itemBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2" },
+    { "bookUid": "Qm9vay1fLXVpZC0xMjM0NTY3ODkw", "itemUid": "SXRlbS1fLXVpZC0xMjM0NTY3ODkw", "uid": "ss-bday1-0cb601744785363cafb04269e981593e" }
+  ],
+  "events": [
+    {
+      "case": "ordinary date; the first text is the canonical output",
+      "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 },
+      "fields": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "dtstart": "DATE:19720315", "dtend": "DATE:19720316", "rrule": "FREQ=YEARLY", "summary": "🎂 Alex Example" },
+      "ics": [
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//Birthdays v1//EN\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTAMP:19720101T000000Z\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        "BEGIN:VCALENDAR\nPRODID:-//Other client//EN\nVERSION:2.0\nBEGIN:VEVENT\nSUMMARY:🎂 Alex \n Example\ndtstart;value=date:19720315\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\nRRULE:FREQ=YEARLY\nDTEND;VALUE=DATE:19720316\nDTSTAMP:20261031T120000Z\nX-UNKNOWN;X-PARAM=\"a:b\":kept\nBEGIN:VALARM\nACTION:DISPLAY\nTRIGGER:-PT9H\nDESCRIPTION:Reminder\nEND:VALARM\nEND:VEVENT\nEND:VCALENDAR\n"
+      ]
+    },
+    {
+      "case": "February 29 is the last day of February",
+      "event": { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "name": "Lee", "month": 2, "day": 29 },
+      "fields": { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "dtstart": "DATE:19720229", "dtend": "DATE:19720301", "rrule": "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1", "summary": "🎂 Lee" },
+      "ics": [
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//Birthdays v1//EN\r\nBEGIN:VEVENT\r\nUID:ss-bday1-1615be37fbc2437021b9d4f73fdac5e2\r\nDTSTAMP:19720101T000000Z\r\nDTSTART;VALUE=DATE:19720229\r\nDTEND;VALUE=DATE:19720301\r\nRRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1\r\nSUMMARY:🎂 Lee\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+      ]
+    },
+    {
+      "case": "December 31 ends in the next year",
+      "event": { "uid": "ss-bday1-0cb601744785363cafb04269e981593e", "name": "Robin", "month": 12, "day": 31 },
+      "fields": { "uid": "ss-bday1-0cb601744785363cafb04269e981593e", "dtstart": "DATE:19721231", "dtend": "DATE:19730101", "rrule": "FREQ=YEARLY", "summary": "🎂 Robin" },
+      "ics": [
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//Birthdays v1//EN\r\nBEGIN:VEVENT\r\nUID:ss-bday1-0cb601744785363cafb04269e981593e\r\nDTSTAMP:19720101T000000Z\r\nDTSTART;VALUE=DATE:19721231\r\nDTEND;VALUE=DATE:19730101\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Robin\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+      ]
+    },
+    {
+      "case": "long multibyte name with escaped characters, folded between characters",
+      "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Maximiliane Zoë Ångström-Åkesson, Jr.; née Øresund 名前テスト名前テスト", "month": 7, "day": 4 },
+      "fields": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "dtstart": "DATE:19720704", "dtend": "DATE:19720705", "rrule": "FREQ=YEARLY", "summary": "🎂 Maximiliane Zoë Ångström-Åkesson, Jr.; née Øresund 名前テスト名前テスト" },
+      "ics": [
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//Birthdays v1//EN\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTAMP:19720101T000000Z\r\nDTSTART;VALUE=DATE:19720704\r\nDTEND;VALUE=DATE:19720705\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Maximiliane Zoë Ångström-Åkesson\\, Jr.\\; née Øresund \r\n 名前テスト名前テスト\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+      ]
+    },
+    {
+      "case": "backslash and line break in a name",
+      "event": { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "name": "Back\\slash\nNext", "month": 1, "day": 1 },
+      "fields": { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "dtstart": "DATE:19720101", "dtend": "DATE:19720102", "rrule": "FREQ=YEARLY", "summary": "🎂 Back\\slash\nNext" },
+      "ics": [
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//Birthdays v1//EN\r\nBEGIN:VEVENT\r\nUID:ss-bday1-1615be37fbc2437021b9d4f73fdac5e2\r\nDTSTAMP:19720101T000000Z\r\nDTSTART;VALUE=DATE:19720101\r\nDTEND;VALUE=DATE:19720102\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Back\\\\slash\\nNext\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "case": "complete inventory: events sorted by uid; contacts without a birthday add nothing",
+      "snapshot": { "inventoryComplete": true, "books": [
+        { "bookUid": "bookAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "complete": true, "items": [
+          { "itemUid": "itemBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "content": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:same\r\nFN:Alex Example\r\nBDAY:1985-03-15\r\nEND:VCARD\r\n" },
+          { "itemUid": "itemDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD", "content": "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:other\r\nFN:No Birthday\r\nEND:VCARD\r\n" },
+          { "itemUid": "itemEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE", "content": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:text\r\nFN:Text\r\nBDAY;VALUE=text:circa 1980\r\nEND:VCARD\r\n" }
+        ] },
+        { "bookUid": "bookCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC", "complete": true, "items": [
+          { "itemUid": "itemBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "content": "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:same\r\nFN:Lee\r\nBDAY:--02-29\r\nEND:VCARD\r\n" }
+        ] }
+      ] },
+      "expected": { "ok": true, "events": [
+        { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "name": "Lee", "month": 2, "day": 29 },
+        { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 }
+      ] }
+    },
+    { "case": "authoritative empty inventory (last address book removed)", "snapshot": { "inventoryComplete": true, "books": [] }, "expected": { "ok": true, "events": [] } },
+    { "case": "inventory listing did not finish", "snapshot": { "inventoryComplete": false, "books": [] }, "expected": { "ok": false, "reason": "incomplete-inventory" } },
+    { "case": "an address book listing did not finish",
+      "snapshot": { "inventoryComplete": true, "books": [ { "bookUid": "bookAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "complete": false, "items": [] } ] },
+      "expected": { "ok": false, "reason": "incomplete-book" } },
+    { "case": "a contact could not be read",
+      "snapshot": { "inventoryComplete": true, "books": [ { "bookUid": "bookAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "complete": true, "items": [ { "itemUid": "itemBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "content": null } ] } ] },
+      "expected": { "ok": false, "reason": "unreadable-contact" } }
+  ],
+  "plans": [
+    {
+      "case": "no-op: current event, user event and unparseable item are left alone",
+      "events": [ { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } ],
+      "calendars": [ { "uid": "cal-A", "state": "active", "writable": true, "complete": true, "items": [
+        { "itemUid": "item-1", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+        { "itemUid": "item-u", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\nDTSTART;VALUE=DATE:20261031\r\nSUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+        { "itemUid": "item-g", "content": "not a calendar" }
+      ] } ],
+      "expected": { "kind": "plan", "plan": { "canonical": "cal-A", "create": [], "update": [], "remove": [], "retire": [], "cleanup": [] } }
+    },
+    {
+      "case": "create the missing, update the kept duplicate, remove the extra duplicate and the unwanted",
+      "events": [
+        { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "name": "Lee", "month": 2, "day": 29 },
+        { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 }
+      ],
+      "calendars": [ { "uid": "cal-A", "state": "active", "writable": true, "complete": true, "items": [
+        { "itemUid": "item-9", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720314\r\nDTEND;VALUE=DATE:19720315\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+        { "itemUid": "item-3", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720314\r\nDTEND;VALUE=DATE:19720315\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+        { "itemUid": "item-5", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-0cb601744785363cafb04269e981593e\r\nDTSTART;VALUE=DATE:19721231\r\nDTEND;VALUE=DATE:19730101\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Robin\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+        { "itemUid": "item-u", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\nDTSTART;VALUE=DATE:20261031\r\nSUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" }
+      ] } ],
+      "expected": { "kind": "plan", "plan": { "canonical": "cal-A",
+        "create": [ { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "name": "Lee", "month": 2, "day": 29 } ],
+        "update": [ { "itemUid": "item-3", "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } } ],
+        "remove": [ "item-5", "item-9" ], "retire": [], "cleanup": [] } }
+    },
+    {
+      "case": "authoritative empty source removes generated events only",
+      "events": [],
+      "calendars": [ { "uid": "cal-A", "state": "active", "writable": true, "complete": true, "items": [
+        { "itemUid": "item-1", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+        { "itemUid": "item-u", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\nDTSTART;VALUE=DATE:20261031\r\nSUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" }
+      ] } ],
+      "expected": { "kind": "plan", "plan": { "canonical": "cal-A", "create": [], "update": [], "remove": [ "item-1" ], "retire": [], "cleanup": [] } }
+    },
+    {
+      "case": "feature off: no active calendar, but a retired one is still cleaned",
+      "events": [ { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } ],
+      "calendars": [ { "uid": "cal-R", "state": "retired", "writable": true, "complete": true, "items": [
+        { "itemUid": "item-1", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+        { "itemUid": "item-u", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\nDTSTART;VALUE=DATE:20261031\r\nSUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" }
+      ] } ],
+      "expected": { "kind": "plan", "plan": { "canonical": null, "create": [], "update": [], "remove": [], "retire": [], "cleanup": [ { "calendarUid": "cal-R", "itemUids": [ "item-1" ] } ] } }
+    },
+    {
+      "case": "two active calendars: the smaller uid stays, the other is retired and its generated items cleaned",
+      "events": [ { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } ],
+      "calendars": [
+        { "uid": "cal-B", "state": "active", "writable": true, "complete": true, "items": [
+          { "itemUid": "item-1", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+          { "itemUid": "item-u", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\nDTSTART;VALUE=DATE:20261031\r\nSUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" }
+        ] },
+        { "uid": "cal-A", "state": "active", "writable": true, "complete": true, "items": [] }
+      ],
+      "expected": { "kind": "plan", "plan": { "canonical": "cal-A",
+        "create": [ { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } ],
+        "update": [], "remove": [], "retire": [ "cal-B" ], "cleanup": [ { "calendarUid": "cal-B", "itemUids": [ "item-1" ] } ] } }
+    },
+    {
+      "case": "the canonical calendar was deleted while another stayed active: the remaining one is canonical",
+      "events": [ { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } ],
+      "calendars": [ { "uid": "cal-B", "state": "active", "writable": true, "complete": true, "items": [
+        { "itemUid": "item-1", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" }
+      ] } ],
+      "expected": { "kind": "plan", "plan": { "canonical": "cal-B", "create": [], "update": [], "remove": [], "retire": [], "cleanup": [] } }
+    },
+    {
+      "case": "a calendar with other members is neither written, retired nor cleaned",
+      "events": [ { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } ],
+      "calendars": [
+        { "uid": "cal-A", "state": "active", "writable": false, "complete": true, "items": [] },
+        { "uid": "cal-B", "state": "active", "writable": true, "complete": true, "items": [] },
+        { "uid": "cal-R", "state": "retired", "writable": false, "complete": true, "items": [
+          { "itemUid": "item-1", "content": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" }
+        ] }
+      ],
+      "expected": { "kind": "plan", "plan": { "canonical": "cal-B",
+        "create": [ { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 } ],
+        "update": [], "remove": [], "retire": [], "cleanup": [] } }
+    },
+    {
+      "case": "a retired calendar that was not listed completely is retired but not cleaned",
+      "events": [],
+      "calendars": [
+        { "uid": "cal-A", "state": "active", "writable": true, "complete": true, "items": [] },
+        { "uid": "cal-B", "state": "active", "writable": true, "complete": false, "items": [] },
+        { "uid": "cal-R", "state": "retired", "writable": true, "complete": true, "items": [ { "itemUid": "item-x", "content": null } ] }
+      ],
+      "expected": { "kind": "plan", "plan": { "canonical": "cal-A", "create": [], "update": [], "remove": [], "retire": [ "cal-B" ], "cleanup": [] } }
+    },
+    {
+      "case": "the canonical calendar was not listed completely",
+      "events": [],
+      "calendars": [ { "uid": "cal-A", "state": "active", "writable": true, "complete": false, "items": [] } ],
+      "expected": { "kind": "skip", "reason": "incomplete-calendar" }
+    },
+    {
+      "case": "an item in the canonical calendar could not be read",
+      "events": [],
+      "calendars": [ { "uid": "cal-A", "state": "active", "writable": true, "complete": true, "items": [ { "itemUid": "item-x", "content": null } ] } ],
+      "expected": { "kind": "skip", "reason": "unreadable-calendar-item" }
+    }
+  ],
+  "postChecks": [
+    { "case": "nothing changed", "check": { "complete": true, "inventoryChanged": false, "changedBooks": [] }, "rerunsSoFar": 0, "decision": "done" },
+    { "case": "a contact changed during the run", "check": { "complete": true, "inventoryChanged": false, "changedBooks": [ "bookAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" ] }, "rerunsSoFar": 0, "decision": "rerun" },
+    { "case": "an address book appeared or went away", "check": { "complete": true, "inventoryChanged": true, "changedBooks": [] }, "rerunsSoFar": 1, "decision": "rerun" },
+    { "case": "still changing after the last rerun", "check": { "complete": true, "inventoryChanged": false, "changedBooks": [ "bookAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" ] }, "rerunsSoFar": 2, "decision": "pending" },
+    { "case": "the check itself did not finish", "check": { "complete": false, "inventoryChanged": false, "changedBooks": [] }, "rerunsSoFar": 0, "decision": "pending" }
+  ],
+  "eventMismatches": [
+    { "case": "renamed contact", "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alexandra Example", "month": 3, "day": 15 },
+      "ics": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+    { "case": "moved birthday", "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 16 },
+      "ics": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+    { "case": "edited to a timed event", "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 },
+      "ics": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART:19720315T090000\r\nDTEND:19720315T100000\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+    { "case": "repeat removed", "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 },
+      "ics": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nSUMMARY:🎂 Alex Example\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+    { "case": "Feb 29 written as a plain yearly rule", "event": { "uid": "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2", "name": "Lee", "month": 2, "day": 29 },
+      "ics": "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:ss-bday1-1615be37fbc2437021b9d4f73fdac5e2\r\nDTSTART;VALUE=DATE:19720229\r\nDTEND;VALUE=DATE:19720301\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:🎂 Lee\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n" },
+    { "case": "not an event at all", "event": { "uid": "ss-bday1-c8970a5b3457981540f4ee428f84a1f4", "name": "Alex Example", "month": 3, "day": 15 },
+      "ics": "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nSUMMARY:🎂 Alex Example\r\nEND:VTODO\r\nEND:VCALENDAR\r\n" }
+  ]
+}

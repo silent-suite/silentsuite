@@ -199,6 +199,54 @@ describe('FREQ=YEARLY', () => {
       '2027-06-20',
     ]);
   });
+
+  it('keeps an ordinary date on the same day every year from an old anchor', () => {
+    const start = d(1972, 6, 15);
+    const range: DateRange = { start: d(2026, 1, 1), end: d(2028, 12, 31) };
+
+    const results = expandRecurrence('FREQ=YEARLY', start, range);
+    expect(fmtDates(results)).toEqual(['2026-06-15', '2027-06-15', '2028-06-15']);
+  });
+
+  it('keeps the time of day of a timed yearly event', () => {
+    const start = dt(2020, 6, 15, 9, 30);
+    const range: DateRange = { start: d(2026, 1, 1), end: d(2026, 12, 31) };
+
+    const results = expandRecurrence('FREQ=YEARLY', start, range);
+    expect(results.map((r) => r.getTime())).toEqual([dt(2026, 6, 15, 9, 30).getTime()]);
+  });
+
+  it('shows a plain Feb 29 yearly event only in leap years', () => {
+    const start = d(1972, 2, 29);
+    const range: DateRange = { start: d(2026, 1, 1), end: d(2032, 12, 31) };
+
+    const results = expandRecurrence('FREQ=YEARLY', start, range);
+    expect(fmtDates(results)).toEqual(['2028-02-29', '2032-02-29']);
+  });
+
+  it('puts BYMONTH=2;BYMONTHDAY=-1 on the last day of February every year', () => {
+    const start = d(1972, 2, 29);
+    const range: DateRange = { start: d(2026, 1, 1), end: d(2028, 12, 31) };
+
+    const results = expandRecurrence('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1', start, range);
+    expect(fmtDates(results)).toEqual(['2026-02-28', '2027-02-28', '2028-02-29']);
+  });
+
+  it('counts only existing Feb 29 dates toward COUNT', () => {
+    const start = d(2024, 2, 29);
+    const range: DateRange = { start: d(2024, 1, 1), end: d(2040, 12, 31) };
+
+    const results = expandRecurrence('FREQ=YEARLY;COUNT=3', start, range);
+    expect(fmtDates(results)).toEqual(['2024-02-29', '2028-02-29', '2032-02-29']);
+  });
+
+  it('removes an EXDATE from a last-day-of-February rule', () => {
+    const start = d(1972, 2, 29);
+    const range: DateRange = { start: d(2026, 1, 1), end: d(2028, 12, 31) };
+
+    const results = expandRecurrence('FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1', start, range, [d(2027, 2, 28)]);
+    expect(fmtDates(results)).toEqual(['2026-02-28', '2028-02-29']);
+  });
 });
 
 // ── COUNT limit ──
@@ -409,11 +457,8 @@ describe('edge cases', () => {
     const range: DateRange = { start: d(2024, 1, 1), end: d(2028, 12, 31) };
 
     const results = expandRecurrence('FREQ=YEARLY', start, range);
-    // On non-leap years, Date will roll to Mar 1
-    const formatted = fmtDates(results);
-    expect(formatted[0]).toBe('2024-02-29');
-    // JavaScript Date(2025, 1, 29) → Mar 1
-    expect(results.length).toBeGreaterThanOrEqual(4);
+    // RFC 5545: a Feb 29 that does not exist in a year is skipped, never moved to Mar 1
+    expect(fmtDates(results)).toEqual(['2024-02-29', '2028-02-29']);
   });
 
   it('strips RRULE: prefix if present', () => {
