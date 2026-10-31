@@ -189,15 +189,38 @@ class FirstRunSignInRuntimeTest {
             activity.getSystemService(InputMethodManager::class.java)?.showSoftInput(password, 0)
         }
         var verified = false
+        var imeWitnessed = false
+        var lastImeBottom = -1
+        var lastActionTop = -1
+        var lastActionHeight = -1
+        var lastDecorTop = -1
+        var lastDecorHeight = -1
+        var lastStableBottom = -1
+        var lastSystemWindowBottom = -1
+        var lastVisibleFrameBottom = -1
         for (attempt in 0 until 100) {
             instrumentation.waitForIdleSync()
             scenario.onActivity { activity ->
-                val rootInsets = ViewCompat.getRootWindowInsets(activity.window.decorView) ?: return@onActivity
-                if (!rootInsets.isVisible(WindowInsetsCompat.Type.ime())) return@onActivity
-                val ime = rootInsets.getInsets(WindowInsetsCompat.Type.ime())
+                val decor = activity.window.decorView
+                val decorLocation = IntArray(2)
+                decor.getLocationOnScreen(decorLocation)
+                lastDecorTop = decorLocation[1]
+                lastDecorHeight = decor.height
+                val visibleFrame = android.graphics.Rect()
+                decor.getWindowVisibleDisplayFrame(visibleFrame)
+                lastVisibleFrameBottom = visibleFrame.bottom
                 val primaryAction = activity.findViewById<View>(requiredId(activity, "login"))
                 val location = IntArray(2)
                 primaryAction.getLocationOnScreen(location)
+                lastActionTop = location[1]
+                lastActionHeight = primaryAction.height
+                val rootInsets = ViewCompat.getRootWindowInsets(decor) ?: return@onActivity
+                val ime = rootInsets.getInsets(WindowInsetsCompat.Type.ime())
+                lastImeBottom = ime.bottom
+                lastStableBottom = rootInsets.stableInsetBottom
+                lastSystemWindowBottom = rootInsets.systemWindowInsetBottom
+                if (!rootInsets.isVisible(WindowInsetsCompat.Type.ime())) return@onActivity
+                imeWitnessed = true
                 // LoginActivity uses adjustResize. Depending on platform inset dispatch, the
                 // window can shrink above the IME or the pinned action can receive IME padding.
                 // The contract is the same in both cases: the action remains fully visible.
@@ -207,7 +230,11 @@ class FirstRunSignInRuntimeTest {
             if (verified) break
             SystemClock.sleep(50)
         }
-        assertTrue("IME did not leave the sign-in action fully visible", verified)
+        val geometry = "imeBottom=$lastImeBottom actionTop=$lastActionTop actionHeight=$lastActionHeight " +
+            "decorTop=$lastDecorTop decorHeight=$lastDecorHeight stableBottom=$lastStableBottom " +
+            "systemWindowBottom=$lastSystemWindowBottom visibleFrameBottom=$lastVisibleFrameBottom"
+        assertTrue("IME never became visible: $geometry", imeWitnessed)
+        assertTrue("IME did not leave the sign-in action fully visible: $geometry", verified)
         scenario.onActivity { activity ->
             val password = activity.findViewById<View>(requiredId(activity, "login_password"))
             ViewCompat.getWindowInsetsController(password)?.hide(WindowInsetsCompat.Type.ime())
