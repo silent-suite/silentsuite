@@ -100,8 +100,9 @@ export {
   fromVTodo,
   serializeTask,
   deserializeTask,
+  taskICalDateFromProperty,
 } from './models/task.js';
-export type { Task, TaskStatus } from './models/task.js';
+export type { Task, TaskStatus, TaskICalDate, TaskICalDateKind } from './models/task.js';
 
 // Contact model
 export {

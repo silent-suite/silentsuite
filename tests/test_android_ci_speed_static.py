@@ -379,6 +379,27 @@ def _with_approved_runtime_ledger_changes(job: dict) -> dict:
     return job
 
 
+# The second approved build-pr change since both predecessors: one step that inspects the merged release
+# R8 configuration directly after the unsigned build. Only that step, present exactly once in exactly that
+# place, is set aside before the comparisons; every other build-pr byte must still match. Its content and
+# fail-closed behaviour are pinned by tests/test_android_r8_optimization.py.
+R8_INSPECTION_STEP_NAME = "Inspect effective release R8 configuration"
+R8_INSPECTION_PREDECESSOR = "Build debug APK and unsigned release APK/AAB"
+
+
+def _without_approved_r8_inspection(job: dict) -> dict:
+    """A candidate build-pr minus the one admitted R8 inspection step, which must directly follow the unsigned build."""
+    job = copy.deepcopy(job)
+    names = [step.get("name") for step in job.get("steps") or []]
+    assert names.count(R8_INSPECTION_STEP_NAME) == 1, "build-pr must inspect the release R8 configuration exactly once"
+    position = names.index(R8_INSPECTION_STEP_NAME)
+    assert position > 0 and names[position - 1] == R8_INSPECTION_PREDECESSOR, (
+        f"the R8 inspection must directly follow {R8_INSPECTION_PREDECESSOR!r}"
+    )
+    del job["steps"][position]
+    return job
+
+
 def _without_static_dedup(job: dict) -> dict:
     """build-pr minus the gating edits: its condition, gate and repeated static suite."""
     job = copy.deepcopy(job)
@@ -482,7 +503,7 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
         if name == RUNTIME_LEDGER_JOB:
             original = _with_approved_runtime_ledger_changes(original)
         if name == "build-pr":
-            current = _without_static_dedup(current)
+            current = _without_static_dedup(_without_approved_r8_inspection(current))
             original = _without_static_provisioning(_without_static_dedup(original))
         assert current == original, name
 
@@ -498,10 +519,43 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
         if name != "build-pr":
             assert candidate["jobs"][name] == job, name
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
-    assert candidate["jobs"]["build-pr"] == expected, (
-        "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate "
-        "and the removed static suite with its Python setup and install"
+    assert _without_approved_r8_inspection(candidate["jobs"]["build-pr"]) == expected, (
+        "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate, "
+        "the removed static suite with its Python setup and install, and the admitted R8 inspection"
     )
+
+
+def test_r8_inspection_normalization_admits_only_the_one_placed_step(predecessor, candidate):
+    expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
+    job = candidate["jobs"]["build-pr"]
+    assert _without_approved_r8_inspection(job) == expected
+    names = [step.get("name") for step in job["steps"]]
+    position = names.index(R8_INSPECTION_STEP_NAME)
+
+    # The admitted step must be present exactly once, directly after the unsigned build.
+    missing = copy.deepcopy(job)
+    _remove_step(missing, lambda step: step.get("name") == R8_INSPECTION_STEP_NAME)
+    duplicated = copy.deepcopy(job)
+    duplicated["steps"].insert(position + 1, copy.deepcopy(job["steps"][position]))
+    misplaced = copy.deepcopy(job)
+    _move_to_end(misplaced, R8_INSPECTION_STEP_NAME)
+    renamed = copy.deepcopy(job)
+    renamed["steps"][position]["name"] = "Inspect release R8 configuration"
+    for broken in (missing, duplicated, misplaced, renamed):
+        with pytest.raises(AssertionError):
+            _without_approved_r8_inspection(broken)
+
+    # Setting the step aside exempts nothing else in build-pr.
+    extra_step = copy.deepcopy(job)
+    extra_step["steps"].insert(position + 1, {"name": "Unrelated", "run": "true"})
+    changed_build = copy.deepcopy(job)
+    changed_build["steps"][position - 1]["run"] += "./gradlew tasks\n"
+    changed_later_step = copy.deepcopy(job)
+    changed_later_step["steps"][position + 1]["run"] += "true\n"
+    widened_permissions = copy.deepcopy(job)
+    widened_permissions["permissions"] = {"contents": "write"}
+    for drifted in (extra_step, changed_build, changed_later_step, widened_permissions):
+        assert _without_approved_r8_inspection(drifted) != expected
 
 
 def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecessor, candidate):

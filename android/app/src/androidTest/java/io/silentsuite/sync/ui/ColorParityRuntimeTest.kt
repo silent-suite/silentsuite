@@ -157,9 +157,9 @@ class ColorParityRuntimeTest {
     private fun View.paddingBounds() = Rect(paddingLeft, paddingTop, paddingRight, paddingBottom)
 
     private fun assertContentInsets(activity: AboutActivity) {
-        if (Build.VERSION.SDK_INT < 35) return
+        val decor = activity.window.decorView
         val content = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
-        val rootInsets = ViewCompat.getRootWindowInsets(activity.window.decorView)
+        val rootInsets = ViewCompat.getRootWindowInsets(decor)
         assertNotNull(rootInsets)
         val safeDrawing = rootInsets!!.getInsets(
             WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
@@ -169,6 +169,18 @@ class ColorParityRuntimeTest {
             content.paddingBounds(),
         )
         assertTrue("Content must retain its inflated child", content.childCount > 0)
+        // The match_parent root must end exactly at the navigation-bar edge: a second
+        // bottom inset claimed by a descendant would lift it further.
+        val child = content.getChildAt(0)
+        val decorLocation = IntArray(2)
+        val childLocation = IntArray(2)
+        decor.getLocationOnScreen(decorLocation)
+        child.getLocationOnScreen(childLocation)
+        assertEquals(
+            "Content root bottom must sit on the safe-drawing edge",
+            decor.height - safeDrawing.bottom,
+            childLocation[1] - decorLocation[1] + child.height,
+        )
     }
 
     private fun expectedScrimBounds(decor: View, insets: Insets, gravity: Int): Rect =
@@ -217,6 +229,7 @@ class ColorParityRuntimeTest {
                     val expected = ContextCompat.getColor(activity, R.color.semantic_system_bar)
                     assertEquals(expected, activity.window.statusBarColor)
                     assertEquals(expected, activity.window.navigationBarColor)
+                    assertContentInsets(activity)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     assertEquals(0, activity.window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
