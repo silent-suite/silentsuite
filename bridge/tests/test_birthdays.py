@@ -406,6 +406,296 @@ def test_retired_or_ordinary_admin_calendar_stays_writable(mem_db, user, mock_co
     assert col.read_only is False
 
 
+def _rights():
+    from radicale.config import DEFAULT_CONFIG_SCHEMA, Configuration
+
+    from silentsuite_bridge.radicale.rights import Rights
+
+    configuration = Configuration(DEFAULT_CONFIG_SCHEMA)
+    configuration.update({"auth": {"type": "silentsuite_bridge.radicale.auth"}}, source="test", privileged=True)
+    return Rights(configuration)
+
+
+@pytest.mark.parametrize("content, expected", [(ACTIVE, "r"), (RETIRED, "rw"), (b"", "rw")], ids=["active", "retired", "ordinary"])
+def test_dav_rights_follow_the_cached_birthdays_marker(mem_db, user, mock_col_mgr, monkeypatch, content, expected):
+    """CONTROL (expected to pass since stage 1's Collection.read_only): the real rights backend
+    removes write for an active Birthdays calendar and keeps it for retired/ordinary ones."""
+    from contextlib import contextmanager
+
+    import silentsuite_bridge.radicale.rights as rights_module
+
+    collection = _cached_collection(mock_col_mgr, user, "cal-x", content, CollectionAccessLevel.Admin)
+    etesync = MagicMock()
+    etesync.get.return_value = collection
+
+    @contextmanager
+    def fake_etesync_for_user(_user, exclusive=False):
+        yield etesync, False
+
+    monkeypatch.setattr(rights_module, "etesync_for_user", fake_etesync_for_user)
+
+    assert _rights().authorization("user@example.com", "/user@example.com/cal-x") == expected
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint 3: post-commit source freshness (SDK boundary, committing fake)
+#
+# The fake commits a transaction only when its deps are exactly the calendar's current
+# root item (as the S0 server contract accepts); committed creates join the collection,
+# committed deletes leave it, so later listings show what the server would hold.
+# ---------------------------------------------------------------------------
+
+
+class FakeRootConflict(Exception):
+    """Test stand-in for the server rejecting a stale root dependency (no guessed SDK class)."""
+
+
+def _committing(account, calendar, on_first_commit=None):
+    manager = account._item_manager(calendar)
+    commits = []
+
+    def transaction(items, deps=None, fetch_options=None):
+        deps = list(deps or [])
+        if deps != [calendar.item]:
+            raise FakeRootConflict("dependency is not the current calendar root")
+        current = account.items.setdefault(calendar.uid, [])
+        for item in items:
+            if item.delete.called:
+                current[:] = [entry for entry in current if entry is not item]
+            elif all(entry is not item for entry in current):
+                current.append(item)
+        commits.append(list(items))
+        if on_first_commit and len(commits) == 1:
+            on_first_commit()
+
+    manager.transaction.side_effect = transaction
+    return commits
+
+
+def test_contact_changed_while_writing_is_corrected_by_a_bounded_fresh_pass():
+    """INTENDED-RED: A reads Alex's old birthday, B changes it, A commits; the post-commit check
+    must lead to a fresh pass so the committed calendar ends with the NEW birthday, within the
+    bounded number of reruns."""
+    calendar, account = _account()
+    new_vcard = ALEX_VCARD.replace("BDAY:1985-03-15", "BDAY:1985-04-20")
+
+    def contact_changed_by_b():
+        account.items[BOOK] = [_sdk_item(CONTACT, new_vcard)]
+
+    commits = _committing(account, calendar, on_first_commit=contact_changed_by_b)
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    final = [_semantic_fields(item.content) for item in account.items["cal-birthdays"]]
+    assert [(f["uid"], f["dtstart"]) for f in final] == [(ALEX_FIELDS["uid"], "DATE:19720420")]
+    assert 1 <= len(commits) <= 1 + 2
+
+
+# ---------------------------------------------------------------------------
+# Checkpoint 4: retirement, root versions, uncertain outcomes, bounded churn
+#
+# _install_server mirrors the S0 root-fence acceptance on top of the committing fake:
+# - a collection update (CollectionManager.transaction) gives the collection a NEW root
+#   item object (a new root revision), as the server's root revision changes;
+# - an item transaction commits only when deps are exactly the collection's CURRENT root,
+#   otherwise FakeRootConflict (a test stand-in: the pinned SDK sources in evidence declare no
+#   exception classes, so no SDK exception name is assumed);
+# - committed creates join, committed deletes leave, so later listings show server state;
+# - FakeLostResponse (stand-in) raises AFTER a commit, so the writer cannot know the outcome.
+# ---------------------------------------------------------------------------
+
+
+class FakeLostResponse(Exception):
+    """Test stand-in: the server committed but the response never arrived."""
+
+
+def _install_server(account, *, on_item_commit=None, lose_responses=0):
+    item_commits = []
+    collection_commits = []
+    lost = {"left": lose_responses}
+
+    def collection_transaction(collection, fetch_options=None):
+        collection.item = MagicMock(name=f"root:{collection.uid}:v{len(collection_commits) + 2}")
+        collection_commits.append((collection.uid, collection.content))
+
+    account.col_mgr.transaction.side_effect = collection_transaction
+
+    for collection in account.collections:
+        if collection.collection_type != "etebase.vevent":
+            continue
+        manager = account._item_manager(collection)
+
+        def transaction(items, deps=None, fetch_options=None, collection=collection):
+            if list(deps or []) != [collection.item]:
+                raise FakeRootConflict(f"stale root for {collection.uid}")
+            current = account.items.setdefault(collection.uid, [])
+            for item in items:
+                if item.delete.called:
+                    current[:] = [entry for entry in current if entry is not item]
+                elif all(entry is not item for entry in current):
+                    current.append(item)
+            item_commits.append((collection.uid, list(items)))
+            if on_item_commit:
+                on_item_commit(len(item_commits))
+            if lost["left"] > 0:
+                lost["left"] -= 1
+                raise FakeLostResponse("response lost after commit")
+
+        manager.transaction.side_effect = transaction
+    return item_commits, collection_commits
+
+
+def _uids_in(account, collection_uid):
+    return [_semantic_fields(item.content)["uid"] if _semantic_fields(item.content)["uid"] else item.uid
+            for item in account.items.get(collection_uid, [])]
+
+
+USER_EVENT_ICS = (
+    "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\nDTSTART;VALUE=DATE:20261031\r\n"
+    "SUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_duplicate_active_calendar_is_retired_before_its_generated_items_are_cleaned():
+    """INTENDED-RED: cal-A (smaller uid) stays canonical and receives the event; cal-B is retired
+    first (root replaced), then only its generated item is deleted against the NEW root."""
+    cal_a = _sdk_collection("cal-A", "etebase.vevent", content=ACTIVE)
+    cal_b = _sdk_collection("cal-B", "etebase.vevent", content=ACTIVE)
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    generated = _sdk_item("gen-b", ALEX_GENERATED_ICS)
+    user_event = _sdk_item("user-b", USER_EVENT_ICS)
+    account = FakeAccount(
+        [cal_a, cal_b, book],
+        {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)], "cal-A": [], "cal-B": [generated, user_event]},
+        {"cal-A": [USERNAME], "cal-B": [USERNAME], BOOK: [USERNAME]},
+    )
+    old_root_b = cal_b.item
+    item_commits, collection_commits = _install_server(account)
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert collection_commits == [("cal-B", RETIRED)]
+    assert cal_b.item is not old_root_b
+    assert _uids_in(account, "cal-B") == ["user-event@example.com"]
+    assert _uids_in(account, "cal-A") == [ALEX_FIELDS["uid"]]
+    assert [uid for uid, _ in item_commits].count("cal-B") == 1
+    user_event.delete.assert_not_called()
+
+
+def test_interrupted_retirement_is_repaired_on_the_next_run():
+    """INTENDED-RED: a calendar already retired (crash before cleanup) loses only its generated
+    item on the next run; it is not retired again and the user's event stays."""
+    cal_a = _sdk_collection("cal-A", "etebase.vevent", content=ACTIVE)
+    cal_r = _sdk_collection("cal-R", "etebase.vevent", content=RETIRED)
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    leftover = _sdk_item("gen-r", ALEX_GENERATED_ICS)
+    user_event = _sdk_item("user-r", USER_EVENT_ICS)
+    account = FakeAccount(
+        [cal_a, cal_r, book],
+        {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)], "cal-A": [], "cal-R": [leftover, user_event]},
+        {"cal-A": [USERNAME], "cal-R": [USERNAME], BOOK: [USERNAME]},
+    )
+    item_commits, collection_commits = _install_server(account)
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert collection_commits == []
+    assert _uids_in(account, "cal-R") == ["user-event@example.com"]
+    assert _uids_in(account, "cal-A") == [ALEX_FIELDS["uid"]]
+
+
+def test_calendar_retired_by_another_client_mid_run_gets_no_generated_items():
+    """CONTROL (no writes under the neutral scaffold; must stay green): another client retires the
+    calendar (new root) after this run listed it; a write fenced on the old root is rejected and
+    the run must not put generated items into the now-retired calendar."""
+    calendar, account = _account()
+    _install_server(account)
+    manager = account._item_manager(calendar)
+    listed = {"count": 0}
+    original_list = manager.list.side_effect
+
+    def list_then_retire(fetch_options=None):
+        response = original_list(fetch_options)
+        listed["count"] += 1
+        if listed["count"] == 1:
+            calendar.content = RETIRED
+            calendar.item = MagicMock(name="root:cal-birthdays:retired-by-other-client")
+        return response
+
+    manager.list.side_effect = list_then_retire
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert [f for f in (_semantic_fields(i.content) for i in account.items["cal-birthdays"]) if f["uid"].startswith("ss-bday1-")] == []
+
+
+def test_lost_response_is_followed_by_a_fresh_read_not_a_blind_resend():
+    """INTENDED-RED: the create commits but its response is lost; the run must re-read and end
+    with exactly ONE Alex event, never a duplicate from resending the create."""
+    calendar, account = _account()
+    item_commits, _ = _install_server(account, lose_responses=1)
+
+    birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert _uids_in(account, "cal-birthdays") == [ALEX_FIELDS["uid"]]
+    assert len(item_commits) == 1
+
+
+def test_endless_source_churn_stops_after_the_bounded_reruns_as_pending():
+    """INTENDED-RED: the contact changes after every commit; the run stops within 1 + 2 commits
+    and reports pending (never done, never an unbounded loop)."""
+    calendar, account = _account()
+    dates = iter(["1985-04-20", "1985-05-21", "1985-06-22", "1985-07-23", "1985-08-24"])
+
+    def churn(_count):
+        account.items[BOOK] = [_sdk_item(CONTACT, ALEX_VCARD.replace("BDAY:1985-03-15", "BDAY:" + next(dates)))]
+
+    item_commits, _ = _install_server(account, on_item_commit=churn)
+
+    result = birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert 1 <= len(item_commits) <= 3
+    assert result.get("status") == "pending"
+
+
+def test_failed_post_commit_check_reports_pending_and_keeps_the_commit():
+    """INTENDED-RED: the source re-check after a commit fails; the committed event stays and the
+    run reports pending, not done."""
+    calendar, account = _account()
+    book_manager = account._item_manager(account.collections[1])
+    calls = {"count": 0}
+    original = book_manager.list.side_effect
+
+    def fail_after_first(fetch_options=None):
+        calls["count"] += 1
+        if calls["count"] > 1:
+            raise RuntimeError("network down during re-check")
+        return original(fetch_options)
+
+    book_manager.list.side_effect = fail_after_first
+    _install_server(account)
+
+    result = birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert _uids_in(account, "cal-birthdays") == [ALEX_FIELDS["uid"]]
+    assert result.get("status") == "pending"
+
+
+def test_birthday_hook_runs_outside_any_cache_transaction(tmp_path, monkeypatch):
+    """CONTROL (boundary, expected green since stage 1): remote I/O started by the hook must never
+    run inside a SQLite/cache transaction. The existing per-account sync serialization is not
+    changed or asserted against here."""
+    database = _database(tmp_path / "birthdays-no-transaction.sqlite")
+    user = models.User.create(username=USERNAME)
+    service = _service(database, user, MagicMock())
+    seen = []
+    monkeypatch.setattr(birthdays, "reconcile_after_sync", lambda svc: seen.append(database.in_transaction()))
+
+    service.sync()
+
+    assert seen == [False]
+
+
 # ---------------------------------------------------------------------------
 # Trigger: after a clean sync cycle, including an empty inventory
 # ---------------------------------------------------------------------------
@@ -559,6 +849,37 @@ def test_dashboard_birthdays_requires_csrf(monkeypatch):
     assert status == 403
     assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
     assert calls == []
+
+
+@pytest.mark.parametrize("result, http, payload", [
+    ({"status": "skipped", "reason": "offline"}, 200, {"ok": False, "status": "skipped"}),
+    ({"status": "pending", "reason": "post-check"}, 200, {"ok": False, "status": "pending"}),
+    ({"status": "unexpected"}, 200, {"ok": False, "status": "failed"}),
+    (None, 200, {"ok": False, "status": "failed"}),
+])
+def test_dashboard_birthdays_reports_the_result_truthfully(monkeypatch, result, http, payload):
+    """CHARACTERIZATION (written with the admitted route in stage 2; not a RED): a result other
+    than done is never reported as completed."""
+    monkeypatch.setattr(birthdays, "set_dashboard_birthdays", lambda username, act: result)
+
+    status, _headers, body = _post({"username": USERNAME, "action": "on"})
+
+    assert status == http
+    assert json.loads(body) == payload
+
+
+def test_dashboard_birthdays_failure_is_reported_without_details(monkeypatch):
+    """CHARACTERIZATION (stage 2, with the route): an exception becomes a failed result."""
+    def boom(username, act):
+        raise RuntimeError("private detail " + username)
+
+    monkeypatch.setattr(birthdays, "set_dashboard_birthdays", boom)
+
+    status, _headers, body = _post({"username": USERNAME, "action": "off"})
+
+    assert status == 500
+    assert json.loads(body) == {"ok": False, "status": "failed"}
+    assert USERNAME not in body if isinstance(body, str) else USERNAME.encode() not in body
 
 
 @pytest.mark.parametrize("body", [{"username": USERNAME, "action": "delete"}, {"action": "on"}])

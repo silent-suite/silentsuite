@@ -4,16 +4,17 @@ Shared contract: contracts/birthday-calendar/v1-vectors.json (also implemented b
 packages/core for web and by the Android client).
 
 Implemented (hosted-RED qualified): marker parsing, contact birthdays, event
-identity, the active-marker check behind DAV read-only, and the post-sync hook.
+identity, the active-marker check behind DAV read-only, the post-sync hook, and the
+pure event/source/planner/post-check helpers.
 
-Still NEUTRAL scaffolds (no SDK reads, no writes, no cache changes) until their own
-hosted RED is qualified: reconcile_birthdays, disable_birthdays,
-set_dashboard_birthdays, and the pure event/planner helpers below them.
+Still NEUTRAL (no SDK reads, no writes, no cache changes) until their own hosted RED
+is qualified: reconcile_birthdays, disable_birthdays, set_dashboard_birthdays.
 """
 
 import hashlib
 import json
 import re
+from datetime import date, timedelta
 
 MARKER_TYPE = "silentsuite.birthdays"
 EVENT_UID_PREFIX = "ss-bday1-"
@@ -163,42 +164,249 @@ def is_managed_collection(collection):
     return parse_birthday_marker(content) == "active"
 
 
-# ── Pure event and planner helpers (NEUTRAL until their hosted RED) ──
+def is_generated_birthday_uid(uid):
+    """Whether an event UID has the generated Birthdays form."""
+    return isinstance(uid, str) and re.fullmatch(r"ss-bday1-[0-9a-f]{32}", uid) is not None
+
+
+# ── Pure event and planner helpers (contract: events, sources, plans, postChecks) ──
+#
+# Events and plans are plain dicts with the contract's camelCase keys, so they compare
+# directly with the shared vectors. Plans are data only: nothing here touches the SDK.
+
+ANCHOR_YEAR = 1972  # leap year, so Feb 29 exists; never shown as a birth year
+LAST_DAY_OF_FEBRUARY = "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1"
+MAX_RERUNS = 2
+_FIELDS = ("uid", "dtstart", "dtend", "rrule", "summary")
 
 
 def birthday_event_fields(event):
-    """Comparable fields a generated event must have (contract `fields`)."""
-    return None
+    """Comparable fields a generated event must have: all-day on the anchor date, exclusive end."""
+    start = date(ANCHOR_YEAR, event["month"], event["day"])
+    end = start + timedelta(days=1)
+    leap_day = event["month"] == 2 and event["day"] == 29
+    return {
+        "uid": event["uid"],
+        "dtstart": "DATE:" + start.strftime("%Y%m%d"),
+        "dtend": "DATE:" + end.strftime("%Y%m%d"),
+        "rrule": LAST_DAY_OF_FEBRUARY if leap_day else "FREQ=YEARLY",
+        "summary": "\U0001F382 " + event["name"],
+    }
+
+
+def _escape_text(value):
+    value = value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    return re.sub(r"\r\n|\r|\n", "\\\\n", value)
+
+
+def _unescape_text(value):
+    return re.sub(r"\\([\\;,nN])", lambda m: "\n" if m.group(1) in "nN" else m.group(1), value)
+
+
+def _fold(line):
+    """RFC 5545 folding: lines of at most 75 octets, never splitting a character."""
+    lines, current, octets = [], "", 0
+    for char in line:
+        size = len(char.encode("utf-8"))
+        if octets + size > 75:
+            lines.append(current)
+            current, octets = " ", 1
+        current += char
+        octets += size
+    lines.append(current)
+    return "\r\n".join(lines)
 
 
 def birthday_event_content(event):
-    """The iCalendar text Bridge writes for a birthday event."""
+    """The iCalendar text Bridge writes for a birthday event (CRLF, folded, escaped)."""
+    fields = birthday_event_fields(event)
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//SilentSuite//Birthdays v1//EN",
+        "BEGIN:VEVENT",
+        "UID:" + fields["uid"],
+        f"DTSTAMP:{ANCHOR_YEAR}0101T000000Z",
+        "DTSTART;VALUE=DATE:" + fields["dtstart"][len("DATE:"):],
+        "DTEND;VALUE=DATE:" + fields["dtend"][len("DATE:"):],
+        "RRULE:" + fields["rrule"],
+        "SUMMARY:" + _escape_text(fields["summary"]),
+        "TRANSP:TRANSPARENT",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "\r\n".join(_fold(line) for line in lines) + "\r\n"
+
+
+def _content_line(line):
+    """(NAME, [params], value) of a content line; quoted parameters may contain ':'."""
+    quoted = False
+    for index, char in enumerate(line):
+        if char == '"':
+            quoted = not quoted
+        elif char == ":" and not quoted:
+            name, *params = line[:index].split(";")
+            return name.upper(), params, line[index + 1:]
     return None
 
 
 def parse_birthday_event_fields(ics):
     """Comparable fields of the first VEVENT, or None without a VEVENT UID."""
-    return None
+    text = _as_text(ics)
+    if text is None:
+        return None
+    lines = re.split(r"\r?\n", re.sub(r"\r?\n[ \t]", "", text))
+    found = {}
+    in_event = False
+    nested = 0
+    for line in lines:
+        prop = _content_line(line)
+        if prop is None:
+            continue
+        name, params, raw = prop
+        value = raw.strip()
+        if not in_event:
+            if name == "BEGIN" and value.upper() == "VEVENT":
+                in_event = True
+            continue
+        if name == "BEGIN":
+            nested += 1
+            continue
+        if name == "END":
+            if nested == 0:
+                break
+            nested -= 1
+            continue
+        if nested > 0 or name not in ("UID", "DTSTART", "DTEND", "RRULE", "SUMMARY") or name in found:
+            continue
+        is_date = any(param.upper() == "VALUE=DATE" for param in params)
+        if name == "SUMMARY":
+            found[name] = _unescape_text(raw)
+        elif name in ("DTSTART", "DTEND") and is_date:
+            found[name] = "DATE:" + value
+        else:
+            found[name] = value
+    if not found.get("UID"):
+        return None
+    return {
+        "uid": found["UID"],
+        "dtstart": found.get("DTSTART", ""),
+        "dtend": found.get("DTEND", ""),
+        "rrule": found.get("RRULE", ""),
+        "summary": found.get("SUMMARY", ""),
+    }
 
 
 def is_current_birthday_event(ics, event):
-    """Whether stored iCalendar text already means exactly this event."""
-    return False
+    """Whether stored iCalendar text already means exactly this event (by meaning, not bytes)."""
+    stored = parse_birthday_event_fields(ics)
+    if stored is None:
+        return False
+    expected = birthday_event_fields(event)
+    return all(stored[key] == expected[key] for key in _FIELDS)
 
 
 def birthday_events_from_source(snapshot):
-    """Desired events from a complete source snapshot (contract `sources`)."""
-    return None
+    """Desired events from a complete source; absence is never inferred from a partial read."""
+    if not snapshot.get("inventoryComplete"):
+        return {"ok": False, "reason": "incomplete-inventory"}
+    books = snapshot.get("books", [])
+    if any(not book.get("complete") for book in books):
+        return {"ok": False, "reason": "incomplete-book"}
+    if any(item.get("content") is None for book in books for item in book.get("items", [])):
+        return {"ok": False, "reason": "unreadable-contact"}
+    events = []
+    for book in books:
+        for item in book.get("items", []):
+            birthday = birthday_from_vcard(item["content"])
+            if birthday:
+                name, month, day = birthday
+                events.append({
+                    "uid": birthday_event_uid(book["bookUid"], item["itemUid"]),
+                    "name": name,
+                    "month": month,
+                    "day": day,
+                })
+    events.sort(key=lambda event: event["uid"])
+    return {"ok": True, "events": events}
+
+
+def _generated_items(items):
+    """Generated items by event UID, each group ordered by item uid (the first is kept)."""
+    groups = {}
+    for item in items:
+        if item.get("content") is None:
+            continue
+        fields = parse_birthday_event_fields(item["content"])
+        if fields is None or not is_generated_birthday_uid(fields["uid"]):
+            continue
+        groups.setdefault(fields["uid"], []).append(item)
+    for group in groups.values():
+        group.sort(key=lambda item: item["itemUid"])
+    return groups
+
+
+def _cleanup_of(calendar):
+    """Generated item uids of a completely and readably listed calendar; none otherwise."""
+    items = calendar.get("items", [])
+    if not calendar.get("complete") or any(item.get("content") is None for item in items):
+        return []
+    return sorted(item["itemUid"] for group in _generated_items(items).values() for item in group)
 
 
 def plan_birthday_calendar(events, calendars):
-    """What to write so the calendars hold exactly `events` (contract `plans`)."""
-    return None
+    """What to write so the calendars hold exactly `events`.
+
+    Only writable calendars count; the active one with the smallest uid is canonical,
+    other active ones are retired, and retired ones lose their generated items. Items
+    that are not generated are never touched.
+    """
+    writable = sorted((c for c in calendars if c.get("writable")), key=lambda c: c["uid"])
+    active = [c for c in writable if c.get("state") == "active"]
+    canonical = active[0] if active else None
+    plan = {
+        "canonical": canonical["uid"] if canonical else None,
+        "create": [],
+        "update": [],
+        "remove": [],
+        "retire": [c["uid"] for c in active[1:]],
+        "cleanup": [],
+    }
+    for calendar in writable:
+        if calendar is canonical:
+            continue
+        item_uids = _cleanup_of(calendar)
+        if item_uids:
+            plan["cleanup"].append({"calendarUid": calendar["uid"], "itemUids": item_uids})
+    if canonical is None:
+        return {"kind": "plan", "plan": plan}
+    if not canonical.get("complete"):
+        return {"kind": "skip", "reason": "incomplete-calendar"}
+    if any(item.get("content") is None for item in canonical.get("items", [])):
+        return {"kind": "skip", "reason": "unreadable-calendar-item"}
+
+    wanted = {event["uid"]: event for event in events}
+    existing = _generated_items(canonical.get("items", []))
+    for uid, (kept, *extra) in existing.items():
+        plan["remove"].extend(item["itemUid"] for item in extra)
+        event = wanted.get(uid)
+        if event is None:
+            plan["remove"].append(kept["itemUid"])
+        elif not is_current_birthday_event(kept["content"], event):
+            plan["update"].append({"itemUid": kept["itemUid"], "event": event})
+    plan["create"] = sorted((e for uid, e in wanted.items() if uid not in existing), key=lambda e: e["uid"])
+    plan["update"].sort(key=lambda change: change["itemUid"])
+    plan["remove"].sort()
+    return {"kind": "plan", "plan": plan}
 
 
 def decide_after_birthday_run(check, reruns_so_far):
-    """'done', 'rerun' or 'pending' after a committed run (contract `postChecks`)."""
-    return None
+    """'done', 'rerun' (bounded) or 'pending' after a committed run's source re-check."""
+    if not check.get("complete"):
+        return "pending"
+    if not check.get("inventoryChanged") and not check.get("changedBooks"):
+        return "done"
+    return "rerun" if reruns_so_far < MAX_RERUNS else "pending"
 
 
 # ── SDK-facing entry points (NEUTRAL until their hosted RED) ──
