@@ -55,6 +55,19 @@ class BirthdayCalendarSharedVectorsTest {
         }
     }
 
+    /**
+     * BUGFIX regression (not a shared vector): JSON allows exactly four hex digits after `\u`, so a
+     * key spelled `ty\u+070e` is invalid JSON and the content is not a Birthdays calendar, even
+     * though a sign-accepting hex read would decode it as "type". The correctly escaped key
+     * `type` is valid JSON for "type" and stays an active marker (control).
+     */
+    @Test fun aSignedUnicodeEscapeInAMarkerKeyIsNotJsonAndNotABirthdaysCalendar() {
+        val valid = """{"type":"silentsuite.birthdays","v":1,"state":"active"}"""
+        assertEquals("control: a well-formed escaped key", MarkerState.ACTIVE, BirthdayCalendar.markerState(valid.toByteArray(Charsets.UTF_8)))
+        val signed = """{"ty\u+070e":"silentsuite.birthdays","v":1,"state":"active"}"""
+        assertNull("BUGFIX: a \\u escape with a sign is invalid JSON", BirthdayCalendar.markerState(signed.toByteArray(Charsets.UTF_8)))
+    }
+
     /** FEATURE: full, compact, timed, year-less, Apple omit-year, leap-day, N-fallback, multibyte and escaped names. */
     @Test @Suppress("UNCHECKED_CAST")
     fun birthdaysFromVCardsMatchTheSharedVectors() {
