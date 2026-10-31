@@ -1062,6 +1062,7 @@ def test_app_ui_avoids_deprecated_edge_to_edge_window_apis():
     deprecated = re.compile(
         r"\b(?:statusBarColor|navigationBarColor)\s*="
         r"|setStatusBarColor\(|setNavigationBarColor\("
+        r"|setStatusBarContrastEnforced\("
         r"|systemUiVisibility|SYSTEM_UI_FLAG_|navigationBarDividerColor|LAYOUT_IN_DISPLAY_CUTOUT_MODE_"
     )
     findings = []
