@@ -4,17 +4,23 @@ Shared contract: contracts/birthday-calendar/v1-vectors.json (also implemented b
 packages/core for web and by the Android client).
 
 Implemented (hosted-RED qualified): marker parsing, contact birthdays, event
-identity, the active-marker check behind DAV read-only, the post-sync hook, and the
-pure event/source/planner/post-check helpers.
+identity, the active-marker check behind DAV read-only, the pure event/source/
+planner/post-check helpers, and the SDK engine reconcile_birthdays/disable_birthdays.
 
-Still NEUTRAL (no SDK reads, no writes, no cache changes) until their own hosted RED
-is qualified: reconcile_birthdays, disable_birthdays, set_dashboard_birthdays.
+Still NEUTRAL until their own hosted RED is qualified: reconcile_after_sync (the
+sync-service integration) and set_dashboard_birthdays (account loading / turn-on).
 """
 
 import hashlib
 import json
+import logging
 import re
+import time
 from datetime import date, timedelta
+
+from etebase import CollectionAccessLevel, FetchOptions
+
+from .privacy_logging import bounded_exception_class
 
 MARKER_TYPE = "silentsuite.birthdays"
 EVENT_UID_PREFIX = "ss-bday1-"
@@ -409,22 +415,332 @@ def decide_after_birthday_run(check, reruns_so_far):
     return "rerun" if reruns_so_far < MAX_RERUNS else "pending"
 
 
-# ── SDK-facing entry points (NEUTRAL until their hosted RED) ──
+# ── SDK engine (pinned etebase 0.31.5) ──
+#
+# Every run reads everything fresh and completely, plans with the pure helpers, and writes
+# each calendar's changes in transactions whose only dependency is that calendar's root
+# item AS READ (re-taken only after this run's own collection commit). Any write error is
+# treated as an unknown outcome: nothing is retried blindly, the next attempt re-reads.
+
+CALENDAR_TYPE = "etebase.vevent"
+ADDRESS_BOOK_TYPE = "etebase.vcard"
+MAX_RESTARTS = 2
+MAX_PAGES = 1000
+CHUNK = 50
+_logger = logging.getLogger("silentsuite-bridge.birthdays")
+
+
+def marker_content(state):
+    """Collection content that marks a Birthdays calendar (contract byte form)."""
+    return json.dumps({"type": MARKER_TYPE, "v": 1, "state": state}, separators=(",", ":")).encode("utf-8")
+
+
+class _Incomplete(Exception):
+    """A listing did not finish; never evidence that something is absent."""
+
+
+def _options(stoken=None, iterator=None):
+    if stoken is None and iterator is None:
+        return None
+    options = FetchOptions()
+    if stoken is not None:
+        options.stoken(stoken)
+    if iterator is not None:
+        options.iterator(iterator)
+    return options
+
+
+def _list_pages(fetch, stoken=None):
+    """All entries from a stoken-paged listing, and the final stoken. Raises _Incomplete."""
+    entries = []
+    token = stoken
+    for _ in range(MAX_PAGES):
+        response = fetch(_options(stoken=token))
+        entries.extend(list(response.data))
+        next_token = response.stoken
+        if response.done:
+            return entries, next_token
+        if next_token is None or next_token == token:
+            raise _Incomplete("listing made no progress")
+        token = next_token
+    raise _Incomplete("listing exceeded its page limit")
+
+
+def _list_members(member_manager):
+    usernames = []
+    iterator = None
+    for _ in range(MAX_PAGES):
+        response = member_manager.list(_options(iterator=iterator))
+        usernames.extend(member.username for member in response.data)
+        if response.done:
+            return usernames
+        next_iterator = response.iterator
+        if next_iterator is None or next_iterator == iterator:
+            raise _Incomplete("member listing made no progress")
+        iterator = next_iterator
+    raise _Incomplete("member listing exceeded its page limit")
+
+
+def _read_content(entry):
+    """Readable text content of an SDK collection or item, or None."""
+    try:
+        return _as_text(entry.content)
+    except Exception:  # noqa: BLE001 - unreadable is reported as None, never as empty
+        return None
+
+
+def _read_state(col_mgr, username, *, with_source=True):
+    """Fresh, complete snapshot of calendars, address books and memberships.
+
+    Returns (state, None) or (None, reason). Marked Admin calendars need a complete member
+    list; a calendar is writable only when that list is exactly `username`.
+    """
+    try:
+        collections, inventory_token = _list_pages(
+            lambda options: col_mgr.list([CALENDAR_TYPE, ADDRESS_BOOK_TYPE], options))
+    except _Incomplete:
+        return None, "incomplete-inventory"
+    calendars = {}
+    books = {}
+    for collection in collections:
+        if collection.deleted:
+            continue
+        if collection.collection_type == ADDRESS_BOOK_TYPE:
+            books[collection.uid] = collection
+            continue
+        if collection.collection_type != CALENDAR_TYPE:
+            continue
+        content = _read_content(collection)
+        if content is None:
+            return None, "unreadable-calendar"
+        marker = parse_birthday_marker(content)
+        if marker is None:
+            continue  # ordinary or unmarked calendars are never adopted
+        writable = False
+        if collection.access_level == CollectionAccessLevel.Admin:
+            try:
+                members = _list_members(col_mgr.get_member_manager(collection))
+            except _Incomplete:
+                return None, "incomplete-members"
+            writable = members == [username]
+        calendars[collection.uid] = {"collection": collection, "root": collection.item, "state": marker,
+                                     "writable": writable, "items": {}, "complete": True}
+
+    for entry in calendars.values():
+        if not entry["writable"]:
+            continue
+        item_mgr = col_mgr.get_item_manager(entry["collection"])
+        try:
+            items, _ = _list_pages(item_mgr.list)
+        except _Incomplete:
+            entry["complete"] = False
+            continue
+        entry["items"] = {item.uid: item for item in items if not item.deleted}
+
+    source = {"inventoryComplete": True, "books": []}
+    book_tokens = {}
+    book_contents = {}
+    if with_source:
+        for uid, book in books.items():
+            item_mgr = col_mgr.get_item_manager(book)
+            try:
+                items, token = _list_pages(item_mgr.list)
+            except _Incomplete:
+                source["books"].append({"bookUid": uid, "complete": False, "items": []})
+                continue
+            live = [item for item in items if not item.deleted]
+            contents = {item.uid: _read_content(item) for item in live}
+            source["books"].append({"bookUid": uid, "complete": True,
+                                    "items": [{"itemUid": k, "content": v} for k, v in contents.items()]})
+            book_tokens[uid] = token
+            book_contents[uid] = contents
+    return {
+        "calendars": calendars,
+        "books": books,
+        "source": source,
+        "inventory_token": inventory_token,
+        "book_tokens": book_tokens,
+        "book_contents": book_contents,
+    }, None
+
+
+def _planner_calendars(state):
+    return [{
+        "uid": uid,
+        "state": entry["state"],
+        "writable": entry["writable"],
+        "complete": entry["complete"],
+        "items": [{"itemUid": item_uid, "content": _read_content(item)} for item_uid, item in entry["items"].items()],
+    } for uid, entry in state["calendars"].items()]
+
+
+def _commit(item_mgr, items, root):
+    for start in range(0, len(items), CHUNK):
+        item_mgr.transaction(items[start:start + CHUNK], [root])
+
+
+def _retire(col_mgr, entry):
+    collection = entry["collection"]
+    collection.content = marker_content("retired")
+    col_mgr.transaction(collection)
+    # This run's own commit: the calendar's new root is the one later writes must name.
+    entry["root"] = collection.item
+    entry["state"] = "retired"
+
+
+def _delete_items(col_mgr, entry, item_uids):
+    items = [entry["items"][uid] for uid in item_uids if uid in entry["items"]]
+    if not items:
+        return
+    for item in items:
+        item.delete()
+    _commit(col_mgr.get_item_manager(entry["collection"]), items, entry["root"])
+
+
+def _new_meta(event_uid):
+    return {"name": event_uid, "mtime": int(time.time() * 1000)}
+
+
+def _apply(col_mgr, state, plan):
+    """Write a plan. Returns True when anything was written. Raises on any write error."""
+    wrote = False
+    calendars = state["calendars"]
+    for uid in plan["retire"]:
+        _retire(col_mgr, calendars[uid])
+        wrote = True
+    for cleanup in plan["cleanup"]:
+        _delete_items(col_mgr, calendars[cleanup["calendarUid"]], cleanup["itemUids"])
+        wrote = True
+    canonical = calendars.get(plan["canonical"]) if plan["canonical"] else None
+    if canonical is None:
+        return wrote
+    item_mgr = col_mgr.get_item_manager(canonical["collection"])
+    changed = []
+    for change in plan["update"]:
+        item = canonical["items"][change["itemUid"]]
+        item.content = birthday_event_content(change["event"]).encode("utf-8")
+        changed.append(item)
+    for item_uid in plan["remove"]:
+        item = canonical["items"][item_uid]
+        item.delete()
+        changed.append(item)
+    for event in plan["create"]:
+        changed.append(item_mgr.create(_new_meta(event["uid"]), birthday_event_content(event).encode("utf-8")))
+    if changed:
+        _commit(item_mgr, changed, canonical["root"])
+        wrote = True
+    return wrote
+
+
+def _post_check(col_mgr, state):
+    """Did the source change since this run read it? (contract `postChecks` input)."""
+    check = {"complete": False, "inventoryChanged": False, "changedBooks": []}
+    try:
+        changes, _ = _list_pages(
+            lambda options: col_mgr.list([CALENDAR_TYPE, ADDRESS_BOOK_TYPE], options),
+            stoken=state["inventory_token"])
+        for collection in changes:
+            if collection.collection_type != ADDRESS_BOOK_TYPE:
+                continue
+            if collection.deleted or collection.uid not in state["books"]:
+                check["inventoryChanged"] = True
+        for uid, book in state["books"].items():
+            known = state["book_contents"].get(uid)
+            if known is None:
+                check["changedBooks"].append(uid)
+                continue
+            item_changes, _ = _list_pages(col_mgr.get_item_manager(book).list, stoken=state["book_tokens"].get(uid))
+            for item in item_changes:
+                if item.deleted or item.uid not in known or _read_content(item) != known[item.uid]:
+                    check["changedBooks"].append(uid)
+                    break
+    except Exception:  # noqa: BLE001 - a failed check is incomplete, never "unchanged"
+        return check
+    check["complete"] = True
+    return check
 
 
 def reconcile_birthdays(account, username):
-    """Fresh-read reconcile of the generated calendar for one account. Never raises."""
-    return dict(SKIPPED)
+    """Fresh-read reconcile of the generated calendar for one account. Never raises.
+
+    Returns {"status": "done" | "skipped" | "pending" | "failed", ...}; only "done" means the
+    calendar matched the source at the end of the run.
+    """
+    try:
+        col_mgr = account.get_collection_manager()
+        reruns = 0
+        restarts = 0
+        while True:
+            state, reason = _read_state(col_mgr, username)
+            if state is None:
+                return {"status": "skipped", "reason": reason}
+            source = birthday_events_from_source(state["source"])
+            if not source["ok"]:
+                return {"status": "skipped", "reason": source["reason"]}
+            planned = plan_birthday_calendar(source["events"], _planner_calendars(state))
+            if planned["kind"] == "skip":
+                return {"status": "skipped", "reason": planned["reason"]}
+            try:
+                wrote = _apply(col_mgr, state, planned["plan"])
+            except Exception as exc:  # noqa: BLE001 - unknown outcome: re-read, never resend blindly
+                _logger.info("Birthdays write outcome unknown (%s)", bounded_exception_class(exc))
+                if restarts >= MAX_RESTARTS:
+                    return {"status": "pending", "reason": "write-outcome-unknown"}
+                restarts += 1
+                continue
+            if not wrote:
+                return {"status": "done"}
+            decision = decide_after_birthday_run(_post_check(col_mgr, state), reruns)
+            if decision == "done":
+                return {"status": "done"}
+            if decision == "pending":
+                return {"status": "pending", "reason": "post-check"}
+            reruns += 1
+    except Exception as exc:  # noqa: BLE001 - birthdays must never raise into their caller
+        _logger.warning("Birthdays reconcile failed (%s)", bounded_exception_class(exc))
+        return {"status": "failed", "reason": "error"}
 
 
 def disable_birthdays(account, username):
-    """Turn off: retire every qualifying active calendar, then remove only generated items."""
-    return dict(SKIPPED)
+    """Turn off: retire every qualifying active calendar, then remove only generated items.
+
+    Fails closed when the inventory, a calendar or a member list cannot be read completely.
+    Calendars are never deleted, and items that are not generated are never touched.
+    """
+    try:
+        col_mgr = account.get_collection_manager()
+        state, reason = _read_state(col_mgr, username, with_source=False)
+        if state is None:
+            return {"status": "failed", "reason": reason}
+        targets = [entry for entry in state["calendars"].values() if entry["writable"]]
+        if any(not entry["complete"] for entry in targets):
+            return {"status": "failed", "reason": "incomplete-calendar"}
+        for entry in targets:
+            if any(_read_content(item) is None for item in entry["items"].values()):
+                return {"status": "failed", "reason": "unreadable-calendar-item"}
+        try:
+            for entry in sorted(targets, key=lambda e: e["collection"].uid):
+                if entry["state"] == "active":
+                    _retire(col_mgr, entry)
+                generated = [uid for uid, item in entry["items"].items()
+                             if is_generated_birthday_uid((parse_birthday_event_fields(_read_content(item)) or {}).get("uid"))]
+                _delete_items(col_mgr, entry, sorted(generated))
+        except Exception as exc:  # noqa: BLE001 - unknown outcome; the next run repairs
+            _logger.info("Birthdays turn-off outcome unknown (%s)", bounded_exception_class(exc))
+            return {"status": "pending", "reason": "write-outcome-unknown"}
+        return {"status": "done"}
+    except Exception as exc:  # noqa: BLE001
+        _logger.warning("Birthdays turn-off failed (%s)", bounded_exception_class(exc))
+        return {"status": "failed", "reason": "error"}
 
 
 def reconcile_after_sync(service):
-    """Called by local_cache.Etebase.sync() after a cycle with no unresolved DAV conflicts."""
-    return reconcile_birthdays(getattr(service, "etebase", None), getattr(service, "username", None))
+    """Called by local_cache.Etebase.sync() after a cycle with no unresolved DAV conflicts.
+
+    Kept neutral: running the engine from the sync service still needs its own hosted RED
+    for re-entrancy, session guards and the canonical-calendar cache refresh.
+    """
+    return dict(SKIPPED)
 
 
 def set_dashboard_birthdays(username, action):

@@ -697,6 +697,195 @@ def test_birthday_hook_runs_outside_any_cache_transaction(tmp_path, monkeypatch)
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint 5 (next hosted RED; behaviour NOT implemented in stage 3)
+# ---------------------------------------------------------------------------
+
+
+def _allow_calendar_creation(account):
+    """CollectionManager.create(col_type, meta, content) + upload(collection), as the pinned SDK."""
+    def create(col_type, meta, content):
+        collection = _sdk_collection(f"new-cal-{len(account.collections)}", col_type, content=content)
+        collection.meta = dict(meta)
+        return collection
+
+    def upload(collection, fetch_options=None):
+        account.collections.append(collection)
+        account.members.setdefault(collection.uid, [USERNAME])
+
+    account.col_mgr.create.side_effect = create
+    account.col_mgr.upload.side_effect = upload
+
+
+def _configured_account(monkeypatch, account, configured=(USERNAME,)):
+    """The real loader seam: radicale.etesync_cache.etesync_for_user yields (service, created)."""
+    from contextlib import contextmanager
+
+    import silentsuite_bridge.radicale.etesync_cache as etesync_cache
+    from silentsuite_bridge import accounts
+
+    service = MagicMock(name="etesync-service")
+    service.etebase = account
+    service.username = USERNAME
+    calls = []
+
+    @contextmanager
+    def fake_etesync_for_user(user, *, exclusive=True, timeout=None, read_only=True):
+        calls.append({"user": user, "exclusive": exclusive, "read_only": read_only})
+        yield service, False
+
+    monkeypatch.setattr(etesync_cache, "etesync_for_user", fake_etesync_for_user)
+    monkeypatch.setattr(accounts, "list_accounts", lambda: list(configured))
+    return service, calls
+
+
+def test_dashboard_turn_on_creates_a_private_marked_calendar_and_fills_it(monkeypatch):
+    """INTENDED-RED: with no Birthdays calendar, turning on creates one ordinary private
+    etebase.vevent collection whose content is the active marker, then generates into it,
+    loading the account through the existing exclusive, writable session."""
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    account = FakeAccount([book], {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)]}, {BOOK: [USERNAME]})
+    _allow_calendar_creation(account)
+    _service_obj, calls = _configured_account(monkeypatch, account)
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "on")
+
+    assert result.get("status") == "done"
+    assert calls == [{"user": USERNAME, "exclusive": True, "read_only": False}]
+    created = [c for c in account.collections if c.collection_type == "etebase.vevent"]
+    assert [(c.content, "name" in c.meta) for c in created] == [(ACTIVE, True)]
+    assert [(uid, _semantic_fields(item.content)["uid"]) for uid, item in account.created] == [(created[0].uid, ALEX_FIELDS["uid"])]
+
+
+def test_dashboard_turn_on_reuses_an_existing_qualifying_calendar(monkeypatch):
+    """INTENDED-RED (done) with CONTROL (no second calendar is created)."""
+    calendar, account = _account()
+    _allow_calendar_creation(account)
+    _configured_account(monkeypatch, account)
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "on")
+
+    account.col_mgr.create.assert_not_called()
+    assert result.get("status") == "done"
+
+
+def test_dashboard_turn_off_retires_through_the_configured_account(monkeypatch):
+    """INTENDED-RED: turning off retires the active calendar (never deletes it)."""
+    calendar, account = _account()
+    _configured_account(monkeypatch, account)
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "off")
+
+    assert result.get("status") == "done"
+    assert calendar.content == RETIRED
+    calendar.delete.assert_not_called()
+
+
+def test_dashboard_action_for_an_unconfigured_account_loads_nothing(monkeypatch):
+    """CONTROL (neutral passes): an account that is not configured is never loaded or written."""
+    _calendar, account = _account()
+    _service_obj, calls = _configured_account(monkeypatch, account, configured=("someone-else@example.com",))
+
+    result = birthdays.set_dashboard_birthdays(USERNAME, "on")
+
+    assert result.get("status") != "done"
+    assert calls == []
+    account.col_mgr.create.assert_not_called()
+
+
+def test_engine_reports_which_calendar_it_wrote():
+    """INTENDED-RED: the sync service needs to know which calendar to refresh in its cache."""
+    _calendar, account = _account()
+    assert birthdays.reconcile_birthdays(account, USERNAME).get("written") == ["cal-birthdays"]
+
+
+def _hook_service(tmp_path, name):
+    database = _database(tmp_path / f"{name}.sqlite")
+    user = models.User.create(username=USERNAME)
+    return _service(database, user, MagicMock())
+
+
+def test_hook_runs_the_engine_once_for_the_service_account(tmp_path, monkeypatch):
+    """INTENDED-RED: the post-sync hook runs the engine with the service's own SDK account."""
+    service = _hook_service(tmp_path, "hook-delegates")
+    calls = []
+    monkeypatch.setattr(birthdays, "reconcile_birthdays", lambda account, username: calls.append((account, username)) or {"status": "done"})
+
+    birthdays.reconcile_after_sync(service)
+
+    assert calls == [(service.etebase, USERNAME)]
+
+
+def test_hook_does_not_re_enter_for_the_same_account(tmp_path, monkeypatch):
+    """INTENDED-RED: a hook triggered while the same account's run is active is coalesced."""
+    service = _hook_service(tmp_path, "hook-reentry")
+    calls = []
+
+    def reconcile(account, username):
+        calls.append(username)
+        birthdays.reconcile_after_sync(service)
+        return {"status": "done"}
+
+    monkeypatch.setattr(birthdays, "reconcile_birthdays", reconcile)
+
+    birthdays.reconcile_after_sync(service)
+
+    assert calls == [USERNAME]
+
+
+def test_hook_skips_a_superseded_session(tmp_path, monkeypatch):
+    """CONTROL (neutral passes): a replaced account session never starts a run."""
+    from silentsuite_bridge.local_cache import SessionSuperseded
+
+    service = _hook_service(tmp_path, "hook-superseded")
+    service._assert_session_current = MagicMock(side_effect=SessionSuperseded("replaced"))
+    calls = []
+    monkeypatch.setattr(birthdays, "reconcile_birthdays", lambda account, username: calls.append(username) or {"status": "done"})
+
+    birthdays.reconcile_after_sync(service)
+
+    assert calls == []
+
+
+def test_hook_refreshes_the_written_calendar_without_generating_again(tmp_path, monkeypatch):
+    """INTENDED-RED: after a writing run the hook syncs only the written calendar (push before pull,
+    so ordinary pending DAV edits are not lost) and does not start another birthday run."""
+    service = _hook_service(tmp_path, "hook-refresh")
+    order = []
+    service.push_collection = MagicMock(side_effect=lambda uid: order.append(("push", uid)))
+    service.pull_collection = MagicMock(side_effect=lambda uid: order.append(("pull", uid)))
+    runs = []
+    monkeypatch.setattr(birthdays, "reconcile_birthdays",
+                        lambda account, username: runs.append(username) or {"status": "done", "written": ["cal-birthdays"]})
+
+    birthdays.reconcile_after_sync(service)
+
+    assert runs == [USERNAME]
+    assert order == [("push", "cal-birthdays"), ("pull", "cal-birthdays")]
+
+
+def test_dashboard_account_card_offers_birthdays_turn_on_and_off(tmp_path, monkeypatch):
+    """INTENDED-RED (GUI wiring; no GUI code in stage 3): each account card carries a Birthdays
+    control posting to the CSRF-protected route, and turning off explains what is kept."""
+    from silentsuite_bridge import config
+    from silentsuite_bridge.radicale.creds import Credentials
+    from silentsuite_bridge.web import _render_dashboard
+
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, username: f"fingerprint for {username}")
+    creds = Credentials()
+    creds.set_etebase(USERNAME, "alice-session", "https://server-a.test")
+    creds.save()
+
+    html = _render_dashboard()
+
+    assert f'data-birthdays-account="{USERNAME}"' in html
+    assert "/.web/api/accounts/birthdays" in html
+    assert "Turn on Birthdays calendar" in html
+    assert "Turn off Birthdays calendar" in html
+    assert "Generated birthdays are removed; your own events are kept." in html
+
+
+# ---------------------------------------------------------------------------
 # Trigger: after a clean sync cycle, including an empty inventory
 # ---------------------------------------------------------------------------
 
