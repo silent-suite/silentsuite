@@ -656,7 +656,7 @@ def test_text_input_refresh_and_system_bar_mechanics_are_bounded():
         assert "R.color.semantic_primary" in body
         assert "ContextCompat.getColor" not in body.split("setColorSchemeResources(", 1)[1].split(")", 1)[0]
     base = source("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
-    for token in ("Build.VERSION.SDK_INT >= 35", "WindowInsetsCompat.Type.statusBars()", "WindowInsetsCompat.Type.navigationBars()", "setStatusBarContrastEnforced(false)", "setNavigationBarContrastEnforced(false)"):
+    for token in ("Build.VERSION.SDK_INT >= 35", "WindowInsetsCompat.Type.statusBars()", "WindowInsetsCompat.Type.navigationBars()", "isAppearanceLightStatusBars = false", "isAppearanceLightNavigationBars = false", "setNavigationBarContrastEnforced(false)"):
         assert token in base
     for token in (
         "statusBarScrims: Map<Int, View>", "navigationBarScrims: Map<Int, View>",
