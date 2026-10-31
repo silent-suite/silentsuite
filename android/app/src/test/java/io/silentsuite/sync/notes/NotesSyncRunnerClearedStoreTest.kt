@@ -33,6 +33,7 @@ class NotesSyncRunnerClearedStoreTest {
         PendingNotesStore.beforeClearForTesting = null
         PendingNotesStore.beforeRemoveForTesting = null
         PendingNotesStore.listFilesForTesting = null
+        PendingNotesStore.presenceForTesting = null
         PendingNotesStore.identityForTesting = null
         PendingNotesStore.resetForTesting()
     }
@@ -87,9 +88,16 @@ class NotesSyncRunnerClearedStoreTest {
         PendingNotesStore.beforeClearForTesting = null
         // A listing of the store that comes back with nothing, and says nothing.
         PendingNotesStore.listFilesForTesting = { d -> if (d == store.dir) emptyArray() else d.listFiles() }
+        // Its counter is there by path, so the count says that it could not be counted.
+        val short = store.unsynced()
+        assertTrue("could not be counted: $short", short.unreadable && short.listed && short.names.isEmpty())
+        // With the counter shown gone as well, as for a lost one, the count finds nothing, and the state still decides.
+        val counter = File(store.dir, "sequence")
+        PendingNotesStore.presenceForTesting = { f -> if (f == counter) PendingNotesStore.Presence.ABSENT else null }
         assertEquals("the count finds nothing", UnsyncedNotes.NOTHING, store.unsynced())
         assertFalse("but the discard did not finish", store.clearedInFull())
         assertThrows(IOException::class.java) { NotesSyncRunner.waitingIn(store) }
+        PendingNotesStore.presenceForTesting = null
     }
 
     @Test fun `a store whose clear stopped at a note its count missed is a storage failure, though nothing its permit names is left`() {

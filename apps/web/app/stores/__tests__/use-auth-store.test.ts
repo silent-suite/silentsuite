@@ -3019,6 +3019,45 @@ describe('accountNotice (store)', () => {
     expect(current === null || (current.userId === userU.id && current.response === null)).toBe(true)
   })
 
+  it.each([
+    { label: 'non-OK 503', failRead: (): Response => ({ ok: false, status: 503, json: async () => ({}) }) as Response },
+    { label: 'fetch rejection', failRead: (): Response => { throw new Error('network failure') } },
+    { label: 'JSON rejection', failRead: (): Response => ({ ok: true, status: 200, json: async () => { throw new Error('invalid JSON') } }) as Response },
+  ])('re-admits a same-account expiry claim after its newer retry read fails ($label)', async ({ failRead }) => {
+    seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', hostedAccess: null, accountNotice: daysLeft } as WithHostedAccess)
+    const firstClaimRead = deferredValue<Response>()
+    const freshClaimRead = deferredValue<Response>()
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const path = String(url)
+      if (path.endsWith('/auth/refresh')) return ok({ id: userU.id, email: userU.email, planId: userU.planId, isAdmin: false, rememberDevice: true })
+      if (path.endsWith('/subscription')) {
+        const call = subscriptionCalls()
+        if (call === 1) return firstClaimRead.promise
+        if (call === 2) return failRead()
+        if (call === 3) return freshClaimRead.promise
+      }
+      return new Response(null, { status: 204 })
+    })
+    const tuple = () => ({
+      isAuthenticated: useAuthStore.getState().isAuthenticated,
+      subscriptionStatus: useAuthStore.getState().subscriptionStatus,
+      hostedAccess: readHostedAccess(),
+    })
+    const oldTuple = tuple()
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(await useAuthStore.getState().retryBillingConnection()).toBe(false)
+    firstClaimRead.resolve(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: daysLeft }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(tuple()).toEqual(oldTuple)
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(claim(trialEndsAt)).toBe(false)
+    freshClaimRead.resolve(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt })
+    expect(subscriptionCalls()).toBe(3)
+    expect(claim(trialEndsAt)).toBe(false)
+  })
+
   it('re-admits an expiry claim only after its owned read failed, and still coalesces while it is in flight', async () => {
     seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', accountNotice: daysLeft } as WithHostedAccess)
     const claimRead = deferredValue<Response>()

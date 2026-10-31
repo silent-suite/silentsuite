@@ -79,8 +79,12 @@ class UnsyncedNotesStoresTest {
         return store.dir.name
     }
 
-    private fun read(vararg accounts: ExactAccountIdentity, open: (String) -> PendingNotesStore = ::opened) =
-        UnsyncedNotesStores.read(noBackup, accounts.toList(), open = open)
+    private fun read(
+        vararg accounts: ExactAccountIdentity,
+        pathFound: Set<String> = emptySet(),
+        open: (String) -> PendingNotesStore = ::opened,
+    ) = UnsyncedNotesStores.read(noBackup, accounts.toList(), open = open, pathFound = { pathFound },
+        presence = { PendingNotesStore.presenceForTesting?.invoke(it) ?: PendingNotesStore.nioPresence(it) })
 
     /** What a discard asked of the Notes job and the store, in order. */
     private val calls = ArrayList<String>()
@@ -214,7 +218,7 @@ class UnsyncedNotesStoresTest {
         assertEquals(p, listing.rows.single { it.directory == folder }.owner)
         assertEquals(UnsyncedNotes(1, 1, false, names = setOf("n1.note")),
             listing.rows.single { it.directory == folder }.answer)
-        assertFalse(listing.othersUnlisted)
+        assertTrue("the listing left out a folder that is there, so the others are flagged", listing.othersUnlisted)
         // A present account with no store adds no row: its folder, never made, holds nothing.
         assertEquals(2, read(p, account("never")).rows.size)
         assertFalse(folderOf(account("never")) in namesIn(pending))
@@ -330,13 +334,22 @@ class UnsyncedNotesStoresTest {
         assertTrue(read().othersUnlisted)
     }
 
-    @Test fun `while notes-pending cannot be listed, a present account with no store is unread and records nothing`() {
+    @Test fun `while notes-pending cannot be listed, a present account's folder lstat shows absent gets no row`() {
         identifyDirectories()
         saveIn(account("orphan"), "n1")
         val q = account("q")
         val folder = folderOf(q)
         unlisted("notes-pending")
+        // Its acknowledgement could never be recorded, so a row for it would be one nothing can be done with.
+        val listing = read(q)
+        assertEquals(emptyList<UnsyncedNotesRow>(), listing.rows)
+        assertTrue(listing.othersUnlisted)
+        // Kept while its presence check fails: a check that failed is no absence.
+        PendingNotesStore.presenceForTesting = { f ->
+            if (f.name == folder) PendingNotesStore.Presence.UNKNOWN else null
+        }
         val row = read(q).rows.single()
+        PendingNotesStore.presenceForTesting = null
         assertEquals(folder, row.directory)
         assertEquals(q, row.owner)
         val shown = row.answer!!
@@ -348,6 +361,177 @@ class UnsyncedNotesStoresTest {
         assertFalse("$folder.acknowledgement" in namesIn(discards))
         PendingNotesStore.listFilesForTesting = null
         assertFalse("and nothing was made", folder in namesIn(pending))
+    }
+
+    @Test fun `while notes-pending cannot be listed, stores known by path are found, and absent folders left out`() {
+        val p = account("p")
+        val present = saveIn(p, "n1")
+        // Orphans with text that a path names: a record in notes-discard, the active account, a registry record.
+        val byPath = listOf("by-permit", "by-active", "by-record").map { saveIn(account(it), "n1") }
+        val hidden = saveIn(account("hidden"), "n1")
+        val never = folderOf(account("never"))
+        unlisted("notes-pending")
+        val listing = read(p, account("q"), pathFound = byPath.toSet() + never)
+        assertEquals("present and found by path, but not a folder nothing names, nor one lstat shows absent",
+            (byPath + present).sorted(), listing.rows.map { it.directory })
+        assertFalse(hidden in listing.rows.map { it.directory })
+        assertTrue("so the others are still flagged", listing.othersUnlisted)
+        val one = UnsyncedNotes(1, 1, false, names = setOf("n1.note"))
+        assertEquals("each is counted from its own folder", List(4) { one }, listing.rows.map { it.answer })
+        assertEquals(listOf(p), listing.rows.mapNotNull { it.owner })
+        // While notes-pending lists, what it lists, the present accounts' folders and those found by path that it left
+        // out.
+        PendingNotesStore.listFilesForTesting = null
+        val whole = read(p, pathFound = byPath.toSet() + never)
+        assertEquals((byPath + present + hidden).sorted(), whole.rows.map { it.directory })
+        assertFalse("every folder found by path that is there is listed", whole.othersUnlisted)
+    }
+
+    @Test fun `while notes-pending lists, stores found by path are read, and a listing that left one out is flagged`() {
+        val p = account("p")
+        val present = saveIn(p, "n1")
+        // Orphans with text that a path names: a record in notes-discard, the active account, a registry record.
+        val byPath = listOf("by-permit", "by-active", "by-record").map { saveIn(account(it), "n1") }
+        val never = folderOf(account("never"))
+        // notes-pending lists, but leaves out the folders that a path names, as a listing that stopped partway can.
+        PendingNotesStore.listFilesForTesting = { d ->
+            val all = d.listFiles()
+            if (all != null && d.name == "notes-pending") all.filter { it.name !in byPath }.toTypedArray() else all
+        }
+        val listing = read(p, pathFound = byPath.toSet() + never)
+        assertEquals((byPath + present).sorted(), listing.rows.map { it.directory })
+        val one = UnsyncedNotes(1, 1, false, names = setOf("n1.note"))
+        assertEquals("each is counted from its own folder", List(4) { one }, listing.rows.map { it.answer })
+        assertTrue("the listing left out folders that are there, so the others are flagged", listing.othersUnlisted)
+        assertEquals(Text.Uncounted, UnsyncedNotesDiscardPolicy.hubSummary(listing))
+        // With the listing whole, the same stores, and a folder found by path that lstat shows absent adds no row and
+        // no flag.
+        PendingNotesStore.listFilesForTesting = null
+        val whole = read(p, pathFound = byPath.toSet() + never)
+        assertEquals((byPath + present).sorted(), whole.rows.map { it.directory })
+        assertFalse(whole.othersUnlisted)
+        // A presence check that fails is no absence: a folder found by path that the listing left out flags the others.
+        PendingNotesStore.presenceForTesting = { f -> if (f.name == never) PendingNotesStore.Presence.UNKNOWN else null }
+        assertTrue("a check that fails is no absence", read(p, pathFound = byPath.toSet() + never).othersUnlisted)
+        // While notes-pending lists, no presence check leaves out a store that is counted, one that says absent too.
+        PendingNotesStore.presenceForTesting = { f -> if (f.name == present) PendingNotesStore.Presence.ABSENT else null }
+        assertEquals((byPath + present).sorted(), read(p, pathFound = byPath.toSet() + never).rows.map { it.directory })
+        PendingNotesStore.presenceForTesting = null
+        // A read of the known paths that throws: the rows the listing gives, and the others flagged.
+        val thrown = UnsyncedNotesStores.read(noBackup, listOf(p), open = ::opened,
+            pathFound = { throw IOException("the registry could not be read") })
+        assertEquals((byPath + present).sorted(), thrown.rows.map { it.directory })
+        assertTrue(thrown.othersUnlisted)
+    }
+
+    @Test fun `a store listed without its counter could not be counted, and its Discard covers the removal`() {
+        val q = account("q")
+        val folder = saveIn(q, "n1")
+        // The store's own listing comes back with nothing, while notes-pending lists.
+        PendingNotesStore.listFilesForTesting = { d -> if (d.name == folder) emptyArray() else d.listFiles() }
+        val listing = read(q)
+        assertFalse(listing.othersUnlisted)
+        val shown = listing.rows.single().answer!!
+        assertTrue("could not be counted: $shown", shown.unreadable && shown.listed)
+        assertEquals(Text.Uncounted, UnsyncedNotesDiscardPolicy.rowText(shown))
+        fun guard() = PendingNotesRemovalGuard.decide(PendingNotesRemovalGuard.input(noBackup, TYPE, TYPE, "q",
+            PendingNotesRemovalGuard.CreationId.Readable("gen-1"), accounts = { null }, active = { null },
+            records = { null }, presence = PendingNotesStore.nioPresence, open = ::opened))
+        assertEquals(PendingNotesRemovalGuard.Verdict.REFUSE_STORE, guard())
+        // Its Discard records a permit for that answer and deletes what the listing held, which is nothing, so it does
+        // not finish; the permit covers the removal.
+        assertEquals(Result.NotFinished(folder, "q", shown), discard(folder, shown, owner = q))
+        assertEquals(shown, permitOf(folder))
+        assertEquals(setOf("n1.note", "b1.notebook", "sequence"), namesIn(File(pending, folder)))
+        assertEquals(PendingNotesRemovalGuard.Verdict.ALLOW, guard())
+    }
+
+    @Test fun `while notes-pending cannot be listed, a discard that stops while the stores are read keeps its row`() {
+        val p = account("p")
+        val folder = saveIn(p, "n1")
+        unlisted("notes-pending")
+        val shown = read(p).rows.single().answer!!
+        // The discard deletes the folder and stops after the stores whose discard stopped were read, and before the
+        // folder's presence check, as a sign-out at that moment can.
+        var ran = false
+        val listing = UnsyncedNotesStores.read(noBackup, listOf(p), open = ::opened, presence = { f ->
+            if (f.name == folder && !ran) {
+                ran = true
+                assertEquals(PendingNotesStore.DiscardOutcome.NotFinished, opened(folder).discardStore(shown))
+            }
+            PendingNotesStore.nioPresence(f)
+        })
+        assertTrue("the discard ran", ran)
+        assertFalse(folder in namesIn(pending))
+        val row = listing.rows.single()
+        assertEquals(folder, row.directory)
+        assertTrue("its row is the Retry", row.stopped)
+        // Read again, the row is stopped from its first read, so it is kept whatever lstat shows, and no second read
+        // decides: a second open of the folder that fails cannot drop it.
+        var opens = 0
+        val again = UnsyncedNotesStores.read(noBackup, listOf(p), open = { f ->
+            if (f == folder && opens++ > 0) throw IOException("a second open fails") else opened(f)
+        })
+        assertEquals(listOf(folder), again.rows.map { it.directory })
+        assertTrue("still the Retry", again.rows.single().stopped)
+    }
+
+    @Test fun `a store read again while notes-pending cannot be listed holds nothing when lstat shows it absent`() {
+        val p = account("p")
+        val stoppedFolder = saveIn(p, "n1")
+        val q = account("q")
+        val never = folderOf(q)
+        unlisted("notes-pending")
+        fun again(folder: String, owner: ExactAccountIdentity) = UnsyncedNotesStores.reread(noBackup, folder, owner,
+            open = ::opened,
+            presence = { PendingNotesStore.presenceForTesting?.invoke(it) ?: PendingNotesStore.nioPresence(it) })
+        // q's folder was never made: its answer is nothing, as the list leaves it out, so a dialog restored in a new
+        // process is not shown again.
+        val absent = again(never, q)
+        assertEquals(UnsyncedNotesRow(never, q, UnsyncedNotes.NOTHING, stopped = false), absent)
+        assertEquals(Result.Reload, UnsyncedNotesDiscardPolicy.restored(absent))
+        assertEquals(emptyList<UnsyncedNotesRow>(), read(q).rows)
+        // A check that fails is no absence: the store's own answer, and the dialog again.
+        PendingNotesStore.presenceForTesting = { f ->
+            if (f.name == never) PendingNotesStore.Presence.UNKNOWN else null
+        }
+        val unknown = again(never, q)
+        val asked = unknown.answer!!
+        assertFalse(asked.listed)
+        assertEquals(Result.Ask(never, "q", asked), UnsyncedNotesDiscardPolicy.restored(unknown))
+        PendingNotesStore.presenceForTesting = null
+        // A store whose discard stopped is read as its Retry, whatever lstat shows.
+        val shown = read(p).rows.single().answer!!
+        assertEquals(Result.NotFinished(stoppedFolder, "p", shown), discard(stoppedFolder, shown, owner = p))
+        val retry = again(stoppedFolder, p)
+        assertTrue(retry.stopped)
+        assertFalse(retry.answer!!.listed)
+        assertEquals(Result.Reload, UnsyncedNotesDiscardPolicy.restored(retry))
+        // While notes-pending lists, the store's own answer, as before, whatever lstat shows.
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(UnsyncedNotesRow(never, q, UnsyncedNotes.NOTHING, stopped = false), again(never, q))
+        val r = account("r")
+        val held = saveIn(r, "n1")
+        PendingNotesStore.presenceForTesting = { f -> if (f.name == held) PendingNotesStore.Presence.ABSENT else null }
+        assertEquals(UnsyncedNotes(1, 1, false, names = setOf("n1.note")), again(held, r).answer)
+        PendingNotesStore.presenceForTesting = null
+    }
+
+    @Test fun `while notes-pending lists, a stopped discard's folder that the listing left out flags the others`() {
+        val folder = saveIn(account("orphan"), "n1", "n2")
+        val shown = read().rows.single().answer!!
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "n2.note") throw IOException("stopped") }
+        assertEquals(PendingNotesStore.DiscardOutcome.NotFinished, opened(folder).discardStore(shown))
+        PendingNotesStore.beforeRemoveForTesting = null
+        // notes-pending lists, but leaves out that folder, which is there and has no account and no known path.
+        PendingNotesStore.listFilesForTesting = { d ->
+            val all = d.listFiles()
+            if (all != null && d.name == "notes-pending") all.filter { it.name != folder }.toTypedArray() else all
+        }
+        val listing = read()
+        assertEquals(listOf(folder), listing.rows.map { it.directory })
+        assertTrue("its row is the Retry", listing.rows.single().stopped)
+        assertTrue("a folder whose discard stopped is there and was left out", listing.othersUnlisted)
     }
 
     @Test fun `reading leaves notes-pending byte for byte and runs no recovery`() {
@@ -504,8 +688,12 @@ class UnsyncedNotesStoresTest {
         val notFinished = Result.NotFinished(folder, "p", shown)
         assertEquals(notFinished, discard(folder, shown, owner = p))
         assertEquals("the permit stays", shown, permitOf(folder))
-        // Gone, but not shown gone while the folder above cannot be listed: it cannot be read right now.
-        val after = read(p).rows.single().answer!!
+        // Gone, but not shown gone while the folder above cannot be listed: lstat shows it absent, but its discard
+        // stopped, so it keeps its row, which is the Retry.
+        val row = read(p).rows.single()
+        assertEquals(folder, row.directory)
+        assertTrue(row.stopped)
+        val after = row.answer!!
         assertFalse(after.listed)
         assertEquals(Text.Unlisted, UnsyncedNotesDiscardPolicy.rowText(after))
         assertEquals("a Retry is not finished either, and is not turned into an acknowledgement", notFinished,

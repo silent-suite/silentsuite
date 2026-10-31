@@ -2186,9 +2186,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
       const sequence = ++subscriptionRequestSequence
       const latest = () => sequence === subscriptionRequestSequence
-      const subRes = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' })
-      if (!current() || !subRes.ok) return false
-      const subData = await subRes.json()
+      const failOwnedExpiryClaim = () => {
+        if (!current() || !latest() || get().user?.id !== refreshData.id) return
+        set({ ...failExpiryClaim(get().trialExpiryRefreshClaim, refreshData.id, owner.epoch, sequence) })
+      }
+      const subRes = await fetch(`${BILLING_API_URL}/subscription`, { credentials: 'include' }).catch(err => {
+        failOwnedExpiryClaim()
+        throw err
+      })
+      if (!current() || !subRes.ok) {
+        failOwnedExpiryClaim()
+        return false
+      }
+      const subData = await subRes.json().catch(err => {
+        failOwnedExpiryClaim()
+        throw err
+      })
       if (!current() || !latest()) return false
       const isAdmin = refreshData.isAdmin === true
       // Only now may a different account replace L. The reset adopts its own epoch into
