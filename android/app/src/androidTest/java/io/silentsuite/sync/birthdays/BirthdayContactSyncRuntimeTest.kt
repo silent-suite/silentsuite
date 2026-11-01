@@ -114,7 +114,9 @@ class BirthdayContactSyncRuntimeTest {
                 val status = SyncStatusStore(context).status(account, SyncStatusStore.Service.CONTACTS)
                 (status.lastTerminalAt ?: 0L) >= startedAt && status.activeAttemptId == null
             }
-            waitUntil("the parent contacts sync to stop running", diagnostics = { syncDiagnostics(account) }) { syncStopped(account) }
+            // The run that recorded the terminal above is no longer executing. Pending is reported in the
+            // timeout diagnostics only: the platform keeps it as a stored status bit (see [syncInactive]).
+            waitUntil("the parent contacts sync to stop running", diagnostics = { syncDiagnostics(account) }) { syncInactive(account) }
 
             // Controls: the parent sync itself completed, with zero address books, for this account generation.
             val status = SyncStatusStore(context).status(account, SyncStatusStore.Service.CONTACTS)
@@ -161,9 +163,11 @@ class BirthdayContactSyncRuntimeTest {
         }
         attempt { fake.releaseAll() }
         attempt { ContentResolver.cancelSync(account, App.addressBooksAuthority) }
+        // No execution may still be running before the account, its cache and the interceptor go. Any
+        // still-scheduled job of the account is then cancelled by the platform when the account is removed.
         attempt {
-            waitUntil("this account's parent contacts sync to be neither running nor pending after cancellation",
-                diagnostics = { syncDiagnostics(account) }) { syncStopped(account) }
+            waitUntil("this account's parent contacts sync to stop running after cancellation",
+                diagnostics = { syncDiagnostics(account) }) { syncInactive(account) }
         }
         attempt { removeAccount(account) }
         attempt {
@@ -185,10 +189,16 @@ class BirthdayContactSyncRuntimeTest {
 
     // ---- fixture ----
 
-    /** No sync of this account is running, and none is pending for the address-books authority. */
-    private fun syncStopped(account: Account) =
-        ContentResolver.getCurrentSyncs().none { it.account == account } &&
-            !ContentResolver.isSyncPending(account, App.addressBooksAuthority)
+    /**
+     * No sync of this account is currently executing for the address-books authority, from the
+     * platform's live active-sync list for this exact endpoint (`ContentService.isSyncActive` →
+     * `SyncStorageEngine.isSyncActive`). `getCurrentSyncs()` is not used for this: without
+     * GET_ACCOUNTS, which this app declares only up to API 22, it returns account-redacted entries,
+     * so filtering it by account proves nothing. `isSyncPending` is not used either: it reads a stored
+     * status bit that the platform recomputes on schedule, cancel and dispatch, not when a run ends,
+     * so it is not a witness that a run is still executing. Both stay visible in [syncDiagnostics].
+     */
+    private fun syncInactive(account: Account) = !ContentResolver.isSyncActive(account, App.addressBooksAuthority)
 
     private fun uploadItem(collection: Collection, name: String, content: String): Item {
         val itemMgr = server.collectionManager.getItemManager(collection)
@@ -228,6 +238,9 @@ class BirthdayContactSyncRuntimeTest {
         }
         val status by lazy { SyncStatusStore(context).status(account, SyncStatusStore.Service.CONTACTS) }
         return listOf(
+            field("getAccountsGranted") {
+                context.checkSelfPermission(Manifest.permission.GET_ACCOUNTS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            },
             field("currentSyncs") { ContentResolver.getCurrentSyncs().count { it.account == account } },
             field("currentAuthorities") { ContentResolver.getCurrentSyncs().filter { it.account == account }.map { it.authority } },
             field("pending") { ContentResolver.isSyncPending(account, authority) },
