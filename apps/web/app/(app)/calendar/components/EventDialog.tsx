@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { LabelEditor } from '@/app/components/LabelEditor'
@@ -768,7 +769,11 @@ export function EventDialog({
   const sectionTitleClass = 'text-[11px] font-semibold uppercase tracking-[0.16em] text-[rgb(var(--muted))]'
   const iconClass = 'h-4 w-4 shrink-0 text-emerald-500/80'
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  // Rendered into the body: the calendar page's `main` is its own stacking context,
+  // so inside it the dialog painted under the bottom nav and the nav stayed tappable.
+  return createPortal(
     <>
       {/* Backdrop */}
       <div
@@ -848,7 +853,7 @@ export function EventDialog({
                   className={`w-full ${fieldClass} text-base font-medium ${disabledClass}`}
                 />
 
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                   <div className="flex items-center gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2.5">
                     <MapPin className={iconClass} />
                     <input
@@ -1190,6 +1195,7 @@ export function EventDialog({
           onCancel={handleScopeCancel}
         />
       )}
-    </>
+    </>,
+    document.body,
   )
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
@@ -776,7 +777,8 @@ function NotesPageBody() {
         </div>
       </div>
 
-      {confirmDelete && selectedNote && (
+      {/* In the body so it paints above the bottom nav. */}
+      {confirmDelete && selectedNote && typeof document !== 'undefined' && createPortal(
         <ConfirmDialog
           title={t('deleteConfirmTitle')}
           message={t('deleteConfirmMessage', { title: selectedNote.title.trim() || t('untitled') })}
@@ -786,7 +788,8 @@ function NotesPageBody() {
             void deleteNote(selectedNote.id)
           }}
           onCancel={() => setConfirmDelete(false)}
-        />
+        />,
+        document.body,
       )}
 
       <MobileCollectionSheet

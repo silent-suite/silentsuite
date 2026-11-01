@@ -114,7 +114,7 @@ export function CalendarListPanel() {
         </span>
         <button
           onClick={() => setIsAdding(true)}
-          className="rounded p-0.5 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
+          className="rounded p-0.5 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] transition-colors"
           aria-label="Add calendar"
         >
           <Plus className="h-3.5 w-3.5" />

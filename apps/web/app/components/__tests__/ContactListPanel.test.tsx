@@ -71,4 +71,12 @@ describe('ContactListPanel', () => {
     expect(mockContactListState.toggleVisibility).toHaveBeenCalledWith('contacts-2')
     expect(mockContactListState.setActiveList).toHaveBeenCalledWith('contacts-2')
   })
+
+  it('gives the add button a mobile-only 44px hit area', () => {
+    render(<ContactListPanel />)
+    const add = screen.getByRole('button', { name: 'Add address book' })
+    expect(add.className).toContain('max-md:min-h-[44px]')
+    expect(add.className).toContain('max-md:min-w-[44px]')
+    expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
 })

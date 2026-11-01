@@ -114,7 +114,7 @@ class BirthdayContactSyncRuntimeTest {
                 val status = SyncStatusStore(context).status(account, SyncStatusStore.Service.CONTACTS)
                 (status.lastTerminalAt ?: 0L) >= startedAt && status.activeAttemptId == null
             }
-            waitUntil("the parent contacts sync to stop running") { syncStopped(account) }
+            waitUntil("the parent contacts sync to stop running", diagnostics = { syncDiagnostics(account) }) { syncStopped(account) }
 
             // Controls: the parent sync itself completed, with zero address books, for this account generation.
             val status = SyncStatusStore(context).status(account, SyncStatusStore.Service.CONTACTS)
@@ -161,7 +161,10 @@ class BirthdayContactSyncRuntimeTest {
         }
         attempt { fake.releaseAll() }
         attempt { ContentResolver.cancelSync(account, App.addressBooksAuthority) }
-        attempt { waitUntil("this account's parent contacts sync to be neither running nor pending after cancellation") { syncStopped(account) } }
+        attempt {
+            waitUntil("this account's parent contacts sync to be neither running nor pending after cancellation",
+                diagnostics = { syncDiagnostics(account) }) { syncStopped(account) }
+        }
         attempt { removeAccount(account) }
         attempt {
             EtebaseLocalCache.clearUserCache(context, account.name)
@@ -211,13 +214,56 @@ class BirthdayContactSyncRuntimeTest {
         assertFalse("the account is still present after its confirmed removal", account in manager.getAccountsByType(account.type))
     }
 
-    private fun waitUntil(description: String, timeoutMillis: Long = 60_000, predicate: () -> Boolean) {
+    /**
+     * Content-free state of this account's platform syncs and its CONTACTS status, for a sync-stop
+     * timeout message only: counts, authorities, booleans, periods, times and a category. No account
+     * name, identifier, request id, session or payload. A query that fails reports only its class.
+     */
+    private fun syncDiagnostics(account: Account): String {
+        val authority = App.addressBooksAuthority
+        fun field(name: String, query: () -> Any?): String = try {
+            "$name=${query()}"
+        } catch (t: Throwable) {
+            "$name=unavailable(${t.javaClass.simpleName})"
+        }
+        val status by lazy { SyncStatusStore(context).status(account, SyncStatusStore.Service.CONTACTS) }
+        return listOf(
+            field("currentSyncs") { ContentResolver.getCurrentSyncs().count { it.account == account } },
+            field("currentAuthorities") { ContentResolver.getCurrentSyncs().filter { it.account == account }.map { it.authority } },
+            field("pending") { ContentResolver.isSyncPending(account, authority) },
+            field("active") { ContentResolver.isSyncActive(account, authority) },
+            field("periodicSyncs") { ContentResolver.getPeriodicSyncs(account, authority).size },
+            field("periodSeconds") { ContentResolver.getPeriodicSyncs(account, authority).map { it.period } },
+            field("syncable") { ContentResolver.getIsSyncable(account, authority) },
+            field("syncAutomatically") { ContentResolver.getSyncAutomatically(account, authority) },
+            field("contactsLastTerminalAt") { status.lastTerminalAt },
+            field("contactsAttemptOpen") { status.activeAttemptId != null },
+            field("contactsFailureCategory") { status.lastFailureCategory },
+        ).joinToString(" ")
+    }
+
+    private fun waitUntil(
+        description: String,
+        timeoutMillis: Long = 60_000,
+        diagnostics: (() -> String)? = null,
+        predicate: () -> Boolean,
+    ) {
         val deadline = SystemClock.uptimeMillis() + timeoutMillis
         while (SystemClock.uptimeMillis() < deadline) {
             if (predicate()) return
             SystemClock.sleep(50)
         }
-        assertTrue("Timed out waiting for $description", predicate())
+        val done = predicate()
+        if (!done && diagnostics != null) {
+            // Computed once, at the deadline; a diagnostics failure never replaces the timeout itself.
+            val detail = try {
+                diagnostics()
+            } catch (t: Throwable) {
+                "diagnostics unavailable (${t.javaClass.simpleName})"
+            }
+            assertTrue("Timed out waiting for $description [$detail]", false)
+        }
+        assertTrue("Timed out waiting for $description", done)
     }
 
     companion object {

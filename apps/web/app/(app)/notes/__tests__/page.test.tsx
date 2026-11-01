@@ -739,4 +739,35 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Any/ }))
     expect(screen.getByTestId('notes-experimental-label')).toHaveTextContent('Experimental · Web app only')
   })
+
+  // #295: the mobile bottom nav sits outside the page's `main`, which is its own stacking context, so a
+  // confirmation rendered inside the page paints under the nav and the nav stays tappable while it is open.
+  it('portals the note delete confirmation to <body> at its call site; cancel keeps the note and confirm deletes once', async () => {
+    loaded([note('note-1', { title: 'Doomed' })])
+    const { container } = renderWithIntl(<NotesPage />)
+    fireEvent.click(screen.getByRole('button', { name: /Doomed/ }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete note' }))
+    const dialog = screen.getByRole('dialog', { name: 'Delete note?' })
+    expect(within(dialog).getByRole('button', { name: 'Delete note' })).toBeInTheDocument()
+
+    expect(container.contains(dialog), 'confirmation is rendered inside the page container').toBe(false)
+    let outer: HTMLElement | null = null
+    for (let node: HTMLElement | null = dialog; node && node !== document.body; node = node.parentElement) {
+      if (node.classList.contains('fixed')) outer = node
+    }
+    expect(outer, 'fixed overlay wrapper').not.toBeNull()
+    expect(outer!.parentElement, 'overlay wrapper is a direct child of <body>').toBe(document.body)
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Delete note?' })).not.toBeInTheDocument()
+    expect(storeMock.noteState.deleteNote).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Doomed')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete note' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete note?' })).getByRole('button', { name: 'Delete note' }))
+    expect(screen.queryByRole('dialog', { name: 'Delete note?' })).not.toBeInTheDocument()
+    await vi.waitFor(() => expect(storeMock.noteState.deleteNote).toHaveBeenCalledTimes(1))
+    expect(storeMock.noteState.deleteNote).toHaveBeenCalledWith('note-1')
+  })
 })
