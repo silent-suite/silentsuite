@@ -22,10 +22,9 @@ import java.nio.charset.CodingErrorAction
 import java.util.TreeMap
 
 /**
- * The Birthdays calendar reconciler: the fenced write step and one basic fresh-read pass
- * ([reconcile]). Removing duplicates, retiring extra calendars, cleaning retired calendars, the
- * post-commit source check, retries and the trigger controller are not here yet; a pass that
- * meets one of them reports [RunStatus.PENDING] or [RunStatus.SKIPPED] instead of [RunStatus.DONE].
+ * The Birthdays calendar reconciler: the fenced write step and one fresh-read pass ([reconcile]),
+ * including duplicate copies, retirement of extra active calendars and repair of retired ones.
+ * The post-commit source check, reruns, coalescing and the trigger controller are not here yet.
  */
 object BirthdayReconciler {
     enum class WriteOutcome { COMMITTED, CONFLICT, UNKNOWN, SKIPPED }
@@ -71,20 +70,29 @@ object BirthdayReconciler {
      *
      * Everything is read fresh and completely before anything is written:
      * - the collection inventory (calendars and address books, deleted ones left out);
-     * - the destination (C3): the calendar with the active marker, Admin access and a fully paged
-     *   member list that is exactly [username]; none is [RunStatus.SKIPPED], and a calendar is never
-     *   created or adopted by its name;
+     * - the active destinations (C3): calendars with the active marker, Admin access and a fully
+     *   paged member list that is exactly [username]; the one with the smallest uid is canonical;
+     * - the retired calendars this user can write to (F3: Admin or ReadWrite, whatever the members);
+     * - the generated items (parsed `ss-bday1-` UID) of all of these;
      * - the source (C2): every listed address book at any access level, every item fully paged.
      * A listing that does not finish, or content that cannot be decrypted or is not UTF-8, ends the
      * pass with [RunStatus.SKIPPED] and nothing written: it is never evidence that something is gone.
+     * Without an active or a writable retired calendar the pass is [RunStatus.SKIPPED]; a calendar is
+     * never created or adopted by its name.
      *
-     * Then missing events are created, a generated event (parsed `ss-bday1-` UID) whose fields
-     * differ from its contact's is rewritten in place (same storage item, canonical text, new
-     * mtime), and generated events whose contact is gone are deleted, in [writeFenced] chunks fenced
-     * on the calendar root as this pass read it. Other items and calendars are never touched. A
-     * conflict or unknown write outcome is [RunStatus.PENDING] (nothing is resent); so is a pass that
-     * needs a duplicate removal or a retirement, which are not handled yet. [RunResult.written]
-     * lists the calendar whenever a write was attempted.
+     * Then, in this order:
+     * - F2/F4: each other active calendar is retired with a conditional calendar update
+     *   (`CollectionManager.transaction`), its retired state and new root are read back, and only
+     *   then are its generated items deleted, fenced on that new root;
+     * - F3: generated leftovers in retired calendars are deleted, fenced on each root as read;
+     * - in the canonical calendar: missing events are created; of several copies of one wanted event
+     *   the one with the smallest storage uid is kept and rewritten in place if its fields differ
+     *   (same storage item, canonical text, new mtime) and the others are deleted; generated events
+     *   whose contact is gone are deleted; all fenced on its root as read.
+     * Item writes go in [writeFenced] chunks. Ordinary items and calendars are never touched, and
+     * nothing is generated into a retired calendar. A conflict or unknown outcome of any write is
+     * [RunStatus.PENDING] and nothing is resent. [RunResult.written] lists every calendar a write
+     * was attempted on. This is one pass: there is no post-commit source check or rerun yet.
      */
     fun reconcile(etebase: com.etebase.client.Account, username: String): RunResult {
         val written = LinkedHashSet<String>()
@@ -121,34 +129,37 @@ object BirthdayReconciler {
             }
         }
 
-        // C3: marked calendars that are Admin and whose complete member list is exactly this user.
+        // C3 for the active destination: Admin, and a complete member list that is exactly this user.
+        // F3 for repair: every retired calendar this user can write to (Admin or ReadWrite), whatever
+        // its members; no member listing is asked of it.
         val active = ArrayList<Collection>()
-        var retired = false
+        val retired = ArrayList<Collection>()
         for (calendar in calendars) {
             val content = readBytes { calendar.content } ?: throw Stop(RunStatus.SKIPPED, "unreadable-calendar")
-            val state = BirthdayCalendar.markerState(content) ?: continue
-            if (calendar.accessLevel != CollectionAccessLevel.Admin) continue
-            val memberManager = colMgr.getMemberManager(calendar)
-            val members = paged("incomplete-members", PagedListingGuard.MAX_COLLECTION_PAGES) { cursor ->
-                memberManager.list(FetchOptions().iterator(cursor)).let { page -> Page(page.data.map { it.username }, page.stoken, page.isDone) }
+            val state = BirthdayCalendar.markerState(content)
+            if (state == BirthdayCalendar.MarkerState.RETIRED) {
+                if (calendar.accessLevel == CollectionAccessLevel.Admin || calendar.accessLevel == CollectionAccessLevel.ReadWrite) {
+                    retired += calendar
+                }
+            } else if (state == BirthdayCalendar.MarkerState.ACTIVE && calendar.accessLevel == CollectionAccessLevel.Admin) {
+                val memberManager = colMgr.getMemberManager(calendar)
+                val members = paged("incomplete-members", PagedListingGuard.MAX_COLLECTION_PAGES) { cursor ->
+                    memberManager.list(FetchOptions().iterator(cursor)).let { page -> Page(page.data.map { it.username }, page.stoken, page.isDone) }
+                }
+                if (members == listOf(username)) active += calendar
             }
-            if (members != listOf(username)) continue
-            if (state == BirthdayCalendar.MarkerState.ACTIVE) active += calendar else retired = true
         }
-        if (active.isEmpty()) throw Stop(RunStatus.SKIPPED, "no-active-calendar")
-        if (active.size > 1) throw Stop(RunStatus.PENDING, "duplicate-active-calendars")
-        val canonical = active.single()
+        if (active.isEmpty() && retired.isEmpty()) throw Stop(RunStatus.SKIPPED, "no-active-calendar")
+        // F4: the active calendar with the smallest uid stays canonical; the others are retired.
+        active.sortBy { it.uid }
+        val canonical = active.firstOrNull()
+        val duplicates = active.drop(1)
 
-        // The destination, read completely: generated items by their parsed event UID.
-        val itemMgr = colMgr.getItemManager(canonical)
-        val generated = LinkedHashMap<String, MutableList<Pair<Item, BirthdayCalendar.EventFields>>>()
-        for (item in listItems(itemMgr, "incomplete-calendar")) {
-            if (item.isDeleted) continue
-            val text = readText { item.content } ?: throw Stop(RunStatus.SKIPPED, "unreadable-calendar-item")
-            val fields = BirthdayCalendar.eventFields(text) ?: continue
-            if (!GENERATED_UID.matches(fields.uid)) continue
-            generated.getOrPut(fields.uid) { ArrayList() } += item to fields
-        }
+        // Every calendar this pass may write, read completely before anything is written.
+        val itemMgr = canonical?.let { colMgr.getItemManager(it) }
+        val generated = itemMgr?.let { generatedItems(it) } ?: LinkedHashMap()
+        val duplicateLeftovers = duplicates.map { calendar -> calendar to generatedItems(colMgr.getItemManager(calendar)) }
+        val retiredLeftovers = retired.map { calendar -> calendar to generatedItems(colMgr.getItemManager(calendar)) }
 
         // C2: every listed address book, every contact, read completely.
         val wanted = TreeMap<String, BirthdayCalendar.BirthdayEvent>()
@@ -162,52 +173,121 @@ object BirthdayReconciler {
             }
         }
 
-        val deferred = LinkedHashSet<String>()
-        if (retired) deferred += "retired-calendars-deferred"
+        // The whole plan is built locally before the first write, so metadata that cannot be read
+        // fails the pass with nothing written.
         val now = System.currentTimeMillis()
         val changes = ArrayList<Item>()
         for ((uid, copies) in generated) {
             val event = wanted[uid]
+            // The copy with the smallest storage uid is kept, as core and Bridge keep it.
+            val ordered = copies.sortedBy { it.first.uid }
             if (event == null) {
                 // Its contact is gone from a complete source: every copy goes.
-                for ((item, _) in copies) {
+                for ((item, _) in ordered) {
                     item.delete()
                     changes += item
                 }
-            } else if (copies.size > 1) {
-                deferred += "duplicate-events-deferred"
-            } else if (copies[0].second != BirthdayCalendar.fieldsOf(event)) {
-                // The same storage item gets the canonical text: no delete and recreate, no second copy.
-                // Its existing metadata is kept except for the mtime; metadata that cannot be read
-                // fails the pass before anything is written.
-                val item = copies[0].first
-                val meta = item.meta
-                meta.mtime = now
-                item.setContent(BirthdayCalendar.eventIcs(event).toByteArray(Charsets.UTF_8))
-                item.meta = meta
+                continue
+            }
+            for ((item, _) in ordered.drop(1)) {
+                item.delete()
                 changes += item
             }
-        }
-        for (event in wanted.values) {
-            if (event.uid in generated) continue
-            val meta = ItemMetadata().apply {
-                name = event.uid
-                mtime = now
+            val (kept, keptFields) = ordered[0]
+            if (keptFields != BirthdayCalendar.fieldsOf(event)) {
+                // The same storage item gets the canonical text: no delete and recreate, no second copy.
+                // Its existing metadata is kept except for the mtime.
+                val meta = kept.meta
+                meta.mtime = now
+                kept.setContent(BirthdayCalendar.eventIcs(event).toByteArray(Charsets.UTF_8))
+                kept.meta = meta
+                changes += kept
             }
-            changes += itemMgr.create(meta, BirthdayCalendar.eventIcs(event).toByteArray(Charsets.UTF_8))
         }
+        if (itemMgr != null) {
+            for (event in wanted.values) {
+                if (event.uid in generated) continue
+                val meta = ItemMetadata().apply {
+                    name = event.uid
+                    mtime = now
+                }
+                changes += itemMgr.create(meta, BirthdayCalendar.eventIcs(event).toByteArray(Charsets.UTF_8))
+            }
+        }
+        // Retirement and repair only ever delete generated items; nothing is created there.
+        val duplicateDeletes = duplicateLeftovers.map { (calendar, leftovers) -> calendar to deleteAll(leftovers) }
+        val retiredDeletes = retiredLeftovers.map { (calendar, leftovers) -> calendar to deleteAll(leftovers) }
 
-        for (chunk in changes.chunked(MAX_CHUNK)) {
+        // F2: each extra active calendar is retired with a conditional calendar update first, then
+        // loses its generated items, fenced on the new root read back from the server.
+        for ((calendar, deletes) in duplicateDeletes) {
+            val previousRoot = calendar.etag
+            // Recorded before the write: an uncertain update may still have landed.
+            written += calendar.uid
+            calendar.setContent(RETIRED_MARKER)
+            try {
+                colMgr.transaction(calendar)
+            } catch (e: ConflictException) {
+                throw Stop(RunStatus.PENDING, "conflict")
+            } catch (e: ConnectionException) {
+                throw Stop(RunStatus.PENDING, "write-outcome-unknown")
+            } catch (e: TemporaryServerErrorException) {
+                throw Stop(RunStatus.PENDING, "write-outcome-unknown")
+            } catch (e: ServerErrorException) {
+                throw Stop(RunStatus.PENDING, "write-outcome-unknown")
+            }
+            val fresh = colMgr.fetch(calendar.uid)
+            val freshContent = readBytes { fresh.content }
+            if (freshContent == null || BirthdayCalendar.markerState(freshContent) != BirthdayCalendar.MarkerState.RETIRED ||
+                fresh.etag == previousRoot) {
+                throw Stop(RunStatus.PENDING, "retirement-unconfirmed")
+            }
+            commitFenced(colMgr.getItemManager(fresh), fresh, deletes, written)
+        }
+        // F3: generated leftovers in retired calendars, fenced on each calendar's root as read.
+        for ((calendar, deletes) in retiredDeletes) {
+            commitFenced(colMgr.getItemManager(calendar), calendar, deletes, written)
+        }
+        if (canonical == null || itemMgr == null) {
+            // No active calendar: repair only, and nothing is generated anywhere.
+            return if (written.isEmpty()) RunResult(RunStatus.SKIPPED, emptyList(), "no-active-calendar")
+            else RunResult(RunStatus.DONE, written.sorted())
+        }
+        commitFenced(itemMgr, canonical, changes, written)
+        return RunResult(RunStatus.DONE, written.sorted())
+    }
+
+    /** The contract's retired marker, in its byte form. */
+    private val RETIRED_MARKER = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"retired\"}".toByteArray(Charsets.UTF_8)
+
+    /** A calendar's live generated items by parsed event UID, read completely; unreadable content stops the pass. */
+    private fun generatedItems(itemMgr: ItemManager): LinkedHashMap<String, MutableList<Pair<Item, BirthdayCalendar.EventFields>>> {
+        val generated = LinkedHashMap<String, MutableList<Pair<Item, BirthdayCalendar.EventFields>>>()
+        for (item in listItems(itemMgr, "incomplete-calendar")) {
+            if (item.isDeleted) continue
+            val text = readText { item.content } ?: throw Stop(RunStatus.SKIPPED, "unreadable-calendar-item")
+            val fields = BirthdayCalendar.eventFields(text) ?: continue
+            if (!GENERATED_UID.matches(fields.uid)) continue
+            generated.getOrPut(fields.uid) { ArrayList() } += item to fields
+        }
+        return generated
+    }
+
+    /** Marks every generated item for deletion, locally. */
+    private fun deleteAll(leftovers: Map<String, List<Pair<Item, BirthdayCalendar.EventFields>>>): List<Item> =
+        leftovers.values.flatten().map { (item, _) -> item.also { it.delete() } }
+
+    /** Writes [items] into [calendar] in [writeFenced] chunks; a conflict or unknown outcome stops the pass as pending. */
+    private fun commitFenced(itemMgr: ItemManager, calendar: Collection, items: List<Item>, written: MutableSet<String>) {
+        for (chunk in items.chunked(MAX_CHUNK)) {
             // Recorded before the write: an uncertain write may still have landed.
-            written += canonical.uid
-            when (writeFenced(itemMgr, canonical, chunk)) {
+            written += calendar.uid
+            when (writeFenced(itemMgr, calendar, chunk)) {
                 WriteOutcome.COMMITTED, WriteOutcome.SKIPPED -> Unit
                 WriteOutcome.CONFLICT -> throw Stop(RunStatus.PENDING, "conflict")
                 WriteOutcome.UNKNOWN -> throw Stop(RunStatus.PENDING, "write-outcome-unknown")
             }
         }
-        if (deferred.isNotEmpty()) return RunResult(RunStatus.PENDING, written.sorted(), deferred.joinToString(","))
-        return RunResult(RunStatus.DONE, written.sorted())
     }
 
     private fun listItems(itemMgr: ItemManager, reason: String): List<Item> =
