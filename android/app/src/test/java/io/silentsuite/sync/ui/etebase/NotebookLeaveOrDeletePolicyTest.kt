@@ -155,17 +155,17 @@ class NotebookLeaveOrDeletePolicyTest {
         fun failed(failure: Throwable) =
             listOf(Run(two, discard = { throw failure }).remove(two), Run(two, discard = { throw failure }).again(two))
         // A uid that is not an Etebase uid is refused after any recovery that is owed and before the notebook is
-        // counted. An Error, such as running out of memory in the recovery that runs before the count, ends the attempt
-        // the same way instead of crashing the app; the store's discard passes on none once its loop began.
+        // counted.
         for (failure in listOf(IOException("not listed"), IllegalStateException("x"),
-                IllegalArgumentException("not an Etebase uid"), OutOfMemoryError("a large entry"),
-                StackOverflowError())) {
+                IllegalArgumentException("not an Etebase uid"))) {
             assertEquals("$failure", List(2) { Ended.DiscardFailed(known = true) }, failed(failure))
         }
         // A store that a clear or a whole-store discard closed refuses before this call deletes anything, but that
-        // clear may have deleted the notebook's text.
+        // clear may have deleted the notebook's text. An Error, such as running out of memory, may come after some of
+        // the text went: the store's discard gives Partly for a throw once its loop began, and memory can run out
+        // again while it makes that Partly. It ends the attempt the same way instead of crashing the app.
         for (failure in listOf(PendingNotesStore.Cleared(), RuntimeException("anything else"),
-                UnsupportedOperationException("or this"))) {
+                UnsupportedOperationException("or this"), OutOfMemoryError("a large entry"), StackOverflowError())) {
             assertEquals("$failure", List(2) { Ended.DiscardFailed(known = false) }, failed(failure))
         }
     }

@@ -1573,7 +1573,7 @@ internal class PendingNotesStore private constructor(
      * It records no permit and no acknowledgement, hands out no version, and never closes or drops the instance, so
      * what it keeps is held by the next push step, and the notebook copy goes with the next prune. Other notebooks'
      * entries, files that cannot be placed, landed records and the counter stay. Anything it throws comes before an
-     * entry went, unless memory runs out again while that last [NotebookDiscard.Partly] is made.
+     * entry went, except an Error: memory can run out again while that last [NotebookDiscard.Partly] is made.
      */
     fun discardNotebook(notebookUid: String, confirmed: UnsyncedNotes): NotebookDiscard = locked {
         val uid = checkedUid(notebookUid)

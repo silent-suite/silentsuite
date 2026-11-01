@@ -75,10 +75,10 @@ internal object NotebookLeaveOrDelete {
      * notebook's text, whether it stopped or finished, so the attempt is never said to have deleted nothing. Any other
      * IllegalStateException, an IOException, or an IllegalArgumentException of a notebook uid that is not an Etebase
      * uid, which is checked after any recovery that is owed and before the notebook is counted, comes before any of
-     * the notebook's text went; any other exception may come from anywhere. An Error, such as running out of memory in
-     * the recovery that runs first, comes before any went as well, since [PendingNotesStore.discardNotebook] passes on
-     * no throw once its loop began and gives [NotebookDiscard.Partly] instead; it ends the attempt like a refusal, so
-     * a leave or delete that already went through on the server never ends in a crash.
+     * the notebook's text went; any other exception may come from anywhere. An Error, such as running out of memory,
+     * may come after some of it went: [PendingNotesStore.discardNotebook] gives [NotebookDiscard.Partly] for a throw
+     * once its loop began, and memory can run out again while it makes that Partly. So an Error ends the attempt
+     * like a closed store's refusal, and a leave or delete that went through on the server never ends in a crash.
      */
     private inline fun discarded(discard: () -> NotebookDiscard): Ended = try {
         Ended.Removed(discard())
@@ -93,7 +93,7 @@ internal object NotebookLeaveOrDelete {
     } catch (e: Exception) {
         Ended.DiscardFailed(known = false)
     } catch (e: Error) {
-        Ended.DiscardFailed(known = true)
+        Ended.DiscardFailed(known = false)
     }
 
     // ---- Android glue ----
