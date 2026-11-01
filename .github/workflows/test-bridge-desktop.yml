@@ -1,0 +1,107 @@
+name: Test Bridge desktop tracers (source)
+
+# Source tests for the #171 desktop work, one tracer at a time. T1a: one Bridge
+# server per data directory (bridge/tests/test_instance_lock.py). No build,
+# installer, release, credential, account, network sync or autostart state.
+
+on:
+  push:
+    branches: [feat/bridge-gui-171]
+    paths:
+      - 'bridge/src/silentsuite_bridge/**'
+      - 'bridge/tests/test_instance_lock.py'
+      - 'bridge/tests/conftest.py'
+      - 'bridge/pyproject.toml'
+      - '.github/workflows/test-bridge-desktop.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-desktop-tracers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  t1a:
+    name: T1a instance lock (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+            rust: "1.63.0"
+            etebase_git: false
+          - runner: macos-15
+            label: macos-arm64
+            rust: "1.96.0"
+            etebase_git: true
+          - runner: windows-latest
+            label: windows-x86_64
+            rust: "1.63.0"
+            etebase_git: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # etebase-py 0.31.5 uses cpython 0.7.x which doesn't support Python 3.12+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Install dependencies
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ "${{ matrix.etebase_git }}" = "true" ]; then
+            # Mirrors test-bridge-macos.yml: no PyPI etebase arm64 wheel.
+            pip install "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+          fi
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest
+
+      # A failure here is a missing prerequisite, not a behavioural RED.
+      - name: Check test prerequisites
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c "import pytest, radicale, appdirs; import silentsuite_bridge.__main__, silentsuite_bridge.config; print('prerequisites ok')"
+
+      - name: Run T1a instance-lock tests
+        timeout-minutes: 10
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/t1a"
+          python -m pytest tests/test_instance_lock.py -v --tb=long -p no:cacheprovider \
+            --junitxml="$RUNNER_TEMP/t1a/junit.xml" 2>&1 | tee "$RUNNER_TEMP/t1a/pytest.txt"
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t1a/pytest.txt"
+          exit "$status"
+
+      - name: Upload T1a receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t1a-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/t1a/junit.xml
+            ${{ runner.temp }}/t1a/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
