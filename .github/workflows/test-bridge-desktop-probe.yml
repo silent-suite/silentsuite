@@ -1,0 +1,179 @@
+name: Test Bridge desktop T0 probe (non-product)
+
+# Throwaway capability probe for #171. It runs a synthetic Qt WebEngine window
+# against two ephemeral loopback fixture servers, from source and as a
+# PyInstaller-frozen probe, on hosted Linux, macOS and Windows runners. It
+# builds nothing that ships, installs no Bridge, touches no autostart or
+# service state, uses no credentials and publishes nothing.
+
+on:
+  push:
+    branches: [feat/bridge-gui-171]
+    paths:
+      - 'bridge/tests/desktop_smoke/probe.py'
+      - 'bridge/tests/desktop_smoke/requirements.txt'
+      - 'bridge/tests/desktop_smoke/README.md'
+      - '.github/workflows/test-bridge-desktop-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-desktop-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: T0 probe (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+            exe: t0-probe
+          - runner: macos-15
+            label: macos-arm64
+            exe: t0-probe
+          - runner: macos-15-intel
+            label: macos-x86_64
+            exe: t0-probe
+          - runner: windows-latest
+            label: windows-x86_64
+            exe: t0-probe.exe
+    env:
+      # Probe-only rendering flag for GPU-less hosted runners. The Chromium
+      # sandbox is deliberately NOT disabled; a sandbox failure must surface.
+      QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
+      PYTHONDONTWRITEBYTECODE: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install Linux display and Qt runtime libraries (runner only)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          # Recorded list; part of what T0 establishes for later .deb Depends.
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xkb1 libegl1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libxkbfile1 libasound2
+          dpkg-query -W -f='${Package} ${Version}\n' xvfb libnss3 libxcb-cursor0 libegl1
+
+      - name: Install probe dependencies (job-local virtual environment)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/t0-venv"
+          if [ "$RUNNER_OS" = "Windows" ]; then PY="$RUNNER_TEMP/t0-venv/Scripts/python.exe"; else PY="$RUNNER_TEMP/t0-venv/bin/python"; fi
+          echo "T0_PY=$PY" >> "$GITHUB_ENV"
+          "$PY" -m pip install --upgrade pip
+          "$PY" -m pip install -r bridge/tests/desktop_smoke/requirements.txt
+          "$PY" -m pip show PySide6 | sed -n '1,2p'
+
+      - name: Prepare isolated probe directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/t0-isolated"
+          rm -rf "$root"
+          mkdir -p "$root/home" "$root/tmp" "$root/xdg-config" "$root/xdg-data" "$root/xdg-cache" "$RUNNER_TEMP/t0-results"
+          echo "T0_ROOT=$root" >> "$GITHUB_ENV"
+
+      # The probe scans the WHOLE isolated root (HOME, TMP and XDG dirs), not
+      # just HOME, so browser temp files are inside the marker scan.
+      - name: Run probe from source
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/t0-results/source.json"
+          probe=(bridge/tests/desktop_smoke/probe.py --mode source --out "$out" --isolated-root "$T0_ROOT")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            HOME="$T0_ROOT/home" TMPDIR="$T0_ROOT/tmp" XDG_CONFIG_HOME="$T0_ROOT/xdg-config" \
+            XDG_DATA_HOME="$T0_ROOT/xdg-data" XDG_CACHE_HOME="$T0_ROOT/xdg-cache" \
+              xvfb-run -a -s "-screen 0 1280x800x24" "$T0_PY" "${probe[@]}"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            HOME="$T0_ROOT/home" TMPDIR="$T0_ROOT/tmp" "$T0_PY" "${probe[@]}"
+          else
+            TMP="$T0_ROOT/tmp" TEMP="$T0_ROOT/tmp" "$T0_PY" "${probe[@]}"
+          fi
+          rc=$?
+          case "$rc" in
+            0) echo "T0 source probe: PASS" ;;
+            1) echo "::error::T0 source probe: gate failed or timed out (see source.json)" ;;
+            2) echo "::error::T0 source probe: prerequisite missing (PySide6/Qt WebEngine import)" ;;
+            *) echo "::error::T0 source probe: crashed before reporting (exit $rc); last stage is in source.json" ;;
+          esac
+          [ -f "$out" ] && cat "$out"
+          exit "$rc"
+
+      - name: Freeze probe with PyInstaller (version recorded, not pinned)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Neighbouring Bridge workflows install PyInstaller unpinned; no verified
+          # PySide6-6.12-compatible pin was available. The exact version is printed.
+          "$T0_PY" -m pip install pyinstaller
+          "$T0_PY" -m PyInstaller --version
+          "$T0_PY" -m PyInstaller --noconfirm --onedir --name t0-probe \
+            --distpath "$RUNNER_TEMP/t0-dist" --workpath "$RUNNER_TEMP/t0-build" \
+            --specpath "$RUNNER_TEMP/t0-spec" bridge/tests/desktop_smoke/probe.py
+
+      - name: Run frozen probe
+        if: ${{ !cancelled() }}
+        timeout-minutes: 6
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/t0-results/frozen.json"
+          exe="$RUNNER_TEMP/t0-dist/t0-probe/${{ matrix.exe }}"
+          if [ ! -f "$exe" ]; then echo "::error::frozen probe executable missing"; exit 1; fi
+          # Fresh isolated root so nothing from the source run is rescanned.
+          rm -rf "$T0_ROOT"
+          mkdir -p "$T0_ROOT/home" "$T0_ROOT/tmp" "$T0_ROOT/xdg-config" "$T0_ROOT/xdg-data" "$T0_ROOT/xdg-cache"
+          args=(--mode frozen --out "$out" --isolated-root "$T0_ROOT")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            HOME="$T0_ROOT/home" TMPDIR="$T0_ROOT/tmp" XDG_CONFIG_HOME="$T0_ROOT/xdg-config" \
+            XDG_DATA_HOME="$T0_ROOT/xdg-data" XDG_CACHE_HOME="$T0_ROOT/xdg-cache" \
+              xvfb-run -a -s "-screen 0 1280x800x24" "$exe" "${args[@]}"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            HOME="$T0_ROOT/home" TMPDIR="$T0_ROOT/tmp" "$exe" "${args[@]}"
+          else
+            TMP="$T0_ROOT/tmp" TEMP="$T0_ROOT/tmp" "$exe" "${args[@]}"
+          fi
+          rc=$?
+          case "$rc" in
+            0) echo "T0 frozen probe: PASS" ;;
+            1) echo "::error::T0 frozen probe: gate failed or timed out (see frozen.json)" ;;
+            2) echo "::error::T0 frozen probe: prerequisite missing in frozen bundle" ;;
+            *) echo "::error::T0 frozen probe: crashed before reporting (exit $rc); last stage is in frozen.json" ;;
+          esac
+          [ -f "$out" ] && cat "$out"
+          exit "$rc"
+
+      - name: Upload probe results (JSON only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t0-probe-${{ matrix.label }}
+          path: ${{ runner.temp }}/t0-results/*.json
+          if-no-files-found: warn
+          retention-days: 7
