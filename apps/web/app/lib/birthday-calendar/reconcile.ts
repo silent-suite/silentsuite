@@ -183,17 +183,22 @@ async function reconcileOnce(input: {
   for (const calendar of calendars) {
     if (calendar.content === null) return failed('unreadable-calendar')
     const marker = parseBirthdayMarker(calendar.content)
-    if ((marker === 'active' || marker === 'retired') && calendar.accessLevel === 'admin' && !calendar.membersComplete) {
+    // C3 membership is checked for the active destination only; retired repair needs write access, not members.
+    if (marker === 'active' && calendar.accessLevel === 'admin' && !calendar.membersComplete) {
       return failed('incomplete-members')
     }
   }
 
   const destinations = calendars.filter((calendar) => {
     const marker = parseBirthdayMarker(calendar.content)
-    return (marker === 'active' || marker === 'retired')
-      && calendar.accessLevel === 'admin'
-      && calendar.membersComplete
-      && isOnlyMember(calendar.members, input.username)
+    // C3: the active destination is Admin with a complete member list of exactly this user.
+    if (marker === 'active') {
+      return calendar.accessLevel === 'admin'
+        && calendar.membersComplete
+        && isOnlyMember(calendar.members, input.username)
+    }
+    // F3: every retired calendar the user can write to loses its generated items; nothing is created there.
+    return marker === 'retired' && (calendar.accessLevel === 'admin' || calendar.accessLevel === 'readWrite')
   })
 
   const sourceTokens: BirthdaySourceTokens = { inventoryToken: inventory.inventoryToken, books: [] }
