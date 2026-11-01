@@ -520,6 +520,92 @@ class BirthdayReconciliationRuntimeTest {
         }
     }
 
+    /**
+     * Bounded conflict recovery (plan.md, conflict: list afresh, re-plan, retry at most twice; kept by
+     * plan3): the run's first calendar write, an in-place update of a stale generated event, is held
+     * BEFORE the stand-in applies it. Meanwhile a separate restored SDK session renames the calendar
+     * with a conditional update, which moves its root revision while it stays an active, private
+     * Birthdays calendar. Released, the held write names the old root, so the stand-in's dependency
+     * check rejects all of it. The run must then read everything afresh, re-plan, and retry once,
+     * fenced on the current root: the same storage item gets the contact's fields, nothing is resent
+     * blindly, and the rename, members, ordinary event and contact are left as they are.
+     */
+    @Test fun aStaleRootConflictIsReadAgainFreshAndRetriedOnceOnTheCurrentRoot() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val staleFields = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Byron", 1, 1))
+        val wantedFields = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10))
+        val stale = uploadItem(calendar, uid, BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Byron", 1, 1)))
+        val renamed = "Birthdays (renamed elsewhere)"
+        val calendarTransaction = "POST collection/${calendar.uid}/item/transaction/"
+        // A second SDK session of the same user, used only by this thread while the run's session is busy.
+        val other = com.etebase.client.Account.restore(
+            Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl), session, null)
+        val otherColMgr = other.collectionManager
+        fun staleOnServer() = BirthdayCalendar.eventFields(String(
+            otherColMgr.getItemManager(otherColMgr.fetch(calendar.uid)).fetch(stale.uid).content, Charsets.UTF_8))
+        assertEquals("the seeded event is stale", staleFields, staleOnServer())
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+        // The run's first write to the calendar is held before the stand-in applies it.
+        val firstWrite = fake.hold("POST", Regex("collection/${Regex.escape(calendar.uid)}/item/transaction/"))
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val run = executor.submit<BirthdayReconciler.RunResult> { BirthdayReconciler.reconcile(server, username) }
+            firstWrite.awaitArrival()
+
+            // Preconditions while it is held: another client renames the calendar with a conditional update.
+            val before = otherColMgr.fetch(calendar.uid)
+            val rootBefore = before.etag
+            val meta = before.meta
+            meta.name = renamed
+            before.meta = meta
+            otherColMgr.transaction(before)
+            val moved = otherColMgr.fetch(calendar.uid)
+            assertFalse("the calendar root moved", moved.etag == rootBefore)
+            assertEquals("renamed", renamed, moved.meta.name)
+            assertEquals("still the active marker", MARKER_ACTIVE, String(moved.content, Charsets.UTF_8))
+            assertEquals("the held write has not been applied: the event is still stale", staleFields, staleOnServer())
+
+            firstWrite.release()
+            val result = run.get(60, TimeUnit.SECONDS)
+
+            val live = generatedLive(calendar.uid)
+            assertEquals("FEATURE_CONFLICT: after the rejected write the event has the contact's current fields",
+                listOf(wantedFields), live.map { BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8)) })
+            assertEquals("FEATURE_CONFLICT: the same storage item, no second copy", listOf(stale.uid), live.map { it.uid })
+            assertEquals("no item is added to the calendar", setOf(stale.uid, ordinary.uid), fake.itemUids(calendar.uid))
+            // Request lines are recorded on arrival; dependencies when the stand-in routes the upload.
+            val lines = fake.requests.drop(requestsBefore).map { it.substringBefore('?') }
+            val transactions = lines.withIndex().filter { it.value == calendarTransaction }.map { it.index }
+            assertEquals("FEATURE_CONFLICT: the rejected first write, this test's rename, and one retry", 3, transactions.size)
+            assertTrue("FEATURE_CONFLICT: the run listed everything afresh between the rename and its retry",
+                (transactions[1] + 1 until transactions[2]).any { lines[it] == "POST collection/list_multi/" })
+            assertEquals("FEATURE_CONFLICT: the rename has no dependency; both run writes name the calendar root",
+                listOf(emptyList(), listOf(calendar.uid), listOf(calendar.uid)), fake.uploadDeps.drop(since))
+            assertEquals("no upload outside the calendar", 3, lines.count { it.startsWith("POST collection/") && it.contains("/item/") })
+            val colMgr = server.collectionManager
+            val after = colMgr.fetch(calendar.uid)
+            assertEquals("the rename is kept", renamed, after.meta.name)
+            assertEquals("the marker is kept", MARKER_ACTIVE, String(after.content, Charsets.UTF_8))
+            assertFalse("the calendar is not deleted", after.isDeleted)
+            assertEquals("the members are as they were", listOf(username), colMgr.getMemberManager(after).list().data.map { it.username })
+            val calendarItems = freshItemManager(calendar.uid)
+            assertEquals("the ordinary event is unchanged", ORDINARY_ICS, String(calendarItems.fetch(ordinary.uid).content, Charsets.UTF_8))
+            assertEquals("the contact is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+            assertEquals("and unchanged", ADA_VCARD, String(freshItemManager(book.uid).fetch(contact.uid).content, Charsets.UTF_8))
+            assertEquals(BirthdayReconciler.RunStatus.DONE, result.status)
+            assertEquals(listOf(calendar.uid), result.written)
+        } finally {
+            firstWrite.release()
+            executor.shutdownNow()
+            executor.awaitTermination(30, TimeUnit.SECONDS)
+        }
+    }
+
     // ---- fixture ----
 
     /** The fresh, complete listing's live items whose parsed event UID has the generated form. */
