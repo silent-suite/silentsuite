@@ -1,10 +1,15 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { Button } from '@silentsuite/ui'
 import { BILLING_API_URL } from '@/app/lib/config'
 import { formatDate as formatDateUtil } from '@/app/lib/date'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import { parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
+import { fetchAuthenticatedAccountOffer } from '@/app/lib/billing-v2'
+import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
+import { formatDaysLeft, isHostedBillingAccount, useEligibleAccountNotice, useTrialCountdown } from '@/app/hooks/use-trial-countdown'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import AddCardBanner from '@/app/components/add-card-banner'
 import { ModalDialog } from '@/app/components/modal-dialog'
@@ -38,6 +43,9 @@ interface SubscriptionData {
   trialPath: '7day' | '30day' | 'immediate' | null
   earlyAdopter: boolean
   capabilities?: SubscriptionCapabilities
+  /** Additive Billing fields; parsed strictly where used, absent on older servers. */
+  accountNotice?: unknown
+  billingDate?: unknown
 }
 
 function isSubscriptionData(value: unknown): value is SubscriptionData {
@@ -95,6 +103,43 @@ function getCapabilities(data: SubscriptionData): SubscriptionCapabilities {
     canRetryPayment: false,
     canResumeCancellation: data.cancelAtPeriodEnd && data.status === 'active',
   }
+}
+
+const BILLING_DATE_LABELS: Record<BillingDate['kind'], string> = {
+  renews: 'Renews on',
+  access_until: 'Access until',
+  trial_ends: 'Free trial ends',
+  first_charge: 'First payment',
+  ended: 'Ended on',
+}
+
+const SUBSCRIBE_REASON = 'Keep your calendar, contacts and tasks syncing, end-to-end encrypted, in the web app and on Android.'
+
+/**
+ * The date row comes from Billing's billingDate. An older server without it only gets a
+ * neutral future period end, never a renewal or charge promise, and no past date.
+ */
+function getDateRow(data: SubscriptionData): { label: string; at: string } | null {
+  if (data.billingDate !== undefined) {
+    const billingDate = parseBillingDate(data.billingDate)
+    return billingDate?.at ? { label: BILLING_DATE_LABELS[billingDate.kind], at: billingDate.at } : null
+  }
+  if (!data.renewalDate || !(new Date(data.renewalDate).getTime() > Date.now())) return null
+  const accessOnly = data.status === 'cancelled' || data.status === 'expired' || data.cancelAtPeriodEnd
+  return { label: accessOnly ? 'Access until' : 'Current period ends', at: data.renewalDate }
+}
+
+/** Which actions the card renders; only a purchase action reads the signed offer price. */
+function getCardActions(data: SubscriptionData, paymentPending: boolean, paymentFailure: string | null) {
+  const capabilities = getCapabilities(data)
+  const showAddCard = capabilities.canSetupCard && data.trial.daysRemaining != null && !paymentPending && !paymentFailure
+  const canOpenPaidRecovery = !paymentPending && !paymentFailure && (
+    capabilities.canRetryPayment
+    || capabilities.canStartPaidSubscription
+    || capabilities.canReactivate
+  )
+  const showPaidRecovery = canOpenPaidRecovery && !capabilities.canSetupCard && !data.cancelAtPeriodEnd
+  return { showAddCard, showPaidRecovery, isPurchase: showAddCard || (showPaidRecovery && !capabilities.canRetryPayment) }
 }
 
 function LoadingSkeleton() {
@@ -229,7 +274,7 @@ export default function SubscriptionPage() {
   ))
   const [data, setData] = useState<SubscriptionData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [bannerDismissed, setBannerDismissed] = useState(false)
+  const [offerQuote, setOfferQuote] = useState<{ price: string; owner: OperationOwner; sequence: number } | null>(null)
   const [showCancelDialog, setShowCancelDialog] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [showPlanSelection, setShowPlanSelection] = useState(false)
@@ -249,6 +294,8 @@ export default function SubscriptionPage() {
   const mountedRef = useRef(false)
   // Latest-started subscription read; an older response never publishes.
   const requestSequenceRef = useRef(0)
+  // Latest-started offer price read, owned separately from the subscription reads.
+  const offerSequenceRef = useRef(0)
   const captureOwner = useCallback((): OperationOwner | null => {
     const user = useAuthStore.getState().user
     if (!mountedRef.current || (user?.id ?? null) !== principal.id || !isCurrentAccountEpoch(principal.epoch)) return null
@@ -303,6 +350,63 @@ export default function SubscriptionPage() {
     if (stripePaymentReturn.paymentIntent && stripePaymentReturn.redirectStatus) return
     void fetchSubscription()
   }, [fetchSubscription, stripePaymentReturn])
+
+  // The notice, its countdown and its expiry dispatch belong to the account this page was opened
+  // for: another account or boundary never sees or triggers them (a same-account fresh user object
+  // stays the owner). Admins, self-host builds and custom-server accounts get no notice here either,
+  // exactly as in navigation; the raw status badge and the date rows remain.
+  const liveUser = useAuthStore((state) => state.user)
+  const pageOwned = (liveUser?.id ?? null) === principal.id && getAccountEpoch() === principal.epoch
+  const notice = useEligibleAccountNotice(data && pageOwned ? parseAccountNotice(data.accountNotice) : null)
+  const countdown = useTrialCountdown(notice)
+  const expiredTrialEndsAt = notice?.kind === 'trial_days_left' && !countdown ? notice.trialEndsAt : null
+
+  // Once this page's countdown has passed its end instant, its data is the pre-expiry view. The
+  // store's expiry claim for this account, boundary and instant carries the one shared result,
+  // whenever it completed; the page adopts it instead of reading again, and an older in-flight
+  // page read can no longer overwrite it. Capabilities come only from that server body.
+  const expiryClaim = useAuthStore((state) => state.trialExpiryRefreshClaim)
+  useEffect(() => {
+    if (!expiredTrialEndsAt || !expiryClaim || expiryClaim.response === null) return
+    if (expiryClaim.trialEndsAt !== expiredTrialEndsAt || expiryClaim.userId !== principal.id || expiryClaim.epoch !== principal.epoch) return
+    if (!captureOwner() || !isSubscriptionData(expiryClaim.response) || expiryClaim.response === data) return
+    requestSequenceRef.current += 1
+    setData(expiryClaim.response)
+  }, [expiredTrialEndsAt, expiryClaim, data, principal, captureOwner])
+  // The shared expiry read for this page's own account and instant failed: offer one owned retry.
+  const expiryRefreshFailed = !!expiredTrialEndsAt && !!expiryClaim && expiryClaim.failed
+    && expiryClaim.trialEndsAt === expiredTrialEndsAt && expiryClaim.userId === principal.id && expiryClaim.epoch === principal.epoch
+  const retryExpiryRefresh = () => {
+    if (!expiredTrialEndsAt || !captureOwner()) return
+    useAuthStore.getState().claimTrialExpiryRefresh(expiredTrialEndsAt)
+  }
+  // The price and the reason to subscribe are hosted-only additions; self-host and custom-server
+  // accounts keep their existing actions but get neither, and no offer read.
+  const purchaseAction = data && isHostedBillingAccount()
+    ? getCardActions(data, paymentConfirmationPending, paymentReturnFailure).isPurchase
+    : false
+
+  // The signed account offer supplies the price, read only while a purchase action is shown.
+  // A quote belongs to the live owner and read that produced it: a newer read, a fresh user
+  // object or another account hides it at once, and a failed or refused read leaves none.
+  useEffect(() => {
+    const sequence = ++offerSequenceRef.current
+    setOfferQuote(null)
+    if (!purchaseAction) return
+    const owner = captureOwner()
+    if (!owner) return
+    const live = () => sequence === offerSequenceRef.current && ownerCurrent(owner)
+    fetchAuthenticatedAccountOffer({
+      fetcher: (input, init) => fetch(input, { ...init, credentials: 'include' }),
+      billingApiUrl: BILLING_API_URL,
+    }).then(
+      (account) => { if (live()) setOfferQuote({ price: `${formatAnnualOfferAmount(account.offer.offer)} per year`, owner, sequence }) },
+      () => { if (live()) setOfferQuote(null) },
+    )
+  }, [purchaseAction, data, liveUser, captureOwner, ownerCurrent])
+  const offerPrice = offerQuote && offerQuote.sequence === offerSequenceRef.current && ownerCurrent(offerQuote.owner)
+    ? offerQuote.price
+    : null
 
   useEffect(() => {
     const { hasStripeParameters, paymentIntent, redirectStatus } = stripePaymentReturn
@@ -487,7 +591,12 @@ export default function SubscriptionPage() {
               </div>
             </div>
           ) : !paymentConfirmationPending && (
-            <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
+            <div className="space-y-3">
+              <p className="text-sm text-[rgb(var(--muted))]">Unable to load subscription details.</p>
+              <Button size="sm" variant="outline" className="w-full sm:w-auto min-h-11" onClick={() => { void fetchSubscription() }}>
+                Try again
+              </Button>
+            </div>
           )}
         </div>
         {showPlanSelection && (
@@ -504,12 +613,18 @@ export default function SubscriptionPage() {
   }
 
   const capabilities = getCapabilities(data)
-  const showTrialBanner =
-    !bannerDismissed &&
-    data.trial.active &&
-    data.trial.daysRemaining != null &&
-    data.trial.daysRemaining <= 7 &&
-    !capabilities.canSetupCard
+  const { showAddCard, showPaidRecovery } = getCardActions(data, paymentConfirmationPending, paymentReturnFailure)
+  const dateRow = getDateRow(data)
+  const showBillingRow = !!data.plan && !data.planLabel.toLowerCase().includes(data.billingInterval)
+  const endedNotice = notice?.kind === 'trial_ended' || notice?.kind === 'access_ended'
+  // Only Billing's notice (seven-day countdown or a verified end) replaces the raw status badge.
+  const headline = countdown
+    ? { title: `Free trial: ${formatDaysLeft(countdown.daysLeft)}`, detail: "No card on file, so you won't be charged." }
+    : notice?.kind === 'trial_ended'
+      ? { title: 'Your trial has ended.', detail: null }
+      : notice?.kind === 'access_ended'
+        ? { title: 'Your subscription has ended.', detail: null }
+        : null
 
   const isCancelled = data.status === 'cancelled' || data.status === 'expired'
   const hasLiveSubscriptionActions = (data.status === 'active' || data.status === 'trialing')
@@ -518,11 +633,6 @@ export default function SubscriptionPage() {
     && !capabilities.trialExpired
     && !capabilities.canRetryPayment
     && !capabilities.canStartPaidSubscription
-  const canOpenPaidRecovery = !paymentConfirmationPending && !paymentReturnFailure && (
-    capabilities.canRetryPayment
-    || capabilities.canStartPaidSubscription
-    || capabilities.canReactivate
-  )
   const paidRecoveryLabel = capabilities.canRetryPayment
     ? 'Retry payment'
     : data.status === 'cancelled'
@@ -539,31 +649,45 @@ export default function SubscriptionPage() {
         inert={modalIsOpen ? true : undefined}
       >
 
-      {/* Trial banner */}
-      {showTrialBanner && (
-        <div className="flex items-center justify-between rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <p className="text-sm text-amber-700 dark:text-amber-400">
-            {data.trial.daysRemaining} day{data.trial.daysRemaining !== 1 ? 's' : ''} remaining in your trial
-          </p>
-          <button
-            onClick={() => setBannerDismissed(true)}
-            className="text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 text-sm font-medium"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
       {/* Subscription details card */}
       <section className="rounded-lg border border-[rgb(var(--border))] p-4 space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-[rgb(var(--foreground))]">Subscription</h2>
-          <span
-            className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[data.status] ?? STATUS_STYLES.none}`}
-          >
-            {STATUS_LABELS[data.status] ?? data.status}
-          </span>
+          {!notice && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[data.status] ?? STATUS_STYLES.none}`}
+            >
+              {STATUS_LABELS[data.status] ?? data.status}
+            </span>
+          )}
         </div>
+
+        {expiryRefreshFailed && (
+          <div className="space-y-3">
+            <p className="text-sm text-[rgb(var(--muted))]">We couldn&apos;t check your trial status.</p>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto min-h-11" onClick={retryExpiryRefresh}>
+              Try again
+            </Button>
+          </div>
+        )}
+
+        {headline && (
+          <div className="space-y-1">
+            <p className="text-base font-semibold text-[rgb(var(--foreground))]">{headline.title}</p>
+            {headline.detail && <p className="text-sm text-[rgb(var(--muted))]">{headline.detail}</p>}
+            {endedNotice && (
+              <>
+                <p className="text-sm text-[rgb(var(--muted))]">Your data is safe and read-only.</p>
+                <Link
+                  href="/settings/export"
+                  className="inline-flex min-h-11 items-center text-sm font-medium text-[rgb(var(--primary))] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-700 dark:focus-visible:ring-emerald-300"
+                >
+                  Export your data
+                </Link>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="space-y-3">
           {/* Plan name */}
@@ -572,22 +696,19 @@ export default function SubscriptionPage() {
             <p className="text-sm text-[rgb(var(--foreground))]">{data.planLabel}</p>
           </div>
 
-          {/* Billing interval */}
-          {data.plan && (
+          {/* Billing interval, unless the plan name already says it */}
+          {showBillingRow && (
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Billing</p>
               <p className="text-sm text-[rgb(var(--foreground))] capitalize">{data.billingInterval}</p>
             </div>
           )}
 
-          {/* Trial info */}
-          {data.trial.active && data.trial.endsAt && (
+          {/* Trial end date for older Billing without billingDate; dates only, no day count */}
+          {data.billingDate === undefined && data.trial.active && data.trial.endsAt && (
             <div>
               <p className="text-xs text-[rgb(var(--muted))]">Trial</p>
-              <p className="text-sm text-[rgb(var(--foreground))]">
-                Ends {formatDateStr(data.trial.endsAt)} &mdash; {data.trial.daysRemaining} day
-                {data.trial.daysRemaining !== 1 ? 's' : ''} remaining
-              </p>
+              <p className="text-sm text-[rgb(var(--foreground))]">Ends {formatDateStr(data.trial.endsAt)}</p>
             </div>
           )}
 
@@ -609,13 +730,11 @@ export default function SubscriptionPage() {
             </div>
           )}
 
-          {/* Renewal / access date */}
-          {data.renewalDate && (
+          {/* Renewal / access / trial / end date, labelled by Billing */}
+          {dateRow && (
             <div>
-              <p className="text-xs text-[rgb(var(--muted))]">
-                {isCancelled || data.cancelAtPeriodEnd ? 'Access until' : 'Next billing'}
-              </p>
-              <p className="text-sm text-[rgb(var(--foreground))]">{formatDateStr(data.renewalDate)}</p>
+              <p className="text-xs text-[rgb(var(--muted))]">{dateRow.label}</p>
+              <p className="text-sm text-[rgb(var(--foreground))]">{formatDateStr(dateRow.at)}</p>
             </div>
           )}
 
@@ -626,14 +745,38 @@ export default function SubscriptionPage() {
             </p>
           )}
         </div>
-      </section>
 
-      {capabilities.canSetupCard
-        && data.trial.daysRemaining != null
-        && !paymentConfirmationPending
-        && !paymentReturnFailure && (
-        <AddCardBanner daysRemaining={data.trial.daysRemaining} onChoosePayment={openPaymentRecovery} />
-      )}
+        {purchaseAction && (
+          <div className="space-y-1 border-t border-[rgb(var(--border))] pt-4">
+            <p className="text-sm text-[rgb(var(--foreground))]">{SUBSCRIBE_REASON}</p>
+            {offerPrice && <p className="text-sm font-medium text-[rgb(var(--foreground))]">{offerPrice}</p>}
+          </div>
+        )}
+
+        {showAddCard && (
+          <AddCardBanner daysRemaining={countdown?.daysLeft ?? null} onChoosePayment={openPaymentRecovery} />
+        )}
+
+        {(showPaidRecovery || hasLiveSubscriptionActions) && (
+          <div className="flex flex-col gap-3 sm:flex-row">
+            {showPaidRecovery && (
+              <Button size="sm" className="w-full sm:w-auto min-h-11" onClick={openPaymentRecovery}>
+                {paidRecoveryLabel}
+              </Button>
+            )}
+            {hasLiveSubscriptionActions && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto min-h-11 border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10"
+                onClick={() => { captureModalOpener(); setShowCancelDialog(true) }}
+              >
+                Cancel subscription
+              </Button>
+            )}
+          </div>
+        )}
+      </section>
 
       {paymentConfirmationPending && (
         <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
@@ -663,25 +806,6 @@ export default function SubscriptionPage() {
           <p className="mt-1 text-xs text-[rgb(var(--muted))]">Your subscription will activate after payment is completed.</p>
         </div>
       )}
-
-      {/* Action buttons */}
-      <div className="flex gap-3">
-        {hasLiveSubscriptionActions && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10"
-              onClick={() => { captureModalOpener(); setShowCancelDialog(true) }}
-            >
-              Cancel subscription
-            </Button>
-        )}
-        {canOpenPaidRecovery && !capabilities.canSetupCard && !data.cancelAtPeriodEnd && (
-          <Button size="sm" onClick={openPaymentRecovery}>
-            {paidRecoveryLabel}
-          </Button>
-        )}
-      </div>
 
       </div>
 
