@@ -18,6 +18,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * The Birthdays reconcile run ([BirthdayReconciler.reconcile]) through the pinned Etebase Java
@@ -438,6 +440,86 @@ class BirthdayReconciliationRuntimeTest {
         assertEquals("and unchanged", ORDINARY_ICS, String(freshItemManager(calendar.uid).fetch(ordinary.uid).content, Charsets.UTF_8))
     }
 
+    /**
+     * Post-commit source check (plan3 §4), the first tracer: the contact changes after the run read
+     * it and while its first generated-event transaction is in flight. That transaction is applied by
+     * the stand-in and its answer is then held ([FakeEtebaseServer.hold] with `answerFirst`, parked
+     * outside the stand-in's lock). Meanwhile a separate restored SDK session confirms the old event on
+     * the server and changes the same contact (same book and item) to a new name and birthday. Once
+     * the answer is released, the run must notice that the source changed after it read it and correct
+     * the event with a fresh, bounded rerun: the same storage item, the new fields, a second
+     * transaction fenced on the calendar root. Nothing else is touched.
+     */
+    @Test fun aContactChangedWhileTheFirstWriteIsInFlightIsCorrectedByAFreshRerun() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val oldFields = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10))
+        val newFields = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada King", 12, 11))
+        val calendarTransaction = "POST collection/${calendar.uid}/item/transaction/"
+        val bookTransaction = "POST collection/${book.uid}/item/transaction/"
+        // A second SDK session of the same user against the same stand-in, used only by this thread
+        // while the run's own session is busy on the executor.
+        val other = com.etebase.client.Account.restore(
+            Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl), session, null)
+        fun generatedFields(account: com.etebase.client.Account): List<Pair<String, BirthdayCalendar.EventFields?>> {
+            val colMgr = account.collectionManager
+            val listed = colMgr.getItemManager(colMgr.fetch(calendar.uid)).list()
+            assertTrue("the calendar listing is complete", listed.isDone)
+            return listed.data.filter { !it.isDeleted }
+                .map { it.uid to BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8)) }
+                .filter { (_, fields) -> fields?.uid?.let { GENERATED_FORM.matches(it) } == true }
+        }
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+        // The run's first write to the calendar is applied, then its answer is held.
+        val firstWrite = fake.hold("POST", Regex("collection/${Regex.escape(calendar.uid)}/item/transaction/"), answerFirst = true)
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            val run = executor.submit<BirthdayReconciler.RunResult> { BirthdayReconciler.reconcile(server, username) }
+            firstWrite.awaitArrival()
+
+            // Preconditions while the answer is held: the old event is on the server, then the contact changes.
+            val applied = generatedFields(other)
+            assertEquals("the first write was applied with the old fields", listOf(oldFields), applied.map { it.second })
+            val storageUid = applied.single().first
+            val otherBooks = other.collectionManager
+            val bookItems = otherBooks.getItemManager(otherBooks.fetch(book.uid))
+            val edited = bookItems.fetch(contact.uid)
+            edited.setContent(ADA_RENAMED_VCARD.toByteArray(Charsets.UTF_8))
+            bookItems.transaction(arrayOf(edited))
+            assertEquals("the contact changed on the server, same book and item", ADA_RENAMED_VCARD,
+                String(otherBooks.getItemManager(otherBooks.fetch(book.uid)).fetch(contact.uid).content, Charsets.UTF_8))
+
+            firstWrite.release()
+            val result = run.get(60, TimeUnit.SECONDS)
+
+            val afterRun = generatedFields(server)
+            assertEquals("FEATURE_POSTCHECK: the event follows the contact as changed after the run read it",
+                listOf(newFields), afterRun.map { it.second })
+            assertEquals("FEATURE_POSTCHECK: the same storage item, no second copy", listOf(storageUid), afterRun.map { it.first })
+            val all = uploads(requestsBefore, since)
+            assertEquals("FEATURE_POSTCHECK: the first write and one fresh correction, each fenced on the calendar root",
+                listOf(listOf(calendar.uid), listOf(calendar.uid)), all.filter { it.first == calendarTransaction }.map { it.second })
+            assertEquals("the only upload to the address book is this test's own change", listOf(bookTransaction to emptyList<String>()),
+                all.filter { it.first.startsWith("POST collection/${book.uid}/") })
+            assertEquals("no other upload", all.size, all.count { it.first == calendarTransaction || it.first == bookTransaction })
+            assertEquals("the contact is as this test left it", ADA_RENAMED_VCARD,
+                String(freshItemManager(book.uid).fetch(contact.uid).content, Charsets.UTF_8))
+            val calendarItems = freshItemManager(calendar.uid)
+            assertFalse("the ordinary event is not deleted", calendarItems.fetch(ordinary.uid).isDeleted)
+            assertEquals("the ordinary event is unchanged", ORDINARY_ICS, String(calendarItems.fetch(ordinary.uid).content, Charsets.UTF_8))
+            assertEquals(BirthdayReconciler.RunStatus.DONE, result.status)
+            assertEquals(listOf(calendar.uid), result.written)
+        } finally {
+            firstWrite.release()
+            executor.shutdownNow()
+            executor.awaitTermination(30, TimeUnit.SECONDS)
+        }
+    }
+
     // ---- fixture ----
 
     /** The fresh, complete listing's live items whose parsed event UID has the generated form. */
@@ -504,6 +586,7 @@ class BirthdayReconciliationRuntimeTest {
         private val GENERATED_FORM = Regex("ss-bday1-[0-9a-f]{32}")
 
         private const val ADA_VCARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c-ada\r\nFN:Ada Lovelace\r\nBDAY:1815-12-10\r\nEND:VCARD\r\n"
+        private const val ADA_RENAMED_VCARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c-ada\r\nFN:Ada King\r\nBDAY:1815-12-11\r\nEND:VCARD\r\n"
         private const val GRACE_VCARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c-grace\r\nFN:Grace Hopper\r\nBDAY:1906-12-09\r\nEND:VCARD\r\n"
         private const val LEE_VCARD = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:c-lee\r\nFN:Lee\r\nBDAY:--02-29\r\nEND:VCARD\r\n"
 
