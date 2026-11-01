@@ -604,6 +604,67 @@ def test_interrupted_retirement_is_repaired_on_the_next_run():
     assert _uids_in(account, "cal-A") == [ALEX_FIELDS["uid"]]
 
 
+class FakeMembersForbidden(Exception):
+    """Test stand-in: a non-Admin member cannot list a collection's members on the real server."""
+
+
+def test_f3_shared_read_write_retired_calendar_loses_only_its_generated_item():
+    """INTENDED-RED (plan3 F3): every run deletes generated leftovers in EACH retired calendar the
+    user can write to. Here the only marked calendar is retired, shared with another member, and
+    ReadWrite for this user (who therefore cannot list its members); there is no active calendar.
+    The generated item must go in one transaction depending on that calendar's current root; the
+    user's event, the marker and the calendar stay; nothing is created, adopted or generated. C3's
+    Admin/exactly-self rule is for the ACTIVE destination only and must not gate this repair."""
+    cal_r = _sdk_collection("cal-R", "etebase.vevent", content=RETIRED, access=CollectionAccessLevel.ReadWrite)
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    contact = _sdk_item(CONTACT, ALEX_VCARD)
+    leftover = _sdk_item("gen-r", ALEX_GENERATED_ICS)
+    user_event = _sdk_item("user-r", USER_EVENT_ICS)
+    account = FakeAccount(
+        [cal_r, book],
+        {BOOK: [contact], "cal-R": [leftover, user_event]},
+        {"cal-R": ["bob@example.com", USERNAME], BOOK: [USERNAME]},
+    )
+    listed_members = account.col_mgr.get_member_manager.side_effect
+
+    def members(collection):
+        if collection.uid == "cal-R":
+            raise FakeMembersForbidden("a ReadWrite member cannot list members")
+        return listed_members(collection)
+
+    account.col_mgr.get_member_manager.side_effect = members
+    root_r = cal_r.item
+    item_commits, collection_commits = _install_server(account)
+
+    # Preconditions: the fixture is what the test says it is.
+    assert birthdays.parse_birthday_marker(cal_r.content) == "retired"
+    assert cal_r.access_level == CollectionAccessLevel.ReadWrite
+    with pytest.raises(FakeMembersForbidden):
+        account.col_mgr.get_member_manager(cal_r)
+    assert _uids_in(account, "cal-R") == [ALEX_FIELDS["uid"], "user-event@example.com"]
+
+    result = birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert _uids_in(account, "cal-R") == ["user-event@example.com"], (
+        "FEATURE_F3: the shared ReadWrite retired calendar's generated leftover is deleted")
+    assert account.transactions("cal-R") == [([leftover], [root_r])], (
+        "FEATURE_F3: in one transaction depending on that calendar's current root")
+    assert item_commits == [("cal-R", [leftover])]
+    leftover.delete.assert_called_once()
+    user_event.delete.assert_not_called()
+    assert user_event.content == USER_EVENT_ICS.encode("utf-8")
+    assert collection_commits == []
+    assert cal_r.content == RETIRED
+    assert cal_r.item is root_r
+    assert account.created == []
+    assert account.transactions(BOOK) == []
+    account.col_mgr.create.assert_not_called()
+    account.col_mgr.upload.assert_not_called()
+    contact.delete.assert_not_called()
+    assert result.get("written") == ["cal-R"]
+    assert result.get("status") == "done"
+
+
 def test_calendar_retired_by_another_client_mid_run_gets_no_generated_items():
     """CONTROL (no writes under the neutral scaffold; must stay green): another client retires the
     calendar (new root) after this run listed it; a write fenced on the old root is rejected and

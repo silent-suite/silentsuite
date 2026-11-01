@@ -1,7 +1,8 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from 'vitest'
-import { birthdayMarkerContent } from '@silentsuite/core'
+import { birthdayMarkerContent, parseBirthdayMarker } from '@silentsuite/core'
 import { createEtebaseBirthdayTransport, BirthdayTransportGateError } from '../etebase-transport'
+import { reconcileBirthdays } from '../reconcile'
 import type { BirthdayGates } from '../reconcile'
 
 function gates(current = () => true): BirthdayGates {
@@ -346,5 +347,73 @@ describe('etebase birthday transport', () => {
 
     await expect(transport.createBirthdayCalendar!({ name: 'Birthdays', content: '{}' })).rejects.toBeInstanceOf(BirthdayTransportGateError)
     expect(upload).not.toHaveBeenCalled()
+  })
+
+  // INTENDED-RED (plan3 F3): every run deletes generated leftovers in EACH retired calendar the user
+  // can write to. C3's Admin/exactly-self rule is for the ACTIVE destination only. Runs the real
+  // adapter under the real reconcile; the stand-ins are the SDK collection and item managers.
+  it('F3: a shared ReadWrite retired calendar loses only its generated event, fenced on its own root', async () => {
+    // Events vector 1's canonical text (contracts/birthday-calendar/v1-vectors.json).
+    const GENERATED = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//Birthdays v1//EN\r\nBEGIN:VEVENT\r\n'
+      + 'UID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTAMP:19720101T000000Z\r\nDTSTART;VALUE=DATE:19720315\r\n'
+      + 'DTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\nSUMMARY:\u{1F382} Alex Example\r\nTRANSP:TRANSPARENT\r\n'
+      + 'END:VEVENT\r\nEND:VCALENDAR\r\n'
+    const ORDINARY = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:user-event@example.com\r\n'
+      + 'DTSTART;VALUE=DATE:20261031\r\nSUMMARY:Party\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n'
+    const ALEX = 'BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c1\r\nFN:Alex Example\r\nBDAY:1985-03-15\r\nEND:VCARD\r\n'
+    const clones: Array<{ uid: string; setContent: ReturnType<typeof vi.fn>; delete: ReturnType<typeof vi.fn> }> = []
+    const row = (uid: string, content: string) => ({
+      uid,
+      etag: `etag-${uid}`,
+      encryptedItem: { lastEtag: `etag-${uid}` },
+      isDeleted: false,
+      getContent: vi.fn(async () => content),
+      setContent: vi.fn(async () => {}),
+      delete: vi.fn(),
+      _clone() {
+        const clone = { uid, setContent: vi.fn(async () => {}), delete: vi.fn() }
+        clones.push(clone)
+        return clone
+      },
+    })
+    const retired = collection({ uid: 'cal-retired', type: 'etebase.vevent', accessLevel: 2, content: birthdayMarkerContent('retired') })
+    const generatedRow = row('gen-r', GENERATED)
+    const ordinaryRow = row('user-r', ORDINARY)
+    retired.itemManager.list.mockReset()
+    retired.itemManager.list.mockResolvedValue({ data: [generatedRow, ordinaryRow], stoken: 'items-end-cal-retired', done: true })
+    // A ReadWrite member cannot list members on the real server; F3 needs only write access.
+    retired.memberManager.list.mockReset()
+    retired.memberManager.list.mockRejectedValue(Object.assign(new Error('forbidden'), { name: 'PermissionDeniedError' }))
+    const book = collection({ uid: 'book-1', type: 'etebase.vcard', accessLevel: 2, items: [[{ uid: 'c1', content: ALEX }]] })
+    const transport = createEtebaseBirthdayTransport(account([retired, book]), gates())
+
+    // Preconditions, through the real adapter: what the reconcile will see.
+    const inventory = await transport.listInventory()
+    const listedRetired = inventory.collections.find((entry) => entry.uid === 'cal-retired')
+    expect(inventory.complete).toBe(true)
+    expect(listedRetired?.accessLevel).toBe('readWrite')
+    expect(parseBirthdayMarker(listedRetired?.content ?? null)).toBe('retired')
+    expect(listedRetired?.rootRevision).toBe('etag-cal-retired')
+    expect(inventory.collections.some((entry) => entry.kind === 'calendar' && parseBirthdayMarker(entry.content) === 'active')).toBe(false)
+
+    const result = await reconcileBirthdays({ accountKey: 'acct', username: 'me', gates: gates(), transport })
+
+    expect(retired.transaction, 'FEATURE_F3: the shared ReadWrite retired calendar gets one cleanup transaction').toHaveBeenCalledTimes(1)
+    const [prepared, deps] = retired.transaction.mock.calls[0] as unknown as [
+      Array<{ uid: string; delete: ReturnType<typeof vi.fn>; setContent: ReturnType<typeof vi.fn> }>,
+      unknown[],
+    ]
+    expect(prepared.map((item) => item.uid), 'FEATURE_F3: it deletes only the generated event').toEqual(['gen-r'])
+    expect(prepared[0].delete).toHaveBeenCalledTimes(1)
+    expect(prepared[0].setContent).not.toHaveBeenCalled()
+    expect(deps, 'FEATURE_F3: fenced on that calendar\'s own root as read').toHaveLength(1)
+    expect(deps[0]).toBe(retired.item)
+    expect(clones.filter((clone) => clone.uid === 'user-r')).toEqual([])
+    expect(ordinaryRow.delete).not.toHaveBeenCalled()
+    expect(ordinaryRow.setContent).not.toHaveBeenCalled()
+    expect(retired.create).not.toHaveBeenCalled()
+    expect(book.transaction).not.toHaveBeenCalled()
+    expect(book.create).not.toHaveBeenCalled()
+    expect(result.status).toBe('done')
   })
 })
