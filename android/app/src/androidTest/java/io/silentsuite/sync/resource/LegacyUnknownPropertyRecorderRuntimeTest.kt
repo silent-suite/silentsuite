@@ -58,6 +58,10 @@ class LegacyUnknownPropertyRecorderRuntimeTest {
         try {
             writeRuntimeProvenance(sink)
             body(LegacyRecorderFloor { sink.line(it) })
+            // D2 N4: actual runtime-selected SLF4J factory (supported API), written only after the body succeeded.
+            val loggerFactory = org.slf4j.LoggerFactory.getILoggerFactory()
+            sink.line("D2-RECORDER provenance-logging factory=${loggerFactory.javaClass.name} " +
+                    "loader=${loggerFactory.javaClass.classLoader?.javaClass?.name ?: "boot"}")
         } catch (t: Throwable) {
             primary = t
         }

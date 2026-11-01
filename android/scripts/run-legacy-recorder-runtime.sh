@@ -356,8 +356,31 @@ except Exception as ex:  # internal validator error: best-effort report, then 30
 PY
 validator_status=$?
 
-echo "D2-STATUS api=${api} arch=${arch} nonce=${nonce} gradle=${gradle_status} validator=${validator_status}"
-if [[ "${gradle_status}" -ne 0 ]]; then
-  exit "${gradle_status}"                          # primary: test/build outcome
+# D2-N4-PROVENANCE-TAIL-BEGIN
+# D2 N4 provenance (SPEC-v2 as amended by SPEC-v3): always attempted after the validator returns; bounded; an
+# interrupted or non-finalized collection is PROVENANCE-INCOMPLETE (40), never COMPLETE. Precedence: Gradle ->
+# validator -> provenance. Cleanup/report are best-effort under uncatchable termination.
+timeout --signal=TERM --kill-after="${D2_N4_KILL_AFTER_S:-15}s" "${D2_N4_TIMEOUT_S:-600}s" \
+  python3 scripts/d2_n4_provenance.py "${api}" "${arch}" "${nonce}" "${out}"
+provenance_raw=$?
+report="${out}/provenance/provenance.json"
+provenance_status="${provenance_raw}"
+if [[ "${provenance_raw}" -eq 124 || "${provenance_raw}" -eq 137 || "${provenance_raw}" -eq 143 ]]; then
+  provenance_status=40; reason="forced-termination"
+elif ! python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r.get("finalized") is True and r.get("collectorExit")==int(sys.argv[2]) and (r.get("status")=="COMPLETE")==(int(sys.argv[2])==0) else 1)' \
+       "${report}" "${provenance_raw}" 2>/dev/null; then
+  provenance_status=40; reason="no-finalized-report"
+else
+  reason="finalized"
 fi
-exit "${validator_status}"                         # else: carrier/semantic outcome
+if [[ "${reason}" != "finalized" ]]; then
+  mkdir -p "${out}/provenance" 2>/dev/null
+  printf '{"schema":"d2-n4-provenance-fallback-1","status":"PROVENANCE-INCOMPLETE","reason":"%s","collectorRaw":%d}\n' \
+    "${reason}" "${provenance_raw}" > "${out}/provenance/provenance-fallback.json" 2>/dev/null || true
+fi
+rm -rf -- "${RUNNER_TEMP:-/tmp}/d2-n4-${nonce}" 2>/dev/null || true
+echo "D2-STATUS api=${api} arch=${arch} nonce=${nonce} gradle=${gradle_status} validator=${validator_status} provenance=${provenance_status} provenanceRaw=${provenance_raw} provenanceReason=${reason}"
+if [[ "${gradle_status}" -ne 0 ]]; then exit "${gradle_status}"; fi            # primary: test/build outcome
+if [[ "${validator_status}" -ne 0 ]]; then exit "${validator_status}"; fi      # then: carrier/semantic outcome
+exit "${provenance_status}"                                                    # then: N4 provenance outcome
+# D2-N4-PROVENANCE-TAIL-END
