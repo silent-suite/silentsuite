@@ -5762,11 +5762,12 @@ class PendingNotesStoreTest {
         // finished.
         assertEquals(listOf(signOut), callersOf("unregister"))
         assertEquals(listOf(settings), callersOf("unregisterIfFinishedOnce"))
-        assertEquals("only the Settings way out asks whether a discard stopped", listOf(settings),
-            callersOf("clearStopped"))
-        // The Settings list and the removal guard read from memory which stores stopped.
+        // The Settings way out, and a notebook's leave or delete before it words a failure of its server call.
+        val notebook = "io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"
+        assertEquals("only these ask whether a discard stopped", listOf(settings, notebook), callersOf("clearStopped"))
+        // The removal guard also reads from memory which stores stopped.
         val guard = "io/silentsuite/sync/ui/PendingNotesRemovalGuard.kt"
-        assertEquals(listOf(guard, settings), callersOf("stoppedIn"))
+        assertEquals(listOf(guard, settings, notebook), callersOf("stoppedIn"))
         assertEquals("clearAll is for test teardown only", emptyList<String>(), callersOf("clearAll"))
         assertEquals("a notebook's leave or delete only",
             listOf("io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"), callersOf("discardNotebook"))

@@ -821,4 +821,26 @@
     <string name="notes_notebook_kept_partly">Some unsynced changes could not be deleted from this device and may no longer sync.</string>
     <string name="notes_notebook_nothing_deleted">This attempt deleted no Notes text. Unsynced text may remain and may no longer sync.</string>
     <string name="notes_notebook_discard_unknown">The discard stopped. Some unsynced changes may already be deleted from this device.</string>
+    <!-- Leaving or deleting a Notes notebook while its Notes changes have not synced: the count, the separate confirmation, the one more question once the store changed after the server call, Sync now, and a server call that failed. For a store that could not be listed, where going on deletes nothing: never "discard", never "remove", and that nothing is deleted from this device. Placeholder wording, pending review. -->
+    <string name="notes_notebook_unsynced_title">Notes changes in this notebook have not synced</string>
+    <string name="notes_notebook_maybe_unsynced_title">Notes changes may not have synced</string>
+    <string name="notes_notebook_unsynced_uncounted">Some Notes changes on this device could not be counted, so this notebook may have changes that have not synced. Sync now tries to send them first, and it can fail. If you go on without syncing, this notebook’s changes that can be read are deleted from this device and cannot be recovered. Those that can’t be read stay.</string>
+    <string name="notes_notebook_unsynced_unlisted">The Notes changes on this device could not be read, so this notebook may have changes that have not synced. Sync now may not be able to send them. While they cannot be read, going on without syncing deletes nothing from this device. Unsynced Notes text may remain on this device and may no longer sync.</string>
+    <string name="notes_notebook_delete_without_syncing">Delete without syncing</string>
+    <string name="notes_notebook_leave_without_syncing">Leave without syncing</string>
+    <string name="notes_notebook_discard_uncounted_delete">Some Notes changes on this device could not be counted. Once the notebook is deleted, this notebook’s unsynced changes that can be read will be deleted from this device, and those that can’t be read stay. This cannot be undone.</string>
+    <string name="notes_notebook_discard_uncounted_leave">Some Notes changes on this device could not be counted. Once you have left the notebook, this notebook’s unsynced changes that can be read will be deleted from this device, and those that can’t be read stay. This cannot be undone.</string>
+    <string name="notes_notebook_discard_and_delete">Discard and delete</string>
+    <string name="notes_notebook_discard_and_leave">Discard and leave</string>
+    <string name="notes_notebook_acknowledge_title_delete">Delete the notebook anyway?</string>
+    <string name="notes_notebook_acknowledge_title_leave">Leave the notebook anyway?</string>
+    <string name="notes_notebook_acknowledge_delete">The Notes changes on this device could not be read. If you go on, the notebook is deleted from the server and nothing is deleted from this device. Unsynced Notes text may remain on this device and may no longer sync.</string>
+    <string name="notes_notebook_acknowledge_leave">The Notes changes on this device could not be read. If you go on, you leave the notebook and nothing is deleted from this device. Unsynced Notes text may remain on this device and may no longer sync.</string>
+    <string name="notes_notebook_again_uncounted_delete">The notebook was deleted. Some Notes changes on this device could not be counted, so some from this notebook may still be here. If you discard, those that can be read are deleted from this device, and those that can’t be read stay. This cannot be undone. If you keep them, they stay on this device and may no longer sync.</string>
+    <string name="notes_notebook_again_uncounted_leave">You left the notebook. Some Notes changes on this device could not be counted, so some from this notebook may still be here. If you discard, those that can be read are deleted from this device, and those that can’t be read stay. This cannot be undone. If you keep them, they stay on this device and may no longer sync.</string>
+    <string name="notes_notebook_discard">Discard</string>
+    <string name="notes_notebook_keep">Keep</string>
+    <string name="notes_notebook_sync_asked">Asked for a Notes sync. Check the count again before you delete or leave this notebook.</string>
+    <string name="notes_notebook_failed_kept">This attempt deleted no Notes text.</string>
+    <string name="notes_notebook_delete_confirm_unnamed">This notebook and all its data will be removed from the server.</string>
 </resources>

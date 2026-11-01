@@ -115,6 +115,20 @@ internal object NotebookLeaveOrDelete {
     fun discard(context: Context, identity: CollectionLifecycleIdentity, shown: UnsyncedNotes): NotebookDiscard =
         store(context, identity).discardNotebook(requireNotNull(identity.collectionUid), shown)
 
+    /**
+     * Whether a clear or a discard of the notebook's store got as far as deleting in this process and has not finished
+     * ([PendingNotesStore.clearStopped]), read from memory. When the store cannot be opened, it is read from the store
+     * folders of such instances ([PendingNotesStore.stoppedIn]), as the Settings discard reads it. While it is, a leave
+     * or delete that fails after a confirmation never says that nothing was deleted.
+     */
+    @WorkerThread
+    fun stopped(context: Context, identity: CollectionLifecycleIdentity): Boolean = runCatching {
+        store(context, identity).clearStopped()
+    }.getOrElse {
+        PendingNotesStore.identityDir(context.noBackupFilesDir, identity.account.type, identity.account.name,
+            identity.creationId).name in PendingNotesStore.stoppedIn(context.noBackupFilesDir)
+    }
+
     /** Whether the exact generation's Notes run runs or waits to. */
     fun running(identity: CollectionLifecycleIdentity): Boolean =
         exact(identity).let { NotesSyncCoordinator.isActive(it) || NotesSyncCoordinator.isPending(it) }
