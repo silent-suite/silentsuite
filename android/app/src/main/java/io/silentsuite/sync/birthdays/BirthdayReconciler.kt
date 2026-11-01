@@ -24,8 +24,8 @@ import java.util.TreeMap
 /**
  * The Birthdays calendar reconciler: the fenced write step and one fresh-read pass ([reconcile]),
  * including duplicate copies, retirement of extra active calendars and repair of retired ones, and
- * a post-commit source check with bounded fresh reruns. Retries of conflicts or unknown outcomes,
- * coalescing and the trigger controller are not here yet.
+ * a post-commit source check and conflict recovery, both by bounded fresh reruns. Retries of unknown
+ * write outcomes, coalescing and the trigger controller are not here yet.
  */
 object BirthdayReconciler {
     enum class WriteOutcome { COMMITTED, CONFLICT, UNKNOWN, SKIPPED }
@@ -91,16 +91,23 @@ object BirthdayReconciler {
      *   (same storage item, canonical text, new mtime) and the others are deleted; generated events
      *   whose contact is gone are deleted; all fenced on its root as read.
      * Item writes go in [writeFenced] chunks. Ordinary items and calendars are never touched, and
-     * nothing is generated into a retired calendar. A conflict or unknown outcome of any write is
+     * nothing is generated into a retired calendar. An unknown outcome of any write is
      * [RunStatus.PENDING] and nothing is resent. [RunResult.written] lists every calendar a write
      * was attempted on, across passes.
+     *
+     * A write or conditional retirement the server rejects as a conflict (a calendar changed after
+     * the pass read it) ends that pass; a fresh full pass then reads and plans everything again from
+     * current state, so current eligibility applies and no old item or root is reused.
      *
      * After a pass that ends DONE, the source is checked again from the cursors that pass saved
      * (the collection inventory and each address book it read): a book that appeared, went away or
      * changed its access, or a contact added, changed or deleted, means the pass may have written
-     * from an older source, so a fresh full pass runs (at most two extra passes). DONE needs a
-     * complete check that finds no change; a check that cannot finish, or a source still changing
-     * after the last pass, is [RunStatus.PENDING] "post-check" for a later run.
+     * from an older source, so a fresh full pass runs.
+     *
+     * Conflicts and source changes share one bound: at most two extra passes (three in all). DONE
+     * needs a complete check that finds no change; a check that cannot finish is
+     * [RunStatus.PENDING] "post-check", and a run that still meets a conflict or a changing source
+     * after its last pass is [RunStatus.PENDING] "conflict" or "post-check" for a later run.
      */
     fun reconcile(etebase: com.etebase.client.Account, username: String): RunResult {
         val written = LinkedHashSet<String>()
@@ -120,6 +127,9 @@ object BirthdayReconciler {
 
     /** Ends a pass early with nothing (more) written. */
     private class Stop(val status: RunStatus, val reason: String) : Exception(reason)
+
+    /** A fenced write or conditional retirement was rejected by the server as a conflict; the pass ends. */
+    private class Conflict : Exception("conflict")
 
     private class Page<T>(val data: List<T>, val cursor: String?, val done: Boolean)
 
@@ -151,7 +161,17 @@ object BirthdayReconciler {
     private fun passes(colMgr: CollectionManager, username: String, written: MutableSet<String>): RunResult {
         var reruns = 0
         while (true) {
-            val (result, source) = pass(colMgr, username, written)
+            val (result, source) = try {
+                pass(colMgr, username, written)
+            } catch (e: Conflict) {
+                // The server rejected a fenced write: a calendar changed after this pass read it.
+                // Nothing of the old pass is reused or resent; a fresh full pass reads and plans again
+                // from current state, sharing the same bound as source-change reruns.
+                if (reruns >= MAX_RERUNS) return RunResult(RunStatus.PENDING, written.sorted(), "conflict")
+                reruns++
+                Logger.log.info("Birthdays write met a newer calendar; reading everything again")
+                continue
+            }
             if (result.status != RunStatus.DONE) return result
             when (postCheck(colMgr, source)) {
                 SourceCheck.STABLE -> return result
@@ -285,7 +305,7 @@ object BirthdayReconciler {
             try {
                 colMgr.transaction(calendar)
             } catch (e: ConflictException) {
-                throw Stop(RunStatus.PENDING, "conflict")
+                throw Conflict()
             } catch (e: ConnectionException) {
                 throw Stop(RunStatus.PENDING, "write-outcome-unknown")
             } catch (e: TemporaryServerErrorException) {
@@ -380,14 +400,17 @@ object BirthdayReconciler {
     private fun deleteAll(leftovers: Map<String, List<Pair<Item, BirthdayCalendar.EventFields>>>): List<Item> =
         leftovers.values.flatten().map { (item, _) -> item.also { it.delete() } }
 
-    /** Writes [items] into [calendar] in [writeFenced] chunks; a conflict or unknown outcome stops the pass as pending. */
+    /**
+     * Writes [items] into [calendar] in [writeFenced] chunks. A conflict ends the pass for a fresh
+     * one ([Conflict]); an unknown outcome stops the run as pending, and nothing is resent.
+     */
     private fun commitFenced(itemMgr: ItemManager, calendar: Collection, items: List<Item>, written: MutableSet<String>) {
         for (chunk in items.chunked(MAX_CHUNK)) {
             // Recorded before the write: an uncertain write may still have landed.
             written += calendar.uid
             when (writeFenced(itemMgr, calendar, chunk)) {
                 WriteOutcome.COMMITTED, WriteOutcome.SKIPPED -> Unit
-                WriteOutcome.CONFLICT -> throw Stop(RunStatus.PENDING, "conflict")
+                WriteOutcome.CONFLICT -> throw Conflict()
                 WriteOutcome.UNKNOWN -> throw Stop(RunStatus.PENDING, "write-outcome-unknown")
             }
         }
