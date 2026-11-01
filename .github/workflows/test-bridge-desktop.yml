@@ -6,6 +6,7 @@ name: Test Bridge desktop tracers (source)
 #   T2 first window: real native desktop window journey (bridge/tests/test_desktop_shell.py)
 #     plus the desktop-flavor updater refusal (bridge/tests/test_desktop_flavor.py)
 #   T1b legacy gate: CLI registration / occupied port migration prompt (bridge/tests/test_desktop_migration.py)
+#   T2 startup DNS: desktop loopback bind without reverse DNS (bridge/tests/test_desktop_startup_dns.py)
 # No build, installer, release, credential, account, network sync or autostart state.
 
 on:
@@ -21,6 +22,8 @@ on:
       - 'bridge/tests/desktop_smoke/product_probe.py'
       - 'bridge/tests/test_desktop_migration.py'
       - 'bridge/tests/desktop_smoke/migration_probe.py'
+      - 'bridge/tests/test_desktop_startup_dns.py'
+      - 'bridge/tests/desktop_smoke/startup_dns_probe.py'
       - 'bridge/tests/desktop_smoke/requirements.txt'
       - 'bridge/tests/conftest.py'
       - 'bridge/pyproject.toml'
@@ -284,5 +287,36 @@ jobs:
           path: |
             ${{ runner.temp }}/t1b-migration/junit.xml
             ${{ runner.temp }}/t1b-migration/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Its own step and receipt, so its result reads apart from T2 and T1b.
+      - name: Run T2 startup-DNS tests
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' }}
+        timeout-minutes: 10
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/t2-startup-dns"
+          cmd=(python -m pytest tests/test_desktop_startup_dns.py -v --tb=long -p no:cacheprovider
+               --junitxml="$RUNNER_TEMP/t2-startup-dns/junit.xml")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t2-startup-dns/pytest.txt"
+          else
+            "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t2-startup-dns/pytest.txt"
+          fi
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t2-startup-dns/pytest.txt"
+          exit "$status"
+
+      - name: Upload T2 startup-DNS receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t2-startup-dns-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/t2-startup-dns/junit.xml
+            ${{ runner.temp }}/t2-startup-dns/pytest.txt
           if-no-files-found: warn
           retention-days: 14
