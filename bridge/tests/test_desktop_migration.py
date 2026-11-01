@@ -95,7 +95,8 @@ def _run(root, data_dir, home, scenario):
     result = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
     describe = (
         f"scenario={scenario} rc={completed.returncode} stage={result.get('stage')!r} "
-        f"entry_error={result.get('entry_error')!r}\nstderr tail:\n{completed.stderr[-3000:]}"
+        f"entry_error={result.get('entry_error')!r}\nstdout tail:\n{completed.stdout[-1500:]}"
+        f"\nstderr tail:\n{completed.stderr[-4000:]}"
     )
     if completed.returncode != 0 or result.get("stage") != "done":
         pytest.fail(f"fixture did not complete (not RED): {describe}")
@@ -112,6 +113,11 @@ def _witness(result):
         f"prompts={observed['prompts']!r} prepared={result['prepared']} "
         f"serving_attempted={result['serving_attempted']} dashboard_shown={observed['dashboard_shown']} "
         f"removal_calls={result['removal_calls']} exit_code={result['exit_code']!r}"
+        # Diagnostic context only (never asserted), so a failure shows where startup stood.
+        f"\nlast_registry={observed.get('last_registry')!r} first_bound_seconds={observed.get('first_bound_seconds')!r}"
+        f"\ndiagnostics={result.get('diagnostics')!r}"
+        f"\nstall_stacks={observed.get('stall_stacks')!r}"
+        f"\n{result['describe']}"
     )
 
 

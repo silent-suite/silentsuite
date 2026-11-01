@@ -52,6 +52,7 @@ EXIT_WATCHDOG = 3
 WATCHDOG_SECONDS = 100
 OBSERVE_INTERVAL_MS = 200
 OUTCOME_DEADLINE_SECONDS = 60
+STALL_CAPTURE_SECONDS = 20  # diagnostic snapshot, before the product's own 30 s dashboard deadline
 BRAND = "SilentSuite Bridge"
 MIGRATION_PROMPT = "Move to the desktop app"
 CLI_RUN_VALUE = "SilentSuiteBridge"
@@ -98,11 +99,14 @@ def _foreign_listener(port, recorder):
     return server, thread
 
 
-def _install_service_manager_trap(traps):
+def _install_service_manager_trap(traps, passthrough=None):
     def guard(original):
         def wrapper(*args, **kwargs):
             argv = args[0] if args else kwargs.get("args")
             first = argv[0] if isinstance(argv, (list, tuple)) and argv else argv
+            if passthrough is not None and len(passthrough) < 50:
+                # Diagnostic only: which subprocesses ran, from which thread.
+                passthrough.append(f"{threading.current_thread().name}:{os.path.basename(str(first))}")
             if isinstance(first, str) and os.path.basename(first).lower() in MANAGERS:
                 traps.append(os.path.basename(first).lower())
                 raise PermissionError("T1b fixture: service-manager call trapped")
@@ -200,7 +204,8 @@ def run(out: Path, scenario: str) -> int:
     from silentsuite_bridge.radicale.server import get_registry
 
     traps = []
-    _install_service_manager_trap(traps)
+    subprocess_calls = []  # diagnostic only
+    _install_service_manager_trap(traps, subprocess_calls)
 
     # --- scenario setup -------------------------------------------------
     cli_registration = scenario.startswith("cli_")
@@ -282,7 +287,37 @@ def run(out: Path, scenario: str) -> int:
                 return True
         return False
 
+    def record_diagnostics():
+        # Diagnostic only, never asserted: registry progress, and one bounded
+        # stack snapshot of every thread if no dashboard appeared in time.
+        registry = get_registry()
+        elapsed = round(time.monotonic() - started, 1)
+        snapshot = {
+            "t": elapsed,
+            "started": registry.is_started,
+            "stopped": registry.is_stopped,
+            "bound": len(registry.bound_listeners()),
+            "failed": registry.failed_count(),
+        }
+        observed["last_registry"] = snapshot
+        if snapshot["bound"] and "first_bound_seconds" not in observed:
+            observed["first_bound_seconds"] = elapsed
+        if (
+            elapsed >= STALL_CAPTURE_SECONDS
+            and not observed["dashboard_shown"]
+            and "stall_stacks" not in observed
+        ):
+            names = {thread.ident: thread.name for thread in threading.enumerate()}
+            stacks = {}
+            for ident, frame in sys._current_frames().items():
+                frames = traceback.extract_stack(frame)[-10:]
+                stacks[names.get(ident, str(ident))] = [
+                    f"{os.path.basename(f.filename)}:{f.lineno}:{f.name}" for f in frames
+                ]
+            observed["stall_stacks"] = stacks
+
     def observe():
+        record_diagnostics()
         for widget in QApplication.topLevelWidgets():
             if not widget.isVisible():
                 continue
@@ -359,6 +394,10 @@ def run(out: Path, scenario: str) -> int:
         "lock_free_after": lock_free,
         "foreign_requests": list(foreign_requests),
         "service_manager_traps": traps,
+        "diagnostics": {  # never asserted
+            "subprocess_calls": subprocess_calls,
+            "seconds_in_main": round(time.monotonic() - started, 1),
+        },
     })
     _write(out, result)
     timer.cancel()
