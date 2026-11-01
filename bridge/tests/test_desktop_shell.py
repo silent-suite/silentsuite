@@ -131,14 +131,21 @@ def test_desktop_entrypoint_accepts_desktop_flavor(journey):
 def test_window_is_branded_and_shows_its_own_bound_dashboard(journey):
     _require_entrypoint_ran(journey)
     observed = journey["result"].get("observed", {})
-    assert not observed.get("window_deadline_missed"), f"no product window showed the dashboard: {_describe(journey)}"
+    assert not observed.get("window_deadline_missed"), (
+        f"no product window showed the dashboard; last seen {observed.get('last_seen')!r}: {_describe(journey)}"
+    )
     assert BRAND in observed.get("window_title", ""), observed
     assert observed.get("page_title") == BRAND
     assert observed.get("visible_top_level_windows") == 1
-    # The view shows the URL this process's registry confirmed after binding,
-    # on the port the run requested: not a requested, file- or IPC-supplied URL.
-    assert observed.get("view_url") == observed.get("registry_dashboard_url")
-    assert observed.get("view_url") == f"http://127.0.0.1:{journey['port']}/"
+    # The view was asked to load the URL this process's registry confirmed
+    # after binding, on the port the run requested: not a requested, file- or
+    # IPC-supplied URL.
+    assert observed.get("requested_url") == observed.get("registry_dashboard_url")
+    assert observed.get("requested_url") == f"http://127.0.0.1:{journey['port']}/"
+    # Radicale's root answers with one same-origin redirect, 302 / -> /.web
+    # (test_web_dashboard.py::test_radicale_root_redirect_terminates_at_dashboard),
+    # so the dashboard is shown at exactly that route on the same host and port.
+    assert observed.get("view_url") == f"http://127.0.0.1:{journey['port']}/.web"
     assert observed.get("off_the_record") is True
     assert observed.get("web_channel_absent") is True
 
@@ -148,7 +155,8 @@ def test_off_origin_load_is_refused_before_any_request(journey):
     observed = journey["result"].get("observed", {})
     assert "foreign_requests" in observed, f"NOT REACHED: the window was never observed. {_describe(journey)}"
     assert observed["foreign_requests"] == []
-    assert observed.get("view_url_after_off_origin") == observed.get("registry_dashboard_url")
+    # The view stays on the dashboard route it was showing.
+    assert observed.get("view_url_after_off_origin") == observed.get("view_url")
 
 
 def test_window_close_stops_the_owned_server_and_releases_the_lock(journey):

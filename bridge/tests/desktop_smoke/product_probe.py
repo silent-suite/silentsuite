@@ -175,11 +175,32 @@ def run(out: Path) -> int:
                 return widget, views[0]
         return None, None
 
+    def requested_of(view):
+        # QWebEnginePage.requestedUrl: the URL originally requested for the
+        # page now shown, before any redirect. None if the binding lacks it.
+        getter = getattr(view.page(), "requestedUrl", None)
+        return getter().toString() if getter is not None else None
+
+    def same_origin(url_a, url_b):
+        a, b = urllib.parse.urlsplit(url_a), urllib.parse.urlsplit(url_b)
+        return (a.scheme, a.hostname, a.port) == (b.scheme, b.hostname, b.port)
+
     def observe():
         phase = state["phase"]
         if phase == "wait-window":
+            window, view = find_product_window()
+            dashboard = get_registry().dashboard_url(False)
+            # Bounded last-seen diagnostics, so a missed deadline says why.
+            state["last_seen"] = {
+                "window_title": window.windowTitle() if window is not None else None,
+                "view_url": view.url().toString() if view is not None else None,
+                "requested_url": requested_of(view) if view is not None else None,
+                "page_title": view.title() if view is not None else None,
+                "registry_dashboard_url": dashboard,
+            }
             if time.monotonic() - state["started"] > WINDOW_DEADLINE_SECONDS:
                 result["observed"]["window_deadline_missed"] = True
+                result["observed"]["last_seen"] = state["last_seen"]
                 state["phase"] = "gave-up"
                 result["stage"] = "window-deadline-missed"
                 _write(out, result)
@@ -187,18 +208,22 @@ def run(out: Path) -> int:
                 for widget in QApplication.topLevelWidgets():
                     widget.close()
                 return
-            window, view = find_product_window()
-            dashboard = get_registry().dashboard_url(False)
             if window is None or dashboard is None:
                 return
-            if view.url().toString() != dashboard or view.title() != BRAND:
+            # The view must have been asked to load THIS process's registry URL;
+            # Radicale's root then redirects same-origin to the dashboard route
+            # (302 / -> /.web), so the final URL is judged by the parent test.
+            requested = requested_of(view)
+            current = view.url().toString()
+            if requested != dashboard or not same_origin(current, dashboard) or view.title() != BRAND:
                 return
             page = view.page()
             profile = page.profile()
             result["observed"].update({
                 "window_title": window.windowTitle(),
                 "visible_top_level_windows": len([w for w in QApplication.topLevelWidgets() if w.isVisible()]),
-                "view_url": view.url().toString(),
+                "view_url": current,
+                "requested_url": requested,
                 "page_title": view.title(),
                 "registry_dashboard_url": dashboard,
                 "requested_port": config.LISTEN_PORT,
