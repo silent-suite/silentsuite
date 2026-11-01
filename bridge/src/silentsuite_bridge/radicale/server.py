@@ -7,8 +7,11 @@ address, and peer address.
 """
 
 import logging
+import re
+import socket
 import ssl
 import threading
+import time
 
 from ..operator_output import address_detail_enabled
 
@@ -292,10 +295,126 @@ def _build_bridge_https_server_class(upstream_class, registry: ListenerRegistry)
                 registry.record_failed()
                 print_listener_not_bound(address, "HTTPS")
                 raise
+            # Per listener and per serve() run: never shared across listeners.
+            self._tls_listener_kind = _listener_kind(self.server_address[0])
+            self._tls_failure_limiter = _TlsFailureLimiter()
             registry.record_bound(self.server_address, self.address_family, ssl=True)
             _print_bound(self.server_address, ssl=True)
 
+        def finish_request_locked(self, request, client_address):
+            """Replace the pinned Radicale 3.2.3 handshake step.
+
+            Upstream ``ParallelHTTPSServer.finish_request_locked`` runs
+            ``do_handshake()``, routes any failure through ``handle_error``
+            (a generic "request failed" line carrying the raw SSL message)
+            and then calls ``shutdown_request``. This keeps the same
+            handshake, ``Exception`` scope and cleanup, but reports one
+            rate-limited closed-category line instead. Successful handshakes
+            continue into the unchanged plain-HTTP request path
+            (``ParallelHTTPServer.finish_request_locked``).
+            """
+            try:
+                request.do_handshake()
+            except Exception as exc:
+                try:
+                    _report_tls_handshake_failure(
+                        self._tls_listener_kind, exc, self._tls_failure_limiter
+                    )
+                finally:
+                    self.shutdown_request(request)
+                return
+            return super(upstream_class, self).finish_request_locked(
+                request, client_address
+            )
+
     return _BridgeHTTPSServer
+
+
+# ---------- pre-HTTP TLS handshake failure diagnostics ----------
+
+_TLS_LISTENER_KINDS = ("loopback", "remote", "wildcard")  # = _listener_kind()
+_TLS_FAILURE_CATEGORIES = (
+    "client_closed",
+    "client_alert",
+    "plaintext_http",
+    "timeout",
+    "unknown",
+)
+# Every line that can be emitted, generated once from closed sets. Nothing
+# from the connection, exception message, peer or certificate is formatted in.
+_TLS_FAILURE_LINES = {
+    (kind, category): f"TLS handshake failed ({kind} listener; category={category})"
+    for kind in _TLS_LISTENER_KINDS
+    for category in _TLS_FAILURE_CATEGORIES
+}
+# OpenSSL reason codes (``SSLError.reason``), compared exactly.
+_TLS_PLAINTEXT_REASONS = frozenset({"HTTP_REQUEST", "HTTPS_PROXY_REQUEST"})
+_TLS_CLOSED_REASONS = frozenset({"UNEXPECTED_EOF_WHILE_READING"})
+# Received-alert reason codes form fixed OpenSSL families.
+_TLS_ALERT_REASON = re.compile(r"(?:SSLV3|TLSV1|TLSV13)_ALERT_[A-Z0-9_]{1,48}")
+_TLS_FAILURE_BURST = 5
+_TLS_FAILURE_WINDOW_SECONDS = 60.0
+
+
+def _tls_failure_category(exc) -> str:
+    """Map a handshake exception to a closed category from its type/reason code.
+
+    The exception message is never consulted. Anything unrecognised is
+    ``unknown``. A category describes what the listener saw, not which
+    client failed or why it distrusted the certificate.
+    """
+    if isinstance(exc, socket.timeout):
+        return "timeout"
+    if isinstance(exc, (ssl.SSLEOFError, ssl.SSLZeroReturnError, ConnectionError)):
+        return "client_closed"
+    if isinstance(exc, ssl.SSLError):
+        reason = getattr(exc, "reason", None)
+        if type(reason) is str:
+            if reason in _TLS_PLAINTEXT_REASONS:
+                return "plaintext_http"
+            if reason in _TLS_CLOSED_REASONS:
+                return "client_closed"
+            if _TLS_ALERT_REASON.fullmatch(reason):
+                return "client_alert"
+    return "unknown"
+
+
+class _TlsFailureLimiter:
+    """Fixed-window limiter with constant-size state; safe across threads."""
+
+    __slots__ = ("_burst", "_window", "_clock", "_lock", "_window_start", "_count")
+
+    def __init__(
+        self,
+        burst=_TLS_FAILURE_BURST,
+        window_seconds=_TLS_FAILURE_WINDOW_SECONDS,
+        clock=time.monotonic,
+    ):
+        self._burst = burst
+        self._window = window_seconds
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._window_start = None
+        self._count = 0
+
+    def allow(self) -> bool:
+        now = self._clock()
+        with self._lock:
+            if self._window_start is None or now - self._window_start >= self._window:
+                self._window_start = now
+                self._count = 0
+            if self._count >= self._burst:
+                return False
+            self._count += 1
+            return True
+
+
+def _report_tls_handshake_failure(kind, exc, limiter) -> None:
+    line = _TLS_FAILURE_LINES.get((kind, _tls_failure_category(exc)))
+    if line is None:
+        line = _TLS_FAILURE_LINES[("remote", "unknown")]
+    if limiter.allow():
+        logger.warning(line)
 
 
 def _listener_kind(host) -> str:
