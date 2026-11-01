@@ -1501,8 +1501,10 @@ internal class PendingNotesStore private constructor(
     sealed class NotebookDiscard {
         /**
          * Every entry of the notebook that could be read went, [deleted] of them, as far as a second listing in the same
-         * hold of the store lock shows: two listings that leave out the same entry and still list the counter do not
-         * show it. The [unreadable] ones, whose header names the notebook and whose text cannot be read, stay.
+         * hold of the store lock shows, and a look by path at what the confirmation names and neither listing showed:
+         * an entry that the confirmation does not name, and that two listings leave out while they still list the
+         * counter, is not seen. The [unreadable] ones, whose header names the notebook and whose text cannot be read,
+         * stay.
          * [uncounted] when the notebook could not be counted, by the count the confirmation was compared with or by the
          * second listing: the files that could not be placed in a notebook, which may hold its text, stay too.
          */
@@ -1521,12 +1523,13 @@ internal class PendingNotesStore private constructor(
 
         /**
          * [deleted] entries went, and [kept] of the notebook's entries stay: a removal failed, the loop stopped, a
-         * throw after the loop stopped the discard, or the second listing still places an entry in the notebook that
-         * this call did not keep for being unreadable. [unsure] when a removal that failed had unlinked a file already,
-         * such as an entry whose directory sync then failed or a conflict copy's original whose copy then stayed, or
-         * when the directory sync owed before Done failed: some of the notebook's text may be gone that [deleted] does
-         * not count, and an unlink whose sync failed can come back after a power loss. [unsure] too when a throw after
-         * the loop stopped a discard that had unlinked a file, before it could check what went.
+         * throw after the loop stopped the discard, the second listing still places an entry in the notebook that this
+         * call did not keep for being unreadable, or the confirmation names one that neither listing showed and that a
+         * look by path does not show gone. [unsure] when a removal that failed had unlinked a file already, such as an
+         * entry whose directory sync then failed or a conflict copy's original whose copy then stayed, or when the
+         * directory sync owed before Done failed: some of the notebook's text may be gone that [deleted] does not
+         * count, and an unlink whose sync failed can come back after a power loss. [unsure] too when a throw after the
+         * loop stopped a discard that had unlinked a file, before it could check what went.
          */
         data class Partly(val deleted: Int, val kept: Int, val unsure: Boolean = false) : NotebookDiscard()
     }
@@ -1561,9 +1564,11 @@ internal class PendingNotesStore private constructor(
      *    partial success makes that durability step too; a sync that fails gives [NotebookDiscard.Partly] with
      *    [NotebookDiscard.Partly.unsure]. Then the notebook is listed again, and an entry that listing places in it,
      *    other than one kept for being unreadable, stays and gives [NotebookDiscard.Partly], since the first listing
-     *    can have come back short; nothing more is deleted for it. Two listings that leave out the same entry and
-     *    still list the counter get past this. A second listing that cannot count the notebook, or cannot list the
-     *    store, gives Done with [NotebookDiscard.Done.uncounted].
+     *    can have come back short; nothing more is deleted for it. So does a name in [confirmed] that neither listing
+     *    showed, which the loop did not walk, unless its path is shown absent ([namesThere]). An entry that
+     *    [confirmed] does not name, and that two listings leave out while they still list the counter, gets past
+     *    this. A second listing that cannot count the notebook, or cannot list the store, otherwise gives Done with
+     *    [NotebookDiscard.Done.uncounted].
      *
      * From step 5 on nothing is passed on, since a caller takes a throw for a discard that deleted nothing: a throw
      * that no step turns into an outcome of its own gives [NotebookDiscard.Partly], in the loop as step 5 says, and
@@ -1627,14 +1632,17 @@ internal class PendingNotesStore private constructor(
                 }
             }
             // The listing the count came from can have come back short: what a second one still places in the
-            // notebook stays, and nothing more is deleted for it.
+            // notebook stays, and nothing more is deleted for it. That one can leave out the same entry, so what the
+            // confirmation names and neither listing showed, which the loop did not walk, is looked up by path.
             val again = try {
                 countNotebook(uid)
             } catch (e: Throwable) {
                 null
             }
-            val left = again?.placed?.filterNot { it in unreadable }
-            if (!left.isNullOrEmpty()) return@locked NotebookDiscard.Partly(deleted, unreadable.size + left.size)
+            val left = again?.placed.orEmpty().toHashSet()
+            left += namesThere(confirmed.names - count.shown - again?.shown.orEmpty())
+            left -= unreadable
+            if (left.isNotEmpty()) return@locked NotebookDiscard.Partly(deleted, unreadable.size + left.size)
             NotebookDiscard.Done(deleted, unreadable.size,
                 uncounted = now.unreadable || again?.answer?.unreadable != false)
         } catch (e: Throwable) {
@@ -1646,8 +1654,16 @@ internal class PendingNotesStore private constructor(
         }
     }
 
-    /** An answer of [unsyncedInNotebook], and the entries it placed in the notebook: null when not listed. */
-    private class NotebookCount(val answer: UnsyncedNotes, val placed: List<String>?)
+    /**
+     * An answer of [unsyncedInNotebook], the entries it placed in the notebook, null when not listed, and the names
+     * its listing showed, as [UnsyncedNotes.names] gives them: every entry placed in any notebook, and what could not
+     * be placed. A first write cut short gives no name, so it shows nothing of its entry.
+     */
+    private class NotebookCount(
+        val answer: UnsyncedNotes,
+        val placed: List<String>?,
+        val shown: Set<String> = emptySet(),
+    )
 
     /** [unsyncedInNotebook] for [notebookUid], a checked uid, under the store lock. */
     private fun countNotebook(notebookUid: String): NotebookCount {
@@ -1666,28 +1682,33 @@ internal class PendingNotesStore private constructor(
         // A listing that lacks the counter while its presence check does not show it absent came back short.
         val short = shortOfCounter(names)
         val held = names.toHashSet()
+        val shown = HashSet<String>()
         val placed = ArrayList<String>()
         val unplaced = ArrayList<String>()
         for (name in names) {
             when (val placement = placementOf(name, held)) {
-                is Placement.In -> if (placement.notebookUid == notebookUid) placed += placement.entry
+                is Placement.In -> {
+                    shown += placement.entry
+                    if (placement.notebookUid == notebookUid) placed += placement.entry
+                }
                 Placement.Unknown -> unplaced += name
                 Placement.Nowhere -> Unit
             }
         }
+        shown += uncountedNames(unplaced)
         // One file that cannot be placed leaves every notebook uncountable, since it may hold this notebook's text, and
         // so does a listing that came back short, which may have left out this notebook's entries.
         if (withdrawn && unplaced.isEmpty() && !short) {
-            if (placed.isEmpty()) return NotebookCount(UnsyncedNotes.NOTHING, placed)
+            if (placed.isEmpty()) return NotebookCount(UnsyncedNotes.NOTHING, placed, shown)
             try {
                 return NotebookCount(UnsyncedNotes(placed.size, currentSequence(strict = true), unreadable = false,
-                    names = placed.toSet()), placed)
+                    names = placed.toSet()), placed, shown)
             } catch (e: IOException) {
                 // A sequence that cannot be read: the notebook could not be counted.
             }
         }
         return NotebookCount(UnsyncedNotes(placed.size + unplaced.size, uncountedSequence(), unreadable = true,
-            names = placed.toSet() + uncountedNames(unplaced)), placed)
+            names = placed.toSet() + uncountedNames(unplaced)), placed, shown)
     }
 
     /** The notebook a listed file's unsynced text belongs to: [In] one, [Nowhere], or [Unknown]. */
@@ -1909,11 +1930,17 @@ internal class PendingNotesStore private constructor(
         if (names == null) return true
         if (names.isEmpty()) return false
         if (!followable()) return true
-        return names.any { name ->
-            name.isEmpty() || name == "." || name == ".." || '\u0000' in name || File(name).name != name ||
-                listOf(name, name + NEW).any { presenceOf(File(dir, it)) != Presence.ABSENT }
-        }
+        return names.any { fileThere(it) }
     }
+
+    /** The ones of [names] that are there, as [namedThere] asks it: all of them while the folder may not be followed. */
+    private fun namesThere(names: Set<String>): Set<String> =
+        if (followable()) names.filterTo(HashSet()) { fileThere(it) } else names
+
+    /** Whether the file [name], or the write beside it, is there, as [namedThere] asks it for each name. */
+    private fun fileThere(name: String): Boolean =
+        name.isEmpty() || name == "." || name == ".." || '\u0000' in name || File(name).name != name ||
+            listOf(name, name + NEW).any { presenceOf(File(dir, it)) != Presence.ABSENT }
 
     /**
      * An acknowledgement holds only while the store cannot be listed and is not written ([acknowledged]), so

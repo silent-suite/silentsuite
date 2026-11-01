@@ -5671,6 +5671,167 @@ class PendingNotesStoreTest {
         assertEquals(setOf("n4.note", "sequence"), dir.list()!!.toSet())
     }
 
+    @Test fun `a discard whose two listings leave out a confirmed entry finds it by path, and never says it went`() {
+        fun leaveOut(name: String, folder: File = dir) {
+            PendingNotesStore.listFilesForTesting = { d ->
+                val all = d.listFiles()
+                if (d.name == folder.name) all?.filter { it.name != name }?.toTypedArray() else all
+            }
+        }
+        for (uid in listOf("n1", "n2")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val shown = store.unsyncedInNotebook("b1")
+        val n2 = File(dir, "n2.note").readBytes()
+        leaveOut("n2.note")
+        assertEquals("n2 stays, and is not said to be gone", NotebookDiscard.Partly(1, 1),
+            store.discardNotebook("b1", shown))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n2.note", "sequence"), dir.list()!!.toSet())
+        assertArrayEquals("nothing more was deleted for it", n2, File(dir, "n2.note").readBytes())
+
+        // With the only entry left out the notebook reads as holding nothing, and that is not taken for gone.
+        val alone = store.unsyncedInNotebook("b1")
+        assertEquals(notes("n2"), alone.names)
+        leaveOut("n2.note")
+        assertEquals(NotebookDiscard.Partly(0, 1), store.discardNotebook("b1", alone))
+        PendingNotesStore.listFilesForTesting = null
+        assertArrayEquals(n2, File(dir, "n2.note").readBytes())
+
+        // Gone from the folder and from both listings: a look that fails counts as there, and only one shown absent is gone.
+        assertTrue(File(dir, "n2.note").delete())
+        PendingNotesStore.presenceForTesting = { f ->
+            if (f.name == "n2.note") PendingNotesStore.Presence.UNKNOWN else null
+        }
+        assertEquals(NotebookDiscard.Partly(0, 1), store.discardNotebook("b1", alone))
+        PendingNotesStore.presenceForTesting = null
+        assertEquals(NotebookDiscard.Done(0, 0), store.discardNotebook("b1", alone))
+
+        // A first write that stopped before its rename counts under its entry's name, and is found as that write.
+        val d = tmp.newFolder("left-out-first-write")
+        val s = PendingNotesStore.open(d, rename = atomicMove)
+        s.saveLocal("n3", "b1", "r1", blob("c"), isCreate = false)
+        val first = PendingEntry("n4", "b1", PendingEntry.State.UPSERT, 1, "r1", false, blob = blob("d"))
+        File(d, "n4.note.new").writeBytes(PendingCodec.encodeEntry(first))
+        val both = s.unsyncedInNotebook("b1")
+        assertEquals(notes("n3", "n4"), both.names)
+        leaveOut("n4.note.new", d)
+        assertEquals(NotebookDiscard.Partly(1, 1), s.discardNotebook("b1", both))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n4.note.new", "sequence"), d.list()!!.toSet())
+
+        // A first write cut short shows nothing of its entry, so the entry left out beside it is still looked up.
+        val b = tmp.newFolder("left-out-beside-cut-write")
+        val r = PendingNotesStore.open(b, rename = atomicMove)
+        for (uid in listOf("n7", "n8")) r.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val beside = r.unsyncedInNotebook("b1")
+        File(b, "n8.note.new").writeBytes(byteArrayOf(0))
+        leaveOut("n8.note", b)
+        assertEquals(NotebookDiscard.Partly(1, 1), r.discardNotebook("b1", beside))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n8.note", "n8.note.new", "sequence"), b.list()!!.toSet())
+
+        // A link that takes the folder's place during the discard: n6 counts, not looked up, and n5, which went, does not.
+        val e = tmp.newFolder("left-out-link")
+        val t = PendingNotesStore.open(e, rename = atomicMove)
+        for (uid in listOf("n5", "n6")) t.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val linked = t.unsyncedInNotebook("b1")
+        leaveOut("n6.note", e)
+        val asked = ArrayList<String>()
+        PendingNotesStore.presenceForTesting = { f ->
+            asked += f.name
+            null
+        }
+        PendingNotesStore.beforeRemoveForTesting = { PendingNotesStore.linkForTesting = { true } }
+        assertEquals(NotebookDiscard.Partly(1, 1), t.discardNotebook("b1", linked))
+        assertFalse("nothing is looked up through it", "n6.note" in asked)
+    }
+
+    @Test fun `a discard's second listing reports what the confirmation does not name, and a file it cannot place stays uncounted`() {
+        // The shown count and the discard's own both leave out n2.note, so only the second listing shows it.
+        for (uid in listOf("n1", "n2")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        var hidden = 2
+        PendingNotesStore.listFilesForTesting = { d ->
+            val all = d.listFiles()
+            if (d.name == dir.name && hidden-- > 0) all?.filter { it.name != "n2.note" }?.toTypedArray() else all
+        }
+        val shown = store.unsyncedInNotebook("b1")
+        assertEquals(notes("n1"), shown.names)
+        assertEquals("n2 is reported, though nothing names it", NotebookDiscard.Partly(1, 1),
+            store.discardNotebook("b1", shown))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n2.note", "sequence"), dir.list()!!.toSet())
+
+        // n4 is named and left out of the discard's own count, and its second listing cannot place it: the file stays,
+        // which Done's uncounted says, and it is not a Partly as well.
+        val d = tmp.newFolder("second-listing-cannot-place")
+        val s = PendingNotesStore.open(d, rename = atomicMove)
+        for (uid in listOf("n3", "n4")) s.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val named = s.unsyncedInNotebook("b1")
+        assertEquals(notes("n3", "n4"), named.names)
+        val damaged = byteArrayOf(0)
+        File(d, "n4.note").writeBytes(damaged)
+        hidden = 1
+        PendingNotesStore.listFilesForTesting = { f ->
+            val all = f.listFiles()
+            if (f.name == d.name && hidden-- > 0) all?.filter { it.name != "n4.note" }?.toTypedArray() else all
+        }
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), s.discardNotebook("b1", named))
+        PendingNotesStore.listFilesForTesting = null
+        assertArrayEquals(damaged, File(d, "n4.note").readBytes())
+
+        // n6 the other way round: the discard's own count cannot place it, and its second listing leaves it out.
+        val e = tmp.newFolder("first-listing-cannot-place")
+        val t = PendingNotesStore.open(e, rename = atomicMove)
+        for (uid in listOf("n5", "n6")) t.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        File(e, "n6.note").writeBytes(damaged)
+        val uncounted = t.unsyncedInNotebook("b1")
+        assertEquals(notes("n5", "n6"), uncounted.names)
+        var listings = 0
+        PendingNotesStore.listFilesForTesting = { f ->
+            val all = f.listFiles()
+            if (f.name == e.name && listings++ > 0) all?.filter { it.name != "n6.note" }?.toTypedArray() else all
+        }
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), t.discardNotebook("b1", uncounted))
+        PendingNotesStore.listFilesForTesting = null
+
+        // A first write that cannot be placed is listed under its own name and named under its entry's.
+        val g = tmp.newFolder("first-write-cannot-place")
+        val u = PendingNotesStore.open(g, rename = atomicMove)
+        u.saveLocal("n7", "b1", "r1", blob("g"), isCreate = false)
+        val other = PendingEntry("n9", "b1", PendingEntry.State.UPSERT, 1, "r1", false, blob = blob("h"))
+        File(g, "n8.note.new").writeBytes(PendingCodec.encodeEntry(other))
+        val written = u.unsyncedInNotebook("b1")
+        assertEquals(notes("n7", "n8"), written.names)
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), u.discardNotebook("b1", written))
+        assertEquals(setOf("n8.note.new", "sequence"), g.list()!!.toSet())
+
+        // A file of a kind this build does not know is listed and named by the same name, whatever it ends in.
+        val h = tmp.newFolder("unknown-kind-write")
+        val w = PendingNotesStore.open(h, rename = atomicMove)
+        w.saveLocal("n9", "b1", "r1", blob("i"), isCreate = false)
+        File(h, "x.draft.new").writeBytes(blob("a newer build's"))
+        val kinds = w.unsyncedInNotebook("b1")
+        assertEquals(notes("n9") + "x.draft.new", kinds.names)
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), w.discardNotebook("b1", kinds))
+        assertEquals(setOf("x.draft.new", "sequence"), h.list()!!.toSet())
+    }
+
+    @Test fun `a discard looks up no confirmed name that a listing shows in another notebook`() {
+        store.saveLocal("n1", "b2", "r1", blob("a"), isCreate = false)
+        assertEquals("not this notebook's now", NotebookDiscard.Done(0, 0),
+            store.discardNotebook("b1", UnsyncedNotes(1, 1, unreadable = false, names = notes("n1"))))
+        assertTrue(File(dir, "n1.note").exists())
+
+        // The same for a first write, which a listing shows by its own name and the confirmation names by its entry's.
+        val d = tmp.newFolder("first-write-elsewhere")
+        val s = PendingNotesStore.open(d, rename = atomicMove)
+        s.saveLocal("n3", "b2", "r1", blob("c"), isCreate = false)
+        val first = PendingEntry("n2", "b2", PendingEntry.State.UPSERT, 1, "r1", false, blob = blob("b"))
+        File(d, "n2.note.new").writeBytes(PendingCodec.encodeEntry(first))
+        assertEquals(NotebookDiscard.Done(0, 0),
+            s.discardNotebook("b1", UnsyncedNotes(1, 1, unreadable = false, names = notes("n2"))))
+        assertTrue(File(d, "n2.note.new").exists())
+    }
+
     @Test fun `a removal that failed after its unlink never says nothing was deleted, and Done waits for the sync it owes`() {
         var failing = 0
         val syncs = ArrayList<String>()
