@@ -2,6 +2,7 @@
 // The pinned Etebase SDK and libsodium reject byte arrays from the jsdom realm, so this file
 // runs in node like the web744 suites; navigator.onLine keeps the browser's online default.
 import { afterAll, afterEach, describe, it, expect, beforeEach, vi } from 'vitest'
+import { deserializeTask, taskICalDateFromProperty } from '@silentsuite/core'
 import { useTaskStore } from '../use-task-store'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useAuthStore } from '../use-auth-store'
@@ -162,6 +163,91 @@ describe('useTaskStore', () => {
     expect(updatedContent).toContain(`UID:${task.uid}`)
     expect(updatedContent).toContain('STATUS:COMPLETED')
     expect(updatedContent).toContain('PERCENT-COMPLETE:100')
+  })
+
+  const startLine = 'DTSTART;TZID=Europe/Berlin:20260530T080000'
+  const dueLine = 'DUE;TZID=America/New_York:20260601T090000'
+  const temporalLines = (content: string) => content.split('\r\n').filter((line) => line.startsWith('DTSTART') || line.startsWith('DUE'))
+
+  /** A task another client wrote with zoned DTSTART and DUE, hydrated the way sync does. */
+  function hydrateZonedTask() {
+    const synced = deserializeTask([
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Other Client//EN',
+      'BEGIN:VTODO',
+      'UID:synced-zoned-task',
+      'SUMMARY:Zoned task',
+      startLine,
+      dueLine,
+      'STATUS:NEEDS-ACTION',
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n'))
+    const updateItem = vi.fn(async (_type: string, _id: string, _content: string) => {})
+    useEtebaseStore.setState({
+      account: {},
+      itemCache: new Map([['synced-item', {}]]),
+      updateItem,
+    } as any)
+    useTaskStore.setState({ tasks: [{ ...synced, id: 'synced-item', listId: 'tasks-1' }] })
+    return { updateItem, savedContent: (call: number) => updateItem.mock.calls[call]![2] }
+  }
+
+  it('an explicit due date pick replaces the zoned DUE with the picked local day and keeps DTSTART (#66)', async () => {
+    const { savedContent } = hydrateZonedTask()
+
+    await useTaskStore.getState().updateTask('synced-item', { due_date: new Date(2026, 5, 3) })
+
+    expect(temporalLines(savedContent(0))).toEqual([startLine, 'DUE;VALUE=DATE:20260603'])
+  })
+
+  it('an explicit start date pick replaces only the zoned DTSTART (#66)', async () => {
+    const { savedContent } = hydrateZonedTask()
+
+    await useTaskStore.getState().updateTask('synced-item', { start_date: new Date(2026, 4, 29) })
+
+    expect(temporalLines(savedContent(0))).toEqual(['DTSTART;VALUE=DATE:20260529', dueLine])
+  })
+
+  it('clearing the due date removes DUE and keeps DTSTART (#66)', async () => {
+    const { savedContent } = hydrateZonedTask()
+
+    await useTaskStore.getState().updateTask('synced-item', { due_date: null })
+
+    expect(temporalLines(savedContent(0))).toEqual([startLine])
+    expect(useTaskStore.getState().tasks[0]!.due_ical).toBeUndefined()
+  })
+
+  it('createTask and importTasks write supplied DTSTART and DUE sources (#66)', async () => {
+    const start = taskICalDateFromProperty('20260530T080000', { TZID: 'Europe/Berlin' })
+    const due = taskICalDateFromProperty('20260601T090000Z')
+    const zoned = { start_date: start.date, start_ical: start.source, due_date: due.date, due_ical: due.source }
+    const { createItem } = acknowledgedAccount()
+    const createItemsBatch = vi.fn(async (_type: string, items: { content: string }[]) => items.map((_, index) => `remote-import-${index}`))
+    useEtebaseStore.setState({ createItemsBatch } as any)
+
+    await useTaskStore.getState().createTask({ title: 'Created zoned', ...zoned })
+    await useTaskStore.getState().importTasks([{ title: 'Imported zoned', ...zoned }])
+
+    const expected = [startLine, 'DUE:20260601T090000Z']
+    expect(temporalLines(createItem.mock.calls[0]![1] as string)).toEqual(expected)
+    expect(temporalLines(createItemsBatch.mock.calls[0]![1][0]!.content)).toEqual(expected)
+  })
+
+  it('keeps synced DTSTART and DUE time zones through title and completion updates (#66)', async () => {
+    const { updateItem } = hydrateZonedTask()
+
+    await useTaskStore.getState().updateTask('synced-item', { title: 'Renamed zoned task' })
+    await useTaskStore.getState().toggleComplete('synced-item')
+
+    expect(updateItem).toHaveBeenCalledTimes(2)
+    const savedLines = updateItem.mock.calls.map((call) => call[2].split('\r\n'))
+    expect(savedLines[0]).toContain('SUMMARY:Renamed zoned task')
+    expect(savedLines[1]).toContain('STATUS:COMPLETED')
+    for (const lines of savedLines) {
+      expect(lines.filter((line) => line.startsWith('DTSTART') || line.startsWith('DUE'))).toEqual([startLine, dueLine])
+    }
   })
 
   it('preserves completed state during task import', async () => {

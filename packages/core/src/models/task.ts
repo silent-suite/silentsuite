@@ -4,6 +4,20 @@ import type { Priority } from './types.js';
 
 export type TaskStatus = 'needs-action' | 'in-process' | 'completed' | 'cancelled';
 
+export type TaskICalDateKind = 'date' | 'floating' | 'utc' | 'tzid';
+
+/**
+ * The DTSTART/DUE value exactly as read from iCalendar. When present it is
+ * authoritative for serialization and the matching Date field is a derived view.
+ */
+export interface TaskICalDate {
+  kind: TaskICalDateKind;
+  /** RFC 5545 value as read: YYYYMMDD, YYYYMMDDTHHMMSS or YYYYMMDDTHHMMSSZ. */
+  value: string;
+  /** TZID parameter verbatim (including any quotes); only for kind 'tzid'. */
+  tzid?: string;
+}
+
 export interface Task {
   id: string;
   uid: string;
@@ -11,6 +25,10 @@ export interface Task {
   description: string;
   start_date?: Date | null;
   due_date: Date | null;
+  /** Source DTSTART identity. Anything that changes start_date must update or clear it. */
+  start_ical?: TaskICalDate;
+  /** Source DUE identity. Anything that changes due_date must update or clear it. */
+  due_ical?: TaskICalDate;
   priority: Priority;
   completed: boolean;
   /** RFC 5545 VTODO STATUS. `completed` remains for legacy callers and is kept in sync. */
@@ -118,6 +136,74 @@ function isDateOnly(value: string): boolean {
   return value.replace(/[^0-9TZ]/g, '').length <= 8;
 }
 
+const ICAL_DATE_VALUE = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/;
+
+/** Offset of `timeZone` from UTC at `utcMs`, in ms. Throws for zones Intl does not know. */
+function zoneOffsetMs(timeZone: string, utcMs: number): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(utcMs));
+  const p = (type: string) => parseInt(parts.find((x) => x.type === type)?.value ?? '0', 10);
+  const hour = p('hour') === 24 ? 0 : p('hour');
+  return Date.UTC(p('year'), p('month') - 1, p('day'), hour, p('minute'), p('second')) - utcMs;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The instant of a wall-clock time in `timeZone`, or null when Intl does not
+ * know the zone. Per RFC 5545 §3.3.5 a repeated local time means its first
+ * occurrence and a skipped one uses the offset from before the gap.
+ */
+function zonedWallTimeToDate(tzid: string, wallAsUtcMs: number): Date | null {
+  const timeZone = tzid.replace(/^"(.*)"$/, '$1');
+  try {
+    const before = zoneOffsetMs(timeZone, wallAsUtcMs - DAY_MS);
+    const after = zoneOffsetMs(timeZone, wallAsUtcMs + DAY_MS);
+    const valid = [before, after]
+      .filter((offset) => zoneOffsetMs(timeZone, wallAsUtcMs - offset) === offset)
+      .map((offset) => wallAsUtcMs - offset);
+    return new Date(valid.length > 0 ? Math.min(...valid) : wallAsUtcMs - before);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Classify an iCalendar DTSTART/DUE value. Returns the derived Date and, for
+ * values this model can reproduce exactly, the source identity to serialize.
+ */
+export function taskICalDateFromProperty(
+  value: string,
+  params?: Record<string, string>,
+): { date: Date; source?: TaskICalDate } {
+  const match = ICAL_DATE_VALUE.exec(value);
+  const timed = match?.[4] !== undefined;
+  // Unrecognised shapes, and VALUE=DATE on a timed value, keep the legacy parse with no source.
+  if (!match || (timed && params?.['VALUE']?.toUpperCase() === 'DATE')) {
+    return { date: parseICalDateValue(value) };
+  }
+  const date = parseICalDateValue(value);
+  if (!timed) return { date, source: { kind: 'date', value } };
+  // A trailing Z is UTC; a TZID alongside it is invalid and ignored.
+  if (match[7]) return { date, source: { kind: 'utc', value } };
+  const tzid = params?.['TZID'];
+  if (!tzid) return { date, source: { kind: 'floating', value } };
+  const [, y, mo, d, h, mi, s] = match.map(Number) as number[];
+  const wall = Date.UTC(y!, mo! - 1, d!, h!, mi!, s!);
+  // Unknown zones keep today's local wall-time reading; the TZID is still written back verbatim.
+  return { date: zonedWallTimeToDate(tzid, wall) ?? date, source: { kind: 'tzid', value, tzid } };
+}
+
+function sourceParams(source: TaskICalDate): Record<string, string> | undefined {
+  if (source.kind === 'date') return { VALUE: 'DATE' };
+  if (source.kind === 'tzid' && source.tzid) return { TZID: source.tzid };
+  return undefined;
+}
+
 function statusToICal(task: Task): string {
   if (task.completed) return 'COMPLETED';
   return TASK_STATUS_TO_ICAL[task.status ?? 'needs-action'];
@@ -153,7 +239,10 @@ export function toVTodo(task: Task): string {
     lastModified: formatICalUtcDateTime(task.updated_at),
   };
 
-  if (task.start_date) {
+  if (task.start_date && task.start_ical) {
+    vtodo.dtstart = task.start_ical.value;
+    vtodo.dtstartParams = sourceParams(task.start_ical);
+  } else if (task.start_date) {
     const startDateOnly = task.start_date.getHours() === 0
       && task.start_date.getMinutes() === 0
       && task.start_date.getSeconds() === 0;
@@ -163,7 +252,10 @@ export function toVTodo(task: Task): string {
     }
   }
 
-  if (task.due_date) {
+  if (task.due_date && task.due_ical) {
+    vtodo.due = task.due_ical.value;
+    vtodo.dueParams = sourceParams(task.due_ical);
+  } else if (task.due_date) {
     const dueDateOnly = task.due_date.getHours() === 0
       && task.due_date.getMinutes() === 0
       && task.due_date.getSeconds() === 0;
@@ -187,7 +279,8 @@ export function fromVTodo(vtodoStr: string): Task {
   const vtodo = parseVTodo(vtodoStr);
   const now = new Date();
 
-  const due_date = vtodo.due ? parseICalDateValue(vtodo.due) : null;
+  const start = vtodo.dtstart ? taskICalDateFromProperty(vtodo.dtstart, vtodo.dtstartParams) : null;
+  const due = vtodo.due ? taskICalDateFromProperty(vtodo.due, vtodo.dueParams) : null;
   const completed = vtodo.status?.toUpperCase() === 'COMPLETED'
     || vtodo.percentComplete === 100
     || (vtodo.status === undefined && vtodo.completed !== undefined);
@@ -198,8 +291,10 @@ export function fromVTodo(vtodoStr: string): Task {
     uid: vtodo.uid,
     title: vtodo.summary ?? '',
     description: vtodo.description ?? '',
-    start_date: vtodo.dtstart ? parseICalDateValue(vtodo.dtstart) : null,
-    due_date,
+    start_date: start?.date ?? null,
+    due_date: due?.date ?? null,
+    ...(start?.source ? { start_ical: start.source } : {}),
+    ...(due?.source ? { due_ical: due.source } : {}),
     priority: icalPriorityToModel(vtodo.priority),
     completed,
     status,

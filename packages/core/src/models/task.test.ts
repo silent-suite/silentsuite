@@ -4,6 +4,7 @@ import {
   fromVTodo,
   serializeTask,
   deserializeTask,
+  taskICalDateFromProperty,
 } from './task.js';
 import type { Task } from './task.js';
 import type { Priority } from './types.js';
@@ -338,6 +339,111 @@ describe('due date serialization', () => {
     const vtodo = toVTodo(task);
 
     expect(vtodo).not.toContain('DUE');
+  });
+});
+
+// ── DUE temporal preservation (#66) ──
+
+describe('DUE temporal preservation (#66)', () => {
+  it('round-trips a TZID DUE verbatim and resolves its instant in that zone', () => {
+    const task = fromVTodo([
+      'BEGIN:VTODO',
+      'UID:tzid-due-task',
+      'SUMMARY:New York deadline',
+      'DUE;TZID=America/New_York:20260601T090000',
+      'END:VTODO',
+    ].join('\r\n'));
+
+    const lines = toVTodo(task).split('\r\n');
+
+    expect(lines.filter((line) => line.startsWith('DUE'))).toEqual([
+      'DUE;TZID=America/New_York:20260601T090000',
+    ]);
+    expect(task.due_date!.toISOString()).toBe('2026-06-01T13:00:00.000Z');
+  });
+
+  function roundTrip(...dateLines: string[]) {
+    const task = fromVTodo(['BEGIN:VTODO', 'UID:temporal-task', 'SUMMARY:Temporal', ...dateLines, 'END:VTODO'].join('\r\n'));
+    const lines = toVTodo(task).split('\r\n');
+    return {
+      task,
+      due: lines.filter((line) => line.startsWith('DUE')),
+      start: lines.filter((line) => line.startsWith('DTSTART')),
+    };
+  }
+
+  it('keeps a UTC DUE in UTC, including at midnight', () => {
+    const nine = roundTrip('DUE:20260601T090000Z');
+    expect(nine.due).toEqual(['DUE:20260601T090000Z']);
+    expect(nine.task.due_date!.toISOString()).toBe('2026-06-01T09:00:00.000Z');
+
+    expect(roundTrip('DUE:20260601T000000Z').due).toEqual(['DUE:20260601T000000Z']);
+  });
+
+  it('keeps a floating DUE floating, including at midnight', () => {
+    const nine = roundTrip('DUE:20260601T090000');
+    expect(nine.due).toEqual(['DUE:20260601T090000']);
+    expect(nine.task.due_date!.getTime()).toBe(new Date(2026, 5, 1, 9, 0, 0).getTime());
+
+    expect(roundTrip('DUE:20260601T000000').due).toEqual(['DUE:20260601T000000']);
+  });
+
+  it('keeps a TZID DUE at midnight timed', () => {
+    expect(roundTrip('DUE;TZID=Europe/Berlin:20260601T000000').due).toEqual(['DUE;TZID=Europe/Berlin:20260601T000000']);
+  });
+
+  it('keeps date-only DUE values as local dates written with VALUE=DATE', () => {
+    for (const line of ['DUE;VALUE=DATE:20260601', 'DUE:20260601']) {
+      const { task, due } = roundTrip(line);
+      expect(due).toEqual(['DUE;VALUE=DATE:20260601']);
+      expect(task.due_date!.getTime()).toBe(new Date(2026, 5, 1).getTime());
+    }
+  });
+
+  it('records the source identity of each temporal form', () => {
+    expect(taskICalDateFromProperty('20260601', { VALUE: 'DATE' }).source).toEqual({ kind: 'date', value: '20260601' });
+    expect(taskICalDateFromProperty('20260601T090000').source).toEqual({ kind: 'floating', value: '20260601T090000' });
+    expect(taskICalDateFromProperty('20260601T090000Z').source).toEqual({ kind: 'utc', value: '20260601T090000Z' });
+    expect(taskICalDateFromProperty('20260601T090000', { TZID: 'America/New_York' }).source)
+      .toEqual({ kind: 'tzid', value: '20260601T090000', tzid: 'America/New_York' });
+  });
+
+  it('keeps independent DTSTART and DUE zones', () => {
+    const { task, start, due } = roundTrip(
+      'DTSTART;TZID=Europe/Berlin:20260530T080000',
+      'DUE;TZID=America/New_York:20260601T090000',
+    );
+    expect(start).toEqual(['DTSTART;TZID=Europe/Berlin:20260530T080000']);
+    expect(due).toEqual(['DUE;TZID=America/New_York:20260601T090000']);
+    expect(task.start_date!.toISOString()).toBe('2026-05-30T06:00:00.000Z');
+  });
+
+  it('resolves a quoted recognised TZID and keeps its quotes', () => {
+    const { task, due } = roundTrip('DUE;TZID="America/New_York":20260601T090000');
+    expect(due).toEqual(['DUE;TZID="America/New_York":20260601T090000']);
+    expect(task.due_date!.toISOString()).toBe('2026-06-01T13:00:00.000Z');
+  });
+
+  it('keeps an unknown TZID verbatim and falls back to local wall time', () => {
+    for (const tzid of ['Eastern Standard Time', '"/mozilla.org/20070129_1/Europe/Berlin"']) {
+      const { task, due } = roundTrip(`DUE;TZID=${tzid}:20260601T090000`);
+      expect(due).toEqual([`DUE;TZID=${tzid}:20260601T090000`]);
+      expect(task.due_date!.getTime()).toBe(new Date(2026, 5, 1, 9, 0, 0).getTime());
+    }
+  });
+
+  // RFC 5545 §3.3.5: a skipped local time uses the offset before the gap; a
+  // repeated local time means its first occurrence.
+  it.each([
+    ['New York gap', 'America/New_York', '20260308T023000', '2026-03-08T07:30:00.000Z'],
+    ['Berlin gap', 'Europe/Berlin', '20260329T023000', '2026-03-29T01:30:00.000Z'],
+    ['New York fold', 'America/New_York', '20261101T013000', '2026-11-01T05:30:00.000Z'],
+    ['Berlin fold', 'Europe/Berlin', '20261025T023000', '2026-10-25T00:30:00.000Z'],
+    ['Berlin summer', 'Europe/Berlin', '20260615T140000', '2026-06-15T12:00:00.000Z'],
+  ])('resolves the %s instant', (_name, tzid, value, iso) => {
+    const { task, due } = roundTrip(`DUE;TZID=${tzid}:${value}`);
+    expect(task.due_date!.toISOString()).toBe(iso);
+    expect(due).toEqual([`DUE;TZID=${tzid}:${value}`]);
   });
 });
 
