@@ -12,6 +12,7 @@ import android.content.*
 import android.os.Bundle
 import android.provider.ContactsContract
 import io.silentsuite.sync.*
+import io.silentsuite.sync.birthdays.BirthdayReconciler
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalAddressBook
@@ -51,6 +52,10 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
                 // An incomplete refresh exits before child discovery but must release the client.
                 contactsProvider.release()
             }
+
+            // Birthdays (#738): after a completed collection refresh and local address-book update,
+            // also when no address book remains, so removing the last one removes its birthdays.
+            maintainBirthdays(account, settings)
 
             val childAccounts = LocalAddressBook.find(context, null, account).map { it.androidAccount }.toSet()
             val attemptId = contactsAttempt(extras)
@@ -97,6 +102,24 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
             val mainIdentity = contactsMainIdentity(extras) ?: return SyncStatusStore.MutationResult.REJECTED
             return SyncStatusStore(context).finishWithoutOutcomeResult(
                 mainIdentity, SyncStatusStore.Service.CONTACTS, attemptId)
+        }
+
+        /**
+         * One fresh-read Birthdays pass for this account ([BirthdayReconciler.reconcile]). It writes
+         * only to a calendar that already carries the active marker and qualifies; it never creates
+         * or adopts one. Its result, and any failure to start it, never changes this contacts sync's
+         * own outcome or its child dispatch. Runs outside the local cache lock, as it does network I/O.
+         */
+        private fun maintainBirthdays(account: Account, settings: AccountSettings) {
+            try {
+                HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
+                    val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
+                    val result = BirthdayReconciler.reconcile(etebase, settings.username())
+                    Logger.log.info("Birthdays after the address-book refresh: ${result.status} ${result.reason ?: ""}")
+                }
+            } catch (e: Exception) {
+                Logger.log.warning("Birthdays after the address-book refresh did not run (${e.javaClass.simpleName})")
+            }
         }
 
         private fun updateLocalAddressBooks(provider: ContentProviderClient, account: Account, settings: AccountSettings) {
