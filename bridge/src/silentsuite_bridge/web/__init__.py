@@ -561,7 +561,9 @@ def _handle_account_login(environ):
 
     email = (data.get("email") or "").strip()
     password = data.get("password") or ""
-    server_url = (data.get("serverUrl") or "").strip()
+    # A blank field means "use the default for new sign-ins"; an explicit
+    # server is passed through unchanged.
+    server_url = (data.get("serverUrl") or "").strip() or config.new_sign_in_server_url()["value"]
     if not email or not password:
         return _json_response(400, {"error": "Email and password are required"})
 
@@ -1663,7 +1665,9 @@ def _render_dashboard():
     page = page.replace("{{LOGIN_REQUIRED}}", login_required)
     page = page.replace("{{LOGIN_TITLE}}", esc(login_title))
     page = page.replace("{{LOGIN_COPY}}", esc(login_copy))
-    page = page.replace("{{SERVER_URL}}", esc(config.ETEBASE_SERVER_URL))
+    # The sign-in form offers the default for NEW sign-ins (--server > env >
+    # saved > built-in), not whichever server the last account signed in to.
+    page = page.replace("{{SERVER_URL}}", esc(config.new_sign_in_server_url()["value"]))
 
     # Sync interval display
     interval = config.SYNC_INTERVAL
@@ -1875,7 +1879,11 @@ class Web(BaseWeb):
 
         # API endpoint for current settings
         if path == "/.web/api/settings":
-            data = {"syncInterval": config.SYNC_INTERVAL}
+            data = {
+                "syncInterval": config.SYNC_INTERVAL,
+                # Additive: default server for new sign-ins and where it comes from.
+                "serverUrl": config.new_sign_in_server_url(),
+            }
             return (
                 200,
                 {"Content-Type": "application/json"},
@@ -1929,33 +1937,64 @@ class Web(BaseWeb):
             if error_response:
                 return error_response
 
+            # Validate every requested field before anything is written or
+            # applied, so a rejected request leaves settings.json untouched.
+            updates = {}
+            if isinstance(data, dict) and "serverUrl" in data:
+                if not config.new_sign_in_server_url()["editable"]:
+                    return _json_response(409, {
+                        "error": "The server URL is set by --server or SILENTSUITE_SERVER_URL and cannot be changed here",
+                    })
+                try:
+                    updates["serverUrl"] = config.validate_server_url(data["serverUrl"])
+                except ValueError as exc:
+                    return _json_response(400, {"error": str(exc)})
+
             if "syncInterval" in data:
                 new_interval = int(data["syncInterval"])
                 if new_interval < 30:
                     new_interval = 30  # enforce minimum
+                updates["syncInterval"] = new_interval
 
+            if "syncInterval" in updates and "serverUrl" in updates:
+                changed = "settings were"
+            elif "serverUrl" in updates:
+                changed = "default server URL was"
+            else:
+                changed = "sync interval was"
+
+            if updates:
                 # Save through the shared safe writer: settings.json also holds
                 # the durable network profile, which a failed write must not destroy.
                 try:
-                    config.save_settings({"syncInterval": new_interval})
+                    config.save_settings(updates)
                 except config.SettingsDurabilityError:
+                    target = "the sync interval" if changed == "sync interval was" else "the settings"
                     return _json_response(
                         500,
-                        {"error": "settings.json was replaced but not confirmed durable; retry to confirm the sync interval"},
+                        {"error": f"settings.json was replaced but not confirmed durable; retry to confirm {target}"},
                     )
                 except config.SettingsLockError:
                     # Another writer (for example --install-autostart) held the
                     # settings lock; nothing was read or written.
                     return _json_response(
                         503,
-                        {"error": "Another bridge process is updating settings.json; the sync interval was not changed, retry shortly"},
+                        {"error": f"Another bridge process is updating settings.json; the {changed} not changed, retry shortly"},
                     )
                 except (config.SettingsFileError, OSError):
                     return _json_response(
                         500,
-                        {"error": "Could not write settings.json; the sync interval was not changed"},
+                        {"error": f"Could not write settings.json; the {changed} not changed"},
                     )
 
+            if "serverUrl" in updates:
+                # New sign-ins only: never copied into ETEBASE_SERVER_URL,
+                # which legacy credential entries fall back to.
+                config.SAVED_SERVER_URL = updates["serverUrl"]
+                log_sync_event("info", "Default server URL for new sign-ins changed")
+
+            if "syncInterval" in updates:
+                new_interval = updates["syncInterval"]
                 # Update running config
                 config.SYNC_INTERVAL = new_interval
 
@@ -1970,10 +2009,14 @@ class Web(BaseWeb):
 
                 log_sync_event("info", f"Sync interval changed to {new_interval}s")
 
+            # An interval-only request keeps its exact historical response.
+            response = {"ok": True, "syncInterval": config.SYNC_INTERVAL}
+            if "serverUrl" in updates:
+                response["serverUrl"] = config.new_sign_in_server_url()
             return (
                 200,
                 {"Content-Type": "application/json"},
-                json.dumps({"ok": True, "syncInterval": config.SYNC_INTERVAL}).encode(),
+                json.dumps(response).encode(),
             )
 
         return (404, {}, b"Not found")

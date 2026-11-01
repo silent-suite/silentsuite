@@ -1071,6 +1071,9 @@ def main():
         idx = sys.argv.index("--server")
         if idx + 1 < len(sys.argv):
             config.ETEBASE_SERVER_URL = sys.argv[idx + 1]
+            # Provenance for the dashboard: the CLI destination outranks the
+            # environment and the saved default, and is not editable there.
+            config.SERVER_URL_CLI = sys.argv[idx + 1]
         else:
             print("Error: --server requires a URL argument")
             sys.exit(1)

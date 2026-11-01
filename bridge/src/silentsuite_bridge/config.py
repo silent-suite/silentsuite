@@ -12,6 +12,7 @@ import re
 import sys
 import tempfile
 import time
+import urllib.parse
 from ipaddress import ip_address
 
 from appdirs import user_data_dir
@@ -28,10 +29,52 @@ except ImportError:  # POSIX
     msvcrt = None
 
 # --- Server ---
-ETEBASE_SERVER_URL = os.environ.get(
-    "SILENTSUITE_SERVER_URL",
-    "https://server.silentsuite.io",
-)
+BUILT_IN_SERVER_URL = "https://server.silentsuite.io"
+SERVER_URL_ENV = "SILENTSUITE_SERVER_URL"
+ETEBASE_SERVER_URL = os.environ.get(SERVER_URL_ENV, BUILT_IN_SERVER_URL)
+
+# The default server for NEW sign-ins is tracked apart from ETEBASE_SERVER_URL.
+# That global is also the fallback destination of legacy credential entries
+# without a stored serverUrl (Credentials.get_server_url) and a successful
+# sign-in rewrites it, so it must never carry the saved new-sign-in default.
+SERVER_URL_CLI = None  # set by main() when --server is applied
+SAVED_SERVER_URL = None  # settings.json "serverUrl", applied by load_settings()
+
+
+def validate_server_url(value) -> str:
+    """Return a usable new-sign-in server URL or raise ValueError.
+
+    Requires a string with an http or https scheme and a non-empty host. The
+    error text never echoes the supplied value.
+    """
+    if not isinstance(value, str):
+        raise ValueError("The server URL must be a string.")
+    candidate = value.strip()
+    try:
+        parts = urllib.parse.urlsplit(candidate)
+        host = parts.hostname
+    except ValueError:
+        raise ValueError("The server URL is not a valid URL.") from None
+    if parts.scheme not in ("http", "https") or not host:
+        raise ValueError("The server URL must use http or https and name a host.")
+    return candidate
+
+
+def new_sign_in_server_url() -> dict:
+    """Effective default server for new sign-ins, with its source.
+
+    Precedence: --server > SILENTSUITE_SERVER_URL > saved serverUrl > built-in.
+    Only a saved or built-in default may be changed from the dashboard.
+    Existing accounts keep the server stored in their credentials.
+    """
+    if SERVER_URL_CLI:
+        return {"value": SERVER_URL_CLI, "source": "cli", "editable": False}
+    env_value = os.environ.get(SERVER_URL_ENV)
+    if env_value:
+        return {"value": env_value, "source": "env", "editable": False}
+    if SAVED_SERVER_URL:
+        return {"value": SAVED_SERVER_URL, "source": "saved", "editable": True}
+    return {"value": BUILT_IN_SERVER_URL, "source": "default", "editable": True}
 
 # --- Boolean parsing ---
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -820,7 +863,7 @@ def load_settings():
     NETWORK_PROFILE_ERROR so validate_network_config() refuses to start the
     listener. Loading never raises, so ``--remove-autostart`` stays usable.
     """
-    global SYNC_INTERVAL, SSL_ENABLED, SSL_CERT_FILE, SSL_KEY_FILE
+    global SYNC_INTERVAL, SSL_ENABLED, SSL_CERT_FILE, SSL_KEY_FILE, SAVED_SERVER_URL
     settings_error: str | None = None
     try:
         settings = read_settings_strict()
@@ -832,6 +875,14 @@ def load_settings():
             SYNC_INTERVAL = int(settings["syncInterval"])
     except ValueError:
         pass
+    # The saved new-sign-in default only. It is never copied into
+    # ETEBASE_SERVER_URL; an unusable saved value falls back to the built-in.
+    try:
+        SAVED_SERVER_URL = (
+            validate_server_url(settings["serverUrl"]) if "serverUrl" in settings else None
+        )
+    except ValueError:
+        SAVED_SERVER_URL = None
     _resolve_network(settings, settings_error)
     # Environment variables override settings even if tests/processes set them
     # after the module was imported.
