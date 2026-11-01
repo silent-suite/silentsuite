@@ -97,9 +97,10 @@ class BirthdayContactSyncRuntimeTest {
                 ContentResolver.setIsSyncable(account, authority, 0)
             }
             ContentResolver.setIsSyncable(account, App.addressBooksAuthority, 1)
-            AccountSettings.setUserData(manager, account, URI(fake.baseUrl), account.name)
+            AccountSettings.setUserData(manager, account, URI(fake.baseUrl), username)
             check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
             AccountSettings(context, account).etebaseSession = session
+            assertEquals("the account's stored username is the SDK user", username, AccountSettings(context, account).username())
             val requestsBefore = fake.requests.size
             val since = fake.uploadDeps.size
             val startedAt = System.currentTimeMillis()
