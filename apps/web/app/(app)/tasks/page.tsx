@@ -238,6 +238,8 @@ function TaskDialog({
   const [description, setDescription] = useState(task?.description ?? '')
   const [startDate, setStartDate] = useState<string>(dateInputValue(task?.start_date))
   const [dueDate, setDueDate] = useState<string>(dateInputValue(task?.due_date))
+  // The day each date field opened with, so an edit only sends dates the user actually changed.
+  const openedDates = useRef({ start: dateInputValue(task?.start_date), due: dateInputValue(task?.due_date) })
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? (task?.completed ? 'completed' : 'needs-action'))
   const [percentComplete, setPercentComplete] = useState(task?.percent_complete ?? (task?.completed ? 100 : 0))
@@ -314,8 +316,10 @@ function TaskDialog({
       updateTask(task.id, {
         title: trimmed,
         description,
-        start_date: parsedStart,
-        due_date: parsedDue,
+        // A date field only holds the day, so resending an untouched date would replace its
+        // original time and time zone. Send a date only when it was changed or cleared.
+        ...(startDate !== openedDates.current.start ? { start_date: parsedStart } : {}),
+        ...(dueDate !== openedDates.current.due ? { due_date: parsedDue } : {}),
         priority,
         status,
         ...progress,
