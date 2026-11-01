@@ -606,6 +606,87 @@ class BirthdayReconciliationRuntimeTest {
         }
     }
 
+    /**
+     * CONTROL_BOUND (supplementary control of the existing bounded conflict policy, added after it was
+     * implemented; not test-first evidence): every calendar write of the run is answered 409 by a
+     * scripted stand-in answer that is never applied (a scripted rejection proves the budget branch,
+     * not a real concurrent etag conflict, which is covered separately). The run makes its first
+     * attempt and exactly two fresh full passes, each listing everything again before its own
+     * attempt, then ends PENDING "conflict" without changing anything. Once the three scripted
+     * answers are used up, a separate next run converges once and is DONE: the bound is per run, and
+     * PENDING does not stop later work.
+     */
+    @Test fun threeRejectedWritesEndPendingAfterTwoFreshRetriesAndTheNextRunConverges() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val staleFields = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Byron", 1, 1))
+        val wantedFields = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10))
+        val stale = uploadItem(calendar, uid, BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Byron", 1, 1)))
+        val calendarTransaction = "POST collection/${calendar.uid}/item/transaction/"
+        val calendarItemList = "GET collection/${calendar.uid}/item/"
+        val inventoryList = "POST collection/list_multi/"
+        val rootBefore = server.collectionManager.fetch(calendar.uid).etag
+        fun eventFields() = generatedLive(calendar.uid).map { BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8)) }
+        assertEquals("the seeded event is stale", listOf(staleFields), eventFields())
+
+        // Three scripted 409 answers for the calendar's item transactions, none of them applied.
+        fake.answer("POST", Regex("collection/${Regex.escape(calendar.uid)}/item/transaction/"), 409, times = 3)
+        var since = fake.uploadDeps.size
+        var requestsBefore = fake.requests.size
+
+        val bounded = BirthdayReconciler.reconcile(server, username)
+
+        var lines = fake.requests.drop(requestsBefore).map { it.substringBefore('?') }
+        val attempts = lines.withIndex().filter { it.value == calendarTransaction }.map { it.index }
+        assertEquals("CONTROL_BOUND: ends pending on conflict", BirthdayReconciler.RunStatus.PENDING, bounded.status)
+        assertEquals("CONTROL_BOUND: the reason is conflict", "conflict", bounded.reason)
+        assertEquals("CONTROL_BOUND: the calendar is reported as possibly written", listOf(calendar.uid), bounded.written)
+        assertEquals("CONTROL_BOUND: the first attempt and exactly two fresh retries", 3, attempts.size)
+        assertEquals("CONTROL_BOUND: exactly three full passes, each listing the inventory once", 3, lines.count { it == inventoryList })
+        assertEquals("CONTROL_BOUND: each pass listed the calendar's items afresh", 3, lines.count { it == calendarItemList })
+        var previous = -1
+        for ((pass, attempt) in attempts.withIndex()) {
+            val window = (previous + 1 until attempt).map { lines[it] }
+            assertTrue("CONTROL_BOUND: pass ${pass + 1} listed the inventory before its attempt", inventoryList in window)
+            assertTrue("CONTROL_BOUND: pass ${pass + 1} listed the calendar's items before its attempt", calendarItemList in window)
+            previous = attempt
+        }
+        assertFalse("CONTROL_BOUND: no fourth pass and no check after the last rejection",
+            (attempts.last() + 1 until lines.size).any { lines[it] == inventoryList || lines[it] == calendarTransaction })
+        assertEquals("CONTROL_BOUND: no rejected write reached the stand-in's upload route", emptyList<List<String>>(), fake.uploadDeps.drop(since))
+        assertEquals("CONTROL_BOUND: the event is still stale", listOf(staleFields), eventFields())
+        assertEquals("CONTROL_BOUND: no item added or removed", setOf(stale.uid, ordinary.uid), fake.itemUids(calendar.uid))
+        assertEquals("CONTROL_BOUND: the calendar root did not move", rootBefore, server.collectionManager.fetch(calendar.uid).etag)
+        assertEquals("CONTROL_BOUND: the ordinary event is unchanged", ORDINARY_ICS,
+            String(freshItemManager(calendar.uid).fetch(ordinary.uid).content, Charsets.UTF_8))
+        assertEquals("CONTROL_BOUND: the contact is unchanged", ADA_VCARD, String(freshItemManager(book.uid).fetch(contact.uid).content, Charsets.UTF_8))
+
+        // The three scripted answers are used up; a separate next run starts with a fresh budget.
+        since = fake.uploadDeps.size
+        requestsBefore = fake.requests.size
+
+        val next = BirthdayReconciler.reconcile(server, username)
+
+        lines = fake.requests.drop(requestsBefore).map { it.substringBefore('?') }
+        assertEquals("CONTROL_BOUND: the next run is done", BirthdayReconciler.RunStatus.DONE, next.status)
+        assertEquals(listOf(calendar.uid), next.written)
+        assertEquals("CONTROL_BOUND: the next run wrote once", 1, lines.count { it == calendarTransaction })
+        assertEquals("CONTROL_BOUND: fenced on the calendar root", listOf(listOf(calendar.uid)), fake.uploadDeps.drop(since))
+        assertEquals("CONTROL_BOUND: the same storage item now has the contact's fields", listOf(stale.uid to wantedFields),
+            generatedLive(calendar.uid).map { it.uid to BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8)) })
+        assertEquals("CONTROL_BOUND: no item added or removed", setOf(stale.uid, ordinary.uid), fake.itemUids(calendar.uid))
+        val after = server.collectionManager.fetch(calendar.uid)
+        assertEquals("CONTROL_BOUND: the root did not move", rootBefore, after.etag)
+        assertEquals("CONTROL_BOUND: the marker is kept", MARKER_ACTIVE, String(after.content, Charsets.UTF_8))
+        assertEquals("CONTROL_BOUND: the ordinary event is unchanged", ORDINARY_ICS,
+            String(freshItemManager(calendar.uid).fetch(ordinary.uid).content, Charsets.UTF_8))
+        assertEquals("CONTROL_BOUND: the contact is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+        assertEquals("CONTROL_BOUND: and unchanged", ADA_VCARD, String(freshItemManager(book.uid).fetch(contact.uid).content, Charsets.UTF_8))
+    }
+
     // ---- fixture ----
 
     /** The fresh, complete listing's live items whose parsed event UID has the generated form. */

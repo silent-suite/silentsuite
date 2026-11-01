@@ -343,11 +343,11 @@ RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launch
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':95,'29:sibling-routes':48,'35:all':202,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':95}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':96,'29:sibling-routes':48,'35:all':203,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':96}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "if len(canonical) != 202 or len(expected) != expected_sizes[key]:\n",
+        "if len(canonical) != 203 or len(expected) != expected_sizes[key]:\n",
     ),
     (
         "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
@@ -570,7 +570,7 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
         ("'36:account-dashboard':33", "'36:account-dashboard':34"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) != 202 or", "if len(canonical) < 202 or"),
+        ("if len(canonical) != 203 or", "if len(canonical) < 203 or"),
         ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
     ):
         mutated = copy.deepcopy(current)
