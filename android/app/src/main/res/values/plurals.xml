@@ -28,4 +28,28 @@
         <item quantity="one">%1$d unsynced Notes change from %2$s will be deleted from this device. This cannot be undone.</item>
         <item quantity="other">%1$d unsynced Notes changes from %2$s will be deleted from this device. This cannot be undone.</item>
     </plurals>
+    <plurals name="notes_notebook_unsynced_delete">
+        <item quantity="one">%d Notes change in this notebook has not synced. Sync now tries to send it first, and it can fail. If you delete the notebook without syncing, the change is deleted from this device and cannot be recovered.</item>
+        <item quantity="other">%d Notes changes in this notebook have not synced. Sync now tries to send them first, and it can fail. If you delete the notebook without syncing, they are deleted from this device and cannot be recovered.</item>
+    </plurals>
+    <plurals name="notes_notebook_unsynced_leave">
+        <item quantity="one">%d Notes change in this notebook has not synced. Sync now tries to send it first, and it can fail. If you leave the notebook without syncing, the change is deleted from this device and cannot be recovered.</item>
+        <item quantity="other">%d Notes changes in this notebook have not synced. Sync now tries to send them first, and it can fail. If you leave the notebook without syncing, they are deleted from this device and cannot be recovered.</item>
+    </plurals>
+    <plurals name="notes_notebook_discard_delete">
+        <item quantity="one">%d unsynced Notes change in this notebook will be deleted from this device once the notebook is deleted. This cannot be undone.</item>
+        <item quantity="other">%d unsynced Notes changes in this notebook will be deleted from this device once the notebook is deleted. This cannot be undone.</item>
+    </plurals>
+    <plurals name="notes_notebook_discard_leave">
+        <item quantity="one">%d unsynced Notes change in this notebook will be deleted from this device once you have left the notebook. This cannot be undone.</item>
+        <item quantity="other">%d unsynced Notes changes in this notebook will be deleted from this device once you have left the notebook. This cannot be undone.</item>
+    </plurals>
+    <plurals name="notes_notebook_again_delete">
+        <item quantity="one">The notebook was deleted. %d unsynced Notes change from it is still on this device. If you discard it, it is deleted from this device. This cannot be undone. If you keep it, it stays on this device and may no longer sync.</item>
+        <item quantity="other">The notebook was deleted. %d unsynced Notes changes from it are still on this device. If you discard them, they are deleted from this device. This cannot be undone. If you keep them, they stay on this device and may no longer sync.</item>
+    </plurals>
+    <plurals name="notes_notebook_again_leave">
+        <item quantity="one">You left the notebook. %d unsynced Notes change from it is still on this device. If you discard it, it is deleted from this device. This cannot be undone. If you keep it, it stays on this device and may no longer sync.</item>
+        <item quantity="other">You left the notebook. %d unsynced Notes changes from it are still on this device. If you discard them, they are deleted from this device. This cannot be undone. If you keep them, they stay on this device and may no longer sync.</item>
+    </plurals>
 </resources>
