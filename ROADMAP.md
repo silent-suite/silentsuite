@@ -1,7 +1,5 @@
 # SilentSuite roadmap
 
-Where SilentSuite is heading, what is being built now, and what has shipped since the start. Upcoming items have no dates and are in no particular order.
-
 ### Native iOS app
 Planned · [#52](https://github.com/silent-suite/silentsuite/issues/52)
 
