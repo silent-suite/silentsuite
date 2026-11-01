@@ -98,15 +98,15 @@ internal object NotebookLeaveOrDeletePolicy {
 
     /**
      * Whether a store that changed after the confirmation, once the server call went through, is asked about once
-     * more with the real count, while the screen is up. The maintainer has not decided yet; false keeps it all for
-     * the push step to hold, with no question.
+     * more with the real count, while the screen is up. True is my chosen default; false keeps it all for the push
+     * step to hold, with no question.
      */
     internal val ASKS_ONCE_MORE_AFTER_A_CHANGE = true
 
     /**
      * Whether a notebook is still left or deleted while the store cannot be listed, after a confirmation that deletes
-     * and records nothing. The maintainer has not decided yet; false refuses it until the store can be read, and the
-     * count's dialog then offers no way on.
+     * no unsynced Notes text and records nothing. True is my chosen default; false refuses it until the store can be
+     * read, and the count's dialog then offers no way on.
      */
     internal val GOES_ON_WHILE_UNLISTED = true
 

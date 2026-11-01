@@ -20,8 +20,8 @@ import io.silentsuite.sync.ui.etebase.NotebookLeaveOrDeletePolicy.Step
  * The dialogs a notebook screen shows when the user leaves or deletes a Notes notebook ([NotebookLeaveOrDeletePolicy]).
  * The count of changes that have not synced comes with Sync now (positive), Cancel, and going on without syncing; the
  * separate confirmation with Cancel and the discard; the one more question after the server call with Discard and Keep,
- * which cannot be canceled. For a store that could not be listed, where going on deletes nothing, the dialogs have
- * words of their own, and none of them calls it a discard.
+ * which cannot be canceled. For a store that could not be listed, where going on deletes no unsynced Notes text, the
+ * dialogs have words of their own, and none of them calls it a discard.
  *
  * The dialog keeps the notebook's exact identity, all of the answer it showed, the names that answer was counted from
  * included, and the token of the app process that made it ([ProcessIncarnation]) in its arguments, and sends them with
@@ -63,7 +63,7 @@ class NotebookLeaveOrDeleteDialogFragment : DialogFragment() {
         }
         val delete = kind == Kind.DELETE
         val text = NotebookLeaveOrDeletePolicy.text(shown)
-        // A store that could not be listed: going on deletes nothing, so no word of a discard is used for it.
+        // A store that could not be listed: going on deletes no unsynced Notes text, so no word of a discard is used.
         val unlisted = text == Text.Unlisted
         val builder = MaterialAlertDialogBuilder(requireContext())
         return when (step) {

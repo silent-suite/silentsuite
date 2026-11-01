@@ -813,7 +813,7 @@
     <string name="notes_remove_uncheckable_retry">Nothing was removed. Try again.</string>
     <string name="notes_remove_uncheckable_unknown">SilentSuite couldn’t check whether %1$s was removed. Review the list.</string>
     <string name="notes_remove_uncheckable_ended">This confirmation has ended. Nothing was removed.</string>
-    <!-- Leaving or deleting a Notes notebook: what came of discarding its unsynced Notes changes once the leave or delete went through on the server. Shown as a message of two lines at most, so each says first what came of the discard. Placeholder wording, pending review. -->
+    <!-- Leaving or deleting a Notes notebook: what came of discarding its unsynced Notes changes once the leave or delete went through on the server. Shown as a message of two lines at most, so each says first what came of the discard. -->
     <string name="notes_notebook_discarded">Unsynced Notes changes from this notebook were deleted from this device.</string>
     <string name="notes_notebook_discarded_readable">Readable unsynced changes were deleted from this device. Those that can’t be read stay.</string>
     <string name="notes_notebook_kept_unreadable">This attempt deleted no unsynced Notes text. This notebook’s changes can’t be read and stay.</string>
@@ -821,7 +821,7 @@
     <string name="notes_notebook_kept_partly">Some unsynced changes could not be deleted from this device and may no longer sync.</string>
     <string name="notes_notebook_nothing_deleted">This attempt deleted no unsynced Notes text. Unsynced text may remain and may no longer sync.</string>
     <string name="notes_notebook_discard_unknown">The discard stopped. Some unsynced changes may already be deleted from this device.</string>
-    <!-- Leaving or deleting a Notes notebook while its Notes changes have not synced: the count, the separate confirmation, the one more question once the store changed after the server call, Sync now, and a server call that failed. For a store that could not be listed, where going on deletes no unsynced Notes text: never "discard", never "remove", and that no unsynced Notes text is deleted from this device. Placeholder wording, pending review. -->
+    <!-- Leaving or deleting a Notes notebook while its Notes changes have not synced: the count, the separate confirmation, the one more question once the store changed after the server call, Sync now, and a server call that failed. For a store that could not be listed, where going on deletes no unsynced Notes text: never "discard", never "remove", and that no unsynced Notes text is deleted from this device. -->
     <string name="notes_notebook_unsynced_title">Notes changes in this notebook have not synced</string>
     <string name="notes_notebook_maybe_unsynced_title">Notes changes may not have synced</string>
     <string name="notes_notebook_unsynced_uncounted">Some Notes changes on this device could not be counted, so this notebook may have changes that have not synced. Sync now tries to send them first, and it can fail. If you go on without syncing, this notebook’s changes that can be read are deleted from this device and cannot be recovered. Those that can’t be read stay.</string>

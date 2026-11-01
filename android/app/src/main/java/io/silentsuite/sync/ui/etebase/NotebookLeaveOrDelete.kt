@@ -78,7 +78,7 @@ internal object NotebookLeaveOrDelete {
      * the notebook's text went; any other exception may come from anywhere. An Error, such as running out of memory,
      * may come after some of it went: [PendingNotesStore.discardNotebook] gives [NotebookDiscard.Partly] for a throw
      * once its loop began, and memory can run out again while it makes that Partly. So an Error ends the attempt
-     * like a closed store's refusal, and a leave or delete that went through on the server never ends in a crash.
+     * like a closed store's refusal: one from [discard] never ends a leave or delete in a crash.
      */
     private inline fun discarded(discard: () -> NotebookDiscard): Ended = try {
         Ended.Removed(discard())

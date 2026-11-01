@@ -1488,9 +1488,9 @@ internal class PendingNotesStore private constructor(
      *   a withdrawal of the acknowledgement that cannot be shown. A sequence that cannot be read gives "could not be
      *   counted" only for a notebook that holds anything; one that holds nothing counts nothing then.
      *
-     * The maintainer has not decided whether one such file may leave every notebook uncountable; [countNotebook]
-     * holds that rule in one branch. A header carries its own checksum and the text does not, so an entry counted
-     * here can turn out unreadable at [discardNotebook], which keeps it.
+     * That one such file leaves every notebook uncountable is my chosen default; [countNotebook] holds that rule in
+     * one branch. A header carries its own checksum and the text does not, so an entry counted here can turn out
+     * unreadable at [discardNotebook], which keeps it.
      */
     fun unsyncedInNotebook(notebookUid: String): UnsyncedNotes = synchronized(lock) {
         checkNotDropped()
@@ -1549,8 +1549,8 @@ internal class PendingNotesStore private constructor(
      * 4. When [confirmed] does not cover what the notebook holds now ([UnsyncedNotes.covers], which compares
      *    [UnsyncedNotes.listed] too), nothing is deleted ([NotebookDiscard.Changed]).
      * 5. Each entry placed in the notebook is read in full. One whose text cannot be read is kept and reported, as
-     *    the maintainer's rule for unreadable drafts asks; whether a notebook's discard should delete it instead is
-     *    his to decide, in that one branch. Any other goes as [discard] removes it, a conflict copy's original with
+     *    the maintainer's rule for unreadable drafts asks; keeping it in a notebook's discard is my chosen default,
+     *    held in that one branch. Any other goes as [discard] removes it, a conflict copy's original with
      *    it. A removal that throws an IOException or a RuntimeException keeps that entry while the others still go;
      *    any other throw, such as running out of memory on a large entry, keeps it and the rest
      *    ([NotebookDiscard.Partly]), and is not passed on. A removal that throws after it unlinked a file, such as one
@@ -1579,7 +1579,7 @@ internal class PendingNotesStore private constructor(
         val uid = checkedUid(notebookUid)
         val count = countNotebook(uid)
         val now = count.answer
-        // No permit and no acknowledgement, here or below, unless the maintainer decides that one is needed.
+        // No permit and no acknowledgement, here or below: my chosen default.
         val placed = count.placed ?: return@locked NotebookDiscard.NotListed
         if (now.anything && !confirmed.covers(now)) return@locked NotebookDiscard.Changed(now)
         var deleted = 0
@@ -1597,7 +1597,7 @@ internal class PendingNotesStore private constructor(
                 val noteUid = entry.removeSuffix(NOTE)
                 try {
                     when (val read = readEntry(noteUid)) {
-                        // Kept, as unreadable drafts are, unless the maintainer decides that this discard deletes it.
+                        // Kept, as unreadable drafts are: my chosen default for this discard.
                         is Read.Unreadable -> unreadable += entry
                         is Read.Present -> {
                             removeEntry(noteUid, read.entry)

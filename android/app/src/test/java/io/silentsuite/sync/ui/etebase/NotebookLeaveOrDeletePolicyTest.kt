@@ -60,8 +60,8 @@ class NotebookLeaveOrDeletePolicyTest {
         assertEquals(Text.Unlisted, policy.text(unlisted))
         assertEquals("never a count of zero", Text.Uncounted, policy.text(UnsyncedNotes.NOTHING))
         assertEquals(Text.Uncounted, policy.text(policy.countFailed))
-        // The defaults while the maintainer has not decided: going on while the store cannot be read, and asking once
-        // more after a change.
+        // My chosen defaults, each in one named value of the policy: going on while the store cannot be read, and
+        // asking once more after a change.
         assertTrue(policy.GOES_ON_WHILE_UNLISTED && policy.ASKS_ONCE_MORE_AFTER_A_CHANGE)
         for (shown in listOf(two, uncounted, unlisted)) assertTrue("$shown", policy.offersGoingOn(shown))
     }
