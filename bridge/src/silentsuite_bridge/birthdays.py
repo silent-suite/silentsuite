@@ -493,8 +493,11 @@ def _read_content(entry):
 def _read_state(col_mgr, username, *, with_source=True):
     """Fresh, complete snapshot of calendars, address books and memberships.
 
-    Returns (state, None) or (None, reason). Marked Admin calendars need a complete member
-    list; a calendar is writable only when that list is exactly `username`.
+    Returns (state, None) or (None, reason). An active calendar (the generation destination, C3)
+    is writable only when it is Admin and its complete member list is exactly `username`; an
+    Admin active calendar whose member list cannot be read completely stops the read. A retired
+    calendar (generated-item repair, F3) is writable whenever this user can write to it (Admin or
+    ReadWrite), whatever its members, and its member list is not asked for.
     """
     try:
         collections, inventory_token = _list_pages(
@@ -518,7 +521,9 @@ def _read_state(col_mgr, username, *, with_source=True):
         if marker is None:
             continue  # ordinary or unmarked calendars are never adopted
         writable = False
-        if collection.access_level == CollectionAccessLevel.Admin:
+        if marker == "retired":
+            writable = collection.access_level in (CollectionAccessLevel.Admin, CollectionAccessLevel.ReadWrite)
+        elif collection.access_level == CollectionAccessLevel.Admin:
             try:
                 members = _list_members(col_mgr.get_member_manager(collection))
             except _Incomplete:
