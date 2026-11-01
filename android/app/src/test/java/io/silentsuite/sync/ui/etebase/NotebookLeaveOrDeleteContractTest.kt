@@ -267,16 +267,93 @@ class NotebookLeaveOrDeleteContractTest {
             "Start.Plain -> if (leavesWhenNothing) leaveNotebook(identity, UnsyncedNotes.NOTHING)\n"))
     }
 
-    @Test fun `a count that throws could not be counted, and the screens count only through it`() {
+    /**
+     * Each withContext(Dispatchers.IO) block of [text], from its opening brace to the brace that closes it. Braces are
+     * counted as they come: the screens' code has none in a string or a character that does not pair.
+     */
+    private fun ioBlocks(text: String): List<IntRange> =
+        Regex("""withContext\(\s*Dispatchers\.IO\s*\)\s*\{""").findAll(text).map { open ->
+            var depth = 0
+            var close = -1
+            for (i in open.range.last until text.length) {
+                if (text[i] == '{') depth++
+                if (text[i] == '}' && --depth == 0) {
+                    close = i
+                    break
+                }
+            }
+            assertTrue("an IO block that does not close", close > open.range.last)
+            open.range.last..close
+        }.toList()
+
+    /** A call or callable reference of a member of the glue: the member is group 2, so a nested type is not one. */
+    private val glueCall = Regex("""\bNotebookLeaveOrDelete\s*(\.|::)\s*([a-z]\w*)""")
+
+    /** A call or callable reference of a member of the pending store, or of its companion. */
+    private val storeCall = Regex("""\bPendingNotesStore(\s*\.\s*Companion)?\s*(\.|::)\s*([a-z]\w*)""")
+
+    @Test fun `a count that throws could not be counted, and the screens reach the store only inside IO blocks`() {
         val glue = code("NotebookLeaveOrDelete.kt")
         assertTrue(glue.contains(
             "fun count(context: Context, identity: CollectionLifecycleIdentity): UnsyncedNotes = runCatching {\n" +
             "        store(context, identity).unsyncedInNotebook(requireNotNull(identity.collectionUid))\n" +
             "    }.getOrDefault(NotebookLeaveOrDeletePolicy.countFailed)\n"))
+        // The glue opens the store in one place, and only its count, its discard and its check of a stopped discard use
+        // it. That check also reads, from memory, the folders of stopped instances when the store cannot be opened.
+        assertEquals("the glue's calls of the store", listOf("forIdentity", "identityDir", "stoppedIn"),
+            storeCall.findAll(glue).map { it.groupValues[3] }.toList())
+        val opener = Regex("""\bstore\(""")
+        val opens = Regex("""\bstore\(context, identity\)""").findAll(glue).map { it.range.first }.toList()
+        assertEquals("the count's, the discard's and the check's", 3, opens.size)
+        assertEquals("and no other use of the opener", 4, opener.findAll(glue).count())
+        for ((at, function) in opens.zip(listOf("fun count(", "fun discard(", "fun stopped("))) {
+            assertEquals(function, glue.lastIndexOf("    $function", at), glue.lastIndexOf("    fun ", at))
+        }
+        // Sync now asks for a Notes run and touches no pending store, so it stays on the main thread.
+        val sync = body(glue, "fun syncNotesNow(context: Context, identity: CollectionLifecycleIdentity): SyncAsked {")
+        assertTrue("Sync now is found", sync.contains("NotesSyncCoordinator.request("))
+        assertFalse(sync, opener.containsMatchIn(sync) || storeCall.containsMatchIn(sync))
+        // Nor does it through the glue's own members, called by their plain names, and neither does the result
+        // posting, which may run on any thread.
+        val reachesStore = Regex("""(?<![.\w])(store|count|discard|stopped|remove|again)\(""")
+        val posting = glue.substringAfter("    fun postResult(context: Context, text: CharSequence) {", "")
+        assertTrue("the result posting is found", posting.contains("Toast.makeText("))
+        for (part in listOf(sync, posting)) assertFalse(part, reachesStore.containsMatchIn(part))
+        for (name in listOf("NotebookLeaveOrDeletePolicy.kt", "NotebookLeaveOrDeleteDialogFragment.kt")) {
+            assertEquals(name, emptyList<String>(), storeCall.findAll(code(name)).map { it.value }.toList())
+        }
+        // The dialog calls no member of the glue but postResult, and the policy none.
+        val dialog = code("NotebookLeaveOrDeleteDialogFragment.kt")
+        assertEquals("the dialog's", listOf("postResult"),
+            glueCall.findAll(dialog).map { it.groupValues[2] }.distinct().toList())
+        assertEquals("the policy's", emptyList<String>(),
+            glueCall.findAll(code("NotebookLeaveOrDeletePolicy.kt")).map { it.value }.toList())
+
+        val onIo = mapOf("count" to 3, "discard" to 2, "stopped" to 1, "remove" to 1, "again" to 1, "running" to 1,
+            "cancel" to 1)
         for (name in listOf("EditCollectionFragment.kt", "CollectionMembersFragment.kt")) {
             val screen = code(name)
             assertFalse(name, screen.contains("unsyncedInNotebook") || screen.contains("PendingNotesStore"))
             assertEquals(name, 3, screen.split("NotebookLeaveOrDelete.count(applicationContext, identity)").size - 1)
+            val io = ioBlocks(screen)
+            val calls = glueCall.findAll(screen).toList()
+            assertEquals("$name: the glue's members a screen calls",
+                (onIo.keys + setOf("postResult", "syncNotesNow")).sorted(),
+                calls.map { it.groupValues[2] }.distinct().sorted())
+            // Each store call, the check of a stopped discard and the cancel of the Notes run starts inside a
+            // withContext(Dispatchers.IO) block: the block of the count before the first dialog, which also runs for
+            // an answer from a dialog made in another process to any step but the one more question, the block of the
+            // confirmed run, the block of the one more question's again(), and the block of its count for an answer to
+            // the one more question from a dialog made in another process.
+            val reaching = calls.filter { it.groupValues[2] in onIo }
+            assertEquals(name, onIo, reaching.groupingBy { it.groupValues[2] }.eachCount())
+            for (call in reaching) {
+                assertTrue("$name: ${call.value} is not inside withContext(Dispatchers.IO)",
+                    io.any { call.range.first in it })
+            }
+            val syncs = calls.filter { it.groupValues[2] == "syncNotesNow" }
+            assertEquals(name, 1, syncs.size)
+            assertFalse("$name: Sync now runs on the main thread", io.any { syncs.single().range.first in it })
         }
     }
 
