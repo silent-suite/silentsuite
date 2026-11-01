@@ -8,6 +8,7 @@ Usage:
     silentsuite-bridge
 """
 
+import contextlib
 import logging
 import os
 import subprocess
@@ -1191,12 +1192,33 @@ def main():
 
         sys.exit(install_autostart())
 
-    # Resume durable cleanup before checking whether account state allows startup.
-    if not _prepare_server_start():
-        sys.exit(1)
+    # Only a server start owns the data directory. Ownership is taken before any
+    # readiness work (cleanup, credential check, dashboard opener, workers,
+    # listeners) and held until the server stops, including early exits.
+    from .instance import (
+        ALREADY_RUNNING_MESSAGE,
+        LOCK_UNAVAILABLE_MESSAGE,
+        InstanceBusyError,
+        instance_ownership,
+    )
 
-    # Start the server
-    run_server()
+    with contextlib.ExitStack() as ownership:
+        try:
+            ownership.enter_context(instance_ownership())
+        except InstanceBusyError:
+            print(ALREADY_RUNNING_MESSAGE, file=sys.stderr)
+            sys.exit(1)
+        except OSError as exc:
+            log_bounded_failure(logger, logging.ERROR, "Bridge instance lock unavailable", exc)
+            print(LOCK_UNAVAILABLE_MESSAGE, file=sys.stderr)
+            sys.exit(1)
+
+        # Resume durable cleanup before checking whether account state allows startup.
+        if not _prepare_server_start():
+            sys.exit(1)
+
+        # Start the server
+        run_server()
 
 
 if __name__ == "__main__":
