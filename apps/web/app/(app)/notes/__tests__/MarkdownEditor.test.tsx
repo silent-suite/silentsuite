@@ -18,6 +18,41 @@ function viewOf(container: HTMLElement): EditorView {
   return view
 }
 
+/** [ids, classes, types] for a single selector (no selector lists). */
+function specificity(selector: string): number[] {
+  const ids = selector.match(/#[\w-]+/g)?.length ?? 0
+  const classes = selector.match(/\.[^\s.#>+~:[]+|\[[^\]]*\]|:(?!:)[\w-]+/g)?.length ?? 0
+  const types = selector.match(/(?:^|[\s>+~])[a-zA-Z][\w-]*/g)?.length ?? 0
+  return [ids, classes, types]
+}
+
+/**
+ * Resolves the cascade for background colours by specificity and then source
+ * order. jsdom's getComputedStyle ignores specificity, which is what this bug is about.
+ */
+function winningBackground(element: Element): string | undefined {
+  const sheets = [...document.styleSheets, ...(document.adoptedStyleSheets ?? [])]
+  let best: { rank: number[]; value: string } | undefined
+  let order = 0
+  for (const sheet of sheets) {
+    for (const rule of [...sheet.cssRules]) {
+      order += 1
+      if (!('selectorText' in rule)) continue
+      const style = (rule as CSSStyleRule).style
+      const value = style.getPropertyValue('background-color') || style.getPropertyValue('background')
+      if (!value) continue
+      const important = (style.getPropertyPriority('background-color') || style.getPropertyPriority('background')) ? 1 : 0
+      for (const selector of (rule as CSSStyleRule).selectorText.split(',').map((part) => part.trim())) {
+        if (selector.includes('::') || !element.matches(selector)) continue
+        const rank = [important, ...specificity(selector), order]
+        const differing = best ? rank.findIndex((n, i) => n !== best!.rank[i]) : 0
+        if (!best || rank[differing] > best.rank[differing]) best = { rank, value }
+      }
+    }
+  }
+  return best?.value
+}
+
 describe('MarkdownEditor', () => {
   it('renders the value as a labelled multiline textbox with Markdown highlighting', () => {
     const { container } = render(
@@ -117,6 +152,21 @@ describe('MarkdownEditor', () => {
     expect(css).toMatch(/font-family:\s*ui-monospace/)
     // drawSelection replaces the native caret, which sits above the placeholder on an empty note.
     expect(container.querySelector('.cm-cursorLayer')).not.toBeNull()
+  })
+
+  it('paints the drawn selection with the theme colour, focused or not, over the base theme', () => {
+    const { container } = render(<MarkdownEditor value={'Plain **bold** `code`'} onChange={() => {}} ariaLabel="Note body" />)
+    const view = viewOf(container)
+    // jsdom draws no selection pieces, so probe the layer CodeMirror paints them into.
+    const layer = view.scrollDOM.querySelector('.cm-selectionLayer')
+    if (!layer) throw new Error('selection layer missing')
+    const piece = layer.appendChild(document.createElement('div'))
+    piece.className = 'cm-selectionBackground'
+
+    view.dom.classList.add('cm-focused')
+    expect(winningBackground(piece)).toMatch(/16,\s*185,\s*129/)
+    view.dom.classList.remove('cm-focused')
+    expect(winningBackground(piece)).toMatch(/16,\s*185,\s*129/)
   })
 
   it('keeps the same editor instance when only the class name changes', () => {
