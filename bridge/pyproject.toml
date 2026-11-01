@@ -36,6 +36,10 @@ tray = [
     "pystray>=0.19.0",
     "Pillow>=9.0.0",
 ]
+# Native desktop window (#171). Same pin the T0 capability probe proved.
+desktop = [
+    "PySide6==6.12.0",
+]
 dev = [
     "pytest>=7.0",
     "ruff>=0.1.0",

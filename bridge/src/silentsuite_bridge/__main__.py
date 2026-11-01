@@ -961,8 +961,23 @@ def _check_result_exit_code(result) -> int:
     return 1
 
 
-def main():
-    """Main entry point for the bridge CLI."""
+_FLAVORS = ("cli", "desktop")
+DESKTOP_UPDATE_REFUSAL = (
+    "Error: this SilentSuite Bridge desktop installation is updated by installing the new desktop "
+    "package; --check-update and --self-update are not available here."
+)
+
+
+def main(flavor="cli"):
+    """Main entry point for the bridge CLI and the desktop app.
+
+    ``flavor="desktop"`` (the desktop app's entry) opens the native window
+    instead of a headless server when no command flag is given, and refuses
+    the binary updater, which can only replace a single CLI executable.
+    """
+    if flavor not in _FLAVORS:
+        raise ValueError(f"unknown bridge flavor: {flavor!r}")
+
     # --help/-h before anything else (including update flags)
     if "--help" in sys.argv or "-h" in sys.argv:
         print(f"SilentSuite Bridge v{__version__}")
@@ -1015,9 +1030,16 @@ def main():
         print(f"SilentSuite Bridge v{__version__}")
         sys.exit(0)
 
-    # Reject contradictory update flags
     has_check = "--check-update" in sys.argv
     has_self = "--self-update" in sys.argv
+
+    # A desktop install is a bundle, not the single executable the updater
+    # replaces: refuse before the updater is imported or called.
+    if flavor == "desktop" and (has_check or has_self):
+        print(DESKTOP_UPDATE_REFUSAL, file=sys.stderr)
+        sys.exit(1)
+
+    # Reject contradictory update flags
     if has_check and has_self:
         print("Error: --check-update and --self-update cannot be used together.", file=sys.stderr)
         sys.exit(1)
@@ -1215,6 +1237,22 @@ def main():
             log_bounded_failure(logger, logging.ERROR, "Bridge instance lock unavailable", exc)
             print(LOCK_UNAVAILABLE_MESSAGE, file=sys.stderr)
             sys.exit(1)
+
+        if flavor == "desktop":
+            # The window is the dashboard: never open a system browser tab.
+            if not _prepare_server_start(open_browser=False):
+                sys.exit(1)
+
+            from .desktop import run_desktop
+
+            code = run_desktop(
+                build_configuration=build_radicale_configuration,
+                start_workers=_start_sync_threads,
+                serve=_serve_radicale_with_bridge_application,
+            )
+            if code:
+                sys.exit(code)
+            return
 
         # Resume durable cleanup before checking whether account state allows startup.
         if not _prepare_server_start():
