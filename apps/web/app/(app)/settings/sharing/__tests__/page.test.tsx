@@ -1,10 +1,11 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
 // Real core and the SDK it bundles; only the SDK account boundary below is faked.
 import * as Etebase from '../../../../../../../packages/core/node_modules/etebase'
 import { getPublicKeyFingerprint } from '@silentsuite/core'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
-import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import SharingSettingsPage from '../page'
 
@@ -267,6 +268,54 @@ describe('SharingSettingsPage invite fingerprint confirmation', () => {
     expect(invitationManager.invite).not.toHaveBeenCalled()
     expect(next.invitationManager.invite).not.toHaveBeenCalled()
     expect(screen.queryByText(/Invitation sent/)).toBeNull()
+  })
+
+  describe('#738 a managed Birthdays calendar cannot be shared', () => {
+    const markManaged = (uids: string[]) => act(() => {
+      useBirthdayMarkerStore.setState({ snapshot: { epoch: getAccountEpoch(), fingerprint: 'account-1-fp', activeIds: uids } })
+    })
+    afterEach(() => useBirthdayMarkerStore.setState({ snapshot: null }))
+
+    it('offers no invitation for an active Birthdays calendar while an ordinary calendar stays shareable', () => {
+      const sdk = createSdkAccount('account-1')
+      const collections = emptyCollections()
+      collections.calendar = [adminCollection('calendar'), { uid: 'bday-1', accessLevel: 1, getMeta: () => ({ name: 'Birthdays' }) }]
+      useEtebaseStore.setState({ account: sdk.account as any, collections: collections as any, accountFingerprint: 'account-1-fp', reconcileCollections: vi.fn(async () => {}) })
+      useBirthdayMarkerStore.setState({ snapshot: { epoch: getAccountEpoch(), fingerprint: 'account-1-fp', activeIds: ['bday-1'] } })
+      renderWithIntl(<SharingSettingsPage />)
+
+      expect(screen.getAllByPlaceholderText('friend@example.com')).toHaveLength(1)
+      expect(screen.getByText(/birthdays calendar is generated from your contacts and can’t be shared/i)).toBeInTheDocument()
+    })
+
+    it('sends nothing when the selected calendar becomes managed while its recipient key is fetched', async () => {
+      let release!: (value: unknown) => void
+      const { invitationManager } = setupPage()
+      invitationManager.fetchUserProfile.mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+      startInvite()
+      await waitFor(() => expect(invitationManager.fetchUserProfile).toHaveBeenCalledTimes(1))
+
+      markManaged(['calendar-1'])
+      await act(async () => { release({ pubkey: sharingKey(21) }) })
+
+      expect(screen.queryByRole('dialog')).toBeNull()
+      expect(invitationManager.invite).not.toHaveBeenCalled()
+    })
+
+    it('sends nothing when the calendar becomes managed after the fingerprint dialog is shown', async () => {
+      const { invitationManager } = setupPage()
+      invitationManager.fetchUserProfile.mockResolvedValueOnce({ pubkey: sharingKey(22) })
+      startInvite()
+      const dialog = await inviteDialog()
+
+      markManaged(['calendar-1'])
+      const confirm = within(dialog).queryByRole('button', { name: 'Fingerprint matches, send invitation' })
+      if (confirm) fireEvent.click(confirm)
+      await act(async () => {})
+
+      expect(invitationManager.invite).not.toHaveBeenCalled()
+      expect(screen.queryByText('Invitation sent to friend@example.com.')).toBeNull()
+    })
   })
 
   it('shows no dialog when the account switches before the profile fetch resolves', async () => {

@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, onTestFinished, vi } from 'vitest'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
+import { useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import CalendarImport from '../CalendarImport'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
@@ -104,6 +106,46 @@ describe('C3a CalendarImport reports only acknowledged events and retries only t
     useCalendarListStore.setState({ calendars: [{ id: 'cal-work', name: 'Work', color: '#123456', visible: true }], defaultCalendarId: 'cal-work' })
     toastMock.showErrorToast.mockReset()
     onImportComplete.mockReset()
+  })
+
+  describe('#738 never imports into a managed Birthdays calendar', () => {
+    const markManaged = (uids: string[]) => useBirthdayMarkerStore.setState({
+      snapshot: { epoch: getAccountEpoch(), fingerprint: 'c3a-calendar-import', activeIds: uids },
+    })
+    afterEach(() => useBirthdayMarkerStore.setState({ snapshot: null }))
+
+    it('does not offer or default to the managed calendar; the ordinary calendar receives the import', async () => {
+      useCalendarListStore.setState({
+        calendars: [
+          { id: 'bday-1', name: 'Birthdays', color: '#f59e0b', visible: true },
+          { id: 'cal-work', name: 'Work', color: '#123456', visible: true },
+        ],
+        defaultCalendarId: 'bday-1',
+      })
+      const account = installCalendarAccount({ existing: [{ uid: 'bday-1', name: 'Birthdays' }, { uid: 'cal-work', name: 'Work' }] })
+      markManaged(['bday-1'])
+      await dropFiles([ics('Work', ['Event one', 'Event two'])])
+
+      expect(screen.queryByText('Birthdays')).toBeNull()
+      fireEvent.click(await screen.findByRole('button', { name: 'Import 2 events' }))
+      await waitFor(() => expect(onImportComplete).toHaveBeenCalledWith(2))
+      expect(account.batchCalls).toEqual([{ collectionUid: 'cal-work', summaries: ['Event one', 'Event two'], outcome: 'ok' }])
+    })
+
+    it('with only a managed calendar, offers none, keeps “Create new”, and writes nothing into it', async () => {
+      useCalendarListStore.setState({ calendars: [{ id: 'bday-1', name: 'Birthdays', color: '#f59e0b', visible: true }], defaultCalendarId: 'bday-1' })
+      const account = installCalendarAccount({ existing: [{ uid: 'bday-1', name: 'Birthdays' }] })
+      markManaged(['bday-1'])
+      await dropFiles([ics('Work', ['Event one'])])
+
+      expect(screen.queryByText('Birthdays')).toBeNull()
+      expect(screen.getByText('Create new')).toBeInTheDocument()
+      const importNow = screen.queryByRole('button', { name: 'Import 1 events' }) ?? screen.queryByRole('button', { name: 'Import 1 event' })
+      if (importNow && !(importNow as HTMLButtonElement).disabled) fireEvent.click(importNow)
+      await act(async () => {})
+      expect(account.batchCalls).toEqual([])
+      expect(useCalendarStore.getState().events.filter((event) => event.calendarId === 'bday-1')).toEqual([])
+    })
   })
 
   it('C3a-R7 control: a single-calendar import into an existing calendar reports its true count', async () => {

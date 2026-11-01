@@ -4,6 +4,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Keyb
 import Link from 'next/link'
 import { MailPlus, RefreshCcw, ShieldCheck, Users } from 'lucide-react'
 import type { CollectionAccessLevel } from '@silentsuite/core'
+import { isManagedBirthdayCalendar, useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/session'
 import {
   useEtebaseStore,
   type IncomingInvitationView,
@@ -22,6 +23,8 @@ type CollectionCard = {
 type Member = { username: string; accessLevel: number }
 type MembersByCollection = Record<string, Member[]>
 type AccessDrafts = Record<string, CollectionAccessLevel>
+
+const MANAGED_BIRTHDAYS_MESSAGE = 'This Birthdays calendar is generated from your contacts and can’t be shared.'
 
 type PendingInviteState = {
   pending: PendingCollectionInvite
@@ -208,6 +211,9 @@ export default function SharingSettingsPage() {
   const prepareInFlight = useRef(false)
   const submitInFlight = useRef(false)
   const currentUsername = (account as any)?.user?.username ?? (account as any)?.username ?? null
+  const managedCalendarIds = useManagedBirthdayCalendarIds()
+  // Live identity at the moment of the action, so a stale card or open dialog cannot share it.
+  const isManagedCard = (card: CollectionCard) => card.type === 'calendar' && isManagedBirthdayCalendar(card.uid)
 
   const collectionCards = useMemo<CollectionCard[]>(() => {
     const cards: CollectionCard[] = []
@@ -321,6 +327,7 @@ export default function SharingSettingsPage() {
 
   async function handleInvite(card: CollectionCard) {
     if (prepareInFlight.current || pendingInviteRef.current) return
+    if (isManagedCard(card)) return
     const username = inviteUsernames[card.uid]?.trim()
     if (!username) {
       setMessage('Enter the account username or email to invite.')
@@ -334,7 +341,7 @@ export default function SharingSettingsPage() {
     try {
       const pending = await prepareCollectionInvite(card.type, card.uid, username, accessLevel)
       if (!pending) return
-      if (generation !== requestGeneration.current) {
+      if (generation !== requestGeneration.current || isManagedCard(card)) {
         discardCollectionInvite(pending)
         return
       }
@@ -349,6 +356,14 @@ export default function SharingSettingsPage() {
   async function handleConfirmInvite() {
     const current = pendingInviteRef.current
     if (!current || submitInFlight.current) return
+    // The calendar may have become a managed Birthdays calendar while the dialog was open.
+    if (isManagedCard(current.card)) {
+      discardCollectionInvite(current.pending)
+      pendingInviteRef.current = null
+      setPendingInvite(null)
+      setMessage(MANAGED_BIRTHDAYS_MESSAGE)
+      return
+    }
     submitInFlight.current = true
     setSubmitting(true)
     const generation = requestGeneration.current
@@ -567,7 +582,11 @@ export default function SharingSettingsPage() {
                 </div>
               </div>
 
-              {card.accessLevel === 1 ? (
+              {managedCalendarIds.includes(card.uid) && card.type === 'calendar' ? (
+                <p className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-xs text-[rgb(var(--muted))]">
+                  {MANAGED_BIRTHDAYS_MESSAGE}
+                </p>
+              ) : card.accessLevel === 1 ? (
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <input
                     value={inviteUsernames[card.uid] ?? ''}

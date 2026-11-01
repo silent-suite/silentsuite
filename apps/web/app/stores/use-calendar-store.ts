@@ -11,6 +11,8 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
+import { selectManagedBirthdayCalendarIds, useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
 import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard, isOfflineQueueBoundaryCancellation } from '@/app/lib/offline-queue-account'
 
 type CalendarView = 'week' | 'month'
@@ -168,10 +170,29 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
   }
 }
 
+const MANAGED_CALENDAR_MESSAGE = 'Birthdays calendar events come from your contacts. Edit the contact instead.'
+
+/** The current account's managed Birthdays calendars (generated, never user-written). */
+function managedCalendarIds(): readonly string[] {
+  return selectManagedBirthdayCalendarIds(
+    useBirthdayMarkerStore.getState().snapshot, getAccountEpoch(), useEtebaseStore.getState().accountFingerprint)
+}
+
+function assertUserWritableCalendar(calendarId: string | null | undefined): void {
+  if (calendarId && managedCalendarIds().includes(calendarId)) throw new Error(MANAGED_CALENDAR_MESSAGE)
+}
+
 function defaultCalendarId(): string {
   const { calendars, defaultCalendarId } = useCalendarListStore.getState()
-  if (calendars.some((calendar) => calendar.id === defaultCalendarId)) return defaultCalendarId
-  return calendars[0]?.id ?? 'default'
+  const managed = managedCalendarIds()
+  const writable = calendars.filter((calendar) => !managed.includes(calendar.id))
+  if (writable.some((calendar) => calendar.id === defaultCalendarId)) return defaultCalendarId
+  // Calendars exist but every one is managed: there is no ordinary target, so refuse rather
+  // than fall back to a phantom id.
+  if (calendars.length > 0 && writable.length === 0) {
+    throw new Error(`There is no calendar to add events to. ${MANAGED_CALENDAR_MESSAGE}`)
+  }
+  return writable[0]?.id ?? 'default'
 }
 
 export const useCalendarStore = create<CalendarState & CalendarActions>()((set, get) => ({
@@ -204,6 +225,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       created: now,
       updated: now,
     }
+    assertUserWritableCalendar(event.calendarId)
 
     // Optimistic local update
     set((state) => ({ events: [...state.events, event] }))
@@ -228,6 +250,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     const { events } = get()
     const index = events.findIndex((e) => e.id === id)
     if (index === -1) return
+    assertUserWritableCalendar(events[index].calendarId)
+    assertUserWritableCalendar(patch.calendarId)
 
     // Optimistic update
     const updated = { ...events[index], ...patch, updated: new Date() }
@@ -250,6 +274,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
   deleteEvent: async (id: string) => {
     if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     const eventToDelete = get().events.find((e) => e.id === id)
+    assertUserWritableCalendar(eventToDelete?.calendarId)
     // Optimistic update
     set((state) => ({ events: state.events.filter((e) => e.id !== id) }))
 
@@ -305,6 +330,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     const { events } = get()
     const master = events.find((e) => e.id === id)
     if (!master) return
+    assertUserWritableCalendar(master.calendarId)
 
     const now = new Date()
 
@@ -424,6 +450,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     const { events } = get()
     const master = events.find((e) => e.id === id)
     if (!master) return
+    assertUserWritableCalendar(master.calendarId)
 
     const now = new Date()
 
@@ -542,6 +569,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
   importEvents: async (newEvents: NewCalendarEvent[]) => {
     if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     if (newEvents.length === 0) return 0
+    for (const newEvent of newEvents) assertUserWritableCalendar(newEvent.calendarId ?? defaultCalendarId())
 
     const now = new Date()
     const events: CalendarEvent[] = newEvents.map((ne) => {

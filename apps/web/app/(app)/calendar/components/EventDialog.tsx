@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
 import { useTranslations } from 'next-intl'
@@ -8,6 +8,7 @@ import { LabelEditor } from '@/app/components/LabelEditor'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/session'
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
 import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
@@ -276,7 +277,11 @@ export function EventDialog({
   const updateRecurringEvent = useCalendarStore((s) => s.updateRecurringEvent)
   const deleteRecurringEvent = useCalendarStore((s) => s.deleteRecurringEvent)
 
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const accountCanWrite = useAuthStore((s) => s.canWrite())
+  const managedCalendarIds = useManagedBirthdayCalendarIds()
+  // A generated birthday changes only through its contact, so its dialog is read-only.
+  const isManagedEvent = mode === 'edit' && Boolean(event?.calendarId && managedCalendarIds.includes(event.calendarId))
+  const canWrite = accountCanWrite && !isManagedEvent
   const notifications = useNotifications()
   const t = useTranslations('Labels')
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
@@ -380,7 +385,12 @@ export function EventDialog({
   }, [dateFormat])
 
   // Calendar selection
-  const calendarLists = useCalendarListStore((s) => s.calendars)
+  const listedCalendars = useCalendarListStore((s) => s.calendars)
+  // Only ordinary calendars can be chosen (or defaulted to) for a user event.
+  const calendarLists = useMemo(
+    () => listedCalendars.filter((calendar) => !managedCalendarIds.includes(calendar.id)),
+    [listedCalendars, managedCalendarIds],
+  )
   const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
   const [selectedCalendarId, setSelectedCalendarId] = useState(
     isEdit ? (event.calendarId ?? defaultCalendarId) : defaultCalendarId,
@@ -819,6 +829,11 @@ export function EventDialog({
           {/* Body — scrollable */}
           <div className="flex-1 overflow-y-auto overscroll-contain">
             <div className="flex flex-col gap-4 px-4 py-5 sm:px-6 sm:py-6">
+              {isManagedEvent && (
+                <p className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2 text-sm text-[rgb(var(--muted))]">
+                  This birthday comes from your contacts. Edit the contact to change it.
+                </p>
+              )}
               {/* Details */}
               <section className={`${sectionClass} space-y-4`}>
                 <div className="flex items-center gap-2">

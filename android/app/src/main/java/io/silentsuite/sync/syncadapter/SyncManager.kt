@@ -499,7 +499,7 @@ constructor(protected val context: Context, protected val account: Account, prot
         val localList = localCollection!!.findDeleted()
         val ret = ArrayList<T>(localList.size)
 
-        val readOnly = cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
+        val readOnly = discardsLocalChanges()
         if (readOnly) {
             for (local in localList) {
                 Logger.log.info("Restoring locally deleted ${resourceType(local)} resource on a read only collection")
@@ -525,7 +525,7 @@ constructor(protected val context: Context, protected val account: Account, prot
 
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     protected open fun prepareDirty() {
-        val readOnly = cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
+        val readOnly = discardsLocalChanges()
         if (readOnly) {
             for (local in localDirty) {
                 Logger.log.info("Restoring locally modified ${resourceType(local)} resource on a read only collection")
@@ -553,6 +553,14 @@ constructor(protected val context: Context, protected val account: Account, prot
      */
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     protected open fun restoreLocalFromRemote(local: T): String? = null
+
+    /**
+     * Whether local changes to this collection are discarded (deletions undone, edits restored
+     * through [restoreLocalFromRemote]) instead of uploaded. By default only a read-only
+     * collection's are; a manager may add collections of its own, never remove read-only ones.
+     */
+    protected open fun discardsLocalChanges(): Boolean =
+        cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
 
     /** Whether this run lists the collection from its start rather than from the saved cursor. */
     protected var replaying: Boolean = false

@@ -29,7 +29,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * fails as a whole with 409, a batch does not check, an upload of the revision that is already
  * current succeeds without a change, an upload with a sync token that is not the collection's current
  * one gets 409, and a read-only member gets 403. The collection's own item is the exception: it is
- * taken as it comes, as a new revision of the collection, with no etag or revision check. [answer],
+ * stored as a new revision of the collection, not as a note: a batch takes it as it comes, and a
+ * transaction checks its etag against the collection's current revision like any other item (all or
+ * nothing, and an upload of the revision that is already current succeeds); that is also how a
+ * calendar's collection update arrives. An upload's dependencies are checked as the
+ * project's server checks them (`ItemBatchIn.validate_db`): each must name the current revision of an
+ * item of the collection, its own item included, or the whole upload fails with 409 `dep_failed`.
+ * The member route answers with the list [setMembers] gave, complete in one page. [answer],
  * [loseAnswer] and [answerAsFor] make it misbehave on purpose.
  *
  * [hold] parks the next matching request until the test releases it, which is how a test puts a
@@ -158,6 +164,16 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
 
     /** The number of items in each upload the stand-in routed, in order; a scripted answer is not counted. */
     val uploadSizes: MutableList<Int> = CopyOnWriteArrayList()
+
+    /** The dependency uids of each upload the stand-in routed, in order (empty when it sent none). */
+    val uploadDeps: MutableList<List<String>> = CopyOnWriteArrayList()
+
+    private val members = ConcurrentHashMap<String, List<Pair<String, Long>>>()
+
+    /** The member list (username, server access level) [uid]'s member route answers with; empty until set. */
+    fun setMembers(uid: String, list: List<Pair<String, Long>>) {
+        members[uid] = list
+    }
 
     /**
      * Answers the next [times] requests whose method and path match with [code] and an error body,
@@ -320,6 +336,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
             val stored = collections[match.groupValues[1]]
             val input = TestMsgPack.decode(body!!) as Map<String, Any?>
             uploadSizes += (input["items"] as List<*>).size
+            uploadDeps += (input["deps"] as? List<*>)?.map { (it as Map<*, *>)["uid"] as String } ?: emptyList()
             val stoken = url.queryParameter("stoken")
             when {
                 stored == null || stored.removedAt != null -> noCollection()
@@ -351,6 +368,18 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
                 else -> 200 to TestMsgPack.encode(item.body)
             }
         }
+        method == "GET" && MEMBER_LIST.matches(path) -> {
+            val stored = collections[MEMBER_LIST.find(path)!!.groupValues[1]]
+            if (stored == null || stored.removedAt != null) {
+                noCollection()
+            } else {
+                200 to TestMsgPack.encode(linkedMapOf(
+                    "data" to members[stored.uid].orEmpty().map { (username, level) -> linkedMapOf("username" to username, "accessLevel" to level) },
+                    "iterator" to null,
+                    "done" to true,
+                ))
+            }
+        }
         method == "GET" && COLLECTION_GET.matches(path) -> {
             val stored = collections[COLLECTION_GET.find(path)!!.groupValues[1]]
             if (stored == null || stored.removedAt != null) noCollection() else 200 to TestMsgPack.encode(collectionOut(stored))
@@ -365,10 +394,26 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
     @Suppress("UNCHECKED_CAST")
     private fun upload(stored: StoredCollection, input: Map<String, Any?>, validateEtag: Boolean): Pair<Int, ByteArray> {
         val items = input["items"] as List<Map<String, Any?>>
-        // The collection's own item is taken as it comes, below; only notes are checked against an etag.
-        val errors = items.filter { it["uid"] != stored.uid }.mapNotNull { item ->
+        // ItemBatchIn.validate_db: each dependency must name the current revision of an item of this
+        // collection, the collection's own (root) item included; a collection update moves that one.
+        val depErrors = (input["deps"] as? List<Map<String, Any?>>).orEmpty().mapNotNull { dep ->
+            val uid = dep["uid"] as String
+            val current = if (uid == stored.uid) revisionOf(stored.body["item"] as Map<String, Any?>) else stored.items[uid]?.let { revisionOf(it.body) }
+            when {
+                current == null -> linkedMapOf("code" to "wrong_etag", "detail" to "Dependency item not found in this collection.", "field" to uid)
+                current != dep["etag"] -> linkedMapOf("code" to "wrong_etag",
+                    "detail" to "Wrong etag. Expected $current got ${dep["etag"]}", "field" to uid)
+                else -> null
+            }
+        }
+        if (depErrors.isNotEmpty()) {
+            return 409 to TestMsgPack.encode(linkedMapOf("code" to "dep_failed", "detail" to "Dependencies failed to validate", "errors" to depErrors))
+        }
+        // item_bulk_common checks every item of a transaction against its current revision, the
+        // collection's own (root) item included, since the server keeps it among the collection's items.
+        val errors = items.mapNotNull { item ->
             val uid = item["uid"] as String
-            val current = stored.items[uid]?.let { revisionOf(it.body) }
+            val current = if (uid == stored.uid) revisionOf(stored.body["item"] as Map<String, Any?>) else stored.items[uid]?.let { revisionOf(it.body) }
             when {
                 current == revisionOf(item) -> null
                 validateEtag && current != item["etag"] -> linkedMapOf("code" to "wrong_etag",
@@ -481,6 +526,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         val ITEM_UPLOAD = Regex("collection/([^/]+)/item/(batch|transaction)/")
         val ITEM_GET = Regex("collection/([^/]+)/item/([^/]+)/")
         val COLLECTION_GET = Regex("collection/([^/]+)/")
+        val MEMBER_LIST = Regex("collection/([^/]+)/member/")
         const val STALL_LIMIT = 20
     }
 }
