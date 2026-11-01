@@ -71,4 +71,12 @@ describe('TaskListPanel', () => {
     expect(mockTaskListState.toggleVisibility).toHaveBeenCalledWith('tasks-2')
     expect(mockTaskListState.setActiveList).toHaveBeenCalledWith('tasks-2')
   })
+
+  it('gives the add button a mobile-only 44px hit area', () => {
+    render(<TaskListPanel />)
+    const add = screen.getByRole('button', { name: 'Add task list' })
+    expect(add.className).toContain('max-md:min-h-[44px]')
+    expect(add.className).toContain('max-md:min-w-[44px]')
+    expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
 })
