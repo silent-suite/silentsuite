@@ -254,17 +254,33 @@ class BirthdayChildContactSyncRuntimeTest {
 
     // ---- fixture ----
 
-    /** Display names of the child account's live raw contacts, read from the Contacts provider. */
-    private fun childContactNames(child: Account): List<String> =
-        checkNotNull(context.contentResolver.query(ContactsContract.Data.CONTENT_URI,
-            arrayOf(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME),
-            "${ContactsContract.RawContacts.ACCOUNT_TYPE}=? AND ${ContactsContract.RawContacts.ACCOUNT_NAME}=? AND " +
-                "${ContactsContract.Data.MIMETYPE}=? AND ${ContactsContract.RawContacts.DELETED}=0",
-            arrayOf(child.type, child.name, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE), null)).use { cursor ->
-            val names = ArrayList<String>()
-            while (cursor.moveToNext()) names += cursor.getString(0) ?: ""
-            names
+    /**
+     * Display names of the child account's live raw contacts, read from the Contacts provider: first
+     * the live (not deleted) raw contact ids of exactly this account from [ContactsContract.RawContacts],
+     * where `deleted` is a column, then each one's StructuredName rows from [ContactsContract.Data] by
+     * its `raw_contact_id` and mimetype. The Data view has no `deleted` column to filter on.
+     */
+    private fun childContactNames(child: Account): List<String> {
+        val liveRawIds = checkNotNull(context.contentResolver.query(ContactsContract.RawContacts.CONTENT_URI,
+            arrayOf(ContactsContract.RawContacts._ID),
+            "${ContactsContract.RawContacts.ACCOUNT_NAME}=? AND ${ContactsContract.RawContacts.ACCOUNT_TYPE}=? AND " +
+                "${ContactsContract.RawContacts.DELETED}=0",
+            arrayOf(child.name, child.type), null)).use { cursor ->
+            val ids = ArrayList<Long>()
+            while (cursor.moveToNext()) ids += cursor.getLong(0)
+            ids
+        }.sorted()
+        val names = ArrayList<String>()
+        for (rawId in liveRawIds) {
+            checkNotNull(context.contentResolver.query(ContactsContract.Data.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME),
+                "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+                arrayOf(rawId.toString(), ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE), null)).use { cursor ->
+                while (cursor.moveToNext()) names += cursor.getString(0) ?: ""
+            }
         }
+        return names
+    }
 
     private fun uploadItem(collection: Collection, name: String, content: String): Item {
         val itemMgr = server.collectionManager.getItemManager(collection)
