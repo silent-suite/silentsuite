@@ -5832,6 +5832,37 @@ class PendingNotesStoreTest {
         assertTrue(File(d, "n2.note.new").exists())
     }
 
+    @Test fun `a discard of nothing owes no directory sync, whoever left an unlink unsynced`() {
+        var failing = 0
+        val syncs = ArrayList<String>()
+        val s = PendingNotesStore.open(dir, syncDirectory = { d ->
+            syncs += d.name
+            if (failing > 0) {
+                failing--
+                throw java.io.IOException("could not sync the store's directory")
+            }
+        }, rename = atomicMove)
+        // An upload that landed removes its entry, and that removal's sync fails: no unsynced text went.
+        s.saveLocal("n9", "b9", "r1", blob("a"), isCreate = false)
+        val version = s.beginSend("n9")!!.version
+        failing = 1
+        assertThrows(java.io.IOException::class.java) { s.completeSend("n9", version, "r2", blob("a")) }
+        assertFalse(File(dir, "n9.note").exists())
+        // A leave or delete of a notebook that holds nothing confirmed no discard, so it reports none, with or without
+        // the sync the store still owes.
+        failing = 1
+        syncs.clear()
+        assertEquals(NotebookDiscard.Done(0, 0), s.discardNotebook("b1", UnsyncedNotes.NOTHING))
+        assertEquals("that sync stays owed", emptyList<String>(), syncs)
+        // The same for an acknowledgement given while the store could not be listed: the notebook's loop walked nothing.
+        val unlisted = UnsyncedNotes(0, 0, unreadable = true, listed = false)
+        assertEquals(NotebookDiscard.Done(0, 0), s.discardNotebook("b1", unlisted))
+        assertEquals("that sync stays owed", emptyList<String>(), syncs)
+        failing = 0
+        assertEquals(NotebookDiscard.Done(0, 0), s.discardNotebook("b1", UnsyncedNotes(1, 0, false)))
+        assertEquals("the next confirmed discard makes it", listOf(dir.name), syncs)
+    }
+
     @Test fun `a removal that failed after its unlink never says nothing was deleted, and Done waits for the sync it owes`() {
         var failing = 0
         val syncs = ArrayList<String>()

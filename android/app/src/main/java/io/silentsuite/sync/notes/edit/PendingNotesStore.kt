@@ -121,7 +121,7 @@ internal class PendingNotesStore private constructor(
     /**
      * Set once [remove] has unlinked a file and no sync of the store's directory by [remove] or [discardNotebook] has
      * worked since, so that unlink can still come back after a power loss; [discardNotebook] syncs the directory
-     * before it says Done.
+     * before it says Done under a confirmation from a listed store that holds anything.
      */
     private var unlinkUnsynced = false
 
@@ -1559,16 +1559,17 @@ internal class PendingNotesStore private constructor(
      *    ([NotebookDiscard.Partly]), and is not passed on. A removal that throws after it unlinked a file, such as one
      *    whose directory sync failed, or a conflict copy whose original went first, marks that outcome
      *    [NotebookDiscard.Partly.unsure].
-     * 6. [NotebookDiscard.Done] comes only after two more steps. While an unlink by [remove], in this call or an
-     *    earlier one, has had no directory sync that worked since, the store's directory is synced, so a retry after a
-     *    partial success makes that durability step too; a sync that fails gives [NotebookDiscard.Partly] with
-     *    [NotebookDiscard.Partly.unsure]. Then the notebook is listed again, and an entry that listing places in it,
-     *    other than one kept for being unreadable, stays and gives [NotebookDiscard.Partly], since the first listing
-     *    can have come back short; nothing more is deleted for it. So does a name in [confirmed] that neither listing
-     *    showed, which the loop did not walk, unless its path is shown absent ([namesThere]). An entry that
-     *    [confirmed] does not name, and that two listings leave out while they still list the counter, gets past
-     *    this. A second listing that cannot count the notebook, or cannot list the store, otherwise gives Done with
-     *    [NotebookDiscard.Done.uncounted].
+     * 6. [NotebookDiscard.Done] comes only after two more steps. Under a [confirmed] from a listed store that holds
+     *    anything, while an unlink by [remove], in this call or an earlier one, has had no directory sync that worked
+     *    since, the store's directory is synced, so a retry after a partial success makes that durability step too; a
+     *    sync that fails gives [NotebookDiscard.Partly] with [NotebookDiscard.Partly.unsure]. Under any other
+     *    [confirmed] the loop walked nothing, so there is no discard to make last, and the unlink stays owed. Then the
+     *    notebook is listed again, and an entry that listing places in it, other than one kept for being unreadable,
+     *    stays and gives [NotebookDiscard.Partly], since the first listing can have come back short; nothing more is
+     *    deleted for it. So does a name in [confirmed] that neither listing showed, which the loop did not walk, unless
+     *    its path is shown absent ([namesThere]). An entry that [confirmed] does not name, and that two listings leave
+     *    out while they still list the counter, gets past this. A second listing that cannot count the notebook, or
+     *    cannot list the store, otherwise gives Done with [NotebookDiscard.Done.uncounted].
      *
      * From step 5 on nothing is passed on, since a caller takes a throw for a discard that deleted nothing: a throw
      * that no step turns into an outcome of its own gives [NotebookDiscard.Partly], in the loop as step 5 says, and
@@ -1622,8 +1623,9 @@ internal class PendingNotesStore private constructor(
             unlinksBefore = unlinksAtStart
             if (failed > 0) return@locked NotebookDiscard.Partly(deleted, failed + unreadable.size, unsure)
             // Step 6: an unlink whose directory sync has not worked since, in this call or an earlier one, lasts only
-            // once the directory is synced.
-            if (unlinkUnsynced) {
+            // once the directory is synced. A confirmation of nothing, or one from a store that could not be listed,
+            // walked nothing, so it has no discard to make last.
+            if (confirmed.anything && confirmed.listed && unlinkUnsynced) {
                 try {
                     syncDirectory(dir)
                     unlinkUnsynced = false
