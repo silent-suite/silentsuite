@@ -7,6 +7,7 @@ import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.Item
 import com.etebase.client.ItemMetadata
 import com.etebase.client.User
+import com.etebase.client.exceptions.ConflictException
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.notes.FakeEtebaseServer
 import okhttp3.OkHttpClient
@@ -14,6 +15,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -246,7 +248,210 @@ class BirthdayReconciliationRuntimeTest {
         assertEquals("the contact itself is untouched", setOf(contact.uid), fake.itemUids(book.uid))
     }
 
+    /**
+     * Lifecycle regression (plan2 §2 step 5, kept by plan3): two stored generated copies of the same
+     * wanted event UID collapse to the copy with the smallest storage uid, as core and Bridge keep
+     * it, with the contact's current fields; the other copy is tombstoned; the ordinary event is
+     * unchanged; all in one transaction fenced on the calendar root. Seeded directly through the SDK.
+     */
+    @Test fun duplicateGeneratedCopiesOfOneEventCollapseToTheSmallestStorageItem() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val expected = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10))
+        // Two copies under the same event UID: the one with the smaller storage uid is stale, the other current.
+        val itemMgr = server.collectionManager.getItemManager(calendar)
+        val copies = List(2) { itemMgr.create(ItemMetadata().apply { name = uid; mtime = 1_000L }, "") }.sortedBy { it.uid }
+        val (kept, redundant) = copies[0] to copies[1]
+        kept.setContent(BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Byron", 1, 1)).toByteArray(Charsets.UTF_8))
+        redundant.setContent(BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10)).toByteArray(Charsets.UTF_8))
+        itemMgr.batch(arrayOf(kept, redundant))
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        assertEquals("both copies are stored", setOf(kept.uid, redundant.uid, ordinary.uid), fake.itemUids(calendar.uid))
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+
+        val result = BirthdayReconciler.reconcile(server, username)
+
+        val live = generatedLive(calendar.uid)
+        assertEquals("FEATURE_DUPLICATE: exactly one generated copy of the event remains", 1, live.size)
+        assertEquals("FEATURE_DUPLICATE: the copy with the smallest storage uid is kept", kept.uid, live.single().uid)
+        assertEquals("FEATURE_DUPLICATE: with the contact's current fields", expected,
+            BirthdayCalendar.eventFields(String(live.single().content, Charsets.UTF_8)))
+        val fresh = freshItemManager(calendar.uid)
+        assertTrue("FEATURE_DUPLICATE: the redundant copy is tombstoned", fresh.fetch(redundant.uid).isDeleted)
+        assertFalse("the ordinary event is not deleted", fresh.fetch(ordinary.uid).isDeleted)
+        assertEquals("the ordinary event is unchanged", ORDINARY_ICS, String(fresh.fetch(ordinary.uid).content, Charsets.UTF_8))
+        assertEquals("FEATURE_DUPLICATE: one transaction fenced on the calendar root",
+            listOf("POST collection/${calendar.uid}/item/transaction/" to listOf(calendar.uid)), uploads(requestsBefore, since))
+        assertEquals(BirthdayReconciler.RunStatus.DONE, result.status)
+        assertEquals(listOf(calendar.uid), result.written)
+        assertEquals("the contact itself is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+    }
+
+    /**
+     * Lifecycle regression (plan3 F4 then F2): of two currently qualifying active calendars, the one
+     * with the smallest uid stays active and is filled; the other is retired with a conditional
+     * calendar update first, and only then loses its generated items, fenced on its new root. User
+     * events in both survive byte-for-byte and neither calendar is deleted. Seeded through the SDK.
+     */
+    @Test fun aSecondActiveCalendarIsRetiredBeforeItsGeneratedEventsAreCleanedUp() {
+        val (canonical, duplicate) = listOf(
+            soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)),
+            soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)),
+        ).sortedBy { it.uid }.let { it[0] to it[1] }
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val expected = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10))
+        val leftover = uploadItem(duplicate, uid, BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10)))
+        val duplicateOrdinary = uploadItem(duplicate, "ordinary-dentist", ORDINARY_ICS)
+        val canonicalOrdinary = uploadItem(canonical, "ordinary-dentist", ORDINARY_ICS)
+        val collections = fake.collectionUids()
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+
+        val result = BirthdayReconciler.reconcile(server, username)
+
+        val colMgr = server.collectionManager
+        assertEquals("FEATURE_RETIRE: the calendar with the larger uid is retired", MARKER_RETIRED,
+            String(colMgr.fetch(duplicate.uid).content, Charsets.UTF_8))
+        assertEquals("the calendar with the smallest uid stays active", MARKER_ACTIVE, String(colMgr.fetch(canonical.uid).content, Charsets.UTF_8))
+        val duplicateItems = freshItemManager(duplicate.uid)
+        assertTrue("FEATURE_RETIRE: the retired calendar's generated event is tombstoned", duplicateItems.fetch(leftover.uid).isDeleted)
+        assertFalse("its ordinary event is not deleted", duplicateItems.fetch(duplicateOrdinary.uid).isDeleted)
+        assertEquals("its ordinary event is unchanged", ORDINARY_ICS, String(duplicateItems.fetch(duplicateOrdinary.uid).content, Charsets.UTF_8))
+        val filled = generatedLive(canonical.uid)
+        assertEquals("FEATURE_RETIRE: the canonical calendar is filled", listOf(expected),
+            filled.map { BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8)) })
+        val canonicalItems = freshItemManager(canonical.uid)
+        assertFalse("the canonical ordinary event is not deleted", canonicalItems.fetch(canonicalOrdinary.uid).isDeleted)
+        assertEquals("the canonical ordinary event is unchanged", ORDINARY_ICS,
+            String(canonicalItems.fetch(canonicalOrdinary.uid).content, Charsets.UTF_8))
+        val all = uploads(requestsBefore, since)
+        assertEquals("FEATURE_RETIRE: the retired calendar gets its conditional update first, then a cleanup fenced on its new root",
+            listOf(emptyList(), listOf(duplicate.uid)),
+            all.filter { it.first == "POST collection/${duplicate.uid}/item/transaction/" }.map { it.second })
+        assertEquals("FEATURE_RETIRE: the canonical calendar's write is fenced on its own root", listOf(listOf(canonical.uid)),
+            all.filter { it.first == "POST collection/${canonical.uid}/item/transaction/" }.map { it.second })
+        assertEquals("no other upload", all.size, all.count { it.first.endsWith("/item/transaction/") &&
+            (it.first.contains(duplicate.uid) || it.first.contains(canonical.uid)) })
+        assertFalse("no calendar is deleted", colMgr.fetch(duplicate.uid).isDeleted || colMgr.fetch(canonical.uid).isDeleted)
+        assertEquals("no collection is created or removed", collections, fake.collectionUids())
+        assertEquals(setOf(canonical.uid, duplicate.uid), result.written.toSet())
+        assertEquals(BirthdayReconciler.RunStatus.DONE, result.status)
+        assertEquals("the contact itself is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+    }
+
+    /**
+     * Lifecycle regression (plan3 F3, interrupted retirement): with no active calendar, generated
+     * leftovers in every retired calendar the user can write to are deleted, each fenced on that
+     * calendar's current root; one is Admin and private, the other ReadWrite and shared, so a repair
+     * limited to C3's Admin-and-sole-member destination rule cannot pass. User events and the
+     * calendars stay, markers stay retired, and no active calendar is created or adopted.
+     */
+    @Test fun generatedLeftoversInRetiredCalendarsAreCleanedWithoutAnActiveCalendar() {
+        val privateRetired = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays (old)", MARKER_RETIRED))
+        val sharedRetired = uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays (old, shared)", MARKER_RETIRED)
+        val privateLeftover = uploadItem(privateRetired, GENERATED_UID, GENERATED_ICS)
+        val privateOrdinary = uploadItem(privateRetired, "ordinary-dentist", ORDINARY_ICS)
+        val sharedLeftover = uploadItem(sharedRetired, OTHER_GENERATED_UID,
+            BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(OTHER_GENERATED_UID, "Lee", 2, 29)))
+        val sharedOrdinary = uploadItem(sharedRetired, "ordinary-dentist", ORDINARY_ICS)
+        fake.setMembers(sharedRetired.uid, listOf(OTHER_USERNAME to ADMIN, username to READ_WRITE))
+        fake.setAccessLevel(sharedRetired.uid, READ_WRITE)
+        assertEquals("the shared retired calendar is ReadWrite for this user", CollectionAccessLevel.ReadWrite,
+            server.collectionManager.fetch(sharedRetired.uid).accessLevel)
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val collections = fake.collectionUids()
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+
+        val result = BirthdayReconciler.reconcile(server, username)
+
+        val privateItems = freshItemManager(privateRetired.uid)
+        val sharedItems = freshItemManager(sharedRetired.uid)
+        assertTrue("FEATURE_REPAIR: the private retired calendar's generated leftover is tombstoned", privateItems.fetch(privateLeftover.uid).isDeleted)
+        assertTrue("FEATURE_REPAIR: the shared ReadWrite retired calendar's generated leftover is tombstoned", sharedItems.fetch(sharedLeftover.uid).isDeleted)
+        for ((items, ordinary) in listOf(privateItems to privateOrdinary, sharedItems to sharedOrdinary)) {
+            assertFalse("an ordinary event is not deleted", items.fetch(ordinary.uid).isDeleted)
+            assertEquals("an ordinary event is unchanged", ORDINARY_ICS, String(items.fetch(ordinary.uid).content, Charsets.UTF_8))
+        }
+        val colMgr = server.collectionManager
+        for (calendar in listOf(privateRetired, sharedRetired)) {
+            assertEquals("the marker stays retired", MARKER_RETIRED, String(colMgr.fetch(calendar.uid).content, Charsets.UTF_8))
+            assertFalse("the calendar is not deleted", colMgr.fetch(calendar.uid).isDeleted)
+            assertEquals("no event is generated into a retired calendar", emptyList<Item>(), generatedLive(calendar.uid))
+        }
+        assertEquals("FEATURE_REPAIR: each cleanup is fenced on its own calendar's current root",
+            setOf("POST collection/${privateRetired.uid}/item/transaction/" to listOf(privateRetired.uid),
+                "POST collection/${sharedRetired.uid}/item/transaction/" to listOf(sharedRetired.uid)),
+            uploads(requestsBefore, since).toSet())
+        assertEquals("no other upload", 2, uploads(requestsBefore, since).size)
+        assertEquals("no active calendar is created or adopted", collections, fake.collectionUids())
+        assertEquals(setOf(privateRetired.uid, sharedRetired.uid), result.written.toSet())
+        assertEquals("the contact itself is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+    }
+
+    /**
+     * CONTROL (pinned SDK and stand-in, no reconcile): a calendar update sent with
+     * `CollectionManager.transaction` is conditional on the calendar's root. Two copies are fetched;
+     * the first retires the calendar, which moves the root revision; the second, still naming the old
+     * revision, is rejected with a conflict and changes nothing. Both reach the server as transactions
+     * of the root item itself, with no dependencies.
+     */
+    @Test fun aCalendarUpdateFromAStaleCopyIsRejectedByTheSdkTransaction() {
+        val colMgr = server.collectionManager
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val first = colMgr.fetch(calendar.uid)
+        val second = colMgr.fetch(calendar.uid)
+        assertEquals("both copies name the same root revision", first.etag, second.etag)
+        val transaction = "POST collection/${calendar.uid}/item/transaction/"
+
+        var requestsBefore = fake.requests.size
+        var since = fake.uploadDeps.size
+        first.setContent(MARKER_RETIRED)
+        colMgr.transaction(first)
+        assertEquals("the update is a transaction of the root item, with no dependencies",
+            listOf(transaction to emptyList<String>()), uploads(requestsBefore, since))
+        val retired = colMgr.fetch(calendar.uid)
+        assertEquals("the update landed", MARKER_RETIRED, String(retired.content, Charsets.UTF_8))
+        assertFalse("the root revision moved", retired.etag == second.etag)
+
+        requestsBefore = fake.requests.size
+        since = fake.uploadDeps.size
+        second.setContent(MARKER_ACTIVE)
+        try {
+            colMgr.transaction(second)
+            fail("an update from a copy that names the old root revision was accepted")
+        } catch (expected: ConflictException) {
+        }
+        assertEquals("the stale update reached the server as a transaction of the root item",
+            listOf(transaction to emptyList<String>()), uploads(requestsBefore, since))
+        val after = colMgr.fetch(calendar.uid)
+        assertEquals("the rejected update changed nothing", MARKER_RETIRED, String(after.content, Charsets.UTF_8))
+        assertEquals("the root revision did not move", retired.etag, after.etag)
+        assertEquals("the ordinary event is still the only item", setOf(ordinary.uid), fake.itemUids(calendar.uid))
+        assertEquals("and unchanged", ORDINARY_ICS, String(freshItemManager(calendar.uid).fetch(ordinary.uid).content, Charsets.UTF_8))
+    }
+
     // ---- fixture ----
+
+    /** The fresh, complete listing's live items whose parsed event UID has the generated form. */
+    private fun generatedLive(collectionUid: String): List<Item> = liveItems(collectionUid).filter {
+        BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8))?.uid?.let { uid -> GENERATED_FORM.matches(uid) } == true
+    }
+
+    /** Each upload since the marks, as (request line without query, dependency uids), in order. */
+    private fun uploads(requestsSince: Int, depsSince: Int): List<Pair<String, List<String>>> {
+        val lines = uploadLines(requestsSince)
+        val deps = fake.uploadDeps.drop(depsSince)
+        assertEquals("every upload line has its recorded dependencies", lines.size, deps.size)
+        return lines.zip(deps)
+    }
 
     private fun uploadCollection(type: String, name: String, content: String): Collection {
         val colMgr = server.collectionManager
@@ -294,6 +499,9 @@ class BirthdayReconciliationRuntimeTest {
 
         /** The shared-v1 marker bytes (`contracts/birthday-calendar/v1-vectors.json`, marker vector 1). */
         private const val MARKER_ACTIVE = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"active\"}"
+        private const val MARKER_RETIRED = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"retired\"}"
+        private const val OTHER_GENERATED_UID = "ss-bday1-1615be37fbc2437021b9d4f73fdac5e2"
+        private val GENERATED_FORM = Regex("ss-bday1-[0-9a-f]{32}")
 
         private const val ADA_VCARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c-ada\r\nFN:Ada Lovelace\r\nBDAY:1815-12-10\r\nEND:VCARD\r\n"
         private const val GRACE_VCARD = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c-grace\r\nFN:Grace Hopper\r\nBDAY:1906-12-09\r\nEND:VCARD\r\n"

@@ -23,9 +23,9 @@ import java.util.TreeMap
 
 /**
  * The Birthdays calendar reconciler: the fenced write step and one basic fresh-read pass
- * ([reconcile]). Updating stale events, removing duplicates, retiring extra calendars, the
+ * ([reconcile]). Removing duplicates, retiring extra calendars, cleaning retired calendars, the
  * post-commit source check, retries and the trigger controller are not here yet; a pass that
- * meets one of them reports [RunStatus.PENDING] instead of [RunStatus.DONE].
+ * meets one of them reports [RunStatus.PENDING] or [RunStatus.SKIPPED] instead of [RunStatus.DONE].
  */
 object BirthdayReconciler {
     enum class WriteOutcome { COMMITTED, CONFLICT, UNKNOWN, SKIPPED }
@@ -78,12 +78,13 @@ object BirthdayReconciler {
      * A listing that does not finish, or content that cannot be decrypted or is not UTF-8, ends the
      * pass with [RunStatus.SKIPPED] and nothing written: it is never evidence that something is gone.
      *
-     * Then missing events are created and generated events (parsed `ss-bday1-` UID) whose contact
-     * is gone are deleted, in [writeFenced] chunks fenced on the calendar root as this pass read it.
-     * Other items and calendars are never touched. A conflict or unknown write outcome is
-     * [RunStatus.PENDING] (nothing is resent); so is a pass that needs an update, a duplicate
-     * removal or a retirement, which are not handled yet. [RunResult.written] lists the calendar
-     * whenever a write was attempted.
+     * Then missing events are created, a generated event (parsed `ss-bday1-` UID) whose fields
+     * differ from its contact's is rewritten in place (same storage item, canonical text, new
+     * mtime), and generated events whose contact is gone are deleted, in [writeFenced] chunks fenced
+     * on the calendar root as this pass read it. Other items and calendars are never touched. A
+     * conflict or unknown write outcome is [RunStatus.PENDING] (nothing is resent); so is a pass that
+     * needs a duplicate removal or a retirement, which are not handled yet. [RunResult.written]
+     * lists the calendar whenever a write was attempted.
      */
     fun reconcile(etebase: com.etebase.client.Account, username: String): RunResult {
         val written = LinkedHashSet<String>()
@@ -163,6 +164,7 @@ object BirthdayReconciler {
 
         val deferred = LinkedHashSet<String>()
         if (retired) deferred += "retired-calendars-deferred"
+        val now = System.currentTimeMillis()
         val changes = ArrayList<Item>()
         for ((uid, copies) in generated) {
             val event = wanted[uid]
@@ -175,10 +177,17 @@ object BirthdayReconciler {
             } else if (copies.size > 1) {
                 deferred += "duplicate-events-deferred"
             } else if (copies[0].second != BirthdayCalendar.fieldsOf(event)) {
-                deferred += "update-deferred"
+                // The same storage item gets the canonical text: no delete and recreate, no second copy.
+                // Its existing metadata is kept except for the mtime; metadata that cannot be read
+                // fails the pass before anything is written.
+                val item = copies[0].first
+                val meta = item.meta
+                meta.mtime = now
+                item.setContent(BirthdayCalendar.eventIcs(event).toByteArray(Charsets.UTF_8))
+                item.meta = meta
+                changes += item
             }
         }
-        val now = System.currentTimeMillis()
         for (event in wanted.values) {
             if (event.uid in generated) continue
             val meta = ItemMetadata().apply {

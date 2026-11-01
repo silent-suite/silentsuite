@@ -29,8 +29,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * fails as a whole with 409, a batch does not check, an upload of the revision that is already
  * current succeeds without a change, an upload with a sync token that is not the collection's current
  * one gets 409, and a read-only member gets 403. The collection's own item is the exception: it is
- * taken as it comes, as a new revision of the collection, with no etag or revision check; that is
- * also how a calendar's collection update arrives. An upload's dependencies are checked as the
+ * stored as a new revision of the collection, not as a note: a batch takes it as it comes, and a
+ * transaction checks its etag against the collection's current revision like any other item (all or
+ * nothing, and an upload of the revision that is already current succeeds); that is also how a
+ * calendar's collection update arrives. An upload's dependencies are checked as the
  * project's server checks them (`ItemBatchIn.validate_db`): each must name the current revision of an
  * item of the collection, its own item included, or the whole upload fails with 409 `dep_failed`.
  * The member route answers with the list [setMembers] gave, complete in one page. [answer],
@@ -407,10 +409,11 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         if (depErrors.isNotEmpty()) {
             return 409 to TestMsgPack.encode(linkedMapOf("code" to "dep_failed", "detail" to "Dependencies failed to validate", "errors" to depErrors))
         }
-        // The collection's own item is taken as it comes, below; only notes are checked against an etag.
-        val errors = items.filter { it["uid"] != stored.uid }.mapNotNull { item ->
+        // item_bulk_common checks every item of a transaction against its current revision, the
+        // collection's own (root) item included, since the server keeps it among the collection's items.
+        val errors = items.mapNotNull { item ->
             val uid = item["uid"] as String
-            val current = stored.items[uid]?.let { revisionOf(it.body) }
+            val current = if (uid == stored.uid) revisionOf(stored.body["item"] as Map<String, Any?>) else stored.items[uid]?.let { revisionOf(it.body) }
             when {
                 current == revisionOf(item) -> null
                 validateEtag && current != item["etag"] -> linkedMapOf("code" to "wrong_etag",
