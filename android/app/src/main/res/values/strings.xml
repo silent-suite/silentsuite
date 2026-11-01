@@ -813,4 +813,12 @@
     <string name="notes_remove_uncheckable_retry">Nothing was removed. Try again.</string>
     <string name="notes_remove_uncheckable_unknown">SilentSuite couldn’t check whether %1$s was removed. Review the list.</string>
     <string name="notes_remove_uncheckable_ended">This confirmation has ended. Nothing was removed.</string>
+    <!-- Leaving or deleting a Notes notebook: what came of discarding its unsynced Notes changes once the leave or delete went through on the server. Shown as a message of two lines at most, so each says first what came of the discard. Placeholder wording, pending review. -->
+    <string name="notes_notebook_discarded">Unsynced Notes changes from this notebook were deleted from this device.</string>
+    <string name="notes_notebook_discarded_readable">Readable unsynced changes were deleted from this device. Those that can’t be read stay.</string>
+    <string name="notes_notebook_kept_unreadable">This attempt deleted no Notes text. This notebook’s changes can’t be read and stay.</string>
+    <string name="notes_notebook_kept_changed">This attempt deleted no Notes text, as Notes changed. Unsynced text may no longer sync.</string>
+    <string name="notes_notebook_kept_partly">Some unsynced changes could not be deleted from this device and may no longer sync.</string>
+    <string name="notes_notebook_nothing_deleted">This attempt deleted no Notes text. Unsynced text may remain and may no longer sync.</string>
+    <string name="notes_notebook_discard_unknown">The discard stopped. Some unsynced changes may already be deleted from this device.</string>
 </resources>

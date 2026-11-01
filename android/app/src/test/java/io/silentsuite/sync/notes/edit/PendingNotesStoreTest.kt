@@ -5768,6 +5768,7 @@ class PendingNotesStoreTest {
         val guard = "io/silentsuite/sync/ui/PendingNotesRemovalGuard.kt"
         assertEquals(listOf(guard, settings), callersOf("stoppedIn"))
         assertEquals("clearAll is for test teardown only", emptyList<String>(), callersOf("clearAll"))
-        assertEquals("nothing discards a notebook's changes yet", emptyList<String>(), callersOf("discardNotebook"))
+        assertEquals("a notebook's leave or delete only",
+            listOf("io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"), callersOf("discardNotebook"))
     }
 }
