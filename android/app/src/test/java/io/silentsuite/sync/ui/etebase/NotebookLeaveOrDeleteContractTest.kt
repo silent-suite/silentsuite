@@ -515,14 +515,45 @@ class NotebookLeaveOrDeleteContractTest {
             assertFalse("never called a discard: $text", text.contains("discard", ignoreCase = true))
             assertFalse("nothing is said to be removed: $text", text.contains("remove", ignoreCase = true))
             assertFalse(text, text.contains("cannot be undone") || text.contains("cannot be recovered"))
-            val rest = listOf("deletes nothing", "nothing is deleted", "Delete the notebook", "the notebook is deleted")
+            val rest = listOf("deletes no unsynced Notes text", "no unsynced Notes text is deleted",
+                "Delete the notebook", "the notebook is deleted")
                 .fold(text) { left, allowed -> left.replace(allowed, "") }
             assertFalse("nothing is said to be deleted: $text", rest.contains("delet", ignoreCase = true))
         }
         for (text in messages) {
-            assertTrue(text, text.contains("nothing") && text.contains("may remain on this device") &&
+            assertTrue(text, text.contains("no unsynced Notes text") && text.contains("may remain on this device") &&
                 text.contains("may no longer sync"))
         }
+    }
+
+    @Test fun `every notebook text that denies a deletion speaks of unsynced Notes text, first in each result`() {
+        // After a delete that went through on the server, the attempt deleted the notebook with its synced notes. So a
+        // text of this flow that denies a deletion names what its discard handles: unsynced Notes text.
+        val denies = Regex("deleted no|deletes no|deletes nothing|nothing (is|was) deleted|\\bno\\b.* is deleted",
+            RegexOption.IGNORE_CASE)
+        val strings = Regex("<string name=\"(notes_notebook_\\w+)\">(.*?)</string>").findAll(resources("strings.xml"))
+            .map { it.groupValues[1] to it.groupValues[2] }.toList()
+        val plurals = Regex("<plurals name=\"(notes_notebook_\\w+)\">").findAll(resources("plurals.xml"))
+            .flatMap { plural ->
+                val name = plural.groupValues[1]
+                pluralTexts(name).mapIndexed { i, text -> "$name[$i]" to text }
+            }.toList()
+        val unscoped = sortedMapOf<String, String>()
+        for ((name, text) in strings + plurals) {
+            for (sentence in text.split(Regex("(?<=[.?!])\\s+"))) {
+                if (denies.containsMatchIn(sentence) && !sentence.contains("unsynced Notes text")) {
+                    unscoped[name] = sentence
+                }
+            }
+        }
+        assertEquals(emptyMap<String, String>(), unscoped)
+        // Each result says first what came of this attempt, in the maintainer's sign-out words: "This attempt" stays
+        // true after a restart, when an earlier attempt may have deleted some.
+        val results = listOf("notes_notebook_kept_unreadable", "notes_notebook_kept_changed",
+            "notes_notebook_nothing_deleted", "notes_notebook_failed_kept")
+        assertTrue(strings.map { it.first }.containsAll(results))
+        val first = "This attempt deleted no unsynced Notes text"
+        assertEquals(results.associateWith { first }, results.associateWith { stringText(it).take(first.length) })
     }
 
     @Test fun `every text that deletes changes not all counted says that those that can't be read stay`() {

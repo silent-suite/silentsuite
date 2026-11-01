@@ -172,9 +172,9 @@ class NotebookLeaveOrDeleteDialogFragment : DialogFragment() {
 
         /**
          * What a server call that failed adds when [kept], after a confirmation of changes to discard: that this
-         * attempt deleted no Notes text, or, while a clear or a discard of the store that got as far as deleting has
-         * stopped in this process ([stopped]), that the discard did not finish and some changes may already be
-         * deleted.
+         * attempt deleted no unsynced Notes text, or, while a clear or a discard of the store that got as far as
+         * deleting has stopped in this process ([stopped]), that the discard did not finish and some changes may
+         * already be deleted.
          */
         private fun line(context: Context, kept: Boolean, stopped: Boolean): String? = when {
             !kept -> null
