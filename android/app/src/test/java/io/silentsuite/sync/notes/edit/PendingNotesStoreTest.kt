@@ -2175,6 +2175,30 @@ class PendingNotesStoreTest {
         assertFalse(Regex("""==\s*(PendingNotesStore\.)?Presence\.PRESENT\b""").containsMatchIn(permits))
     }
 
+    @Test fun `every write of new text is in the store and takes a new version`() {
+        // A confirmation covers a sequence, and only a new version moves it on and withdraws the permit.
+        val code = File("src/main/java/io/silentsuite/sync/notes/edit/PendingNotesStore.kt").readText()
+            .replace(Regex("(?s)/\\*.*?\\*/"), "").replace(Regex("//[^\n]*"), "")
+        assertEquals("update() is the store's own", listOf("private fun update("),
+            Regex("""\b(?:\w+ )*fun update\(""").findAll(code).map { it.value }.toList())
+        // Each function of the class, from its declaration to the next one.
+        val starts = Regex("""(?m)^ {4}(?:(?:private|internal|override|inline) )*fun (?:<[^>]*> )?(\w+)""")
+            .findAll(code).toList()
+        val functions = starts.mapIndexed { i, start ->
+            start.groupValues[1] to code.substring(start.range.first, starts.getOrNull(i + 1)?.range?.first ?: code.length)
+        }
+        // Text comes in as a blob (a save, a rebase) or as a whole entry (a conflict copy).
+        val writers = functions.filter { (_, body) -> Regex("""\bblob = |\bnewNote\b""").containsMatchIn(body) }
+        assertEquals(listOf("saveLocal", "rebase", "replaceWithNewNote"), writers.map { it.first })
+        // A release from holding moves the sequence on as well (UnsyncedNotes). A step of a run, a rebase or a
+        // conflict copy, takes its version through nextRunVersion, which can only hold it back first.
+        assertTrue("nextRunVersion takes a new version",
+            "nextVersion(" in functions.single { it.first == "nextRunVersion" }.second)
+        for ((name, body) in writers + functions.single { it.first == "release" }) {
+            assertTrue("$name takes a new version", Regex("""\bnext(?:Run)?Version\(""").containsMatchIn(body))
+        }
+    }
+
     @Test fun `uids that could escape the directory are refused for every kind of file`() {
         for (uid in listOf("../x", "a/b", "", ".", "a b", "x".repeat(129))) {
             assertThrows(uid, IllegalArgumentException::class.java) { store.read(uid) }
@@ -2391,7 +2415,8 @@ class PendingNotesStoreTest {
         val counter = sequence.readBytes()
         assertTrue(sequence.delete() && sequence.mkdir())
         val shown = store.unsynced()
-        assertTrue(shown.unreadable)
+        val shownInNotebook = store.unsyncedInNotebook("b1")
+        assertTrue(shown.unreadable && shownInNotebook.unreadable)
         // The counter reads again, the note is saved over, and the counter fails again: the same note and the
         // same number of files, with text that was never shown.
         assertTrue(sequence.delete())
@@ -2402,6 +2427,7 @@ class PendingNotesStoreTest {
         assertEquals(shown.copy(sequence = now.sequence), now)
         assertTrue("above the one shown", now.sequence > shown.sequence)
         assertEquals(DiscardOutcome.Changed(now), store.discardStore(shown))
+        assertEquals(NotebookDiscard.Changed(store.unsyncedInNotebook("b1")), store.discardNotebook("b1", shownInNotebook))
         assertEquals("nothing was deleted", setOf("n1.note", "sequence"), dir.list()!!.toSet())
         assertArrayEquals(blob("typed after the question"), entry("n1").blob)
     }

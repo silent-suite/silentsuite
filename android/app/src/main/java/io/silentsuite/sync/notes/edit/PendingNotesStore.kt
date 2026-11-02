@@ -347,8 +347,12 @@ internal class PendingNotesStore private constructor(
 
     // ---- the one primitive every change goes through ----
 
-    /** Reads the entry and applies [transform] atomically under the store lock. Returns the new state. */
-    fun update(noteUid: String, transform: (Read) -> Change): Read = locked {
+    /**
+     * Reads the entry and applies [transform] atomically under the store lock. Returns the new state.
+     * Private, so every write of new text is in the store, where each takes a new version ([nextVersion]):
+     * a confirmation covers a sequence, and only a new version moves it on and withdraws the permit.
+     */
+    private fun update(noteUid: String, transform: (Read) -> Change): Read = locked {
         val current = readEntry(noteUid)
         when (val change = transform(current)) {
             Change.Keep -> current
