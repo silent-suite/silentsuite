@@ -247,6 +247,167 @@ class BirthdayGenerationFenceRuntimeTest {
         }
     }
 
+    /**
+     * Cancellation only, distinct from the replacement above: the same parent sync, held at the same
+     * last read before its write, is cancelled through the platform while its account row, principal
+     * and generation all stay current. The platform closes a cancelled run without rescheduling it and
+     * tells the adapter through `ISyncAdapter.cancelSync` (AOSP `SyncManager.runSyncFinishedOrCanceledH`),
+     * asynchronously, so the return of [ContentResolver.cancelSync] proves nothing; the witness is the
+     * interrupt the parked sync thread itself receives while it waits. That interrupt is kept
+     * (`swallowInterrupt = false`), so the run resumes with the platform's real signal set. The end of
+     * the run is the end of that very thread; the CONTACTS status is not used for it, since a status
+     * commit on an interrupted thread can fail and leave the attempt open after execution has ended.
+     */
+    @Test fun aParentSyncCancelledDuringItsLastReadWritesNothingAfterwards() {
+        val name = "birthday-cancel-${System.nanoTime()}@example.invalid"
+        val type = App.accountType
+        val generation = "birthday-cancel-${System.nanoTime()}"
+        val previousMasterSync = ContentResolver.getMasterSyncAutomatically()
+        val previousInterceptor = HttpClient.testInterceptor
+        val store = SyncStatusStore(context)
+        val holds = ArrayList<FakeEtebaseServer.Hold>()
+        var primary: Throwable? = null
+        try {
+            // Server side, through the pinned SDK: the parent hook's fixture.
+            val colMgr = server.collectionManager
+            val calendar = colMgr.create(Constants.ETEBASE_TYPE_CALENDAR, ItemMetadata().apply { this.name = "Birthdays" }, MARKER_ACTIVE)
+            colMgr.upload(calendar)
+            fake.setMembers(calendar.uid, listOf(username to ADMIN))
+            val generated = uploadItem(calendar, GENERATED_UID, GENERATED_ICS)
+            val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+            val rootBefore = colMgr.fetch(calendar.uid).etag
+            val collections = fake.collectionUids()
+            assertEquals("no address book on the server", listOf(calendar.uid), collections.toList())
+            val transactionPath = "POST collection/${calendar.uid}/item/transaction/"
+            val listing = Regex(Regex.escape("collection/${calendar.uid}/item/"))
+
+            // The account, created with its generation and read back from a freshly listed row.
+            ContentResolver.setMasterSyncAutomatically(false)
+            HttpClient.testInterceptor = fake
+            check(manager.addAccountExplicitly(Account(name, type), null, Bundle().apply {
+                putString(AccountSettings.KEY_CREATION_ID, generation)
+            }))
+            val row = checkNotNull(currentRow(name, type)) { "the account row is listed" }
+            assertEquals("the row carries its generation from creation", generation,
+                manager.getUserData(row, AccountSettings.KEY_CREATION_ID))
+            for (authority in TaskProvider.TASK_PROVIDERS.map { it.authority } + CalendarContract.AUTHORITY) {
+                ContentResolver.setIsSyncable(row, authority, 0)
+            }
+            ContentResolver.setIsSyncable(row, App.addressBooksAuthority, 1)
+            AccountSettings.setUserData(manager, row, URI(fake.baseUrl), username)
+            AccountSettings(context, row).etebaseSession = session
+            assertEquals("the stored username is the SDK user", username, AccountSettings(context, row).username())
+            assertEquals("the session setup kept the generation", generation, manager.getUserData(row, AccountSettings.KEY_CREATION_ID))
+            val identity = store.identity(row, generation)
+            assertEquals("the status identity is this generation's", identity, store.identity(row))
+            assertEquals("no contacts attempt yet", SyncStatusStore.Status(), store.status(identity, SyncStatusStore.Service.CONTACTS))
+
+            // The real parent contacts sync, held at its last read before the write.
+            val hold = fake.hold("GET", listing, swallowInterrupt = false, answerFirst = true).also { holds += it }
+            ContentResolver.requestSync(row, App.addressBooksAuthority, Bundle().apply {
+                putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
+                putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+            })
+            hold.awaitArrival(60)
+            val runThread = checkNotNull(hold.parkedThread) { "the parked request's thread is known" }
+
+            // Controls: the parked read is the reconciler's, on a running sync thread of this generation's open attempt.
+            assertTrue("the held request is the calendar's item listing",
+                hold.request?.startsWith("GET collection/${calendar.uid}/item/") == true)
+            assertTrue("this generation's parent attempt is open",
+                store.status(identity, SyncStatusStore.Service.CONTACTS).activeAttemptId != null)
+            assertTrue("the parent sync is running", ContentResolver.isSyncActive(row, App.addressBooksAuthority))
+            assertTrue("the parked thread is a live thread other than the test's", runThread.isAlive && runThread !== Thread.currentThread())
+            assertFalse("the parked thread was not interrupted before the cancellation", hold.interruptedWhileParkedWithin(0))
+            assertTrue("nothing was written into the calendar before the cancellation",
+                fake.requests.none { it.substringBefore('?') == transactionPath })
+            // Any later parent run has to list the calendar before it can write; that listing would park here.
+            val laterListing = fake.hold("GET", listing, swallowInterrupt = false, answerFirst = true).also { holds += it }
+            val depsAtCancel = fake.uploadDeps.size
+
+            // The platform's cancellation of this exact sync, witnessed on the parked thread itself.
+            ContentResolver.cancelSync(row, App.addressBooksAuthority)
+            assertTrue("the platform's cancellation interrupted the parked sync thread", hold.interruptedWhileParkedWithin(30))
+            val stillCurrent = checkNotNull(currentRow(name, type)) { "the account row is still listed" }
+            assertEquals("the generation is still current at the release", generation,
+                manager.getUserData(stillCurrent, AccountSettings.KEY_CREATION_ID))
+            assertTrue("nothing was written into the calendar before the release",
+                fake.requests.none { it.substringBefore('?') == transactionPath })
+            assertEquals("no upload before the release", depsAtCancel, fake.uploadDeps.size)
+
+            // The held read completes, with the interrupt restored; the run ends when its thread does.
+            val requestsAtRelease = fake.requests.size
+            hold.release()
+            runThread.join(60_000)
+            assertFalse("the cancelled sync's thread finished [${statusDiagnostics(identity)}]", runThread.isAlive)
+            // What the run sent after the release, taken before this test's own reads below.
+            val afterRelease = fake.requests.toList().drop(requestsAtRelease)
+            val depsAfterRelease = fake.uploadDeps.toList().drop(depsAtCancel)
+
+            // Controls: no other run reached the calendar, and the exact account is untouched.
+            assertEquals("no later parent run listed the calendar", null, laterListing.request)
+            val current = checkNotNull(currentRow(name, type)) { "the account row is still listed at the end" }
+            assertEquals("the generation is intact", generation, manager.getUserData(current, AccountSettings.KEY_CREATION_ID))
+            assertEquals("the status identity is unchanged", identity, store.identity(current))
+            assertEquals("the principal is intact", username, AccountSettings(context, current).username())
+            assertEquals("address books stay syncable", 1, ContentResolver.getIsSyncable(current, App.addressBooksAuthority))
+
+            val itemMgr = colMgr.getItemManager(colMgr.fetch(calendar.uid))
+            assertFalse("CANCELLATION_FENCE: nothing is written after the sync was cancelled",
+                itemMgr.fetch(generated.uid).isDeleted)
+            assertEquals("CANCELLATION_FENCE: no calendar transaction after the cancellation (${afterRelease.size} requests)",
+                emptyList<String>(), afterRelease.map { it.substringBefore('?') }.filter { it == transactionPath })
+            assertEquals("CANCELLATION_FENCE: no root-fenced upload after the cancellation", emptyList<List<String>>(), depsAfterRelease)
+            assertEquals("no item is added to or removed from the calendar", setOf(generated.uid, ordinary.uid), fake.itemUids(calendar.uid))
+            assertFalse("the ordinary event is not deleted", itemMgr.fetch(ordinary.uid).isDeleted)
+            assertEquals("the ordinary event is unchanged", ORDINARY_ICS, String(itemMgr.fetch(ordinary.uid).content, Charsets.UTF_8))
+            val after = colMgr.fetch(calendar.uid)
+            assertEquals("the calendar root did not move", rootBefore, after.etag)
+            assertEquals("the active marker is kept", MARKER_ACTIVE, String(after.content, Charsets.UTF_8))
+            assertEquals("no collection is created or removed", collections, fake.collectionUids())
+        } catch (t: Throwable) {
+            primary = t
+        }
+
+        // Every cleanup step is attempted even if an earlier one fails. A failure in the test body stays
+        // the reported failure, with cleanup failures attached; otherwise a cleanup failure fails the test.
+        val cleanup = ArrayList<Throwable>()
+        fun attempt(step: () -> Unit) {
+            try {
+                step()
+            } catch (t: Throwable) {
+                cleanup += t
+            }
+        }
+        attempt { fake.releaseAll() }
+        // Every thread a hold parked must have ended before the row, the cache or the interceptor goes.
+        for (parked in holds.mapNotNull { it.parkedThread }.distinct()) {
+            attempt {
+                parked.join(60_000)
+                check(!parked.isAlive) { "a parked sync thread is still running" }
+            }
+        }
+        attempt { currentRow(name, type)?.let { ContentResolver.cancelSync(it, App.addressBooksAuthority) } }
+        attempt { removeExactGeneration(name, type, generation) }
+        attempt {
+            // The cache is keyed by the name: it is only cleared once no row of that name is left.
+            check(currentRow(name, type) == null) { "a row with this test's name is still present; its cache is kept" }
+            EtebaseLocalCache.clearUserCache(context, name)
+            CollectionListRefresh.collectionLastFetchMap.keys.filter { it.startsWith("$name\u0000") }
+                .forEach { CollectionListRefresh.collectionLastFetchMap.remove(it) }
+        }
+        attempt { HttpClient.testInterceptor = previousInterceptor }
+        attempt { ContentResolver.setMasterSyncAutomatically(previousMasterSync) }
+        primary?.let { failure ->
+            cleanup.forEach(failure::addSuppressed)
+            throw failure
+        }
+        cleanup.firstOrNull()?.let { failure ->
+            cleanup.drop(1).forEach(failure::addSuppressed)
+            throw failure
+        }
+    }
+
     // ---- fixture ----
 
     /** The row AccountManager lists now under exactly [name] and [type], or null. */

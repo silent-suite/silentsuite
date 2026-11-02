@@ -125,6 +125,19 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         @Volatile var request: String? = null
             internal set
 
+        /** The thread that sent the parked request, set before [awaitArrival] returns; it stays parked until released. */
+        @Volatile var parkedThread: Thread? = null
+            internal set
+
+        /** Counted down when the parked thread is interrupted while it waits here. */
+        internal val interruptedLatch = CountDownLatch(1)
+
+        /**
+         * Whether the parked thread is interrupted while it waits here, within [seconds]. Only observes:
+         * the interrupt is still swallowed or restored on release as [swallowInterrupt] says.
+         */
+        fun interruptedWhileParkedWithin(seconds: Long): Boolean = interruptedLatch.await(seconds, TimeUnit.SECONDS)
+
         internal fun matches(method: String, path: String) = predicate(method, path)
 
         /** True for the request this hold parks; the matching ones before it pass. */
@@ -290,11 +303,12 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
 
     private fun park(hold: Hold, line: String) {
         hold.request = line
+        hold.parkedThread = Thread.currentThread()
         hold.arrivedLatch.countDown()
-        awaitUninterruptibly(hold.releaseLatch, hold.swallowInterrupt)
+        awaitUninterruptibly(hold.releaseLatch, hold.swallowInterrupt) { hold.interruptedLatch.countDown() }
     }
 
-    private fun awaitUninterruptibly(latch: CountDownLatch, swallowInterrupt: Boolean) {
+    private fun awaitUninterruptibly(latch: CountDownLatch, swallowInterrupt: Boolean, onInterrupt: () -> Unit = {}) {
         var interrupted = false
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60)
         while (latch.count > 0 && System.nanoTime() < deadline) {
@@ -302,6 +316,7 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
                 latch.await(100, TimeUnit.MILLISECONDS)
             } catch (_: InterruptedException) {
                 interrupted = true
+                onInterrupt()
             }
         }
         if (swallowInterrupt) Thread.interrupted() else if (interrupted) Thread.currentThread().interrupt()
