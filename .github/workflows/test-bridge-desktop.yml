@@ -9,6 +9,7 @@ name: Test Bridge desktop tracers (source)
 #   T2 startup DNS: desktop loopback bind without reverse DNS (bridge/tests/test_desktop_startup_dns.py)
 #   T2 IPC: second launch reopens the owner; lock before legacy (bridge/tests/test_desktop_ipc.py)
 #   T4 windowed stdio (source simulation): no stdio, default DATA_DIR logs (bridge/tests/test_desktop_windowed.py)
+#   T4 start-at-login: registration-only desktop entry, stable-install gate (bridge/tests/test_desktop_autostart.py)
 # No build, installer, release, credential, account, network sync or autostart state.
 
 on:
@@ -30,6 +31,8 @@ on:
       - 'bridge/tests/desktop_smoke/ipc_probe.py'
       - 'bridge/tests/test_desktop_windowed.py'
       - 'bridge/tests/desktop_smoke/windowed_probe.py'
+      - 'bridge/tests/test_desktop_autostart.py'
+      - 'bridge/tests/desktop_smoke/autostart_probe.py'
       - 'bridge/tests/desktop_smoke/requirements.txt'
       - 'bridge/tests/conftest.py'
       - 'bridge/pyproject.toml'
@@ -386,5 +389,93 @@ jobs:
           path: |
             ${{ runner.temp }}/t4-windowed/junit.xml
             ${{ runner.temp }}/t4-windowed/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Linux only: an EMPTY, inert file at the planned installed path, owned by
+      # the runner user. Refuses if anything already exists there; never executed.
+      - name: Create inert Linux installed-path fixture (T4 start-at-login)
+        id: t4_opt
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=/opt/silentsuite-bridge
+          file="$dir/silentsuite-bridge-desktop"
+          if [ -e "$dir" ] || [ -L "$dir" ]; then
+            echo "::error::$dir already exists on this runner; refusing to touch it"
+            exit 1
+          fi
+          # mkdir fails if anything appeared meanwhile; record ownership the moment it succeeds.
+          sudo mkdir "$dir"
+          echo "dir_created=1" >> "$GITHUB_OUTPUT"
+          echo "dir_inode=$(stat -c %i "$dir")" >> "$GITHUB_OUTPUT"
+          sudo chown "$(id -u):$(id -g)" "$dir"
+          sudo chmod 0755 "$dir"
+          # O_EXCL-style: refuse if the file exists; empty, never executed.
+          ( set -o noclobber; : > "$file" )
+          echo "file_created=1" >> "$GITHUB_OUTPUT"
+          echo "file_inode=$(stat -c %i "$file")" >> "$GITHUB_OUTPUT"
+          chmod 0755 "$file"
+
+      # Its own step and receipt, so its result reads apart from the other tracers.
+      - name: Run T4 desktop start-at-login tests
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' }}
+        timeout-minutes: 15
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/t4-autostart"
+          cmd=(python -m pytest tests/test_desktop_autostart.py -v --tb=long -p no:cacheprovider
+               --junitxml="$RUNNER_TEMP/t4-autostart/junit.xml")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-autostart/pytest.txt"
+          else
+            "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-autostart/pytest.txt"
+          fi
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t4-autostart/pytest.txt"
+          exit "$status"
+
+      # Removes only what the create step recorded as its own, after checking
+      # identity. Never rm -rf; any mismatch or leftover fails this step.
+      - name: Remove inert Linux installed-path fixture
+        if: ${{ always() && steps.t4_opt.outputs.dir_created == '1' }}
+        shell: bash
+        env:
+          FILE_CREATED: ${{ steps.t4_opt.outputs.file_created }}
+          FILE_INODE: ${{ steps.t4_opt.outputs.file_inode }}
+          DIR_INODE: ${{ steps.t4_opt.outputs.dir_inode }}
+        run: |
+          set -uo pipefail
+          dir=/opt/silentsuite-bridge
+          file="$dir/silentsuite-bridge-desktop"
+          status=0
+          if [ "${FILE_CREATED:-}" = "1" ]; then
+            if [ -f "$file" ] && [ ! -L "$file" ] && [ ! -s "$file" ] \
+               && [ "$(stat -c %i "$file")" = "${FILE_INODE:-}" ] && [ "$(stat -c %u "$file")" = "$(id -u)" ]; then
+              rm -- "$file" || status=1
+            else
+              echo "::error::$file is not the inert file this job created; left in place"
+              status=1
+            fi
+          fi
+          if [ -d "$dir" ] && [ ! -L "$dir" ] && [ "$(stat -c %i "$dir")" = "${DIR_INODE:-}" ]; then
+            sudo rmdir -- "$dir" || { echo "::error::$dir is not empty; left in place"; status=1; }
+          else
+            echo "::error::$dir is not the directory this job created; left in place"
+            status=1
+          fi
+          exit "$status"
+
+      - name: Upload T4 start-at-login receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t4-autostart-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/t4-autostart/junit.xml
+            ${{ runner.temp }}/t4-autostart/pytest.txt
           if-no-files-found: warn
           retention-days: 14
