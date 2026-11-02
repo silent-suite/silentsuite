@@ -13,8 +13,11 @@ import android.os.Bundle
 import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
+import io.silentsuite.sync.EtebaseLocalCache
+import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.birthdays.BirthdayReconciler
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalAddressBook
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -199,8 +202,31 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             return when (providerOutcome) {
                 SyncManager.ProviderOutcome.FAILURE -> Completion.FAILURE
                 SyncManager.ProviderOutcome.CANCELLED -> Completion.SKIPPED
-                SyncManager.ProviderOutcome.SUCCESS -> Completion.SUCCESS
+                SyncManager.ProviderOutcome.SUCCESS -> {
+                    // Birthdays (#738): after this address book's own successful sync, before its
+                    // outcome is recorded. The sync manager and its client are already closed.
+                    maintainBirthdays(settings)
+                    Completion.SUCCESS
+                }
                 SyncManager.ProviderOutcome.SKIPPED -> Completion.SKIPPED
+            }
+        }
+
+        /**
+         * One fresh-read Birthdays pass for the main account of this address book
+         * ([BirthdayReconciler.reconcile]), with [settings] taken from that main account. It writes
+         * only to a calendar that already carries the active marker and qualifies; it never creates
+         * or adopts one. Its result, and any failure to start it, never changes this sync's outcome.
+         */
+        private fun maintainBirthdays(settings: AccountSettings) {
+            try {
+                HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
+                    val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
+                    val result = BirthdayReconciler.reconcile(etebase, settings.username())
+                    Logger.log.info("Birthdays after the address-book sync: ${result.status} ${result.reason ?: ""}")
+                }
+            } catch (e: Exception) {
+                Logger.log.warning("Birthdays after the address-book sync did not run (${e.javaClass.simpleName})")
             }
         }
 
