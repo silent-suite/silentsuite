@@ -716,3 +716,41 @@ def remove_autostart() -> int:
         return remove_autostart_windows()
     print(f"Auto-start not supported on platform: {platform}")
     return 1
+
+
+def legacy_cli_registration_present() -> bool:
+    """Return True when the COMMAND-LINE bridge's own start-at-login entry exists.
+
+    Read-only: checks the systemd unit file (Linux), the launchd plist (macOS)
+    or the HKCU Run value ``SilentSuiteBridge`` (Windows) that
+    ``install_autostart`` writes. It runs no service manager and never looks
+    at a desktop app registration. A Windows entry that cannot be read for
+    any reason other than being absent counts as present, so an unreadable
+    state is never mistaken for "no legacy bridge".
+    """
+    platform = config.get_platform()
+    if platform == "linux":
+        return os.path.exists(_systemd_service_path())
+    if platform == "macos":
+        return os.path.exists(_launchd_plist_path())
+    if platform != "windows":
+        return False
+    try:
+        import winreg
+    except ImportError:
+        return False
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _windows_registry_key(), 0, winreg.KEY_READ)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    try:
+        winreg.QueryValueEx(key, WINDOWS_RUN_VALUE)
+        return True
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    finally:
+        winreg.CloseKey(key)

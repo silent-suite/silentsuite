@@ -110,20 +110,175 @@ def _stop_sync_workers() -> None:
         storage.stop_sync_thread(user)
 
 
+def _qt_application():
+    """Return the running QApplication, or create one (on the calling thread)."""
+    from PySide6.QtCore import QCoreApplication, Qt
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+        app = QApplication(sys.argv[:1] or ["silentsuite-bridge"])
+    return app
+
+
+# --- Legacy command-line bridge gate (T1b) ----------------------------------
+
+MIGRATION_PROMPT_TEXT = "Move to the desktop app?"
+MIGRATION_CANCELLED_MESSAGE = (
+    "Error: the desktop app was not started; the command-line SilentSuite Bridge is still set up here."
+)
+MIGRATION_REMAINS_MESSAGE = (
+    "Error: the desktop app was not started; the command-line SilentSuite Bridge is still set up or running."
+)
+_REGISTRATION_DETAIL = (
+    "The command-line SilentSuite Bridge is set to start when you sign in. Moving turns that off so "
+    "the desktop app runs the Bridge instead. Your accounts and settings are kept."
+)
+_LISTENER_DETAIL = (
+    "Another program is already using the Bridge's local port. If it is the command-line Bridge, "
+    "quit it (on Windows, close its window) before you continue."
+)
+_REFUSAL_TEXT = "The desktop app can't start yet."
+_REFUSAL_REGISTRATION = (
+    "The command-line Bridge's start-at-login entry is still there. Remove it with "
+    "'silentsuite-bridge --remove-autostart', then open the desktop app again."
+)
+_REFUSAL_LISTENER = (
+    "Another program is still using the Bridge's local port. Quit it, then open the desktop app again."
+)
+
+
+def _loopback_listener_in_use() -> bool:
+    """True if a requested loopback listener's address is already taken.
+
+    A bind probe on the effective SERVER_HOSTS loopback entries; no data is
+    sent and nothing connects to the other listener. POSIX uses SO_REUSEADDR
+    like the Bridge's own server, so a port in TIME_WAIT is not mistaken for
+    a live listener; Windows uses no option, which still refuses a bind over
+    an active listener.
+    """
+    import ipaddress
+
+    for record in config.requested_loopback_listeners():
+        host, port = record["host"], record["port"]
+        if not port:
+            continue
+        try:
+            family = socket.AF_INET6 if ipaddress.ip_address(host).version == 6 else socket.AF_INET
+        except ValueError:
+            family = socket.AF_INET  # "localhost"
+        probe = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            if os.name != "nt":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((host, port))
+        except OSError:
+            return True
+        finally:
+            probe.close()
+    return False
+
+
+def legacy_conflicts() -> dict:
+    """Read-only check for a command-line bridge this desktop app would clash with."""
+    from . import autostart
+
+    return {
+        "registration": autostart.legacy_cli_registration_present(),
+        "listener": _loopback_listener_in_use(),
+    }
+
+
+def _ask_to_move(QMessageBox, conflicts) -> bool:
+    details = [_REGISTRATION_DETAIL] if conflicts["registration"] else []
+    if conflicts["listener"]:
+        details.append(_LISTENER_DETAIL)
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle(WINDOW_TITLE)
+    box.setText(MIGRATION_PROMPT_TEXT)
+    box.setInformativeText("\n\n".join(details))
+    box.addButton("Move to the desktop app", QMessageBox.ButtonRole.AcceptRole)
+    cancel = box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(cancel)
+    box.setEscapeButton(cancel)
+    box.exec()
+    clicked = box.clickedButton()
+    return clicked is not None and box.buttonRole(clicked) == QMessageBox.ButtonRole.AcceptRole
+
+
+def _show_refusal(QMessageBox, remaining) -> None:
+    details = [_REFUSAL_REGISTRATION] if remaining["registration"] else []
+    if remaining["listener"]:
+        details.append(_REFUSAL_LISTENER)
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Critical)
+    box.setWindowTitle(WINDOW_TITLE)
+    box.setText(_REFUSAL_TEXT)
+    box.setInformativeText("\n\n".join(details))
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    box.exec()
+
+
+def resolve_legacy_conflicts() -> int:
+    """Gate a desktop start on the absence of a command-line bridge.
+
+    Called only by the instance-lock owner, before any start-up preparation,
+    worker or listener. No conflict: returns 0 without showing anything.
+    Otherwise asks once; cancel returns 1. On confirmation, and only when the
+    CLI's own start-at-login entry was found, the existing
+    ``autostart.remove_autostart()`` runs once (it acts only on that CLI
+    label; no PID is ever signalled). Then one re-check: clear returns 0,
+    anything left shows a fixed error and returns 1.
+    """
+    conflicts = legacy_conflicts()
+    if not any(conflicts.values()):
+        return 0
+    try:
+        from PySide6.QtWidgets import QMessageBox
+    except ImportError:
+        print(QT_MISSING_MESSAGE, file=sys.stderr)
+        return 1
+
+    app = _qt_application()
+    # Closing a dialog before the main window exists must not end the app.
+    quit_on_last_window = app.quitOnLastWindowClosed()
+    app.setQuitOnLastWindowClosed(False)
+    try:
+        if not _ask_to_move(QMessageBox, conflicts):
+            print(MIGRATION_CANCELLED_MESSAGE, file=sys.stderr)
+            return 1
+        if conflicts["registration"]:
+            from . import autostart
+
+            if autostart.remove_autostart() != 0:
+                logger.warning("Command-line bridge start-at-login removal was not confirmed")
+        remaining = legacy_conflicts()
+        if any(remaining.values()):
+            _show_refusal(QMessageBox, remaining)
+            print(MIGRATION_REMAINS_MESSAGE, file=sys.stderr)
+            return 1
+        return 0
+    finally:
+        app.setQuitOnLastWindowClosed(quit_on_last_window)
+
+
 def run_desktop(*, build_configuration, start_workers, serve) -> int:
     """Run the desktop window around this process's own Bridge server.
 
     ``build_configuration``, ``start_workers`` and ``serve`` are the server
     stages of ``__main__`` (passed in so the running ``__main__`` module is
     reused, never imported a second time). The caller already owns the
-    instance lock and has run the start-up preparation. Returns an exit code;
+    instance lock, has passed ``resolve_legacy_conflicts`` and has run the
+    start-up preparation. Returns an exit code;
     0 after a normal window close.
     """
     if _unsafe_environment():
         print(UNSAFE_ENVIRONMENT_MESSAGE, file=sys.stderr)
         return 1
     try:
-        from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer, QUrl
+        from PySide6.QtCore import QCoreApplication, QEvent, QTimer, QUrl
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtWebEngineCore import (
             QWebEnginePage,
@@ -132,7 +287,6 @@ def run_desktop(*, build_configuration, start_workers, serve) -> int:
             QWebEngineUrlRequestInterceptor,
         )
         from PySide6.QtWebEngineWidgets import QWebEngineView
-        from PySide6.QtWidgets import QApplication
     except ImportError:
         print(QT_MISSING_MESSAGE, file=sys.stderr)
         return 1
@@ -145,10 +299,7 @@ def run_desktop(*, build_configuration, start_workers, serve) -> int:
         log_bounded_failure(logger, logging.ERROR, "Bridge configuration is invalid", exc)
         return 1
 
-    app = QApplication.instance()
-    if app is None:
-        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-        app = QApplication(sys.argv[:1] or ["silentsuite-bridge"])
+    app = _qt_application()
     app.setQuitOnLastWindowClosed(True)
 
     policy = DashboardOrigin()

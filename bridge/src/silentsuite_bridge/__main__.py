@@ -1247,11 +1247,18 @@ def main(flavor="cli"):
             sys.exit(1)
 
         if flavor == "desktop":
+            from .desktop import resolve_legacy_conflicts, run_desktop
+
+            # Lock owner only: a command-line bridge (its start-at-login entry
+            # or a listener on the loopback port) is resolved before any
+            # preparation, worker or listener of this process.
+            code = resolve_legacy_conflicts()
+            if code:
+                sys.exit(code)
+
             # The window is the dashboard: never open a system browser tab.
             if not _prepare_server_start(open_browser=False):
                 sys.exit(1)
-
-            from .desktop import run_desktop
 
             code = run_desktop(
                 build_configuration=build_radicale_configuration,
