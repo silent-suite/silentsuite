@@ -518,6 +518,56 @@ class NotePushStepTest {
         assertEquals(HeldReason.READ_ONLY, entry("a").held?.reason)
     }
 
+    @Test fun `a store listing that leaves out the refused entry while a notebook's entries are held still holds it, by its name`() {
+        save("a", "one")
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        // From the moment the notebook is confirmed read-only, every listing of the store comes back short and leaves
+        // out a.note, the entry the server just refused.
+        server.notebookAnswer = {
+            PendingNotesStore.listFilesForTesting = { d ->
+                if (d.name == dir.name) d.listFiles()?.filter { it.name != "a.note" }?.toTypedArray() else d.listFiles()
+            }
+            NotebookCheck.Found(readOnly = true, deleted = false)
+        }
+        val result = run()
+        PendingNotesStore.listFilesForTesting = null
+        // Held only from that listing, "a" would wait neither held nor failed, and the run would record success.
+        assertEquals(1, result.held)
+        assertEquals(HeldReason.READ_ONLY, entry("a").held?.reason)
+        assertEquals(listOf("a"), uploaded())
+        assertEquals("one confirming fetch of the notebook", listOf("b1"), server.notebookFetches)
+        assertTrue(result.succeeded)
+        // Held, it is not sent again.
+        assertEquals(0, run().pushed)
+        assertEquals(listOf("a"), uploaded())
+    }
+
+    @Test fun `a refused entry whose hold fails is a storage failure, and its hold by name does not try it again`() {
+        save("a", "one")
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        // The listing shows a.note, and its hold fails once, after the notebook is confirmed read-only.
+        var failedOnce = false
+        server.notebookAnswer = {
+            PendingNotesStore.beforeRenameForTesting = {
+                if (!failedOnce && it.name == "a.note") {
+                    failedOnce = true
+                    throw IOException("no space left on device")
+                }
+            }
+            NotebookCheck.Found(readOnly = true, deleted = false)
+        }
+        val result = run()
+        PendingNotesStore.beforeRenameForTesting = null
+        assertTrue(failedOnce)
+        // That failure settles the entry, and the hold by name, which is for an entry the listing left out, does not
+        // try the hold once more in that run: the entry waits with its one failure, as when any other hold fails.
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(0, result.held)
+        assertEquals(PendingEntry.State.UPSERT, entry("a").state)
+        assertEquals(1, entry("a").failureCount)
+        assertEquals(listOf("a"), uploaded())
+    }
+
     @Test fun `the saved item is in the cache before the entry is dropped`() {
         val saved = save("a", "text")
         run()

@@ -369,9 +369,10 @@ internal class NotePushStep(
     /**
      * A 403 or 404 on a request for this note. A single answer moves nothing: the notebook itself is
      * fetched, once per notebook per run, and the result decides. Read-only, deleted or gone is a
-     * newer answer to step 1, so everything still pending in that notebook is held without an upload,
-     * this entry included. Still writable or unknown is passing trouble: the entry backs off and the
-     * others are still pushed, and a later 403 or 404 in the same notebook reuses the result.
+     * newer answer to step 1: what a new listing finds pending there is held without an upload, and this entry,
+     * by name if left out. One only the first listing showed is held if its own turn draws a 403 or 404 too; one
+     * no listing shows waits for the next run's step 1. Still writable or unknown is passing trouble: the entry
+     * backs off and the others are still pushed, and a later 403 or 404 in the same notebook reuses the result.
      */
     private fun notebookRefused(snapshot: PendingEntry, kind: FailureKind) {
         val notebookUid = snapshot.notebookUid
@@ -385,8 +386,12 @@ internal class NotePushStep(
         for (header in again.headers) {
             if (header.notebookUid == notebookUid && header.state != PendingEntry.State.HELD) holdForNotebook(header.noteUid, reason)
         }
+        // A listing can come back short and leave out this entry, which the server just refused. Not held, it would
+        // wait neither held nor failed, and the run would record success.
+        if (snapshot.noteUid !in settled) holdForNotebook(snapshot.noteUid, reason)
         // A file whose header no longer reads is not among the headers, so it is not held, this entry's own
-        // included. As at the start of the pass, the run does not record success while any file cannot be read.
+        // included: its hold by name finds it unreadable. As at the start of the pass, the run does not record
+        // success while any file cannot be read.
         if (again.unreadable.isNotEmpty()) noteFailure(FailureKind.LOCAL)
         if (check == NotebookCheck.Gone) {
             // So the notebook does not stay listed as writable until a later run's refresh drops it.
