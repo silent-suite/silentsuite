@@ -36,15 +36,57 @@ _ACCOUNT_ACTION_FLAGS = (
 _RADICALE_SERVER_APPLICATION_LOCK = threading.Lock()
 
 
-def configure_logging():
-    """Set up logging for the bridge."""
+DESKTOP_LOG_FILENAME = "silentsuite-bridge.log"
+
+
+def _desktop_default_log_file():
+    """The desktop app's default log file in DATA_DIR, or None.
+
+    Only used when SILENTSUITE_LOG_FILE is not set (that explicit override
+    wins unchanged). A windowed app has no terminal, so without this its logs
+    would go nowhere. The data directory is created as usual (0700) and the
+    file is created or tightened to owner-only before the handler opens it.
+    Any failure means no file log rather than a failed start.
+    """
+    if config.LOG_FILE:
+        return None
+    try:
+        config.ensure_data_dir()
+        path = os.path.join(config.DATA_DIR, DESKTOP_LOG_FILENAME)
+        os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))
+    except OSError:
+        return None
+    try:
+        os.chmod(path, 0o600)  # an older, wider file is tightened; no effect on Windows
+    except OSError:
+        pass
+    return path
+
+
+def configure_logging(default_log_file=None):
+    """Set up logging for the bridge.
+
+    ``default_log_file`` is the desktop app's sink when no explicit
+    SILENTSUITE_LOG_FILE is set. With no stderr (a windowed app) no stream
+    handler is created, so nothing writes to a missing stream.
+    """
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     log_level = getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
 
-    handlers = [logging.StreamHandler(sys.stderr)]
+    handlers = []
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler(sys.stderr))
 
     if config.LOG_FILE:
         handlers.append(logging.FileHandler(config.LOG_FILE))
+    elif default_log_file:
+        try:
+            handlers.append(logging.FileHandler(default_log_file, encoding="utf-8"))
+        except OSError:
+            pass  # no file log rather than a failed desktop start
+
+    if not handlers:
+        handlers.append(logging.NullHandler())
 
     logging.basicConfig(
         level=log_level,
@@ -1108,7 +1150,10 @@ def main(flavor="cli"):
             print("Error: --server requires a URL argument")
             sys.exit(1)
 
-    configure_logging()
+    if flavor == "desktop":
+        configure_logging(default_log_file=_desktop_default_log_file())
+    else:
+        configure_logging()
 
     # Handle --setup-macos-apple-accounts before validating existing SSL files:
     # this command is how users create the missing cert/key in the first place.
