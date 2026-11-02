@@ -107,5 +107,12 @@
     "deleteNotebookTitle": "Delete notebook?",
     "deleteNotebookMessage": "{count, plural, =0 {\"{name}\" is empty and will be permanently deleted.} one {\"{name}\" and the # note in it will be permanently deleted.} other {\"{name}\" and the # notes in it will be permanently deleted.}} This cannot be undone.",
     "experimentalWebOnly": "Experimental · Web app only"
+  },
+  "SettingsExperimental": {
+    "Language": {
+      "title": "Language",
+      "description": "Most of the app is still in English. Italian covers only some screens for now. This choice applies to this browser only and is not synced to your account or other devices.",
+      "partialTag": "(partial, experimental)"
+    }
   }
 }
