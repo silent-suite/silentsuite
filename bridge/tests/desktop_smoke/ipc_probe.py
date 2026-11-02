@@ -156,6 +156,75 @@ def _count_calls(module, names, counts):
         setattr(module, name, counted)
 
 
+def _late_listener(args, out, result, timer, QCoreApplication, QLocalServer, QLocalSocket):
+    """A CONTROLLED Qt listener on the product's real endpoint, opened late.
+
+    Not the product owner and no window: it exists only to test the second
+    launch's retry window. It takes the endpoint name from the product's own
+    ``desktop_ipc.endpoint_name`` (user and DATA_DIR scoped), acknowledges
+    readiness, waits for the parent's "go", listens immediately (recording the
+    wall-clock instant), and records the bytes of the first client it gets.
+    """
+    control = Path(args.control)
+    app = QCoreApplication([sys.argv[0]])  # noqa: F841 - Qt needs an application object
+    from silentsuite_bridge import desktop_ipc
+
+    name = desktop_ipc.endpoint_name(create=True)
+    if name is None:
+        result["prereq"]["endpoint"] = False
+        _write(out, result)
+        timer.cancel()
+        return EXIT_PREREQ
+    if os.name != "nt":
+        desktop_ipc._remove_own_socket(name)  # a leftover from an earlier run, ours only
+    (control / "listener.ready").write_text("ok", encoding="utf-8")
+
+    deadline = time.monotonic() + 60
+    while not (control / "go").exists():
+        if time.monotonic() > deadline:
+            result["stage"] = "no-go"
+            _write(out, result)
+            timer.cancel()
+            return EXIT_PREREQ
+        time.sleep(0.01)
+
+    server = QLocalServer()
+    server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+    listening = bool(server.listen(name))
+    listen_wall = time.time()
+    _write(control / "listening.json", {"listening": listening, "listen_wall": listen_wall})
+
+    received = b""
+    connected = False
+    if listening:
+        available, _timed_out = server.waitForNewConnection(10000)
+        if available:
+            sock = server.nextPendingConnection()
+            connected = sock is not None
+            end = time.monotonic() + 3
+            while connected and time.monotonic() < end and len(received) < 64:
+                if sock.bytesAvailable() > 0:
+                    received += bytes(sock.read(64 - len(received)).data())
+                    continue
+                if sock.state() == QLocalSocket.LocalSocketState.UnconnectedState:
+                    break
+                sock.waitForReadyRead(100)
+            sock.abort()
+        server.close()
+    if os.name != "nt":
+        desktop_ipc._remove_own_socket(name)
+    result.update({
+        "stage": "done",
+        "listening": listening,
+        "listen_wall": listen_wall,
+        "connected": connected,
+        "received_hex": received.hex(),
+    })
+    _write(out, result)
+    timer.cancel()
+    return EXIT_WRITTEN
+
+
 def _endpoint_facts(server):
     """Record what the owner's QLocalServer is, and on POSIX who can reach it."""
     name = server.fullServerName()
@@ -201,6 +270,9 @@ def run(args) -> int:
         _write(out, result)
         timer.cancel()
         return EXIT_PREREQ
+
+    if args.role == "late_listener":
+        return _late_listener(args, out, result, timer, QCoreApplication, QLocalServer, QLocalSocket)
 
     if args.role == "payload":
         app = QCoreApplication([sys.argv[0]])
@@ -411,6 +483,7 @@ def run(args) -> int:
     sys.argv = ["silentsuite-bridge"]
     exit_code = None
     result["stage"] = "entrypoint"
+    result["entry_wall"] = time.time()  # lets the parent time a late endpoint against this launch
     _write(out, result)
     entered = time.monotonic()
     try:
@@ -453,7 +526,7 @@ def run(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="T2 IPC fixture (non-product)")
-    parser.add_argument("--role", required=True, choices=["owner", "second", "payload"])
+    parser.add_argument("--role", required=True, choices=["owner", "second", "payload", "late_listener"])
     parser.add_argument("--out", required=True)
     parser.add_argument("--ready", default="")
     parser.add_argument("--control", default="")

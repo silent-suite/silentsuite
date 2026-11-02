@@ -9,9 +9,11 @@ Contract (implementation-plan-v2 section 5 plus the v3 amendment):
   workers, serving or a web view;
 - a healthy owner's bound port and a CLI registration that appears after the
   owner started must not make a second launch prompt (lock before legacy);
-- if no owner answers, the second launch shows the fixed native message
-  "SilentSuite Bridge is already running (possibly from the command line)"
-  and exits non-zero;
+- the second launch keeps trying the owner's endpoint until a fixed 3-second
+  deadline, so an owner that starts listening slightly late still gets "show";
+- if no owner answers by then, the second launch shows the fixed native
+  message "SilentSuite Bridge is already running, possibly from the command
+  line or still starting. Try again in a moment." and exits non-zero;
 - a relaunch while the owner's migration prompt is up must not re-prompt,
   remove or serve, and the owner still shows one prompt;
 - any payload other than exactly b"show" changes nothing and gets no reply.
@@ -41,7 +43,14 @@ BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "desktop_smoke" / "ipc_probe.py"
 REQUIRE_ENV = "SILENTSUITE_REQUIRE_DESKTOP_NATIVE"
 PREPARED_LINE = "No account configured yet"
-BUSY_MESSAGE = "SilentSuite Bridge is already running (possibly from the command line)"
+# implementation-plan-v3-amendment.md lines 29-30: a 3-second attempt deadline
+# and this exact fixed native text (v3 replaces the v2 second-launch paragraph).
+BUSY_MESSAGE = (
+    "SilentSuite Bridge is already running, possibly from the command line or still starting. "
+    "Try again in a moment."
+)
+LATE_ENDPOINT_AFTER_SECONDS = 2.4  # after the 2 s an early draft allowed, safely before 3 s
+LATE_ENDPOINT_WINDOW = (2.1, 2.9)  # outside this, the setup timing (not the product) decided
 READY_TIMEOUT = 90
 CHILD_TIMEOUT = 60
 SHOW_ACK_TIMEOUT = 5.0
@@ -402,5 +411,122 @@ def test_relaunch_during_migration_prompt_does_nothing_else(reentry):
 def test_relaunch_during_migration_prompt_hands_over_to_the_owner(reentry):
     second = reentry["second"]
     assert second["exit_code"] in (None, 0), f"the relaunch did not hand over to the owner: {_describe(second)}"
+    client = second["client_socket"]
+    assert "".join(client["writes_hex"]) == b"show".hex() and client["read_attempts"] == 0, _describe(second)
+
+
+# --- startup race: the endpoint appears between 2 s and 3 s -----------------
+#
+# Client retry-budget check only. A real lock is held by a non-desktop holder,
+# the real main(flavor="desktop") takes the busy-lock path, and a CONTROLLED Qt
+# listener (ipc_probe role late_listener, not the product owner, no window)
+# opens the product's own user/DATA_DIR endpoint about 2.4 s after the second
+# launch entered main(). It shows the sender keeps trying past 2 s; it does not
+# prove the owner's GUI startup or activation, or that attempts stop at 3 s.
+
+
+def _wait_until(predicate, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.02)
+    return None
+
+
+def _read_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+@pytest.fixture(scope="module")
+def late_endpoint(tmp_path_factory):
+    _native_required()
+    root, data, home, control = _layout(tmp_path_factory, "t2ipc-late")
+    env = _env(data, home, _free_port())
+    journey = {}
+    logs = [open(root / name, "w", encoding="utf-8") for name in
+            ("listener.stdout", "listener.stderr", "second.stdout", "second.stderr")]
+    listener = second = None
+    try:
+        with hold_instance_lock(data):
+            listener_argv, listener_out = _args("late_listener", root, control=control)
+            listener = subprocess.Popen(listener_argv, stdout=logs[0], stderr=logs[1], env=env, text=True)
+            if not _wait_until(lambda: (control / "listener.ready").exists() or listener.poll() is not None, 60) \
+                    or not (control / "listener.ready").exists():
+                pytest.fail(f"fixture did not complete (not RED): late listener never got ready\n"
+                            f"{_tail(root / 'listener.stderr')}")
+
+            second_argv, second_out = _args("second", root)
+            second = subprocess.Popen(second_argv, stdout=logs[2], stderr=logs[3], env=env, text=True)
+            entered = _wait_until(
+                lambda: (_read_json(second_out) or {}).get("entry_wall") or (second.poll() is not None and -1), 60,
+            )
+            if not entered or entered == -1:
+                pytest.fail(f"fixture did not complete (not RED): second launch never entered main()\n"
+                            f"{_tail(root / 'second.stderr')}")
+            delay = entered + LATE_ENDPOINT_AFTER_SECONDS - time.time()
+            if delay > 0:
+                time.sleep(delay)
+            (control / "go").write_text("1", encoding="utf-8")
+            listening = _wait_until(lambda: _read_json(control / "listening.json"), 10)
+            if not listening:
+                pytest.fail(f"fixture timeout (not RED): late listener never acknowledged listening\n"
+                            f"{_tail(root / 'listener.stderr')}")
+            try:
+                second.wait(timeout=CHILD_TIMEOUT)
+                listener.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pytest.fail("fixture timeout (not RED): late-endpoint processes did not finish")
+    finally:
+        for process in (second, listener):
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=30)
+        for handle in logs:
+            handle.close()
+
+    second_result = _read_json(second_out) or {}
+    listener_result = _read_json(listener_out) or {}
+    for role, process, result, log in (
+        ("second", second, second_result, "second.stderr"),
+        ("late_listener", listener, listener_result, "listener.stderr"),
+    ):
+        if process.returncode != 0 or result.get("stage") != "done":
+            pytest.fail(f"fixture did not complete (not RED): {role} rc={process.returncode} "
+                        f"stage={result.get('stage')!r}\n{_tail(root / log)}")
+    if second_result.get("entry_error") is not None:
+        pytest.fail(f"desktop entrypoint raised (not RED): {second_result['entry_error']!r}\n"
+                    f"{_tail(root / 'second.stderr')}")
+    if not listening.get("listening"):
+        pytest.fail(f"fixture did not complete (not RED): late listener could not listen\n"
+                    f"{_tail(root / 'listener.stderr')}")
+    opened_after = round(listening["listen_wall"] - second_result["entry_wall"], 2)
+    if not LATE_ENDPOINT_WINDOW[0] <= opened_after <= LATE_ENDPOINT_WINDOW[1]:
+        pytest.fail(f"fixture timing outside {LATE_ENDPOINT_WINDOW} s (not RED): the endpoint opened "
+                    f"{opened_after} s after the second launch entered main()")
+    second_result["prepared"] = PREPARED_LINE in _tail(root / "second.stdout", 100000)
+    second_result["stderr_tail"] = _tail(root / "second.stderr")
+    journey.update({"second": second_result, "listener": listener_result, "opened_after": opened_after})
+    return journey
+
+
+def test_late_endpoint_second_launch_does_nothing_else(late_endpoint):
+    # Control: whatever the handover outcome, the busy-lock path stays inert.
+    _assert_second_did_nothing(late_endpoint["second"])
+
+
+def test_second_launch_still_hands_over_to_an_endpoint_opened_between_two_and_three_seconds(late_endpoint):
+    second = late_endpoint["second"]
+    assert second["exit_code"] in (None, 0), (
+        f"the second launch gave up before the 3-second deadline; the endpoint opened "
+        f"{late_endpoint['opened_after']} s after it entered main(): {_describe(second)}"
+    )
+    listener = late_endpoint["listener"]
+    assert listener["connected"] is True, listener
+    assert listener["received_hex"] == b"show".hex(), listener
     client = second["client_socket"]
     assert "".join(client["writes_hex"]) == b"show".hex() and client["read_attempts"] == 0, _describe(second)
