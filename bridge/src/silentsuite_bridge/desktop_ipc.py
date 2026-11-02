@@ -38,9 +38,14 @@ from . import config
 logger = logging.getLogger("silentsuite-bridge.desktop")
 
 SHOW_MESSAGE = b"show"
-ALREADY_RUNNING_TEXT = "SilentSuite Bridge is already running (possibly from the command line)."
+# implementation-plan-v3-amendment.md lines 29-30 and 47: the second launch
+# retries until a fixed 3-second deadline, then shows this exact text.
+ALREADY_RUNNING_TEXT = (
+    "SilentSuite Bridge is already running, possibly from the command line or still starting. "
+    "Try again in a moment."
+)
 ALREADY_RUNNING_MESSAGE = "Error: " + ALREADY_RUNNING_TEXT
-HANDOVER_SECONDS = 2.0
+HANDOVER_SECONDS = 3.0  # sender retry budget; not the owner's per-client _CLIENT_SECONDS
 _CLIENT_SECONDS = 2.0
 _READ_CHUNK = 4096  # Qt read-buffer cap per client and the most one read() allocates
 _MAX_CLIENT_BYTES = 256 * 1024  # total a client may send before it is dropped
