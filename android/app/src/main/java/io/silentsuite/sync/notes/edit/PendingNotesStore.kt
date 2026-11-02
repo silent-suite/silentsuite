@@ -254,6 +254,11 @@ internal class PendingNotesStore private constructor(
         object Done : SendOutcome()
         /** The user changed the note while it was being sent; rebase this entry onto the landed item. */
         data class NewerLocalChange(val entry: PendingEntry) : SendOutcome()
+        /**
+         * The upload landed, and the entry's file cannot be read now. It is kept as it is: nothing shows
+         * whether the user changed the note meanwhile.
+         */
+        object Unreadable : SendOutcome()
     }
 
     /**
@@ -532,6 +537,9 @@ internal class PendingNotesStore private constructor(
      * the rebase that follows still applies, and the outcome carries the entry as written. If the write
      * fails, the upload has still landed: the outcome carries the entry with its mark, and the rebase
      * clears it.
+     *
+     * An entry whose file cannot be read now is kept as it is, and the outcome says so
+     * ([SendOutcome.Unreadable]) rather than [SendOutcome.Done], so the run does not record success over it.
      */
     fun completeSend(noteUid: String, sentVersion: Long, revision: String, blob: ByteArray): SendOutcome = locked {
         if (hasEditor(noteUid)) {
@@ -539,8 +547,10 @@ internal class PendingNotesStore private constructor(
         } else {
             remove(landedFile(noteUid))
         }
-        val e = (readEntry(noteUid) as? Read.Present)?.entry
+        val read = readEntry(noteUid)
+        val e = (read as? Read.Present)?.entry
         when {
+            read is Read.Unreadable -> SendOutcome.Unreadable
             e == null -> SendOutcome.Done
             e.version == sentVersion -> {
                 remove(noteFile(noteUid))

@@ -572,6 +572,17 @@ class PendingNotesStoreTest {
         assertEquals(listOf("r1"), rebased.sent)
     }
 
+    @Test fun `a landed upload of an entry that cannot be read now keeps it as it is and says so`() {
+        val editor = store.editorOpened("n1")
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        val snapshot = store.beginSend("n1")!!
+        File(dir, "n1.note").writeBytes(byteArrayOf(0))
+        assertEquals(SendOutcome.Unreadable, store.completeSend("n1", snapshot.version, "r1", blob("landed")))
+        assertArrayEquals("kept as it is", byteArrayOf(0), File(dir, "n1.note").readBytes())
+        assertEquals("the upload landed, so the open editor keeps its landed record", "r1", store.landed("n1")!!.revision)
+        store.editorClosed(editor)
+    }
+
     @Test fun `a rebase moves the revision it was built on to the newest end of the sent list`() {
         // 32 revisions sent without one confirmed answer. The oldest, s1, is the server's current copy.
         for (i in 1..PendingEntry.MAX_SENT) {
