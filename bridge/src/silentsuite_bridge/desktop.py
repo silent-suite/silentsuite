@@ -201,7 +201,9 @@ def run_desktop(*, build_configuration, start_workers, serve) -> int:
 
     def serve_bridge():
         try:
-            serve(configuration, shutdown_socket=serve_end)
+            # Desktop opt-in: binding the known loopback literal must not wait
+            # on reverse DNS before the registry can confirm the dashboard URL.
+            serve(configuration, shutdown_socket=serve_end, literal_loopback_server_name=True)
         except Exception as exc:  # reported by the window, then by the exit code
             server_errors.append(exc)
             log_bounded_failure(logger, logging.ERROR, "Bridge server stopped with an error", exc)

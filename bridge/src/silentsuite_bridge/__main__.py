@@ -798,7 +798,9 @@ def run_server():
         sys.exit(1)
 
 
-def _serve_radicale_with_bridge_application(configuration, shutdown_socket=None) -> None:
+def _serve_radicale_with_bridge_application(
+    configuration, shutdown_socket=None, *, literal_loopback_server_name=False,
+) -> None:
     """Run Radicale once with the Bridge's adapted server stack.
 
     Radicale 3.2.3 reads Application, RequestHandler, ParallelHTTPServer, and
@@ -807,6 +809,11 @@ def _serve_radicale_with_bridge_application(configuration, shutdown_socket=None)
     resets the ListenerRegistry, and passes ``shutdown_socket`` through to
     serve().  On return / exception / KeyboardInterrupt all four globals are
     restored and the registry is marked stopped.
+
+    ``literal_loopback_server_name`` is the desktop's opt-in: its HTTP
+    listener on a numeric loopback literal takes that literal as
+    ``server_name``/``SERVER_NAME`` instead of a reverse DNS lookup. The CLI
+    default (False), HTTPS and non-loopback binds are unchanged.
 
     tray.quit() terminates the process with ``os._exit(0)`` and is outside
     these guarantees.
@@ -849,6 +856,7 @@ def _serve_radicale_with_bridge_application(configuration, shutdown_socket=None)
         # --- build and inject bridge-owned classes ---
         BridgeHTTP = _build_bridge_http_server_class(
             originals["ParallelHTTPServer"], registry,
+            literal_loopback_name=literal_loopback_server_name,
         )
         BridgeHTTPS = _build_bridge_https_server_class(
             originals["ParallelHTTPSServer"], registry,

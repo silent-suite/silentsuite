@@ -7,8 +7,10 @@ address, and peer address.
 """
 
 import logging
+import socketserver
 import ssl
 import threading
+import wsgiref.simple_server
 
 from ..operator_output import address_detail_enabled
 
@@ -242,10 +244,43 @@ class _BridgeServerTrait:
     """Shared marker for both bridge HTTP and HTTPS server subclasses."""
 
 
+class _LoopbackLiteralServerName(wsgiref.simple_server.WSGIServer):
+    """Name a numeric loopback bind after its literal instead of reverse DNS.
+
+    Upstream ``http.server.HTTPServer.server_bind`` binds the socket
+    (``TCPServer.server_bind``) and only then calls ``socket.getfqdn(host)``
+    to fill ``server_name``, which ``WSGIServer.setup_environ`` copies into
+    the base ``SERVER_NAME``. On a resolver with slow reverse lookups that
+    can hold a desktop start for tens of seconds after the socket is bound.
+
+    Mixed in after the upstream server class, so every override above it in
+    the MRO (Radicale's own ``server_bind``) still runs first. For a numeric
+    loopback literal this replaces only the HTTPServer step: the same
+    ``TCPServer.server_bind``, then ``server_name`` set to the bound literal,
+    ``server_port`` and the full ``setup_environ``. Any other host takes the
+    upstream path unchanged.
+    """
+
+    def server_bind(self):
+        if not _is_loopback_literal(self.server_address[0]):
+            super().server_bind()
+            return
+        socketserver.TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = host
+        self.server_port = port
+        self.setup_environ()
+
+
 # ---------- server builders ----------
 
-def _build_bridge_http_server_class(upstream_class, registry: ListenerRegistry):
+def _build_bridge_http_server_class(upstream_class, registry: ListenerRegistry, *, literal_loopback_name=False):
     """Create a bridge HTTP server subclass.
+
+    ``literal_loopback_name`` (desktop only) mixes in
+    ``_LoopbackLiteralServerName`` so a numeric loopback bind does not wait on
+    reverse DNS. It applies only when the upstream class is a WSGIServer, the
+    class the mixin specializes; otherwise the class is built as before.
 
     The upstream constructor (which performs ``server_bind``) is wrapped in a
     try/except so that an occupied port, activation failure, or any other
@@ -259,7 +294,11 @@ def _build_bridge_http_server_class(upstream_class, registry: ListenerRegistry):
     constructor failed before binding.
     """
 
-    class _BridgeServer(upstream_class, _BridgeServerTrait):
+    bases = (upstream_class, _BridgeServerTrait)
+    if literal_loopback_name and issubclass(upstream_class, wsgiref.simple_server.WSGIServer):
+        bases = (upstream_class, _LoopbackLiteralServerName, _BridgeServerTrait)
+
+    class _BridgeServer(*bases):
         def __init__(self, configuration, family, address, handler_class):
             try:
                 super().__init__(configuration, family, address, handler_class)
