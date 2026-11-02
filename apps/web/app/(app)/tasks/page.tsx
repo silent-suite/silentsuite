@@ -238,8 +238,6 @@ function TaskDialog({
   const [description, setDescription] = useState(task?.description ?? '')
   const [startDate, setStartDate] = useState<string>(dateInputValue(task?.start_date))
   const [dueDate, setDueDate] = useState<string>(dateInputValue(task?.due_date))
-  // The day each date field opened with, so an edit only sends dates the user actually changed.
-  const openedDates = useRef({ start: dateInputValue(task?.start_date), due: dateInputValue(task?.due_date) })
   const [priority, setPriority] = useState<Priority>(task?.priority ?? 'medium')
   const [status, setStatus] = useState<TaskStatus>(task?.status ?? (task?.completed ? 'completed' : 'needs-action'))
   const [percentComplete, setPercentComplete] = useState(task?.percent_complete ?? (task?.completed ? 100 : 0))
@@ -247,6 +245,20 @@ function TaskDialog({
   const [url, setUrl] = useState(task?.url ?? '')
   const [categories, setCategories] = useState<string[]>(task?.categories ?? [])
   const [selectedListId, setSelectedListId] = useState(task?.listId ?? defaultListId)
+  // What each field held when the dialog opened. An edit sends only the fields the user changed, so
+  // values synced from another device while the dialog is open are not overwritten by stale ones.
+  const opened = useRef({
+    title: task?.title ?? '',
+    description: task?.description ?? '',
+    start: dateInputValue(task?.start_date),
+    due: dateInputValue(task?.due_date),
+    priority: task?.priority ?? 'medium',
+    status: task?.status ?? (task?.completed ? 'completed' : 'needs-action'),
+    percentComplete: task?.percent_complete ?? (task?.completed ? 100 : 0),
+    location: task?.location ?? '',
+    url: task?.url ?? '',
+    categories: [...(task?.categories ?? [])],
+  })
   // A new task's draft stays open until its create settles (create mode only).
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -313,20 +325,24 @@ function TaskDialog({
       onClose()
       return
     } else if (task) {
-      updateTask(task.id, {
-        title: trimmed,
-        description,
+      const was = opened.current
+      const categoriesChanged = categories.length !== was.categories.length
+        || categories.some((category, index) => category !== was.categories[index])
+      const patch: Partial<Task> = {
+        ...(trimmed !== was.title.trim() ? { title: trimmed } : {}),
+        ...(description !== was.description ? { description } : {}),
         // A date field only holds the day, so resending an untouched date would replace its
         // original time and time zone. Send a date only when it was changed or cleared.
-        ...(startDate !== openedDates.current.start ? { start_date: parsedStart } : {}),
-        ...(dueDate !== openedDates.current.due ? { due_date: parsedDue } : {}),
-        priority,
-        status,
-        ...progress,
-        location,
-        url,
-        categories,
-      })
+        ...(startDate !== was.start ? { start_date: parsedStart } : {}),
+        ...(dueDate !== was.due ? { due_date: parsedDue } : {}),
+        ...(priority !== was.priority ? { priority } : {}),
+        // Status, completion and progress are sent together, and only when one of them changed.
+        ...(status !== was.status || percentComplete !== was.percentComplete ? { status, ...progress } : {}),
+        ...(location !== was.location ? { location } : {}),
+        ...(url !== was.url ? { url } : {}),
+        ...(categoriesChanged ? { categories } : {}),
+      }
+      if (Object.keys(patch).length > 0) updateTask(task.id, patch)
     }
     onClose()
   }, [title, creating, description, startDate, dueDate, priority, status, percentComplete, location, url, categories, selectedListId, mode, task, createTask, updateTask, onClose])
