@@ -264,7 +264,7 @@ def resolve_legacy_conflicts() -> int:
         app.setQuitOnLastWindowClosed(quit_on_last_window)
 
 
-def run_desktop(*, build_configuration, start_workers, serve) -> int:
+def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
     """Run the desktop window around this process's own Bridge server.
 
     ``build_configuration``, ``start_workers`` and ``serve`` are the server
@@ -383,10 +383,14 @@ def run_desktop(*, build_configuration, start_workers, serve) -> int:
         start_workers()
         server_thread.start()
         view.show()
+        if ipc is not None:
+            ipc.window = view  # what a second launch's "show" brings back
         poll.start()
         app.exec()
     finally:
         poll.stop()
+        if ipc is not None:
+            ipc.window = None
         # Release web content first so its loopback connections close, then
         # stop the server through its shutdown socket, then the workers.
         view.close()

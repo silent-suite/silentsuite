@@ -1239,6 +1239,12 @@ def main(flavor="cli"):
         try:
             ownership.enter_context(instance_ownership())
         except InstanceBusyError:
+            if flavor == "desktop":
+                # Busy lock: hand over to the running owner (b"show" only) or
+                # say it is running. Nothing else of this launch runs.
+                from .desktop_ipc import handover_to_owner
+
+                sys.exit(handover_to_owner())
             print(ALREADY_RUNNING_MESSAGE, file=sys.stderr)
             sys.exit(1)
         except OSError as exc:
@@ -1248,6 +1254,14 @@ def main(flavor="cli"):
 
         if flavor == "desktop":
             from .desktop import resolve_legacy_conflicts, run_desktop
+            from .desktop_ipc import start_owner_ipc
+
+            # Lock owner only: the reopen endpoint listens from here, before
+            # the legacy gate, and is closed (ExitStack order) before the lock
+            # is released on every exit path.
+            ipc = start_owner_ipc()
+            if ipc is not None:
+                ownership.callback(ipc.close)
 
             # Lock owner only: a command-line bridge (its start-at-login entry
             # or a listener on the loopback port) is resolved before any
@@ -1264,6 +1278,7 @@ def main(flavor="cli"):
                 build_configuration=build_radicale_configuration,
                 start_workers=_start_sync_threads,
                 serve=_serve_radicale_with_bridge_application,
+                ipc=ipc,
             )
             if code:
                 sys.exit(code)
