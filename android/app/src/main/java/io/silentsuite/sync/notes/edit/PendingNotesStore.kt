@@ -413,14 +413,14 @@ internal class PendingNotesStore private constructor(
                 is Read.Present -> when (read.entry.state) {
                     PendingEntry.State.UPSERT -> {
                         notebookCopy?.let { putNotebookLocked(read.entry.notebookUid, it) }
-                        val version = nextVersion()
+                        val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.Saved(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob,
                             failureCount = 0, lastFailureAt = null, lastFailureCategory = null))
                     }
                     PendingEntry.State.HELD -> {
                         // The editor's latest text joins the held text instead of being lost.
-                        val version = nextVersion()
+                        val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.SavedToHolding(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob))
                     }
@@ -580,7 +580,8 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.version != expectedVersion || e.state == PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.withNewestSent(onto).copy(version = nextRunVersion(), revision = revision, blob = blob, fromConflict = false))
+                Change.Write(e.withNewestSent(onto).copy(version = nextRunVersion(above = e.version), revision = revision, blob = blob,
+                    fromConflict = false))
             }
         }
         applied
@@ -650,7 +651,7 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.state != PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(), held = null,
+                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(above = e.version), held = null,
                     failureCount = 0, lastFailureAt = null, lastFailureCategory = null, fromConflict = false))
             }
         }
@@ -1835,10 +1836,18 @@ internal class PendingNotesStore private constructor(
      * restart holds only while the counter reads, as [UnsyncedNotes.covers] says, and one shown before a
      * discard that finished, which deletes the counter, does not hold at all. The push order, which compares
      * versions across notes, is bounded the same way.
+     *
+     * And it is above [above], the version of the entry the new one replaces, which the caller read by name.
+     * In a new instance, as after a restart, that first reads the store once the counter is lost, [highWater]
+     * is the rebuild, and the rebuild rests on a listing, which can come back short and leave that entry out.
+     * Every check of an entry's version (a drop, a rebase, a recorded failure, a hold, a conflict copy and its
+     * recovery) compares it only with an earlier one of the same note, so a new version above the one it
+     * replaces is what they need, whatever the listing showed. A new entry has no version to replace. What is
+     * compared across notes, the push order and the store-wide sequence, gets only the [highWater] bound.
      */
-    private fun nextVersion(): Long {
+    private fun nextVersion(above: Long = 0): Long {
         withdrawPermit()
-        val next = currentSequence(strict = true) + 1
+        val next = maxOf(currentSequence(strict = true), above) + 1
         writeAtomically(File(dir, SEQUENCE), PendingCodec.encodeSequence(next))
         highWater = next
         return next
@@ -1853,9 +1862,9 @@ internal class PendingNotesStore private constructor(
      * release from holding still withdraw the permit. Once this instance has shown the permit gone
      * ([withdrawPermit]), nothing holds a new version back, and the permit is not read again ([permitNames]).
      */
-    private fun nextRunVersion(): Long {
+    private fun nextRunVersion(above: Long = 0): Long {
         if (namedThere(permitNames())) throw HeldBack()
-        return nextVersion()
+        return nextVersion(above)
     }
 
     /**

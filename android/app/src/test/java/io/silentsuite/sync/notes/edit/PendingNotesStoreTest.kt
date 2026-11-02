@@ -276,6 +276,49 @@ class PendingNotesStoreTest {
         assertEquals("nothing was deleted", before, filesOf(dir))
     }
 
+    @Test fun `a save during an upload is not dropped with it while a lost counter is rebuilt from a listing that left the note out`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        store.saveLocal("n1", "b1", "r1", blob("sent"), isCreate = false)
+        val sent = store.beginSend("n1")!!
+        // The counter is lost while the upload is in flight, and the save that rebuilds it does not see n1. It saves
+        // through a new instance, as after a restart, so that only the version it replaces keeps it above.
+        assertTrue(File(dir, "sequence").delete())
+        val s = restarted()
+        listingLeavesOut("n1.note")
+        val newer = saved(s.saveLocal("n1", "b1", "r2", blob("newer"), isCreate = false))
+        PendingNotesStore.listFilesForTesting = null
+        assertTrue("above the version that was sent", newer > sent.version)
+        assertTrue(s.completeSend("n1", sent.version, "r1", blob("landed")) is SendOutcome.NewerLocalChange)
+        assertArrayEquals("the newer text stays to be sent", blob("newer"), s.entry("n1").blob)
+    }
+
+    @Test fun `every new version of an entry is above the one it replaces while a lost counter is rebuilt from a listing that left it out`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        val steps = listOf<Pair<String, (PendingNotesStore) -> Unit>>(
+            "a save" to { s -> s.saveLocal("n1", "b1", "r2", blob("two"), isCreate = false) },
+            "a rebase" to { s ->
+                assertTrue(s.rebase("n1", s.entry("n1").version, onto = "r2", revision = "r3", blob = blob("three")))
+            },
+            "a save into held text" to { s ->
+                s.hold("n1", HeldReason.LOST_ACCESS, 1)
+                s.saveLocal("n1", "b1", "r4", blob("four"), isCreate = false)
+            },
+            "a release" to { s -> assertTrue(s.release("n1")) },
+        )
+        var s = store
+        for ((step, write) in steps) {
+            val before = s.entry("n1").version
+            assertTrue(File(dir, "sequence").delete())
+            // A new instance, as after a restart, so that only the version the write replaces keeps it above.
+            s = restarted()
+            listingLeavesOut("n1.note")
+            write(s)
+            PendingNotesStore.listFilesForTesting = null
+            assertTrue("$step: above $before", s.entry("n1").version > before)
+        }
+    }
+
     @Test fun `a lost counter is rebuilt above a first write that recovery cannot commit yet`() {
         var refuse = true
         val d = tmp.newFolder("stranded-version")
