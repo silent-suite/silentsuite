@@ -8,6 +8,7 @@ name: Test Bridge desktop tracers (source)
 #   T1b legacy gate: CLI registration / occupied port migration prompt (bridge/tests/test_desktop_migration.py)
 #   T2 startup DNS: desktop loopback bind without reverse DNS (bridge/tests/test_desktop_startup_dns.py)
 #   T2 IPC: second launch reopens the owner; lock before legacy (bridge/tests/test_desktop_ipc.py)
+#   T4 windowed stdio (source simulation): no stdio, default DATA_DIR logs (bridge/tests/test_desktop_windowed.py)
 # No build, installer, release, credential, account, network sync or autostart state.
 
 on:
@@ -27,6 +28,8 @@ on:
       - 'bridge/tests/desktop_smoke/startup_dns_probe.py'
       - 'bridge/tests/test_desktop_ipc.py'
       - 'bridge/tests/desktop_smoke/ipc_probe.py'
+      - 'bridge/tests/test_desktop_windowed.py'
+      - 'bridge/tests/desktop_smoke/windowed_probe.py'
       - 'bridge/tests/desktop_smoke/requirements.txt'
       - 'bridge/tests/conftest.py'
       - 'bridge/pyproject.toml'
@@ -352,5 +355,36 @@ jobs:
           path: |
             ${{ runner.temp }}/t2-ipc/junit.xml
             ${{ runner.temp }}/t2-ipc/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Its own step and receipt, so its result reads apart from the other tracers.
+      - name: Run T4 windowed-stdio tests
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' }}
+        timeout-minutes: 15
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/t4-windowed"
+          cmd=(python -m pytest tests/test_desktop_windowed.py -v --tb=long -p no:cacheprovider
+               --junitxml="$RUNNER_TEMP/t4-windowed/junit.xml")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-windowed/pytest.txt"
+          else
+            "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-windowed/pytest.txt"
+          fi
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t4-windowed/pytest.txt"
+          exit "$status"
+
+      - name: Upload T4 windowed-stdio receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t4-windowed-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/t4-windowed/junit.xml
+            ${{ runner.temp }}/t4-windowed/pytest.txt
           if-no-files-found: warn
           retention-days: 14
