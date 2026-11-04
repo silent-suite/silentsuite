@@ -47,6 +47,67 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AccountDashboardRuntimeTest {
+    @Test fun dashboardOpenButtonsLaunchNativeAppsAndReportUnavailableHandlers() {
+        val launched = mutableListOf<Intent>()
+        AccountActivity.taskAppLaunchIntentOverride = {
+            Intent(Intent.ACTION_MAIN).setPackage("org.tasks")
+        }
+        AccountActivity.dashboardExternalAppLauncherOverride = { launched += Intent(it) }
+        try {
+            withDashboardAccount { context, _, scenario ->
+                scenario.onActivity { activity ->
+                    val calendar = activity.findViewById<View>(R.id.caldav_open)
+                    val contacts = activity.findViewById<View>(R.id.carddav_open)
+                    val tasks = activity.findViewById<View>(R.id.taskdav_open)
+                    assertEquals(View.VISIBLE, calendar.visibility)
+                    assertEquals(View.VISIBLE, contacts.visibility)
+                    assertEquals(View.VISIBLE, tasks.visibility)
+                    calendar.performClick()
+                    contacts.performClick()
+                    tasks.performClick()
+                }
+
+                assertEquals(3, launched.size)
+                assertEquals(Intent.ACTION_MAIN, launched[0].action)
+                assertTrue(launched[0].hasCategory(Intent.CATEGORY_APP_CALENDAR))
+                assertEquals(Intent.ACTION_MAIN, launched[1].action)
+                assertTrue(launched[1].hasCategory(Intent.CATEGORY_APP_CONTACTS))
+                assertEquals("org.tasks", launched[2].getPackage())
+
+                AccountActivity.dashboardExternalAppLauncherOverride = {
+                    throw android.content.ActivityNotFoundException()
+                }
+                scenario.onActivity { it.findViewById<View>(R.id.caldav_open).performClick() }
+                waitUntil("unavailable-app snackbar") {
+                    var shown = false
+                    scenario.onActivity { activity ->
+                        shown = activity.findViewById<TextView>(com.google.android.material.R.id.snackbar_text)
+                            ?.text?.toString() == context.getString(R.string.dashboard_open_app_unavailable)
+                    }
+                    shown
+                }
+            }
+        } finally {
+            AccountActivity.dashboardExternalAppLauncherOverride = null
+            AccountActivity.taskAppLaunchIntentOverride = null
+        }
+    }
+
+    @Test fun dashboardTaskOpenButtonIsHiddenWithoutALaunchableTaskApp() {
+        AccountActivity.taskAppLaunchIntentOverride = { null }
+        try {
+            withDashboardAccount { _, _, scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.caldav_open).visibility)
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.carddav_open).visibility)
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.taskdav_open).visibility)
+                }
+            }
+        } finally {
+            AccountActivity.taskAppLaunchIntentOverride = null
+        }
+    }
+
     @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
         val phase = AtomicInteger(0)
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
