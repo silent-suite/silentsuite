@@ -608,6 +608,48 @@ def _handle_account_login(environ):
     })
 
 
+# Set per request by the desktop app's own server only (a WSGI environ key that
+# no HTTP header can produce). A headless or CLI bridge never sets it.
+DESKTOP_START_AT_LOGIN_ENVIRON = "silentsuite_bridge.desktop_start_at_login"
+
+
+def _desktop_start_at_login(environ):
+    from ..desktop_autostart import DesktopStartAtLogin
+
+    candidate = environ.get(DESKTOP_START_AT_LOGIN_ENVIRON)
+    return candidate if isinstance(candidate, DesktopStartAtLogin) else None
+
+
+def _handle_start_at_login(environ, data):
+    """Turn the desktop app's own start-at-login entry on or off (registration only)."""
+    start_at_login = _desktop_start_at_login(environ)
+    if start_at_login is None:
+        return _json_response(409, {"error": "Start at login is available only in the desktop app"})
+    if set(data) != {"startAtLogin"}:
+        return _json_response(400, {"error": "Change start at login on its own"})
+    wanted = data["startAtLogin"]
+    if not isinstance(wanted, bool):
+        return _json_response(400, {"error": "startAtLogin must be true or false"})
+    if wanted and not start_at_login.editable:
+        return _json_response(409, {
+            "error": "Start at login is available only for the installed desktop app",
+        })
+    try:
+        if wanted:
+            start_at_login.enable()
+        else:
+            start_at_login.disable()  # also allowed off a stable install, so an old entry can be removed
+    except (OSError, ValueError) as exc:
+        logger.warning("Desktop start-at-login change failed (%s)", bounded_exception_class(exc))
+        return _json_response(500, {"error": "Start at login could not be changed"})
+    log_sync_event("info", "Start at login turned on" if wanted else "Start at login turned off")
+    return _json_response(200, {
+        "ok": True,
+        "syncInterval": config.SYNC_INTERVAL,
+        "startAtLogin": start_at_login.state(),
+    })
+
+
 def log_sync_event(event_type, message):
     """Add an entry to the sync log."""
     _sync_log.appendleft({
@@ -1884,6 +1926,9 @@ class Web(BaseWeb):
                 # Additive: default server for new sign-ins and where it comes from.
                 "serverUrl": config.new_sign_in_server_url(),
             }
+            start_at_login = _desktop_start_at_login(environ)
+            if start_at_login is not None:  # desktop app only
+                data["startAtLogin"] = start_at_login.state()
             return (
                 200,
                 {"Content-Type": "application/json"},
@@ -1936,6 +1981,9 @@ class Web(BaseWeb):
             data, error_response = _read_json_body(environ)
             if error_response:
                 return error_response
+
+            if isinstance(data, dict) and "startAtLogin" in data:
+                return _handle_start_at_login(environ, data)
 
             # Validate every requested field before anything is written or
             # applied, so a rejected request leaves settings.json untouched.

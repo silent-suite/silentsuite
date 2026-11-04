@@ -842,6 +842,7 @@ def run_server():
 
 def _serve_radicale_with_bridge_application(
     configuration, shutdown_socket=None, *, literal_loopback_server_name=False,
+    desktop_start_at_login=None,
 ) -> None:
     """Run Radicale once with the Bridge's adapted server stack.
 
@@ -856,6 +857,14 @@ def _serve_radicale_with_bridge_application(
     listener on a numeric loopback literal takes that literal as
     ``server_name``/``SERVER_NAME`` instead of a reverse DNS lookup. The CLI
     default (False), HTTPS and non-loopback binds are unchanged.
+
+    ``desktop_start_at_login`` is the running desktop app's own
+    ``DesktopStartAtLogin``. Only when it is given does this invocation install
+    a per-call Application subclass that puts it in each request's WSGI environ
+    (a non-``HTTP_`` key no client can set), which is what lets the settings
+    API show and change start at login. The CLI passes nothing and gets the
+    plain BridgeApplication, as before. Nothing process-wide is granted: the
+    subclass is dropped when this call restores Radicale's globals.
 
     tray.quit() terminates the process with ``os._exit(0)`` and is outside
     these guarantees.
@@ -872,6 +881,13 @@ def _serve_radicale_with_bridge_application(
         get_registry,
         print_resolution_failed,
     )
+
+    if desktop_start_at_login is not None:
+        from .desktop_autostart import DesktopStartAtLogin
+        from .web import DESKTOP_START_AT_LOGIN_ENVIRON
+
+        if not isinstance(desktop_start_at_login, DesktopStartAtLogin):
+            raise TypeError("desktop_start_at_login must be a DesktopStartAtLogin")
 
     registry = get_registry()
     # Only a registry this invocation actually started is marked stopped on
@@ -908,14 +924,24 @@ def _serve_radicale_with_bridge_application(
         class _BridgeRequestHandler(BridgeRequestHandlerMixin, originals["RequestHandler"]):
             pass
 
-        radicale_server.Application = BridgeApplication
+        application_class = BridgeApplication
+        if desktop_start_at_login is not None:
+
+            class _DesktopBridgeApplication(BridgeApplication):
+                def __call__(self, environ, start_response):
+                    environ[DESKTOP_START_AT_LOGIN_ENVIRON] = desktop_start_at_login
+                    return super().__call__(environ, start_response)
+
+            application_class = _DesktopBridgeApplication
+
+        radicale_server.Application = application_class
         radicale_server.RequestHandler = _BridgeRequestHandler
         radicale_server.ParallelHTTPServer = BridgeHTTP
         radicale_server.ParallelHTTPSServer = BridgeHTTPS
 
         # Record what we installed so we only restore our own replacements.
         _installed = {
-            "Application": BridgeApplication,
+            "Application": application_class,
             "RequestHandler": _BridgeRequestHandler,
             "ParallelHTTPServer": BridgeHTTP,
             "ParallelHTTPSServer": BridgeHTTPS,

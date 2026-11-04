@@ -349,12 +349,22 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
     registry = get_registry()
     server_errors = []
     serve_end, shutdown_end = socket.socketpair()
+    # This app's own start-at-login control, handed only to its own server.
+    # It can write an entry only if this is a stable installed frozen build.
+    from .desktop_autostart import DesktopStartAtLogin
+
+    start_at_login = DesktopStartAtLogin.for_running_app()
 
     def serve_bridge():
         try:
             # Desktop opt-in: binding the known loopback literal must not wait
             # on reverse DNS before the registry can confirm the dashboard URL.
-            serve(configuration, shutdown_socket=serve_end, literal_loopback_server_name=True)
+            serve(
+                configuration,
+                shutdown_socket=serve_end,
+                literal_loopback_server_name=True,
+                desktop_start_at_login=start_at_login,
+            )
         except Exception as exc:  # reported by the window, then by the exit code
             server_errors.append(exc)
             log_bounded_failure(logger, logging.ERROR, "Bridge server stopped with an error", exc)
