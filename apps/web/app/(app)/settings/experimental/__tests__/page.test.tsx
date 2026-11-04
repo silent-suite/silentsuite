@@ -8,7 +8,7 @@ import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 
 const calls = vi.hoisted(() => ({ create: vi.fn(), canWrite: vi.fn(() => true) }))
-vi.mock('next/navigation', () => ({ usePathname: () => '/settings/experimental' }))
+vi.mock('next/navigation', () => ({ usePathname: () => '/settings/experimental', useRouter: () => ({ refresh: vi.fn() }) }))
 vi.mock('@/app/stores/use-auth-store', () => ({ useAuthStore: { getState: () => ({ canWrite: calls.canWrite }) } }))
 vi.mock('@/app/stores/use-etebase-store', async () => {
   const { create } = await import('zustand')
