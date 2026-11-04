@@ -12,6 +12,7 @@ name: Test Bridge desktop tracers (source)
 #   T4 start-at-login: registration-only desktop entry, stable-install gate (bridge/tests/test_desktop_autostart.py)
 #   T2 lifecycle: close/hide, --background, reopen, native Quit (bridge/tests/test_desktop_lifecycle.py)
 #   T3 server-URL UI: dashboard control for the new-sign-in default (bridge/tests/test_desktop_server_url_ui.py)
+#   T4 start-at-login UI: dashboard toggle over the desktop registration API (bridge/tests/test_desktop_autostart_ui.py)
 # No build, installer, release, credential, account, network sync or autostart state.
 
 on:
@@ -39,6 +40,8 @@ on:
       - 'bridge/tests/desktop_smoke/lifecycle_probe.py'
       - 'bridge/tests/test_desktop_server_url_ui.py'
       - 'bridge/tests/desktop_smoke/server_url_ui_probe.py'
+      - 'bridge/tests/test_desktop_autostart_ui.py'
+      - 'bridge/tests/desktop_smoke/autostart_ui_probe.py'
       - 'bridge/tests/desktop_smoke/requirements.txt'
       - 'bridge/tests/conftest.py'
       - 'bridge/pyproject.toml'
@@ -444,6 +447,30 @@ jobs:
           echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t4-autostart/pytest.txt"
           exit "$status"
 
+      # Same owned inert /opt fixture lifetime as the step above (created and
+      # inode-recorded by t4_opt, removed by the guarded cleanup step below);
+      # the probe only lstat()s it and checks the recorded inode, never writes it.
+      - name: Run T4 start-at-login UI tests
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' }}
+        timeout-minutes: 15
+        working-directory: bridge
+        shell: bash
+        env:
+          T4_OPT_FILE_INODE: ${{ steps.t4_opt.outputs.file_inode }}
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/t4-autostart-ui"
+          cmd=(python -m pytest tests/test_desktop_autostart_ui.py -v --tb=long -p no:cacheprovider
+               --junitxml="$RUNNER_TEMP/t4-autostart-ui/junit.xml")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-autostart-ui/pytest.txt"
+          else
+            "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-autostart-ui/pytest.txt"
+          fi
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t4-autostart-ui/pytest.txt"
+          exit "$status"
+
       # Removes only what the create step recorded as its own, after checking
       # identity. Never rm -rf; any mismatch or leftover fails this step.
       - name: Remove inert Linux installed-path fixture
@@ -546,5 +573,16 @@ jobs:
           path: |
             ${{ runner.temp }}/t3-server-url-ui/junit.xml
             ${{ runner.temp }}/t3-server-url-ui/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload T4 start-at-login UI receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t4-autostart-ui-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/t4-autostart-ui/junit.xml
+            ${{ runner.temp }}/t4-autostart-ui/pytest.txt
           if-no-files-found: warn
           retention-days: 14
