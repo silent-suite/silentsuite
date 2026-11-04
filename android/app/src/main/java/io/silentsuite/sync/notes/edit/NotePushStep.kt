@@ -284,6 +284,9 @@ internal class NotePushStep(
             // The user changed the note during the upload: the newer change is rebased onto the item
             // that just landed (3.3 step 5). The save that made it asks for its own run.
             is SendOutcome.NewerLocalChange -> rebaseOntoLanded(outcome.entry, saved)
+            // The upload landed and counts. The entry is kept as it is, and the run does not record success
+            // over a file that cannot be read.
+            SendOutcome.Unreadable -> noteFailure(FailureKind.LOCAL)
         }
         landed(uid)
     }
@@ -324,11 +327,15 @@ internal class NotePushStep(
         } catch (e: Exception) {
             if (cancelled(e)) throw e
             // The entry stays on its old base. Its next push gets a 409 whose server copy is ours,
-            // and it is rebased then, or held then if it still cannot be built.
+            // and it is rebased then, or held then if it still cannot be built. A file that stopped
+            // reading meanwhile is reported all the same.
+            failIfUnreadable(newer.noteUid)
             return
         }
         try {
-            store.rebase(newer.noteUid, newer.version, onto = saved.revision, revision = built.revision, blob = built.blob)
+            if (!store.rebase(newer.noteUid, newer.version, onto = saved.revision, revision = built.revision, blob = built.blob)) {
+                failIfUnreadable(newer.noteUid)
+            }
         } catch (e: IOException) {
             // The same, and the upload itself did land: the push counts, the run reports the storage
             // failure, and nothing is recorded against the newer text, which was never sent.
@@ -362,9 +369,10 @@ internal class NotePushStep(
     /**
      * A 403 or 404 on a request for this note. A single answer moves nothing: the notebook itself is
      * fetched, once per notebook per run, and the result decides. Read-only, deleted or gone is a
-     * newer answer to step 1, so everything still pending in that notebook is held without an upload,
-     * this entry included. Still writable or unknown is passing trouble: the entry backs off and the
-     * others are still pushed, and a later 403 or 404 in the same notebook reuses the result.
+     * newer answer to step 1: what a new listing finds pending there is held without an upload, and this entry,
+     * by name if left out. One only the first listing showed is held if its own turn draws a 403 or 404 too; one
+     * no listing shows waits for the next run's step 1. Still writable or unknown is passing trouble: the entry
+     * backs off and the others are still pushed, and a later 403 or 404 in the same notebook reuses the result.
      */
     private fun notebookRefused(snapshot: PendingEntry, kind: FailureKind) {
         val notebookUid = snapshot.notebookUid
@@ -374,9 +382,17 @@ internal class NotePushStep(
             fail(snapshot, kind)
             return
         }
-        for (header in store.snapshot { false }.headers) {
+        val again = store.snapshot { false }
+        for (header in again.headers) {
             if (header.notebookUid == notebookUid && header.state != PendingEntry.State.HELD) holdForNotebook(header.noteUid, reason)
         }
+        // A listing can come back short and leave out this entry, which the server just refused. Not held, it would
+        // wait neither held nor failed, and the run would record success.
+        if (snapshot.noteUid !in settled) holdForNotebook(snapshot.noteUid, reason)
+        // A file whose header no longer reads is not among the headers, so it is not held, this entry's own
+        // included: its hold by name finds it unreadable. As at the start of the pass, the run does not record
+        // success while any file cannot be read.
+        if (again.unreadable.isNotEmpty()) noteFailure(FailureKind.LOCAL)
         if (check == NotebookCheck.Gone) {
             // So the notebook does not stay listed as writable until a later run's refresh drops it.
             try {
@@ -432,8 +448,11 @@ internal class NotePushStep(
         }
         ensureCurrent()
         // The result is built from the entry as it is now: the user may have saved during the upload.
-        val latest = (store.read(uid) as? Read.Present)?.entry
+        val read = store.read(uid)
+        val latest = (read as? Read.Present)?.entry
         if (latest == null || latest.state == PendingEntry.State.HELD) {
+            // A file that cannot be read now is kept as it is, and the run does not record success over it.
+            if (read is Read.Unreadable) noteFailure(FailureKind.LOCAL)
             settled += uid
             return
         }
@@ -445,6 +464,7 @@ internal class NotePushStep(
                     SendOutcome.Done -> Unit
                     // Saved since the read above: the newer change is rebased onto our copy, as in [send].
                     is SendOutcome.NewerLocalChange -> rebaseOntoLanded(outcome.entry, server)
+                    SendOutcome.Unreadable -> noteFailure(FailureKind.LOCAL)
                 }
                 landed(uid)
             }
@@ -482,7 +502,8 @@ internal class NotePushStep(
         if (store.rebase(uid, latest.version, onto = server.revision, revision = built.revision, blob = built.blob)) {
             push(uid)
         } else {
-            // Saved again in between; that save asks for its own run.
+            // Saved again in between; that save asks for its own run. Or the file cannot be read now.
+            failIfUnreadable(uid)
             settled += uid
         }
     }
@@ -515,7 +536,11 @@ internal class NotePushStep(
             return
         }
         settled += uid
-        if (!replaced) return
+        if (!replaced) {
+            // The original moved on, or its file cannot be read now.
+            failIfUnreadable(uid)
+            return
+        }
         countConflict(latest.notebookUid)
         push(note.noteUid)
     }
@@ -600,10 +625,27 @@ internal class NotePushStep(
                 return
             }
             // The entry moved on, or is gone. One whose file cannot be read was not held either, and
-            // the header-only listing did not show that: the run does not record success over it.
-            HoldOutcome.NOT_APPLIED -> if (sentVersion == null && store.read(uid) is Read.Unreadable) noteFailure(FailureKind.LOCAL)
+            // neither the header-only listing nor the read the step started from showed that.
+            HoldOutcome.NOT_APPLIED -> failIfUnreadable(uid)
         }
         settled += uid
+    }
+
+    /**
+     * After a rebase, a new note or a hold that the store did not apply, the store gives the same answer for
+     * an entry whose file cannot be read as for one that moved on or is gone; after a rebase onto the landed
+     * upload that could not be built, nothing has read the entry since the upload. Such a file is kept as it
+     * is, and the run does not record success over it. A read that fails counts the same, and is not thrown,
+     * unless the run was canceled or may no longer write ([classified]); otherwise the step goes on.
+     */
+    private fun failIfUnreadable(uid: String) {
+        val unreadable = try {
+            store.read(uid) is Read.Unreadable
+        } catch (e: IOException) {
+            classified(e)
+            true
+        }
+        if (unreadable) noteFailure(FailureKind.LOCAL)
     }
 
     /**
