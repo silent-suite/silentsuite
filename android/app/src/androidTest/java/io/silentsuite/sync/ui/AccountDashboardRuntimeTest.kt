@@ -48,61 +48,6 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AccountDashboardRuntimeTest {
-    private fun dashboardOpenButtonsLaunchNativeAppsAndReportUnavailableHandlers() {
-        val launched = mutableListOf<Intent>()
-        AccountActivity.taskAppLaunchIntentOverride = {
-            Intent(Intent.ACTION_MAIN).setPackage("org.tasks")
-        }
-        AccountActivity.dashboardExternalAppLauncherOverride = { launched += Intent(it) }
-        try {
-            withDashboardAccount { context, _, scenario ->
-                scenario.onActivity { activity ->
-                    val calendar = activity.findViewById<View>(R.id.caldav_open)
-                    val contacts = activity.findViewById<View>(R.id.carddav_open)
-                    val tasks = activity.findViewById<View>(R.id.taskdav_open)
-                    assertEquals(View.VISIBLE, calendar.visibility)
-                    assertEquals(View.VISIBLE, contacts.visibility)
-                    assertEquals(View.VISIBLE, tasks.visibility)
-                    calendar.performClick()
-                    contacts.performClick()
-                    tasks.performClick()
-                }
-
-                assertEquals(3, launched.size)
-                assertEquals(Intent.ACTION_MAIN, launched[0].action)
-                assertTrue(launched[0].selector?.hasCategory(Intent.CATEGORY_APP_CALENDAR) == true)
-                assertEquals(Intent.ACTION_MAIN, launched[1].action)
-                assertTrue(launched[1].selector?.hasCategory(Intent.CATEGORY_APP_CONTACTS) == true)
-                assertEquals("org.tasks", launched[2].getPackage())
-
-                AccountActivity.dashboardExternalAppLauncherOverride = {
-                    throw android.content.ActivityNotFoundException()
-                }
-                // The production click handler must absorb ActivityNotFoundException rather
-                // than crashing the account dashboard. Snackbar rendering is owned by UI tests.
-                scenario.onActivity { it.findViewById<View>(R.id.caldav_open).performClick() }
-            }
-        } finally {
-            AccountActivity.dashboardExternalAppLauncherOverride = null
-            AccountActivity.taskAppLaunchIntentOverride = null
-        }
-    }
-
-    private fun dashboardTaskOpenButtonIsHiddenWithoutALaunchableTaskApp() {
-        AccountActivity.taskAppLaunchIntentOverride = { null }
-        try {
-            withDashboardAccount { _, _, scenario ->
-                scenario.onActivity { activity ->
-                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.caldav_open).visibility)
-                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.carddav_open).visibility)
-                    assertEquals(View.GONE, activity.findViewById<View>(R.id.taskdav_open).visibility)
-                }
-            }
-        } finally {
-            AccountActivity.taskAppLaunchIntentOverride = null
-        }
-    }
-
     @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
         val phase = AtomicInteger(0)
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
@@ -697,104 +642,152 @@ class AccountDashboardRuntimeTest {
 
     @Test
     fun serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting() {
-        dashboardOpenButtonsLaunchNativeAppsAndReportUnavailableHandlers()
-        dashboardTaskOpenButtonIsHiddenWithoutALaunchableTaskApp()
-        withDashboardAccount { context, account, scenario ->
-            scenario.onActivity { activity ->
-                val calendarModule = activity.findViewById<View>(R.id.calendar_service_module)
-                val contactsModule = activity.findViewById<View>(R.id.contacts_service_module)
-                val tasksModule = activity.findViewById<View>(R.id.tasks_service_module)
-                val calendarCollections = activity.findViewById<View>(R.id.caldav)
-                assertTrue(calendarModule.top < contactsModule.top)
-                assertTrue(contactsModule.top < tasksModule.top)
-                assertTrue(tasksModule.top < calendarCollections.top)
-                listOf(calendarModule, contactsModule, tasksModule).forEach {
-                    assertFalse(it.isClickable)
-                    assertFalse(it.hasOnClickListeners())
+        val launched = mutableListOf<Intent>()
+        AccountActivity.taskAppLaunchIntentOverride = {
+            Intent(Intent.ACTION_MAIN).setPackage("org.tasks")
+        }
+        AccountActivity.dashboardExternalAppLauncherOverride = { launched += Intent(it) }
+        try {
+            withDashboardAccount { context, account, scenario ->
+                // Exercise all three Open actions within this test's existing ActivityScenario.
+                // The previous nested fixtures created and removed two extra accounts and launched
+                // two additional Activities, increasing API 29 instrumentation memory pressure.
+                scenario.onActivity { activity ->
+                    val calendarOpen = activity.findViewById<View>(R.id.caldav_open)
+                    val contactsOpen = activity.findViewById<View>(R.id.carddav_open)
+                    val tasksOpen = activity.findViewById<View>(R.id.taskdav_open)
+                    assertEquals(View.VISIBLE, calendarOpen.visibility)
+                    assertEquals(View.VISIBLE, contactsOpen.visibility)
+                    assertEquals(View.VISIBLE, tasksOpen.visibility)
+                    calendarOpen.performClick()
+                    contactsOpen.performClick()
+                    tasksOpen.performClick()
                 }
 
-                val calendarList = activity.listCalDAV!!
-                val row = calendarList.adapter.getView(0, null, calendarList)
-                assertEquals("Private calendar", row.findViewById<TextView>(R.id.title).text.toString())
-                assertEquals("Personal events", row.findViewById<TextView>(R.id.description).text.toString())
-                assertEquals(View.VISIBLE, row.findViewById<View>(R.id.color).visibility)
-                assertEquals(View.VISIBLE, row.findViewById<View>(R.id.read_only).visibility)
-                assertTrue(row.contentDescription.toString().contains("Read-only collection"))
-                assertTrue(activity.findViewById<View>(R.id.account_swipe_refresh).isShown)
-                assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown)
+                assertEquals(3, launched.size)
+                assertEquals(Intent.ACTION_MAIN, launched[0].action)
+                assertTrue(launched[0].selector?.hasCategory(Intent.CATEGORY_APP_CALENDAR) == true)
+                assertEquals(Intent.ACTION_MAIN, launched[1].action)
+                assertTrue(launched[1].selector?.hasCategory(Intent.CATEGORY_APP_CONTACTS) == true)
+                assertEquals("org.tasks", launched[2].getPackage())
 
-                // Invoke collection management and creation through the production listeners. The
-                // launch seam captures both intents before a destination Activity can load a session.
-                assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
-                val createCalendar = requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
-                )
-                activity.onMenuItemClick(createCalendar)
+                AccountActivity.dashboardExternalAppLauncherOverride = {
+                    throw android.content.ActivityNotFoundException()
+                }
+                // The production click handler must absorb ActivityNotFoundException rather
+                // than crashing the account dashboard. Snackbar rendering is owned by UI tests.
+                scenario.onActivity { it.findViewById<View>(R.id.caldav_open).performClick() }
 
-                // Invoke the explicit toolbar sync control. The seam prevents provider scheduling
-                // while proving the exact account selected by the production action.
-                val syncNow = requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
-                )
-                assertTrue(syncNow.isVisible)
-                assertTrue(activity.onOptionsItemSelected(syncNow))
+                // Recreate the same Activity with no launchable Tasks app instead of creating a
+                // second account fixture. Calendar and Contacts remain available; Tasks is hidden.
+                AccountActivity.taskAppLaunchIntentOverride = { null }
+                scenario.recreate()
+                waitForModel(scenario)
+                scenario.onActivity { activity ->
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.caldav_open).visibility)
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.carddav_open).visibility)
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.taskdav_open).visibility)
+                }
+
+                scenario.onActivity { activity ->
+                    val calendarModule = activity.findViewById<View>(R.id.calendar_service_module)
+                    val contactsModule = activity.findViewById<View>(R.id.contacts_service_module)
+                    val tasksModule = activity.findViewById<View>(R.id.tasks_service_module)
+                    val calendarCollections = activity.findViewById<View>(R.id.caldav)
+                    assertTrue(calendarModule.top < contactsModule.top)
+                    assertTrue(contactsModule.top < tasksModule.top)
+                    assertTrue(tasksModule.top < calendarCollections.top)
+                    listOf(calendarModule, contactsModule, tasksModule).forEach {
+                        assertFalse(it.isClickable)
+                        assertFalse(it.hasOnClickListeners())
+                    }
+
+                    val calendarList = activity.listCalDAV!!
+                    val row = calendarList.adapter.getView(0, null, calendarList)
+                    assertEquals("Private calendar", row.findViewById<TextView>(R.id.title).text.toString())
+                    assertEquals("Personal events", row.findViewById<TextView>(R.id.description).text.toString())
+                    assertEquals(View.VISIBLE, row.findViewById<View>(R.id.color).visibility)
+                    assertEquals(View.VISIBLE, row.findViewById<View>(R.id.read_only).visibility)
+                    assertTrue(row.contentDescription.toString().contains("Read-only collection"))
+                    assertTrue(activity.findViewById<View>(R.id.account_swipe_refresh).isShown)
+                    assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown)
+
+                    // Invoke collection management and creation through the production listeners. The
+                    // launch seam captures both intents before a destination Activity can load a session.
+                    assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
+                    val createCalendar = requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
+                    )
+                    activity.onMenuItemClick(createCalendar)
+
+                    // Invoke the explicit toolbar sync control. The seam prevents provider scheduling
+                    // while proving the exact account selected by the production action.
+                    val syncNow = requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
+                    )
+                    assertTrue(syncNow.isVisible)
+                    assertTrue(activity.onOptionsItemSelected(syncNow))
+                }
+
+                assertEquals(2, launchedCollectionIntents.size)
+                val manage = launchedCollectionIntents[0]
+                assertEquals(CollectionActivity::class.java.name, manage.component?.className)
+                assertEquals(account,
+                    manage.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
+                assertEquals(generation,
+                    manage.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
+                assertEquals("uid-CALENDAR",
+                    manage.getStringExtra(CollectionActivity.EXTRA_COLLECTION_UID))
+                assertFalse(manage.hasExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
+
+                val create = launchedCollectionIntents[1]
+                assertEquals(CollectionActivity::class.java.name, create.component?.className)
+                assertEquals(account,
+                    create.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
+                assertEquals(generation,
+                    create.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
+                assertEquals(Constants.ETEBASE_TYPE_CALENDAR,
+                    create.getStringExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
+                assertFalse(create.hasExtra(CollectionActivity.EXTRA_COLLECTION_UID))
+
+                assertEquals(listOf(account to generation), syncRequests)
+
+                val manager = AccountManager.get(context)
+                scenario.onActivity { activity ->
+                    assertFalse(activity.hasObservedRetainedGenerationInvalidation())
+                }
+                removeAccountAndWait(manager, account)
+                waitForRetainedGenerationInvalidation(scenario)
+                val replacementGeneration = "dashboard-replacement-generation"
+                assertTrue(manager.addAccountExplicitly(account, null, null))
+                assertTrue(AccountSettings.writeVerified(manager, account,
+                    AccountSettings.KEY_CREATION_ID, replacementGeneration))
+                val replacementRow = manager.getAccountsByType(account.type)
+                    .single { it.name == account.name }
+                assertEquals(replacementGeneration,
+                    manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
+                launchedCollectionIntents.clear()
+                syncRequests.clear()
+
+                scenario.onActivity { activity ->
+                    val calendarList = activity.listCalDAV!!
+                    val row = calendarList.adapter.getView(0, null, calendarList)
+                    assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
+                    activity.onMenuItemClick(requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
+                    ))
+                    assertTrue(activity.onOptionsItemSelected(requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
+                    )))
+                }
+
+                assertTrue(launchedCollectionIntents.isEmpty())
+                assertTrue(syncRequests.isEmpty())
+                assertTrue(account in manager.getAccountsByType(account.type))
             }
-
-            assertEquals(2, launchedCollectionIntents.size)
-            val manage = launchedCollectionIntents[0]
-            assertEquals(CollectionActivity::class.java.name, manage.component?.className)
-            assertEquals(account,
-                manage.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
-            assertEquals(generation,
-                manage.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
-            assertEquals("uid-CALENDAR",
-                manage.getStringExtra(CollectionActivity.EXTRA_COLLECTION_UID))
-            assertFalse(manage.hasExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
-
-            val create = launchedCollectionIntents[1]
-            assertEquals(CollectionActivity::class.java.name, create.component?.className)
-            assertEquals(account,
-                create.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
-            assertEquals(generation,
-                create.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
-            assertEquals(Constants.ETEBASE_TYPE_CALENDAR,
-                create.getStringExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
-            assertFalse(create.hasExtra(CollectionActivity.EXTRA_COLLECTION_UID))
-
-            assertEquals(listOf(account to generation), syncRequests)
-
-            val manager = AccountManager.get(context)
-            scenario.onActivity { activity ->
-                assertFalse(activity.hasObservedRetainedGenerationInvalidation())
-            }
-            removeAccountAndWait(manager, account)
-            waitForRetainedGenerationInvalidation(scenario)
-            val replacementGeneration = "dashboard-replacement-generation"
-            assertTrue(manager.addAccountExplicitly(account, null, null))
-            assertTrue(AccountSettings.writeVerified(manager, account,
-                AccountSettings.KEY_CREATION_ID, replacementGeneration))
-            val replacementRow = manager.getAccountsByType(account.type)
-                .single { it.name == account.name }
-            assertEquals(replacementGeneration,
-                manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
-            launchedCollectionIntents.clear()
-            syncRequests.clear()
-
-            scenario.onActivity { activity ->
-                val calendarList = activity.listCalDAV!!
-                val row = calendarList.adapter.getView(0, null, calendarList)
-                assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
-                activity.onMenuItemClick(requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
-                ))
-                assertTrue(activity.onOptionsItemSelected(requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
-                )))
-            }
-
-            assertTrue(launchedCollectionIntents.isEmpty())
-            assertTrue(syncRequests.isEmpty())
-            assertTrue(account in manager.getAccountsByType(account.type))
+        } finally {
+            AccountActivity.dashboardExternalAppLauncherOverride = null
+            AccountActivity.taskAppLaunchIntentOverride = null
         }
     }
 
