@@ -47,7 +47,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AccountDashboardRuntimeTest {
-    @Test fun dashboardOpenButtonsLaunchNativeAppsAndReportUnavailableHandlers() {
+    private fun dashboardOpenButtonsLaunchNativeAppsAndReportUnavailableHandlers() {
         val launched = mutableListOf<Intent>()
         AccountActivity.taskAppLaunchIntentOverride = {
             Intent(Intent.ACTION_MAIN).setPackage("org.tasks")
@@ -93,7 +93,7 @@ class AccountDashboardRuntimeTest {
         }
     }
 
-    @Test fun dashboardTaskOpenButtonIsHiddenWithoutALaunchableTaskApp() {
+    private fun dashboardTaskOpenButtonIsHiddenWithoutALaunchableTaskApp() {
         AccountActivity.taskAppLaunchIntentOverride = { null }
         try {
             withDashboardAccount { _, _, scenario ->
@@ -646,6 +646,8 @@ class AccountDashboardRuntimeTest {
 
     @Test
     fun serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting() {
+        dashboardOpenButtonsLaunchNativeAppsAndReportUnavailableHandlers()
+        dashboardTaskOpenButtonIsHiddenWithoutALaunchableTaskApp()
         withDashboardAccount { context, account, scenario ->
             scenario.onActivity { activity ->
                 val calendarModule = activity.findViewById<View>(R.id.calendar_service_module)
