@@ -1185,6 +1185,47 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         findViewById<View>(service.rowView).contentDescription =
             "${getString(service.title)}. $statusText. $detailText"
         applyDashboardVisual(findViewById(service.iconView), statusView, presentation)
+
+        val openButtonId = when (service.destination) {
+            R.string.dashboard_calendar_destination -> R.id.caldav_open
+            R.string.dashboard_contacts_destination -> R.id.carddav_open
+            R.string.dashboard_tasks_destination -> R.id.taskdav_open
+            else -> null
+        }
+        openButtonId?.let { id ->
+            val button = findViewById<com.google.android.material.button.MaterialButton>(id)
+            val intent = dashboardOpenIntent(service.destination)
+            button.visibility = if (intent == null) View.GONE else View.VISIBLE
+            button.setOnClickListener { intent?.let(::launchDashboardExternalApp) }
+        }
+    }
+
+    private fun dashboardOpenIntent(destination: Int): Intent? = when (destination) {
+        R.string.dashboard_calendar_destination ->
+            Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR)
+        R.string.dashboard_contacts_destination ->
+            Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CONTACTS)
+        R.string.dashboard_tasks_destination -> {
+            val resolver = taskAppLaunchIntentOverride
+            if (resolver != null) resolver(this)
+            else TaskProviderHandling.getWantedTaskSyncProvider(this)?.let { provider ->
+                packageManager.getLaunchIntentForPackage(provider.packageName)
+            }
+        }
+        else -> null
+    }
+
+    private fun launchDashboardExternalApp(intent: Intent) {
+        if (!exactAccountStillCurrent()) return
+        try {
+            dashboardExternalAppLauncherOverride?.invoke(intent) ?: startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            Snackbar.make(
+                findViewById(R.id.coordinator),
+                R.string.dashboard_open_app_unavailable,
+                Snackbar.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun dashboardStatusText(presentation: AccountDashboardPresentation): String = when (presentation.label) {
@@ -1974,6 +2015,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         @JvmField internal var billingStatusOverride: ((Context, Account, String) -> BillingManager.SubscriptionStatus)? = null
         @VisibleForTesting
         @JvmField internal var accountRouteLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var dashboardExternalAppLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var taskAppLaunchIntentOverride: ((Context) -> Intent?)? = null
         @VisibleForTesting
         @JvmField internal var permissionRequestOverride: ((android.app.Activity) -> Unit)? = null
         @VisibleForTesting
