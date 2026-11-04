@@ -116,9 +116,19 @@ class BirthdayChildContactSyncRuntimeTest {
             ContentResolver.setMasterSyncAutomatically(false)
             HttpClient.testInterceptor = fake
             check(manager.addAccountExplicitly(main, null, null))
-            for (authority in TaskProvider.TASK_PROVIDERS.map { it.authority } + CalendarContract.AUTHORITY + App.addressBooksAuthority) {
+            for (authority in TaskProvider.TASK_PROVIDERS.map { it.authority } + CalendarContract.AUTHORITY) {
                 ContentResolver.setIsSyncable(main, authority, 0)
             }
+            // The address-books adapter is always syncable: the platform sets a new account's unknown
+            // state to syncable once, asynchronously (SyncManager.scheduleSync, after the adapter's
+            // onUnsyncableAccount). That one-time write is waited for (the account has no session yet),
+            // and only then is the authority made unsyncable, so it cannot land after this setting.
+            waitUntil("the platform to initialise the main account's address books") {
+                ContentResolver.getIsSyncable(main, App.addressBooksAuthority) > 0
+            }
+            ContentResolver.setIsSyncable(main, App.addressBooksAuthority, 0)
+            assertEquals("the main account's address books are unsyncable", 0,
+                ContentResolver.getIsSyncable(main, App.addressBooksAuthority))
             AccountSettings.setUserData(manager, main, URI(fake.baseUrl), username)
             check(AccountSettings.writeVerified(manager, main, AccountSettings.KEY_CREATION_ID, generation))
             AccountSettings(context, main).etebaseSession = session
@@ -154,6 +164,8 @@ class BirthdayChildContactSyncRuntimeTest {
             val requestsBefore = fake.requests.size
             val since = fake.uploadDeps.size
 
+            assertEquals("the main account's address books are still unsyncable at the child request", 0,
+                ContentResolver.getIsSyncable(main, App.addressBooksAuthority))
             // The real child contacts sync, as a manual request with its parent's target runs it.
             ContentResolver.requestSync(childAccount, ContactsContract.AUTHORITY, Bundle().apply {
                 putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
