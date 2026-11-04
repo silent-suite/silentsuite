@@ -804,6 +804,171 @@ class BirthdayReconciliationRuntimeTest {
         })
     }
 
+    /**
+     * The stop gate at a landed retirement (plan amendment G2, T2, C4): of two exactly-self active
+     * calendars, the one with the larger uid gets the run's first write, its conditional retirement
+     * update (`POST collection/<duplicate>/item/transaction/`, no dependencies). The stand-in applies
+     * it and holds its answer. While it is held the retirement is read back through a second session,
+     * then the run's gate is turned false and the real answer released. From then on the run may send
+     * nothing: no read-back of the retired calendar, no cleanup of its generated leftover (left for a
+     * later F3 repair), nothing into the canonical calendar; it ends PENDING "stopped" with the retired
+     * calendar reported written. The chunk check (C5) already stops the cleanup chunk today, so the
+     * first RETIRE_STOP assertion is the request trace: today the run still reads the calendar back.
+     */
+    @Test fun aRunToldToStopAfterARetirementLandedSkipsItsReadBackAndCleanup() {
+        val (canonical, duplicate) = listOf(
+            soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)),
+            soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)),
+        ).sortedBy { it.uid }.let { it[0] to it[1] }
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val leftover = uploadItem(duplicate, uid, BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10)))
+        val duplicateOrdinary = uploadItem(duplicate, "ordinary-dentist", ORDINARY_ICS)
+        val canonicalOrdinary = uploadItem(canonical, "ordinary-dentist", ORDINARY_ICS)
+        val collections = fake.collectionUids()
+        // A second SDK session of the same user, used only by this thread while the run's own is busy.
+        val other = com.etebase.client.Account.restore(
+            Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl), session, null)
+        val retirementPath = "POST collection/${duplicate.uid}/item/transaction/"
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+        val keepGoing = AtomicBoolean(true)
+        val retirement = fake.hold("POST", Regex(Regex.escape("collection/${duplicate.uid}/item/transaction/")), answerFirst = true)
+        val executor = Executors.newSingleThreadExecutor()
+        withRestores({
+            val run = executor.submit<BirthdayReconciler.RunResult> {
+                BirthdayReconciler.reconcile(server, username) { keepGoing.get() }
+            }
+            retirement.awaitArrival()
+
+            // Controls while its answer is held: the run's first write, a dependency-free calendar update, and it landed.
+            val held = checkNotNull(retirement.request) { "the held request is recorded" }
+            assertEquals("the held request is the duplicate calendar's transaction", retirementPath, held.substringBefore('?'))
+            assertEquals("it is the run's only upload so far", listOf(retirementPath), uploadLines(requestsBefore))
+            assertEquals("a calendar update carries no dependency", listOf(emptyList<String>()), fake.uploadDeps.drop(since))
+            val otherCalendars = other.collectionManager
+            assertEquals("the retirement landed on the server", MARKER_RETIRED,
+                String(otherCalendars.fetch(duplicate.uid).content, Charsets.UTF_8))
+            assertEquals("the canonical calendar is still active", MARKER_ACTIVE,
+                String(otherCalendars.fetch(canonical.uid).content, Charsets.UTF_8))
+
+            keepGoing.set(false)
+            val requestsAtRelease = fake.requests.size
+            val depsAtRelease = fake.uploadDeps.size
+            retirement.release()
+            val result = run.get(60, TimeUnit.SECONDS)
+            // What the run sent after the release, taken before this test's own reads below.
+            val afterRelease = fake.requests.toList().drop(requestsAtRelease)
+            val depsAfterRelease = fake.uploadDeps.toList().drop(depsAtRelease)
+
+            assertEquals("RETIRE_STOP: no request follows the landed retirement, not even its read-back",
+                emptyList<String>(), afterRelease)
+            assertEquals("RETIRE_STOP: no upload after the stop", emptyList<List<String>>(), depsAfterRelease)
+            assertEquals("RETIRE_STOP: the run ends pending", BirthdayReconciler.RunStatus.PENDING, result.status)
+            assertEquals("RETIRE_STOP: because it was stopped", "stopped", result.reason)
+            assertEquals("RETIRE_STOP: only the retired calendar is reported written", listOf(duplicate.uid), result.written)
+            val colMgr = server.collectionManager
+            assertEquals("the landed retirement stays", MARKER_RETIRED, String(colMgr.fetch(duplicate.uid).content, Charsets.UTF_8))
+            assertEquals("the canonical calendar stays active", MARKER_ACTIVE, String(colMgr.fetch(canonical.uid).content, Charsets.UTF_8))
+            val duplicateItems = freshItemManager(duplicate.uid)
+            assertFalse("the retired calendar's generated leftover stays for a later repair", duplicateItems.fetch(leftover.uid).isDeleted)
+            assertFalse("its ordinary event is not deleted", duplicateItems.fetch(duplicateOrdinary.uid).isDeleted)
+            assertEquals("its ordinary event is unchanged", ORDINARY_ICS, String(duplicateItems.fetch(duplicateOrdinary.uid).content, Charsets.UTF_8))
+            val canonicalItems = freshItemManager(canonical.uid)
+            assertFalse("the canonical ordinary event is not deleted", canonicalItems.fetch(canonicalOrdinary.uid).isDeleted)
+            assertEquals("the canonical ordinary event is unchanged", ORDINARY_ICS,
+                String(canonicalItems.fetch(canonicalOrdinary.uid).content, Charsets.UTF_8))
+            assertEquals("nothing is generated into the canonical calendar", emptyList<Item>(), generatedLive(canonical.uid))
+            assertEquals("no collection is created or removed", collections, fake.collectionUids())
+            assertEquals("the contact itself is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+        }, { retirement.release() }, {
+            executor.shutdownNow()
+            check(executor.awaitTermination(30, TimeUnit.SECONDS)) { "the run did not end" }
+        })
+    }
+
+    /**
+     * The stop gate before a retirement (plan amendment G2, T2, C3): the same two exactly-self active
+     * calendars and a complete source. The run's last read before any write, its listing of the address
+     * book, is held; then the run's gate is turned false and the listing released. From then on the run
+     * may send nothing: the calendar with the larger uid is not retired, nothing is cleaned or generated,
+     * and it ends PENDING "stopped" with nothing reported written. Today nothing gates the conditional
+     * retirement update, so the first RETIRE_STOP assertion fails on the duplicate's marker.
+     */
+    @Test fun aRunToldToStopBeforeARetirementLeavesBothCalendarsActiveAndWritesNothing() {
+        val (canonical, duplicate) = listOf(
+            soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)),
+            soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)),
+        ).sortedBy { it.uid }.let { it[0] to it[1] }
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val uid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val leftover = uploadItem(duplicate, uid, BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(uid, "Ada Lovelace", 12, 10)))
+        val duplicateOrdinary = uploadItem(duplicate, "ordinary-dentist", ORDINARY_ICS)
+        val canonicalOrdinary = uploadItem(canonical, "ordinary-dentist", ORDINARY_ICS)
+        val collections = fake.collectionUids()
+        // A second SDK session of the same user, used only by this thread while the run's own is busy.
+        val other = com.etebase.client.Account.restore(
+            Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl), session, null)
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+        val keepGoing = AtomicBoolean(true)
+        val bookListing = fake.hold("GET", Regex(Regex.escape("collection/${book.uid}/item/")), answerFirst = true)
+        val executor = Executors.newSingleThreadExecutor()
+        withRestores({
+            val run = executor.submit<BirthdayReconciler.RunResult> {
+                BirthdayReconciler.reconcile(server, username) { keepGoing.get() }
+            }
+            bookListing.awaitArrival()
+
+            // Controls while the last read is held: it is the book's listing, and nothing has been written.
+            val held = checkNotNull(bookListing.request) { "the held request is recorded" }
+            assertEquals("the held request is the address book's item listing",
+                "GET collection/${book.uid}/item/", held.substringBefore('?'))
+            assertEquals("no upload before the stop", emptyList<String>(), uploadLines(requestsBefore))
+            assertEquals("no upload dependency before the stop", emptyList<List<String>>(), fake.uploadDeps.drop(since))
+            val otherCalendars = other.collectionManager
+            assertEquals("the duplicate calendar is active before the stop", MARKER_ACTIVE,
+                String(otherCalendars.fetch(duplicate.uid).content, Charsets.UTF_8))
+            assertEquals("the canonical calendar is active before the stop", MARKER_ACTIVE,
+                String(otherCalendars.fetch(canonical.uid).content, Charsets.UTF_8))
+
+            keepGoing.set(false)
+            val requestsAtRelease = fake.requests.size
+            val depsAtRelease = fake.uploadDeps.size
+            bookListing.release()
+            val result = run.get(60, TimeUnit.SECONDS)
+            // What the run sent after the release, taken before this test's own reads below.
+            val afterRelease = fake.requests.toList().drop(requestsAtRelease)
+            val depsAfterRelease = fake.uploadDeps.toList().drop(depsAtRelease)
+
+            val colMgr = server.collectionManager
+            assertEquals("RETIRE_STOP: the duplicate calendar is not retired after the stop", MARKER_ACTIVE,
+                String(colMgr.fetch(duplicate.uid).content, Charsets.UTF_8))
+            assertEquals("RETIRE_STOP: no request follows the held listing", emptyList<String>(), afterRelease)
+            assertEquals("RETIRE_STOP: no upload after the stop", emptyList<List<String>>(), depsAfterRelease)
+            assertEquals("RETIRE_STOP: the run ends pending", BirthdayReconciler.RunStatus.PENDING, result.status)
+            assertEquals("RETIRE_STOP: because it was stopped", "stopped", result.reason)
+            assertEquals("RETIRE_STOP: nothing is reported written", emptyList<String>(), result.written)
+            assertEquals("the canonical calendar stays active", MARKER_ACTIVE, String(colMgr.fetch(canonical.uid).content, Charsets.UTF_8))
+            val duplicateItems = freshItemManager(duplicate.uid)
+            assertFalse("the duplicate's generated event is not deleted", duplicateItems.fetch(leftover.uid).isDeleted)
+            assertFalse("its ordinary event is not deleted", duplicateItems.fetch(duplicateOrdinary.uid).isDeleted)
+            assertEquals("its ordinary event is unchanged", ORDINARY_ICS, String(duplicateItems.fetch(duplicateOrdinary.uid).content, Charsets.UTF_8))
+            val canonicalItems = freshItemManager(canonical.uid)
+            assertFalse("the canonical ordinary event is not deleted", canonicalItems.fetch(canonicalOrdinary.uid).isDeleted)
+            assertEquals("the canonical ordinary event is unchanged", ORDINARY_ICS,
+                String(canonicalItems.fetch(canonicalOrdinary.uid).content, Charsets.UTF_8))
+            assertEquals("nothing is generated into the canonical calendar", emptyList<Item>(), generatedLive(canonical.uid))
+            assertEquals("no collection is created or removed", collections, fake.collectionUids())
+            assertEquals("the contact itself is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+        }, { bookListing.release() }, {
+            executor.shutdownNow()
+            check(executor.awaitTermination(30, TimeUnit.SECONDS)) { "the run did not end" }
+        })
+    }
+
     // ---- fixture ----
 
     /** The fresh, complete listing's live items whose parsed event UID has the generated form. */
