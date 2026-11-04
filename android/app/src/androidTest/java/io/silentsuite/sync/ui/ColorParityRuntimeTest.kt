@@ -343,17 +343,38 @@ class ColorParityRuntimeTest {
         val safeDrawing = rootInsets!!.getInsets(
             WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
         )
+        val decorLocation = IntArray(2)
+        decor.getLocationOnScreen(decorLocation)
+        // Toolbar-based (NoActionBar) screens such as About have no window action bar, so their
+        // content top is exactly the status/cutout inset. Legacy AppTheme screens such as Settings
+        // have AppCompat's window action bar above the content; ActionBarOverlayLayout adds its
+        // height to the insets the content receives. Derive that from the bar's actual bounds:
+        // it must sit directly on the safe-drawing top edge, and content starts at its bottom.
+        val windowActionBar = activity.findViewById<View>(androidx.appcompat.R.id.action_bar_container)
+            ?.takeIf { it.isShown && it.height > 0 }
+        val expectedTop = if (windowActionBar == null) {
+            safeDrawing.top
+        } else {
+            val barLocation = IntArray(2)
+            val contentLocation = IntArray(2)
+            windowActionBar.getLocationOnScreen(barLocation)
+            content.getLocationOnScreen(contentLocation)
+            assertEquals(
+                "Window action bar must sit directly below the status/cutout inset",
+                safeDrawing.top,
+                barLocation[1] - decorLocation[1],
+            )
+            barLocation[1] + windowActionBar.height - contentLocation[1]
+        }
         assertEquals(
-            Rect(safeDrawing.left, safeDrawing.top, safeDrawing.right, safeDrawing.bottom),
+            Rect(safeDrawing.left, expectedTop, safeDrawing.right, safeDrawing.bottom),
             content.paddingBounds(),
         )
         assertTrue("Content must retain its inflated child", content.childCount > 0)
         // The match_parent root must end exactly at the navigation-bar edge: a second
         // bottom inset claimed by a descendant would lift it further.
         val child = content.getChildAt(0)
-        val decorLocation = IntArray(2)
         val childLocation = IntArray(2)
-        decor.getLocationOnScreen(decorLocation)
         child.getLocationOnScreen(childLocation)
         assertEquals(
             "Content root bottom must sit on the safe-drawing edge",
