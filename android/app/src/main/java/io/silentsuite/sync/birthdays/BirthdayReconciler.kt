@@ -109,19 +109,21 @@ object BirthdayReconciler {
      * [RunStatus.PENDING] "post-check", and a run that still meets a conflict or a changing source
      * after its last pass is [RunStatus.PENDING] "conflict" or "post-check" for a later run.
      *
-     * [mayContinue] is asked before each fenced chunk write is handed to the SDK, before that
-     * calendar is recorded in [RunResult.written]. When it answers false, that chunk and everything
-     * after it are not sent, and the run ends [RunStatus.PENDING] "stopped". It is not asked before
-     * reads, the conditional retirement update or its read-back, or the post-check, and a chunk
-     * already handed to the SDK is not called back: this is a write-boundary check, not a full
-     * cancellation guarantee.
+     * [mayContinue] is asked at three write boundaries: before each fenced chunk write and before
+     * each conditional retirement update is handed to the SDK (each before that calendar is recorded
+     * in [RunResult.written]), and after a retirement update returned, before its read-back. When it
+     * answers false, nothing more is sent and the run ends [RunStatus.PENDING] "stopped"; a retirement
+     * that already landed stays recorded in [RunResult.written], and its generated leftovers are left
+     * for a later repair. It is not asked before other reads or the post-check, and a request already
+     * handed to the SDK is not called back: these are write-boundary checks, not a full cancellation
+     * guarantee.
      */
     fun reconcile(etebase: com.etebase.client.Account, username: String, mayContinue: () -> Boolean = { true }): RunResult {
         val written = LinkedHashSet<String>()
         return try {
             passes(etebase.collectionManager, username, written, mayContinue)
         } catch (e: Stopped) {
-            Logger.log.info("Birthdays reconcile stopped before a write")
+            Logger.log.info("Birthdays reconcile stopped at a write boundary")
             RunResult(RunStatus.PENDING, written.sorted(), "stopped")
         } catch (e: Stop) {
             Logger.log.info("Birthdays reconcile stopped: ${e.reason}")
@@ -139,9 +141,10 @@ object BirthdayReconciler {
     private class Stop(val status: RunStatus, val reason: String) : Exception(reason)
 
     /**
-     * The [reconcile] gate answered false before a fenced chunk write: nothing more is sent. Not a
-     * [Stop]: it is thrown only from [commitFenced], and nothing between there and [reconcile]
-     * catches it ([passes] catches only [Conflict]).
+     * The [reconcile] gate answered false at a write boundary: before a fenced chunk write
+     * ([commitFenced]), before a conditional retirement update, or before a landed retirement's
+     * read-back (both in [pass], outside the retirement update's own catch). Nothing more is sent. Not
+     * a [Stop], and nothing between there and [reconcile] catches it ([passes] catches only [Conflict]).
      */
     private class Stopped : Exception("stopped")
 
@@ -318,6 +321,8 @@ object BirthdayReconciler {
         // loses its generated items, fenced on the new root read back from the server.
         for ((calendar, deletes) in duplicateDeletes) {
             val previousRoot = calendar.etag
+            // Before the update is handed to the SDK: a refused calendar is neither recorded nor changed.
+            if (!mayContinue()) throw Stopped()
             // Recorded before the write: an uncertain update may still have landed.
             written += calendar.uid
             calendar.setContent(RETIRED_MARKER)
@@ -332,6 +337,9 @@ object BirthdayReconciler {
             } catch (e: ServerErrorException) {
                 throw Stop(RunStatus.PENDING, "write-outcome-unknown")
             }
+            // The update returned: before its read-back. A stop here leaves the landed retirement
+            // recorded and its generated leftovers for a later repair.
+            if (!mayContinue()) throw Stopped()
             val fresh = colMgr.fetch(calendar.uid)
             val freshContent = readBytes { fresh.content }
             if (freshContent == null || BirthdayCalendar.markerState(freshContent) != BirthdayCalendar.MarkerState.RETIRED ||
