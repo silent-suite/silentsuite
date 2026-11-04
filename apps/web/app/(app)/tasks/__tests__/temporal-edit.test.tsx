@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { deserializeTask, type Task } from '@silentsuite/core'
@@ -226,5 +226,159 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     expect(saved.start_ical).toEqual({ kind: 'date', value: '20260530' })
     expect(lines.some((line) => line.startsWith('DUE'))).toBe(false)
     expect(saved.due_date).toBeNull()
+  })
+
+  // The editor reads the task once, when it opens. Changes synced from another device while it is
+  // open must survive a save that did not touch those fields.
+  describe('keeps changes synced while the editor is open', () => {
+    const REMOTE = {
+      description: 'Remote notes',
+      status: 'completed' as const,
+      completed: true,
+      percent_complete: 100,
+      priority: 'urgent' as const,
+      location: 'Remote place',
+      url: 'https://example.invalid/remote',
+      categories: ['remote-label'],
+    }
+
+    /** Another device's newer version of the task arrives through the normal sync path. */
+    function syncRemote(changes: Partial<Task>) {
+      const current = useTaskStore.getState().tasks[0]!
+      act(() => {
+        useTaskStore.getState().syncFromRemote([{ ...current, ...changes }])
+      })
+    }
+
+    function stored(): Task {
+      return useTaskStore.getState().tasks[0]!
+    }
+
+    it('keeps every remote field on a title-only save and sends only the title', async () => {
+      seedTask([START_LINE, DUE_LINE])
+      renderWithIntl(<TasksPage />)
+      const dialog = openMobileEditor()
+
+      syncRemote(REMOTE)
+      fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Renamed task' } })
+      const { lines, saved } = await saveAndReadContent(dialog, updateItem)
+
+      expect(Object.keys(patches[0]!).sort()).toEqual(['title'])
+      for (const task of [stored(), saved]) {
+        expect(task.title).toBe('Renamed task')
+        expect(task).toMatchObject({
+          description: REMOTE.description,
+          status: 'completed',
+          completed: true,
+          percent_complete: 100,
+          priority: 'urgent',
+          location: REMOTE.location,
+          url: REMOTE.url,
+          categories: REMOTE.categories,
+        })
+      }
+      expect(lines).toContain(START_LINE)
+      expect(lines).toContain(DUE_LINE)
+    })
+
+    it('omits fields that were changed and then set back, so their remote values survive', async () => {
+      seedTask([START_LINE, DUE_LINE])
+      renderWithIntl(<TasksPage />)
+      const dialog = openMobileEditor()
+
+      const notes = within(dialog).getByPlaceholderText('Add notes...')
+      fireEvent.change(notes, { target: { value: 'Draft notes' } })
+      fireEvent.change(notes, { target: { value: 'Original notes' } })
+      const status = within(dialog).getByLabelText('Task status')
+      fireEvent.change(status, { target: { value: 'in-process' } })
+      fireEvent.change(status, { target: { value: 'needs-action' } })
+      const place = within(dialog).getByLabelText('Location')
+      fireEvent.change(place, { target: { value: 'Draft place' } })
+      fireEvent.change(place, { target: { value: '' } })
+
+      syncRemote({ description: REMOTE.description, status: 'completed', completed: true, percent_complete: 100, location: REMOTE.location })
+      fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Renamed task' } })
+      const { saved } = await saveAndReadContent(dialog, updateItem)
+
+      expect(Object.keys(patches[0]!).sort()).toEqual(['title'])
+      for (const task of [stored(), saved]) {
+        expect(task).toMatchObject({
+          title: 'Renamed task',
+          description: REMOTE.description,
+          status: 'completed',
+          completed: true,
+          percent_complete: 100,
+          location: REMOTE.location,
+        })
+      }
+    })
+
+    it('sends a status change as one coherent status, completion and progress group', async () => {
+      seedTask([START_LINE, DUE_LINE])
+      renderWithIntl(<TasksPage />)
+      const dialog = openMobileEditor()
+
+      syncRemote({ description: REMOTE.description, location: REMOTE.location })
+      fireEvent.change(within(dialog).getByLabelText('Task status'), { target: { value: 'completed' } })
+      const { saved } = await saveAndReadContent(dialog, updateItem)
+
+      expect(patches[0]).toEqual({ status: 'completed', completed: true, percent_complete: 100 })
+      for (const task of [stored(), saved]) {
+        expect(task).toMatchObject({
+          title: 'Timed task',
+          description: REMOTE.description,
+          location: REMOTE.location,
+          status: 'completed',
+          completed: true,
+          percent_complete: 100,
+        })
+      }
+    })
+
+    it('sends a progress change with its matching status and completion', async () => {
+      seedTask([START_LINE, DUE_LINE])
+      renderWithIntl(<TasksPage />)
+      const dialog = openMobileEditor()
+
+      syncRemote({ description: REMOTE.description })
+      fireEvent.change(within(dialog).getByLabelText('Percent complete'), { target: { value: '40' } })
+      const { saved } = await saveAndReadContent(dialog, updateItem)
+
+      expect(patches[0]).toEqual({ status: 'needs-action', completed: false, percent_complete: 40 })
+      for (const task of [stored(), saved]) {
+        expect(task).toMatchObject({ description: REMOTE.description, status: 'needs-action', completed: false, percent_complete: 40 })
+      }
+    })
+
+    it('closes without saving anything when nothing was changed', async () => {
+      seedTask([START_LINE, DUE_LINE])
+      renderWithIntl(<TasksPage />)
+      const dialog = openMobileEditor()
+
+      syncRemote(REMOTE)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Task' })).not.toBeInTheDocument())
+      await act(async () => { await Promise.resolve() })
+
+      expect(patches).toHaveLength(0)
+      expect(updateItem).not.toHaveBeenCalled()
+      expect(stored()).toMatchObject({ title: 'Timed task', description: REMOTE.description, status: 'completed', percent_complete: 100 })
+    })
+
+    it('treats a title that differs only by surrounding spaces as unchanged', async () => {
+      seedTask([START_LINE, DUE_LINE])
+      renderWithIntl(<TasksPage />)
+      const dialog = openMobileEditor()
+
+      syncRemote(REMOTE)
+      fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: '  Timed task  ' } })
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit Task' })).not.toBeInTheDocument())
+      await act(async () => { await Promise.resolve() })
+
+      expect(patches).toHaveLength(0)
+      expect(updateItem).not.toHaveBeenCalled()
+      expect(stored()).toMatchObject({ title: 'Timed task', description: REMOTE.description, status: 'completed' })
+    })
   })
 })

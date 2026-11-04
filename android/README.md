@@ -24,7 +24,7 @@ Based on [EteSync for Android](https://github.com/etesync/android) by Ricki Hirn
 SilentSuite uses `git-submodules`, so cloning the code requires slightly different commands.
 
 1. Clone the repo: `git clone --recurse-submodules https://github.com/silent-suite/silentsuite`
-2. Change to the directory `cd silentsuite-android`
+2. Change to the directory `cd silentsuite/android`
 3. Open with Android studio or build with gradle:
   1. Android studio (easier): `android-studio .`
   2. Gradle: `./gradlew assembleDebug`
