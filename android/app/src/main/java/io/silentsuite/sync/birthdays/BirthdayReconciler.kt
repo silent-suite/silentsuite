@@ -109,13 +109,20 @@ object BirthdayReconciler {
      * [RunStatus.PENDING] "post-check", and a run that still meets a conflict or a changing source
      * after its last pass is [RunStatus.PENDING] "conflict" or "post-check" for a later run.
      *
-     * [mayContinue] is accepted but not consulted yet: tests-first scaffolding for the stop gate.
+     * [mayContinue] is asked before each fenced chunk write is handed to the SDK, before that
+     * calendar is recorded in [RunResult.written]. When it answers false, that chunk and everything
+     * after it are not sent, and the run ends [RunStatus.PENDING] "stopped". It is not asked before
+     * reads, the conditional retirement update or its read-back, or the post-check, and a chunk
+     * already handed to the SDK is not called back: this is a write-boundary check, not a full
+     * cancellation guarantee.
      */
-    @Suppress("UNUSED_PARAMETER")
     fun reconcile(etebase: com.etebase.client.Account, username: String, mayContinue: () -> Boolean = { true }): RunResult {
         val written = LinkedHashSet<String>()
         return try {
-            passes(etebase.collectionManager, username, written)
+            passes(etebase.collectionManager, username, written, mayContinue)
+        } catch (e: Stopped) {
+            Logger.log.info("Birthdays reconcile stopped before a write")
+            RunResult(RunStatus.PENDING, written.sorted(), "stopped")
         } catch (e: Stop) {
             Logger.log.info("Birthdays reconcile stopped: ${e.reason}")
             RunResult(e.status, written.sorted(), e.reason)
@@ -130,6 +137,13 @@ object BirthdayReconciler {
 
     /** Ends a pass early with nothing (more) written. */
     private class Stop(val status: RunStatus, val reason: String) : Exception(reason)
+
+    /**
+     * The [reconcile] gate answered false before a fenced chunk write: nothing more is sent. Not a
+     * [Stop]: it is thrown only from [commitFenced], and nothing between there and [reconcile]
+     * catches it ([passes] catches only [Conflict]).
+     */
+    private class Stopped : Exception("stopped")
 
     /** A fenced write or conditional retirement was rejected by the server as a conflict; the pass ends. */
     private class Conflict : Exception("conflict")
@@ -161,11 +175,12 @@ object BirthdayReconciler {
      * times, and a check that cannot finish is never taken as "unchanged". No cross-collection
      * atomicity is claimed: a later change is left to the next trigger.
      */
-    private fun passes(colMgr: CollectionManager, username: String, written: MutableSet<String>): RunResult {
+    private fun passes(colMgr: CollectionManager, username: String, written: MutableSet<String>,
+        mayContinue: () -> Boolean): RunResult {
         var reruns = 0
         while (true) {
             val (result, source) = try {
-                pass(colMgr, username, written)
+                pass(colMgr, username, written, mayContinue)
             } catch (e: Conflict) {
                 // The server rejected a fenced write: a calendar changed after this pass read it.
                 // Nothing of the old pass is reused or resent; a fresh full pass reads and plans again
@@ -188,7 +203,8 @@ object BirthdayReconciler {
         }
     }
 
-    private fun pass(colMgr: CollectionManager, username: String, written: MutableSet<String>): Pair<RunResult, SourceRead> {
+    private fun pass(colMgr: CollectionManager, username: String, written: MutableSet<String>,
+        mayContinue: () -> Boolean): Pair<RunResult, SourceRead> {
         val inventoryListing = pagedListing("incomplete-inventory", PagedListingGuard.MAX_COLLECTION_PAGES, null) { cursor ->
             colMgr.list(INVENTORY_TYPES, FetchOptions().stoken(cursor)).let { Page(it.data.toList(), it.stoken, it.isDone) }
         }
@@ -322,18 +338,18 @@ object BirthdayReconciler {
                 fresh.etag == previousRoot) {
                 throw Stop(RunStatus.PENDING, "retirement-unconfirmed")
             }
-            commitFenced(colMgr.getItemManager(fresh), fresh, deletes, written)
+            commitFenced(colMgr.getItemManager(fresh), fresh, deletes, written, mayContinue)
         }
         // F3: generated leftovers in retired calendars, fenced on each calendar's root as read.
         for ((calendar, deletes) in retiredDeletes) {
-            commitFenced(colMgr.getItemManager(calendar), calendar, deletes, written)
+            commitFenced(colMgr.getItemManager(calendar), calendar, deletes, written, mayContinue)
         }
         if (canonical == null || itemMgr == null) {
             // No active calendar: repair only, and nothing is generated anywhere.
             return (if (written.isEmpty()) RunResult(RunStatus.SKIPPED, emptyList(), "no-active-calendar")
             else RunResult(RunStatus.DONE, written.sorted())) to source
         }
-        commitFenced(itemMgr, canonical, changes, written)
+        commitFenced(itemMgr, canonical, changes, written, mayContinue)
         return RunResult(RunStatus.DONE, written.sorted()) to source
     }
 
@@ -406,9 +422,13 @@ object BirthdayReconciler {
     /**
      * Writes [items] into [calendar] in [writeFenced] chunks. A conflict ends the pass for a fresh
      * one ([Conflict]); an unknown outcome stops the run as pending, and nothing is resent.
+     * Before each chunk is recorded and handed to the SDK, [mayContinue] is asked; false ends the
+     * run with [Stopped], so that chunk and the ones after it are never sent.
      */
-    private fun commitFenced(itemMgr: ItemManager, calendar: Collection, items: List<Item>, written: MutableSet<String>) {
+    private fun commitFenced(itemMgr: ItemManager, calendar: Collection, items: List<Item>, written: MutableSet<String>,
+        mayContinue: () -> Boolean) {
         for (chunk in items.chunked(MAX_CHUNK)) {
+            if (!mayContinue()) throw Stopped()
             // Recorded before the write: an uncertain write may still have landed.
             written += calendar.uid
             when (writeFenced(itemMgr, calendar, chunk)) {
