@@ -1350,6 +1350,9 @@ def main(flavor="cli"):
                 start_workers=_start_sync_threads,
                 serve=_serve_radicale_with_bridge_application,
                 ipc=ipc,
+                # Desktop only (its start-at-login entry): serve without showing
+                # the window. The command-line bridge ignores this flag as before.
+                background="--background" in sys.argv,
             )
             if code:
                 sys.exit(code)

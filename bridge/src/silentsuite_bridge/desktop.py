@@ -19,6 +19,9 @@ Browser boundary (implementation-plan-v2 section 4, proven feasible by T0):
 
 The server-side loopback, Host and CSRF gates are unchanged; the window is
 just another loopback client.
+
+Lifecycle: see ``run_desktop`` (``--background``, close hides only while this
+app's start-at-login entry is registered, "Quit SilentSuite Bridge" stops).
 """
 
 import logging
@@ -264,22 +267,35 @@ def resolve_legacy_conflicts() -> int:
         app.setQuitOnLastWindowClosed(quit_on_last_window)
 
 
-def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
+QUIT_ACTION_TEXT = "Quit SilentSuite Bridge"
+
+
+def run_desktop(*, build_configuration, start_workers, serve, ipc=None, background=False) -> int:
     """Run the desktop window around this process's own Bridge server.
 
     ``build_configuration``, ``start_workers`` and ``serve`` are the server
     stages of ``__main__`` (passed in so the running ``__main__`` module is
     reused, never imported a second time). The caller already owns the
     instance lock, has passed ``resolve_legacy_conflicts`` and has run the
-    start-up preparation. Returns an exit code;
-    0 after a normal window close.
+    start-up preparation. Returns an exit code; 0 after a normal stop.
+
+    Lifecycle (implementation-plan-v2 section 5):
+    - ``background`` (the desktop's ``--background``, as its start-at-login
+      entry runs it) starts the same server and reopen endpoint but never
+      shows the window; a second launch's "show" brings it up;
+    - closing the window checks this app's own start-at-login entry at that
+      moment: registered, the window is only hidden and the Bridge keeps
+      running; not registered, the Bridge stops;
+    - the menu action "Quit SilentSuite Bridge" always stops it.
+    Stopping ends the event loop; the server, workers and window are then
+    shut down here, and the caller closes IPC and releases the lock last.
     """
     if _unsafe_environment():
         print(UNSAFE_ENVIRONMENT_MESSAGE, file=sys.stderr)
         return 1
     try:
         from PySide6.QtCore import QCoreApplication, QEvent, QTimer, QUrl
-        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
         from PySide6.QtWebEngineCore import (
             QWebEnginePage,
             QWebEngineProfile,
@@ -287,6 +303,7 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
             QWebEngineUrlRequestInterceptor,
         )
         from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWidgets import QMainWindow
     except ImportError:
         print(QT_MISSING_MESSAGE, file=sys.stderr)
         return 1
@@ -300,7 +317,33 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
         return 1
 
     app = _qt_application()
-    app.setQuitOnLastWindowClosed(True)
+    # Close and Quit decide when the event loop ends (stop_bridge below); a
+    # hidden window must not end it.
+    app.setQuitOnLastWindowClosed(False)
+
+    lifecycle = {"stopping": False, "start_at_login": None}
+
+    def stop_bridge():
+        """End the event loop once. exit(), not quit(): a quit could be refused by a window."""
+        if lifecycle["stopping"]:
+            return
+        lifecycle["stopping"] = True
+        QCoreApplication.exit(0)
+
+    def close_hides_window() -> bool:
+        # The entry's current state, read at each close, so a later change
+        # of start at login is honoured without restarting.
+        start_at_login = lifecycle["start_at_login"]
+        return start_at_login is not None and start_at_login.state()["value"] is True
+
+    class _DashboardWindow(QMainWindow):
+        def closeEvent(self, event):  # noqa: N802 - Qt override
+            if not lifecycle["stopping"] and close_hides_window():
+                event.ignore()
+                self.hide()  # keeps serving; "show" from a second launch brings it back
+                return
+            event.accept()
+            stop_bridge()
 
     policy = DashboardOrigin()
 
@@ -327,11 +370,20 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
     profile.setUrlRequestInterceptor(interceptor)
     profile.downloadRequested.connect(lambda request: request.cancel())
 
-    view = QWebEngineView()
+    window = _DashboardWindow()
+    window.setWindowTitle(WINDOW_TITLE)
+    window.resize(1000, 760)
+    view = QWebEngineView(window)
     page = _DashboardPage(profile, view)
     view.setPage(page)
-    view.setWindowTitle(WINDOW_TITLE)
-    view.resize(1000, 760)
+    window.setCentralWidget(view)  # the window owns the view (and the view its page)
+
+    # Always reachable from the window's menu (on macOS: the application menu, Cmd+Q).
+    quit_action = QAction(QUIT_ACTION_TEXT, window)
+    quit_action.setMenuRole(QAction.MenuRole.QuitRole)  # before it is added to the menu bar
+    quit_action.setShortcuts(QKeySequence.StandardKey.Quit)
+    quit_action.triggered.connect(lambda _checked=False: stop_bridge())
+    window.menuBar().addMenu("&File").addAction(quit_action)
 
     settings = page.settings()
     for name in ("JavascriptCanOpenWindows", "LocalContentCanAccessRemoteUrls", "LocalContentCanAccessFileUrls"):
@@ -354,6 +406,7 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
     from .desktop_autostart import DesktopStartAtLogin
 
     start_at_login = DesktopStartAtLogin.for_running_app()
+    lifecycle["start_at_login"] = start_at_login  # read (never enabled) at each window close
 
     def serve_bridge():
         try:
@@ -383,7 +436,7 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
             poll.stop()
             print(NO_DASHBOARD_MESSAGE, file=sys.stderr)
             outcome["code"] = 1
-            view.close()
+            stop_bridge()  # also when the window is hidden or was never shown
 
     poll = QTimer()
     poll.setInterval(_URL_POLL_MS)
@@ -392,19 +445,23 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None) -> int:
     try:
         start_workers()
         server_thread.start()
-        view.show()
         if ipc is not None:
-            ipc.window = view  # what a second launch's "show" brings back
+            # What a second launch's "show" brings back, shown yet or not.
+            ipc.window = window
+        if not background:
+            window.show()
         poll.start()
         app.exec()
     finally:
+        lifecycle["stopping"] = True  # from here on a close really closes
         poll.stop()
         if ipc is not None:
             ipc.window = None
         # Release web content first so its loopback connections close, then
         # stop the server through its shutdown socket, then the workers.
-        view.close()
-        view.deleteLater()
+        # Deleting the window deletes its view and page before the profile.
+        window.close()
+        window.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         profile.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
