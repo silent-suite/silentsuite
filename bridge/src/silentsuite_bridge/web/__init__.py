@@ -1107,6 +1107,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <span id="syncIntervalStatus" style="font-size:12px;color:#555;"></span>
             <span id="syncProgress" style="font-size:12px;color:#888;margin-left:auto;"></span>
         </div>
+
+        <section id="defaultServerSection" class="status-card" aria-labelledby="defaultServerHeading">
+            <h3 id="defaultServerHeading" style="font-size:14px;color:#888;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;">Default server for new sign-ins</h3>
+            <p id="defaultServerHelp" style="font-size:13px;color:#9ca3af;margin-bottom:10px;">Used only for new sign-ins. Existing accounts keep their own server.</p>
+            {{DEFAULT_SERVER_MANAGED_NOTE}}
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <label for="defaultServerUrl" style="font-size:13px;color:#888;">Default server URL</label>
+                <input type="url" id="defaultServerUrl" value="{{DEFAULT_SERVER_URL}}" data-saved="{{DEFAULT_SERVER_URL}}" data-editable="{{DEFAULT_SERVER_EDITABLE}}" aria-describedby="defaultServerHelp defaultServerManaged" {{DEFAULT_SERVER_INPUT_LOCK}}style="flex:1;min-width:220px;background:#111;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px 10px;font-size:13px;">
+                <button id="defaultServerSave" class="account-action-btn primary" type="button" {{DEFAULT_SERVER_SAVE_LOCK}}>Save</button>
+                <span id="defaultServerStatus" role="status" aria-live="polite" style="font-size:12px;color:#555;"></span>
+            </div>
+        </section>
         <script>
             (function() {
                 var sel = document.getElementById('syncInterval');
@@ -1349,6 +1361,60 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             }
             pollProgress();
             setInterval(pollProgress, 2000);
+            // Default server for NEW sign-ins (settings API serverUrl). One save at
+            // a time; only an acknowledged 2xx answer says Saved, and a failure
+            // never changes the last acknowledged value.
+            var defaultServerSave = { pending: null };
+            function saveDefaultServer() {
+                var input = document.getElementById('defaultServerUrl');
+                var button = document.getElementById('defaultServerSave');
+                var st = document.getElementById('defaultServerStatus');
+                if (!input || !button || !st) return null;
+                if (defaultServerSave.pending) return defaultServerSave.pending;
+                if (input.getAttribute('data-editable') !== 'true') return null;
+                var previous = input.getAttribute('data-saved') || '';
+                button.disabled = true;
+                input.readOnly = true;
+                st.textContent = 'Saving...';
+                st.style.color = '#555';
+                defaultServerSave.pending = fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({serverUrl: input.value})})
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        var saved = data && data.serverUrl;
+                        if (!saved || typeof saved.value !== 'string') throw new Error('the server did not confirm the new default');
+                        input.value = saved.value;
+                        input.setAttribute('data-saved', saved.value);
+                        input.setAttribute('data-editable', saved.editable ? 'true' : 'false');
+                        // The sign-in form follows the new default unless its field was edited by hand.
+                        var login = document.getElementById('dashboardServerUrl');
+                        if (login && login.value === previous) login.value = saved.value;
+                        st.textContent = 'Saved';
+                        st.style.color = '#555';
+                    })
+                    .catch(function(error) {
+                        st.textContent = 'Not saved: ' + ((error && error.message) || 'request failed');
+                        st.style.color = '#ff8a8a';
+                    })
+                    .then(function() {
+                        defaultServerSave.pending = null;
+                        var editable = input.getAttribute('data-editable') === 'true';
+                        input.readOnly = !editable;
+                        button.disabled = !editable;
+                    });
+                return defaultServerSave.pending;
+            }
+            (function() {
+                var input = document.getElementById('defaultServerUrl');
+                var button = document.getElementById('defaultServerSave');
+                if (!input || !button || input.getAttribute('data-editable') !== 'true') return;
+                button.addEventListener('click', saveDefaultServer);
+                input.addEventListener('keydown', function(event) {
+                    if (event.key === 'Enter') {
+                        event.preventDefault();
+                        saveDefaultServer();
+                    }
+                });
+            })();
             // Bind the 'Add / Re-authenticate Account' button via addEventListener
             // rather than an inline onclick, so the handler does not depend on
             // inline-onclick resolving a global function (the failure mode behind
@@ -1709,7 +1775,28 @@ def _render_dashboard():
     page = page.replace("{{LOGIN_COPY}}", esc(login_copy))
     # The sign-in form offers the default for NEW sign-ins (--server > env >
     # saved > built-in), not whichever server the last account signed in to.
-    page = page.replace("{{SERVER_URL}}", esc(config.new_sign_in_server_url()["value"]))
+    new_sign_in = config.new_sign_in_server_url()
+    # Dedicated control for that default. Read-only, with no Save, when --server
+    # or SILENTSUITE_SERVER_URL manages it (the API also refuses with 409).
+    managed_note = ""
+    if not new_sign_in["editable"]:
+        managed_by = (
+            "--server when SilentSuite Bridge was started"
+            if new_sign_in["source"] == "cli"
+            else "the SILENTSUITE_SERVER_URL environment variable"
+        )
+        managed_note = (
+            '<p id="defaultServerManaged" style="font-size:13px;color:#9ca3af;margin-bottom:10px;">'
+            f"Set by {esc(managed_by)}, so it can't be changed here.</p>"
+        )
+    page = page.replace("{{DEFAULT_SERVER_MANAGED_NOTE}}", managed_note)
+    page = page.replace("{{DEFAULT_SERVER_URL}}", esc(new_sign_in["value"]))
+    page = page.replace("{{DEFAULT_SERVER_EDITABLE}}", "true" if new_sign_in["editable"] else "false")
+    page = page.replace(
+        "{{DEFAULT_SERVER_INPUT_LOCK}}", "" if new_sign_in["editable"] else 'readonly aria-readonly="true" ',
+    )
+    page = page.replace("{{DEFAULT_SERVER_SAVE_LOCK}}", "" if new_sign_in["editable"] else "disabled")
+    page = page.replace("{{SERVER_URL}}", esc(new_sign_in["value"]))
 
     # Sync interval display
     interval = config.SYNC_INTERVAL
