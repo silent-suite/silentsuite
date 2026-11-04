@@ -1,5 +1,6 @@
 package io.silentsuite.sync.ui
 
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -15,12 +16,14 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.graphics.drawable.DrawerArrowDrawable
 import androidx.appcompat.widget.ActionMenuView
 import androidx.appcompat.widget.Toolbar
+import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.Insets
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.viewpager.widget.ViewPager
 import io.silentsuite.sync.R
@@ -332,7 +335,7 @@ class ColorParityRuntimeTest {
 
     private fun View.paddingBounds() = Rect(paddingLeft, paddingTop, paddingRight, paddingBottom)
 
-    private fun assertContentInsets(activity: AboutActivity) {
+    private fun assertContentInsets(activity: BaseActivity) {
         val decor = activity.window.decorView
         val content = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
         val rootInsets = ViewCompat.getRootWindowInsets(decor)
@@ -368,9 +371,8 @@ class ColorParityRuntimeTest {
             else -> Rect()
         }
 
-    private fun assertScrimSet(activity: AboutActivity, prefix: String, insets: Insets) {
+    private fun assertScrimSet(activity: BaseActivity, prefix: String, insets: Insets, expectedColor: Int) {
         val decor = activity.window.decorView
-        val expectedColor = ContextCompat.getColor(activity, R.color.semantic_system_bar)
         for ((gravity, suffix) in BaseActivity.SCRIM_EDGES) {
             val tag = "$prefix-$suffix"
             val scrim = decor.findViewWithTag<View>(tag)
@@ -381,67 +383,142 @@ class ColorParityRuntimeTest {
         }
     }
 
-    private fun assertScrimBounds(activity: AboutActivity) {
+    private fun assertScrimBounds(activity: BaseActivity) {
         val decor = activity.window.decorView
         val insets = ViewCompat.getRootWindowInsets(decor)
         assertNotNull(insets)
         val status = insets!!.getInsets(WindowInsetsCompat.Type.statusBars())
         val navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-        assertScrimSet(activity, BaseActivity.STATUS_BAR_SCRIM_TAG, status)
-        assertScrimSet(activity, BaseActivity.NAVIGATION_BAR_SCRIM_TAG, navigation)
+        assertScrimSet(activity, BaseActivity.STATUS_BAR_SCRIM_TAG, status, ContextCompat.getColor(activity, R.color.semantic_system_bar))
+        assertScrimSet(activity, BaseActivity.NAVIGATION_BAR_SCRIM_TAG, navigation, pageBackground(activity))
+    }
+
+    /** The page colour from the activity theme (android:colorBackground), independent of any bar decision. */
+    private fun pageBackground(activity: BaseActivity): Int {
+        val attributes = activity.theme.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackground))
+        try {
+            assertTrue("theme must define android:colorBackground", attributes.hasValue(0))
+            return attributes.getColor(0, Color.MAGENTA)
+        } finally {
+            attributes.recycle()
+        }
+    }
+
+    /**
+     * Status bar: navy with light icons. Navigation bar: the page colour, with dark native glyphs
+     * on a light page and light glyphs on a dark page. Content keeps its safe-drawing insets.
+     */
+    private fun assertSystemBars(activity: BaseActivity, label: String, night: Boolean) {
+        val navy = ContextCompat.getColor(activity, R.color.semantic_system_bar)
+        val page = pageBackground(activity)
+        val uiNight = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        assertEquals("$label night configuration", night, uiNight == Configuration.UI_MODE_NIGHT_YES)
+        assertEquals("$label page role", ContextCompat.getColor(activity, R.color.semantic_background), page)
+        assertEquals("$label page must be opaque", 0xFF, Color.alpha(page))
+        assertTrue("$label page and status bar must differ", page != navy || night)
+        val lightNavigation = ColorUtils.calculateContrast(Color.BLACK, page) > ColorUtils.calculateContrast(Color.WHITE, page)
+        assertEquals("$label page lightness", !night, lightNavigation)
+
+        if (Build.VERSION.SDK_INT >= 35) {
+            assertEquals("$label status bar colour", Color.TRANSPARENT, activity.window.statusBarColor)
+            assertEquals("$label navigation bar colour", Color.TRANSPARENT, activity.window.navigationBarColor)
+            assertFalse(activity.window.isStatusBarContrastEnforced)
+            assertFalse(activity.window.isNavigationBarContrastEnforced)
+            assertScrimBounds(activity)
+        } else {
+            assertEquals("$label status bar colour", navy, activity.window.statusBarColor)
+            assertEquals("$label navigation bar colour", page, activity.window.navigationBarColor)
+        }
+        assertContentInsets(activity)
+
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        assertFalse("$label status icons must stay light on navy", controller.isAppearanceLightStatusBars)
+        assertEquals("$label navigation glyph appearance", lightNavigation, controller.isAppearanceLightNavigationBars)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            val flags = activity.window.decorView.systemUiVisibility
+            assertEquals("$label legacy status flag", 0, flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
+            assertEquals("$label legacy navigation flag", lightNavigation, (flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) != 0)
+        }
+    }
+
+    private fun <T> settings(block: (ActivityScenario<AppSettingsActivity>) -> T): T {
+        val intent = AppSettingsActivity.newIntent(InstrumentationRegistry.getInstrumentation().targetContext)
+        return ActivityScenario.launch<AppSettingsActivity>(intent).use { scenario ->
+            waitForSettingsBar(scenario)
+            block(scenario)
+        }
     }
 
     @Test fun systemBarProtectionMatchesApiAndInsets() {
-        about { scenario ->
-            scenario.onActivity { activity ->
-                if (Build.VERSION.SDK_INT >= 35) {
-                    assertEquals(Color.TRANSPARENT, activity.window.statusBarColor)
-                    assertEquals(Color.TRANSPARENT, activity.window.navigationBarColor)
-                    assertFalse(activity.window.isStatusBarContrastEnforced)
-                    assertFalse(activity.window.isNavigationBarContrastEnforced)
-                    assertScrimBounds(activity)
-                    assertContentInsets(activity)
-                } else {
-                    val expected = ContextCompat.getColor(activity, R.color.semantic_system_bar)
-                    assertEquals(expected, activity.window.statusBarColor)
-                    assertEquals(expected, activity.window.navigationBarColor)
-                    assertContentInsets(activity)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    assertEquals(0, activity.window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    assertEquals(0, activity.window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR)
-                }
+        val prior = AppCompatDelegate.getDefaultNightMode()
+        try {
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+            about { scenario ->
+                scenario.onActivity { assertSystemBars(it, "about (day)", night = false) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertSystemBars(it, "about (night)", night = true) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertSystemBars(it, "about (day, recreated)", night = false) }
             }
+            // Settings is the screen from the customer screenshot.
+            settings { scenario ->
+                scenario.onActivity { assertSystemBars(it, "settings (day)", night = false) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSystemBars(it, "settings (night)", night = true) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSystemBars(it, "settings (day, recreated)", night = false) }
+            }
+        } finally {
+            setNightModeOnMainThread(prior)
+        }
+    }
+
+    private fun assertStableContentAndScrims(activity: BaseActivity, label: String, bounds: Rect?, padding: Rect?) {
+        assertEquals("$label content bounds", bounds, activity.findViewById<View>(android.R.id.content).bounds())
+        assertEquals("$label content padding", padding, activity.findViewById<View>(android.R.id.content).paddingBounds())
+        if (Build.VERSION.SDK_INT >= 35) {
+            val decor = activity.window.decorView
+            assertScrimBounds(activity)
+            assertContentInsets(activity)
+            assertEquals(8, BaseActivity.SCRIM_EDGES.sumOf { (_, suffix) ->
+                countTagged(decor, "${BaseActivity.STATUS_BAR_SCRIM_TAG}-$suffix") +
+                    countTagged(decor, "${BaseActivity.NAVIGATION_BAR_SCRIM_TAG}-$suffix")
+            })
         }
     }
 
     @Test fun repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent() {
-        about { scenario ->
-            var before: Rect? = null
-            var paddingBefore: Rect? = null
-            scenario.onActivity { activity ->
-                before = activity.findViewById<View>(android.R.id.content).bounds()
-                paddingBefore = activity.findViewById<View>(android.R.id.content).paddingBounds()
-                ViewCompat.requestApplyInsets(activity.window.decorView)
-            }
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            scenario.recreate()
-            waitForAbout(scenario)
-            scenario.onActivity { activity ->
-                assertEquals(before, activity.findViewById<View>(android.R.id.content).bounds())
-                assertEquals(paddingBefore, activity.findViewById<View>(android.R.id.content).paddingBounds())
-                if (Build.VERSION.SDK_INT >= 35) {
-                    val decor = activity.window.decorView
-                    assertScrimBounds(activity)
-                    assertContentInsets(activity)
-                    assertEquals(8, BaseActivity.SCRIM_EDGES.sumOf { (_, suffix) ->
-                        countTagged(decor, "${BaseActivity.STATUS_BAR_SCRIM_TAG}-$suffix") +
-                            countTagged(decor, "${BaseActivity.NAVIGATION_BAR_SCRIM_TAG}-$suffix")
-                    })
+        val prior = AppCompatDelegate.getDefaultNightMode()
+        try {
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+            about { scenario ->
+                var before: Rect? = null
+                var paddingBefore: Rect? = null
+                scenario.onActivity { activity ->
+                    before = activity.findViewById<View>(android.R.id.content).bounds()
+                    paddingBefore = activity.findViewById<View>(android.R.id.content).paddingBounds()
+                    ViewCompat.requestApplyInsets(activity.window.decorView)
                 }
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertStableContentAndScrims(it, "day recreation", before, paddingBefore) }
+                // A theme switch recolours the bars but must not move the content or duplicate scrims.
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertStableContentAndScrims(it, "night recreation", before, paddingBefore) }
             }
+        } finally {
+            setNightModeOnMainThread(prior)
         }
     }
 

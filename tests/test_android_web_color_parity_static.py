@@ -656,8 +656,10 @@ def test_text_input_refresh_and_system_bar_mechanics_are_bounded():
         assert "R.color.semantic_primary" in body
         assert "ContextCompat.getColor" not in body.split("setColorSchemeResources(", 1)[1].split(")", 1)[0]
     base = source("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
-    for token in ("Build.VERSION.SDK_INT >= 35", "WindowInsetsCompat.Type.statusBars()", "WindowInsetsCompat.Type.navigationBars()", "isAppearanceLightStatusBars = false", "isAppearanceLightNavigationBars = false", "setNavigationBarContrastEnforced(false)"):
+    for token in ("Build.VERSION.SDK_INT >= 35", "WindowInsetsCompat.Type.statusBars()", "WindowInsetsCompat.Type.navigationBars()", "isAppearanceLightStatusBars = false", "setNavigationBarContrastEnforced(false)"):
         assert token in base
+    # Navigation glyph appearance follows the page (see the navigation-bar contract below).
+    assert "isAppearanceLightNavigationBars = false" not in base
     for token in (
         "statusBarScrims: Map<Int, View>", "navigationBarScrims: Map<Int, View>",
         "FrameLayout.LayoutParams(-1, insets.top, gravity)",
@@ -1181,3 +1183,67 @@ def test_dashboard_top_bar_is_navy_with_toolbar_scoped_white_foregrounds_in_both
         declared = colors(qualifier)
         assert contrast_ratio(declared["semantic_on_system_bar"], declared["semantic_system_bar"]) >= 4.5
     assert resource_styles("values")["Widget.AppTheme.Dashboard.CollectionToolbar"]["navigationIconTint"] == "@color/semantic_action_text"
+
+
+SYSTEM_BAR_THEME_FAMILIES = ("AppTheme", "AppTheme.NoActionBar", "AppTheme.Material3", "AppTheme.Material3.NoActionBar")
+# Android resource precedence ranks night mode above platform version, so on the API 29+
+# product floor the night definition wins at night and values-v21 wins by day.
+THEME_SOURCES = {
+    "day": (("values-v21", "styles.xml"), ("values", "themes.xml"), ("values", "styles.xml")),
+    "night": (
+        ("values-night", "themes.xml"), ("values-night", "styles.xml"),
+        ("values-v21", "styles.xml"), ("values", "themes.xml"), ("values", "styles.xml"),
+    ),
+}
+
+
+def effective_theme_item(mode: str, style_name: str, item: str):
+    """Return the winning app value of item for style_name, following implicit dotted parents."""
+    for qualifier, file_name in THEME_SOURCES[mode]:
+        path = RES / qualifier / file_name
+        if not path.exists():
+            continue
+        for style in ET.parse(path).getroot().findall("style"):
+            if style.attrib["name"] != style_name:
+                continue
+            items = {entry.attrib["name"]: (entry.text or "").strip() for entry in style.findall("item")}
+            if item in items:
+                return items[item]
+            if "parent" not in style.attrib and "." in style_name:
+                return effective_theme_item(mode, style_name.rsplit(".", 1)[0], item)
+            return None
+    raise AssertionError((mode, style_name, "undefined theme"))
+
+
+def test_navigation_bar_matches_the_page_with_native_glyph_appearance_in_day_and_night():
+    for mode, qualifier in (("day", "values"), ("night", "values-night")):
+        page = colors(qualifier)["semantic_background"]
+        # Dark native glyphs belong wherever black out-contrasts white on the page colour.
+        light_navigation = contrast_ratio("#000000", page) > contrast_ratio("#FFFFFF", page)
+        assert light_navigation == (mode == "day"), (mode, page)
+        for family in SYSTEM_BAR_THEME_FAMILIES:
+            where = (mode, family)
+            page_role = effective_theme_item(mode, family, "android:colorBackground")
+            assert page_role == "@color/semantic_background", (where, page_role)
+            # Below API 35 the platform paints this colour; it must be the page, not the navy bar.
+            assert effective_theme_item(mode, family, "android:navigationBarColor") == page_role, where
+            assert effective_theme_item(mode, family, "android:windowLightNavigationBar") == (
+                "true" if light_navigation else "false"
+            ), where
+            # The status bar stays navy with light icons in both themes.
+            assert effective_theme_item(mode, family, "android:statusBarColor") == "@color/semantic_system_bar", where
+            assert effective_theme_item(mode, family, "android:windowLightStatusBar") in (None, "false"), where
+
+    base = source("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
+    # API 35+ draws both bars with app scrims. The navigation scrims need the page colour and the
+    # navigation glyph appearance must follow the page instead of being forced light.
+    assert "isAppearanceLightStatusBars = false" in base
+    assert "isAppearanceLightNavigationBars = false" not in base
+    assert re.search(r"isAppearanceLightNavigationBars\s*=", base), "navigation glyph appearance is not set"
+    assert any(
+        token in base
+        for token in (
+            "R.color.semantic_background", "android.R.attr.colorBackground",
+            "android.R.attr.navigationBarColor", "android.R.attr.windowLightNavigationBar",
+        )
+    ), "navigation scrims do not resolve a page-matching colour"
