@@ -69,9 +69,9 @@ class AccountDashboardRuntimeTest {
 
                 assertEquals(3, launched.size)
                 assertEquals(Intent.ACTION_MAIN, launched[0].action)
-                assertTrue(launched[0].hasCategory(Intent.CATEGORY_APP_CALENDAR))
+                assertTrue(launched[0].selector?.hasCategory(Intent.CATEGORY_APP_CALENDAR) == true)
                 assertEquals(Intent.ACTION_MAIN, launched[1].action)
-                assertTrue(launched[1].hasCategory(Intent.CATEGORY_APP_CONTACTS))
+                assertTrue(launched[1].selector?.hasCategory(Intent.CATEGORY_APP_CONTACTS) == true)
                 assertEquals("org.tasks", launched[2].getPackage())
 
                 AccountActivity.dashboardExternalAppLauncherOverride = {
