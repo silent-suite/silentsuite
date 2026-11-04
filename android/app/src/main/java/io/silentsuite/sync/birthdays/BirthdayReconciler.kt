@@ -108,8 +108,11 @@ object BirthdayReconciler {
      * needs a complete check that finds no change; a check that cannot finish is
      * [RunStatus.PENDING] "post-check", and a run that still meets a conflict or a changing source
      * after its last pass is [RunStatus.PENDING] "conflict" or "post-check" for a later run.
+     *
+     * [mayContinue] is accepted but not consulted yet: tests-first scaffolding for the stop gate.
      */
-    fun reconcile(etebase: com.etebase.client.Account, username: String): RunResult {
+    @Suppress("UNUSED_PARAMETER")
+    fun reconcile(etebase: com.etebase.client.Account, username: String, mayContinue: () -> Boolean = { true }): RunResult {
         val written = LinkedHashSet<String>()
         return try {
             passes(etebase.collectionManager, username, written)

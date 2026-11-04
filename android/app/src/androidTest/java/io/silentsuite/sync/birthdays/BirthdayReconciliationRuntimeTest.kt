@@ -20,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * The Birthdays reconcile run ([BirthdayReconciler.reconcile]) through the pinned Etebase Java
@@ -687,6 +688,122 @@ class BirthdayReconciliationRuntimeTest {
         assertEquals("CONTROL_BOUND: and unchanged", ADA_VCARD, String(freshItemManager(book.uid).fetch(contact.uid).content, Charsets.UTF_8))
     }
 
+    /**
+     * The stop gate, tests-first (plan amendment G2, T1): the run's last read before its write, the
+     * second page of the canonical calendar's item listing (one item a page), is held. While it is
+     * parked the test turns the run's gate false, then releases the page. From then on the run may
+     * send nothing: the generated leftover stays live, no request follows the held page, and the run
+     * ends PENDING "stopped" with nothing reported written. While the gate is not yet consulted the
+     * run tombstones the leftover, so the first STOP_FENCE assertion is the intended RED.
+     */
+    @Test fun aRunToldToStopDuringItsLastCalendarPageWritesNothingAndEndsPendingStopped() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val generated = uploadItem(calendar, GENERATED_UID, GENERATED_ICS)
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        // A second SDK session of the same user, used only by this thread while the run's own is busy.
+        val other = com.etebase.client.Account.restore(
+            Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl), session, null)
+        fun otherCalendarItems() = other.collectionManager.let { it.getItemManager(it.fetch(calendar.uid)) }
+        // One item a page: the calendar's listing has two pages, and the second is the run's last read.
+        fake.itemPageSize = 1
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+        val keepGoing = AtomicBoolean(true)
+        val lastPage = fake.hold("GET", Regex(Regex.escape("collection/${calendar.uid}/item/")), skip = 1, answerFirst = true)
+        val executor = Executors.newSingleThreadExecutor()
+        withRestores({
+            val run = executor.submit<BirthdayReconciler.RunResult> {
+                BirthdayReconciler.reconcile(server, username) { keepGoing.get() }
+            }
+            lastPage.awaitArrival()
+
+            // Controls while the last page is held: it is that page, and nothing has been written.
+            val held = checkNotNull(lastPage.request) { "the held request is recorded" }
+            assertEquals("the held request is the calendar's item listing",
+                "GET collection/${calendar.uid}/item/", held.substringBefore('?'))
+            assertTrue("it is a later page, asked from the first page's cursor", held.contains("stoken=i"))
+            assertEquals("no upload before the stop", emptyList<String>(), uploadLines(requestsBefore))
+            assertEquals("no upload dependency before the stop", emptyList<List<String>>(), fake.uploadDeps.drop(since))
+            assertFalse("the leftover is live before the stop", otherCalendarItems().fetch(generated.uid).isDeleted)
+
+            keepGoing.set(false)
+            val requestsAtRelease = fake.requests.size
+            val depsAtRelease = fake.uploadDeps.size
+            lastPage.release()
+            val result = run.get(60, TimeUnit.SECONDS)
+            // What the run sent after the release, taken before this test's own reads below.
+            val afterRelease = fake.requests.toList().drop(requestsAtRelease)
+            val depsAfterRelease = fake.uploadDeps.toList().drop(depsAtRelease)
+            fake.itemPageSize = 50
+
+            val itemMgr = freshItemManager(calendar.uid)
+            assertFalse("STOP_FENCE: nothing is written after the run was told to stop",
+                itemMgr.fetch(generated.uid).isDeleted)
+            assertEquals("STOP_FENCE: no request follows the held page", emptyList<String>(), afterRelease)
+            assertEquals("STOP_FENCE: no upload after the stop", emptyList<List<String>>(), depsAfterRelease)
+            assertEquals("STOP_FENCE: the run ends pending", BirthdayReconciler.RunStatus.PENDING, result.status)
+            assertEquals("STOP_FENCE: because it was stopped", "stopped", result.reason)
+            assertEquals("STOP_FENCE: nothing is reported written", emptyList<String>(), result.written)
+            assertFalse("the ordinary event is not deleted", itemMgr.fetch(ordinary.uid).isDeleted)
+            assertEquals("the ordinary event is unchanged", ORDINARY_ICS, String(itemMgr.fetch(ordinary.uid).content, Charsets.UTF_8))
+            assertEquals("the calendar holds exactly what was seeded", setOf(generated.uid, ordinary.uid), fake.itemUids(calendar.uid))
+        }, { lastPage.release() }, {
+            executor.shutdownNow()
+            check(executor.awaitTermination(30, TimeUnit.SECONDS)) { "the run did not end" }
+        }, { fake.itemPageSize = 50 })
+    }
+
+    /**
+     * Preservation control for the stop gate (plan amendment G2, T4): a post-check listing that
+     * stalls is an incomplete check, PENDING "post-check", as today. The run's post-check inventory
+     * request (its second collection listing) is held; meanwhile the address book's item listing is
+     * made to stall, so only the post-check's listing of it, from the cursor the pass saved, repeats
+     * its cursor. Default gate. Expected to pass before and after the stop gate exists.
+     */
+    @Test fun aPostCheckListingThatStallsStillEndsPendingPostCheck() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+        val postCheckInventory = fake.hold("POST", Regex(Regex.escape("collection/list_multi/")), skip = 1)
+        val executor = Executors.newSingleThreadExecutor()
+        withRestores({
+            val run = executor.submit<BirthdayReconciler.RunResult> { BirthdayReconciler.reconcile(server, username) }
+            postCheckInventory.awaitArrival()
+
+            // Controls while the post-check's inventory request is held: the pass is complete.
+            val held = checkNotNull(postCheckInventory.request) { "the held request is recorded" }
+            assertTrue("the held request is a collection listing from the pass's saved cursor",
+                held.startsWith("POST collection/list_multi/") && held.contains("stoken=s"))
+            assertEquals("the pass wrote its one event, fenced on the calendar root", listOf(listOf(calendar.uid)), fake.uploadDeps.drop(since))
+            assertEquals("the pass listed the address book once", 1,
+                fake.requests.drop(requestsBefore).count { it.startsWith("GET collection/${book.uid}/item/") })
+
+            fake.stallItemList(book.uid, FakeEtebaseServer.Stall.SAME_CURSOR)
+            val requestsAtRelease = fake.requests.size
+            postCheckInventory.release()
+            val result = run.get(60, TimeUnit.SECONDS)
+            val afterRelease = fake.requests.toList().drop(requestsAtRelease)
+            fake.stallItemList(book.uid, null)
+
+            assertTrue("the post-check asked the address book's listing from its saved cursor",
+                afterRelease.any { it.startsWith("GET collection/${book.uid}/item/") && it.contains("stoken=") })
+            assertEquals("CONTROL_STALL: an incomplete post-check ends pending", BirthdayReconciler.RunStatus.PENDING, result.status)
+            assertEquals("CONTROL_STALL: reported as post-check, not as the stalled listing", "post-check", result.reason)
+            assertEquals("CONTROL_STALL: the pass's write is reported", listOf(calendar.uid), result.written)
+            assertEquals("CONTROL_STALL: no upload after the check", emptyList<String>(), afterRelease.filter { UPLOAD.matches(it) })
+            val expected = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(
+                BirthdayCalendar.eventUid(book.uid, contact.uid), "Ada Lovelace", 12, 10))
+            assertEquals("the pass's event stays", listOf(expected),
+                generatedLive(calendar.uid).map { BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8)) })
+            assertEquals("the contact is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+        }, { postCheckInventory.release() }, { fake.stallItemList(book.uid, null) }, {
+            executor.shutdownNow()
+            check(executor.awaitTermination(30, TimeUnit.SECONDS)) { "the run did not end" }
+        })
+    }
+
     // ---- fixture ----
 
     /** The fresh, complete listing's live items whose parsed event UID has the generated form. */
@@ -736,6 +853,36 @@ class BirthdayReconciliationRuntimeTest {
 
     /** The upload request lines since [since], without their query. */
     private fun uploadLines(since: Int) = fake.requests.drop(since).filter { UPLOAD.matches(it) }.map { it.substringBefore('?') }
+
+    /**
+     * Runs [body], then every one of [restores] even if an earlier one fails. A failure of [body]
+     * stays the reported failure, with restore failures attached as suppressed; otherwise the first
+     * restore failure fails the test, with the others suppressed.
+     */
+    private fun withRestores(body: () -> Unit, vararg restores: () -> Unit) {
+        var primary: Throwable? = null
+        try {
+            body()
+        } catch (t: Throwable) {
+            primary = t
+        }
+        val failures = ArrayList<Throwable>()
+        for (restore in restores) {
+            try {
+                restore()
+            } catch (t: Throwable) {
+                failures += t
+            }
+        }
+        primary?.let { failure ->
+            failures.forEach(failure::addSuppressed)
+            throw failure
+        }
+        failures.firstOrNull()?.let { failure ->
+            failures.drop(1).forEach(failure::addSuppressed)
+            throw failure
+        }
+    }
 
     companion object {
         private val UPLOAD = Regex("POST collection/[^/]+/item/(transaction|batch)/.*")
