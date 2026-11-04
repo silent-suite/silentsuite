@@ -1119,6 +1119,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <span id="defaultServerStatus" role="status" aria-live="polite" style="font-size:12px;color:#555;"></span>
             </div>
         </section>
+        {{START_AT_LOGIN_SECTION}}
         <script>
             (function() {
                 var sel = document.getElementById('syncInterval');
@@ -1403,6 +1404,58 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     });
                 return defaultServerSave.pending;
             }
+            // Desktop start at login (present only in the desktop app). One change at
+            // a time; Saved only after a 2xx answer with valid startAtLogin metadata;
+            // any failure puts the last acknowledged state back.
+            var startAtLoginSave = { pending: null };
+            function saveStartAtLogin() {
+                var box = document.getElementById('startAtLoginToggle');
+                var st = document.getElementById('startAtLoginStatus');
+                if (!box || !st) return null;
+                var previous = box.getAttribute('data-saved') === 'true';
+                var wanted = box.checked;
+                if (startAtLoginSave.pending) {
+                    box.checked = previous;
+                    return startAtLoginSave.pending;
+                }
+                if (wanted === previous) return null;
+                if (wanted && box.getAttribute('data-editable') !== 'true') {
+                    box.checked = previous;  // turning on needs the installed app
+                    return null;
+                }
+                box.disabled = true;
+                st.textContent = 'Saving...';
+                st.style.color = '#555';
+                startAtLoginSave.pending = fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({startAtLogin: wanted})})
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        var state = data && data.startAtLogin;
+                        if (!state || typeof state.value !== 'boolean' || typeof state.editable !== 'boolean') {
+                            throw new Error('unconfirmed');
+                        }
+                        box.setAttribute('data-saved', state.value ? 'true' : 'false');
+                        box.setAttribute('data-editable', state.editable ? 'true' : 'false');
+                        // States what was saved, from the acknowledged value, and stays until the next change.
+                        st.textContent = state.value ? 'Saved: start at login is on.' : 'Saved: start at login is off.';
+                        st.style.color = '#555';
+                    })
+                    .catch(function() {
+                        st.textContent = 'Not saved: start at login could not be changed.';
+                        st.style.color = '#ff8a8a';
+                    })
+                    .then(function() {
+                        startAtLoginSave.pending = null;
+                        var saved = box.getAttribute('data-saved') === 'true';
+                        box.checked = saved;
+                        // Off is always allowed for an existing entry; on only when editable.
+                        box.disabled = !(box.getAttribute('data-editable') === 'true' || saved);
+                    });
+                return startAtLoginSave.pending;
+            }
+            (function() {
+                var box = document.getElementById('startAtLoginToggle');
+                if (box) box.addEventListener('change', saveStartAtLogin);
+            })();
             (function() {
                 var input = document.getElementById('defaultServerUrl');
                 var button = document.getElementById('defaultServerSave');
@@ -1587,7 +1640,43 @@ def _render_network_card() -> str:
     return "\n".join(parts)
 
 
-def _render_dashboard():
+def _render_start_at_login(start_at_login) -> str:
+    """The desktop app's start-at-login toggle, or nothing outside the desktop app.
+
+    ``start_at_login`` is the runtime-owned DesktopStartAtLogin from the request
+    environ (see _desktop_start_at_login), never anything the client sent. The
+    checkbox shows the current registration; it can be turned on only when
+    editable (a stable installed app). An existing entry can always be turned
+    off, which the API also allows.
+    """
+    if start_at_login is None:
+        return ""
+    state = start_at_login.state()
+    value, editable = bool(state["value"]), bool(state["editable"])
+    unavailable = "" if editable else (
+        '<p id="startAtLoginUnavailable" style="font-size:13px;color:#9ca3af;margin-top:8px;">'
+        "Start at login is available only in the installed desktop app.</p>"
+    )
+    return (
+        '<section id="startAtLoginSection" class="status-card" aria-labelledby="startAtLoginHeading">'
+        '<h3 id="startAtLoginHeading" style="font-size:14px;color:#888;margin-bottom:8px;'
+        'text-transform:uppercase;letter-spacing:0.5px;">Start at login</h3>'
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">'
+        f'<input type="checkbox" id="startAtLoginToggle" data-saved="{"true" if value else "false"}" '
+        f'data-editable="{"true" if editable else "false"}" '
+        'aria-describedby="startAtLoginHelp startAtLoginUnavailable"'
+        f'{" checked" if value else ""}{"" if (editable or value) else " disabled"}>'
+        '<label for="startAtLoginToggle" style="font-size:13px;color:#ccc;">Start at login</label>'
+        '<span id="startAtLoginStatus" role="status" aria-live="polite" style="font-size:12px;color:#555;"></span>'
+        "</div>"
+        '<p id="startAtLoginHelp" style="font-size:13px;color:#9ca3af;margin-top:8px;">'
+        "Opens SilentSuite Bridge in the background when you sign in to this computer.</p>"
+        f"{unavailable}"
+        "</section>"
+    )
+
+
+def _render_dashboard(start_at_login=None):
     """Render the dashboard HTML with current status."""
     from .. import __version__
 
@@ -1789,6 +1878,7 @@ def _render_dashboard():
             '<p id="defaultServerManaged" style="font-size:13px;color:#9ca3af;margin-bottom:10px;">'
             f"Set by {esc(managed_by)}, so it can't be changed here.</p>"
         )
+    page = page.replace("{{START_AT_LOGIN_SECTION}}", _render_start_at_login(start_at_login))
     page = page.replace("{{DEFAULT_SERVER_MANAGED_NOTE}}", managed_note)
     page = page.replace("{{DEFAULT_SERVER_URL}}", esc(new_sign_in["value"]))
     page = page.replace("{{DEFAULT_SERVER_EDITABLE}}", "true" if new_sign_in["editable"] else "false")
@@ -1889,7 +1979,8 @@ class Web(BaseWeb):
             return denial
 
         if path in ("", "/", "/.web", "/.web/"):
-            html = _render_dashboard()
+            # Desktop app only: its own start-at-login context from the environ.
+            html = _render_dashboard(start_at_login=_desktop_start_at_login(environ))
             return (
                 200,
                 {"Content-Type": "text/html; charset=utf-8"},
