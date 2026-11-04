@@ -182,26 +182,52 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:orientation="vertical">
-                            <LinearLayout android:id="@+id/caldav_status_row" style="@style/Widget.AppTheme.Dashboard.StatusRow" android:layout_width="match_parent" android:layout_height="wrap_content">
-                            <ImageView android:id="@+id/caldav_status_icon" style="@style/Widget.AppTheme.Dashboard.StatusIcon" android:src="@drawable/ic_event_light" />
-                            <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
-                                <TextView style="@style/TextAppearance.Material3.TitleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/settings_caldav" />
-                                <TextView android:id="@+id/caldav_status" style="@style/TextAppearance.Material3.BodyMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_status_checking" />
-                                <TextView android:id="@+id/caldav_status_detail" style="@style/TextAppearance.Material3.BodySmall" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_calendar_destination" />
+                            <LinearLayout
+                                android:id="@+id/caldav_status_row"
+                                style="@style/Widget.AppTheme.Dashboard.StatusRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content">
+                                <ImageView
+                                    android:id="@+id/caldav_status_icon"
+                                    style="@style/Widget.AppTheme.Dashboard.StatusIcon"
+                                    android:src="@drawable/ic_event_light" />
+                                <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
+                                    <TextView
+                                        style="@style/TextAppearance.Material3.TitleMedium"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/settings_caldav" />
+                                    <TextView
+                                        android:id="@+id/caldav_status"
+                                        style="@style/TextAppearance.Material3.BodyMedium"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/dashboard_status_checking" />
+                                    <TextView
+                                        android:id="@+id/caldav_status_detail"
+                                        style="@style/TextAppearance.Material3.BodySmall"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/dashboard_calendar_destination" />
+                                </LinearLayout>
+                                <ProgressBar
+                                    android:id="@+id/caldav_refreshing"
+                                    style="?android:attr/progressBarStyleSmall"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:visibility="gone" />
                             </LinearLayout>
-                            <ProgressBar android:id="@+id/caldav_refreshing" style="?android:attr/progressBarStyleSmall" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/caldav_open"
+                                style="@style/Widget.AppTheme.Material3.Button.Text"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="end"
+                                android:layout_marginEnd="@dimen/spacing_16"
+                                android:layout_marginBottom="@dimen/spacing_8"
+                                android:text="@string/dashboard_open_app"
+                                android:visibility="gone" />
                         </LinearLayout>
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/caldav_open"
-                            style="@style/Widget.AppTheme.Material3.Button.Text"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="end"
-                            android:layout_marginEnd="@dimen/spacing_16"
-                            android:layout_marginBottom="@dimen/spacing_8"
-                            android:text="@string/dashboard_open_app"
-                            android:visibility="gone" />
-                    </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 
                     <com.google.android.material.card.MaterialCardView
@@ -214,26 +240,52 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:orientation="vertical">
-                            <LinearLayout android:id="@+id/carddav_status_row" style="@style/Widget.AppTheme.Dashboard.StatusRow" android:layout_width="match_parent" android:layout_height="wrap_content">
-                            <ImageView android:id="@+id/carddav_status_icon" style="@style/Widget.AppTheme.Dashboard.StatusIcon" android:src="@drawable/ic_people_light" />
-                            <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
-                                <TextView style="@style/TextAppearance.Material3.TitleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/settings_carddav" />
-                                <TextView android:id="@+id/carddav_status" style="@style/TextAppearance.Material3.BodyMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_status_checking" />
-                                <TextView android:id="@+id/carddav_status_detail" style="@style/TextAppearance.Material3.BodySmall" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_contacts_destination" />
+                            <LinearLayout
+                                android:id="@+id/carddav_status_row"
+                                style="@style/Widget.AppTheme.Dashboard.StatusRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content">
+                                <ImageView
+                                    android:id="@+id/carddav_status_icon"
+                                    style="@style/Widget.AppTheme.Dashboard.StatusIcon"
+                                    android:src="@drawable/ic_people_light" />
+                                <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
+                                    <TextView
+                                        style="@style/TextAppearance.Material3.TitleMedium"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/settings_carddav" />
+                                    <TextView
+                                        android:id="@+id/carddav_status"
+                                        style="@style/TextAppearance.Material3.BodyMedium"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/dashboard_status_checking" />
+                                    <TextView
+                                        android:id="@+id/carddav_status_detail"
+                                        style="@style/TextAppearance.Material3.BodySmall"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/dashboard_contacts_destination" />
+                                </LinearLayout>
+                                <ProgressBar
+                                    android:id="@+id/carddav_refreshing"
+                                    style="?android:attr/progressBarStyleSmall"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:visibility="gone" />
                             </LinearLayout>
-                            <ProgressBar android:id="@+id/carddav_refreshing" style="?android:attr/progressBarStyleSmall" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/carddav_open"
+                                style="@style/Widget.AppTheme.Material3.Button.Text"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="end"
+                                android:layout_marginEnd="@dimen/spacing_16"
+                                android:layout_marginBottom="@dimen/spacing_8"
+                                android:text="@string/dashboard_open_app"
+                                android:visibility="gone" />
                         </LinearLayout>
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/carddav_open"
-                            style="@style/Widget.AppTheme.Material3.Button.Text"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="end"
-                            android:layout_marginEnd="@dimen/spacing_16"
-                            android:layout_marginBottom="@dimen/spacing_8"
-                            android:text="@string/dashboard_open_app"
-                            android:visibility="gone" />
-                    </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 
                     <com.google.android.material.card.MaterialCardView
@@ -246,26 +298,52 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:orientation="vertical">
-                            <LinearLayout android:id="@+id/taskdav_status_row" style="@style/Widget.AppTheme.Dashboard.StatusRow" android:layout_width="match_parent" android:layout_height="wrap_content">
-                            <ImageView android:id="@+id/taskdav_status_icon" style="@style/Widget.AppTheme.Dashboard.StatusIcon" android:src="@drawable/ic_task_light" />
-                            <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
-                                <TextView style="@style/TextAppearance.Material3.TitleMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/settings_taskdav" />
-                                <TextView android:id="@+id/taskdav_status" style="@style/TextAppearance.Material3.BodyMedium" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_status_checking" />
-                                <TextView android:id="@+id/taskdav_status_detail" style="@style/TextAppearance.Material3.BodySmall" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/dashboard_tasks_destination" />
+                            <LinearLayout
+                                android:id="@+id/taskdav_status_row"
+                                style="@style/Widget.AppTheme.Dashboard.StatusRow"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content">
+                                <ImageView
+                                    android:id="@+id/taskdav_status_icon"
+                                    style="@style/Widget.AppTheme.Dashboard.StatusIcon"
+                                    android:src="@drawable/ic_task_light" />
+                                <LinearLayout style="@style/Widget.AppTheme.Dashboard.StatusTextGroup">
+                                    <TextView
+                                        style="@style/TextAppearance.Material3.TitleMedium"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/settings_taskdav" />
+                                    <TextView
+                                        android:id="@+id/taskdav_status"
+                                        style="@style/TextAppearance.Material3.BodyMedium"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/dashboard_status_checking" />
+                                    <TextView
+                                        android:id="@+id/taskdav_status_detail"
+                                        style="@style/TextAppearance.Material3.BodySmall"
+                                        android:layout_width="match_parent"
+                                        android:layout_height="wrap_content"
+                                        android:text="@string/dashboard_tasks_destination" />
+                                </LinearLayout>
+                                <ProgressBar
+                                    android:id="@+id/taskdav_refreshing"
+                                    style="?android:attr/progressBarStyleSmall"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:visibility="gone" />
                             </LinearLayout>
-                            <ProgressBar android:id="@+id/taskdav_refreshing" style="?android:attr/progressBarStyleSmall" android:layout_width="wrap_content" android:layout_height="wrap_content" android:visibility="gone" />
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/taskdav_open"
+                                style="@style/Widget.AppTheme.Material3.Button.Text"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="end"
+                                android:layout_marginEnd="@dimen/spacing_16"
+                                android:layout_marginBottom="@dimen/spacing_8"
+                                android:text="@string/dashboard_open_app"
+                                android:visibility="gone" />
                         </LinearLayout>
-                        <com.google.android.material.button.MaterialButton
-                            android:id="@+id/taskdav_open"
-                            style="@style/Widget.AppTheme.Material3.Button.Text"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="end"
-                            android:layout_marginEnd="@dimen/spacing_16"
-                            android:layout_marginBottom="@dimen/spacing_8"
-                            android:text="@string/dashboard_open_app"
-                            android:visibility="gone" />
-                    </LinearLayout>
                     </com.google.android.material.card.MaterialCardView>
 
                     <com.google.android.material.card.MaterialCardView
