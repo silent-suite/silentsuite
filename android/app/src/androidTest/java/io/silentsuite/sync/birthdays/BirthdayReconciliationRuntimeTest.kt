@@ -969,6 +969,109 @@ class BirthdayReconciliationRuntimeTest {
         })
     }
 
+    /**
+     * The stop gate before the first read (plan amendment G2, T3, C1/C2): the run's gate answers false from
+     * the start. Nothing may be sent at all, not even the inventory listing, and the run ends PENDING
+     * "stopped" with nothing reported written. The fixture is the one
+     * [aCompleteEmptySourceTombstonesOnlyGeneratedEventsWithAFencedWrite] uses (with the gate open the run
+     * tombstones the generated leftover), so a run that reads here is one that would write. Today the run
+     * reads everything first and only its chunk check (C5) stops it, so the first READ_STOP assertion is the
+     * request trace.
+     */
+    @Test fun aRunThatMayNotContinueFromTheStartSendsNoRequest() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val generated = uploadItem(calendar, GENERATED_UID, GENERATED_ICS)
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val collections = fake.collectionUids()
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+
+        val result = BirthdayReconciler.reconcile(server, username) { false }
+        // What the run sent, taken before this test's own reads below.
+        val sent = fake.requests.toList().drop(requestsBefore)
+        val deps = fake.uploadDeps.toList().drop(since)
+
+        assertEquals("READ_STOP: a run that may not continue sends no request at all", emptyList<String>(), sent)
+        assertEquals("READ_STOP: no upload", emptyList<List<String>>(), deps)
+        assertEquals("READ_STOP: the run ends pending", BirthdayReconciler.RunStatus.PENDING, result.status)
+        assertEquals("READ_STOP: because it was stopped", "stopped", result.reason)
+        assertEquals("READ_STOP: nothing is reported written", emptyList<String>(), result.written)
+        val itemMgr = freshItemManager(calendar.uid)
+        assertFalse("the generated leftover is not deleted", itemMgr.fetch(generated.uid).isDeleted)
+        assertEquals("the generated leftover is unchanged", GENERATED_ICS, String(itemMgr.fetch(generated.uid).content, Charsets.UTF_8))
+        assertFalse("the ordinary event is not deleted", itemMgr.fetch(ordinary.uid).isDeleted)
+        assertEquals("the ordinary event is unchanged", ORDINARY_ICS, String(itemMgr.fetch(ordinary.uid).content, Charsets.UTF_8))
+        assertEquals("the active marker is kept", MARKER_ACTIVE, String(server.collectionManager.fetch(calendar.uid).content, Charsets.UTF_8))
+        assertEquals("the calendar holds exactly what was seeded", setOf(generated.uid, ordinary.uid), fake.itemUids(calendar.uid))
+        assertEquals("no collection is created or removed", collections, fake.collectionUids())
+    }
+
+    /**
+     * The stop gate during the post-check (plan amendment G2, T3, C2 and the post-check's own stop): the gate
+     * stays open through the pass, which writes the contact's event. The post-check's inventory request (the
+     * run's second collection listing, from the cursor the pass saved) is held; then the gate is turned false
+     * and the request released. From then on the run may send nothing more (no listing of the address book
+     * from its cursor), and it ends PENDING "stopped", neither "post-check" nor DONE, with the pass's write
+     * still reported. A post-check listing that stalls stays "post-check"
+     * ([aPostCheckListingThatStallsStillEndsPendingPostCheck]). Today the post-check reads on and the run ends
+     * DONE, so the first READ_STOP assertion is the request trace.
+     */
+    @Test fun aRunToldToStopDuringItsPostCheckSendsNothingMoreAndEndsPendingStopped() {
+        val calendar = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE))
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val book = soleOwned(uploadCollection(Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", ""))
+        val contact = uploadItem(book, "contact-ada", ADA_VCARD)
+        val transactionPath = "POST collection/${calendar.uid}/item/transaction/"
+        val since = fake.uploadDeps.size
+        val requestsBefore = fake.requests.size
+        val keepGoing = AtomicBoolean(true)
+        val postCheckInventory = fake.hold("POST", Regex(Regex.escape("collection/list_multi/")), skip = 1)
+        val executor = Executors.newSingleThreadExecutor()
+        withRestores({
+            val run = executor.submit<BirthdayReconciler.RunResult> {
+                BirthdayReconciler.reconcile(server, username) { keepGoing.get() }
+            }
+            postCheckInventory.awaitArrival()
+
+            // Controls while the post-check's inventory request is held: the pass is complete, and it wrote.
+            val held = checkNotNull(postCheckInventory.request) { "the held request is recorded" }
+            assertTrue("the held request is a collection listing from the pass's saved cursor",
+                held.startsWith("POST collection/list_multi/") && held.contains("stoken=s"))
+            assertEquals("the pass wrote its one event, as one transaction into the calendar",
+                listOf(transactionPath), uploadLines(requestsBefore))
+            assertEquals("fenced on the calendar root", listOf(listOf(calendar.uid)), fake.uploadDeps.drop(since))
+            assertEquals("the pass listed the address book once", 1,
+                fake.requests.drop(requestsBefore).count { it.startsWith("GET collection/${book.uid}/item/") })
+
+            keepGoing.set(false)
+            val requestsAtRelease = fake.requests.size
+            val depsAtRelease = fake.uploadDeps.size
+            postCheckInventory.release()
+            val result = run.get(60, TimeUnit.SECONDS)
+            // What the run sent after the release, taken before this test's own reads below.
+            val afterRelease = fake.requests.toList().drop(requestsAtRelease)
+            val depsAfterRelease = fake.uploadDeps.toList().drop(depsAtRelease)
+
+            assertEquals("READ_STOP: no request follows the held post-check listing", emptyList<String>(), afterRelease)
+            assertEquals("READ_STOP: no upload after the stop", emptyList<List<String>>(), depsAfterRelease)
+            assertEquals("READ_STOP: the run ends pending", BirthdayReconciler.RunStatus.PENDING, result.status)
+            assertEquals("READ_STOP: because it was stopped, not as an incomplete post-check", "stopped", result.reason)
+            assertEquals("READ_STOP: the pass's write is still reported", listOf(calendar.uid), result.written)
+            val expected = BirthdayCalendar.fieldsOf(BirthdayCalendar.BirthdayEvent(
+                BirthdayCalendar.eventUid(book.uid, contact.uid), "Ada Lovelace", 12, 10))
+            assertEquals("the pass's event stays", listOf(expected),
+                generatedLive(calendar.uid).map { BirthdayCalendar.eventFields(String(it.content, Charsets.UTF_8)) })
+            val calendarItems = freshItemManager(calendar.uid)
+            assertFalse("the ordinary event is not deleted", calendarItems.fetch(ordinary.uid).isDeleted)
+            assertEquals("the ordinary event is unchanged", ORDINARY_ICS, String(calendarItems.fetch(ordinary.uid).content, Charsets.UTF_8))
+            assertEquals("the active marker is kept", MARKER_ACTIVE, String(server.collectionManager.fetch(calendar.uid).content, Charsets.UTF_8))
+            assertEquals("the contact is untouched", setOf(contact.uid), fake.itemUids(book.uid))
+        }, { postCheckInventory.release() }, {
+            executor.shutdownNow()
+            check(executor.awaitTermination(30, TimeUnit.SECONDS)) { "the run did not end" }
+        })
+    }
+
     // ---- fixture ----
 
     /** The fresh, complete listing's live items whose parsed event UID has the generated form. */

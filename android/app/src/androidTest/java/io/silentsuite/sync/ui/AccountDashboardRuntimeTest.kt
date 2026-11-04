@@ -551,23 +551,29 @@ class AccountDashboardRuntimeTest {
             }
 
             val store = SyncStatusStore(context)
+            val upToDate = armTransitionWatch(scenario) { it == "Up to date" }
             assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, 100))
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.caldav_status) { it == "Up to date" }
             scenario.onActivity { activity ->
                 assertEquals("Up to date", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
+                val mode = upToDate.liveRegion()
+                upToDate.detach()
+                assertEquals("the render that showed \"Up to date\" announced it",
+                    ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE, mode)
             }
 
+            val network = armTransitionWatch(scenario) { it == context.getString(R.string.dashboard_status_network) }
             assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
                 SyncStatusStore.FailureCategory.NETWORK, 200))
             scenario.onActivity { it.refresh() }
             waitForText(scenario, R.id.caldav_status) { it == context.getString(R.string.dashboard_status_network) }
             scenario.onActivity { activity ->
                 assertEquals(activity.getString(R.string.dashboard_status_network), activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
+                val mode = network.liveRegion()
+                network.detach()
+                assertEquals("the render that showed the network failure announced it",
+                    ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE, mode)
             }
 
             scenario.recreate()
@@ -1189,6 +1195,45 @@ class AccountDashboardRuntimeTest {
             android.os.SystemClock.sleep(50)
         }
         throw AssertionError("Dashboard text did not reach expected state")
+    }
+
+    /**
+     * One-shot witness of a dashboard transition. `AccountActivity.renderDashboard` sets the Calendar row,
+     * then the status row's live-region mode, then the headline text, in one main-thread pass; this watcher
+     * on the headline keeps the mode of the first render whose Calendar row text matches [predicate], and
+     * ignores every later render (a reload of an unchanged state renders NONE by design and must not erase
+     * the transition's own mode). Created and detached on the main thread through `onActivity`.
+     */
+    private class TransitionWatch(
+        private val headline: TextView,
+        private val calendar: TextView,
+        private val row: View,
+        private val predicate: (String) -> Boolean,
+    ) : TextWatcher {
+        private val mode = AtomicReference<Int?>(null)
+        override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+        override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+            if (mode.get() == null && predicate(calendar.text.toString())) mode.set(ViewCompat.getAccessibilityLiveRegion(row))
+        }
+        override fun afterTextChanged(text: Editable?) = Unit
+
+        /** The mode the first matching render gave the status row, or null if no such render happened. */
+        fun liveRegion(): Int? = mode.get()
+
+        fun detach() = headline.removeTextChangedListener(this)
+    }
+
+    /** Arms a [TransitionWatch] before the change that should produce the transition. */
+    private fun armTransitionWatch(scenario: ActivityScenario<AccountActivity>, predicate: (String) -> Boolean): TransitionWatch {
+        val armed = AtomicReference<TransitionWatch>()
+        scenario.onActivity { activity ->
+            val headline = activity.findViewById<TextView>(R.id.dashboard_overall_status)
+            val watch = TransitionWatch(headline, activity.findViewById(R.id.caldav_status),
+                activity.findViewById(R.id.dashboard_status_row), predicate)
+            headline.addTextChangedListener(watch)
+            armed.set(watch)
+        }
+        return checkNotNull(armed.get())
     }
 
     private fun assertNoGenericAttention(scenario: ActivityScenario<AccountActivity>) {
