@@ -191,7 +191,7 @@ class NotesSyncRunnerClearedStoreTest {
         val runner = File("src/main/java/io/silentsuite/sync/notes/NotesSyncRunner.kt").readText()
             .replace("\r\n", "\n")
         val push = runner.substringAfter("private fun pushPending(", "").substringBefore("\n    }\n")
-        assertTrue(push.contains("val waiting = waitingIn(store) ?: return null\n        if (nothingToPush(waiting)) {"))
+        assertTrue(push.contains("val waiting = waitingIn(store) ?: return null\n        if (nothingToPush(waiting)) return null\n"))
     }
 
     @Test fun `a store that was cleared in full has nothing to push either, also once it is dropped`() {

@@ -33,6 +33,7 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -584,6 +585,9 @@ class AccountDashboardRuntimeTest {
         }
     }
 
+    /** One dashboard delivery as rendered: its count, the calendar row status and the status-row live region. */
+    private data class DashboardDelivery(val count: Int, val calendarStatus: String, val liveRegion: Int)
+
     private val generation = "dashboard-generation"
     private val launchedCollectionIntents = mutableListOf<Intent>()
     private val syncRequests = mutableListOf<Pair<Account, String?>>()
@@ -592,39 +596,92 @@ class AccountDashboardRuntimeTest {
     fun truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation() {
         withDashboardAccount { context, account, scenario ->
             var deliveryCount = 0
-            scenario.onActivity { activity ->
-                assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
-                assertEquals("First sync pending", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertFalse(activity.findViewById<View>(R.id.subscription_card).isShown)
-                deliveryCount = activity.accountInfoDeliveryCount
-                activity.refresh()
-            }
-            waitForDeliveryAfter(scenario, deliveryCount)
-            scenario.onActivity { activity ->
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
-            }
+            // The ViewModel also loads unprompted (service bind, platform sync-status callbacks). Such a
+            // delivery repeats the same state, so the deduper rightly sets the live region to NONE and
+            // can replace the transition's POLITE before the test reads the row. Record every delivery
+            // instead: renderDashboard sets the live region just before it writes the headline, so this
+            // watcher reads the calendar status, live region and delivery count of one delivery together.
+            val deliveries = CopyOnWriteArrayList<DashboardDelivery>()
+            val recorder = AtomicReference<TextWatcher>()
+            // The watcher captures this Activity: remove it and drop the reference before recreation,
+            // also when a phase fails. A cleanup failure never replaces the phase's own failure.
+            var failure: Throwable? = null
+            try {
+                scenario.onActivity { activity ->
+                    assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
+                    assertEquals("First sync pending", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                    assertFalse(activity.findViewById<View>(R.id.subscription_card).isShown)
+                    val watcher = object : TextWatcher {
+                        override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                            deliveries += DashboardDelivery(
+                                activity.accountInfoDeliveryCount,
+                                activity.findViewById<TextView>(R.id.caldav_status).text.toString(),
+                                ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)),
+                            )
+                        }
+                        override fun afterTextChanged(text: Editable?) = Unit
+                    }
+                    activity.findViewById<TextView>(R.id.dashboard_overall_status).addTextChangedListener(watcher)
+                    recorder.set(watcher)
+                    deliveryCount = activity.accountInfoDeliveryCount
+                    activity.refresh()
+                }
+                waitForDeliveryAfter(scenario, deliveryCount)
+                scenario.onActivity { activity ->
+                    assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE,
+                        ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
+                }
 
-            val store = SyncStatusStore(context)
-            assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, 100))
-            scenario.onActivity { it.refresh() }
-            waitForText(scenario, R.id.caldav_status) { it == "Up to date" }
-            scenario.onActivity { activity ->
-                assertEquals("Up to date", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
-            }
+                // The first delivery showing the new calendar state is the meaningful transition and must
+                // announce; every later delivery of that same state must not. The current row must match the
+                // latest recorded delivery, so no delivery escaped the record.
+                fun assertTransitionAnnouncedOnceThenDeduped(calendarStatus: String) {
+                    waitUntil("a dashboard delivery showing $calendarStatus") {
+                        deliveries.any { it.calendarStatus == calendarStatus }
+                    }
+                    scenario.onActivity { activity ->
+                        val recorded = deliveries.toList()
+                        val transition = recorded.indexOfFirst { it.calendarStatus == calendarStatus }
+                        assertTrue("$calendarStatus must follow a delivery with another calendar state",
+                            transition > 0 && recorded[transition - 1].calendarStatus != calendarStatus)
+                        assertEquals("$calendarStatus transition delivery #${recorded[transition].count} must announce",
+                            ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE, recorded[transition].liveRegion)
+                        recorded.drop(transition + 1).forEach {
+                            assertEquals("repeat delivery #${it.count} keeps $calendarStatus", calendarStatus, it.calendarStatus)
+                            assertEquals("repeat delivery #${it.count} of $calendarStatus must not announce again",
+                                ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE, it.liveRegion)
+                        }
+                        assertEquals(calendarStatus, activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                        assertEquals("the latest delivery was recorded", activity.accountInfoDeliveryCount, recorded.last().count)
+                        assertEquals(recorded.last().liveRegion,
+                            ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
+                    }
+                }
 
-            assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
-                SyncStatusStore.FailureCategory.NETWORK, 200))
-            scenario.onActivity { it.refresh() }
-            waitForText(scenario, R.id.caldav_status) { it == context.getString(R.string.dashboard_status_network) }
-            scenario.onActivity { activity ->
-                assertEquals(activity.getString(R.string.dashboard_status_network), activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
-            }
+                val store = SyncStatusStore(context)
+                assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, 100))
+                scenario.onActivity { it.refresh() }
+                assertTransitionAnnouncedOnceThenDeduped("Up to date")
 
+                assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
+                    SyncStatusStore.FailureCategory.NETWORK, 200))
+                scenario.onActivity { it.refresh() }
+                assertTransitionAnnouncedOnceThenDeduped(context.getString(R.string.dashboard_status_network))
+            } catch (e: Throwable) {
+                failure = e
+                throw e
+            } finally {
+                try {
+                    recorder.getAndSet(null)?.let { watcher ->
+                        scenario.onActivity {
+                            it.findViewById<TextView>(R.id.dashboard_overall_status).removeTextChangedListener(watcher)
+                        }
+                    }
+                } catch (cleanup: Throwable) {
+                    failure?.addSuppressed(cleanup) ?: throw cleanup
+                }
+            }
             scenario.recreate()
             waitForModel(scenario)
             scenario.onActivity { activity ->

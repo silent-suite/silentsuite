@@ -29,8 +29,10 @@
                 android:id="@+id/toolbar"
                 android:layout_width="match_parent"
                 android:layout_height="?attr/actionBarSize"
-                android:background="?attr/colorPrimary"
-                app:titleTextColor="@color/semantic_on_primary" />
+                android:background="@color/semantic_system_bar"
+                android:theme="@style/ThemeOverlay.AppTheme.TopBar"
+                app:titleTextColor="@color/semantic_on_system_bar"
+                app:navigationIconTint="@color/semantic_on_system_bar" />
         </com.google.android.material.appbar.AppBarLayout>
 
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout

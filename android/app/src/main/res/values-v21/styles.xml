@@ -15,11 +15,13 @@
         <!-- Solid navy status bar matches the always-navy toolbar so the system
              time/battery/connectivity icons (light by default) stay readable in
              both light and dark themes. Previously transparent, which made light
-             status-bar icons invisible on the light offwhite background. -->
+             status-bar icons invisible on the light offwhite background.
+             This qualifier wins by day only (values-night outranks it at night), so the
+             navigation bar takes the light page colour with dark native glyphs. -->
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
-        <item name="android:navigationBarColor">@color/semantic_system_bar</item>
+        <item name="android:navigationBarColor">@color/semantic_background</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 
 </resources>
