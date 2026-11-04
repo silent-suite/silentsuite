@@ -109,13 +109,16 @@ object BirthdayReconciler {
      * [RunStatus.PENDING] "post-check", and a run that still meets a conflict or a changing source
      * after its last pass is [RunStatus.PENDING] "conflict" or "post-check" for a later run.
      *
-     * [mayContinue] is asked at three write boundaries: before each fenced chunk write and before
-     * each conditional retirement update is handed to the SDK (each before that calendar is recorded
-     * in [RunResult.written]), and after a retirement update returned, before its read-back. When it
-     * answers false, nothing more is sent and the run ends [RunStatus.PENDING] "stopped"; a retirement
-     * that already landed stays recorded in [RunResult.written], and its generated leftovers are left
-     * for a later repair. It is not asked before other reads or the post-check, and a request already
-     * handed to the SDK is not called back: these are write-boundary checks, not a full cancellation
+     * [mayContinue] is asked before each request the run would hand to the SDK: at the start of every
+     * pass (reruns included), before every page of every listing (the collection inventory, member
+     * lists, calendar and address-book items, and the post-check's listings), before each fenced chunk
+     * write and before each conditional retirement update (each before that calendar is recorded in
+     * [RunResult.written]), and after a retirement update returned, before its read-back. When it
+     * answers false, nothing more is sent and the run ends [RunStatus.PENDING] "stopped", also from
+     * inside the post-check; a write or retirement that already landed stays recorded in
+     * [RunResult.written], and generated leftovers are left for a later repair. A request already
+     * handed to the SDK is not called back, and the answer can change right after it is read: these
+     * checks bound what a run sends after it is told to stop; they are no cancellation or atomicity
      * guarantee.
      */
     fun reconcile(etebase: com.etebase.client.Account, username: String, mayContinue: () -> Boolean = { true }): RunResult {
@@ -123,7 +126,7 @@ object BirthdayReconciler {
         return try {
             passes(etebase.collectionManager, username, written, mayContinue)
         } catch (e: Stopped) {
-            Logger.log.info("Birthdays reconcile stopped at a write boundary")
+            Logger.log.info("Birthdays reconcile stopped at a request boundary")
             RunResult(RunStatus.PENDING, written.sorted(), "stopped")
         } catch (e: Stop) {
             Logger.log.info("Birthdays reconcile stopped: ${e.reason}")
@@ -141,10 +144,11 @@ object BirthdayReconciler {
     private class Stop(val status: RunStatus, val reason: String) : Exception(reason)
 
     /**
-     * The [reconcile] gate answered false at a write boundary: before a fenced chunk write
-     * ([commitFenced]), before a conditional retirement update, or before a landed retirement's
-     * read-back (both in [pass], outside the retirement update's own catch). Nothing more is sent. Not
-     * a [Stop], and nothing between there and [reconcile] catches it ([passes] catches only [Conflict]).
+     * The [reconcile] gate answered false before a request: at the start of a pass ([pass]), before a
+     * listing page ([pagedListing]), before a fenced chunk write ([commitFenced]), or before a
+     * conditional retirement update or a landed retirement's read-back (in [pass], outside the
+     * retirement update's own catch). Nothing more is sent. Not a [Stop]: [passes] catches only
+     * [Conflict], and [postCheck] rethrows it ahead of its own catch, so it always reaches [reconcile].
      */
     private class Stopped : Exception("stopped")
 
@@ -194,7 +198,7 @@ object BirthdayReconciler {
                 continue
             }
             if (result.status != RunStatus.DONE) return result
-            when (postCheck(colMgr, source)) {
+            when (postCheck(colMgr, source, mayContinue)) {
                 SourceCheck.STABLE -> return result
                 SourceCheck.INCOMPLETE -> return RunResult(RunStatus.PENDING, written.sorted(), "post-check")
                 SourceCheck.CHANGED -> {
@@ -208,7 +212,9 @@ object BirthdayReconciler {
 
     private fun pass(colMgr: CollectionManager, username: String, written: MutableSet<String>,
         mayContinue: () -> Boolean): Pair<RunResult, SourceRead> {
-        val inventoryListing = pagedListing("incomplete-inventory", PagedListingGuard.MAX_COLLECTION_PAGES, null) { cursor ->
+        // C1: before the pass sends anything, reruns included.
+        if (!mayContinue()) throw Stopped()
+        val inventoryListing = pagedListing("incomplete-inventory", PagedListingGuard.MAX_COLLECTION_PAGES, null, mayContinue) { cursor ->
             colMgr.list(INVENTORY_TYPES, FetchOptions().stoken(cursor)).let { Page(it.data.toList(), it.stoken, it.isDone) }
         }
         val inventory = inventoryListing.entries
@@ -236,7 +242,7 @@ object BirthdayReconciler {
                 }
             } else if (state == BirthdayCalendar.MarkerState.ACTIVE && calendar.accessLevel == CollectionAccessLevel.Admin) {
                 val memberManager = colMgr.getMemberManager(calendar)
-                val members = paged("incomplete-members", PagedListingGuard.MAX_COLLECTION_PAGES) { cursor ->
+                val members = paged("incomplete-members", PagedListingGuard.MAX_COLLECTION_PAGES, mayContinue) { cursor ->
                     memberManager.list(FetchOptions().iterator(cursor)).let { page -> Page(page.data.map { it.username }, page.stoken, page.isDone) }
                 }
                 if (members == listOf(username)) active += calendar
@@ -250,15 +256,15 @@ object BirthdayReconciler {
 
         // Every calendar this pass may write, read completely before anything is written.
         val itemMgr = canonical?.let { colMgr.getItemManager(it) }
-        val generated = itemMgr?.let { generatedItems(it) } ?: LinkedHashMap()
-        val duplicateLeftovers = duplicates.map { calendar -> calendar to generatedItems(colMgr.getItemManager(calendar)) }
-        val retiredLeftovers = retired.map { calendar -> calendar to generatedItems(colMgr.getItemManager(calendar)) }
+        val generated = itemMgr?.let { generatedItems(it, mayContinue) } ?: LinkedHashMap()
+        val duplicateLeftovers = duplicates.map { calendar -> calendar to generatedItems(colMgr.getItemManager(calendar), mayContinue) }
+        val retiredLeftovers = retired.map { calendar -> calendar to generatedItems(colMgr.getItemManager(calendar), mayContinue) }
 
         // C2: every listed address book, every contact, read completely.
         val wanted = TreeMap<String, BirthdayCalendar.BirthdayEvent>()
         val bookReads = LinkedHashMap<String, BookRead>()
         for (book in books) {
-            val listing = listItemsFrom(colMgr.getItemManager(book), "incomplete-book", null)
+            val listing = listItemsFrom(colMgr.getItemManager(book), "incomplete-book", null, mayContinue)
             val contents = LinkedHashMap<String, String>()
             for (item in listing.entries) {
                 if (item.isDeleted) continue
@@ -366,17 +372,20 @@ object BirthdayReconciler {
      * (deleted or no longer shared), or changed its access, or an item of a book that was read was
      * added, changed or deleted. Listed from the cursors the pass saved, with the pinned SDK's own
      * stoken listings. A listing that does not finish, content that cannot be read, or any error is
-     * [SourceCheck.INCOMPLETE], never "unchanged".
+     * [SourceCheck.INCOMPLETE], never "unchanged". A [Stopped] gate answer is not such an error: it is
+     * rethrown, so a run told to stop during the check ends "stopped", not "post-check".
      */
-    private fun postCheck(colMgr: CollectionManager, source: SourceRead): SourceCheck = try {
-        if (sourceChanged(colMgr, source)) SourceCheck.CHANGED else SourceCheck.STABLE
+    private fun postCheck(colMgr: CollectionManager, source: SourceRead, mayContinue: () -> Boolean): SourceCheck = try {
+        if (sourceChanged(colMgr, source, mayContinue)) SourceCheck.CHANGED else SourceCheck.STABLE
+    } catch (e: Stopped) {
+        throw e
     } catch (e: Exception) {
         SourceCheck.INCOMPLETE
     }
 
-    private fun sourceChanged(colMgr: CollectionManager, source: SourceRead): Boolean {
+    private fun sourceChanged(colMgr: CollectionManager, source: SourceRead, mayContinue: () -> Boolean): Boolean {
         val removed = ArrayList<String>()
-        val changes = pagedListing("incomplete-post-check", PagedListingGuard.MAX_COLLECTION_PAGES, source.inventoryCursor) { cursor ->
+        val changes = pagedListing("incomplete-post-check", PagedListingGuard.MAX_COLLECTION_PAGES, source.inventoryCursor, mayContinue) { cursor ->
             colMgr.list(INVENTORY_TYPES, FetchOptions().stoken(cursor)).let { page ->
                 page.removedMemberships.mapTo(removed) { it.uid() }
                 Page(page.data.toList(), page.stoken, page.isDone)
@@ -393,7 +402,7 @@ object BirthdayReconciler {
         // Listed from scratch (no cursor to start from): every book read must still be listed.
         if (source.inventoryCursor == null && listedBooks != source.books.keys) return true
         for (book in source.books.values) {
-            val itemChanges = listItemsFrom(colMgr.getItemManager(book.collection), "incomplete-post-check", book.cursor).entries
+            val itemChanges = listItemsFrom(colMgr.getItemManager(book.collection), "incomplete-post-check", book.cursor, mayContinue).entries
             for (item in itemChanges) {
                 val known = book.contents[item.uid]
                 // A deleted item the pass never saw live (a tombstone, or one added and removed since) changes nothing.
@@ -411,9 +420,9 @@ object BirthdayReconciler {
     private val RETIRED_MARKER = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"retired\"}".toByteArray(Charsets.UTF_8)
 
     /** A calendar's live generated items by parsed event UID, read completely; unreadable content stops the pass. */
-    private fun generatedItems(itemMgr: ItemManager): LinkedHashMap<String, MutableList<Pair<Item, BirthdayCalendar.EventFields>>> {
+    private fun generatedItems(itemMgr: ItemManager, mayContinue: () -> Boolean): LinkedHashMap<String, MutableList<Pair<Item, BirthdayCalendar.EventFields>>> {
         val generated = LinkedHashMap<String, MutableList<Pair<Item, BirthdayCalendar.EventFields>>>()
-        for (item in listItems(itemMgr, "incomplete-calendar")) {
+        for (item in listItems(itemMgr, "incomplete-calendar", mayContinue)) {
             if (item.isDeleted) continue
             val text = readText { item.content } ?: throw Stop(RunStatus.SKIPPED, "unreadable-calendar-item")
             val fields = BirthdayCalendar.eventFields(text) ?: continue
@@ -447,24 +456,30 @@ object BirthdayReconciler {
         }
     }
 
-    private fun listItems(itemMgr: ItemManager, reason: String): List<Item> = listItemsFrom(itemMgr, reason, null).entries
+    private fun listItems(itemMgr: ItemManager, reason: String, mayContinue: () -> Boolean): List<Item> =
+        listItemsFrom(itemMgr, reason, null, mayContinue).entries
 
     /** Every item changed after [start] (from scratch when null), and the cursor the done page gave. */
-    private fun listItemsFrom(itemMgr: ItemManager, reason: String, start: String?): Listing<Item> =
-        pagedListing(reason, PagedListingGuard.MAX_ITEM_PAGES, start) { cursor ->
+    private fun listItemsFrom(itemMgr: ItemManager, reason: String, start: String?, mayContinue: () -> Boolean): Listing<Item> =
+        pagedListing(reason, PagedListingGuard.MAX_ITEM_PAGES, start, mayContinue) { cursor ->
             itemMgr.list(FetchOptions().stoken(cursor)).let { Page(it.data.toList(), it.stoken, it.isDone) }
         }
 
     /** Every entry of a cursor-paged listing; one that cannot finish stops the pass with [reason]. */
-    private fun <T> paged(reason: String, maxPages: Int, fetch: (String?) -> Page<T>): List<T> =
-        pagedListing(reason, maxPages, null, fetch).entries
+    private fun <T> paged(reason: String, maxPages: Int, mayContinue: () -> Boolean, fetch: (String?) -> Page<T>): List<T> =
+        pagedListing(reason, maxPages, null, mayContinue, fetch).entries
 
-    /** Every entry of a cursor-paged listing from [start], and the cursor of its done page. */
-    private fun <T> pagedListing(reason: String, maxPages: Int, start: String?, fetch: (String?) -> Page<T>): Listing<T> {
+    /**
+     * Every entry of a cursor-paged listing from [start], and the cursor of its done page. [mayContinue]
+     * is asked before each page is requested (C2); false ends the run with [Stopped].
+     */
+    private fun <T> pagedListing(reason: String, maxPages: Int, start: String?, mayContinue: () -> Boolean,
+        fetch: (String?) -> Page<T>): Listing<T> {
         val guard = PagedListingGuard("Birthdays", start, maxPages)
         val entries = ArrayList<T>()
         var cursor: String? = start
         while (true) {
+            if (!mayContinue()) throw Stopped()
             val page = fetch(cursor)
             entries.addAll(page.data)
             try {
