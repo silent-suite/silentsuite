@@ -152,15 +152,31 @@ class ColorParityRuntimeTest {
             about { scenario ->
                 scenario.onActivity { assertRoles(it, dayRoles) }
                 scenario.onActivity { assertDashboardToolbar(it, "dashboard toolbar (day)") }
+                // The real About toolbar: navy, white title, and a white up-arrow glyph checked on its own.
+                scenario.onActivity {
+                    val toolbar = it.findViewById<Toolbar>(R.id.toolbar)
+                    assertToolbarGlyphs("about toolbar (day)", toolbar, minimumActionViews = 0)
+                    assertNavyBarWithWhiteForeground("about toolbar (day)", toolbar)
+                }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRoles(it, nightRoles) }
                 scenario.onActivity { assertDashboardToolbar(it, "dashboard toolbar (night)") }
+                scenario.onActivity {
+                    val toolbar = it.findViewById<Toolbar>(R.id.toolbar)
+                    assertToolbarGlyphs("about toolbar (night)", toolbar, minimumActionViews = 0)
+                    assertNavyBarWithWhiteForeground("about toolbar (night)", toolbar)
+                }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRoles(it, dayRoles) }
+                scenario.onActivity {
+                    val toolbar = it.findViewById<Toolbar>(R.id.toolbar)
+                    assertToolbarGlyphs("about toolbar (day, recreated)", toolbar, minimumActionViews = 0)
+                    assertNavyBarWithWhiteForeground("about toolbar (day, recreated)", toolbar)
+                }
             }
             // The real legacy Settings window action bar, through day -> night -> day recreation.
             val settingsIntent = AppSettingsActivity.newIntent(InstrumentationRegistry.getInstrumentation().targetContext)

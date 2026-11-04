@@ -1185,6 +1185,33 @@ def test_dashboard_top_bar_is_navy_with_toolbar_scoped_white_foregrounds_in_both
     assert resource_styles("values")["Widget.AppTheme.Dashboard.CollectionToolbar"]["navigationIconTint"] == "@color/semantic_action_text"
 
 
+def test_about_toolbar_controls_are_white_through_the_scoped_top_bar_overlay():
+    root = ET.parse(RES / "layout/activity_about.xml").getroot()
+    toolbar = next(element for element in root.iter() if element.attrib.get(f"{ANDROID_NS}id") == "@+id/toolbar")
+    assert toolbar.tag == "androidx.appcompat.widget.Toolbar"
+    assert toolbar.attrib.get("style") == "@style/toolbar_style"
+    # AppCompat tints the About up arrow with colorControlNormal of the toolbar context. Without a
+    # toolbar-scoped overlay it inherits the light content theme's gray on the navy bar.
+    theme = toolbar.attrib.get(f"{ANDROID_NS}theme")
+    assert theme == "@style/ThemeOverlay.AppTheme.TopBar", (
+        "About up arrow needs the toolbar-scoped white control overlay", theme)
+    assert f"{APP_NS}popupTheme" not in toolbar.attrib
+
+    for qualifier in ("values", "values-night"):
+        # The navy bar and white title are unchanged; only the control colour is scoped in.
+        assert resource_styles(qualifier)["toolbar_style"] == {
+            "android:background": TOP_BAR, "titleTextColor": ON_TOP_BAR,
+        }, qualifier
+        overlay = app_style(qualifier, theme)
+        assert overlay.get("colorControlNormal") == ON_TOP_BAR, (qualifier, overlay)
+        assert app_style(qualifier, overlay["drawerArrowStyle"]).get("color") == ON_TOP_BAR, qualifier
+        # Popup-safe and non-global: the overlay sets no text colours, and content themes keep theirs.
+        for attribute in (*POPUP_TEXT_ATTRIBUTES, "android:textColorSecondary"):
+            assert attribute not in overlay, (qualifier, attribute, "white would leak into the light overflow popup")
+        for theme_name in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
+            assert "colorControlNormal" not in styles(qualifier)[theme_name], (qualifier, theme_name)
+
+
 SYSTEM_BAR_THEME_FAMILIES = ("AppTheme", "AppTheme.NoActionBar", "AppTheme.Material3", "AppTheme.Material3.NoActionBar")
 # Android resource precedence ranks night mode above platform version, so on the API 29+
 # product floor the night definition wins at night and values-v21 wins by day.
