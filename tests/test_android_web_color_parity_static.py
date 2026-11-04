@@ -1072,3 +1072,112 @@ def test_app_ui_avoids_deprecated_edge_to_edge_window_apis():
                 if deprecated.search(line):
                     findings.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
     assert not findings, "deprecated edge-to-edge window APIs:\n" + "\n".join(findings)
+
+
+ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+APP_NS = "{http://schemas.android.com/apk/res-auto}"
+TOP_BAR = "@color/semantic_system_bar"
+ON_TOP_BAR = "@color/semantic_on_system_bar"
+LEGACY_WINDOW_BAR_ACTIVITIES = (
+    ".ui.AppSettingsActivity", ".ui.AccountSettingsActivity", ".ui.DebugInfoActivity",
+    ".ui.WebViewActivity", ".ui.ViewCollectionActivity", ".ui.CollectionMembersActivity",
+    ".ui.JournalItemActivity",
+)
+# Attributes that would make the light overflow popup (which inherits the toolbar context
+# unless a popupTheme is set) draw white text on its light surface.
+POPUP_TEXT_ATTRIBUTES = ("android:textColorPrimary", "android:textColor", "colorOnSurface")
+
+
+def app_style(qualifier: str, reference: str) -> dict[str, str]:
+    """Resolve an app @style reference as Android would for qualifier, requiring an explicit parent."""
+    assert reference.startswith("@style/"), (qualifier, reference, "expected an app @style reference")
+    name = reference[len("@style/"):]
+    for candidate in (qualifier, "values"):
+        for file_name in ("themes.xml", "styles.xml"):
+            path = RES / candidate / file_name
+            for style in ET.parse(path).getroot().findall("style") if path.exists() else ():
+                if style.attrib["name"] == name:
+                    assert "parent" in style.attrib, (candidate, name, "declare parent explicitly (or parent=\"\")")
+                    return {item.attrib["name"]: (item.text or "").strip() for item in style.findall("item")}
+    raise AssertionError((qualifier, reference, "undefined app style"))
+
+
+def test_legacy_window_action_bars_are_navy_with_white_foreground_in_both_themes():
+    manifest = ET.parse(ROOT / "android/app/src/main/AndroidManifest.xml").getroot()
+    application = manifest.find("application")
+    assert application.attrib[f"{ANDROID_NS}theme"] == "@style/AppTheme"
+    activities = {activity.attrib[f"{ANDROID_NS}name"]: activity for activity in application.findall("activity")}
+    for name in LEGACY_WINDOW_BAR_ACTIVITIES:
+        assert f"{ANDROID_NS}theme" not in activities[name].attrib, (name, "must keep the AppTheme window action bar")
+
+    for qualifier in ("values", "values-night"):
+        declared = colors(qualifier)
+        assert declared["semantic_system_bar"] == "#0A1018" and declared["semantic_on_system_bar"] == "#FFFFFF"
+        assert contrast_ratio(declared["semantic_on_system_bar"], declared["semantic_system_bar"]) >= 4.5
+        app_theme = styles(qualifier)["AppTheme"]
+        # Material Components otherwise paints this bar colorPrimary (light) or colorSurface (night).
+        bar = app_style(qualifier, app_theme.get("actionBarStyle", ""))
+        assert bar.get("background") == TOP_BAR, (qualifier, "AppTheme actionBarStyle background", bar)
+        overlay = app_theme.get("actionBarTheme", "")
+        if overlay != "@style/ThemeOverlay.AppCompat.Dark.ActionBar":
+            items = app_style(qualifier, overlay)
+            assert items.get("android:textColorPrimary") == ON_TOP_BAR, (qualifier, items)
+            assert items.get("colorControlNormal") == ON_TOP_BAR, (qualifier, items)
+        # White belongs to the bar overlay only; content text and icons keep their surface roles.
+        assert app_theme.get("android:textColorPrimary") == "@color/semantic_on_surface"
+        assert app_theme.get("android:textColorSecondary") == "@color/semantic_on_surface_variant"
+        assert "colorControlNormal" not in app_theme
+        # The About toolbar already uses the approved pair and must stay that way.
+        about = resource_styles(qualifier)["toolbar_style"]
+        assert about.get("android:background") == TOP_BAR and about.get("titleTextColor") == ON_TOP_BAR
+
+
+def test_dashboard_top_bar_is_navy_with_toolbar_scoped_white_foregrounds_in_both_themes():
+    root = ET.parse(RES / "layout/activity_account.xml").getroot()
+    toolbar = next(element for element in root.iter() if element.attrib.get(f"{ANDROID_NS}id") == "@+id/toolbar")
+    assert toolbar.tag == "com.google.android.material.appbar.MaterialToolbar"
+    assert "AccountActivity" in source("android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt")
+    assert "setSupportActionBar(toolbar)" in source("android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt")
+
+    for qualifier in ("values", "values-night"):
+        style = app_style(qualifier, toolbar.attrib["style"]) if "style" in toolbar.attrib else {}
+
+        def effective(attribute: str, style_item: str):
+            return toolbar.attrib.get(attribute, style.get(style_item))
+
+        assert effective(f"{ANDROID_NS}background", "android:background") == TOP_BAR, (qualifier, "dashboard toolbar background")
+        assert effective(f"{APP_NS}titleTextColor", "titleTextColor") == ON_TOP_BAR, (qualifier, "dashboard title")
+        assert effective(f"{APP_NS}navigationIconTint", "navigationIconTint") == ON_TOP_BAR, (qualifier, "dashboard navigation tint")
+
+        # Action icons (ic_sync_light tints ?attr/colorControlNormal) and the overflow glyph resolve
+        # in the toolbar's own themed context, so the overlay must be scoped to this toolbar.
+        theme = (
+            toolbar.attrib.get(f"{ANDROID_NS}theme")
+            or toolbar.attrib.get(f"{APP_NS}theme")
+            or style.get("materialThemeOverlay", "")
+        )
+        overlay = app_style(qualifier, theme)
+        assert overlay.get("colorControlNormal") == ON_TOP_BAR, (qualifier, "dashboard toolbar overlay", overlay)
+        # The drawer toggle is a DrawerArrowDrawable coloured by drawerArrowStyle (default
+        # ?android:textColorSecondary), which navigationIconTint does not reliably recolour.
+        if "drawerArrowStyle" in overlay:
+            assert app_style(qualifier, overlay["drawerArrowStyle"]).get("color") == ON_TOP_BAR, qualifier
+        else:
+            assert overlay.get("android:textColorSecondary") == ON_TOP_BAR, (qualifier, "drawer toggle colour")
+
+        popup = toolbar.attrib.get(f"{APP_NS}popupTheme") or style.get("popupTheme")
+        for attribute in POPUP_TEXT_ATTRIBUTES:
+            assert attribute not in overlay, (qualifier, attribute, "white would leak into the light overflow popup")
+        if popup is None:
+            assert "android:textColorSecondary" not in overlay, (qualifier, "set a light popupTheme or use drawerArrowStyle")
+        else:
+            assert popup.startswith("@style/") and "Dark" not in popup, (qualifier, popup)
+
+        # The content themes keep their own control colours: no global white icons on surfaces.
+        for theme_name in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
+            content_theme = styles(qualifier)[theme_name]
+            assert "colorControlNormal" not in content_theme, (qualifier, theme_name)
+            assert "android:textColorSecondary" not in content_theme, (qualifier, theme_name)
+        declared = colors(qualifier)
+        assert contrast_ratio(declared["semantic_on_system_bar"], declared["semantic_system_bar"]) >= 4.5
+    assert resource_styles("values")["Widget.AppTheme.Dashboard.CollectionToolbar"]["navigationIconTint"] == "@color/semantic_action_text"

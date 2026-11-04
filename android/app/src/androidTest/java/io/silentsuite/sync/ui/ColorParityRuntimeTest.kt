@@ -1,5 +1,7 @@
 package io.silentsuite.sync.ui
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
@@ -7,7 +9,10 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.appcompat.graphics.drawable.DrawerArrowDrawable
+import androidx.appcompat.widget.Toolbar
 import androidx.core.graphics.Insets
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -23,6 +28,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.abs
 
 @RunWith(AndroidJUnit4::class)
 class ColorParityRuntimeTest {
@@ -138,18 +144,119 @@ class ColorParityRuntimeTest {
             setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
             about { scenario ->
                 scenario.onActivity { assertRoles(it, dayRoles) }
+                scenario.onActivity { assertDashboardToolbar(it, "dashboard toolbar (day)") }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRoles(it, nightRoles) }
+                scenario.onActivity { assertDashboardToolbar(it, "dashboard toolbar (night)") }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRoles(it, dayRoles) }
             }
+            // The real legacy Settings window action bar, through day -> night -> day recreation.
+            val settingsIntent = AppSettingsActivity.newIntent(InstrumentationRegistry.getInstrumentation().targetContext)
+            ActivityScenario.launch<AppSettingsActivity>(settingsIntent).use { scenario ->
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSettingsBar(it, "settings action bar (day)") }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSettingsBar(it, "settings action bar (night)") }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSettingsBar(it, "settings action bar (day, recreated)") }
+            }
         } finally {
             setNightModeOnMainThread(prior)
         }
+    }
+
+    private fun waitForSettingsBar(scenario: ActivityScenario<AppSettingsActivity>) {
+        repeat(40) {
+            var ready = false
+            scenario.onActivity { activity ->
+                val bar = activity.findViewById<View>(androidx.appcompat.R.id.action_bar_container)
+                ready = bar != null && bar.isAttachedToWindow && bar.isShown && bar.width > 0 && bar.height > 0 &&
+                    activity.supportFragmentManager.findFragmentById(android.R.id.content) != null
+            }
+            if (ready) return
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            SystemClock.sleep(50)
+        }
+        throw AssertionError("AppSettingsActivity window action bar was not attached, shown, and laid out")
+    }
+
+    private fun assertSettingsBar(activity: AppSettingsActivity, label: String) {
+        val toolbar = activity.findViewById<Toolbar>(androidx.appcompat.R.id.action_bar)
+        val titleText = toolbar.title?.toString()
+        assertTrue("$label title is set", !titleText.isNullOrEmpty())
+        val title = (0 until toolbar.childCount).map { toolbar.getChildAt(it) }
+            .filterIsInstance<TextView>()
+            .single { it.text?.toString() == titleText }
+        assertEquals("$label title colour", ContextCompat.getColor(activity, R.color.semantic_on_system_bar), title.currentTextColor)
+        assertNavyBarWithWhiteForeground(label, activity.findViewById(androidx.appcompat.R.id.action_bar_container))
+    }
+
+    /**
+     * AccountActivity needs a signed-in account, so this inflates its real layout in an activity
+     * with the same AppTheme.Material3.NoActionBar theme and mirrors its wiring: the drawer toggle
+     * sets a DrawerArrowDrawable built from the toolbar context, and the support action bar inflates
+     * the options menu with that same themed context. It is not a launched dashboard.
+     */
+    private fun assertDashboardToolbar(activity: AboutActivity, label: String) {
+        val root = activity.layoutInflater.inflate(R.layout.activity_account, null, false)
+        val toolbar = root.findViewById<Toolbar>(R.id.toolbar)
+        toolbar.title = activity.getString(R.string.app_name)
+        toolbar.navigationIcon = DrawerArrowDrawable(toolbar.context)
+        toolbar.inflateMenu(R.menu.activity_account)
+        assertNotNull("$label overflow icon", toolbar.overflowIcon)
+        val width = activity.window.decorView.width
+        val height = toolbar.layoutParams.height
+        assertTrue("$label has a laid-out size", width > 0 && height > 0)
+        toolbar.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+        )
+        toolbar.layout(0, 0, width, height)
+        assertNavyBarWithWhiteForeground(label, toolbar)
+    }
+
+    /**
+     * Renders the bar and requires a navy background with every pixel on the navy-to-white blend
+     * line, so the title, navigation, action and overflow glyphs are all white (or their
+     * antialiased edges) and nothing else is painted on the bar.
+     */
+    private fun assertNavyBarWithWhiteForeground(label: String, bar: View) {
+        val navy = ContextCompat.getColor(bar.context, R.color.semantic_system_bar)
+        val white = ContextCompat.getColor(bar.context, R.color.semantic_on_system_bar)
+        assertEquals(Color.parseColor("#0A1018"), navy)
+        assertEquals(Color.parseColor("#FFFFFF"), white)
+        val bitmap = Bitmap.createBitmap(bar.width, bar.height, Bitmap.Config.ARGB_8888)
+        bar.draw(Canvas(bitmap))
+        assertEquals("$label background", navy, bitmap.getPixel(bitmap.width - 1, 0))
+        val span = intArrayOf(
+            Color.red(white) - Color.red(navy), Color.green(white) - Color.green(navy), Color.blue(white) - Color.blue(navy),
+        )
+        val spanSquared = span.sumOf { it * it }.toDouble()
+        val stray = mutableListOf<String>()
+        var foreground = 0
+        for (y in 0 until bitmap.height) {
+            for (x in 0 until bitmap.width) {
+                val pixel = bitmap.getPixel(x, y)
+                val delta = intArrayOf(
+                    Color.red(pixel) - Color.red(navy), Color.green(pixel) - Color.green(navy), Color.blue(pixel) - Color.blue(navy),
+                )
+                val coverage = (0..2).sumOf { delta[it] * span[it] } / spanSquared
+                val residual = (0..2).maxOf { abs(delta[it] - coverage * span[it]) }
+                if (Color.alpha(pixel) != 255 || residual > 8.0) stray += "($x,$y)=#%08X".format(pixel)
+                if (coverage > 0.9) foreground++
+            }
+        }
+        assertTrue("$label has non navy/white pixels ${stray.take(5)} of ${stray.size}", stray.isEmpty())
+        assertTrue("$label draws no white foreground", foreground > 0)
     }
 
     private fun View.bounds() = Rect(left, top, right, bottom)
