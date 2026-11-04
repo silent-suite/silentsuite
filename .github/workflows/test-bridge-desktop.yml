@@ -3,6 +3,7 @@ name: Test Bridge desktop tracers (source)
 # Source tests for the #171 desktop work, one tracer at a time.
 #   T1a: one Bridge server per data directory (bridge/tests/test_instance_lock.py)
 #   T3 server URL: settings API default server URL (bridge/tests/test_desktop_settings_api.py)
+#   T3 network policy: network field metadata and read-only refusal (bridge/tests/test_desktop_network_settings.py)
 #   T2 first window: real native desktop window journey (bridge/tests/test_desktop_shell.py)
 #     plus the desktop-flavor updater refusal (bridge/tests/test_desktop_flavor.py)
 #   T1b legacy gate: CLI registration / occupied port migration prompt (bridge/tests/test_desktop_migration.py)
@@ -22,6 +23,7 @@ on:
       - 'bridge/src/silentsuite_bridge/**'
       - 'bridge/tests/test_instance_lock.py'
       - 'bridge/tests/test_desktop_settings_api.py'
+      - 'bridge/tests/test_desktop_network_settings.py'
       - 'bridge/tests/settings_lock_holder.py'
       - 'bridge/tests/test_desktop_shell.py'
       - 'bridge/tests/test_desktop_flavor.py'
@@ -164,6 +166,32 @@ jobs:
           path: |
             ${{ runner.temp }}/t1a/junit.xml
             ${{ runner.temp }}/t1a/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Real headless CLI starts on loopback; no Qt. Its own step and receipt.
+      - name: Run T3 network settings policy tests
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' }}
+        timeout-minutes: 15
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/t3-network-policy"
+          python -m pytest tests/test_desktop_network_settings.py -v --tb=long -p no:cacheprovider \
+            --junitxml="$RUNNER_TEMP/t3-network-policy/junit.xml" 2>&1 | tee "$RUNNER_TEMP/t3-network-policy/pytest.txt"
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t3-network-policy/pytest.txt"
+          exit "$status"
+
+      - name: Upload T3 network settings policy receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t3-network-policy-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/t3-network-policy/junit.xml
+            ${{ runner.temp }}/t3-network-policy/pytest.txt
           if-no-files-found: warn
           retention-days: 14
 
