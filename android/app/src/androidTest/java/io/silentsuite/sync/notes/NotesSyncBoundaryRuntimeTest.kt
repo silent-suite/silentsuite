@@ -1416,21 +1416,27 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals(setOf("Plan v2", "List"), cachedNotes(account, notebook))
         assertSucceeded(status(account, "gen-push"))
 
-        // The landed record is the uploaded note as the app itself saved it, and it goes with its editor.
+        // The landed record is the uploaded note as the app itself saved it, and it goes with its editor. The copy of
+        // the notebook stays.
         val afterPush = pending(account, "gen-push")
-        assertEquals(setOf("${note.uid}.landed", "sequence"), filesOnDisk(afterPush).keys)
+        assertEquals(setOf("${note.uid}.landed", "$notebook.notebook", "sequence"), filesOnDisk(afterPush).keys)
         assertNothingPlainOnDisk(afterPush, listOf("Plan v2", "Second draft"))
         val landed = itemManager(notebook).cacheLoad(checkNotNull(afterPush.landed(note.uid)).blob)
         assertEquals(listOf("Plan v2", "Second draft"), listOf(landed.meta.name, landed.contentString))
         afterPush.editorClosed(editor)
-        assertEquals("the record goes with its editor", setOf("sequence"), filesOnDisk(afterPush).keys)
+        assertEquals("the record goes with its editor", setOf("$notebook.notebook", "sequence"), filesOnDisk(afterPush).keys)
 
-        // A notebook copy no entry needs goes, in a run with something to push and in one without.
+        // A notebook copy no entry needs stays until the store is discarded or cleared, after a run with something to
+        // push, as above, and after one without: a listing can come back short and hide a note that needs it.
         val store = pending(account, "gen-push")
-        assertNull(store.notebook(notebook))
-        store.putNotebook(notebook, server.collectionManager.cacheSave(uploaded.getValue(notebook)))
+        val copy = checkNotNull(store.notebook(notebook))
         syncNow(account, "gen-push")
-        assertNull(store.notebook(notebook))
+        assertArrayEquals(copy, store.notebook(notebook))
+        // So does a copy whose notebook the cache does not hold.
+        val uncached = "notebook-the-cache-does-not-hold"
+        store.putNotebook(uncached, ByteArray(4))
+        syncNow(account, "gen-push")
+        assertNotNull(store.notebook(uncached))
     }
 
     @Test fun anEditMadeOnAnOlderCopyBecomesAConflictedCopyAndBothReachTheServer() {
@@ -1601,6 +1607,26 @@ class NotesSyncBoundaryRuntimeTest {
         assertArrayEquals("the entry file is as it was", before.getValue("${note.uid}.note"), filesOnDisk(store).getValue("${note.uid}.note"))
         assertEquals("Edited before access changed", decryptThroughStoredCopy(store, kept).contentString)
         assertSucceeded(status(account, "gen-readonly"))
+
+        // The copy stays while every listing of the store leaves out the held note, as File.listFiles can when reading
+        // the directory fails partway the same way each time. The run then sees nothing waiting.
+        val copy = checkNotNull(store.notebook(notebook))
+        PendingNotesStore.listFilesForTesting = { d ->
+            if (d == store.dir) d.listFiles()?.filter { it.name != "${note.uid}.note" }?.toTypedArray() else d.listFiles()
+        }
+        try {
+            syncNow(account, "gen-readonly")
+        } finally {
+            PendingNotesStore.listFilesForTesting = null
+        }
+        assertArrayEquals("the copy the held note needs stays, byte for byte", copy, store.notebook(notebook))
+        // The owner then removes this account from the notebook, and the next run's collection refresh drops it before
+        // anything lists the note again. The copy is the only key left, and the held text still decrypts through it.
+        fake.removeMembership(notebook)
+        syncNow(account, "gen-readonly")
+        assertFalse("the notebook is no longer cached", notebook in cachedNotebooks(account))
+        assertEquals(PendingEntry.State.HELD, (store.read(note.uid) as PendingNotesStore.Read.Present).entry.state)
+        assertEquals("Edited before access changed", decryptThroughStoredCopy(store, kept).contentString)
     }
 
     @Test fun aSingle403OnAPushIsConfirmedAndHoldsNothing() {
