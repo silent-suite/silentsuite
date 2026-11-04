@@ -268,6 +268,14 @@ def resolve_legacy_conflicts() -> int:
 
 
 QUIT_ACTION_TEXT = "Quit SilentSuite Bridge"
+# Shown in the window's status bar before any close (implementation-plan-v2
+# section 5): what closing will do, for the current start-at-login state.
+CLOSE_STOPS_NOTICE = "Closing this window stops SilentSuite Bridge."
+CLOSE_HIDES_NOTICE = (
+    "Closing this window keeps SilentSuite Bridge running in the background. "
+    "Use Quit SilentSuite Bridge to stop it."
+)
+_NOTICE_REFRESH_MS = 2000
 
 
 def run_desktop(*, build_configuration, start_workers, serve, ipc=None, background=False) -> int:
@@ -286,7 +294,9 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
     - closing the window checks this app's own start-at-login entry at that
       moment: registered, the window is only hidden and the Bridge keeps
       running; not registered, the Bridge stops;
-    - the menu action "Quit SilentSuite Bridge" always stops it.
+    - the menu action "Quit SilentSuite Bridge" always stops it;
+    - the status bar says beforehand what a close will do, from the same
+      current-state check, refreshed on show and every 2 s while visible.
     Stopping ends the event loop; the server, workers and window are then
     shut down here, and the caller closes IPC and releases the lock last.
     """
@@ -294,7 +304,7 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
         print(UNSAFE_ENVIRONMENT_MESSAGE, file=sys.stderr)
         return 1
     try:
-        from PySide6.QtCore import QCoreApplication, QEvent, QTimer, QUrl
+        from PySide6.QtCore import QCoreApplication, QEvent, Qt, QTimer, QUrl
         from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
         from PySide6.QtWebEngineCore import (
             QWebEnginePage,
@@ -303,7 +313,7 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
             QWebEngineUrlRequestInterceptor,
         )
         from PySide6.QtWebEngineWidgets import QWebEngineView
-        from PySide6.QtWidgets import QMainWindow
+        from PySide6.QtWidgets import QLabel, QMainWindow
     except ImportError:
         print(QT_MISSING_MESSAGE, file=sys.stderr)
         return 1
@@ -321,7 +331,7 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
     # hidden window must not end it.
     app.setQuitOnLastWindowClosed(False)
 
-    lifecycle = {"stopping": False, "start_at_login": None}
+    lifecycle = {"stopping": False, "start_at_login": None, "notice": None}
 
     def stop_bridge():
         """End the event loop once. exit(), not quit(): a quit could be refused by a window."""
@@ -336,7 +346,20 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
         start_at_login = lifecycle["start_at_login"]
         return start_at_login is not None and start_at_login.state()["value"] is True
 
+    def refresh_close_notice():
+        """Say what a close will do, from the same check closeEvent uses. Main thread only."""
+        notice = lifecycle["notice"]
+        if notice is None or lifecycle["stopping"]:
+            return
+        text = CLOSE_HIDES_NOTICE if close_hides_window() else CLOSE_STOPS_NOTICE
+        if notice.text() != text:
+            notice.setText(text)
+
     class _DashboardWindow(QMainWindow):
+        def showEvent(self, event):  # noqa: N802 - Qt override
+            refresh_close_notice()  # current before the window appears
+            super().showEvent(event)
+
         def closeEvent(self, event):  # noqa: N802 - Qt override
             if not lifecycle["stopping"] and close_hides_window():
                 event.ignore()
@@ -385,6 +408,18 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
     quit_action.triggered.connect(lambda _checked=False: stop_bridge())
     window.menuBar().addMenu("&File").addAction(quit_action)
 
+    # Plain native notice of what closing does, always visible in the status bar
+    # (a permanent widget, so menu status tips never hide it). No prompt.
+    notice = QLabel()
+    notice.setTextFormat(Qt.TextFormat.PlainText)
+    window.statusBar().addPermanentWidget(notice, 1)
+    lifecycle["notice"] = notice
+    # Start at login can change while the app runs (settings API); a cheap
+    # read of the entry every 2 s keeps the visible notice current.
+    notice_timer = QTimer()
+    notice_timer.setInterval(_NOTICE_REFRESH_MS)
+    notice_timer.timeout.connect(lambda: window.isVisible() and refresh_close_notice())
+
     settings = page.settings()
     for name in ("JavascriptCanOpenWindows", "LocalContentCanAccessRemoteUrls", "LocalContentCanAccessFileUrls"):
         attribute = getattr(QWebEngineSettings.WebAttribute, name, None)
@@ -407,6 +442,7 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
 
     start_at_login = DesktopStartAtLogin.for_running_app()
     lifecycle["start_at_login"] = start_at_login  # read (never enabled) at each window close
+    refresh_close_notice()  # filled before any show; background mode shows nothing yet
 
     def serve_bridge():
         try:
@@ -451,9 +487,12 @@ def run_desktop(*, build_configuration, start_workers, serve, ipc=None, backgrou
         if not background:
             window.show()
         poll.start()
+        notice_timer.start()
         app.exec()
     finally:
         lifecycle["stopping"] = True  # from here on a close really closes
+        notice_timer.stop()
+        lifecycle["notice"] = None  # the label goes with the window below
         poll.stop()
         if ipc is not None:
             ipc.window = None
