@@ -5,7 +5,9 @@ lines 55-56):
 - start-at-login off: an actual close of the window stops the Bridge
   gracefully. Serving and the workers stop, the registry is stopped and IPC is
   closed before the instance lock is released, the process exits normally,
-  and nothing uses os._exit;
+  and nothing uses os._exit. Before that close the window plainly says, in a
+  visible native label or status-bar message, that closing it stops the
+  Bridge (v2 line 112);
 - start-at-login on: an actual close hides the window. The owner keeps its
   listener, registry, workers and lock, and a second launch for the same
   DATA_DIR brings back the same window: fixed "show", no new backend, login or
@@ -23,14 +25,15 @@ using the product's own label and renderers. That is not login-time, frozen or
 installer evidence. Simulated boundaries are listed in
 tests/desktop_smoke/lifecycle_probe.py.
 
-Not covered here: the start-at-login-off notice "the window says so
-beforehand" (v2 line 112), a real account's sync workers, reopen during
-migration (v3 line 57, see test_desktop_ipc.py) and login-time launch.
+Not covered here: a notice in page content (only native window text counts),
+a real account's sync workers, reopen during migration (v3 line 57, see
+test_desktop_ipc.py) and login-time launch.
 
 Needs PySide6 and a display; required (SILENTSUITE_REQUIRE_DESKTOP_NATIVE=1)
 in the native CI job, skipped elsewhere.
 """
 
+import re
 import subprocess
 import sys
 import time
@@ -58,6 +61,14 @@ SECOND_TIMEOUT = 60
 SHOW_ACK_TIMEOUT = 15
 OWNER_EXIT_TIMEOUT = 60
 EXIT_OS_EXIT = 4
+# v2 line 112 notice: one visible text that says closing stops the Bridge.
+# The meaning is fixed, not the wording.
+CLOSE_NOTICE_WORDS = ({"close", "closes", "closing"}, {"stop", "stops", "stopping"}, {"bridge"})
+
+
+def _says_close_stops_bridge(text):
+    words = set(re.findall(r"[a-z]+", re.sub(r"<[^>]+>", " ", text).lower()))  # rich-text tags ignored
+    return all(words & group for group in CLOSE_NOTICE_WORDS)
 
 
 def _witness(data, port, owner):
@@ -284,6 +295,21 @@ def test_close_without_start_at_login_stops_everything_before_the_lock_is_releas
     assert (owner.get("close") or {}).get("accepted") is True, _describe(foreground_off)
     assert owner.get("teardown") is None, f"the fixture had to stop the owner: {_describe(foreground_off)}"
     _assert_stopped_before_release(foreground_off)
+
+
+def test_window_says_before_closing_that_closing_stops_the_bridge(foreground_off):
+    # v2 line 112: "start-at-login off: close stops the Bridge, and the window
+    # says so beforehand". Sampled from the owner's own window right before the
+    # actual close: visible native QLabels and a visible status-bar message only.
+    sample = (foreground_off["owner"].get("close") or {}).get("notice_before")
+    if not sample or sample.get("window_visible") is not True:
+        pytest.fail(f"fixture did not sample a visible window before the close (not RED): {sample!r}")
+    texts = [entry["text"] for entry in sample["texts"]]
+    assert any(_says_close_stops_bridge(text) for text in texts), (
+        f"the window does not say that closing it stops SilentSuite Bridge; visible native texts: {texts!r} "
+        f"(labels {sample['labels_total']}, status bars {sample['status_bars_total']}); "
+        f"at ready: {foreground_off['ready'].get('notice')!r}"
+    )
 
 
 # --- start-at-login on: actual close hides; a second launch reopens ---------

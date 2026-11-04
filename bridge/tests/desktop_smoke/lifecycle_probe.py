@@ -242,9 +242,11 @@ def run(args) -> int:
         from PySide6.QtWidgets import (
             QApplication,
             QDialog,
+            QLabel,
             QMenu,
             QMenuBar,
             QMessageBox,
+            QStatusBar,
             QSystemTrayIcon,
             QWidget,
         )
@@ -567,6 +569,29 @@ def run(args) -> int:
         matches = [a for a in actions if _plain(a.text()) == QUIT_TEXT]
         return matches, sorted({a.text() for a in actions if a.text()})[:30]
 
+    def visible_native_texts(window):
+        """Rendered native text in the owner's window that a user can see now.
+
+        Only EXISTING children are read: every visible QLabel (status-bar
+        permanent widgets included) and the current message of a visible
+        QStatusBar, found with findChildren (never window.statusBar(), which
+        would create one). Menu action text, hidden labels, tooltips and page
+        content are not counted. Bounded: 20 texts of 200 characters.
+        """
+        sample = {"window_visible": bool(window.isVisible()), "labels_total": 0,
+                  "status_bars_total": 0, "texts": []}
+        for label in window.findChildren(QLabel):
+            sample["labels_total"] += 1
+            if label.isVisible() and label.text():
+                sample["texts"].append({"source": "label", "text": label.text()[:200]})
+        for bar in window.findChildren(QStatusBar):
+            sample["status_bars_total"] += 1
+            message = bar.currentMessage()
+            if bar.isVisible() and message:
+                sample["texts"].append({"source": "status-bar", "text": message[:200]})
+        sample["texts"] = sample["texts"][:20]
+        return sample
+
     def write_ready(kind):
         _arm_faulthandler("at ready, after the page loaded")
         _phase("owner: ready: endpoint facts")
@@ -587,6 +612,7 @@ def run(args) -> int:
             "view_count": view_count(),
             "dashboard_visible": window is not None,
             "quit_actions_found": len(quit_actions()[0]),
+            "notice": visible_native_texts(window) if window is not None else None,  # diagnostic
             "wall": time.time(),
         }
         result["ready"] = ready
@@ -660,6 +686,8 @@ def run(args) -> int:
         if phase == "ready" and flag("close") and state["window"] is not None:
             window = state["window"]
             close = {"wall": time.time(), "visible_before": bool(window.isVisible())}
+            # What the window plainly shows right before the actual close (v2 line 112).
+            close["notice_before"] = visible_native_texts(window)
             result["close"] = close
             # An ACTUAL close: a real QCloseEvent through QWidget.close(), not hide().
             _phase("owner: close: QWidget.close() called")
