@@ -23,9 +23,10 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Unpushed Notes changes for one exact account identity, kept apart from the Etebase cache so a
  * fetch can never overwrite them. One self-describing file per note (`<uid>.note`), a landed record
- * per note after a successful push (`<uid>.landed`), an encrypted copy of each notebook that still
- * has entries (`<uid>.notebook`), so held text stays decryptable after the Etebase cache drops the
- * notebook, and a store-wide version counter (`sequence`).
+ * per note after a successful push (`<uid>.landed`), an encrypted copy of each notebook that has
+ * had entries (`<uid>.notebook`), so held text stays decryptable after the Etebase cache drops the
+ * notebook, and a store-wide version counter (`sequence`). A copy stays until the store is discarded
+ * or cleared: a listing can come back short and leave out a note that needs it.
  *
  * There is exactly one instance per directory in a process ([open]), so its lock is the one lock per
  * identity. Every operation runs under it. Callers must never hold the Etebase cache monitor or the
@@ -254,13 +255,18 @@ internal class PendingNotesStore private constructor(
         object Done : SendOutcome()
         /** The user changed the note while it was being sent; rebase this entry onto the landed item. */
         data class NewerLocalChange(val entry: PendingEntry) : SendOutcome()
+        /**
+         * The upload landed, and the entry's file cannot be read now. It is kept as it is: nothing shows
+         * whether the user changed the note meanwhile.
+         */
+        object Unreadable : SendOutcome()
     }
 
     /**
      * What every operation but [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [acknowledged],
      * [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll] throws once
      * [clearAll], or a [discardStore] that got as far as deleting, has closed the store: nothing in it is read,
-     * pushed, pruned or written from then on. An IllegalStateException, as before it had a type of its own.
+     * pushed or written from then on. An IllegalStateException, as before it had a type of its own.
      */
     class Cleared : IllegalStateException("the pending store was cleared")
 
@@ -342,8 +348,12 @@ internal class PendingNotesStore private constructor(
 
     // ---- the one primitive every change goes through ----
 
-    /** Reads the entry and applies [transform] atomically under the store lock. Returns the new state. */
-    fun update(noteUid: String, transform: (Read) -> Change): Read = locked {
+    /**
+     * Reads the entry and applies [transform] atomically under the store lock. Returns the new state.
+     * Private, so every write of new text is in the store, where each takes a new version ([nextVersion]):
+     * a confirmation covers a sequence, and only a new version moves it on and withdraws the permit.
+     */
+    private fun update(noteUid: String, transform: (Read) -> Change): Read = locked {
         val current = readEntry(noteUid)
         when (val change = transform(current)) {
             Change.Keep -> current
@@ -389,8 +399,7 @@ internal class PendingNotesStore private constructor(
     /**
      * A save by note uid. An open editor saves through its handle instead (above), which is what keeps
      * a late save away from a note that a conflict copy replaced. Resets the failure backoff, since new
-     * content may push where the old did not. [notebookCopy], when given, is written in the same step,
-     * so no prune can remove it in between.
+     * content may push where the old did not. [notebookCopy], when given, is written in the same step.
      */
     fun saveLocal(
         noteUid: String,
@@ -413,14 +422,14 @@ internal class PendingNotesStore private constructor(
                 is Read.Present -> when (read.entry.state) {
                     PendingEntry.State.UPSERT -> {
                         notebookCopy?.let { putNotebookLocked(read.entry.notebookUid, it) }
-                        val version = nextVersion()
+                        val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.Saved(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob,
                             failureCount = 0, lastFailureAt = null, lastFailureCategory = null))
                     }
                     PendingEntry.State.HELD -> {
                         // The editor's latest text joins the held text instead of being lost.
-                        val version = nextVersion()
+                        val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.SavedToHolding(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob))
                     }
@@ -532,6 +541,9 @@ internal class PendingNotesStore private constructor(
      * the rebase that follows still applies, and the outcome carries the entry as written. If the write
      * fails, the upload has still landed: the outcome carries the entry with its mark, and the rebase
      * clears it.
+     *
+     * An entry whose file cannot be read now is kept as it is, and the outcome says so
+     * ([SendOutcome.Unreadable]) rather than [SendOutcome.Done], so the run does not record success over it.
      */
     fun completeSend(noteUid: String, sentVersion: Long, revision: String, blob: ByteArray): SendOutcome = locked {
         if (hasEditor(noteUid)) {
@@ -539,8 +551,10 @@ internal class PendingNotesStore private constructor(
         } else {
             remove(landedFile(noteUid))
         }
-        val e = (readEntry(noteUid) as? Read.Present)?.entry
+        val read = readEntry(noteUid)
+        val e = (read as? Read.Present)?.entry
         when {
+            read is Read.Unreadable -> SendOutcome.Unreadable
             e == null -> SendOutcome.Done
             e.version == sentVersion -> {
                 remove(noteFile(noteUid))
@@ -580,7 +594,8 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.version != expectedVersion || e.state == PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.withNewestSent(onto).copy(version = nextRunVersion(), revision = revision, blob = blob, fromConflict = false))
+                Change.Write(e.withNewestSent(onto).copy(version = nextRunVersion(above = e.version), revision = revision, blob = blob,
+                    fromConflict = false))
             }
         }
         applied
@@ -650,7 +665,7 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.state != PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(), held = null,
+                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(above = e.version), held = null,
                     failureCount = 0, lastFailureAt = null, lastFailureCategory = null, fromConflict = false))
             }
         }
@@ -786,36 +801,6 @@ internal class PendingNotesStore private constructor(
     fun notebook(notebookUid: String): ByteArray? = locked {
         val bytes = readIfPresent(notebookFile(notebookUid)) ?: return@locked null
         (PendingCodec.decodeNotebook(bytes) as? PendingCodec.Decoded.Ok)?.value?.second
-    }
-
-    /**
-     * Removes notebook copies no entry references, decided from one listing: a listing that reads as
-     * empty then has no copy to remove either. Skipped entirely while anything is unreadable, since its
-     * notebook is unknown and its copy may be the only way to decrypt it, and while the listing holds a
-     * first write that is not committed yet ("<uid>.note.new"), which may be the only copy of a note
-     * whose notebook no committed entry names. A listing that fails throws, as every listing of the store
-     * does, and nothing is removed. Skipped as well while a file the store's discard permit names is there, or a
-     * permit that may be there cannot be read or was recorded as for an answer that could not be counted
-     * ([Snapshot.discardUnfinished]): the listing can come back short and leave out such a file, whose notebook
-     * copy may be the only key to its text once a save withdraws the permit. Skipping a prune is always safe.
-     *
-     * It runs no recovery: while one is owed, it lists and removes nothing and returns at once. The runner
-     * only logs a prune that fails, so a recovery that failed here would be logged and nothing more. The
-     * next other call runs it instead, at the latest the snapshot of the next run, where a failure counts.
-     */
-    fun pruneNotebooks(): List<String> = synchronized(lock) {
-        if (closed) throw Cleared()
-        if (!recovered) emptyList() else locked {
-            if (namedThere(permitNames())) return@locked emptyList()
-            val listed = listing()
-            if (listed.any { it.name.endsWith(NOTE + NEW) }) return@locked emptyList()
-            val scan = scanOf(withSuffix(listed, NOTE))
-            if (scan.unreadable.isNotEmpty()) return@locked emptyList()
-            val referenced = scan.entries.map { it.notebookUid }.toSet()
-            withSuffix(listed, NOTEBOOK).filter { it.isFile }.map { it.name.removeSuffix(NOTEBOOK) }
-                .filter { it !in referenced }
-                .onEach { remove(notebookFile(it)) }
-        }
     }
 
     // ---- the whole store ----
@@ -1577,9 +1562,10 @@ internal class PendingNotesStore private constructor(
      * this call unlinked a file.
      *
      * It records no permit and no acknowledgement, hands out no version, and never closes or drops the instance, so
-     * what it keeps is held by the next push step, and the notebook copy goes with the next prune. Other notebooks'
-     * entries, files that cannot be placed, landed records and the counter stay. Anything it throws comes before an
-     * entry went, except an Error: memory can run out again while that last [NotebookDiscard.Partly] is made.
+     * what it keeps is held by the next push step. The notebook's copy stays too, as every copy does until the store is
+     * discarded or cleared. Other notebooks' entries, files that cannot be placed, landed records and the counter
+     * stay. Anything it throws comes before an entry went, except an Error: memory can run out again while that last
+     * [NotebookDiscard.Partly] is made.
      */
     fun discardNotebook(notebookUid: String, confirmed: UnsyncedNotes): NotebookDiscard = locked {
         val uid = checkedUid(notebookUid)
@@ -1755,7 +1741,7 @@ internal class PendingNotesStore private constructor(
 
     /**
      * Every public operation except [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [acknowledged],
-     * [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce], [clearAll] and [pruneNotebooks]:
+     * [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll]:
      * refuse ([Cleared]) once [clearAll], or a [discardStore] that got as far as deleting, has closed the store, and
      * finish any interrupted work first. Recovery runs again before the next operation for as long as anything in it
      * did not work out, including a write or removal inside recovery itself, or a listing it works from. A recovery
@@ -1768,10 +1754,6 @@ internal class PendingNotesStore private constructor(
      * IOException at its start, before recovery and on every call, also in an instance that recovered before the
      * link came, so nothing is read, written or deleted through the link. Recovery is then owed again, so it runs
      * over whatever the folder holds once it can be followed.
-     *
-     * [pruneNotebooks] refuses ([Cleared]) after [clearAll] as well, but runs no recovery: while one is owed it does
-     * nothing, and it comes here only when none is, so no recovery runs inside a prune, where a failure
-     * would show only as a log line.
      *
      * Recovery runs once per operation, at its start. An operation that calls another one under the lock (a
      * save through a handle, anything that goes through [update]) does not recover again in between:
@@ -1835,10 +1817,18 @@ internal class PendingNotesStore private constructor(
      * restart holds only while the counter reads, as [UnsyncedNotes.covers] says, and one shown before a
      * discard that finished, which deletes the counter, does not hold at all. The push order, which compares
      * versions across notes, is bounded the same way.
+     *
+     * And it is above [above], the version of the entry the new one replaces, which the caller read by name.
+     * In a new instance, as after a restart, that first reads the store once the counter is lost, [highWater]
+     * is the rebuild, and the rebuild rests on a listing, which can come back short and leave that entry out.
+     * Every check of an entry's version (a drop, a rebase, a recorded failure, a hold, a conflict copy and its
+     * recovery) compares it only with an earlier one of the same note, so a new version above the one it
+     * replaces is what they need, whatever the listing showed. A new entry has no version to replace. What is
+     * compared across notes, the push order and the store-wide sequence, gets only the [highWater] bound.
      */
-    private fun nextVersion(): Long {
+    private fun nextVersion(above: Long = 0): Long {
         withdrawPermit()
-        val next = currentSequence(strict = true) + 1
+        val next = maxOf(currentSequence(strict = true), above) + 1
         writeAtomically(File(dir, SEQUENCE), PendingCodec.encodeSequence(next))
         highWater = next
         return next
@@ -1853,9 +1843,9 @@ internal class PendingNotesStore private constructor(
      * release from holding still withdraw the permit. Once this instance has shown the permit gone
      * ([withdrawPermit]), nothing holds a new version back, and the permit is not read again ([permitNames]).
      */
-    private fun nextRunVersion(): Long {
+    private fun nextRunVersion(above: Long = 0): Long {
         if (namedThere(permitNames())) throw HeldBack()
-        return nextVersion()
+        return nextVersion(above)
     }
 
     /**
@@ -2161,8 +2151,9 @@ internal class PendingNotesStore private constructor(
         // away (design 3.1). An entry file this build cannot read is then reported like every committed
         // entry that cannot be read. The other kinds are kept for a build that can read them but not
         // reported. A landed record goes in step 2 unless an editor is open, and a notebook copy lasts until
-        // a run prunes or rewrites it. A counter this build cannot read stays as it is, and every write that
-        // needs a new version fails while it does: the build that wrote it may have handed out higher ones.
+        // a run rewrites it or the store is discarded or cleared. A counter this build cannot read stays as it
+        // is, and every write that needs a new version fails while it does: the build that wrote it may have
+        // handed out higher ones.
         // A ".new" of any other kind is left as it is: not deleted, not committed and not reported, since
         // this build cannot judge it and a newer build may keep versions in it. With the counter lost, the
         // version rebuild ([versionOf]) then takes it for a file of a kind this build does not know.
@@ -2190,8 +2181,7 @@ internal class PendingNotesStore private constructor(
         }
         // 2. A landed record only matters while an editor for its note is open. Any other is left from an
         // editor that closed without clearing it, or from an earlier process (no editor survives one),
-        // and would otherwise keep a full copy of the note on the device. Only regular files are removed,
-        // as in [pruneNotebooks].
+        // and would otherwise keep a full copy of the note on the device. Only regular files are removed.
         for (file in files(LANDED).filter { it.isFile && !hasEditor(it.name.removeSuffix(LANDED)) }) {
             try {
                 remove(file)
@@ -2240,9 +2230,9 @@ internal class PendingNotesStore private constructor(
 
     /**
      * The files in [listed] with [suffix], chosen by name alone. File.isFile also answers false when its
-     * check fails, and an entry dropped for that would be neither reported nor pushed, its version would
-     * be passed over, and its notebook copy would look unreferenced. A caller that removes what it lists
-     * keeps only regular files on top, since there a shorter list can only keep more.
+     * check fails, and an entry dropped for that would be neither reported nor pushed, and its version
+     * would be passed over. A caller that removes what it lists keeps only regular files on top, since
+     * there a shorter list can only keep more.
      */
     private fun withSuffix(listed: Array<out File>, suffix: String): List<File> =
         listed.filter { it.name.endsWith(suffix) }.sortedBy { it.name }

@@ -226,6 +226,25 @@
         <item name="titleTextColor">@color/semantic_on_system_bar</item>
     </style>
 
+    <!-- Legacy AppTheme window action bar: navy in both themes. Foreground stays white through
+         actionBarTheme (ThemeOverlay.AppCompat.Dark.ActionBar). -->
+    <style name="Widget.AppTheme.WindowActionBar" parent="Widget.MaterialComponents.Light.ActionBar.Solid">
+        <item name="background">@color/semantic_system_bar</item>
+        <item name="backgroundStacked">@color/semantic_system_bar</item>
+        <item name="backgroundSplit">@color/semantic_system_bar</item>
+    </style>
+
+    <!-- Dashboard top bar overlay, scoped to that toolbar: white action/overflow icons and drawer
+         toggle. Text colours are deliberately not set, so the overflow popup keeps its light-surface text. -->
+    <style name="ThemeOverlay.AppTheme.TopBar" parent="">
+        <item name="colorControlNormal">@color/semantic_on_system_bar</item>
+        <item name="drawerArrowStyle">@style/Widget.AppTheme.TopBar.DrawerArrowToggle</item>
+    </style>
+
+    <style name="Widget.AppTheme.TopBar.DrawerArrowToggle" parent="Widget.AppCompat.DrawerArrowToggle">
+        <item name="color">@color/semantic_on_system_bar</item>
+    </style>
+
 
     <!-- text content -->
 
