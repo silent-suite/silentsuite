@@ -107,5 +107,12 @@
     "deleteNotebookTitle": "Eliminare il blocco appunti?",
     "deleteNotebookMessage": "{count, plural, =0 {\"{name}\" è vuoto e verrà eliminato permanentemente.} one {\"{name}\" e la nota contenuta al suo interno verranno eliminati permanentemente.} other {\"{name}\" e le # note contenute al suo interno verranno eliminati permanentemente.}} Questa azione non può essere annullata.",
     "experimentalWebOnly": "Sperimentale · Solo app Web"
+  },
+  "SettingsExperimental": {
+    "Language": {
+      "title": "Lingua",
+      "description": "Gran parte dell'app è ancora in inglese. Per ora l'italiano copre solo alcune schermate. Questa scelta vale solo per questo browser e non viene sincronizzata con il tuo account o con altri dispositivi.",
+      "partialTag": "(parziale, sperimentale)"
+    }
   }
 }
