@@ -30,7 +30,13 @@ Native dialogs are answered through their real buttons: the migration prompt
 (a QMessageBox whose text contains MIGRATION_PROMPT) gets its Accept/Yes or
 Reject/No button per scenario; any other message box is acknowledged.
 
-Exit codes: 0 result written, 2 prerequisite missing, 3 fixture watchdog.
+Ending a run: the dashboard window is closed normally, except in desktop_only.
+There the desktop start-at-login entry is registered, so a close only hides
+the window. That scenario ends through the product's native "Quit SilentSuite
+Bridge" action instead (close semantics are covered by test_desktop_lifecycle.py).
+
+Exit codes: 0 result written, 2 prerequisite missing, 3 fixture watchdog,
+4 desktop_only found no enabled Quit action (fixture failure, not RED).
 """
 
 import argparse
@@ -49,7 +55,9 @@ from pathlib import Path
 EXIT_WRITTEN = 0
 EXIT_PREREQ = 2
 EXIT_WATCHDOG = 3
+EXIT_NO_QUIT_ACTION = 4  # fixture failure (not RED): desktop_only could not end through the product's Quit
 WATCHDOG_SECONDS = 100
+QUIT_ACTION_TEXT = "Quit SilentSuite Bridge"
 OBSERVE_INTERVAL_MS = 200
 OUTCOME_DEADLINE_SECONDS = 60
 STALL_CAPTURE_SECONDS = 20  # diagnostic snapshot, before the product's own 30 s dashboard deadline
@@ -187,6 +195,7 @@ def run(out: Path, scenario: str) -> int:
 
     try:
         from PySide6.QtCore import QCoreApplication, Qt, QTimer
+        from PySide6.QtGui import QAction
         from PySide6.QtWebEngineWidgets import QWebEngineView
         from PySide6.QtWidgets import QApplication, QMessageBox
     except Exception as exc:  # noqa: BLE001
@@ -316,8 +325,41 @@ def run(out: Path, scenario: str) -> int:
                 ]
             observed["stall_stacks"] = stacks
 
+    quit_teardown = {"started": False}
+
+    def end_desktop_only(window):
+        """desktop_only: finish through the product's own native Quit action, once.
+
+        Its desktop start-at-login entry is registered, so an ordinary close only
+        hides the window and the Bridge keeps serving (implementation-plan-v2
+        section 5; verified by test_desktop_lifecycle.py). This scenario checks
+        that the desktop entry is not mistaken for the CLI's, so it ends via
+        "Quit SilentSuite Bridge": the real QAction in the window, triggered on
+        this (the Qt main) thread. If that action is missing or disabled,
+        the fixture fails at once (exit 4); it never fakes a Quit with app.quit().
+        """
+        quit_teardown["started"] = True
+        matches = [
+            action for action in window.findChildren(QAction)
+            if action.text().replace("&", "") == QUIT_ACTION_TEXT
+        ]
+        observed["teardown"] = {
+            "via": "quit-action",
+            "found": len(matches),
+            "enabled": bool(matches) and matches[0].isEnabled(),
+            "main_thread": threading.current_thread() is threading.main_thread(),
+        }
+        if not matches or not matches[0].isEnabled():
+            result["stage"] = result["stage"] + ":quit-action-unavailable"
+            result["observed"] = observed
+            _write(out, result)
+            os._exit(EXIT_NO_QUIT_ACTION)  # fixture-only, bounded; reported as not RED
+        matches[0].trigger()
+
     def observe():
         record_diagnostics()
+        if quit_teardown["started"]:
+            return  # one teardown only; the product is stopping
         for widget in QApplication.topLevelWidgets():
             if not widget.isVisible():
                 continue
@@ -341,7 +383,10 @@ def run(out: Path, scenario: str) -> int:
                 if dashboard and requested == dashboard and view.title() == BRAND:
                     observed.update({"dashboard_shown": True, "requested_url": requested,
                                      "registry_dashboard_url": dashboard})
-                    widget.close()  # a normal user close; start-at-login is off
+                    if scenario == "desktop_only":
+                        end_desktop_only(widget)  # registered: a close would only hide
+                    else:
+                        widget.close()  # a normal user close; no desktop start-at-login entry
                     return
         if time.monotonic() - started > OUTCOME_DEADLINE_SECONDS:
             observed["deadline_missed"] = True
