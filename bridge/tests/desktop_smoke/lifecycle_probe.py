@@ -26,7 +26,10 @@ Roles (one per process; the parent test drives them):
           bytes written to the owner's endpoint.
 
 Owner witnesses:
-- every Show/Hide of a top-level widget, with wall-clock time (bounded list);
+- every Show/Hide of a top-level widget, with wall-clock time (bounded list).
+  An event filter goes on each top-level widget itself, never on the
+  application. It is attached before the product's first show (in a delegating
+  start_workers wrapper) and on every tick, and removed on aboutToQuit;
 - a snapshot taken inside the instance-lock context just before the lock is
   released: server thread, registry, IPC listening state, endpoint file and
   the synthetic worker; plus the order of IPC close and lock release, from
@@ -385,25 +388,79 @@ def run(args) -> int:
 
     history = []
 
-    class _ShowHistory(QObject):
+    def record_show_hide(widget, kind, attached_visible=False):
+        if len(history) >= HISTORY_CAP:
+            result["history_truncated"] = True
+            return
+        entry = {
+            "wall": time.time(),
+            "event": kind,
+            "class": type(widget).__name__,
+            "dialog": isinstance(widget, QDialog),
+            "menu": isinstance(widget, (QMenu, QMenuBar)),  # a menu (bar) is not a dashboard window
+        }
+        if attached_visible:
+            entry["attached_visible"] = True  # already on screen when first seen: counted as a show
+        history.append(entry)
+
+    # TARGETED Show/Hide observation (fixture correction 1). The first version
+    # installed this filter on the QApplication, which delivers every event of
+    # every main-thread QObject (WebEngine internals included) into Python.
+    # All six POSIX owners then died in app.exec() with that filter active (run
+    # 41820702916). Now the filter goes only on individual top-level widgets
+    # (QObject.installEventFilter on the widget itself), whatever their class,
+    # so a future QMainWindow container is covered the same way as today's view.
+    class _WindowShowHide(QObject):
         def eventFilter(self, obj, event):  # noqa: N802 - Qt override
             kind = event.type()
             if kind in (QEvent.Type.Show, QEvent.Type.Hide) and isinstance(obj, QWidget) and obj.isWindow():
-                if len(history) < HISTORY_CAP:
-                    history.append({
-                        "wall": time.time(),
-                        "event": "show" if kind == QEvent.Type.Show else "hide",
-                        "class": type(obj).__name__,
-                        "dialog": isinstance(obj, QDialog),
-                        "menu": isinstance(obj, (QMenu, QMenuBar)),  # a menu (bar) is not a dashboard window
-                    })
-                else:
-                    result["history_truncated"] = True
-            return False
+                record_show_hide(obj, "show" if kind == QEvent.Type.Show else "hide")
+            return False  # never consumes: the widget's own handlers run unchanged
 
-    show_history = _ShowHistory()
-    app.installEventFilter(show_history)
-    _phase("owner: app-wide Show/Hide event filter installed")
+    window_show_hide = _WindowShowHide()
+    watched = []
+    watching = {"detached": False}
+
+    def watch_top_levels():
+        """Attach to every top-level widget not yet watched (hidden ones too)."""
+        if watching["detached"]:
+            return
+        for widget in QApplication.topLevelWidgets():
+            if any(widget is seen for seen in watched):
+                continue
+            widget.installEventFilter(window_show_hide)
+            watched.append(widget)
+            if widget.isVisible():
+                record_show_hide(widget, "show", attached_visible=True)
+
+    def unwatch_top_levels():
+        """Remove every per-window filter before the product tears its windows down."""
+        if watching["detached"]:
+            return
+        watching["detached"] = True
+        for widget in watched:
+            try:
+                widget.removeEventFilter(window_show_hide)
+            except RuntimeError:  # that widget is already gone (Qt dropped its filters)
+                pass
+        watched.clear()
+        _phase("owner: per-window Show/Hide filters removed")
+
+    # First-show coverage: run_desktop calls start_workers() after building its
+    # window and before view.show()/app.exec(), so a delegating wrapper attaches
+    # there, before the first product show. Every tick attaches to any later
+    # top-level as well. aboutToQuit removes the filters after the event loop
+    # ends and before run_desktop deletes the view.
+    original_start_workers = bridge_main._start_sync_threads
+
+    def start_workers_after_watch():
+        watch_top_levels()
+        _phase(f"owner: per-window Show/Hide filters attached before first show ({len(watched)})")
+        return original_start_workers()
+
+    bridge_main._start_sync_threads = start_workers_after_watch  # main() passes it at call time
+    app.aboutToQuit.connect(unwatch_top_levels)
+    _phase("owner: targeted per-window Show/Hide observer prepared (no application-wide filter)")
 
     # Diagnostic only: run_desktop calls DesktopStartAtLogin.for_running_app() after it
     # has built the web profile and view and before view.show()/app.exec(). A
@@ -562,6 +619,7 @@ def run(args) -> int:
         fixture_quit("fixture-quit")
 
     def tick():
+        watch_top_levels()  # top-levels created after start_workers (none today)
         if not state.get("ticked"):
             state["ticked"] = True
             _arm_faulthandler("first event-loop tick")
@@ -649,8 +707,7 @@ def run(args) -> int:
     argv = ["silentsuite-bridge"] + (["--background"] if args.background else [])
     exit_code = run_main(argv)
     poll.stop()
-    app.removeEventFilter(show_history)
-    _phase("owner: app-wide event filter removed")
+    unwatch_top_levels()  # no-op when aboutToQuit already removed them
     if result.get("quit"):
         result["quit"]["main_returned_wall"] = time.time()
 
