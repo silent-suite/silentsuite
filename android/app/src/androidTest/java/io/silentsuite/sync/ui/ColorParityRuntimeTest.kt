@@ -9,9 +9,11 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
+import android.widget.ImageButton
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.graphics.drawable.DrawerArrowDrawable
+import androidx.appcompat.widget.ActionMenuView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.graphics.Insets
 import androidx.test.core.app.ActivityScenario
@@ -29,6 +31,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 @RunWith(AndroidJUnit4::class)
 class ColorParityRuntimeTest {
@@ -139,6 +142,7 @@ class ColorParityRuntimeTest {
     )
 
     @Test fun dayNightRolesRecreateDeterministically() {
+        assertTopBarCheckersRejectKnownGrayDefaults()
         val prior = AppCompatDelegate.getDefaultNightMode()
         try {
             setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
@@ -191,13 +195,84 @@ class ColorParityRuntimeTest {
 
     private fun assertSettingsBar(activity: AppSettingsActivity, label: String) {
         val toolbar = activity.findViewById<Toolbar>(androidx.appcompat.R.id.action_bar)
+        // Settings has no options menu; its up arrow comes from parentActivityName.
+        assertToolbarGlyphs(label, toolbar, minimumActionViews = 0)
+        assertNavyBarWithWhiteForeground(label, activity.findViewById(androidx.appcompat.R.id.action_bar_container))
+    }
+
+    /**
+     * Per-glyph evidence, so a white title cannot hide gray or invisible icons: the title text
+     * colour, the navigation button, and every visible enabled action-menu child (action items and
+     * the overflow button) are each rendered on their own and must have a white glyph.
+     */
+    private fun assertToolbarGlyphs(label: String, toolbar: Toolbar, minimumActionViews: Int) {
+        val children = (0 until toolbar.childCount).map { toolbar.getChildAt(it) }
         val titleText = toolbar.title?.toString()
         assertTrue("$label title is set", !titleText.isNullOrEmpty())
-        val title = (0 until toolbar.childCount).map { toolbar.getChildAt(it) }
-            .filterIsInstance<TextView>()
-            .single { it.text?.toString() == titleText }
-        assertEquals("$label title colour", ContextCompat.getColor(activity, R.color.semantic_on_system_bar), title.currentTextColor)
-        assertNavyBarWithWhiteForeground(label, activity.findViewById(androidx.appcompat.R.id.action_bar_container))
+        val title = children.filterIsInstance<TextView>().single { it.text?.toString() == titleText }
+        assertEquals("$label title colour", ContextCompat.getColor(toolbar.context, R.color.semantic_on_system_bar), title.currentTextColor)
+
+        val navigationIcon = toolbar.navigationIcon
+        assertNotNull("$label navigation icon", navigationIcon)
+        val navigation = children.filterIsInstance<ImageButton>().single { it.drawable === navigationIcon }
+        assertWhiteGlyph("$label navigation icon", navigation.renderOnTransparent())
+
+        val actions = children.filterIsInstance<ActionMenuView>()
+            .flatMap { menu -> (0 until menu.childCount).map { menu.getChildAt(it) } }
+            .filter { it.visibility == View.VISIBLE && it.isEnabled && it.width > 0 && it.height > 0 }
+        assertTrue("$label has ${actions.size} action views, expected at least $minimumActionViews", actions.size >= minimumActionViews)
+        actions.forEachIndexed { index, view ->
+            assertWhiteGlyph("$label action view $index (${view.javaClass.simpleName} ${view.contentDescription})", view.renderOnTransparent())
+        }
+    }
+
+    private fun View.renderOnTransparent(): Bitmap =
+        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { draw(Canvas(it)) }
+
+    /**
+     * A glyph rendered alone on a transparent bitmap. getPixel() returns unpremultiplied colour, and
+     * a white source unpremultiplies back to 255 exactly, so every substantially covered pixel must be
+     * white; an opaque core proves the glyph is really drawn rather than faint or empty.
+     */
+    private fun assertWhiteGlyph(label: String, glyph: Bitmap) {
+        var core = 0
+        val nonWhite = mutableListOf<String>()
+        for (y in 0 until glyph.height) {
+            for (x in 0 until glyph.width) {
+                val pixel = glyph.getPixel(x, y)
+                if (Color.alpha(pixel) < GLYPH_COVERED_ALPHA) continue
+                if (!isWhiteGlyphPixel(pixel)) nonWhite += "($x,$y)=#%08X".format(pixel)
+                if (Color.alpha(pixel) >= GLYPH_CORE_ALPHA) core++
+            }
+        }
+        assertTrue("$label has non-white glyph pixels ${nonWhite.take(5)} of ${nonWhite.size}", nonWhite.isEmpty())
+        assertTrue("$label has no opaque white glyph core", core > 0)
+    }
+
+    private fun isWhiteGlyphPixel(pixel: Int) =
+        Color.red(pixel) >= WHITE_GLYPH_MIN && Color.green(pixel) >= WHITE_GLYPH_MIN && Color.blue(pixel) >= WHITE_GLYPH_MIN
+
+    /** Distance of an opaque pixel from the navy-to-white blend line, with its estimated white coverage. */
+    private fun navyWhiteBlend(pixel: Int): Pair<Double, Double> {
+        val delta = intArrayOf(Color.red(pixel) - NAVY_R, Color.green(pixel) - NAVY_G, Color.blue(pixel) - NAVY_B)
+        val coverage = (0..2).sumOf { delta[it] * BLEND_SPAN[it] } / BLEND_SPAN_SQUARED
+        val residual = (0..2).maxOf { abs(delta[it] - coverage * BLEND_SPAN[it]) }
+        return coverage to residual
+    }
+
+    /** Negative and positive controls: the gray defaults this fix replaced must fail both checkers. */
+    private fun assertTopBarCheckersRejectKnownGrayDefaults() {
+        for (gray in arrayOf("#49454F", "#CAC4D0")) {
+            val pixel = Color.parseColor(gray)
+            assertTrue("$gray must be off the navy/white blend line", navyWhiteBlend(pixel).second > BLEND_TOLERANCE)
+            assertFalse("$gray must not count as a white glyph pixel", isWhiteGlyphPixel(pixel))
+        }
+        assertEquals(0.0, navyWhiteBlend(Color.parseColor("#0A1018")).second, 1e-9)
+        assertEquals(0.0, navyWhiteBlend(Color.parseColor("#FFFFFF")).second, 1e-9)
+        // A half-covered blend rounded to 8 bits per channel stays inside the tolerance.
+        val half = Color.rgb(NAVY_R + (BLEND_SPAN[0] + 1) / 2, NAVY_G + (BLEND_SPAN[1] + 1) / 2, NAVY_B + (BLEND_SPAN[2] + 1) / 2)
+        assertTrue("rounded half blend must stay on the line", navyWhiteBlend(half).second <= BLEND_TOLERANCE)
+        assertTrue(isWhiteGlyphPixel(Color.parseColor("#FFFFFF")))
     }
 
     /**
@@ -221,6 +296,8 @@ class ColorParityRuntimeTest {
             View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
         )
         toolbar.layout(0, 0, width, height)
+        // R.menu.activity_account: sync_now is showAsAction="always"; the other two go to overflow.
+        assertToolbarGlyphs(label, toolbar, minimumActionViews = 2)
         assertNavyBarWithWhiteForeground(label, toolbar)
     }
 
@@ -237,21 +314,13 @@ class ColorParityRuntimeTest {
         val bitmap = Bitmap.createBitmap(bar.width, bar.height, Bitmap.Config.ARGB_8888)
         bar.draw(Canvas(bitmap))
         assertEquals("$label background", navy, bitmap.getPixel(bitmap.width - 1, 0))
-        val span = intArrayOf(
-            Color.red(white) - Color.red(navy), Color.green(white) - Color.green(navy), Color.blue(white) - Color.blue(navy),
-        )
-        val spanSquared = span.sumOf { it * it }.toDouble()
         val stray = mutableListOf<String>()
         var foreground = 0
         for (y in 0 until bitmap.height) {
             for (x in 0 until bitmap.width) {
                 val pixel = bitmap.getPixel(x, y)
-                val delta = intArrayOf(
-                    Color.red(pixel) - Color.red(navy), Color.green(pixel) - Color.green(navy), Color.blue(pixel) - Color.blue(navy),
-                )
-                val coverage = (0..2).sumOf { delta[it] * span[it] } / spanSquared
-                val residual = (0..2).maxOf { abs(delta[it] - coverage * span[it]) }
-                if (Color.alpha(pixel) != 255 || residual > 8.0) stray += "($x,$y)=#%08X".format(pixel)
+                val (coverage, residual) = navyWhiteBlend(pixel)
+                if (Color.alpha(pixel) != 255 || residual > BLEND_TOLERANCE) stray += "($x,$y)=#%08X".format(pixel)
                 if (coverage > 0.9) foreground++
             }
         }
@@ -374,6 +443,25 @@ class ColorParityRuntimeTest {
                 }
             }
         }
+    }
+
+    private companion object {
+        // semantic_system_bar #0A1018 and semantic_on_system_bar #FFFFFF (asserted against resources above).
+        const val NAVY_R = 0x0A
+        const val NAVY_G = 0x10
+        const val NAVY_B = 0x18
+        val BLEND_SPAN = intArrayOf(0xFF - NAVY_R, 0xFF - NAVY_G, 0xFF - NAVY_B)
+        val BLEND_SPAN_SQUARED = BLEND_SPAN.sumOf { it * it }.toDouble()
+        // An 8-bit src-over composite rounds the source and destination terms separately, so each
+        // channel of a true navy/white blend is within e = 2 * 0.5 = 1.0 of the ideal value. Refitting
+        // coverage by projection moves the fitted point by at most |e| <= 1.0 * sqrt(3), giving a
+        // per-channel residual bound of 1.0 * (1 + sqrt(3)) ~= 2.73. The gray defaults sit at ~4.36
+        // (#49454F) and ~5.82 (#CAC4D0), outside it.
+        val BLEND_TOLERANCE = 1.0 * (1.0 + sqrt(3.0))
+        // At alpha >= 128 unpremultiplying a white source stays within 2 of 255 even with rounding.
+        const val GLYPH_COVERED_ALPHA = 128
+        const val GLYPH_CORE_ALPHA = 250
+        const val WHITE_GLYPH_MIN = 250
     }
 
     private fun countTagged(view: View, tag: String): Int {
