@@ -48,10 +48,16 @@ Simulated boundaries (and only these):
 
 Exit codes: 0 result written, 2 prerequisite missing, 3 fixture watchdog,
 4 the product called os._exit (result written first).
+
+Crash diagnostics (POSIX): faulthandler writes the crashing thread's Python
+stack to stderr. It is armed before Qt and again after the web engine has
+started. Short "t2-lifecycle-probe phase:" lines on stderr mark the probe's
+own boundaries, each printed at most once. Neither changes what is observed.
 """
 
 import argparse
 import contextlib
+import faulthandler
 import gc
 import hashlib
 import os
@@ -60,6 +66,36 @@ import threading
 import time
 import traceback
 from pathlib import Path
+
+# --- crash diagnostics (run 41818896067: the owner died with SIGSEGV on Linux/macOS) ---
+# faulthandler prints the crashing thread's Python stack to stderr, which the
+# parent already includes in its failure message (the last 2500 characters).
+# Only the crashing thread is dumped so the stack fits in that tail. Phase markers
+# are one short stderr line per probe-only boundary, each printed at most once.
+# POSIX only: Windows passed, and faulthandler there also reports handled exceptions.
+_FAULTHANDLER = sys.platform != "win32"
+_PHASES_SEEN = set()
+_PHASE_CAP = 32
+
+
+def _phase(name):
+    if name in _PHASES_SEEN or len(_PHASES_SEEN) >= _PHASE_CAP:
+        return
+    _PHASES_SEEN.add(name)
+    print(f"t2-lifecycle-probe phase: {name}", file=sys.stderr, flush=True)
+
+
+def _arm_faulthandler(reason):
+    """(Re)install faulthandler. Chromium's start-up may reset SIGSEGV/SIGBUS to the
+    default action, so it is armed again after the web engine has started."""
+    if not _FAULTHANDLER:
+        return
+    faulthandler.disable()
+    faulthandler.enable(file=sys.stderr, all_threads=False)
+    _phase(f"faulthandler armed ({reason})")
+
+
+_arm_faulthandler("before Qt and product import")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -224,6 +260,7 @@ def run(args) -> int:
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication([sys.argv[0]])
     result["prereq"].update({"qapplication": True, "screen": app.primaryScreen() is not None})
+    _phase(f"{args.role}: QApplication created")
 
     client_socket = {"connects": 0, "writes_hex": [], "write_bytes": 0, "read_attempts": 0, "read_methods": []}
     if args.role == "second":
@@ -271,6 +308,7 @@ def run(args) -> int:
         exit_code = None
         result["stage"] = "entrypoint"
         _write(out, result)
+        _phase(f"{args.role}: entering desktop main")
         try:
             bridge_main.main(flavor="desktop")
         except SystemExit as exc:
@@ -278,6 +316,7 @@ def run(args) -> int:
         except Exception as exc:  # noqa: BLE001
             frames = [f"{os.path.basename(f.filename)}:{f.lineno}" for f in traceback.extract_tb(exc.__traceback__)]
             result["entry_error"] = {"class": type(exc).__name__, "frames": frames[-6:]}
+        _phase(f"{args.role}: desktop main returned")
         return exit_code
 
     # --- second launch ------------------------------------------------------
@@ -364,6 +403,20 @@ def run(args) -> int:
 
     show_history = _ShowHistory()
     app.installEventFilter(show_history)
+    _phase("owner: app-wide Show/Hide event filter installed")
+
+    # Diagnostic only: run_desktop calls DesktopStartAtLogin.for_running_app() after it
+    # has built the web profile and view and before view.show()/app.exec(). A
+    # delegating wrapper re-arms faulthandler there, after Chromium's start-up.
+    from silentsuite_bridge import desktop_autostart
+
+    original_for_running_app = desktop_autostart.DesktopStartAtLogin.for_running_app
+
+    def for_running_app_after_rearm():
+        _arm_faulthandler("after the web profile and view were built")
+        return original_for_running_app()
+
+    desktop_autostart.DesktopStartAtLogin.for_running_app = staticmethod(for_running_app_after_rearm)
 
     order = []
     before_release = {}
@@ -394,12 +447,15 @@ def run(args) -> int:
     def observed_ownership(*a, **kw):
         with original_ownership(*a, **kw):
             order.append("lock_acquired")
+            _phase("owner: instance lock acquired")
             try:
                 yield
             finally:
+                _phase("owner: lock-release snapshot")
                 before_release.update(ownership_snapshot())
                 order.append("lock_releasing")
         order.append("lock_released")
+        _phase("owner: instance lock released")
 
     instance.instance_ownership = observed_ownership  # delegating; main() imports it at call time
 
@@ -407,6 +463,7 @@ def run(args) -> int:
 
     def observed_ipc_close(self):
         order.append("ipc_close")
+        _phase("owner: OwnerIpc.close")
         return original_ipc_close(self)
 
     desktop_ipc.OwnerIpc.close = observed_ipc_close
@@ -454,12 +511,16 @@ def run(args) -> int:
         return matches, sorted({a.text() for a in actions if a.text()})[:30]
 
     def write_ready(kind):
+        _arm_faulthandler("at ready, after the page loaded")
+        _phase("owner: ready: endpoint facts")
         servers = app.findChildren(QLocalServer)
         facts = ipc_probe._endpoint_facts(servers[0]) if servers else {"found": False}
         if sys.platform != "win32" and facts.get("full_name") and os.path.isabs(facts["full_name"]):
             state["endpoint"] = facts["full_name"]
+        _phase("owner: ready: synthetic worker")
         worker_box["worker"] = _register_synthetic_worker(storage)
         window, _view = visible_dashboard()
+        _phase("owner: ready: QAction scan (incl. gc.get_objects)")
         ready = {
             "kind": kind,
             "registry_dashboard_url": get_registry().dashboard_url(False),
@@ -473,13 +534,16 @@ def run(args) -> int:
         }
         result["ready"] = ready
         _write(args.ready, ready)
+        _phase("owner: ready written")
 
     def fixture_quit(reason):
         result["teardown"] = reason  # fixture teardown only; never evidence of a product Quit
         state["phase"] = "ending"
+        _phase(f"owner: fixture teardown ({reason})")
         app.quit()
 
     def begin_quit():
+        _phase("owner: quit: QAction scan (incl. gc.get_objects)")
         matches, texts = quit_actions()
         quit = {"found": len(matches), "texts": texts, "requested_wall": time.time()}
         result["quit"] = quit
@@ -492,11 +556,16 @@ def run(args) -> int:
             })
             result["teardown"] = "quit-action"
             state.update({"phase": "quitting", "quit_at": time.monotonic()})
+            _phase("owner: quit: QAction.trigger()")
             action.trigger()  # the real native action, on the owner's main thread
             return
         fixture_quit("fixture-quit")
 
     def tick():
+        if not state.get("ticked"):
+            state["ticked"] = True
+            _arm_faulthandler("first event-loop tick")
+            _phase("owner: event loop running")
         phase = state["phase"]
         if phase == "ending":
             return
@@ -535,7 +604,9 @@ def run(args) -> int:
             close = {"wall": time.time(), "visible_before": bool(window.isVisible())}
             result["close"] = close
             # An ACTUAL close: a real QCloseEvent through QWidget.close(), not hide().
+            _phase("owner: close: QWidget.close() called")
             close["accepted"] = bool(window.close())
+            _phase("owner: close: QWidget.close() returned")
             state.update({"phase": "closed", "closed_at": time.monotonic()})
             return
         if phase == "closed":
@@ -549,6 +620,7 @@ def run(args) -> int:
                       "wall": time.time(), **ownership_snapshot()}
             result["closed"] = closed
             _write(control / "closed.json", closed)
+            _phase("owner: closed snapshot written")
             state["phase"] = "hidden"
             return
         if phase in ("ready", "hidden") and flag("second.started"):
@@ -566,6 +638,7 @@ def run(args) -> int:
             }
             result["shown"] = shown
             _write(control / "shown.ack", shown)
+            _phase("owner: shown ack written")
             state["phase"] = "shown"
 
     poll = QTimer()
@@ -577,6 +650,7 @@ def run(args) -> int:
     exit_code = run_main(argv)
     poll.stop()
     app.removeEventFilter(show_history)
+    _phase("owner: app-wide event filter removed")
     if result.get("quit"):
         result["quit"]["main_returned_wall"] = time.time()
 
