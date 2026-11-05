@@ -29,10 +29,16 @@ Sources of each observation:
   classified by location: wheel, the bundle's own bootloader executable,
   PyInstaller-generated (under --workpath), interpreter runtime (under
   sys.base_prefix), a Linux dpkg package (owner, version, copyright file), or
-  unknown;
+  unknown; an in-bundle link is ``bundle-link`` (with its target's origin) only
+  when its SYMLINK TOC entry and the actual bundle symlink name the same relative
+  target and that target is an existing file inside the bundle, else unknown;
 - wheel tags and build tag: each distribution's own WHEEL file;
 - Qt version and build string: the build interpreter's PySide6.QtCore, in a
-  subprocess (only QtCore; no window, web engine or bundled app is started).
+  subprocess (only QtCore; no window, web engine or bundled app is started);
+- WebEngine/Chromium versions: the build interpreter's PySide6.QtWebEngineCore
+  qWebEngineVersion(), qWebEngineChromiumVersion() and
+  qWebEngineChromiumSecurityPatchVersion(), in a separate subprocess that creates
+  no application, profile, page or window; failures are recorded, never fatal.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -62,6 +69,12 @@ QT_PLUGIN_DIRS = ("PySide6/Qt/plugins/", "PySide6/plugins/")
 QT_PROBE = (
     "import json; from PySide6 import QtCore; "
     "print(json.dumps({'qVersion': QtCore.qVersion(), 'build': QtCore.QLibraryInfo.build()}))"
+)
+# Documented PySide6.QtWebEngineCore global functions (qt-webengine-version-api-evidence.json).
+WEBENGINE_FUNCTIONS = ("qWebEngineVersion", "qWebEngineChromiumVersion", "qWebEngineChromiumSecurityPatchVersion")
+WEBENGINE_PROBE = (
+    "import json; from PySide6 import QtWebEngineCore; "
+    f"print(json.dumps({{name: getattr(QtWebEngineCore, name)() for name in {WEBENGINE_FUNCTIONS!r}}}))"
 )
 DPKG_DOC_ROOT = Path("/usr/share/doc")
 
@@ -108,6 +121,10 @@ def _bundle_files(bundle_root: Path) -> list[dict]:
                 target = path.resolve()
                 if root not in target.parents:
                     entry.update({"sha256": None, "size": None, "symlink_outside_bundle": True})
+                    entries.append(entry)
+                    continue
+                if not target.exists():  # an in-bundle link to nothing: observed, not hashed
+                    entry.update({"sha256": None, "size": None, "symlink_dangling": True})
                     entries.append(entry)
                     continue
             entry["sha256"] = _sha256_file(path)
@@ -262,11 +279,37 @@ def _origin(relative: str, source: str | None, build: dict) -> dict:
     return {"class": "unknown", "source": source}
 
 
+def _link_origin(entry: dict, link_source: str, entries_by_path: dict, file_origins: dict) -> dict:
+    """A source-backed in-bundle link, or unknown.
+
+    PyInstaller 6.22.3 records a preserved link as (dest, rel_link, 'SYMLINK') with
+    rel_link relative to dirname(dest) (building/datastruct.py:453-454), and COLLECT
+    creates os.symlink(rel_link, dest) (building/api.py:1213). Both must agree, and
+    the target must be an existing regular file inside the bundle.
+    """
+    unknown = {"class": "unknown", "source": link_source}
+    observed = entry.get("symlink")
+    if observed is None or entry.get("symlink_outside_bundle") or entry.get("symlink_dangling"):
+        return unknown
+    wanted = link_source.replace("\\", "/")
+    if observed.replace("\\", "/") != wanted or PurePosixPath(wanted).is_absolute():
+        return unknown
+    target = posixpath.normpath(posixpath.join(posixpath.dirname(entry["path"]), wanted))
+    if target == ".." or target.startswith("../"):
+        return unknown
+    target_entry = entries_by_path.get(target)
+    if target_entry is None or "symlink" in target_entry or target not in file_origins:
+        return unknown
+    return {"class": "bundle-link", "source": link_source, "target": target,
+            "target_origin": dict(file_origins[target])}
+
+
 def collect(bundle_root, modules, search_path=None, build=None) -> dict:
     """Facts for ``bundle_root`` (the onedir folder) given its bundled ``modules``.
 
     ``build`` (CLI only) carries the PyInstaller evidence: ``sources`` (bundle path
-    under ``_internal/`` -> build source path), ``workpath`` and ``executable``.
+    under ``_internal/`` -> build source path), ``links`` (the SYMLINK subset:
+    bundle path -> relative link target), ``workpath`` and ``executable``.
     Without it no file has a trusted origin, so every non-wheel file is unknown.
     """
     bundle_root = Path(bundle_root)
@@ -305,18 +348,21 @@ def collect(bundle_root, modules, search_path=None, build=None) -> dict:
             tops.setdefault(top, set()).add(key)
 
     sources = (build or {}).get("sources", {})
+    links = (build or {}).get("links", {})
     bundle_files = _bundle_files(bundle_root)
     owned: dict[str, list[str]] = {}
     file_owners = {}
     file_origins = {}
     unmapped_files = []
     ambiguous_files = []
+    pending_links = []
     for entry in bundle_files:
         relative = entry["path"]
         source = sources.get(_inner(relative))
+        link_source = links.get(_inner(relative))
         owners = sorted(set(by_path.get(_inner(relative), [])))
         match = "record-path"
-        if not owners and source:
+        if not owners and source and link_source is None:  # a link target is not a build path
             owners = sorted(by_source.get(_real(source), set()))
             match = "record-source"
         if not owners and entry.get("sha256") and entry.get("size"):
@@ -331,8 +377,16 @@ def collect(bundle_root, modules, search_path=None, build=None) -> dict:
         unmapped_files.append(relative)
         if owners:
             ambiguous_files.append({"path": relative, "candidates": owners, "match": match})
-        file_origins[relative] = _origin(relative, source, build) if build is not None \
-            else {"class": "unknown", "source": None}
+        if build is None:
+            file_origins[relative] = {"class": "unknown", "source": None}
+        elif link_source is not None:
+            pending_links.append((entry, link_source))  # resolved once every target has its origin
+        else:
+            file_origins[relative] = _origin(relative, source, build)
+
+    entries_by_path = {entry["path"]: entry for entry in bundle_files}
+    for entry, link_source in pending_links:
+        file_origins[entry["path"]] = _link_origin(entry, link_source, entries_by_path, file_origins)
 
     stdlib = getattr(sys, "stdlib_module_names", frozenset())
     module_owners = {}
@@ -428,7 +482,7 @@ def _toc_entries(value):
             yield from _toc_entries(item)
 
 
-def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], list[str], dict, dict, list[str]]:
+def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], list[str], dict, dict, list[str], dict]:
     if not workpath.is_dir():
         raise InputError("--workpath is not a directory")
     tocs = sorted(workpath.glob("*/Analysis-00.toc"))
@@ -441,6 +495,7 @@ def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], lis
         raise InputError(f"Analysis-00.toc is not a readable literal TOC ({type(exc).__name__})") from None
     modules, scripts = set(), set()
     sources: dict[str, str | None] = {}
+    links: dict[str, str] = {}
     conflicts = set()
     for name, source, typecode in _toc_entries(parsed):
         if typecode in MODULE_TYPECODES:
@@ -453,33 +508,61 @@ def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], lis
             if destination in sources and sources[destination] != source:
                 conflicts.add(destination)
             sources.setdefault(destination, source)
+            if typecode == "SYMLINK":  # source is the relative link target, not a build path
+                links.setdefault(destination, source)
     for destination in conflicts:
         sources[destination] = None  # two different build sources: origin unknown
+        links.pop(destination, None)
     if not modules:
         raise InputError("Analysis-00.toc lists no PYMODULE entries")
     if not any(module == ENTRY_PACKAGE or module.startswith(ENTRY_PACKAGE + ".") for module in modules):
         raise InputError(f"Analysis-00.toc module evidence does not contain {ENTRY_PACKAGE}; incomplete")
     toc = {"path": tocs[0].relative_to(workpath).as_posix(), "sha256": _sha256_file(tocs[0]),
            "bundle": bundle_name}
-    return sorted(modules), sorted(scripts), toc, sources, sorted(conflicts)
+    return sorted(modules), sorted(scripts), toc, sources, sorted(conflicts), links
 
 
-def _qt_observation() -> dict:
-    observation = {"source": "build interpreter subprocess: PySide6.QtCore.qVersion() and QLibraryInfo.build()"}
+def _probe_observation(source: str, code: str, keys=None) -> dict:
+    """Run ``code`` in the build interpreter and record its last JSON line, never failing.
+
+    With ``keys``, the value must be a JSON object of exactly those string fields;
+    anything else is reported as an error with value null.
+    """
+    observation = {"source": source}
     try:
-        done = subprocess.run([sys.executable, "-c", QT_PROBE], capture_output=True, text=True, timeout=120)
+        done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as exc:
         observation.update({"value": None, "error": type(exc).__name__})
         return observation
     observation["returncode"] = done.returncode
     if done.returncode == 0:
         try:
-            observation["value"] = json.loads(done.stdout.strip().splitlines()[-1])
+            value = json.loads(done.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             observation.update({"value": None, "error": "unparsable probe output"})
+            return observation
+        if keys is not None and not (isinstance(value, dict) and set(value) == set(keys)
+                                     and all(isinstance(value[key], str) for key in keys)):
+            observation.update({"value": None, "error": "unexpected probe output"})
+            return observation
+        observation["value"] = value
     else:
         observation.update({"value": None, "stderr_tail": done.stderr[-1000:]})
     return observation
+
+
+def _qt_observation() -> dict:
+    return _probe_observation(
+        "build interpreter subprocess: PySide6.QtCore.qVersion() and QLibraryInfo.build()", QT_PROBE)
+
+
+def _webengine_observation() -> dict:
+    # Imports only PySide6.QtWebEngineCore and calls its documented version functions;
+    # no application, profile, page or window is created. A missing module or
+    # function exits non-zero and is recorded as value null with stderr_tail.
+    return _probe_observation(
+        "build interpreter subprocess: PySide6.QtWebEngineCore " + ", ".join(f"{name}()" for name in WEBENGINE_FUNCTIONS),
+        WEBENGINE_PROBE, WEBENGINE_FUNCTIONS)
 
 
 def _tool_version(name: str):
@@ -497,9 +580,9 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         bundle = _single_bundle(args.dist)
-        modules, scripts, toc, sources, conflicts = _analysis_evidence(args.workpath, bundle.name)
+        modules, scripts, toc, sources, conflicts, links = _analysis_evidence(args.workpath, bundle.name)
         executable = bundle.name + (".exe" if sys.platform == "win32" else "")
-        build = {"sources": sources, "workpath": args.workpath, "executable": executable}
+        build = {"sources": sources, "links": links, "workpath": args.workpath, "executable": executable}
         facts = collect(bundle, modules, build=build)
     except InputError as exc:
         print(f"collect_bundle_facts: invalid input: {exc}", file=sys.stderr)
@@ -516,6 +599,7 @@ def main(argv=None) -> int:
                    "platform": sys.platform},
         "pyinstaller": _tool_version("pyinstaller"),
         "qt": _qt_observation(),
+        "webengine": _webengine_observation(),
     }
     try:
         args.out.parent.mkdir(parents=True, exist_ok=True)
