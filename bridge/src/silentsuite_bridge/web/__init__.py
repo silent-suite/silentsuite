@@ -2103,6 +2103,8 @@ class Web(BaseWeb):
                 "syncInterval": config.SYNC_INTERVAL,
                 # Additive: default server for new sign-ins and where it comes from.
                 "serverUrl": config.new_sign_in_server_url(),
+                # Additive: effective listen address/port, source and editability.
+                **config.network_settings(),
             }
             start_at_login = _desktop_start_at_login(environ)
             if start_at_login is not None:  # desktop app only
@@ -2162,6 +2164,17 @@ class Web(BaseWeb):
 
             if isinstance(data, dict) and "startAtLogin" in data:
                 return _handle_start_at_login(environ, data)
+
+            # A managed (advanced) network profile is read-only here: network
+            # fields are refused before anything is written, read or restarted.
+            if (
+                not config.NETWORK_SETTINGS_EDITABLE
+                and isinstance(data, dict)
+                and any(key in data for key in config.NETWORK_PROFILE_ENV)
+            ):
+                return _json_response(409, {
+                    "error": "The network settings are managed by advanced configuration; use the CLI",
+                })
 
             # Validate every requested field before anything is written or
             # applied, so a rejected request leaves settings.json untouched.

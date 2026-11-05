@@ -285,6 +285,12 @@ ALLOW_REMOTE = False
 # Bounded, value-free description of why the effective network profile is
 # unusable. Checked by validate_network_config() so startup fails closed.
 NETWORK_PROFILE_ERROR: str | None = None
+# Which layer supplied LISTEN_ADDRESS / LISTEN_PORT ("env", "saved" or
+# "default"), and whether the dashboard may treat the listener as a simple
+# loopback setting. Both are set by _resolve_network() with the values above.
+LISTEN_ADDRESS_SOURCE = "default"
+LISTEN_PORT_SOURCE = "default"
+NETWORK_SETTINGS_EDITABLE = True
 
 
 def _resolve_network(settings: dict, settings_error: str | None = None) -> None:
@@ -295,7 +301,7 @@ def _resolve_network(settings: dict, settings_error: str | None = None) -> None:
     fails closed instead of silently falling back to the loopback defaults.
     """
     global LISTEN_ADDRESS, LISTEN_PORT, DEFAULT_SERVER_HOSTS, SERVER_HOSTS, ALLOW_REMOTE
-    global NETWORK_PROFILE_ERROR
+    global NETWORK_PROFILE_ERROR, LISTEN_ADDRESS_SOURCE, LISTEN_PORT_SOURCE, NETWORK_SETTINGS_EDITABLE
 
     errors: list[str] = []
     if settings_error:
@@ -327,6 +333,40 @@ def _resolve_network(settings: dict, settings_error: str | None = None) -> None:
     else:
         ALLOW_REMOTE = persisted.get("allowRemote", False)
     NETWORK_PROFILE_ERROR = "; ".join(errors) if errors else None
+
+    LISTEN_ADDRESS_SOURCE = (
+        "env" if env_address is not None else "saved" if "listenAddress" in persisted else "default"
+    )
+    LISTEN_PORT_SOURCE = "env" if env_port_raw is not None else "saved" if "listenPort" in persisted else "default"
+    # Advanced configuration owns the listener when any network variable is
+    # present (whatever its value), or settings.json saves serverHosts or a
+    # true allowRemote. Only a plain loopback address/port profile stays editable.
+    NETWORK_SETTINGS_EDITABLE = (
+        not any(variable in os.environ for variable in NETWORK_PROFILE_ENV.values())
+        and "serverHosts" not in persisted
+        and persisted.get("allowRemote") is not True
+    )
+
+
+def network_settings() -> dict:
+    """The effective listen address and port, each as {value, source, editable}.
+
+    Values are the configured layer results (env > saved > built-in), not a
+    port the server may have picked or bound; editability is shared, because the
+    two fields can only be changed together.
+    """
+    return {
+        "listenAddress": {
+            "value": LISTEN_ADDRESS,
+            "source": LISTEN_ADDRESS_SOURCE,
+            "editable": NETWORK_SETTINGS_EDITABLE,
+        },
+        "listenPort": {
+            "value": LISTEN_PORT,
+            "source": LISTEN_PORT_SOURCE,
+            "editable": NETWORK_SETTINGS_EDITABLE,
+        },
+    }
 
 
 _resolve_network({})
