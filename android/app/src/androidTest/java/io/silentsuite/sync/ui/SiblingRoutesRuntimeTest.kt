@@ -2283,6 +2283,75 @@ class SiblingRoutesRuntimeTest {
         c.check(!f.dirty(x) && f.certifiedLike(x, ref)) { "the released row's edit uploads and certifies it" }
     }
 
+    /**
+     * #934 S6 (code review F2): a held edit whose listed live item cannot supply individual labels (here the
+     * same item has become a group vCard on the server) was observed, not absent. It must stay held: never
+     * released, never uploaded over that item, and the run is not reported as a success.
+     */
+    private fun observedLiveUnusableItemStaysHeld(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Type-changed labels", listOf(
+            "tc-i" to catCard("tc-i", "CATEGORIES:Family", "TEL:5550160")))
+        val row = f.rawId(native, "tc-i")
+        val itemUid = f.itemUid("tc-i")
+        f.stripCategoryProjectionAsSyncAdapter(native, listOf(row))
+        f.changeRemote("tc-i", nativeGroupVcard("tc-i", "Converted group", emptyList()))
+        f.recache()
+        f.unsetCached("tc-i")
+        categoryFixture(f.cachedEtag("tc-i") == null && f.rawString(row, ContactsContract.RawContacts.SYNC4) == null &&
+            !f.dirty(row) && f.rawString(row, ContactsContract.RawContacts.SOURCE_ID) == itemUid) {
+            "an unprojected server-backed row whose cached item is missing"
+        }
+        val groupCard = f.serverContent("tc-i")
+        categoryFixture(groupCard.contains("X-ADDRESSBOOKSERVER-KIND:group")) { "the same server item is now a group vCard" }
+        val itemsBefore = f.liveServerItems()
+        f.addPhone(row, "5550161")
+        for (run in 1..2) {
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.sync(native)
+            c.check(outcome != success) { "run $run: a held edit whose listed item is unusable is not reported as a successful sync" }
+            c.expect(uploads, f.itemUploadRequests().size, "run $run: nothing is uploaded over the observed item")
+            c.expect(groupCard, f.serverContent("tc-i"), "run $run: the server's group vCard is untouched")
+            c.expect(itemsBefore, f.liveServerItems(), "run $run: no server item is created")
+            c.check(f.dirty(row) && f.phones(row).contains("5550161")) { "run $run: the local edit stays pending" }
+            c.check(f.rawString(row, ContactsContract.RawContacts.SYNC4) == null) { "run $run: the row is neither released nor certified" }
+            c.expect(itemUid, f.rawString(row, ContactsContract.RawContacts.SOURCE_ID), "run $run: the row stays bound to its item")
+        }
+    }
+
+    /**
+     * #934 S7 (code review F3): a child address book without the creation metadata a run captures its exact
+     * destination from (as an older version left it), whose owner still resolves. A held edit whose item a
+     * completed listing does not return live must not be released there: the run fails and the edit is kept.
+     */
+    private fun uncapturedDestinationNeverReleases(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Uncaptured labels", listOf(
+            "unc-r" to catCard("unc-r", "CATEGORIES:Family", "TEL:5550170")))
+        val row = f.rawId(native, "unc-r")
+        f.stripCategoryProjectionAsSyncAdapter(native, listOf(row))
+        f.deleteRemote("unc-r")
+        f.recache()
+        f.unsetCached("unc-r")
+        f.manager.setUserData(native, LocalAddressBook.USER_DATA_CREATION_ID, null)
+        categoryFixture(f.manager.getUserData(native, LocalAddressBook.USER_DATA_CREATION_ID) == null &&
+            LocalAddressBook(f.context, native, null).mainAccountOrNull == f.main) {
+            "an uncorrelated child row that still resolves its owner"
+        }
+        categoryFixture(f.cachedEtag("unc-r") == null && f.rawString(row, ContactsContract.RawContacts.SYNC4) == null && !f.dirty(row)) {
+            "an unprojected server-backed row whose cached item is missing"
+        }
+        val itemsBefore = f.liveServerItems()
+        f.addPhone(row, "5550171")
+        for (run in 1..2) {
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.sync(native)
+            c.expect(SyncManager.ProviderOutcome.FAILURE, outcome, "run $run: a release without a captured destination fails the run")
+            c.expect(uploads, f.itemUploadRequests().size, "run $run: nothing is uploaded")
+            c.expect(itemsBefore, f.liveServerItems(), "run $run: no server item is created")
+            c.check(f.dirty(row) && f.phones(row).contains("5550171")) { "run $run: the local edit stays pending" }
+            c.check(f.rawString(row, ContactsContract.RawContacts.SYNC4) == null) { "run $run: the held row is not released" }
+        }
+    }
+
     /** Populates [entries] into a new native address book through a real sync and returns it. */
     private fun NativeStore.populated(name: String, entries: List<Pair<String, String>>): Account {
         book(name, entries)
@@ -2775,6 +2844,8 @@ class SiblingRoutesRuntimeTest {
         // #934 addition, in its own book after the original assertions above.
         runCategoryScenarios(
             "S3 dirty cache-miss hold, listing and release" to { c: CategoryChecks -> cacheMissHoldsThenRecovers(f, c) },
+            "S6 observed live unusable item stays held" to { c: CategoryChecks -> observedLiveUnusableItemStaysHeld(f, c) },
+            "S7 uncaptured destination never releases" to { c: CategoryChecks -> uncapturedDestinationNeverReleases(f, c) },
         )
     }
 
