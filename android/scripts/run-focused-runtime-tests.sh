@@ -129,6 +129,40 @@ scenario_args=(
   "-Pandroid.testInstrumentationRunnerArguments.scenarioShard=${selector_mode}"
 )
 
+# Diagnostic only, API 29 account dashboard: a content-free, read-only snapshot of the effective runtime
+# memory configuration, printed to stdout with a fixed prefix. One remote read and two host reads per site,
+# each under a finite deadline; nothing is retried, polled or written to the device, and a read that times
+# out or fails is reported as such. It returns 0 and never touches the caller's status, but it does add
+# bounded time (about 30 s per site at most) and so changes timing and the job's deadline margin.
+device_profile() {
+  local label="$1" out rc ini avd_dir
+  if out="$(timeout --kill-after=2s 20s adb shell 'for p in dalvik.vm.heapgrowthlimit dalvik.vm.heapsize dalvik.vm.heapstartsize dalvik.vm.heaptargetutilization dalvik.vm.heapminfree dalvik.vm.heapmaxfree qemu.dalvik.vm.heapsize ro.boot.qemu.dalvik.vm.heapsize ro.config.low_ram ro.sf.lcd_density qemu.sf.lcd_density ro.build.version.sdk ro.build.fingerprint; do echo "getprop.$p=$(getprop $p)"; done; echo "wm.size=$(wm size 2>/dev/null)"; echo "wm.density=$(wm density 2>/dev/null)"; grep -E "^MemTotal:" /proc/meminfo' 2>/dev/null)"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  echo "device-profile[${label}] remote-read status=${rc}"
+  if [[ -n "${out}" ]]; then
+    printf '%s\n' "${out}" | tr -d '\r' | sed "s/^/device-profile[${label}] /"
+  else
+    echo "device-profile[${label}] remote-read unavailable"
+  fi
+  avd_dir="${ANDROID_AVD_HOME:-${HOME}/.android/avd}/test.avd"
+  for ini in config.ini hardware-qemu.ini; do
+    if [[ ! -f "${avd_dir}/${ini}" ]]; then
+      echo "device-profile[${label}] ${ini} absent"
+      continue
+    fi
+    # Raw stderr is dropped so that an open or read error cannot print a host path; its status is still reported.
+    if out="$(timeout --kill-after=1s 3s grep -E '^(hw\.ramSize|vm\.heapSize|hw\.lcd\.(width|height|density)|hw\.device\.name|skin\.name|hw\.cpu\.ncore)[[:space:]]*=' "${avd_dir}/${ini}" 2>/dev/null)"; then
+      printf '%s\n' "${out}" | sed "s/^/device-profile[${label}] ${ini} /"
+    else
+      echo "device-profile[${label}] ${ini} read status=$?"
+    fi
+  done
+  return 0
+}
+
 pull_and_validate_scenarios() {
   python3 - "${ledger}" "${selector_mode}" "${scenario_nonce}" "${scenario_output}" \
     "${GITHUB_RUN_ID:-local}" "${GITHUB_RUN_ATTEMPT:-0}" "${GITHUB_JOB:-local}" "${GITHUB_SHA:-local}" <<'PY'
@@ -277,13 +311,16 @@ elif [[ "${api_level}:${shard}" == "29:account-dashboard" ]]; then
     if [[ "${status}" -eq 0 && "${restore_status}" -ne 0 ]]; then
       status="${restore_status}"
     fi
+    device_profile "exit-${status}"
     exit "${status}"
   }
   trap restore_requested_results EXIT
 
+  device_profile before || true
   timeout --signal=TERM --kill-after=10s 600s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${requested_selector}" "${scenario_args[@]}"
   save_requested_results
+  device_profile between || true
 
   timeout --signal=TERM --kill-after=10s 1500s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${api29_account_dashboard_selectors}" "${scenario_args[@]}"
