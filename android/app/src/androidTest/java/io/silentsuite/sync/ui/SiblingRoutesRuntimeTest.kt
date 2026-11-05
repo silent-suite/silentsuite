@@ -1598,6 +1598,12 @@ class SiblingRoutesRuntimeTest {
         }
 
         /** Runs [sync] on its own thread; [join] returns its outcome, or the throwable it ended with. */
+        /** One direct run, as [sync], whose address book and manager use [client] instead of a fresh real one. */
+        fun syncThrough(native: Account, client: android.content.ContentProviderClient): SyncManager.ProviderOutcome =
+            ContactsSyncManager(context, native, AccountSettings(context, requireNotNull(main)), Bundle(),
+                ContactsContract.AUTHORITY, client, SyncResult(), LocalAddressBook(context, native, client),
+                fake.baseUrl.toHttpUrl()).use { it.performSync() }
+
         fun syncInBackground(native: Account): Pair<Thread, AtomicReference<Any?>> {
             val outcome = AtomicReference<Any?>()
             val thread = Thread { outcome.set(try { sync(native) } catch (t: Throwable) { t }) }
@@ -2352,6 +2358,129 @@ class SiblingRoutesRuntimeTest {
         }
     }
 
+    /**
+     * Runs [block] with a forwarding fault session of the real Contacts provider. The session is always closed;
+     * a cleanup failure is thrown as a FIXTURE error with the block's own failure attached, never swallowed.
+     */
+    private fun <T> withFaultSession(f: NativeStore, block: (io.silentsuite.sync.resource.CategoryQueryFaultProvider.Session) -> T): T {
+        val session = io.silentsuite.sync.resource.CategoryQueryFaultProvider.open(f.context)
+        var primary: Throwable? = null
+        try {
+            return block(session)
+        } catch (t: Throwable) {
+            primary = t
+            throw t
+        } finally {
+            val cleanup = runCatching { session.close() }.exceptionOrNull()
+            if (cleanup != null) {
+                primary?.let { cleanup.addSuppressed(it) }
+                throw cleanup
+            }
+        }
+    }
+
+    /** One forwarded run with nothing armed: proves the transport before a fault is measured. */
+    private fun NativeStore.unarmedTransportSync(native: Account, session: io.silentsuite.sync.resource.CategoryQueryFaultProvider.Session) {
+        val before = session.forwardedQueries
+        val outcome = syncThrough(native, session.client)
+        categoryFixture(outcome == success && session.forwardedQueries > before) {
+            "an unarmed sync through the forwarding client succeeds and forwards queries (outcome $outcome)"
+        }
+    }
+
+    /** One run with [fault] armed; the fault must be reached, otherwise the scenario measured nothing. */
+    private fun NativeStore.faultedSync(native: Account, session: io.silentsuite.sync.resource.CategoryQueryFaultProvider.Session,
+                                        fault: io.silentsuite.sync.resource.CategoryQueryFaultProvider.Fault): SyncManager.ProviderOutcome {
+        session.arm(fault)
+        val outcome = try {
+            syncThrough(native, session.client)
+        } finally {
+            session.disarm()
+        }
+        categoryFixture(fault.hits.get() > 0) { "the ${fault.name} query was reached and answered with no cursor" }
+        return outcome
+    }
+
+    /** #934 S8 (code review F1): an unreadable label-group classification never uploads a contact without its labels. */
+    private fun nullClassificationNeverUploads(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Null classification labels", listOf(
+            "nc-a" to catCard("nc-a", "CATEGORIES:Family,Work", "TEL:5550180")))
+        val row = f.rawId(native, "nc-a")
+        if (f.unfiledMembershipTitles(native, row) != listOf("Family", "Work")) c.stop("the downloaded labels are projected before the fault")
+        val serverBefore = f.serverContent("nc-a")
+        val itemsBefore = f.liveServerItems()
+        withFaultSession(f) { session ->
+            f.unarmedTransportSync(native, session)
+            f.addPhone(row, "5550181")
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.faultedSync(native, session, io.silentsuite.sync.resource.CategoryQueryFaultProvider.categoryGroupClassification())
+            c.check(outcome != success) { "an unknown label classification is not reported as a successful sync" }
+            c.expect(uploads, f.itemUploadRequests().size, "nothing is uploaded while labels are unknown")
+            c.expect(serverBefore, f.serverContent("nc-a"), "the server's labels are untouched")
+            c.expect(itemsBefore, f.liveServerItems(), "no server item is created")
+            c.expect(listOf("Family", "Work"), f.unfiledMembershipTitles(native, row), "the provider label memberships are kept")
+            c.check(f.dirty(row) && f.phones(row).contains("5550181")) { "the local edit stays pending" }
+        }
+        f.syncOk(native, c, "recovery sync without a fault")
+        val final = f.serverContent("nc-a")
+        c.expect(listOf("Family", "Work"), serverCategories(final), "the kept edit uploads with its labels once they are readable")
+        c.check(final.contains("5550181") && !f.dirty(row)) { "the kept edit reaches the server" }
+    }
+
+    /** #934 S9 (code review F1): an unreadable used-membership enumeration deletes no label group. */
+    private fun nullMembershipEnumerationDeletesNothing(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Null enumeration labels", listOf(
+            "ne-a" to catCard("ne-a", "CATEGORIES:Family"),
+            "ne-b" to catCard("ne-b", "CATEGORIES:Work")))
+        val a = f.rawId(native, "ne-a")
+        val b = f.rawId(native, "ne-b")
+        val groupsBefore = f.unfiledGroups(native)
+        if (groupsBefore.values.sorted() != listOf("Family", "Work")) c.stop("the downloaded label groups exist before the fault")
+        withFaultSession(f) { session ->
+            f.unarmedTransportSync(native, session)
+            c.expect(groupsBefore, f.unfiledGroups(native), "a readable enumeration with every label group in use deletes nothing")
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.faultedSync(native, session, io.silentsuite.sync.resource.CategoryQueryFaultProvider.usedMembershipEnumeration())
+            c.check(outcome != success) { "an unknown membership enumeration is not reported as a successful sync" }
+            c.expect(groupsBefore, f.unfiledGroups(native), "no label group is deleted while memberships are unknown")
+            c.expect(listOf("Family"), f.unfiledMembershipTitles(native, a), "ne-a keeps its label membership")
+            c.expect(listOf("Work"), f.unfiledMembershipTitles(native, b), "ne-b keeps its label membership")
+            c.expect(uploads, f.itemUploadRequests().size, "nothing is uploaded")
+        }
+        f.addPhone(a, "5550190")
+        f.syncOk(native, c, "native edit after the fault")
+        c.expect(listOf("Family"), serverCategories(f.serverContent("ne-a")), "a later edit uploads the kept labels")
+    }
+
+    /** #934 S10 (code review F1): an unreadable unprojected-row scan stops recovery and upload instead of skipping them. */
+    private fun nullCandidateScanStopsRecovery(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Null scan labels", listOf(
+            "ns-l" to catCard("ns-l", "CATEGORIES:Family", "TEL:5550200")))
+        val row = f.rawId(native, "ns-l")
+        val serverBefore = f.serverContent("ns-l")
+        val itemsBefore = f.liveServerItems()
+        withFaultSession(f) { session ->
+            f.unarmedTransportSync(native, session)
+            f.stripCategoryProjectionAsSyncAdapter(native, listOf(row))
+            categoryFixture(f.cachedEtag("ns-l") != null && f.rawString(row, ContactsContract.RawContacts.SYNC4) == null &&
+                f.groupRowIds(row).isEmpty() && !f.dirty(row)) { "a row modelled as populated before the fix, with its cached item" }
+            f.addPhone(row, "5550201")
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.faultedSync(native, session, io.silentsuite.sync.resource.CategoryQueryFaultProvider.unprojectedCandidateScan())
+            c.check(outcome != success) { "an unknown unprojected-row scan is not reported as a successful sync" }
+            c.expect(uploads, f.itemUploadRequests().size, "nothing is uploaded while unprojected rows are unknown")
+            c.expect(serverBefore, f.serverContent("ns-l"), "the server's labels are untouched")
+            c.expect(itemsBefore, f.liveServerItems(), "no server item is created")
+            c.check(f.dirty(row) && f.phones(row).contains("5550201")) { "the local edit stays pending" }
+            c.check(f.rawString(row, ContactsContract.RawContacts.SYNC4) == null) { "the row is not certified without recovery" }
+        }
+        f.syncOk(native, c, "recovery sync without a fault")
+        val final = f.serverContent("ns-l")
+        c.expect(listOf("Family"), serverCategories(final), "recovery restores the labels before the kept edit uploads")
+        c.check(final.contains("5550201") && !f.dirty(row)) { "the kept edit reaches the server" }
+        c.expect(listOf("Family"), f.unfiledMembershipTitles(native, row), "the provider labels are recovered")
+    }
+
     /** Populates [entries] into a new native address book through a real sync and returns it. */
     private fun NativeStore.populated(name: String, entries: List<Pair<String, String>>): Account {
         book(name, entries)
@@ -2378,6 +2507,9 @@ class SiblingRoutesRuntimeTest {
         runCategoryScenarios(
             "S2 legacy live-cache recovery" to { c: CategoryChecks -> legacyRowsRecoverFromCache(f, c) },
             "S5 stale cache basis" to { c: CategoryChecks -> staleCacheBasisNeverUploads(f, c) },
+            "S8 null label-group classification" to { c: CategoryChecks -> nullClassificationNeverUploads(f, c) },
+            "S9 null used-membership enumeration" to { c: CategoryChecks -> nullMembershipEnumerationDeletesNothing(f, c) },
+            "S10 null unprojected-candidate scan" to { c: CategoryChecks -> nullCandidateScanStopsRecovery(f, c) },
         )
     }
 
