@@ -703,3 +703,63 @@ def test_cli_reports_a_missing_webengine_module_without_failing(collector, monke
     assert observation.get("value") is None, observation
     assert "error" in observation or "stderr_tail" in observation, observation
     assert facts["observations"]["qt"]["value"] == {"qVersion": "0.0.0-synthetic-qtcore", "build": "synthetic QtCore build"}
+
+
+# --- C3 review correction (post-p2-component-review-answer.md finding 4; tests first) ---
+#
+# On Linux a backslash is an ordinary filename character, not a directory separator.
+# A TOC rel_link "nss/real.so" and an on-disk link to "nss\real.so" therefore name two
+# different files. That link is malformed evidence: COLLECT writes os.symlink(rel_link,
+# dest) verbatim, so the spellings would agree. It must stay unknown and must not
+# inherit the origin of the slash-named file, which it does not reach.
+TOC_LINK_TARGET = "nss/real.so"
+ACTUAL_LINK_TARGET = "nss\\real.so"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="in-bundle symlinks are a Linux observation here")
+def test_cli_keeps_link_unknown_when_its_backslash_target_differs_from_the_toc(collector, monkeypatch, tmp_path):
+    os_source = tmp_path / "system" / "nss" / "real.so"
+    os_source.parent.mkdir(parents=True)
+    os_source.write_bytes(b"synthetic slash-named placeholder")
+    workpath = tmp_path / "work"
+    _analysis_toc(workpath, scripts=[ENTRY_SCRIPT], pure=BASE_PURE, binaries=[
+        (TOC_LINK_TARGET, str(os_source), "BINARY"),
+        ("libmalformed.so", TOC_LINK_TARGET, "SYMLINK"),  # the TOC claims the slash-named target
+    ])
+    bundle = _bundle_with(tmp_path, {
+        TOC_LINK_TARGET: b"synthetic slash-named placeholder",
+        ACTUAL_LINK_TARGET: b"synthetic backslash-named placeholder",  # one file directly in _internal/
+    })
+    internal = bundle / "_internal"
+    link = internal / "libmalformed.so"
+    link.symlink_to(ACTUAL_LINK_TARGET)  # what the bundle actually holds
+    slash_file, backslash_file = internal / "nss" / "real.so", internal / ACTUAL_LINK_TARGET
+    # Prerequisites (not RED if they fail): two distinct regular files, a link whose
+    # literal target keeps the backslash and differs from the TOC spelling, and which
+    # reaches only the backslash-named file.
+    for path in (slash_file, backslash_file):
+        if not path.is_file() or path.is_symlink():
+            pytest.fail(f"prerequisite failed (not RED): {path.name!r} is not a regular in-bundle file")
+    if backslash_file.parent != internal or slash_file.samefile(backslash_file):
+        pytest.fail("prerequisite failed (not RED): the slash- and backslash-named files are not distinct")
+    if slash_file.read_bytes() == backslash_file.read_bytes():
+        pytest.fail("prerequisite failed (not RED): the two files have identical bytes")
+    if os.readlink(link) != ACTUAL_LINK_TARGET or ACTUAL_LINK_TARGET == TOC_LINK_TARGET:
+        pytest.fail(f"prerequisite failed (not RED): readlink gave {os.readlink(link)!r}")
+    if not link.samefile(backslash_file) or link.samefile(slash_file):
+        pytest.fail("prerequisite failed (not RED): the link does not reach only the backslash-named file")
+    _controlled_subprocess(monkeypatch, collector, dpkg_owners={str(os_source): (NSS_PACKAGE, "2:3.98-synthetic")})
+    code, facts = _run_cli(collector, tmp_path, workpath)
+    if code != 0 or facts is None:
+        pytest.fail(f"prerequisite failed (not RED): the collector did not write facts (exit {code})")
+    origins = facts["file_origins"]
+    slash_origin = origins.get("_internal/nss/real.so") or {}
+    if slash_origin.get("class") != "os-package" or slash_origin.get("package") != NSS_PACKAGE:
+        pytest.fail(f"prerequisite failed (not RED): the slash-named file has no trusted origin: {slash_origin!r}")
+    if "_internal/" + ACTUAL_LINK_TARGET not in origins:
+        pytest.fail("prerequisite failed (not RED): the collector did not observe the backslash-named file")
+    got = origins.get("_internal/libmalformed.so") or {}
+    assert {k: got.get(k) for k in ("class", "source")} == {"class": "unknown", "source": TOC_LINK_TARGET} \
+        and "target" not in got and "target_origin" not in got, (
+        f"a link to {ACTUAL_LINK_TARGET!r} was attributed through the TOC spelling {TOC_LINK_TARGET!r}: {got!r}")
+    assert "_internal/libmalformed.so" in facts["unmapped_files"]
