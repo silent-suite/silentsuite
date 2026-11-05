@@ -544,3 +544,162 @@ def test_collect_without_build_evidence_leaves_runtime_files_unknown(collector, 
     assert "file_origins" in facts, "no per-file origins are reported"
     assert facts["file_origins"]["_internal/python310.dll"] == {"class": "unknown", "source": None}
     assert facts["file_origins"][f"_internal/{DIST}/{QT_LIBRARY}"]["class"] == "wheel"
+
+
+# --- C3: in-bundle links and the WebEngine/Chromium observation (tests first) ------
+#
+# PyInstaller 6.22.3 records a preserved symbolic link as (dest, rel_link, 'SYMLINK'),
+# where rel_link is relative to dirname(dest) and points at another collected
+# destination (building/datastruct.py:416-454), and COLLECT then creates
+# os.symlink(rel_link, dest) inside the bundle (building/api.py:1207-1213).
+# So a link origin is source-backed only when BOTH the TOC entry is SYMLINK and
+# the bundle file is a real symlink to that same relative target, which resolves
+# to an existing file inside the bundle. Facts fields defined here:
+#   file_origins[link] = {class: "bundle-link", source: <relative target>,
+#                         target: <bundle path>, target_origin: <the target's origin>}
+#   observations.webengine = {source, returncode, value: {qWebEngineVersion,
+#       qWebEngineChromiumVersion, qWebEngineChromiumSecurityPatchVersion} | null,
+#       error | stderr_tail}   (diagnostic, never fatal)
+
+ENTRY_SCRIPT = ("entrypoint_desktop", "/build/bridge/entrypoint_desktop.py", "PYSOURCE")
+BASE_PURE = [("encodings", "/py/lib/encodings/__init__.py", "PYMODULE"),
+             (BRIDGE_PKG, "/build/bridge/src/silentsuite_bridge/__init__.py", "PYMODULE")]
+NSS_PACKAGE = "libsynthetic-nss3:amd64"  # synthetic; not a real Debian package
+QTCORE_PROBE_SOURCE = "build interpreter subprocess: PySide6.QtCore.qVersion() and QLibraryInfo.build()"
+SYNTHETIC_QTCORE = (
+    "def qVersion():\n    return '0.0.0-synthetic-qtcore'\n\n\n"
+    "class QLibraryInfo:\n    @staticmethod\n    def build():\n        return 'synthetic QtCore build'\n"
+)
+WEBENGINE_SENTINELS = {
+    "qWebEngineVersion": "9.9.9-synthetic-webengine",
+    "qWebEngineChromiumVersion": "999.0.0.1-synthetic",
+    "qWebEngineChromiumSecurityPatchVersion": "999.0.0.2-synthetic",
+}
+
+
+def _synthetic_webengine(names):
+    return "".join(f"def {name}():\n    return {WEBENGINE_SENTINELS[name]!r}\n\n\n" for name in names)
+
+
+def _real_probe_cli(collector, monkeypatch, tmp_path, webengine_source):
+    """CLI run whose probes use the real subprocess against a synthetic PySide6 on the child path."""
+    package = tmp_path / "fakepkgs" / "PySide6"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "QtCore.py").write_text(SYNTHETIC_QTCORE, encoding="utf-8")
+    if webengine_source is not None:
+        (package / "QtWebEngineCore.py").write_text(webengine_source, encoding="utf-8")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path / "fakepkgs"))  # child processes only
+    _bundle_with(tmp_path, {})
+    workpath = tmp_path / "work"
+    _analysis_toc(workpath, scripts=[ENTRY_SCRIPT], pure=BASE_PURE)
+    return _run_cli(collector, tmp_path, workpath)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="in-bundle symlinks are a Linux observation here")
+def test_cli_resolves_in_bundle_symlink_to_its_classified_target(collector, monkeypatch, tmp_path):
+    os_source = tmp_path / "system" / "nss" / "libfreebl3.so"
+    os_source.parent.mkdir(parents=True)
+    os_source.write_bytes(b"synthetic nss placeholder")
+    workpath = tmp_path / "work"
+    _analysis_toc(workpath, scripts=[ENTRY_SCRIPT], pure=BASE_PURE, binaries=[
+        ("nss/libfreebl3.so", str(os_source), "BINARY"),
+        ("libfreebl3.so", "nss/libfreebl3.so", "SYMLINK"),  # rel_link relative to dirname(dest)
+    ])
+    bundle = _bundle_with(tmp_path, {"nss/libfreebl3.so": b"synthetic nss placeholder"})
+    os.symlink("nss/libfreebl3.so", bundle / "_internal" / "libfreebl3.so")  # as COLLECT creates it
+    _controlled_subprocess(monkeypatch, collector, dpkg_owners={str(os_source): (NSS_PACKAGE, "2:3.98-synthetic")})
+    code, facts = _run_cli(collector, tmp_path, workpath)
+    assert code == 0 and facts is not None, f"the collector did not write facts (exit {code})"
+    origins = facts["file_origins"]
+    target = origins["_internal/nss/libfreebl3.so"]
+    assert target.get("class") == "os-package" and target.get("package") == NSS_PACKAGE, target
+    link = origins.get("_internal/libfreebl3.so") or {}
+    assert {k: link.get(k) for k in ("class", "source", "target")} == {
+        "class": "bundle-link", "source": "nss/libfreebl3.so", "target": "_internal/nss/libfreebl3.so",
+    }, f"the in-bundle link was not resolved to its target: {link!r}"
+    assert link.get("target_origin") == target, link
+    assert "_internal/libfreebl3.so" in facts["unmapped_files"]  # unmapped keeps its meaning (no wheel owner)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="in-bundle symlinks are a Linux observation here")
+def test_cli_keeps_unproved_relative_sources_and_escaping_links_unknown(collector, monkeypatch, tmp_path):
+    # Preservation: none of these is a source-backed in-bundle link.
+    workpath = tmp_path / "work"
+    _analysis_toc(workpath, scripts=[ENTRY_SCRIPT], pure=BASE_PURE, binaries=[
+        ("escape.so", "../../outside.so", "SYMLINK"),  # real symlink, but its target leaves the bundle
+        ("claimed.so", "nss/real.so", "SYMLINK"),      # TOC says link, bundle file is a regular file
+        ("relative.so", "nss/real.so", "BINARY"),      # relative source without any link evidence
+    ])
+    bundle = _bundle_with(tmp_path, {
+        "nss/real.so": b"synthetic real placeholder",
+        "claimed.so": b"synthetic regular placeholder",
+        "relative.so": b"synthetic regular placeholder",
+    })
+    (tmp_path / "dist" / "outside.so").write_bytes(b"outside the bundle")
+    os.symlink("../../outside.so", bundle / "_internal" / "escape.so")
+    _controlled_subprocess(monkeypatch, collector)
+    code, facts = _run_cli(collector, tmp_path, workpath)
+    assert code == 0 and facts is not None, f"the collector did not write facts (exit {code})"
+    origins = facts["file_origins"]
+    expected = {"_internal/escape.so": "../../outside.so", "_internal/claimed.so": "nss/real.so",
+                "_internal/relative.so": "nss/real.so"}
+    for path, source in expected.items():
+        got = origins.get(path) or {}
+        assert {k: got.get(k) for k in ("class", "source")} == {"class": "unknown", "source": source}, f"{path}: {got!r}"
+    assert set(expected) <= set(facts["unmapped_files"])
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="in-bundle symlinks are a Linux observation here")
+def test_cli_reports_dangling_in_bundle_symlink_as_unknown(collector, monkeypatch, tmp_path):
+    workpath = tmp_path / "work"
+    _analysis_toc(workpath, scripts=[ENTRY_SCRIPT], pure=BASE_PURE, binaries=[
+        ("libdangling.so", "nss/missing.so", "SYMLINK"),
+    ])
+    bundle = _bundle_with(tmp_path, {})
+    os.symlink("nss/missing.so", bundle / "_internal" / "libdangling.so")
+    _controlled_subprocess(monkeypatch, collector)
+    code, facts = _run_cli(collector, tmp_path, workpath)
+    assert code == 0 and facts is not None, f"a dangling in-bundle link made the collector fail (exit {code})"
+    got = facts["file_origins"].get("_internal/libdangling.so") or {}
+    assert {k: got.get(k) for k in ("class", "source")} == {"class": "unknown", "source": "nss/missing.so"}, got
+    assert "_internal/libdangling.so" in facts["unmapped_files"]
+
+
+def test_cli_qtcore_observation_is_unchanged_with_a_synthetic_pyside6(collector, monkeypatch, tmp_path):
+    # Preservation: the existing QtCore probe, through the real subprocess.
+    code, facts = _real_probe_cli(collector, monkeypatch, tmp_path, _synthetic_webengine(WEBENGINE_SENTINELS))
+    assert code == 0 and facts is not None
+    assert facts["observations"]["qt"] == {
+        "source": QTCORE_PROBE_SOURCE, "returncode": 0,
+        "value": {"qVersion": "0.0.0-synthetic-qtcore", "build": "synthetic QtCore build"},
+    }
+
+
+def test_cli_observes_webengine_versions_through_the_real_probe(collector, monkeypatch, tmp_path):
+    code, facts = _real_probe_cli(collector, monkeypatch, tmp_path, _synthetic_webengine(WEBENGINE_SENTINELS))
+    assert code == 0 and facts is not None
+    observation = facts["observations"].get("webengine")
+    assert isinstance(observation, dict), "no observations.webengine is reported"
+    assert observation.get("returncode") == 0 and isinstance(observation.get("source"), str), observation
+    assert observation.get("value") == WEBENGINE_SENTINELS, observation
+
+
+def test_cli_reports_a_missing_webengine_function_without_failing(collector, monkeypatch, tmp_path):
+    partial = _synthetic_webengine(["qWebEngineVersion", "qWebEngineChromiumVersion"])
+    code, facts = _real_probe_cli(collector, monkeypatch, tmp_path, partial)
+    assert code == 0 and facts is not None, f"a missing WebEngine function made the collector fail (exit {code})"
+    observation = facts["observations"].get("webengine")
+    assert isinstance(observation, dict), "no observations.webengine is reported"
+    assert observation.get("value") is None, f"a partial WebEngine API produced a value: {observation!r}"
+    assert "error" in observation or "stderr_tail" in observation, observation
+
+
+def test_cli_reports_a_missing_webengine_module_without_failing(collector, monkeypatch, tmp_path):
+    code, facts = _real_probe_cli(collector, monkeypatch, tmp_path, None)
+    assert code == 0 and facts is not None, f"a missing WebEngine module made the collector fail (exit {code})"
+    observation = facts["observations"].get("webengine")
+    assert isinstance(observation, dict), "no observations.webengine is reported"
+    assert observation.get("value") is None, observation
+    assert "error" in observation or "stderr_tail" in observation, observation
+    assert facts["observations"]["qt"]["value"] == {"qVersion": "0.0.0-synthetic-qtcore", "build": "synthetic QtCore build"}
