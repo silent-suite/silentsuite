@@ -8,6 +8,8 @@ on:
       # .github/workflows/** and package.json and must not deploy an incidental
       # docs preview. No other branch is excluded.
       - fix/annual-finalized-artifact-20260905
+      # Exact branch only: #171 desktop test builds must not deploy the shared docs preview or comment on a PR.
+      - feat/bridge-gui-171
     paths:
       - 'apps/docs/**'
       - 'apps/web/**'

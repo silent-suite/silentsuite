@@ -1,0 +1,182 @@
+name: Test Bridge desktop frozen startup (non-publishing)
+
+# T4 packaged startup for #171. It builds the canonical desktop spec (when
+# present) as a PyInstaller onedir app and launches that unmodified executable
+# with a synthetic data directory, home and loopback port. A bundler/runtime
+# control first freezes the non-product T0 probe in the same environment.
+# Nothing is signed, notarized, installed, released or uploaded except the
+# test receipts and build logs below. No credentials, accounts, services,
+# start-at-login entries, /opt or HKCU writes are involved.
+
+on:
+  push:
+    branches: [feat/bridge-gui-171]
+    paths:
+      - 'bridge/entrypoint_desktop.py'
+      - 'bridge/silentsuite-bridge-desktop.spec'
+      - 'bridge/src/silentsuite_bridge/**'
+      - 'bridge/pyproject.toml'
+      - 'bridge/tests/test_desktop_frozen.py'
+      - 'bridge/tests/test_desktop_ipc.py'
+      - 'bridge/tests/test_instance_lock.py'
+      - 'bridge/tests/desktop_smoke/probe.py'
+      - 'bridge/tests/desktop_smoke/requirements.txt'
+      - '.github/workflows/test-bridge-desktop-frozen.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-desktop-frozen-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frozen:
+    name: Frozen desktop startup (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+            rust: "1.63.0"
+            etebase_git: false
+          - runner: macos-15
+            label: macos-arm64
+            rust: "1.96.0"
+            etebase_git: true
+          - runner: windows-latest
+            label: windows-x86_64
+            rust: "1.63.0"
+            etebase_git: false
+    env:
+      # Same rendering flag as the other native jobs; the Chromium sandbox stays on.
+      QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
+      PYTHONDONTWRITEBYTECODE: '1'
+      SILENTSUITE_REQUIRE_DESKTOP_FROZEN: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Install Linux display and Qt runtime libraries (runner only)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          # Same list the T0 probe and the native desktop jobs use.
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xkb1 libegl1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libxkbfile1 libasound2
+
+      - name: Install dependencies
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ "${{ matrix.etebase_git }}" = "true" ]; then
+            pip install "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+          fi
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest
+          # PySide6 pin shared with T0 and the desktop extra.
+          pip install -r tests/desktop_smoke/requirements.txt
+          # Unpinned, as in build-bridge.yml and T0; the exact version is recorded.
+          pip install pyinstaller
+
+      # A failure here is a missing prerequisite, not a behavioural RED.
+      - name: Check prerequisites
+        id: prereq
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c "import pytest, PyInstaller, PySide6; from PySide6.QtWebEngineWidgets import QWebEngineView; import silentsuite_bridge.__main__; print('PySide6', PySide6.__version__, 'PyInstaller', PyInstaller.__version__)"
+
+      # Builds only; the tests judge the results. Each build records its exit
+      # status; a missing canonical input is recorded, not papered over.
+      - name: Build bundler control and canonical desktop app
+        if: ${{ steps.prereq.outcome == 'success' }}
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$RUNNER_TEMP/frozen"
+          rm -rf "$out"
+          mkdir -p "$out"
+          python -m PyInstaller --version > "$out/pyinstaller-version.txt"
+          # 1. Bundler/runtime control: the T0 recipe, non-product.
+          python -m PyInstaller --noconfirm --onedir --name t0-probe \
+            --distpath "$out/t0-dist" --workpath "$out/t0-build" --specpath "$out/t0-spec" \
+            bridge/tests/desktop_smoke/probe.py > "$out/t0-build.log" 2>&1
+          echo $? > "$out/t0-build.rc"
+          # 2. Canonical product build, only from the canonical inputs.
+          missing=0
+          for input in bridge/entrypoint_desktop.py bridge/silentsuite-bridge-desktop.spec; do
+            if [ ! -f "$input" ]; then echo "$input" >> "$out/canonical-missing.txt"; missing=1; fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo "Canonical desktop build inputs missing:"; cat "$out/canonical-missing.txt"
+            exit 0
+          fi
+          (cd bridge && python -m PyInstaller silentsuite-bridge-desktop.spec --noconfirm --clean \
+            --distpath "$out/dist" --workpath "$out/build") > "$out/canonical-build.log" 2>&1
+          echo $? > "$out/canonical-build.rc"
+          echo "t0 build rc: $(cat "$out/t0-build.rc"); canonical build rc: $(cat "$out/canonical-build.rc")"
+          exit 0
+
+      - name: Run frozen desktop startup tests
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' }}
+        timeout-minutes: 20
+        working-directory: bridge
+        shell: bash
+        env:
+          SILENTSUITE_FROZEN_OUT: ${{ runner.temp }}/frozen
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/t4-frozen"
+          cmd=(python -m pytest tests/test_desktop_frozen.py -v --tb=long -p no:cacheprovider
+               --junitxml="$RUNNER_TEMP/t4-frozen/junit.xml")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-frozen/pytest.txt"
+          else
+            "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/t4-frozen/pytest.txt"
+          fi
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/t4-frozen/pytest.txt"
+          exit "$status"
+
+      # Receipts and logs only; no bundle or binary is uploaded.
+      - name: Upload frozen startup receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: t4-frozen-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/t4-frozen/junit.xml
+            ${{ runner.temp }}/t4-frozen/pytest.txt
+            ${{ runner.temp }}/frozen/*.txt
+            ${{ runner.temp }}/frozen/*.rc
+            ${{ runner.temp }}/frozen/*.log
+            ${{ runner.temp }}/frozen/t0-frozen.json
+          if-no-files-found: warn
+          retention-days: 14
