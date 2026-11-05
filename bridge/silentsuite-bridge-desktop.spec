@@ -294,6 +294,43 @@ def _excluded_qt_family(destination):
 a.binaries = [entry for entry in a.binaries if not _excluded_qt_family(entry[0])]
 a.datas = [entry for entry in a.datas if not _excluded_qt_family(entry[0])]
 
+# W1 (Windows only): drop exactly these 44 + 2 bundled DLLs, matched on the
+# destination basename (case-insensitive, as Windows file names are).
+#  - W1a: Windows API-set forwarders and ucrtbase.dll; the system copies are
+#    used on the Qt 6.12 GUI's supported Windows 10 (1809+) and 11 x86_64.
+#  - W1b: OpenSSL 3, which Qt's TLS plugin loads only at runtime; without it
+#    Qt selects schannel. python3.dll, python310.dll, OpenSSL 1.1, VCRUNTIME and
+#    MSVCP runtimes, Qt and its TLS plugins are not matched and stay.
+if sys.platform == "win32":
+    W1A_SYSTEM_DLLS = (
+        "api-ms-win-core-console-l1-1-0.dll", "api-ms-win-core-datetime-l1-1-0.dll",
+        "api-ms-win-core-debug-l1-1-0.dll", "api-ms-win-core-errorhandling-l1-1-0.dll",
+        "api-ms-win-core-fibers-l1-1-0.dll", "api-ms-win-core-fibers-l1-1-1.dll",
+        "api-ms-win-core-file-l1-1-0.dll", "api-ms-win-core-file-l1-2-0.dll",
+        "api-ms-win-core-file-l2-1-0.dll", "api-ms-win-core-handle-l1-1-0.dll",
+        "api-ms-win-core-heap-l1-1-0.dll", "api-ms-win-core-interlocked-l1-1-0.dll",
+        "api-ms-win-core-kernel32-legacy-l1-1-1.dll", "api-ms-win-core-libraryloader-l1-1-0.dll",
+        "api-ms-win-core-localization-l1-2-0.dll", "api-ms-win-core-memory-l1-1-0.dll",
+        "api-ms-win-core-namedpipe-l1-1-0.dll", "api-ms-win-core-processenvironment-l1-1-0.dll",
+        "api-ms-win-core-processthreads-l1-1-0.dll", "api-ms-win-core-processthreads-l1-1-1.dll",
+        "api-ms-win-core-profile-l1-1-0.dll", "api-ms-win-core-rtlsupport-l1-1-0.dll",
+        "api-ms-win-core-string-l1-1-0.dll", "api-ms-win-core-synch-l1-1-0.dll",
+        "api-ms-win-core-synch-l1-2-0.dll", "api-ms-win-core-sysinfo-l1-1-0.dll",
+        "api-ms-win-core-sysinfo-l1-2-0.dll", "api-ms-win-core-timezone-l1-1-0.dll",
+        "api-ms-win-core-util-l1-1-0.dll", "api-ms-win-crt-conio-l1-1-0.dll",
+        "api-ms-win-crt-convert-l1-1-0.dll", "api-ms-win-crt-environment-l1-1-0.dll",
+        "api-ms-win-crt-filesystem-l1-1-0.dll", "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll", "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-private-l1-1-0.dll", "api-ms-win-crt-process-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll", "api-ms-win-crt-stdio-l1-1-0.dll",
+        "api-ms-win-crt-string-l1-1-0.dll", "api-ms-win-crt-time-l1-1-0.dll",
+        "api-ms-win-crt-utility-l1-1-0.dll", "ucrtbase.dll",
+    )
+    W1B_OPENSSL3_DLLS = ("libcrypto-3-x64.dll", "libssl-3-x64.dll")
+    W1_EXCLUDED_DLLS = {name.lower() for name in W1A_SYSTEM_DLLS + W1B_OPENSSL3_DLLS}
+    a.binaries = [entry for entry in a.binaries
+                  if entry[0].replace("\\", "/").rsplit("/", 1)[-1].lower() not in W1_EXCLUDED_DLLS]
+
 pyz = PYZ(a.pure)  # noqa: F821
 
 exe = EXE(  # noqa: F821
