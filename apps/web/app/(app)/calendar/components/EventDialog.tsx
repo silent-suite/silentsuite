@@ -499,6 +499,11 @@ export function EventDialog({
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
         if (JSON.stringify(categories) !== JSON.stringify(event.categories ?? [])) patch.categories = categories
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
+        // An all-day event without a zone that becomes timed is anchored in the dialog's zone,
+        // rather than being saved as a UTC instant.
+        if (event.allDay && !allDay && !event.timezone) patch.timezone = timezone
+        // An explicit zone change or an all-day switch replaces a floating start time.
+        if (event.floating && (patch.timezone !== undefined || patch.allDay !== undefined)) patch.floating = undefined
         if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
 
         // Compare alarms

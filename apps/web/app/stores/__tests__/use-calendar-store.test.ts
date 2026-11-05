@@ -3,6 +3,7 @@ import { useCalendarStore } from '../use-calendar-store'
 import { serializeCalendarEvent, deserializeCalendarEvent } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 import { expandEventsForRange } from '@/app/(app)/calendar/lib/calendar-grid-events'
+import { vEventToImportEvent } from '@/app/components/import/import-mappers'
 import { _setEncryptedQueuePersistenceAvailableForTests, getAll } from '@/app/lib/offline-queue'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
@@ -89,6 +90,178 @@ function makeRecurringEvent(overrides?: Partial<CalendarEvent>): CalendarEvent {
     ...overrides,
   }
 }
+
+// ── #886: anchor preservation through the real store paths ──
+
+const DTSTART_KIND_LINES = /^(DTSTART|DTEND|EXDATE)[:;]/
+const timedLines = (ics: string) => ics.split('\r\n').filter((line) => DTSTART_KIND_LINES.test(line))
+
+describe('useCalendarStore anchor preservation (#886)', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('(a) a floating import stays floating through mapper -> importEvents -> serializer -> reload', async () => {
+    acknowledgeImports()
+    const payload = vEventToImportEvent({
+      uid: 'floating-import@example',
+      summary: 'Floating weekly',
+      dtstart: '20260302T100000',
+      dtend: '20260302T110000',
+      rrule: 'FREQ=WEEKLY;COUNT=3',
+      exdate: ['20260309T100000'],
+    }, 'cal-1')
+
+    await useCalendarStore.getState().importEvents([payload])
+
+    const stored = useCalendarStore.getState().events[0]!
+    expect(stored).toMatchObject({ floating: true })
+    const contents = etebaseMock.state.createItemsBatch.mock.calls[0]![1] as Array<{ content: string; tempId: string }>
+    const uploaded = contents[0]!.content
+    expect(timedLines(uploaded)).toEqual([
+      'DTSTART:20260302T100000',
+      'DTEND:20260302T110000',
+      'EXDATE:20260309T100000',
+    ])
+
+    const reloaded = deserializeCalendarEvent(uploaded)
+    expect(reloaded).toMatchObject({ floating: true })
+    const range = { start: new Date(2026, 1, 1), end: new Date(2026, 3, 1) }
+    const before = expandEventsForRange([stored], range).map((e) => e.startDate.getTime())
+    const after = expandEventsForRange([reloaded], range).map((e) => e.startDate.getTime())
+    expect(before).toEqual([new Date(2026, 2, 2, 10).getTime(), new Date(2026, 2, 16, 10).getTime()])
+    expect(after).toEqual(before)
+  })
+
+  it('(b) createEvent carries a floating anchor to the uploaded item', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.createItem.mockResolvedValue('remote-floating')
+    const input = {
+      title: 'Floating created',
+      startDate: new Date(2026, 2, 2, 10, 0, 0),
+      endDate: new Date(2026, 2, 2, 11, 0, 0),
+      floating: true as const,
+    }
+
+    await useCalendarStore.getState().createEvent(input)
+
+    const uploaded = etebaseMock.state.createItem.mock.calls[0]![1] as string
+    expect(timedLines(uploaded)).toEqual(['DTSTART:20260302T100000', 'DTEND:20260302T110000'])
+    expect(deserializeCalendarEvent(uploaded)).toMatchObject({ floating: true })
+  })
+
+  it('(c1) "this and future" update ends a UTC-anchored master on the previous UTC day', async () => {
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-10-20T00:30:00Z'),
+      endDate: new Date('2026-10-20T01:00:00Z'),
+      recurrenceRule: 'FREQ=DAILY',
+      timezone: undefined,
+    })
+    useCalendarStore.setState({ events: [master] })
+
+    await useCalendarStore.getState().updateRecurringEvent(
+      master.id,
+      { title: 'Later occurrences' },
+      'this_and_future',
+      new Date('2026-11-02T00:30:00Z'),
+    )
+
+    const updatedMaster = useCalendarStore.getState().events.find((e) => e.id === master.id)!
+    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20261101')
+  })
+
+  it('(c2) "this and future" delete ends an Asia/Tokyo master on the previous Tokyo day', async () => {
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-03-01T23:00:00Z'), // 2026-03-02 08:00 JST
+      endDate: new Date('2026-03-01T23:30:00Z'),
+      recurrenceRule: 'FREQ=DAILY',
+      timezone: 'Asia/Tokyo',
+    })
+    useCalendarStore.setState({ events: [master] })
+
+    await useCalendarStore.getState().deleteRecurringEvent(
+      master.id,
+      'this_and_future',
+      new Date('2026-03-09T23:00:00Z'), // 2026-03-10 08:00 JST
+    )
+
+    const updatedMaster = useCalendarStore.getState().events.find((e) => e.id === master.id)!
+    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20260309')
+  })
+
+  it('(d) control: an explicit-zone "this" edit of a floating master serializes consistently', async () => {
+    const master = deserializeCalendarEvent([
+      'BEGIN:VEVENT',
+      'UID:floating-master',
+      'SUMMARY:Floating series',
+      'DTSTART:20260302T100000',
+      'DTEND:20260302T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=4',
+      'END:VEVENT',
+    ].join('\r\n'))
+    useCalendarStore.setState({ events: [master] })
+    const instanceDate = new Date(2026, 2, 9, 10, 0, 0)
+
+    await useCalendarStore.getState().updateRecurringEvent(
+      master.id,
+      {
+        timezone: 'Europe/Berlin',
+        startDate: new Date('2026-03-09T09:00:00Z'),
+        endDate: new Date('2026-03-09T10:00:00Z'),
+      },
+      'this',
+      instanceDate,
+    )
+
+    const events = useCalendarStore.getState().events
+    const updatedMaster = events.find((e) => e.id === master.id)!
+    const standalone = events.find((e) => e.id !== master.id)!
+
+    expect(timedLines(serializeCalendarEvent(updatedMaster))).toContain('EXDATE:20260309T100000')
+    expect(deserializeCalendarEvent(serializeCalendarEvent(updatedMaster))).toMatchObject({ floating: true })
+
+    const standaloneIcs = serializeCalendarEvent(standalone)
+    expect(timedLines(standaloneIcs)).toEqual([
+      'DTSTART;TZID=Europe/Berlin:20260309T100000',
+      'DTEND;TZID=Europe/Berlin:20260309T110000',
+    ])
+    const reloadedStandalone = deserializeCalendarEvent(standaloneIcs)
+    expect(reloadedStandalone.timezone).toBe('Europe/Berlin')
+    expect(reloadedStandalone).not.toHaveProperty('floating')
+  })
+
+  it('(e) deleting a displayed UTC-anchored occurrence after DST removes exactly that occurrence', async () => {
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-02-23T18:00:00Z'),
+      endDate: new Date('2026-02-23T19:00:00Z'),
+      recurrenceRule: 'FREQ=WEEKLY;COUNT=6',
+      timezone: undefined,
+    })
+    useCalendarStore.setState({ events: [master] })
+    const range = { start: new Date('2026-02-20T00:00:00Z'), end: new Date('2026-04-05T00:00:00Z') }
+
+    const displayed = expandEventsForRange([master], range)
+    expect(displayed.map((e) => e.startDate.toISOString())).toEqual([
+      '2026-02-23T18:00:00.000Z',
+      '2026-03-02T18:00:00.000Z',
+      '2026-03-09T18:00:00.000Z',
+      '2026-03-16T18:00:00.000Z',
+      '2026-03-23T18:00:00.000Z',
+      '2026-03-30T18:00:00.000Z',
+    ])
+
+    await useCalendarStore.getState().deleteRecurringEvent(master.id, 'this', displayed[3]!.instanceDate)
+
+    const reloaded = deserializeCalendarEvent(serializeCalendarEvent(useCalendarStore.getState().events[0]!))
+    expect(expandEventsForRange([reloaded], range).map((e) => e.startDate.toISOString())).toEqual([
+      '2026-02-23T18:00:00.000Z',
+      '2026-03-02T18:00:00.000Z',
+      '2026-03-09T18:00:00.000Z',
+      '2026-03-23T18:00:00.000Z',
+      '2026-03-30T18:00:00.000Z',
+    ])
+  })
+})
 
 describe('useCalendarStore.importEvents', () => {
   beforeEach(() => {

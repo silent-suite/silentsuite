@@ -1,5 +1,8 @@
 import { parseVEvent, generateVEvent } from '../utils/ical-parser.js';
 import type { VEvent, VAlarm } from '../utils/ical-parser.js';
+import { wallTimeToInstant } from '../utils/zoned-time.js';
+import { expandRecurrence } from '../utils/recurrence.js';
+import type { DateRange } from './types.js';
 
 export interface CalendarEvent {
   id: string;
@@ -21,6 +24,10 @@ export interface CalendarEvent {
   /** IANA timezone for this event (e.g. 'America/New_York'). When absent,
    *  falls back to user default timezone, then local system timezone. */
   timezone?: string;
+  /** True only when a timed DTSTART was read as RFC 5545 floating time (no Z, no TZID).
+   *  Such events keep host-local semantics and are written back floating. Omitted otherwise.
+   *  `allDay` and `timezone` take precedence over this flag. */
+  floating?: true;
   created: Date;
   updated: Date;
 }
@@ -57,6 +64,17 @@ function formatICalDateTimeLocal(date: Date, tzid: string): string {
   return `${year}${month}${day}T${hour}${minute}${second}`;
 }
 
+/** Host-local wall clock without Z or TZID, for events that were read as floating. */
+function formatICalDateTimeFloating(date: Date): string {
+  const y = date.getFullYear();
+  const mo = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const h = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  const s = String(date.getSeconds()).padStart(2, '0');
+  return `${y}${mo}${d}T${h}${mi}${s}`;
+}
+
 function formatICalDateTime(date: Date): string {
   // Emit UTC with Z suffix so events have a timezone anchor across all sync
   // clients and timezones. Floating-time (no Z, no TZID) would cause events
@@ -88,48 +106,54 @@ export function parseICalDateValue(value: string, tzid?: string): { date: Date; 
     return { date: new Date(Date.UTC(year, month, day, hour, minute, second)), allDay: false };
   }
 
-  // If a TZID is specified, convert via Intl.DateTimeFormat so the
-  // resulting Date represents the correct UTC instant.
+  // If a TZID is specified, resolve the wall clock in that zone (host-independent).
+  // DST gaps use the pre-gap offset and overlaps the first occurrence (RFC 5545 §3.3.5),
+  // the same conversion recurrence expansion uses, so parsed EXDATEs match expanded
+  // occurrences.
   if (tzid) {
-    try {
-      const utcGuess = Date.UTC(year, month, day, hour, minute, second);
-
-      function getOffsetMs(utcMs: number): number {
-        const formatter = new Intl.DateTimeFormat('en-US', {
-          timeZone: tzid,
-          year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit',
-          hour12: false,
-        });
-        const parts = formatter.formatToParts(new Date(utcMs));
-        const p = (type: string) => parseInt(parts.find((x) => x.type === type)?.value ?? '0', 10);
-        // Use Date.UTC, not `new Date(...)` — the latter interprets in the
-        // runtime's local TZ, which makes this whole calculation dependent on
-        // the browser/server's TZ (returning 0 when browser TZ matches tzid,
-        // and arbitrary wrong offsets otherwise). Date.UTC always returns
-        // the UTC ms for the given wall-clock components, so the diff
-        // measures purely the tzid's offset from UTC at this instant.
-        const hour = p('hour') === 24 ? 0 : p('hour'); // Intl midnight edge case
-        const localUtcMs = Date.UTC(p('year'), p('month') - 1, p('day'), hour, p('minute'), p('second'));
-        return localUtcMs - utcMs;
-      }
-
-      // Two-pass approach: the first offset may be wrong when a DST
-      // transition falls between utcGuess and the real target instant.
-      const offset1 = getOffsetMs(utcGuess);
-      const betterUtc = utcGuess - offset1;
-
-      // Second pass — refine if DST boundary was crossed
-      const offset2 = getOffsetMs(betterUtc);
-      const finalUtc = utcGuess - offset2;
-
-      return { date: new Date(finalUtc), allDay: false };
-    } catch {
-      // Invalid TZID — fall through to local time interpretation
-    }
+    const instant = wallTimeToInstant(tzid, Date.UTC(year, month, day, hour, minute, second));
+    if (instant !== null) return { date: new Date(instant), allDay: false };
+    // Invalid TZID — fall through to local time interpretation
   }
 
   return { date: new Date(year, month, day, hour, minute, second), allDay: false };
+}
+
+/**
+ * True for an RFC 5545 floating DATE-TIME: a timed value with neither a TZID parameter nor a
+ * trailing Z. DATE values (VALUE=DATE or 8 digits) are never floating.
+ */
+export function isFloatingICalDateTime(value: string, params?: Record<string, string>): boolean {
+  if (params?.['VALUE']?.toUpperCase() === 'DATE') return false;
+  const clean = value.replace(/[^0-9TZ]/g, '');
+  if (clean.length <= 8) return false;
+  if (clean.endsWith('Z')) return false;
+  return !params?.['TZID'];
+}
+
+/**
+ * The zone in which an event's recurrence repeats DTSTART's wall clock.
+ * Precedence: all-day (host-local dates) > TZID > floating (host-local) > explicit UTC.
+ * Returns undefined for host-local expansion.
+ */
+export function recurrenceTimeZone(
+  event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating'>,
+): string | undefined {
+  if (event.allDay) return undefined;
+  if (event.timezone) return event.timezone;
+  if (event.floating === true) return undefined;
+  return 'UTC';
+}
+
+/**
+ * Expand a recurring event's occurrences within `range`, in the event's own anchor zone,
+ * excluding its EXDATEs. Returns [] for an event without a recurrence rule.
+ */
+export function expandEventRecurrence(event: CalendarEvent, range: DateRange): Date[] {
+  if (!event.recurrenceRule) return [];
+  return expandRecurrence(event.recurrenceRule, event.startDate, range, event.exceptions, {
+    timeZone: recurrenceTimeZone(event),
+  });
 }
 
 /**
@@ -137,24 +161,27 @@ export function parseICalDateValue(value: string, tzid?: string): { date: Date; 
  */
 export function toVEvent(event: CalendarEvent): string {
   const tzid = event.allDay ? undefined : event.timezone;
+  // Precedence: all-day > TZID > floating > explicit UTC. A floating source is written back
+  // floating instead of being converted to a UTC instant.
+  const floating = !event.allDay && !tzid && event.floating === true;
+  const formatTimed = (d: Date): string =>
+    tzid
+      ? formatICalDateTimeLocal(d, tzid)
+      : floating
+        ? formatICalDateTimeFloating(d)
+        : formatICalDate(d, event.allDay);
 
   const vevent: VEvent = {
     uid: event.uid,
-    dtstart: tzid
-      ? formatICalDateTimeLocal(event.startDate, tzid)
-      : formatICalDate(event.startDate, event.allDay),
-    dtend: tzid
-      ? formatICalDateTimeLocal(event.endDate, tzid)
-      : formatICalDate(event.endDate, event.allDay),
+    dtstart: formatTimed(event.startDate),
+    dtend: formatTimed(event.endDate),
     summary: event.title,
     description: event.description || undefined,
     location: event.location || undefined,
     rrule: event.recurrenceRule ?? undefined,
     exdate:
       event.exceptions.length > 0
-        ? event.exceptions.map((d) =>
-            tzid ? formatICalDateTimeLocal(d, tzid) : formatICalDate(d, event.allDay)
-          )
+        ? event.exceptions.map(formatTimed)
         : undefined,
     exdateParams:
       event.exceptions.length > 0 && tzid
@@ -198,6 +225,8 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     (d) => parseICalDateValue(d, exdateTzid).date,
   );
 
+  const startIsFloating = !isAllDay && isFloatingICalDateTime(vevent.dtstart, vevent.dtstartParams);
+
   const now = new Date();
 
   return {
@@ -216,6 +245,7 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     categories: vevent.categories ?? [],
     // Preserve the TZID from DTSTART so we can round-trip it correctly
     timezone: startTzid ?? undefined,
+    ...(startIsFloating ? { floating: true as const } : {}),
     created: vevent.created ? parseICalDateValue(vevent.created).date : now,
     updated: vevent.lastModified ? parseICalDateValue(vevent.lastModified).date : now,
   };

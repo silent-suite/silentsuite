@@ -1,4 +1,4 @@
-import { parseICalDateValue } from '@silentsuite/core'
+import { isFloatingICalDateTime, parseICalDateValue } from '@silentsuite/core'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
 import { normalizeLabels } from '@/app/components/LabelEditor'
 
@@ -15,6 +15,8 @@ export interface ImportEventPayload {
   categories: string[]
   calendarId: string
   timezone: string | undefined
+  /** Present (true) only when the source DTSTART is a floating DATE-TIME (no TZID, no Z). */
+  floating?: true
 }
 
 function addDays(date: Date, days: number): Date {
@@ -78,6 +80,7 @@ export function vEventToImportEvent(
     categories: normalizeLabels(event.categories ?? []),
     calendarId,
     timezone: isAllDay ? undefined : startTzid,
+    ...(!isAllDay && isFloatingICalDateTime(event.dtstart, event.dtstartParams) ? { floating: true as const } : {}),
   }
 }
 

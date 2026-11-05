@@ -1,6 +1,7 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
+import { deserializeCalendarEvent, serializeCalendarEvent } from '@silentsuite/core'
 import { EventDialog, formatEventDateInput, formatEventTimeInput, parseEventDateInput, parseEventTimeInput } from '../EventDialog'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
@@ -363,6 +364,130 @@ describe('EventDialog edit calendar selection', () => {
       instanceDate,
     )
     expect(mocks.onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// #886 / plan-v2 §3.2: editor transitions keep one consistent anchor. Each case applies the real
+// saved patch the way the store does ({ ...event, ...patch }) and serializes it with the real codec.
+
+describe('EventDialog anchor transitions (#886)', () => {
+  beforeEach(() => {
+    mocks.createEvent.mockReset()
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.updateRecurringEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  async function savedPatch(): Promise<Partial<CalendarEvent>> {
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+    return mocks.updateEvent.mock.calls[0]![1] as Partial<CalendarEvent>
+  }
+
+  const timedLines = (ics: string) => ics.split('\r\n').filter((line) => /^(DTSTART|DTEND)[:;]/.test(line))
+
+  it('T2: an explicit zone change on a floating event clears floating and anchors the TZID', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      floating: true,
+      startDate: new Date('2026-06-01T09:00:00Z'),
+      endDate: new Date('2026-06-01T10:00:00Z'),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event timezone'), { target: { value: 'Europe/Berlin' } })
+    const patch = await savedPatch()
+
+    expect(patch.timezone).toBe('Europe/Berlin')
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBeUndefined()
+    const ics = serializeCalendarEvent(merged)
+    expect(timedLines(ics)[0]).toMatch(/^DTSTART;TZID=Europe\/Berlin:/)
+    const reloaded = deserializeCalendarEvent(ics)
+    expect(reloaded.timezone).toBe('Europe/Berlin')
+    expect(reloaded).not.toHaveProperty('floating')
+    expect(reloaded.startDate.getTime()).toBe(merged.startDate.getTime())
+  })
+
+  it('T3 control: a floating event saved without a zone change stays floating', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      floating: true,
+      startDate: new Date(2026, 5, 1, 9, 0, 0),
+      endDate: new Date(2026, 5, 1, 10, 0, 0),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed floating' } })
+    const patch = await savedPatch()
+
+    expect(patch).not.toHaveProperty('floating')
+    expect(patch).not.toHaveProperty('timezone')
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBe(true)
+    expect(timedLines(serializeCalendarEvent(merged))).toEqual(['DTSTART:20260601T090000', 'DTEND:20260601T100000'])
+  })
+
+  it('T4: switching a floating timed event to all-day clears floating', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      floating: true,
+      startDate: new Date(2026, 5, 1, 9, 0, 0),
+      endDate: new Date(2026, 5, 1, 10, 0, 0),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.click(screen.getByLabelText('All day'))
+    const patch = await savedPatch()
+
+    expect(patch.allDay).toBe(true)
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBeUndefined()
+    expect(timedLines(serializeCalendarEvent(merged))[0]).toMatch(/^DTSTART;VALUE=DATE:/)
+  })
+
+  it('T5: switching an all-day event to timed anchors it in the dialog zone, not UTC', async () => {
+    mocks.preferences.defaultTimezone = 'Europe/Berlin'
+    const event = makeEvent({
+      allDay: true,
+      timezone: undefined,
+      startDate: new Date(2026, 5, 1),
+      endDate: new Date(2026, 5, 2),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.click(screen.getByLabelText('All day'))
+    const patch = await savedPatch()
+
+    expect(patch.allDay).toBe(false)
+    expect(patch.timezone).toBe('Europe/Berlin')
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBeUndefined()
+    const ics = serializeCalendarEvent(merged)
+    expect(timedLines(ics)[0]).toMatch(/^DTSTART;TZID=Europe\/Berlin:/)
+    expect(deserializeCalendarEvent(ics).timezone).toBe('Europe/Berlin')
+  })
+
+  it('T6 control: a UTC-anchored event saved with an unchanged zone stays UTC', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      startDate: new Date('2026-06-01T09:00:00Z'),
+      endDate: new Date('2026-06-01T10:00:00Z'),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed UTC' } })
+    const patch = await savedPatch()
+
+    expect(patch).not.toHaveProperty('timezone')
+    expect(patch).not.toHaveProperty('floating')
+    expect(timedLines(serializeCalendarEvent({ ...event, ...patch }))).toEqual([
+      'DTSTART:20260601T090000Z',
+      'DTEND:20260601T100000Z',
+    ])
   })
 })
 
