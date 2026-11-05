@@ -593,3 +593,204 @@ def test_windows_executable_import_measurement(canonical, tmp_path):
     if "error" in measurement:
         pytest.fail(f"measurement unavailable (not RED, not W1 evidence): {measurement['error']}")
     # Characterization only: the measured names are raw review inputs; none is asserted.
+
+
+# --- W1 tests first: two Windows-only family absence cases (w1-plan-v2.md) ------
+#
+# Approved tests-only (c4-s2b1-w1-review-answer.md, W1_V2_PLAN); no spec removal is
+# admitted. Exact basenames are copied from the real Windows facts unknown_origins
+# (s2b1-green-628fe68d4872/qualification.json). Before either absence assertion
+# can count, a module fixture measures EVERY bundled .exe/.dll/.pyd with
+# _w1_measure. It re-runs its own parser, positive and negative controls, checks
+# the real witnesses and file controls, and writes the closure receipt.
+#   W1a: Windows API-set forwarders and ucrtbase. Remaining importers are recorded
+#        and permitted only under the documented system resolution for the Qt 6.12
+#        GUI's vendor floor, Windows 10 (1809+) and 11 x86_64. This is not a new CLI
+#        support promise and not proof of arbitrary runtime LoadLibrary.
+#   W1b: OpenSSL 3. No prospective remaining PE file may import either basename,
+#        ordinary or delayed.
+# Each family's prospective remaining set excludes only that family's own candidate
+# paths, so a candidate-to-candidate edge (libssl-3 -> libcrypto-3) is never a
+# remaining consumer.
+W1_CLOSURE_RECEIPT_NAME = "w1-closure-pe-imports.txt"
+W1_PE_SUFFIXES = (".exe", ".dll", ".pyd")
+W1A_NAMES = (
+    "api-ms-win-core-console-l1-1-0.dll", "api-ms-win-core-datetime-l1-1-0.dll",
+    "api-ms-win-core-debug-l1-1-0.dll", "api-ms-win-core-errorhandling-l1-1-0.dll",
+    "api-ms-win-core-fibers-l1-1-0.dll", "api-ms-win-core-fibers-l1-1-1.dll",
+    "api-ms-win-core-file-l1-1-0.dll", "api-ms-win-core-file-l1-2-0.dll",
+    "api-ms-win-core-file-l2-1-0.dll", "api-ms-win-core-handle-l1-1-0.dll",
+    "api-ms-win-core-heap-l1-1-0.dll", "api-ms-win-core-interlocked-l1-1-0.dll",
+    "api-ms-win-core-kernel32-legacy-l1-1-1.dll", "api-ms-win-core-libraryloader-l1-1-0.dll",
+    "api-ms-win-core-localization-l1-2-0.dll", "api-ms-win-core-memory-l1-1-0.dll",
+    "api-ms-win-core-namedpipe-l1-1-0.dll", "api-ms-win-core-processenvironment-l1-1-0.dll",
+    "api-ms-win-core-processthreads-l1-1-0.dll", "api-ms-win-core-processthreads-l1-1-1.dll",
+    "api-ms-win-core-profile-l1-1-0.dll", "api-ms-win-core-rtlsupport-l1-1-0.dll",
+    "api-ms-win-core-string-l1-1-0.dll", "api-ms-win-core-synch-l1-1-0.dll",
+    "api-ms-win-core-synch-l1-2-0.dll", "api-ms-win-core-sysinfo-l1-1-0.dll",
+    "api-ms-win-core-sysinfo-l1-2-0.dll", "api-ms-win-core-timezone-l1-1-0.dll",
+    "api-ms-win-core-util-l1-1-0.dll", "api-ms-win-crt-conio-l1-1-0.dll",
+    "api-ms-win-crt-convert-l1-1-0.dll", "api-ms-win-crt-environment-l1-1-0.dll",
+    "api-ms-win-crt-filesystem-l1-1-0.dll", "api-ms-win-crt-heap-l1-1-0.dll",
+    "api-ms-win-crt-locale-l1-1-0.dll", "api-ms-win-crt-math-l1-1-0.dll",
+    "api-ms-win-crt-private-l1-1-0.dll", "api-ms-win-crt-process-l1-1-0.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll", "api-ms-win-crt-stdio-l1-1-0.dll",
+    "api-ms-win-crt-string-l1-1-0.dll", "api-ms-win-crt-time-l1-1-0.dll",
+    "api-ms-win-crt-utility-l1-1-0.dll", "ucrtbase.dll",
+)
+W1B_NAMES = ("libcrypto-3-x64.dll", "libssl-3-x64.dll")
+W1_FAMILIES = {"W1a": W1A_NAMES, "W1b": W1B_NAMES}
+W1_FAMILY_LABELS = {"W1a": "Windows API-set/UCRT (W1a)", "W1b": "OpenSSL 3 (W1b)"}
+# Real witnesses (non-vacuous coverage) and unweakened file controls, all observed
+# at these exact paths in the current Windows facts.
+W1_WITNESSES = ("_internal/python310.dll", "_internal/etebase/etebase_python.pyd",
+                "_internal/PySide6/Qt6Core.dll", "_internal/PySide6/Qt6Pdf.dll",
+                "_internal/PySide6/Qt6WebEngineCore.dll")
+W1_KEPT_FILES = (
+    "_internal/python310.dll", "_internal/libssl-1_1.dll", "_internal/libcrypto-1_1.dll",
+    "_internal/VCRUNTIME140.dll", "_internal/VCRUNTIME140_1.dll", "_internal/PySide6/MSVCP140.dll",
+    "_internal/PySide6/Qt6Core.dll", "_internal/PySide6/Qt6Network.dll",
+    "_internal/PySide6/Qt6WebEngineCore.dll", "_internal/PySide6/Qt6Pdf.dll",
+    "_internal/PySide6/plugins/tls/qcertonlybackend.dll",
+    "_internal/PySide6/plugins/tls/qopensslbackend.dll",
+    "_internal/PySide6/plugins/tls/qschannelbackend.dll",
+)
+
+
+def _w1_family_grouping_problems():
+    problems = []
+    lowered = [name.lower() for name in W1A_NAMES]
+    if (len(W1A_NAMES) != 44 or len(set(lowered)) != 44 or "ucrtbase.dll" not in lowered
+            or sum(name.startswith("api-ms-win-") for name in lowered) != 43):
+        problems.append("W1a is not exactly 43 api-ms-win-* names plus ucrtbase.dll")
+    if sorted(name.lower() for name in W1B_NAMES) != ["libcrypto-3-x64.dll", "libssl-3-x64.dll"]:
+        problems.append("W1b is not exactly libssl-3-x64.dll and libcrypto-3-x64.dll")
+    if set(lowered) & {name.lower() for name in W1B_NAMES}:
+        problems.append("W1a and W1b overlap")
+    return problems
+
+
+def _w1_family_closure(measurements, family):
+    """Present candidate paths, other same-named occurrences and remaining importers."""
+    names = {name.lower() for name in W1_FAMILIES[family]}
+    candidates = sorted(path for path in measurements
+                        if path.lower() in {f"_internal/{name}" for name in names})
+    others = sorted(path for path in measurements
+                    if path not in candidates and path.rsplit("/", 1)[-1].lower() in names)
+    importers = {}
+    for path, entry in measurements.items():
+        if path in candidates:  # proposed for removal with the family: not a remaining consumer
+            continue
+        for kind in ("ordinary", "delayed"):
+            for imported in entry.get(kind, []):
+                if imported.lower() in names:
+                    importers.setdefault(imported, []).append({"importer": path, "kind": kind})
+    return {"label": W1_FAMILY_LABELS[family], "expected_names": len(names), "present": candidates,
+            "same_named_elsewhere": others, "remaining_importers": importers}
+
+
+@pytest.fixture(scope="module")
+def w1_closure(canonical, tmp_path_factory):
+    """Full PE closure over the real bundle; its problems are prerequisites, never RED."""
+    out = _out()
+    receipt = out / W1_CLOSURE_RECEIPT_NAME
+    record = {
+        "scope": "W1 tests-first closure over this frozen job's own bundle bytes; not final-package proof, "
+                 "not exclusion permission; error entries are diagnostics, not empty tables",
+        "pyinstaller": _read(out / "pyinstaller-version.txt"),
+        "pefile_required": W1_PEFILE_VERSION,
+        "pefile": None,
+    }
+    problems = _w1_family_grouping_problems()
+    bundle = canonical["bundle"]
+    if bundle is None:
+        problems.append("NOT REACHED: no canonical bundle was built")
+        record["prerequisite_errors"] = problems
+        _w1_write(receipt, record)
+        return {"problems": problems, "families": {}}
+    pefile = None
+    try:
+        import importlib.metadata
+
+        record["pefile"] = importlib.metadata.version("pefile")
+        import pefile
+    except Exception as exc:
+        problems.append(f"pefile is unavailable ({type(exc).__name__})")
+        pefile = None
+    if pefile is not None and record["pefile"] != W1_PEFILE_VERSION:
+        problems.append(f"pefile {record['pefile']} is not the inspected {W1_PEFILE_VERSION}")
+        pefile = None
+    root = bundle["root"]
+    exe_relative = bundle["exe"].relative_to(root).as_posix()
+    families = {}
+    if pefile is not None:
+        # Controls repeated here, so they do not depend on the characterization case's order.
+        control_path, control_sha, control_delayed = W1_PDF_CONTROL
+        control = _w1_measure(pefile, root / control_path, control_path)
+        record["positive_control"] = control
+        if control.get("sha256") != control_sha:
+            problems.append(f"positive control bytes are not the verified Qt6Pdf.dll: {control.get('sha256')}")
+        elif "error" in control or control.get("delayed") != control_delayed:
+            problems.append(f"positive control did not reproduce {control_delayed}: {control!r}")
+        exe_bytes = bundle["exe"].read_bytes()
+        truncated = tmp_path_factory.mktemp("w1-closure") / "truncated-executable.exe"
+        truncated.write_bytes(exe_bytes[:min(4096, len(exe_bytes) // 2)])
+        negative = _w1_measure(pefile, truncated, "truncated copy of the executable")
+        record["negative_control"] = negative
+        if "error" not in negative or "ordinary" in negative or "delayed" in negative:
+            problems.append(f"negative control admitted import lists: {negative!r}")
+        # Complete enumeration: every regular .exe/.dll/.pyd, suffix compared case-insensitively.
+        enumerated = sorted(p.relative_to(root).as_posix() for p in root.rglob("*")
+                            if p.is_file() and not p.is_symlink() and p.suffix.lower() in W1_PE_SUFFIXES)
+        measurements = {path: _w1_measure(pefile, root / path, path) for path in enumerated}
+        record["pe_files"] = len(enumerated)
+        record["measurements"] = measurements
+        errors = sorted(path for path, entry in measurements.items() if "error" in entry)
+        if errors:
+            problems.append(f"{len(errors)} bundled PE files could not be measured, e.g. "
+                            f"{[(path, measurements[path]['error']) for path in errors[:10]]}")
+        if set(measurements) != set(enumerated):
+            problems.append("the closure does not cover every enumerated PE file")
+        for witness in (exe_relative, *W1_WITNESSES):
+            entry = measurements.get(witness)
+            if entry is None or "error" in entry or not entry.get("ordinary"):
+                problems.append(f"witness {witness} was not measured with ordinary imports: {entry!r}")
+        for kept in W1_KEPT_FILES:
+            if not (root / kept).is_file():
+                problems.append(f"kept file control {kept} is missing")
+        families = {family: _w1_family_closure(measurements, family) for family in W1_FAMILIES}
+        record["families"] = families
+        record["w1a_rule"] = ("remaining W1a importers are permitted only under documented system API-set/UCRT "
+                              "resolution for the Qt 6.12 GUI floor, Windows 10 (1809+) and 11 x86_64")
+    record["prerequisite_errors"] = problems
+    _w1_write(receipt, record)  # the closure is recorded before any absence assertion
+    if not receipt.is_file():
+        problems.append("the closure receipt is absent")
+    return {"problems": problems, "families": families}
+
+
+def _w1_require_closure(closure, family):
+    if closure["problems"]:
+        pytest.fail(f"prerequisite failed (not RED): {closure['problems']}")
+    info = closure["families"].get(family)
+    if info is None:
+        pytest.fail(f"prerequisite failed (not RED): no {family} closure was recorded")
+    if family == "W1b" and info["remaining_importers"]:
+        pytest.fail(f"closure failed (not RED): remaining PE files import OpenSSL 3: {info['remaining_importers']}")
+    return info
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="W1 families are Windows-only bundle files")
+def test_windows_bundle_omits_w1a_api_set_and_ucrt_family(w1_closure):
+    info = _w1_require_closure(w1_closure, "W1a")
+    assert not info["present"], (
+        f"{info['label']} family still bundled: {len(info['present'])} of {info['expected_names']} exact basenames "
+        f"under _internal, e.g. {info['present'][:5]}")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="W1 families are Windows-only bundle files")
+def test_windows_bundle_omits_w1b_openssl3_family(w1_closure):
+    info = _w1_require_closure(w1_closure, "W1b")
+    assert not info["present"], (
+        f"{info['label']} family still bundled: {len(info['present'])} of {info['expected_names']} exact basenames "
+        f"under _internal: {info['present']}")
