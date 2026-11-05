@@ -432,3 +432,164 @@ def test_frozen_desktop_refuses_the_updater_without_side_effects(canonical, tmp_
     assert done.returncode == 1, f"rc={done.returncode}"
     assert not data.exists(), "the refused launch created the data directory"
     assert not _connectable(port), "the refused launch bound a listener"
+
+
+# --- W1 characterization: the executable's PE import tables (measurement only) ----
+#
+# Approved as a tests-only measurement (c3r-c4-review-answer.md, C4_MINIMAL_PLAN).
+# It records the ordinary and delay-load import DLL names of THIS job's own
+# executable into the uploaded frozen/*.txt receipt. It asserts no expected names,
+# is not a behavioural RED, and permits no DLL exclusion. An "error" entry is a
+# diagnostic, never an empty table and never W1 evidence. Parser: pefile, which
+# PyInstaller requires on win32. Only the inspected 2024.8.26 API is used
+# (pefile.py 819-826, 3449-3457, 3688-3781, 5675-5782, 5872-5976).
+W1_RECEIPT_NAME = "w1-executable-pe-imports.txt"
+W1_PEFILE_VERSION = "2024.8.26"
+W1_DIRECTORIES = {"ordinary": "IMAGE_DIRECTORY_ENTRY_IMPORT", "delayed": "IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT"}
+W1_DELAY_DESCRIPTOR_SIZE = 32  # IMAGE_DELAYLOAD_DESCRIPTOR (PE/COFF); Size counts the zero terminator
+# Real positive control: byte-bound in post-p2-delayed-imports/index.json.
+W1_PDF_CONTROL = ("_internal/PySide6/Qt6Pdf.dll",
+                  "5caf5744e017df85455c5c7e11028c5ec2765633a7ca64a11d7b64d127f6c4cc", ["WINMM.dll"])
+
+
+def _w1_sha256(path):
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _w1_dll_names(items):
+    """Exact DLL names in descriptor order, or None if any name is invalid."""
+    names = []
+    for item in items:
+        dll = getattr(item, "dll", None)
+        if not isinstance(dll, bytes) or not dll or dll == b"*invalid*":
+            return None
+        try:
+            names.append(dll.decode("ascii"))
+        except UnicodeDecodeError:
+            return None
+    return names
+
+
+def _w1_measure(pefile, path, label):
+    """One PE file's import tables, or an honest error with no lists (fail closed)."""
+    result = {"path": label}
+    try:
+        result["bytes"] = Path(path).stat().st_size
+        result["sha256"] = _w1_sha256(path)
+    except OSError as exc:
+        result["error"] = f"unreadable ({type(exc).__name__})"
+        return result
+    try:
+        pe = pefile.PE(str(path), fast_load=True)
+        with pe:
+            indexes = {key: pefile.DIRECTORY_ENTRY[name] for key, name in W1_DIRECTORIES.items()}
+            directories = {}
+            for key, index in indexes.items():
+                entry = pe.OPTIONAL_HEADER.DATA_DIRECTORY[index]
+                directories[key] = {"rva": entry.VirtualAddress, "size": entry.Size}
+            result["directories"] = directories
+            before = len(pe.get_warnings())
+            pe.parse_data_directories(directories=list(indexes.values()), import_dllnames_only=True)
+            result["warnings_added"] = len(pe.get_warnings()) - before
+            result["warnings_total"] = len(pe.get_warnings())
+            if result["warnings_added"]:
+                result["error"] = "parser-warning"
+                return result
+            lists = {}
+            for key, name in W1_DIRECTORIES.items():
+                rva, size = directories[key]["rva"], directories[key]["size"]
+                if rva == 0:
+                    if size != 0:
+                        result["error"] = f"{key}: directory-size-without-address"
+                        return result
+                    lists[key] = []  # no such directory in the image
+                    continue
+                items = getattr(pe, name[len("IMAGE_"):], None)
+                if not items:  # a non-zero directory yielded nothing: not proof of an empty table
+                    result["error"] = f"{key}: unparsed-nonzero-directory"
+                    return result
+                if key == "delayed" and (size % W1_DELAY_DESCRIPTOR_SIZE
+                                         or len(items) != size // W1_DELAY_DESCRIPTOR_SIZE - 1):
+                    result["error"] = "delayed: delay-descriptor-count-mismatch"
+                    return result
+                names = _w1_dll_names(items)
+                if names is None:
+                    result["error"] = f"{key}: invalid-dll-name"
+                    return result
+                lists[key] = names
+            result.update(lists)
+    except Exception as exc:  # malformed input or parser failure: recorded, never a list
+        result.pop("ordinary", None)
+        result.pop("delayed", None)
+        result["error"] = type(exc).__name__
+    return result
+
+
+def _w1_write(receipt, record):
+    try:
+        receipt.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except OSError as exc:
+        pytest.fail(f"prerequisite failed (not RED): the measurement receipt was not written ({type(exc).__name__})")
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PE executable import measurement is Windows-only")
+def test_windows_executable_import_measurement(canonical, tmp_path):
+    out = _out()
+    receipt = out / W1_RECEIPT_NAME
+    record = {
+        "scope": "W1 characterization of this frozen job's own executable bytes; not a behavioural RED, "
+                 "not exclusion permission; error entries are diagnostics, not empty tables",
+        "pyinstaller": _read(out / "pyinstaller-version.txt"),
+        "pefile_required": W1_PEFILE_VERSION,
+        "pefile": None,
+    }
+    bundle = canonical["bundle"]
+    if bundle is None:
+        record["error"] = "NOT REACHED: no canonical bundle was built"
+        _w1_write(receipt, record)
+        pytest.fail("NOT REACHED: no canonical bundle was built")
+    problems = []
+    try:
+        import importlib.metadata
+
+        record["pefile"] = importlib.metadata.version("pefile")
+        import pefile
+    except Exception as exc:
+        problems.append(f"pefile is unavailable ({type(exc).__name__})")
+    if not problems and record["pefile"] != W1_PEFILE_VERSION:
+        problems.append(f"pefile {record['pefile']} is not the inspected {W1_PEFILE_VERSION}")
+    if not problems:
+        # Positive control: real, byte-verified Pdf DLL with its independently measured delay import.
+        control_path, control_sha, control_delayed = W1_PDF_CONTROL
+        control = _w1_measure(pefile, bundle["root"] / control_path, control_path)
+        record["positive_control"] = control
+        if control.get("sha256") != control_sha:
+            problems.append(f"positive control bytes are not the verified Qt6Pdf.dll: {control.get('sha256')}")
+        elif "error" in control or control.get("delayed") != control_delayed:
+            problems.append(f"positive control did not reproduce {control_delayed}: {control!r}")
+        # Negative control: a truncated copy of the actual executable must not yield lists.
+        exe_bytes = bundle["exe"].read_bytes()
+        truncated = tmp_path / "truncated-executable.exe"
+        truncated.write_bytes(exe_bytes[:min(4096, len(exe_bytes) // 2)])
+        negative = _w1_measure(pefile, truncated, "truncated copy of the executable")
+        record["negative_control"] = negative
+        if "error" not in negative or "ordinary" in negative or "delayed" in negative:
+            problems.append(f"negative control admitted import lists: {negative!r}")
+    if problems:
+        record["prerequisite_errors"] = problems
+        _w1_write(receipt, record)
+        pytest.fail(f"prerequisite failed (not RED): {problems}")
+    measurement = _w1_measure(pefile, bundle["exe"], bundle["exe"].relative_to(out).as_posix())
+    record["executable"] = measurement
+    _w1_write(receipt, record)
+    if not receipt.is_file():
+        pytest.fail("prerequisite failed (not RED): the measurement receipt is absent")
+    if "error" in measurement:
+        pytest.fail(f"measurement unavailable (not RED, not W1 evidence): {measurement['error']}")
+    # Characterization only: the measured names are raw review inputs; none is asserted.
