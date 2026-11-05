@@ -2481,6 +2481,73 @@ class SiblingRoutesRuntimeTest {
         c.expect(listOf("Family"), f.unfiledMembershipTitles(native, row), "the provider labels are recovered")
     }
 
+    /**
+     * #934 S11 (visibility): before labels were mapped, a labelled contact without group-vCard membership was
+     * ungrouped and shown through the address book's UNGROUPED_VISIBLE=1 setting. Its new label-group
+     * memberships must keep it visible (the provider uses MAX(GROUP_VISIBLE) once a contact has any membership),
+     * and a visibility the user later chooses for a label group must not be reset by a sync.
+     */
+    private fun labelledContactsStayVisible(f: NativeStore, c: CategoryChecks) {
+        val resolver = f.context.contentResolver
+        fun <T> settle(timeoutMillis: Long, read: () -> T?, done: (T?) -> Boolean): T? {
+            val deadline = SystemClock.uptimeMillis() + timeoutMillis
+            var value = read()
+            while (!done(value) && SystemClock.uptimeMillis() < deadline) {
+                SystemClock.sleep(25)
+                value = read()
+            }
+            return value
+        }
+        fun contactId(rawId: Long): Long? = f.rawString(rawId, ContactsContract.RawContacts.CONTACT_ID)?.toLong()
+        fun inVisibleGroup(contactId: Long): Int? = resolver.query(
+            ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId),
+            arrayOf(ContactsContract.Contacts.IN_VISIBLE_GROUP), null, null, null)
+            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getInt(0) else null }
+            ?: throw IllegalStateException("FIXTURE #934: null contacts cursor")
+        fun groupVisible(groupId: Long): Int? = resolver.query(
+            ContentUris.withAppendedId(ContactsContract.Groups.CONTENT_URI, groupId),
+            arrayOf(ContactsContract.Groups.GROUP_VISIBLE), null, null, null)
+            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getInt(0) else null }
+            ?: throw IllegalStateException("FIXTURE #934: null groups cursor")
+
+        val native = f.populated("Visible labels", listOf(
+            "vis-u" to catCard("vis-u", "TEL:5550210"),
+            "vis-l" to catCard("vis-l", "CATEGORIES:Family", "TEL:5550211")))
+        val ungroupedVisible = resolver.query(ContactsContract.Settings.CONTENT_URI,
+            arrayOf(ContactsContract.Settings.UNGROUPED_VISIBLE),
+            "${ContactsContract.Settings.ACCOUNT_NAME}=? AND ${ContactsContract.Settings.ACCOUNT_TYPE}=?",
+            arrayOf(native.name, native.type), null)
+            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getInt(0) else null }
+        categoryFixture(ungroupedVisible == 1) { "the address book has the production UNGROUPED_VISIBLE=1 setting (was $ungroupedVisible)" }
+        val unlabelled = f.rawId(native, "vis-u")
+        val labelled = f.rawId(native, "vis-l")
+        categoryFixture(f.groupRowIds(unlabelled).isEmpty()) { "the control contact has no group membership" }
+        val family = f.unfiledGroups(native).entries.firstOrNull { it.value == "Family" }?.key
+            ?: c.stop("the downloaded label has no label group")
+        if (family !in f.groupRowIds(labelled)) c.stop("the labelled contact is not in its label group")
+
+        val controlId = settle(10_000, { contactId(unlabelled) }) { it != null }
+        val labelledId = settle(10_000, { contactId(labelled) }) { it != null }
+        categoryFixture(controlId != null && labelledId != null) { "both raw contacts were aggregated" }
+        val control = settle(5_000, { inVisibleGroup(controlId!!) }) { it == 1 }
+        categoryFixture(control == 1) { "the unlabelled control contact is visible as ungrouped (was $control)" }
+
+        val visible = settle(5_000, { inVisibleGroup(labelledId!!) }) { it == 1 }
+        c.expect(1, visible, "a contact whose only memberships are label groups stays visible")
+        c.expect(1, groupVisible(family), "a new label group is created visible")
+
+        // A visibility the user chooses for a label group (a non-sync-adapter update, as a Contacts app makes it)
+        // is theirs: a later sync that re-delivers the contact keeps it.
+        val chosen = resolver.update(ContentUris.withAppendedId(ContactsContract.Groups.CONTENT_URI, family),
+            ContentValues().apply { put(ContactsContract.Groups.GROUP_VISIBLE, 0) }, null, null)
+        categoryFixture(chosen == 1 && groupVisible(family) == 0) { "the user's visibility choice was stored" }
+        f.changeRemote("vis-l", catCard("vis-l", "CATEGORIES:Family", "TEL:5550212"))
+        f.recache()
+        f.syncOk(native, c, "re-delivery after a visibility choice")
+        categoryFixture(f.phones(labelled).contains("5550212")) { "the re-delivered contact was applied" }
+        c.expect(0, groupVisible(family), "a sync keeps the visibility the user chose for a label group")
+    }
+
     /** Populates [entries] into a new native address book through a real sync and returns it. */
     private fun NativeStore.populated(name: String, entries: List<Pair<String, String>>): Account {
         book(name, entries)
@@ -2533,6 +2600,7 @@ class SiblingRoutesRuntimeTest {
         runCategoryScenarios(
             "S1 label round trip" to { c: CategoryChecks -> categoryLabelRoundTrip(f, c) },
             "S4 provider-created first upload" to { c: CategoryChecks -> nativeCreatedFirstUpload(f, c) },
+            "S11 labelled contacts stay visible" to { c: CategoryChecks -> labelledContactsStayVisible(f, c) },
         )
     }
 
