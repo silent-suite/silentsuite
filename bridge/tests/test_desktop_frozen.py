@@ -193,6 +193,39 @@ def test_frozen_bundle_contains_qt_webengine_runtime(canonical):
     assert "qtwebengine_resources.pak" in names, "no Qt WebEngine resources in the bundle"
 
 
+# Qt Charts, Qt Data Visualization and Qt Graphs (P1, s2-delivery-plan-v9 section 3):
+# any path segment that names one of these families, i.e. the libraries
+# (libQt6Charts.so.6, Qt6Graphs.dll, Qt6Graphs2DImpl), macOS frameworks
+# (QtCharts.framework), QML module directories (qml/QtDataVisualization/...) and
+# PySide6 bindings (QtCharts.abi3.so, QtGraphsWidgets.pyd). The negative
+# lookahead keeps unrelated names such as QtGraphicalEffects out.
+EXCLUDED_QT_FAMILY = re.compile(r"^(lib)?Qt6?(Charts|DataVisualization|Graphs)(?![a-z])")
+QT_CORE_NAME = re.compile(r"^(lib)?Qt6?Core(?![A-Za-z])")
+
+
+def test_frozen_bundle_excludes_qt_charts_datavisualization_and_graphs(canonical):
+    bundle = canonical["bundle"]
+    if bundle is None:
+        pytest.fail("NOT REACHED: no canonical bundle was built")
+    # Controls (not RED if they fail): the rule matches each family form and
+    # leaves unrelated Qt names alone; the bundle really contains Qt.
+    for name in ("libQt6Charts.so.6", "Qt6DataVisualizationQml.dll", "libQt6Graphs2DImpl.so.6", "QtCharts.framework",
+                 "QtGraphs", "QtGraphsWidgets.pyd", "QtDataVisualization.abi3.so"):
+        if not EXCLUDED_QT_FAMILY.match(name):
+            pytest.fail(f"control failed (not RED): the family rule misses {name}")
+    for name in ("QtGraphicalEffects", "Qt6GraphicalEffects.dll", "libQt6Core.so.6", "QtQuick", "Qt6WebEngineCore.dll"):
+        if EXCLUDED_QT_FAMILY.match(name):
+            pytest.fail(f"control failed (not RED): the family rule wrongly matches {name}")
+    root = bundle["root"]
+    paths = [p.relative_to(root).as_posix() for p in sorted(root.rglob("*"))]
+    if not any(QT_CORE_NAME.match(part) for path in paths for part in path.split("/")):
+        pytest.fail("control failed (not RED): no Qt Core library found, so the scan would be vacuous")
+    found = [path for path in paths if any(EXCLUDED_QT_FAMILY.match(part) for part in path.split("/"))]
+    assert not found, (
+        f"the bundle contains {len(found)} Qt Charts/DataVisualization/Graphs paths, e.g. {found[:20]}"
+    )
+
+
 # --- the real bootloader launch ------------------------------------------------
 
 
