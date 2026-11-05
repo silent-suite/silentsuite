@@ -11,15 +11,25 @@ Library use (tested in bridge/tests/test_desktop_dev_licence_gate.py):
 CLI (run by .github/workflows/test-bridge-desktop-dev.yml with the build
 interpreter, after the desktop spec built into --dist/--workpath):
     python collect_bundle_facts.py --dist DIR --workpath DIR --out FILE
-Exit 0 when the facts file was written, 2 for unreadable or invalid input.
+Exit 0 when the facts file was written, 2 for unreadable or invalid input,
+including module evidence that does not contain the app's own package.
 
 Sources of each observation:
 - bundle files: a walk of the onedir bundle, SHA256 of each file;
-- owners: installed distributions' RECORD (by path under ``_internal/``, else
-  by RECORD SHA256 for non-empty files) and ``top_level.txt``;
+- owners: installed distributions' RECORD (by path under ``_internal/``, then,
+  with build evidence, by the file's build source path, then by RECORD SHA256
+  for non-empty files) and ``top_level.txt``;
 - licence and notice texts: the owning distribution's own files, full text and
-  SHA256 (RECORD entries with licence/notice names, plus License-File headers);
-- modules: the PYMODULE entries of PyInstaller's ``Analysis-00.toc`` in --workpath;
+  SHA256 of the raw bytes (every RECORD entry under ``<dist-info>/licenses/``,
+  RECORD entries with licence/notice names, plus License-File headers);
+  ``dist_info_files`` lists every RECORD entry of the dist-info directory;
+- modules and scripts: the PYMODULE[-N] / PYSOURCE[-N] entries of PyInstaller's
+  ``Analysis-00.toc`` in --workpath (-N is the bytecode optimization level);
+- per-file origin (``file_origins``): the build source path from the same TOC,
+  classified by location: wheel, the bundle's own bootloader executable,
+  PyInstaller-generated (under --workpath), interpreter runtime (under
+  sys.base_prefix), a Linux dpkg package (owner, version, copyright file), or
+  unknown;
 - wheel tags and build tag: each distribution's own WHEEL file;
 - Qt version and build string: the build interpreter's PySide6.QtCore, in a
   subprocess (only QtCore; no window, web engine or bundled app is started).
@@ -41,6 +51,9 @@ from pathlib import Path, PurePosixPath
 
 SCHEMA_VERSION = 1
 CONTENTS_DIR = "_internal"  # PyInstaller 6 onedir contents directory (spec default)
+ENTRY_PACKAGE = "silentsuite_bridge"  # the desktop entry imports it; its absence means incomplete evidence
+MODULE_TYPECODES = {"PYMODULE", "PYMODULE-1", "PYMODULE-2"}  # PyInstaller 6.22.3 build_main.py:874
+SCRIPT_TYPECODES = {"PYSOURCE", "PYSOURCE-1", "PYSOURCE-2"}  # PyInstaller 6.22.3 build_main.py:806
 LICENCE_NAME = re.compile(r"^(licen[cs]e|copying|notice|copyright)|third[_-]?party|3rd[_-]?party", re.IGNORECASE)
 NOT_TEXT_SUFFIXES = (".py", ".pyc", ".pyd", ".so", ".dll", ".dylib", ".exe")
 NATIVE_LIBRARY = re.compile(r"\.(dll|dylib|exe)$|\.so(\.\d+)*$", re.IGNORECASE)
@@ -50,6 +63,7 @@ QT_PROBE = (
     "import json; from PySide6 import QtCore; "
     "print(json.dumps({'qVersion': QtCore.qVersion(), 'build': QtCore.QLibraryInfo.build()}))"
 )
+DPKG_DOC_ROOT = Path("/usr/share/doc")
 
 
 class InputError(Exception):
@@ -66,6 +80,18 @@ def _sha256_file(path: Path) -> str:
 
 def _record_hash(hex_digest: str) -> str:
     return "sha256=" + base64.urlsafe_b64encode(bytes.fromhex(hex_digest)).rstrip(b"=").decode("ascii")
+
+
+def _real(path) -> str:
+    return os.path.normcase(os.path.realpath(str(path)))
+
+
+def _within(path, root) -> bool:
+    path, root = _real(path), _real(root)
+    try:
+        return path != root and os.path.commonpath([path, root]) == root
+    except ValueError:  # different drives on Windows
+        return False
 
 
 def _bundle_files(bundle_root: Path) -> list[dict]:
@@ -90,6 +116,10 @@ def _bundle_files(bundle_root: Path) -> list[dict]:
     return entries
 
 
+def _inner(relative: str) -> str:
+    return relative[len(CONTENTS_DIR) + 1:] if relative.startswith(CONTENTS_DIR + "/") else relative
+
+
 def _dist_info_dir(files) -> str | None:
     for entry in files:
         first = PurePosixPath(str(entry)).parts[0]
@@ -111,39 +141,59 @@ def _top_level_names(dist, files) -> set[str]:
     return names
 
 
+def _text_record(display: str, data: bytes) -> dict:
+    """A notice record from raw bytes; undecodable bytes are reported, not decoded."""
+    try:
+        return {"path": display, "sha256": hashlib.sha256(data).hexdigest(), "text": data.decode("utf-8")}
+    except UnicodeDecodeError:
+        return {"path": display, "sha256": hashlib.sha256(data).hexdigest(), "text": None, "undecodable": True}
+
+
 def _licence_files(dist, files, info_dir) -> tuple[list[dict], list[str]]:
     found: dict[str, dict] = {}
 
-    def add(display: str, data: bytes) -> None:
+    def read(display: str, path) -> None:
         try:
-            text = data.decode("utf-8")
-            found[display] = {"path": display, "sha256": hashlib.sha256(data).hexdigest(), "text": text}
-        except UnicodeDecodeError:
-            found[display] = {"path": display, "sha256": hashlib.sha256(data).hexdigest(), "text": None,
-                              "undecodable": True}
+            found[display] = _text_record(display, Path(path).read_bytes())
+        except OSError:
+            found[display] = {"path": display, "sha256": None, "text": None, "unreadable": True}
 
     for entry in files:
         posix = PurePosixPath(str(entry))
-        if not LICENCE_NAME.search(posix.name) or posix.name.lower().endswith(NOT_TEXT_SUFFIXES):
+        in_info = bool(info_dir) and posix.parts[0] == info_dir
+        in_licences = in_info and len(posix.parts) > 2 and posix.parts[1] == "licenses"
+        named = bool(LICENCE_NAME.search(posix.name)) and not posix.name.lower().endswith(NOT_TEXT_SUFFIXES)
+        if not (in_licences or named):
             continue
-        display = "/".join(posix.parts[1:]) if info_dir and posix.parts[0] == info_dir else posix.as_posix()
-        try:
-            add(display, Path(entry.locate()).read_bytes())
-        except OSError:
-            found[display] = {"path": display, "sha256": None, "text": None, "unreadable": True}
+        read("/".join(posix.parts[1:]) if in_info else posix.as_posix(), entry.locate())
 
     missing = []
     for declared in dist.metadata.get_all("License-File") or []:
         if declared in found or f"licenses/{declared}" in found:
             continue
         for candidate in (f"licenses/{declared}", declared):
-            text = dist.read_text(candidate)
-            if text is not None:
-                add(candidate, text.encode("utf-8"))
+            # Raw bytes from the dist-info directory: no newline translation.
+            path = Path(dist.locate_file(f"{info_dir}/{candidate}")) if info_dir else None
+            if path is not None and path.is_file():
+                read(candidate, path)
                 break
         else:
             missing.append(declared)
     return [found[key] for key in sorted(found)], missing
+
+
+def _dist_info_listing(files, info_dir) -> list[dict]:
+    listing = []
+    for entry in files:
+        posix = PurePosixPath(str(entry))
+        if not info_dir or posix.parts[0] != info_dir:
+            continue
+        relative = "/".join(posix.parts[1:])
+        try:
+            listing.append({"path": relative, "sha256": _sha256_file(Path(entry.locate()))})
+        except OSError:
+            listing.append({"path": relative, "sha256": None, "unreadable": True})
+    return sorted(listing, key=lambda item: item["path"])
 
 
 def _wheel(dist) -> dict | None:
@@ -155,8 +205,70 @@ def _wheel(dist) -> dict | None:
     return {"tags": tags, "build": builds[0] if builds else None}
 
 
-def collect(bundle_root, modules, search_path=None) -> dict:
-    """Facts for ``bundle_root`` (the onedir folder) given its bundled ``modules``."""
+def _run_query(argv) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _dpkg_owner(source: str) -> dict | None:
+    """The single dpkg package owning ``source`` (or its resolved path), with version and copyright."""
+    queried = [source] + ([os.path.realpath(source)] if os.path.realpath(source) != source else [])
+    for path in queried:
+        done = _run_query(["dpkg-query", "-S", path])
+        if done is None or done.returncode != 0:
+            continue
+        packages = set()
+        for line in done.stdout.splitlines():
+            if line.startswith("diversion ") or ": " not in line:
+                continue
+            owners, owned_path = line.split(": ", 1)
+            if owned_path.strip() == path:
+                packages.update(owner.strip() for owner in owners.split(","))
+        if len(packages) != 1:
+            return {"class": "unknown", "source": source, "dpkg_candidates": sorted(packages)} if packages else None
+        package = packages.pop()
+        version = _run_query(["dpkg-query", "-W", "-f=${Version}", package])
+        origin = {"class": "os-package", "source": source, "dpkg_path": path, "package": package,
+                  "version": version.stdout.strip() if version is not None and version.returncode == 0 else None}
+        copyright_path = DPKG_DOC_ROOT / package.split(":", 1)[0] / "copyright"
+        try:
+            record = _text_record(str(copyright_path), copyright_path.read_bytes())
+            origin.update({"copyright": record["text"], "copyright_sha256": record["sha256"],
+                           "copyright_missing": False})
+            if record.get("undecodable"):
+                origin["copyright_undecodable"] = True
+        except OSError:
+            origin.update({"copyright": None, "copyright_missing": True})
+        return origin
+    return None
+
+
+def _origin(relative: str, source: str | None, build: dict) -> dict:
+    """Classify a non-wheel bundle file by where the build took it from; never by its name."""
+    if relative == build["executable"]:
+        return {"class": "pyinstaller-bootloader", "source": None}
+    if not source:
+        return {"class": "unknown", "source": None}
+    if _within(source, build["workpath"]):
+        return {"class": "pyinstaller-generated", "source": source}
+    if _within(source, sys.base_prefix):
+        return {"class": "interpreter-runtime", "source": source}
+    if sys.platform.startswith("linux"):
+        owner = _dpkg_owner(source)
+        if owner is not None:
+            return owner
+    return {"class": "unknown", "source": source}
+
+
+def collect(bundle_root, modules, search_path=None, build=None) -> dict:
+    """Facts for ``bundle_root`` (the onedir folder) given its bundled ``modules``.
+
+    ``build`` (CLI only) carries the PyInstaller evidence: ``sources`` (bundle path
+    under ``_internal/`` -> build source path), ``workpath`` and ``executable``.
+    Without it no file has a trusted origin, so every non-wheel file is unknown.
+    """
     bundle_root = Path(bundle_root)
     if not bundle_root.is_dir():
         raise InputError("bundle root is not a directory")
@@ -176,6 +288,7 @@ def collect(bundle_root, modules, search_path=None) -> dict:
 
     by_path: dict[str, list[str]] = {}
     by_hash: dict[str, set[str]] = {}
+    by_source: dict[str, set[str]] = {}
     tops: dict[str, set[str]] = {}
     records = {}
     for key, dist in distributions.items():
@@ -186,29 +299,40 @@ def collect(bundle_root, modules, search_path=None) -> dict:
             by_path.setdefault(posix, []).append(key)
             if entry.hash and entry.hash.mode == "sha256":
                 by_hash.setdefault(f"sha256={entry.hash.value}", set()).add(key)
+            if build is not None:
+                by_source.setdefault(_real(entry.locate()), set()).add(key)
         for top in _top_level_names(dist, files):
             tops.setdefault(top, set()).add(key)
 
+    sources = (build or {}).get("sources", {})
     bundle_files = _bundle_files(bundle_root)
     owned: dict[str, list[str]] = {}
     file_owners = {}
+    file_origins = {}
     unmapped_files = []
     ambiguous_files = []
     for entry in bundle_files:
         relative = entry["path"]
-        inner = relative[len(CONTENTS_DIR) + 1:] if relative.startswith(CONTENTS_DIR + "/") else relative
-        owners = sorted(set(by_path.get(inner, [])))
+        source = sources.get(_inner(relative))
+        owners = sorted(set(by_path.get(_inner(relative), [])))
         match = "record-path"
+        if not owners and source:
+            owners = sorted(by_source.get(_real(source), set()))
+            match = "record-source"
         if not owners and entry.get("sha256") and entry.get("size"):
             owners = sorted(by_hash.get(_record_hash(entry["sha256"]), set()))
             match = "record-hash"
         if len(owners) == 1:
             owned.setdefault(owners[0], []).append(relative)
-            file_owners[relative] = {"distribution": distributions[owners[0]].metadata["Name"], "match": match}
-        else:
-            unmapped_files.append(relative)
-            if owners:
-                ambiguous_files.append({"path": relative, "candidates": owners, "match": match})
+            name = distributions[owners[0]].metadata["Name"]
+            file_owners[relative] = {"distribution": name, "match": match}
+            file_origins[relative] = {"class": "wheel", "distribution": name, "match": match, "source": source}
+            continue
+        unmapped_files.append(relative)
+        if owners:
+            ambiguous_files.append({"path": relative, "candidates": owners, "match": match})
+        file_origins[relative] = _origin(relative, source, build) if build is not None \
+            else {"class": "unknown", "source": None}
 
     stdlib = getattr(sys, "stdlib_module_names", frozenset())
     module_owners = {}
@@ -231,7 +355,8 @@ def collect(bundle_root, modules, search_path=None) -> dict:
         dist = distributions[key]
         metadata = dist.metadata
         files = records[key]
-        licence_files, missing = _licence_files(dist, files, _dist_info_dir(files))
+        info_dir = _dist_info_dir(files)
+        licence_files, missing = _licence_files(dist, files, info_dir)
         dist_facts.append({
             "name": metadata["Name"],
             "version": dist.version,
@@ -240,6 +365,7 @@ def collect(bundle_root, modules, search_path=None) -> dict:
             "license_classifiers": [c for c in metadata.get_all("Classifier") or [] if c.startswith("License ::")],
             "license_files": licence_files,
             "declared_license_files_missing": missing,
+            "dist_info_files": _dist_info_listing(files, info_dir),
             "record_present": bool(files),
             "wheel": _wheel(dist),
             "bundle_files": sorted(owned.get(key, [])),
@@ -249,9 +375,8 @@ def collect(bundle_root, modules, search_path=None) -> dict:
     qt_libraries = []
     for entry in bundle_files:
         relative = entry["path"]
-        inner = relative[len(CONTENTS_DIR) + 1:] if relative.startswith(CONTENTS_DIR + "/") else relative
         name = PurePosixPath(relative).name
-        if NATIVE_LIBRARY.search(name) and (QT_LIBRARY_NAME.search(name) or inner.startswith(QT_PLUGIN_DIRS)):
+        if NATIVE_LIBRARY.search(name) and (QT_LIBRARY_NAME.search(name) or _inner(relative).startswith(QT_PLUGIN_DIRS)):
             qt_libraries.append(relative)
 
     return {
@@ -259,6 +384,7 @@ def collect(bundle_root, modules, search_path=None) -> dict:
         "bundle_files": bundle_files,
         "distributions": dist_facts,
         "file_owners": file_owners,
+        "file_origins": file_origins,
         "module_owners": module_owners,
         "stdlib_modules": stdlib_modules,
         "unmapped_modules": unmapped_modules,
@@ -302,7 +428,7 @@ def _toc_entries(value):
             yield from _toc_entries(item)
 
 
-def _analysis_modules(workpath: Path, bundle_name: str) -> tuple[list[str], list[str], dict]:
+def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], list[str], dict, dict, list[str]]:
     if not workpath.is_dir():
         raise InputError("--workpath is not a directory")
     tocs = sorted(workpath.glob("*/Analysis-00.toc"))
@@ -314,16 +440,28 @@ def _analysis_modules(workpath: Path, bundle_name: str) -> tuple[list[str], list
     except (OSError, UnicodeDecodeError, ValueError, SyntaxError) as exc:
         raise InputError(f"Analysis-00.toc is not a readable literal TOC ({type(exc).__name__})") from None
     modules, scripts = set(), set()
-    for name, _source, typecode in _toc_entries(parsed):
-        if typecode == "PYMODULE":
+    sources: dict[str, str | None] = {}
+    conflicts = set()
+    for name, source, typecode in _toc_entries(parsed):
+        if typecode in MODULE_TYPECODES:
             modules.add(name)
-        elif typecode == "PYSOURCE":
+        elif typecode in SCRIPT_TYPECODES:
             scripts.add(name)
+        elif source and source != "-":
+            # Collected file: name is its destination under _internal/.
+            destination = PurePosixPath(name.replace("\\", "/")).as_posix()
+            if destination in sources and sources[destination] != source:
+                conflicts.add(destination)
+            sources.setdefault(destination, source)
+    for destination in conflicts:
+        sources[destination] = None  # two different build sources: origin unknown
     if not modules:
         raise InputError("Analysis-00.toc lists no PYMODULE entries")
-    source = {"path": tocs[0].relative_to(workpath).as_posix(), "sha256": _sha256_file(tocs[0]),
-              "bundle": bundle_name}
-    return sorted(modules), sorted(scripts), source
+    if not any(module == ENTRY_PACKAGE or module.startswith(ENTRY_PACKAGE + ".") for module in modules):
+        raise InputError(f"Analysis-00.toc module evidence does not contain {ENTRY_PACKAGE}; incomplete")
+    toc = {"path": tocs[0].relative_to(workpath).as_posix(), "sha256": _sha256_file(tocs[0]),
+           "bundle": bundle_name}
+    return sorted(modules), sorted(scripts), toc, sources, sorted(conflicts)
 
 
 def _qt_observation() -> dict:
@@ -359,8 +497,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         bundle = _single_bundle(args.dist)
-        modules, scripts, toc = _analysis_modules(args.workpath, bundle.name)
-        facts = collect(bundle, modules)
+        modules, scripts, toc, sources, conflicts = _analysis_evidence(args.workpath, bundle.name)
+        executable = bundle.name + (".exe" if sys.platform == "win32" else "")
+        build = {"sources": sources, "workpath": args.workpath, "executable": executable}
+        facts = collect(bundle, modules, build=build)
     except InputError as exc:
         print(f"collect_bundle_facts: invalid input: {exc}", file=sys.stderr)
         return 2
@@ -371,6 +511,7 @@ def main(argv=None) -> int:
         "bundle": bundle.name,
         "analysis_toc": toc,
         "scripts": scripts,
+        "toc_source_conflicts": conflicts,
         "python": {"version": sys.version.split()[0], "implementation": sys.implementation.name,
                    "platform": sys.platform},
         "pyinstaller": _tool_version("pyinstaller"),
