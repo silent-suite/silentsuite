@@ -128,11 +128,16 @@ class NotesStartupSweepTest {
         return lines
     }
 
-    /** A run held back for [reason]: nothing was opened, and nothing under no_backup changed. */
+    /**
+     * A run held back for [reason]: nothing was opened, the record was not written unless writing it is what
+     * failed, and nothing under no_backup changed.
+     */
     private fun assertHeldBack(reason: HoldBack, run: () -> Outcome) {
+        asked.clear()
         val before = tree(noBackup)
         assertEquals(Outcome.HeldBack(reason), run())
         assertEquals("nothing opened", emptyList<String>(), openedFolders)
+        if (reason != HoldBack.RECORD_WRITE_FAILED) assertFalse("no record write", "remember" in asked)
         assertEquals("byte for byte", before, tree(noBackup))
     }
 
@@ -219,22 +224,29 @@ class NotesStartupSweepTest {
         assertEquals(listOf("Notes startup sweep: held back (ROOT_UNLISTABLE)"), lines)
     }
 
+    // The hold-backs before the record step run with a preference to name, so a record write made too early would
+    // change the tree.
+
     @Test fun `an account list that cannot be read holds back`() {
         cleanStore("a")
-        assertHeldBack(HoldBack.ACCOUNTS_UNREADABLE) { sweep(rows = { null }) }
-        assertHeldBack(HoldBack.ACCOUNTS_UNREADABLE) { sweep(rows = { throw SecurityException("no access") }) }
+        assertHeldBack(HoldBack.ACCOUNTS_UNREADABLE) { sweep(rows = { null }, active = { identity("b") }) }
+        assertHeldBack(HoldBack.ACCOUNTS_UNREADABLE) {
+            sweep(rows = { throw SecurityException("no access") }, active = { identity("b") })
+        }
     }
 
     @Test fun `a row whose creation id does not read holds back, among rows whose ids read`() {
         cleanStore("a")
+        NotesLastActiveRecord.write(noBackup, folderOf("c"))
         assertHeldBack(HoldBack.ROW_WITHOUT_ID) {
-            sweep(rows = { listOf(row("live"), Row("blank", CreationId.Unreadable), row("other")) })
+            sweep(rows = { listOf(row("live"), Row("blank", CreationId.Unreadable), row("other")) },
+                active = { identity("b") })
         }
     }
 
     @Test fun `an account list with no row holds back`() {
         cleanStore("a")
-        assertHeldBack(HoldBack.NO_ACCOUNTS) { sweep(rows = { emptyList() }) }
+        assertHeldBack(HoldBack.NO_ACCOUNTS) { sweep(rows = { emptyList() }, active = { identity("b") }) }
     }
 
     @Test fun `an active-account preference that cannot be read holds back`() {
@@ -245,7 +257,7 @@ class NotesStartupSweepTest {
     @Test fun `a record that holds anything but one store folder name holds back`() {
         cleanStore("a")
         record.writeText("x")
-        assertHeldBack(HoldBack.LAST_ACTIVE_UNREADABLE) { sweep() }
+        assertHeldBack(HoldBack.LAST_ACTIVE_UNREADABLE) { sweep(active = { identity("b") }) }
     }
 
     @Test fun `a record that must change and cannot be written holds back, and one that need not change is not written`() {
