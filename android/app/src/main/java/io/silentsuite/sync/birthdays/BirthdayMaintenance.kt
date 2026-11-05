@@ -8,8 +8,10 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.syncadapter.CollectionListRefresh
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
+import okhttp3.OkHttpClient
 
 /** Whether one Birthdays maintenance run may use the main account row it re-selected (plan amendment G2 §2.1). */
 internal enum class BirthdayOwnership { PROCEED, NO_ACCOUNT, NO_GENERATION, NO_ADMISSION, STALE_RUN }
@@ -60,14 +62,63 @@ internal object BirthdayMaintenance {
                 Logger.log.info("Birthdays after the $trigger skipped (stopped)")
                 return
             }
-            val settings = AccountSettings(context, row)
-            HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
-                val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
+            withOwnedSession(context, row) { settings, _, etebase ->
                 val result = BirthdayReconciler.reconcile(etebase, settings.username(), gate)
                 Logger.log.info("Birthdays after the $trigger: ${result.status} ${result.reason ?: ""}")
             }
         } catch (e: Exception) {
             Logger.log.warning("Birthdays after the $trigger did not run (${e.javaClass.simpleName})")
+        }
+    }
+
+    /**
+     * One Birthdays turn-on ([on]) or turn-off from the dashboard (plan3 §3), for exactly the main account
+     * [main] at the generation [creationId] the caller holds; [stillWanted] is the caller's own ownership
+     * check. The gate is that check, the exact generation still being the listed row's, and an uninterrupted
+     * thread: nothing runs unless it holds, and the engine asks it before every request (C1-C5). After a
+     * run that wrote something, while the gate still holds, this account's collection cache is refreshed for
+     * that generation so the dashboard can show the result; a refresh that fails changes nothing about the
+     * run. Returns the run's result, or null when it did not run. Never throws; logs only an outcome or an
+     * exception class.
+     */
+    fun turn(context: Context, main: Account, creationId: String, on: Boolean, stillWanted: () -> Boolean): BirthdayReconciler.RunResult? {
+        val action = if (on) "turn-on" else "turn-off"
+        return try {
+            val manager = AccountManager.get(context)
+            val gate = {
+                stillWanted() && ExactAccountRouting.validate(main, creationId, App.accountType, manager) != null &&
+                    !Thread.currentThread().isInterrupted
+            }
+            if (!gate()) {
+                Logger.log.info("Birthdays $action skipped (stopped)")
+                return null
+            }
+            withOwnedSession(context, main) { settings, httpClient, etebase ->
+                val result = if (on) BirthdayReconciler.enable(etebase, settings.username(), gate)
+                    else BirthdayReconciler.disable(etebase, settings.username(), gate)
+                Logger.log.info("Birthdays $action: ${result.status} ${result.reason ?: ""}")
+                if (result.written.isNotEmpty() && gate()) {
+                    try {
+                        CollectionListRefresh.run(context, main, settings, httpClient, false, creationId, gate)
+                    } catch (e: Exception) {
+                        Logger.log.info("Birthdays $action cache refresh deferred (${e.javaClass.simpleName})")
+                    }
+                }
+                result
+            }
+        } catch (e: Exception) {
+            Logger.log.warning("Birthdays $action did not run (${e.javaClass.simpleName})")
+            null
+        }
+    }
+
+    /** This account's settings, a background transport and its Etebase session from the stored session, for [block] only. */
+    private inline fun <T> withOwnedSession(context: Context, row: Account,
+        block: (AccountSettings, OkHttpClient, com.etebase.client.Account) -> T): T {
+        val settings = AccountSettings(context, row)
+        return HttpClient.Builder(context, settings).setForeground(false).build().use { httpClient ->
+            val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings)
+            block(settings, httpClient.okHttpClient, etebase)
         }
     }
 }

@@ -137,6 +137,86 @@ object BirthdayReconciler {
         }
     }
 
+    /**
+     * Turn on (plan3 §3) for the account [etebase], signed in as the SDK user [username]. The collection
+     * inventory and the C3 qualification are read fresh and completely, exactly as a reconcile pass reads
+     * them. Only when no calendar qualifies is ONE new calendar created: named "Birthdays", its content the
+     * active marker. An ordinary calendar of that name, a received one, or an active one without Admin
+     * access or with another member is never adopted. The calendar is then filled by [reconcile], whose
+     * pass verifies its membership before any write. An unreadable calendar or an incomplete listing ends
+     * the run with nothing created. A create whose outcome is unknown ends it [RunStatus.PENDING]
+     * "create-outcome-unknown", recorded in [RunResult.written], and is not sent again in this run.
+     * [mayContinue] is asked as in [reconcile], and before the create. Never throws.
+     */
+    fun enable(etebase: com.etebase.client.Account, username: String, mayContinue: () -> Boolean = { true }): RunResult {
+        val written = LinkedHashSet<String>()
+        val colMgr = etebase.collectionManager
+        val prepared = endSwitch("turn-on", written) {
+            if (!mayContinue()) throw Stopped()
+            val inventory = readInventory(colMgr, mayContinue)
+            if (destinations(colMgr, inventory.calendars, username, mayContinue).first.isEmpty()) {
+                if (!mayContinue()) throw Stopped()
+                val calendar = colMgr.create(Constants.ETEBASE_TYPE_CALENDAR, ItemMetadata().apply { name = CALENDAR_NAME }, ACTIVE_MARKER)
+                // Recorded before the upload: an uncertain create may still have landed.
+                written += calendar.uid
+                try {
+                    colMgr.upload(calendar)
+                } catch (e: ConnectionException) {
+                    throw Stop(RunStatus.PENDING, "create-outcome-unknown")
+                } catch (e: TemporaryServerErrorException) {
+                    throw Stop(RunStatus.PENDING, "create-outcome-unknown")
+                } catch (e: ServerErrorException) {
+                    throw Stop(RunStatus.PENDING, "create-outcome-unknown")
+                }
+            }
+            RunResult(RunStatus.DONE, written.sorted())
+        }
+        if (prepared.status != RunStatus.DONE) return prepared
+        val filled = reconcile(etebase, username, mayContinue)
+        return RunResult(filled.status, (written + filled.written).sorted(), filled.reason)
+    }
+
+    /**
+     * Turn off (plan3 §3) for the account [etebase], signed in as the SDK user [username]: every calendar
+     * that qualifies under C3 now, read fresh and completely, is retired in the F2 order, the conditional
+     * retirement first and then its generated items, fenced on the new root read back from the server.
+     * Every qualifying calendar's generated items are read completely before anything is written; an
+     * unreadable calendar or item, or an incomplete listing, ends the run with nothing written. Calendars
+     * are never deleted; ordinary items and calendars that do not qualify are never touched. A conflict or
+     * an unknown outcome ends the run [RunStatus.PENDING] and nothing is resent. [mayContinue] is asked
+     * as in [reconcile]. Never throws.
+     */
+    fun disable(etebase: com.etebase.client.Account, username: String, mayContinue: () -> Boolean = { true }): RunResult {
+        val written = LinkedHashSet<String>()
+        val colMgr = etebase.collectionManager
+        return endSwitch("turn-off", written) {
+            if (!mayContinue()) throw Stopped()
+            val inventory = readInventory(colMgr, mayContinue)
+            val qualifying = destinations(colMgr, inventory.calendars, username, mayContinue).first.sortedBy { it.uid }
+            if (qualifying.isEmpty()) throw Stop(RunStatus.SKIPPED, "no-active-calendar")
+            val deletes = qualifying.map { calendar -> calendar to deleteAll(generatedItems(colMgr.getItemManager(calendar), mayContinue)) }
+            for ((calendar, items) in deletes) retire(colMgr, calendar, items, written, mayContinue)
+            RunResult(RunStatus.DONE, written.sorted())
+        }
+    }
+
+    /** How a turn-on or turn-off step ends, as [reconcile] ends its runs; a conflict is left for a later run. */
+    private fun endSwitch(action: String, written: MutableSet<String>, step: () -> RunResult): RunResult = try {
+        step()
+    } catch (e: Stopped) {
+        Logger.log.info("Birthdays $action stopped at a request boundary")
+        RunResult(RunStatus.PENDING, written.sorted(), "stopped")
+    } catch (e: Stop) {
+        Logger.log.info("Birthdays $action stopped: ${e.reason}")
+        RunResult(e.status, written.sorted(), e.reason)
+    } catch (e: Conflict) {
+        Logger.log.info("Birthdays $action met a newer calendar; left for a later run")
+        RunResult(RunStatus.PENDING, written.sorted(), "conflict")
+    } catch (e: Exception) {
+        Logger.log.warning("Birthdays $action failed (${e.javaClass.simpleName})")
+        RunResult(RunStatus.FAILED, written.sorted(), "error")
+    }
+
     private val INVENTORY_TYPES = arrayOf(Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_ADDRESS_BOOK)
     private val GENERATED_UID = Regex("ss-bday1-[0-9a-f]{32}")
 
@@ -214,40 +294,12 @@ object BirthdayReconciler {
         mayContinue: () -> Boolean): Pair<RunResult, SourceRead> {
         // C1: before the pass sends anything, reruns included.
         if (!mayContinue()) throw Stopped()
-        val inventoryListing = pagedListing("incomplete-inventory", PagedListingGuard.MAX_COLLECTION_PAGES, null, mayContinue) { cursor ->
-            colMgr.list(INVENTORY_TYPES, FetchOptions().stoken(cursor)).let { Page(it.data.toList(), it.stoken, it.isDone) }
-        }
-        val inventory = inventoryListing.entries
-        val calendars = ArrayList<Collection>()
-        val books = ArrayList<Collection>()
-        for (collection in inventory) {
-            if (collection.isDeleted) continue
-            when (collection.collectionType) {
-                Constants.ETEBASE_TYPE_CALENDAR -> calendars += collection
-                Constants.ETEBASE_TYPE_ADDRESS_BOOK -> books += collection
-            }
-        }
+        val inventory = readInventory(colMgr, mayContinue)
+        val calendars = inventory.calendars
+        val books = inventory.books
 
-        // C3 for the active destination: Admin, and a complete member list that is exactly this user.
-        // F3 for repair: every retired calendar this user can write to (Admin or ReadWrite), whatever
-        // its members; no member listing is asked of it.
-        val active = ArrayList<Collection>()
-        val retired = ArrayList<Collection>()
-        for (calendar in calendars) {
-            val content = readBytes { calendar.content } ?: throw Stop(RunStatus.SKIPPED, "unreadable-calendar")
-            val state = BirthdayCalendar.markerState(content)
-            if (state == BirthdayCalendar.MarkerState.RETIRED) {
-                if (calendar.accessLevel == CollectionAccessLevel.Admin || calendar.accessLevel == CollectionAccessLevel.ReadWrite) {
-                    retired += calendar
-                }
-            } else if (state == BirthdayCalendar.MarkerState.ACTIVE && calendar.accessLevel == CollectionAccessLevel.Admin) {
-                val memberManager = colMgr.getMemberManager(calendar)
-                val members = paged("incomplete-members", PagedListingGuard.MAX_COLLECTION_PAGES, mayContinue) { cursor ->
-                    memberManager.list(FetchOptions().iterator(cursor)).let { page -> Page(page.data.map { it.username }, page.stoken, page.isDone) }
-                }
-                if (members == listOf(username)) active += calendar
-            }
-        }
+        // C3 for the active destinations and F3 for repair, read as [destinations] reads them.
+        val (active, retired) = destinations(colMgr, calendars, username, mayContinue)
         if (active.isEmpty() && retired.isEmpty()) throw Stop(RunStatus.SKIPPED, "no-active-calendar")
         // F4: the active calendar with the smallest uid stays canonical; the others are retired.
         active.sortBy { it.uid }
@@ -276,7 +328,7 @@ object BirthdayReconciler {
             }
             bookReads[book.uid] = BookRead(book, book.accessLevel, listing.cursor, contents)
         }
-        val source = SourceRead(inventoryListing.cursor, bookReads)
+        val source = SourceRead(inventory.cursor, bookReads)
 
         // The whole plan is built locally before the first write, so metadata that cannot be read
         // fails the pass with nothing written.
@@ -325,35 +377,7 @@ object BirthdayReconciler {
 
         // F2: each extra active calendar is retired with a conditional calendar update first, then
         // loses its generated items, fenced on the new root read back from the server.
-        for ((calendar, deletes) in duplicateDeletes) {
-            val previousRoot = calendar.etag
-            // Before the update is handed to the SDK: a refused calendar is neither recorded nor changed.
-            if (!mayContinue()) throw Stopped()
-            // Recorded before the write: an uncertain update may still have landed.
-            written += calendar.uid
-            calendar.setContent(RETIRED_MARKER)
-            try {
-                colMgr.transaction(calendar)
-            } catch (e: ConflictException) {
-                throw Conflict()
-            } catch (e: ConnectionException) {
-                throw Stop(RunStatus.PENDING, "write-outcome-unknown")
-            } catch (e: TemporaryServerErrorException) {
-                throw Stop(RunStatus.PENDING, "write-outcome-unknown")
-            } catch (e: ServerErrorException) {
-                throw Stop(RunStatus.PENDING, "write-outcome-unknown")
-            }
-            // The update returned: before its read-back. A stop here leaves the landed retirement
-            // recorded and its generated leftovers for a later repair.
-            if (!mayContinue()) throw Stopped()
-            val fresh = colMgr.fetch(calendar.uid)
-            val freshContent = readBytes { fresh.content }
-            if (freshContent == null || BirthdayCalendar.markerState(freshContent) != BirthdayCalendar.MarkerState.RETIRED ||
-                fresh.etag == previousRoot) {
-                throw Stop(RunStatus.PENDING, "retirement-unconfirmed")
-            }
-            commitFenced(colMgr.getItemManager(fresh), fresh, deletes, written, mayContinue)
-        }
+        for ((calendar, deletes) in duplicateDeletes) retire(colMgr, calendar, deletes, written, mayContinue)
         // F3: generated leftovers in retired calendars, fenced on each calendar's root as read.
         for ((calendar, deletes) in retiredDeletes) {
             commitFenced(colMgr.getItemManager(calendar), calendar, deletes, written, mayContinue)
@@ -418,6 +442,96 @@ object BirthdayReconciler {
 
     /** The contract's retired marker, in its byte form. */
     private val RETIRED_MARKER = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"retired\"}".toByteArray(Charsets.UTF_8)
+
+    /** The contract's active marker, in its byte form (shared-v1 marker vector 1). */
+    private val ACTIVE_MARKER = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"active\"}".toByteArray(Charsets.UTF_8)
+
+    /** The name a turn-on gives the calendar it creates, as Bridge does. */
+    private const val CALENDAR_NAME = "Birthdays"
+
+    /** The collection inventory, read completely: its done cursor, and its live calendars and address books. */
+    private class Inventory(val cursor: String?, val calendars: List<Collection>, val books: List<Collection>)
+
+    /** The calendars and address books listed now (deleted ones left out), every page read (C2 asked before each). */
+    private fun readInventory(colMgr: CollectionManager, mayContinue: () -> Boolean): Inventory {
+        val listing = pagedListing("incomplete-inventory", PagedListingGuard.MAX_COLLECTION_PAGES, null, mayContinue) { cursor ->
+            colMgr.list(INVENTORY_TYPES, FetchOptions().stoken(cursor)).let { Page(it.data.toList(), it.stoken, it.isDone) }
+        }
+        val calendars = ArrayList<Collection>()
+        val books = ArrayList<Collection>()
+        for (collection in listing.entries) {
+            if (collection.isDeleted) continue
+            when (collection.collectionType) {
+                Constants.ETEBASE_TYPE_CALENDAR -> calendars += collection
+                Constants.ETEBASE_TYPE_ADDRESS_BOOK -> books += collection
+            }
+        }
+        return Inventory(listing.cursor, calendars, books)
+    }
+
+    /**
+     * The active destinations (C3) and the calendars to repair (F3), in listing order. C3: the active marker,
+     * Admin, and a complete member list that is exactly [username]. F3: every retired calendar this user can
+     * write to (Admin or ReadWrite), whatever its members; no member listing is asked of it. A calendar whose
+     * content cannot be read stops the run with nothing written.
+     */
+    private fun destinations(colMgr: CollectionManager, calendars: List<Collection>, username: String,
+        mayContinue: () -> Boolean): Pair<ArrayList<Collection>, ArrayList<Collection>> {
+        val active = ArrayList<Collection>()
+        val retired = ArrayList<Collection>()
+        for (calendar in calendars) {
+            val content = readBytes { calendar.content } ?: throw Stop(RunStatus.SKIPPED, "unreadable-calendar")
+            val state = BirthdayCalendar.markerState(content)
+            if (state == BirthdayCalendar.MarkerState.RETIRED) {
+                if (calendar.accessLevel == CollectionAccessLevel.Admin || calendar.accessLevel == CollectionAccessLevel.ReadWrite) {
+                    retired += calendar
+                }
+            } else if (state == BirthdayCalendar.MarkerState.ACTIVE && calendar.accessLevel == CollectionAccessLevel.Admin) {
+                val memberManager = colMgr.getMemberManager(calendar)
+                val members = paged("incomplete-members", PagedListingGuard.MAX_COLLECTION_PAGES, mayContinue) { cursor ->
+                    memberManager.list(FetchOptions().iterator(cursor)).let { page -> Page(page.data.map { it.username }, page.stoken, page.isDone) }
+                }
+                if (members == listOf(username)) active += calendar
+            }
+        }
+        return active to retired
+    }
+
+    /**
+     * F2 for one calendar: a conditional calendar update retires it, its retired state and new root are
+     * read back from the server, and only then are [deletes], its generated items, removed, fenced on that
+     * new root. [mayContinue] is asked before the update and again after it returned, before the read-back.
+     */
+    private fun retire(colMgr: CollectionManager, calendar: Collection, deletes: List<Item>, written: MutableSet<String>,
+        mayContinue: () -> Boolean) {
+        val previousRoot = calendar.etag
+        // Before the update is handed to the SDK: a refused calendar is neither recorded nor changed.
+        if (!mayContinue()) throw Stopped()
+        // Recorded before the write: an uncertain update may still have landed.
+        written += calendar.uid
+        calendar.setContent(RETIRED_MARKER)
+        try {
+            colMgr.transaction(calendar)
+        } catch (e: ConflictException) {
+            throw Conflict()
+        } catch (e: ConnectionException) {
+            throw Stop(RunStatus.PENDING, "write-outcome-unknown")
+        } catch (e: TemporaryServerErrorException) {
+            throw Stop(RunStatus.PENDING, "write-outcome-unknown")
+        } catch (e: ServerErrorException) {
+            throw Stop(RunStatus.PENDING, "write-outcome-unknown")
+        }
+        // The update returned: before its read-back. A stop here leaves the landed retirement
+        // recorded and its generated leftovers for a later repair.
+        if (!mayContinue()) throw Stopped()
+        val fresh = colMgr.fetch(calendar.uid)
+        val freshContent = readBytes { fresh.content }
+        if (freshContent == null || BirthdayCalendar.markerState(freshContent) != BirthdayCalendar.MarkerState.RETIRED ||
+            fresh.etag == previousRoot) {
+            throw Stop(RunStatus.PENDING, "retirement-unconfirmed")
+        }
+        commitFenced(colMgr.getItemManager(fresh), fresh, deletes, written, mayContinue)
+    }
 
     /** A calendar's live generated items by parsed event UID, read completely; unreadable content stops the pass. */
     private fun generatedItems(itemMgr: ItemManager, mayContinue: () -> Boolean): LinkedHashMap<String, MutableList<Pair<Item, BirthdayCalendar.EventFields>>> {
