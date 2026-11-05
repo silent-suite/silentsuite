@@ -411,11 +411,14 @@ class LocalAddressBook(
     /** This account's label groups (vCard CATEGORIES) by row ID, lowest ID first; never group vCards. */
     fun categoryGroups(): Map<Long, String> {
         val groups = LinkedHashMap<Long, String>()
-        provider!!.query(syncAdapterURI(Groups.CONTENT_URI), arrayOf(Groups._ID, Groups.TITLE),
+        // Unknown is not empty: without this list, label memberships would be read as ordinary ones.
+        val cursor = provider!!.query(syncAdapterURI(Groups.CONTENT_URI), arrayOf(Groups._ID, Groups.TITLE),
                 "${Groups.ACCOUNT_NAME}=? AND ${Groups.ACCOUNT_TYPE}=? AND $CATEGORY_GROUP_COLUMN=? AND ${Groups.DELETED}=0",
-                arrayOf(account.name, account.type, CATEGORY_GROUP_MARKER), "${Groups._ID} ASC")?.use { cursor ->
-            while (cursor.moveToNext())
-                cursor.getString(1)?.let { title -> groups[cursor.getLong(0)] = title }
+                arrayOf(account.name, account.type, CATEGORY_GROUP_MARKER), "${Groups._ID} ASC")
+                ?: throw ContactsStorageException("Couldn't read label groups")
+        cursor.use {
+            while (it.moveToNext())
+                it.getString(1)?.let { title -> groups[it.getLong(0)] = title }
         }
         return groups
     }
@@ -444,11 +447,14 @@ class LocalAddressBook(
         if (groups.isEmpty())
             return 0
         val used = HashSet<Long>()
-        provider!!.query(syncAdapterURI(ContactsContract.Data.CONTENT_URI), arrayOf(GroupMembership.GROUP_ROW_ID),
+        // Unknown is not unused: without this list no label group may be deleted.
+        val cursor = provider!!.query(syncAdapterURI(ContactsContract.Data.CONTENT_URI), arrayOf(GroupMembership.GROUP_ROW_ID),
                 "${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID} IN (${groups.joinToString(",")})",
-                arrayOf(GroupMembership.CONTENT_ITEM_TYPE), null)?.use { cursor ->
-            while (cursor.moveToNext())
-                used += cursor.getLong(0)
+                arrayOf(GroupMembership.CONTENT_ITEM_TYPE), null)
+                ?: throw ContactsStorageException("Couldn't read label group memberships")
+        cursor.use {
+            while (it.moveToNext())
+                used += it.getLong(0)
         }
         var removed = 0
         for (id in groups - used)

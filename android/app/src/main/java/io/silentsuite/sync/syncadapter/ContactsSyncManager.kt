@@ -249,22 +249,26 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
      */
     private fun reconcileCategoryProjection() {
         heldIds.clear()
+        listedUnusableIds.clear()
         if (cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly)
             return
         val addressBook = localAddressBook()
 
         class Candidate(val id: Long, val fileName: String?, val eTag: String?, val dirty: Boolean, val released: Boolean)
         val candidates = ArrayList<Candidate>()
-        addressBook.provider!!.query(addressBook.syncAdapterURI(ContactsContract.RawContacts.CONTENT_URI),
+        // Unknown is not none: without this list, rows needing recovery could be uploaded unprojected.
+        val cursor = addressBook.provider!!.query(addressBook.syncAdapterURI(ContactsContract.RawContacts.CONTENT_URI),
                 arrayOf(ContactsContract.RawContacts._ID, at.bitfire.vcard4android.AndroidContact.COLUMN_FILENAME,
                         at.bitfire.vcard4android.AndroidContact.COLUMN_ETAG, ContactsContract.RawContacts.DIRTY,
                         LocalContact.COLUMN_CATEGORIES),
                 "${ContactsContract.RawContacts.DELETED}=0 AND " +
                         "(${LocalContact.COLUMN_CATEGORIES} IS NULL OR ${LocalContact.COLUMN_CATEGORIES}=?)",
-                arrayOf(LocalContact.CATEGORIES_RELEASED), null)?.use { cursor ->
-            while (cursor.moveToNext())
-                candidates += Candidate(cursor.getLong(0), cursor.getString(1), cursor.getString(2),
-                        !cursor.isNull(3) && cursor.getInt(3) != 0, cursor.getString(4) == LocalContact.CATEGORIES_RELEASED)
+                arrayOf(LocalContact.CATEGORIES_RELEASED), null)
+                ?: throw ContactsStorageException("Couldn't read contacts awaiting label projection")
+        cursor.use {
+            while (it.moveToNext())
+                candidates += Candidate(it.getLong(0), it.getString(1), it.getString(2),
+                        !it.isNull(3) && it.getInt(3) != 0, it.getString(4) == LocalContact.CATEGORIES_RELEASED)
         }
 
         var recovered = 0
@@ -301,18 +305,30 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
     private fun releaseHeldRows() {
         if (heldIds.isEmpty())
             return
-        if (!exactDestinationCurrent())
+        // Only a destination this run actually captured, and that is still exactly current, authorizes a release;
+        // the inherited fallback for an uncaptured destination is not that proof.
+        val captured = destination
+        if (captured == null || !destinationStillCurrent(captured))
             throw ContactsStorageException("${heldIds.size} contact edit(s) held for label recovery")
+        // A row whose live item was listed is not absent, even if that item could not supply its labels.
+        val absent = heldIds - listedUnusableIds
         val addressBook = localAddressBook()
         val values = ContentValues(1)
         values.put(LocalContact.COLUMN_CATEGORIES, LocalContact.CATEGORIES_RELEASED)
-        for (id in heldIds)
+        for (id in absent)
             addressBook.provider!!.update(
                     addressBook.syncAdapterURI(ContentUris.withAppendedId(ContactsContract.RawContacts.CONTENT_URI, id)),
                     values, "${LocalContact.COLUMN_CATEGORIES} IS NULL", null)
-        Logger.log.info("Released ${heldIds.size} held contact edit(s) that a complete listing did not return")
+        if (absent.isNotEmpty())
+            Logger.log.info("Released ${absent.size} held contact edit(s) that a complete listing did not return")
+        val unresolved = heldIds.size - absent.size
         heldIds.clear()
+        if (unresolved > 0)
+            throw ContactsStorageException("$unresolved held contact edit(s) whose listed item could not supply labels")
     }
+
+    /** Held rows whose live item this run's listing returned without a usable individual-contact basis. */
+    private val listedUnusableIds = HashSet<Long>()
 
     /**
      * A replay lists every entry, so a local change made while it runs would otherwise be written
@@ -429,7 +445,10 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             if (listed != null && !listed.group) {
                 local.replaceCategoryProjection(listed.categories)
                 heldIds -= local.id!!
-            }
+                listedUnusableIds -= local.id!!
+            } else
+                // Observed live but unusable (a group vCard, or no contact parsed): never released as absent.
+                listedUnusableIds += local.id!!
         }
 
         if (local != null && !item.isDeleted && keepsLocalEditsOfThisRun && isDirty(local)) {
