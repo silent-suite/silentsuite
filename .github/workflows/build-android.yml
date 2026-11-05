@@ -603,8 +603,8 @@ jobs:
           - api-level: 29
             arch: x86
             shard: account-dashboard
-            # The generic AVD is a 320x640 mdpi screen whose app heap growth limit is the
-            # 16 MiB CDD minimum; a named phone profile gives this lane a realistic API 29 heap.
+            # Without a profile this lane ran on a generic 320x640, 160 dpi AVD and the app hit a
+            # 16 MiB heap growth limit. This lane runs on the named pixel profile instead.
             avd-profile: pixel
           - api-level: 29
             arch: x86
