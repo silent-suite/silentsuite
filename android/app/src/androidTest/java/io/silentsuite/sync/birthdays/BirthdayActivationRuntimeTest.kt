@@ -254,6 +254,71 @@ class BirthdayActivationRuntimeTest {
         }
     }
 
+    @Test fun turningOffAgainAfterAnUnfinishedCleanupRemovesTheRemainingGeneratedEvents() {
+        val colMgr = server.collectionManager
+        val calendar = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(calendar.uid, listOf(username to ADMIN))
+        val generatedItem = uploadItem(calendar, "generated", GENERATED_ICS)
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val ordinaryBefore = state(colMgr, calendar.uid).items.getValue(ordinary.uid)
+        val activeRoot = colMgr.fetch(calendar.uid).etag
+        val seeded = fake.collectionUids()
+        val writes = Regex("collection/${Regex.escape(calendar.uid)}/item/(batch|transaction)/")
+        // The retirement (the calendar's own root-item transaction) passes; the cleanup after it is parked.
+        val cleanup = fake.hold("POST", writes, skip = 1)
+        assertEquals("PREREQUISITE: no scripted answer is armed", 0, fake.pendingAnswers())
+
+        withActivationDashboard(seeded) { scenario ->
+            val since = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_OFF)
+            assertTrue("PREREQUISITE: the first turn-off reaches the cleanup of the retired calendar", cleanup.arrivesWithin(60_000))
+            val retired = colMgr.fetch(calendar.uid)
+            assertEquals("PREREQUISITE: the calendar is retired before its cleanup", MARKER_RETIRED, String(retired.content, Charsets.UTF_8))
+            assertNotEquals("PREREQUISITE: the retirement moved the root", activeRoot, retired.etag)
+            assertFalse("PREREQUISITE: its generated event is still there", colMgr.getItemManager(retired).fetch(generatedItem.uid).isDeleted)
+            assertBusy(scenario)
+            try {
+                // Only the parked cleanup of this calendar is answered with a server error, and it is not applied.
+                fake.answer("POST", writes, 500)
+                cleanup.release()
+                awaitIdle(scenario, "PREREQUISITE: the first turn-off to end and its actions to be available again")
+                assertEquals("PREREQUISITE: the armed failure was consumed by that cleanup", 0, fake.pendingAnswers())
+            } finally {
+                fake.clearAnswers()
+            }
+            val afterFirst = colMgr.fetch(calendar.uid)
+            assertEquals("PREREQUISITE: the calendar stays retired", MARKER_RETIRED, String(afterFirst.content, Charsets.UTF_8))
+            assertEquals("PREREQUISITE: the failed cleanup changed no root", retired.etag, afterFirst.etag)
+            assertFalse("PREREQUISITE: the failed cleanup left the generated event",
+                colMgr.getItemManager(afterFirst).fetch(generatedItem.uid).isDeleted)
+            assertFalse("PREREQUISITE: no fenced cleanup was routed", listOf(calendar.uid) in fake.uploadDeps.drop(since))
+            assertEquals("PREREQUISITE: the ordinary event and metadata are unchanged", ordinaryBefore,
+                state(colMgr, calendar.uid).items.getValue(ordinary.uid))
+            assertEquals("PREREQUISITE: no calendar is created or removed", seeded, fake.collectionUids())
+
+            // The same action again, for the same account and generation, with every route answering normally.
+            val inventory = fake.hold("POST", Regex("collection/list_multi/"))
+            val again = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_OFF)
+            assertTrue("PREREQUISITE: the repeated turn-off reads the inventory fresh", inventory.arrivesWithin(60_000))
+            assertBusy(scenario)
+            inventory.release()
+            awaitIdle(scenario, "the repeated turn-off to end and its actions to be available again")
+
+            val after = colMgr.fetch(calendar.uid)
+            assertFalse("the retired calendar is kept", after.isDeleted)
+            assertEquals("it stays retired", MARKER_RETIRED, String(after.content, Charsets.UTF_8))
+            assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+            assertEquals("the ordinary event and metadata are unchanged", ordinaryBefore,
+                state(colMgr, calendar.uid).items.getValue(ordinary.uid))
+            assertTrue("FEATURE_ACTIVATION_OFF_RETRY: the repeated turn-off removes the retired calendar's remaining generated event",
+                colMgr.getItemManager(after).fetch(generatedItem.uid).isDeleted)
+            assertTrue("FEATURE_ACTIVATION_OFF_RETRY: that cleanup is fenced on the retired calendar's current root",
+                listOf(calendar.uid) in fake.uploadDeps.drop(again))
+            assertEquals("the retired calendar itself is not updated again", afterFirst.etag, after.etag)
+        }
+    }
+
     // ---- fixture ----
 
     private data class ItemState(val deleted: Boolean, val content: String, val name: String?, val mtime: Long?)

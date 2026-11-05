@@ -206,6 +206,12 @@ class FakeEtebaseServer(val baseUrl: String = "https://etebase-fake.invalid/") :
         scripted += Scripted(method, Regex(Regex.escape(path)), times, answerFor = otherPath)
     }
 
+    /** The remaining uses of every scripted answer still armed, so a test can prove one was consumed. */
+    fun pendingAnswers(): Int = synchronized(scripted) { scripted.sumOf { it.times.coerceAtLeast(0) } }
+
+    /** Disarms every scripted answer; the routes answer as normal again. */
+    fun clearAnswers() = synchronized(scripted) { scripted.clear() }
+
     /**
      * Parks the next request whose method and path (after "/api/v1/") match, until released. With
      * [skip], that many matching requests pass first, so a later page of a listing can be parked.
