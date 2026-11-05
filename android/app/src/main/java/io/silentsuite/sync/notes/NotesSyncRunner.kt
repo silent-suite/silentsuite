@@ -232,17 +232,11 @@ internal object NotesSyncRunner {
     ): NotePushStep.Result? {
         val store = PendingNotesStore.forIdentity(context, account.type, account.name, creationId)
         val waiting = waitingIn(store) ?: return null
-        if (nothingToPush(waiting)) {
-            // A copy whose last entry went outside a run (held text discarded), or whose removal failed
-            // before, goes here. Nothing is written when there is none.
-            pruneNotebookCopies(store)
-            return null
-        }
+        if (nothingToPush(waiting)) return null
         refreshNotebookCopies(store, cache, colMgr, guard, waiting.headers.mapTo(HashSet()) { it.notebookUid })
         val memory = pushMemory.getOrPut(listOf(account.type, account.name, creationId).joinToString("\u0000")) { NotePushStep.Memory() }
         val result = NotePushStep(store, EtebasePushRemote(cache, colMgr, store, guard), memory,
             userInitiated = request.manual, mayWrite = guard::mayWrite).pass()
-        pruneNotebookCopies(store)
         // Counts only: no title, notebook name or text is ever logged.
         Logger.log.info("Notes push ${result.ended}: pushed ${result.pushed}, held ${result.held}, " +
             "conflicts ${result.conflicts.values.sum()}, failure ${result.failure}, carried ${result.carriedFailure}")
@@ -283,14 +277,6 @@ internal object NotesSyncRunner {
         null
     }
 
-    private fun pruneNotebookCopies(store: PendingNotesStore) {
-        try {
-            store.pruneNotebooks()
-        } catch (e: IOException) {
-            Logger.log.warning("Notebook copies no pending note needs could not be removed: ${e.javaClass.name}")
-        }
-    }
-
     /** What a run records when the pending store cannot be read at the start of its push step. */
     internal fun unreadableStore() = NotePushStep.Result(NotePushStep.Ended.STOPPED, pushed = 0, held = 0,
         conflicts = emptyMap(), failure = NotePushPolicy.FailureKind.LOCAL, carriedFailure = null)
@@ -299,7 +285,9 @@ internal object NotesSyncRunner {
      * Design 3.1: each pending note is decrypted through a copy of its notebook that the store keeps,
      * so its text stays readable after the Etebase cache drops the notebook. The copy is refreshed here,
      * after the collection refresh and never inside it, from the notebook as this run cached it, and
-     * never from a notebook seen as deleted. A copy that cannot be written stays as it was.
+     * never from a notebook seen as deleted. A copy that cannot be written stays as it was. No run removes
+     * a copy: a listing can come back short and leave out a note that needs it, and once the cache drops
+     * the notebook, nothing could write that copy again. It stays until the store is discarded or cleared.
      */
     private fun refreshNotebookCopies(
         store: PendingNotesStore,

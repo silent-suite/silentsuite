@@ -1,6 +1,7 @@
 package io.silentsuite.sync.notes.edit
 
 import io.silentsuite.sync.notes.edit.PendingNotesStore.DiscardOutcome
+import io.silentsuite.sync.notes.edit.PendingNotesStore.NotebookDiscard
 import io.silentsuite.sync.notes.edit.PendingNotesStore.Read
 import io.silentsuite.sync.notes.edit.PendingNotesStore.RemovalCheck
 import io.silentsuite.sync.notes.edit.PendingNotesStore.SaveOutcome
@@ -275,6 +276,49 @@ class PendingNotesStoreTest {
         assertEquals("nothing was deleted", before, filesOf(dir))
     }
 
+    @Test fun `a save during an upload is not dropped with it while a lost counter is rebuilt from a listing that left the note out`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        store.saveLocal("n1", "b1", "r1", blob("sent"), isCreate = false)
+        val sent = store.beginSend("n1")!!
+        // The counter is lost while the upload is in flight, and the save that rebuilds it does not see n1. It saves
+        // through a new instance, as after a restart, so that only the version it replaces keeps it above.
+        assertTrue(File(dir, "sequence").delete())
+        val s = restarted()
+        listingLeavesOut("n1.note")
+        val newer = saved(s.saveLocal("n1", "b1", "r2", blob("newer"), isCreate = false))
+        PendingNotesStore.listFilesForTesting = null
+        assertTrue("above the version that was sent", newer > sent.version)
+        assertTrue(s.completeSend("n1", sent.version, "r1", blob("landed")) is SendOutcome.NewerLocalChange)
+        assertArrayEquals("the newer text stays to be sent", blob("newer"), s.entry("n1").blob)
+    }
+
+    @Test fun `every new version of an entry is above the one it replaces while a lost counter is rebuilt from a listing that left it out`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        val steps = listOf<Pair<String, (PendingNotesStore) -> Unit>>(
+            "a save" to { s -> s.saveLocal("n1", "b1", "r2", blob("two"), isCreate = false) },
+            "a rebase" to { s ->
+                assertTrue(s.rebase("n1", s.entry("n1").version, onto = "r2", revision = "r3", blob = blob("three")))
+            },
+            "a save into held text" to { s ->
+                s.hold("n1", HeldReason.LOST_ACCESS, 1)
+                s.saveLocal("n1", "b1", "r4", blob("four"), isCreate = false)
+            },
+            "a release" to { s -> assertTrue(s.release("n1")) },
+        )
+        var s = store
+        for ((step, write) in steps) {
+            val before = s.entry("n1").version
+            assertTrue(File(dir, "sequence").delete())
+            // A new instance, as after a restart, so that only the version the write replaces keeps it above.
+            s = restarted()
+            listingLeavesOut("n1.note")
+            write(s)
+            PendingNotesStore.listFilesForTesting = null
+            assertTrue("$step: above $before", s.entry("n1").version > before)
+        }
+    }
+
     @Test fun `a lost counter is rebuilt above a first write that recovery cannot commit yet`() {
         var refuse = true
         val d = tmp.newFolder("stranded-version")
@@ -390,7 +434,7 @@ class PendingNotesStoreTest {
         assertFalse(File(dir, "z.draft").exists())
         assertFalse("a known kind is finished as before",
             File(dir, "n5.landed.new").exists() || File(dir, "n5.landed").exists())
-        assertEquals("the recovery finished, so the prune runs", listOf("b9"), s.pruneNotebooks())
+        assertArrayEquals("the recovery finished, and the copy no entry names stays", blob("key b9"), s.notebook("b9"))
         // With the counter lost, each of them is a file of a kind this build does not know, alone as well.
         assertTrue(File(dir, "sequence").delete())
         assertTrue(File(dir, "y.draft").delete())
@@ -526,6 +570,17 @@ class PendingNotesStoreTest {
         assertTrue(rebased.version > newer.version)
         assertEquals("r2b", rebased.revision)
         assertEquals(listOf("r1"), rebased.sent)
+    }
+
+    @Test fun `a landed upload of an entry that cannot be read now keeps it as it is and says so`() {
+        val editor = store.editorOpened("n1")
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        val snapshot = store.beginSend("n1")!!
+        File(dir, "n1.note").writeBytes(byteArrayOf(0))
+        assertEquals(SendOutcome.Unreadable, store.completeSend("n1", snapshot.version, "r1", blob("landed")))
+        assertArrayEquals("kept as it is", byteArrayOf(0), File(dir, "n1.note").readBytes())
+        assertEquals("the upload landed, so the open editor keeps its landed record", "r1", store.landed("n1")!!.revision)
+        store.editorClosed(editor)
     }
 
     @Test fun `a rebase moves the revision it was built on to the newest end of the sent list`() {
@@ -1586,78 +1641,6 @@ class PendingNotesStoreTest {
         assertTrue(reopened.snapshot { false }.unreadable.isEmpty())
     }
 
-    // ---- notebooks, identity, safety ----
-
-    @Test fun `notebook copies stay while an entry or held text needs them`() {
-        store.putNotebook("b3", blob("key b3"))
-        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
-        store.saveLocal("n2", "b2", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b2"))
-        store.hold("n2", HeldReason.LOST_ACCESS, 1)
-        assertEquals(listOf("b3"), store.pruneNotebooks())
-        assertArrayEquals(blob("key b1"), store.notebook("b1"))
-        assertArrayEquals(blob("key b2"), store.notebook("b2"))
-        assertNull(store.notebook("b3"))
-    }
-
-    @Test fun `no notebook copy is pruned while any entry is unreadable`() {
-        store.putNotebook("b9", blob("key"))
-        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
-        File(dir, "n1.note").writeBytes(byteArrayOf(0))
-        assertTrue(store.pruneNotebooks().isEmpty())
-        assertArrayEquals(blob("key"), store.notebook("b9"))
-    }
-
-    @Test fun `a failed listing prunes nothing, even when the listings after it work`() {
-        store.putNotebook("b9", blob("key b9"))
-        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
-        var listings = 0
-        PendingNotesStore.listFilesForTesting = { d -> if (listings++ == 0) null else d.listFiles() }
-        assertThrows(java.io.IOException::class.java) { store.pruneNotebooks() }
-        PendingNotesStore.listFilesForTesting = null
-        assertArrayEquals(blob("key b1"), store.notebook("b1"))
-        assertArrayEquals(blob("key b9"), store.notebook("b9"))
-        assertEquals(listOf("b9"), store.pruneNotebooks())
-    }
-
-    @Test fun `a prune runs no recovery that is owed, and lists and removes nothing until another call has run it`() {
-        store.putNotebook("b9", blob("key b9"))
-        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
-        // A refresh of a copy that is there already stops at its rename, so a recovery is owed: it drops the
-        // write left beside that copy.
-        PendingNotesStore.beforeRenameForTesting = {
-            if (it.name == "b1.notebook") throw java.io.IOException("rename refused")
-        }
-        assertThrows(java.io.IOException::class.java) { store.putNotebook("b1", blob("key b1 again")) }
-        PendingNotesStore.beforeRenameForTesting = null
-        assertTrue(File(dir, "b1.notebook.new").exists())
-        // Run by the prune, a recovery that fails would only be logged. The prune asks for no listing at all.
-        val asked = ArrayList<String>()
-        PendingNotesStore.listFilesForTesting = { d -> asked += d.name; null }
-        assertEquals(emptyList<String>(), store.pruneNotebooks())
-        assertEquals("no listing, so no recovery either", emptyList<String>(), asked)
-        PendingNotesStore.listFilesForTesting = null
-        assertTrue(File(dir, "b9.notebook").exists() && File(dir, "b1.notebook.new").exists())
-        // The next other call runs the recovery, where a failure counts, and a prune after it works as before.
-        assertEquals(listOf("n1"), store.scan().entries.map { it.noteUid })
-        assertFalse(File(dir, "b1.notebook.new").exists())
-        assertEquals(listOf("b9"), store.pruneNotebooks())
-        assertArrayEquals(blob("key b1"), store.notebook("b1"))
-        assertNull(store.notebook("b9"))
-    }
-
-    @Test fun `a store whose directory was never created prunes nothing and stays uncreated`() {
-        val never = File(tmp.root, "never")
-        val s = open(never)
-        // A prune runs no recovery, so a scan runs it first; the prune then lists the directory itself.
-        assertTrue(s.scan().entries.isEmpty())
-        val asked = ArrayList<String>()
-        PendingNotesStore.listFilesForTesting = { d -> asked += d.name; d.listFiles() }
-        assertTrue(s.pruneNotebooks().isEmpty())
-        PendingNotesStore.listFilesForTesting = null
-        assertEquals("not there, as the directory above shows", listOf("never", tmp.root.name), asked)
-        assertFalse(never.exists())
-    }
-
     // ---- a listing that fails is never an empty store ----
 
     @Test fun `a listing of the store that fails is not read as an empty store`() {
@@ -1685,13 +1668,10 @@ class PendingNotesStoreTest {
         val s = restarted()
         PendingNotesStore.listFilesForTesting = { d -> if (d.name == s.dir.name) null else d.listFiles() }
         assertThrows(java.io.IOException::class.java) { s.read("n1") }
-        assertEquals("a prune runs no recovery, and removes nothing while one is owed",
-            emptyList<String>(), s.pruneNotebooks())
         PendingNotesStore.listFilesForTesting = null
         // Taken for done, the failed recovery would leave n1 uncommitted, and no scan or snapshot would
         // show it.
         assertEquals(listOf("n1"), s.snapshot { false }.headers.map { it.noteUid })
-        assertEquals("the copy the stranded text needs is kept", emptyList<String>(), s.pruneNotebooks())
         assertEquals(only, s.entry("n1"))
         assertFalse(File(dir, "n1.note.new").exists())
         assertArrayEquals(blob("key b1"), s.notebook("b1"))
@@ -1781,14 +1761,13 @@ class PendingNotesStoreTest {
         assertTrue(snapshot.headers.isEmpty() && snapshot.entries.isEmpty() && snapshot.unreadable.isEmpty())
         assertEquals(PendingNotesStore.Scan(emptyList(), emptyList()), never.scan())
         assertEquals(PendingNotesStore.Observed(Read.Missing, 0), never.observe("n1"))
-        assertTrue(never.pruneNotebooks().isEmpty())
         assertFalse(File(root, "notes-pending").exists())
     }
 
     @Test fun `a listed entry that File isFile does not count as a file is still read, and its notebook copy kept`() {
         // File.isFile answers false when its check fails, as well as for anything that is not a regular
-        // file. Dropped for that, the entry would be neither reported nor pushed, its version would be
-        // passed over when a lost counter is rebuilt, and the copy of its notebook would look unreferenced.
+        // file. Dropped for that, the entry would be neither reported nor pushed, and its version would be
+        // passed over when a lost counter is rebuilt.
         val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1")))
         fun statFails(f: File): File = object : File(f.path) {
             override fun isFile() = false
@@ -1798,7 +1777,6 @@ class PendingNotesStoreTest {
         }
         assertEquals(listOf("n1"), store.snapshot { false }.headers.map { it.noteUid })
         assertEquals(listOf("n1"), store.scan().entries.map { it.noteUid })
-        assertEquals(emptyList<String>(), store.pruneNotebooks())
         assertTrue(File(dir, "sequence").delete())
         // A new instance, as after a restart, so that only the rebuild keeps the save above.
         val s = restarted()
@@ -1806,75 +1784,6 @@ class PendingNotesStoreTest {
             saved(s.saveLocal("n2", "b1", "r1", blob("u"), isCreate = false)) > v1)
         PendingNotesStore.listFilesForTesting = null
         assertArrayEquals(blob("key b1"), s.notebook("b1"))
-    }
-
-    @Test fun `a prune decides from one listing, so a listing above that wrongly shows nothing removes no copy`() {
-        store.putNotebook("b9", blob("key b9"))
-        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false, notebookCopy = blob("key b1"))
-        // The store's own listing fails once, and the listing above it then answers with no names, as if
-        // the store were not there. Every listing after those two is real.
-        val asked = ArrayList<String>()
-        PendingNotesStore.listFilesForTesting = { d ->
-            asked += d.name
-            when (asked.size) {
-                1 -> null
-                2 -> emptyArray()
-                else -> d.listFiles()
-            }
-        }
-        assertEquals("read as a store that is not there, which holds no copy to remove",
-            emptyList<String>(), store.pruneNotebooks())
-        assertEquals("one listing of the store, and the one above it",
-            listOf(dir.name, store.dir.parentFile!!.name), asked)
-        PendingNotesStore.listFilesForTesting = null
-        assertArrayEquals(blob("key b1"), store.notebook("b1"))
-        assertArrayEquals(blob("key b9"), store.notebook("b9"))
-        assertEquals(listOf("b9"), store.pruneNotebooks())
-    }
-
-    @Test fun `a prune keeps every copy while its listing holds a first write that is not committed yet`() {
-        store.putNotebook("b1", blob("key b1"))
-        // A first write of n1 that recovery does not know of, as when its check that a problem's file is
-        // still there fails: written in full after recovery ran. No committed entry names b1, and the next
-        // recovery commits this write, which needs that copy.
-        val first = PendingEntry("n1", "b1", PendingEntry.State.UPSERT, 4, "r4", false, blob = blob("first write"))
-        File(dir, "n1.note.new").writeBytes(PendingCodec.encodeEntry(first))
-        assertEquals(emptyList<String>(), store.pruneNotebooks())
-        assertArrayEquals(blob("key b1"), store.notebook("b1"))
-        val next = restarted()
-        assertEquals(first, next.entry("n1"))
-        assertEquals("an entry names it now", emptyList<String>(), next.pruneNotebooks())
-        assertArrayEquals(blob("key b1"), next.notebook("b1"))
-    }
-
-    @Test fun `a prune removes no copy while a file a discard that has not finished was confirmed for is there`() {
-        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
-        store.saveLocal("n2", "b2", "r1", blob("confirmed for discard"), isCreate = false, notebookCopy = blob("key b2"))
-        val s = restarted()
-        permitsOf(s).record(dir.name, UnsyncedNotes(1, 2, false, names = notes("n2")))
-        // The listing comes back short and leaves out n2.note, whose notebook copy may be the only key to its text
-        // once a save withdraws the permit.
-        listingLeavesOut("n2.note")
-        val waiting = s.snapshot { false }
-        assertEquals(listOf("n1"), waiting.headers.map { it.noteUid })
-        assertTrue(waiting.discardUnfinished)
-        val copy = File(dir, "b2.notebook").readBytes()
-        assertEquals(emptyList<String>(), s.pruneNotebooks())
-        assertArrayEquals("the copy stays, byte for byte", copy, File(dir, "b2.notebook").readBytes())
-    }
-
-    @Test fun `a prune removes no copy while a permit that may be there cannot be read`() {
-        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
-        store.saveLocal("n2", "b2", "r1", blob("b"), isCreate = false, notebookCopy = blob("key b2"))
-        val s = restarted()
-        // Read, this permit would hold nothing back: what it names is gone.
-        permitsOf(s).record(dir.name, UnsyncedNotes(1, 2, false, names = notes("gone")))
-        permitReadsFail()
-        listingLeavesOut("n2.note")
-        assertTrue(s.snapshot { false }.discardUnfinished)
-        val copy = File(dir, "b2.notebook").readBytes()
-        assertEquals(emptyList<String>(), s.pruneNotebooks())
-        assertArrayEquals("the copy stays, byte for byte", copy, File(dir, "b2.notebook").readBytes())
     }
 
     // ---- a check that fails is never an absence ----
@@ -2084,10 +1993,11 @@ class PendingNotesStoreTest {
             .replace(Regex("(?s)/\\*.*?\\*/"), "").replace(Regex("//[^\n]*"), "")
         // Words, not calls, so that a reference such as File::exists is caught as well.
         assertFalse(Regex("""\b(exists|notExists)\b""").containsMatchIn(code))
-        // A true answer from these needs a check that worked. Each removal keeps only regular files on top
-        // of a listing, so a false answer keeps a file; mkdir answered first, so a false answer fails a write.
-        assertEquals(2, Regex("""\bisFile\b""").findAll(code).count())
-        assertEquals(2, Regex("""\.filter \{ it\.isFile\b""").findAll(code).count())
+        // A true answer from these needs a check that worked. The removal of landed records keeps only regular
+        // files on top of a listing, so a false answer keeps a file; mkdir answered first, so a false answer
+        // fails a write.
+        assertEquals(1, Regex("""\bisFile\b""").findAll(code).count())
+        assertEquals(1, Regex("""\.filter \{ it\.isFile\b""").findAll(code).count())
         assertEquals(1, Regex("""\bisDirectory\b""").findAll(code).count())
         assertEquals(1, Regex("""!level\.mkdir\(\) && !level\.isDirectory\)""").findAll(code).count())
         // The presence check is asked only where a check that failed cannot pass for an absence: isPresent and
@@ -2118,6 +2028,51 @@ class PendingNotesStoreTest {
         assertEquals(1, Regex("""\bisDirectory\b""").findAll(permits).count())
         assertEquals(1, Regex("""!level\.mkdir\(\) && !level\.isDirectory\)""").findAll(permits).count())
         assertFalse(Regex("""==\s*(PendingNotesStore\.)?Presence\.PRESENT\b""").containsMatchIn(permits))
+    }
+
+    @Test fun `every write of new text is in the store and takes a new version`() {
+        // A confirmation covers a sequence, and only a new version moves it on and withdraws the permit.
+        val code = File("src/main/java/io/silentsuite/sync/notes/edit/PendingNotesStore.kt").readText()
+            .replace(Regex("(?s)/\\*.*?\\*/"), "").replace(Regex("//[^\n]*"), "")
+        assertEquals("update() is the store's own", listOf("private fun update("),
+            Regex("""\b(?:\w+ )*fun update\(""").findAll(code).map { it.value }.toList())
+        // Each function of the class, from its declaration to the next one.
+        val starts = Regex("""(?m)^ {4}(?:(?:private|internal|override|inline) )*fun (?:<[^>]*> )?(\w+)""")
+            .findAll(code).toList()
+        val functions = starts.mapIndexed { i, start ->
+            start.groupValues[1] to code.substring(start.range.first, starts.getOrNull(i + 1)?.range?.first ?: code.length)
+        }
+        // Text comes in as a blob (a save, a rebase) or as a whole entry (a conflict copy).
+        val writers = functions.filter { (_, body) -> Regex("""\bblob = |\bnewNote\b""").containsMatchIn(body) }
+        assertEquals(listOf("saveLocal", "rebase", "replaceWithNewNote"), writers.map { it.first })
+        // A release from holding moves the sequence on as well (UnsyncedNotes). A step of a run, a rebase or a
+        // conflict copy, takes its version through nextRunVersion, which can only hold it back first.
+        assertTrue("nextRunVersion takes a new version",
+            "nextVersion(" in functions.single { it.first == "nextRunVersion" }.second)
+        for ((name, body) in writers + functions.single { it.first == "release" }) {
+            assertTrue("$name takes a new version", Regex("""\bnext(?:Run)?Version\(""").containsMatchIn(body))
+        }
+    }
+
+    @Test fun `a notebook copy goes only with the whole store, and no run removes one`() {
+        // A copy can be the only key to held text once the Etebase cache drops its notebook, and two listings that
+        // come back short the same way can hide the note that needs it, so no copy goes by what a listing shows.
+        val strip = { path: String ->
+            File(path).readText().replace(Regex("(?s)/\\*.*?\\*/"), "").replace(Regex("//[^\n]*"), "")
+        }
+        val code = strip("src/main/java/io/silentsuite/sync/notes/edit/PendingNotesStore.kt")
+        val declarations = Regex("""\bfun (?:<[^>]*> )?(\w+)""").findAll(code).toList()
+        // The functions, in file order, whose code matches [pattern], each named by the nearest declaration above.
+        fun usersOf(pattern: Regex): List<String> = pattern.findAll(code)
+            .map { use -> declarations.last { it.range.first <= use.range.first }.groupValues[1] }.distinct().toList()
+        // A copy is named only to read it and to write it. A discard of the whole store and a clear remove it with
+        // everything else.
+        assertEquals(listOf("notebook", "putNotebookLocked", "notebookFile"), usersOf(Regex("""\bnotebookFile\(""")))
+        // Its suffix tells only a file's kind; nothing chooses copies by it.
+        assertEquals(listOf("versionOf", "isKnownWrite", "isKnownKind", "notebookFile"),
+            usersOf(Regex("""(?<!val )\bNOTEBOOK\b""")))
+        val runner = strip("src/main/java/io/silentsuite/sync/notes/NotesSyncRunner.kt")
+        assertFalse("no run prunes", Regex("(?i)prune").containsMatchIn(runner))
     }
 
     @Test fun `uids that could escape the directory are refused for every kind of file`() {
@@ -2336,7 +2291,8 @@ class PendingNotesStoreTest {
         val counter = sequence.readBytes()
         assertTrue(sequence.delete() && sequence.mkdir())
         val shown = store.unsynced()
-        assertTrue(shown.unreadable)
+        val shownInNotebook = store.unsyncedInNotebook("b1")
+        assertTrue(shown.unreadable && shownInNotebook.unreadable)
         // The counter reads again, the note is saved over, and the counter fails again: the same note and the
         // same number of files, with text that was never shown.
         assertTrue(sequence.delete())
@@ -2347,6 +2303,7 @@ class PendingNotesStoreTest {
         assertEquals(shown.copy(sequence = now.sequence), now)
         assertTrue("above the one shown", now.sequence > shown.sequence)
         assertEquals(DiscardOutcome.Changed(now), store.discardStore(shown))
+        assertEquals(NotebookDiscard.Changed(store.unsyncedInNotebook("b1")), store.discardNotebook("b1", shownInNotebook))
         assertEquals("nothing was deleted", setOf("n1.note", "sequence"), dir.list()!!.toSet())
         assertArrayEquals(blob("typed after the question"), entry("n1").blob)
     }
@@ -2870,7 +2827,6 @@ class PendingNotesStoreTest {
 
     @Test fun `a permit for an answer that could not be counted holds back every note, one its count's listing missed included, until a save withdraws it`() {
         val v1 = saved(store.saveLocal("n1", "b1", "r1", blob("missed by the count"), isCreate = false))
-        store.putNotebook("b9", blob("key b9"))
         // A file of a kind this build does not know, so the store cannot be counted, and a count's listing that
         // leaves out n1, as a listing that comes back short can.
         File(dir, "x.draft").writeBytes(blob("kept by a newer build"))
@@ -2893,14 +2849,13 @@ class PendingNotesStoreTest {
         val waiting = s.snapshot { false }
         assertEquals("every note counts as confirmed", setOf("n1"), waiting.discardConfirmed)
         assertTrue(waiting.discardUnfinished)
-        // With the file the permit names gone, the rule alone holds back: a run records no success, a rebase writes
-        // nothing, and no notebook copy is pruned.
+        // With the file the permit names gone, the rule alone holds back: a run records no success, and a rebase
+        // writes nothing.
         assertTrue(File(dir, "x.draft").delete())
         assertTrue(s.snapshot { false }.discardUnfinished)
         assertThrows(PendingNotesStore.HeldBack::class.java) {
             s.rebase("n1", s.entry("n1").version, "r1", "r2", blob("rebased"))
         }
-        assertEquals(emptyList<String>(), s.pruneNotebooks())
         // A save, of any note, withdraws the permit, and n1 is sent again.
         assertTrue(s.saveLocal("n2", "b1", "r1", blob("typed later"), isCreate = false) is SaveOutcome.Saved)
         assertNull(permitsOf(s).read(dir.name))
@@ -2948,7 +2903,6 @@ class PendingNotesStoreTest {
 
     @Test fun `once a save has withdrawn the permit, a check of its path that keeps failing holds nothing back, until a sign-out has it read again`() {
         store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
-        store.putNotebook("b9", blob("key b9"))
         val s = restarted()
         permitsOf(s).record(dir.name, UnsyncedNotes(1, 1, false, names = notes("n1")))
         // A save withdraws the permit, and from then on every check of its path fails.
@@ -2959,7 +2913,6 @@ class PendingNotesStoreTest {
         assertEquals(PendingNotesDiscardPermits.Lookup.Unknown, permitsOf(s).lookup(dir.name))
         assertTrue(s.startSend("n1") is PendingNotesStore.SendStart.Ready)
         assertFalse(s.snapshot { false }.discardUnfinished)
-        assertEquals("the prune runs", listOf("b9"), s.pruneNotebooks())
 
         // A sign-out that stops has the instance read the permit again, and the hold-back holds once more.
         PendingNotesDiscardPermits.beforeRecordForTesting = { throw java.io.IOException("could not record the permit") }
@@ -4146,7 +4099,6 @@ class PendingNotesStoreTest {
             assertThrows(java.io.IOException::class.java) { a.startSend("n1") }
             assertThrows(java.io.IOException::class.java) { a.putNotebook("b1", blob("key b1")) }
         }
-        assertEquals("a prune with a recovery owed lists nothing", emptyList<String>(), a.pruneNotebooks())
 
         assertEquals("B's own answer covers nothing here", DiscardOutcome.Changed(shown), a.discardStore(bCount))
         assertFalse(a.acknowledged())
@@ -4189,8 +4141,6 @@ class PendingNotesStoreTest {
         val held = filesOf(aside)
         val shown = s.unsynced()
         assertEquals("not counted through the link", UnsyncedNotes(0, v, unreadable = true, listed = false), shown)
-        assertThrows("a recovered instance's prune", java.io.IOException::class.java) { s.pruneNotebooks() }
-        assertEquals("a recovery is owed from then on", emptyList<String>(), s.pruneNotebooks())
         repeat(2) {
             assertThrows(java.io.IOException::class.java) { s.read("n1") }
             assertThrows(java.io.IOException::class.java) { s.scan() }
@@ -4235,7 +4185,6 @@ class PendingNotesStoreTest {
         PendingNotesStore.linkForTesting = { d -> asked += d.path; null }
         val shown = s.unsynced()
         assertEquals(UnsyncedNotes(0, v, unreadable = true, listed = false), shown)
-        assertThrows(java.io.IOException::class.java) { s.pruneNotebooks() }
         repeat(2) {
             assertThrows(java.io.IOException::class.java) { s.scan() }
             assertThrows(java.io.IOException::class.java) { s.read("n1") }
@@ -5102,6 +5051,829 @@ class PendingNotesStoreTest {
         assertEquals("nothing was made", emptySet<String>(), namesIn(noBackup))
     }
 
+    // ---- one notebook: what it holds, and the discard of it after a leave or delete ----
+
+    @Test fun `a notebook's count names only its own entries, held entries and conflict copies included`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
+        store.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n2", HeldReason.READ_ONLY, now = 5))
+        store.saveLocal("n3", "b2", "r1", blob("c"), isCreate = false, notebookCopy = blob("key b2"))
+        conflictCopy()
+        store.editorOpened("pushed")
+        store.saveLocal("pushed", "b1", "r1", blob("p"), isCreate = false)
+        assertEquals(SendOutcome.Done, store.completeSend("pushed", store.beginSend("pushed")!!.version, "r1",
+            blob("landed")))
+        assertTrue("a landed record and two notebook copies are there",
+            setOf("pushed.landed", "b1.notebook", "b2.notebook").all { File(dir, it).isFile })
+        val sequence = store.unsynced().sequence
+        assertEquals(UnsyncedNotes(3, sequence, false, names = notes("n1", "n2", "copy1")),
+            store.unsyncedInNotebook("b1"))
+        assertEquals(UnsyncedNotes(1, sequence, false, names = notes("n3")), store.unsyncedInNotebook("b2"))
+        assertEquals("a notebook with no entry", UnsyncedNotes.NOTHING, store.unsyncedInNotebook("b3"))
+        assertThrows(IllegalArgumentException::class.java) { store.unsyncedInNotebook("../b1") }
+    }
+
+    @Test fun `an intact first write counts in the notebook its header names, and one cut short counts nowhere`() {
+        store.saveLocal("waiting", "b1", "r1", blob("a"), isCreate = false)
+        // Behind the store's back, all in notebook b2: an intact first write that never got its name, one cut short,
+        // and an intact write beside an entry, which recovery drops unread.
+        val complete = PendingEntry("stranded", "b2", PendingEntry.State.UPSERT, 9, "r9", false, blob = blob("c"))
+        File(dir, "stranded.note.new").writeBytes(PendingCodec.encodeEntry(complete))
+        File(dir, "cut.note.new").writeBytes(PendingCodec.encodeEntry(complete.copy(noteUid = "cut")).copyOf(20))
+        File(dir, "waiting.note.new").writeBytes(PendingCodec.encodeEntry(complete.copy(noteUid = "waiting")))
+        val before = filesOf(dir)
+        val fresh = restarted()
+        val sequence = fresh.unsynced().sequence
+        assertEquals(UnsyncedNotes(1, sequence, false, names = notes("stranded")), fresh.unsyncedInNotebook("b2"))
+        assertEquals("the entry's own header decides", UnsyncedNotes(1, sequence, false, names = notes("waiting")),
+            fresh.unsyncedInNotebook("b1"))
+        assertEquals("no recovery ran and nothing was written", before, filesOf(dir))
+    }
+
+    @Test fun `each file that cannot be placed in a notebook makes every notebook's count uncountable, and is named`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        store.saveLocal("n2", "b2", "r1", blob("b"), isCreate = false)
+        val sequence = store.unsynced().sequence
+        val other = PendingEntry("n9", "b1", PendingEntry.State.UPSERT, 1, "r1", false, blob = blob("c"))
+        val cases = linkedMapOf(
+            "an entry whose header cannot be read" to ("damaged.note" to byteArrayOf(0)),
+            "a file of a kind this build does not know" to ("n3.draft" to blob("kept by a newer build")),
+            "a first write whose header cannot be read" to
+                ("n4.note.new" to withFormatVersion(PendingCodec.encodeEntry(other.copy(noteUid = "n4")), 3)),
+            "a name that is not an Etebase uid" to
+                ("bad.uid.note" to PendingCodec.encodeEntry(other.copy(noteUid = "bad.uid"))),
+            "a header that names another note" to ("n5.note" to File(dir, "n1.note").readBytes()),
+        )
+        for ((case, file) in cases) {
+            val (name, bytes) = file
+            val written = File(dir, name).also { it.writeBytes(bytes) }
+            val named = name.removeSuffix(".new")
+            assertEquals(case, UnsyncedNotes(2, sequence, unreadable = true, names = notes("n1") + named),
+                store.unsyncedInNotebook("b1"))
+            assertEquals(case, UnsyncedNotes(2, sequence, unreadable = true, names = notes("n2") + named),
+                store.unsyncedInNotebook("b2"))
+            assertEquals(case, UnsyncedNotes(1, sequence, unreadable = true, names = setOf(named)),
+                store.unsyncedInNotebook("b3"))
+            assertTrue(written.delete())
+        }
+        assertEquals(UnsyncedNotes(1, sequence, false, names = notes("n1")), store.unsyncedInNotebook("b1"))
+    }
+
+    @Test fun `while the store cannot be listed every notebook's count says so, and one never made counts nothing`() {
+        val s = identityStore()
+        val v = saved(s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false))
+        unlisted(s)
+        for (notebook in listOf("b1", "b2")) {
+            assertEquals(notebook, UnsyncedNotes(0, v, unreadable = true, listed = false),
+                s.unsyncedInNotebook(notebook))
+        }
+        PendingNotesStore.listFilesForTesting = null
+        val root = tmp.newFolder("never_backup")
+        assertEquals(UnsyncedNotes.NOTHING, identityStore(root, creationId = "gen-2").unsyncedInNotebook("b1"))
+        assertEquals("asking makes nothing", emptySet<String>(), namesIn(root))
+    }
+
+    @Test fun `a notebook's count runs no recovery, writes nothing, and withdraws the acknowledgement`() {
+        identifyDirectories()
+        val noBackup = tmp.newFolder("no_backup")
+        val s = identityStore(noBackup)
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        unlisted(s)
+        assertEquals(DiscardOutcome.Acknowledged, s.discardStore(s.unsynced()))
+        PendingNotesStore.listFilesForTesting = null
+        // Behind the store's back: an intact first write that recovery would commit.
+        val stranded = PendingEntry("n9", "b1", PendingEntry.State.UPSERT, 9, "r9", false, blob = blob("c"))
+        File(s.dir, "n9.note.new").writeBytes(PendingCodec.encodeEntry(stranded))
+        val before = filesOf(s.dir)
+        PendingNotesStore.resetForTesting()
+        val fresh = identityStore(noBackup)
+        assertEquals(UnsyncedNotes(2, 1, false, names = notes("n1", "n9")), fresh.unsyncedInNotebook("b1"))
+        assertNull("withdrawn, as a count withdraws it", permitsOf(s).acknowledgement(s.dir.name))
+        assertFalse(fresh.acknowledged())
+        assertEquals("no recovery ran and nothing was written in the store", before, filesOf(s.dir))
+
+        // While the acknowledgement cannot be shown gone, a notebook could not be counted, and names what it holds.
+        val record = File(permitsOf(s).root, s.dir.name + ".acknowledgement")
+        assertTrue(record.mkdir() && File(record, "x").createNewFile())
+        PendingNotesStore.resetForTesting()
+        val stuck = identityStore(noBackup)
+        assertEquals(UnsyncedNotes(2, 1, unreadable = true, names = notes("n1", "n9")), stuck.unsyncedInNotebook("b1"))
+        assertEquals(UnsyncedNotes(0, 1, unreadable = true), stuck.unsyncedInNotebook("b2"))
+        assertEquals(before, filesOf(s.dir))
+    }
+
+    @Test fun `a notebook's discard removes only its own readable entries, and every other file stays byte for byte`() {
+        val noBackup = tmp.newFolder("no_backup")
+        val s = identityStore(noBackup)
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
+        s.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, s.hold("n2", HeldReason.LOST_ACCESS, now = 5))
+        s.saveLocal("n3", "b2", "r1", blob("c"), isCreate = false, notebookCopy = blob("key b2"))
+        s.editorOpened("pushed")
+        s.saveLocal("pushed", "b1", "r1", blob("p"), isCreate = false)
+        assertEquals(SendOutcome.Done, s.completeSend("pushed", s.beginSend("pushed")!!.version, "r1", blob("landed")))
+        val shown = s.unsyncedInNotebook("b1")
+        val other = s.unsyncedInNotebook("b2")
+        val kept = filesOf(s.dir) - setOf("n1.note", "n2.note")
+        val root = File(noBackup, PendingNotesDiscardPermits.ROOT)
+        val records = namesIn(root)
+        assertEquals(NotebookDiscard.Done(2, 0), s.discardNotebook("b1", shown))
+        assertEquals("the notebook copies, the landed record, the counter and the other notebook's entry", kept,
+            filesOf(s.dir))
+        assertEquals("no permit and no acknowledgement", records, namesIn(root))
+        assertEquals(UnsyncedNotes.NOTHING, s.unsyncedInNotebook("b1"))
+        assertEquals("the sequence did not move, so the other notebook's answer still holds", other,
+            s.unsyncedInNotebook("b2"))
+        assertTrue("the store stays open",
+            s.saveLocal("n4", "b1", "r1", blob("d"), isCreate = false) is SaveOutcome.Saved)
+    }
+
+    @Test fun `an entry whose text cannot be read is kept, and so is one whose header cannot be read`() {
+        store.saveLocal("n1", "b1", "r1", blob("one"), isCreate = false)
+        store.saveLocal("n2", "b1", "r1", blob("two"), isCreate = false)
+        // The header still reads on its own; the whole file does not.
+        val file = File(dir, "n2.note")
+        val damaged = file.readBytes().also { it[it.size - 6] = (it[it.size - 6].toInt() xor 0x40).toByte() }
+        file.writeBytes(damaged)
+        val shown = store.unsyncedInNotebook("b1")
+        assertEquals("counted by its header", UnsyncedNotes(2, 2, false, names = notes("n1", "n2")), shown)
+        assertEquals(NotebookDiscard.Done(1, 1), store.discardNotebook("b1", shown))
+        assertArrayEquals("kept as it was", damaged, file.readBytes())
+        assertEquals(Read.Missing, store.read("n1"))
+
+        // One whose header cannot be read cannot be placed: every notebook could not be counted, and it stays too.
+        store.saveLocal("n3", "b1", "r1", blob("three"), isCreate = false)
+        File(dir, "n4.note").writeBytes(byteArrayOf(0))
+        val uncounted = store.unsyncedInNotebook("b1")
+        assertEquals(UnsyncedNotes(3, 3, unreadable = true, names = notes("n2", "n3", "n4")), uncounted)
+        assertEquals("the discard says the notebook could not be counted", NotebookDiscard.Done(1, 1, uncounted = true),
+            store.discardNotebook("b1", uncounted))
+        assertEquals(setOf("n2.note", "n4.note", "sequence"), dir.list()!!.toSet())
+        assertArrayEquals(damaged, file.readBytes())
+        // A notebook with no entry of its own deletes nothing, and still could not be counted: n4 may be its.
+        val none = store.unsyncedInNotebook("b2")
+        assertEquals(UnsyncedNotes(1, 3, unreadable = true, names = notes("n4")), none)
+        assertEquals(NotebookDiscard.Done(0, 0, uncounted = true), store.discardNotebook("b2", none))
+        assertEquals(setOf("n2.note", "n4.note", "sequence"), dir.list()!!.toSet())
+    }
+
+    @Test fun `while the counter cannot be read a notebook could not be counted, and its discard says so`() {
+        val v = saved(store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false))
+        val sequence = File(dir, "sequence")
+        assertTrue(sequence.delete() && sequence.mkdir())
+        val shown = store.unsyncedInNotebook("b1")
+        assertEquals("the instance's high-water mark for the sequence", UnsyncedNotes(1, v, unreadable = true,
+            names = notes("n1")), shown)
+        assertEquals("a notebook with no entry holds nothing", UnsyncedNotes.NOTHING, store.unsyncedInNotebook("b2"))
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), store.discardNotebook("b1", shown))
+        assertEquals("only the counter is left", setOf("sequence"), dir.list()!!.toSet())
+    }
+
+    @Test fun `a held conflict copy takes its original with it, and one whose original cannot be read stays`() {
+        val next = linkedCopyWhoseOriginalReadsAgain()
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, next.hold("copy1", HeldReason.NOTEBOOK_DELETED, now = 5))
+        val shown = next.unsyncedInNotebook("b1")
+        assertEquals(notes("copy1", "orig"), shown.names)
+        // While the original cannot be removed, the copy is not removed either, so it keeps its link and is not sent.
+        val files = filesOf(dir)
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "orig.note") throw java.io.IOException("stopped") }
+        assertEquals(NotebookDiscard.Partly(0, 2), next.discardNotebook("b1", shown))
+        PendingNotesStore.beforeRemoveForTesting = null
+        assertEquals("both stay, byte for byte", files, filesOf(dir))
+        assertEquals(NotebookDiscard.Done(1, 0), next.discardNotebook("b1", shown))
+        assertTrue(next.scan().entries.isEmpty())
+        assertEquals(Read.Missing, next.read("orig"))
+
+        // The original is there, its header reads and its text does not: the copy cannot go without it, and it is
+        // kept for being unreadable.
+        PendingNotesStore.resetForTesting()
+        val s = open(tmp.newFolder("linked"))
+        s.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        PendingNotesStore.beforeOriginalRemovedForTesting = { throw IllegalStateException("process died") }
+        assertThrows(IllegalStateException::class.java) {
+            s.replaceWithNewNote("orig", s.entry("orig").version, "srv", newNote())
+        }
+        PendingNotesStore.beforeOriginalRemovedForTesting = null
+        val original = File(s.dir, "orig.note")
+        original.writeBytes(original.readBytes().also { it[it.size - 6] = (it[it.size - 6].toInt() xor 0x40).toByte() })
+        PendingNotesStore.resetForTesting()
+        val after = open(s.dir)
+        assertEquals("orig", after.entry("copy1").origin?.noteUid)
+        val linked = after.unsyncedInNotebook("b1")
+        assertEquals(UnsyncedNotes(2, linked.sequence, false, names = notes("copy1", "orig")), linked)
+        val before = filesOf(s.dir)
+        assertEquals(NotebookDiscard.Partly(0, 2), after.discardNotebook("b1", linked))
+        assertEquals("both stay, byte for byte", before, filesOf(s.dir))
+    }
+
+    @Test fun `a save, a rebase or a release since the shown answer gives Changed, in this notebook or another`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        store.saveLocal("n2", "b2", "r1", blob("b"), isCreate = false)
+        fun changedBy(change: String, make: () -> Unit) {
+            val shown = store.unsyncedInNotebook("b1")
+            make()
+            val before = filesOf(dir)
+            assertEquals(change, NotebookDiscard.Changed(store.unsyncedInNotebook("b1")),
+                store.discardNotebook("b1", shown))
+            assertEquals("nothing was deleted: $change", before, filesOf(dir))
+        }
+        changedBy("a save in another notebook") {
+            store.saveLocal("n2", "b2", "r2", blob("typed in the other notebook"), isCreate = false)
+        }
+        changedBy("a save in this one") {
+            store.saveLocal("n1", "b1", "r2", blob("typed in this one"), isCreate = false)
+        }
+        changedBy("a new note in this one") { store.saveLocal("n3", "b1", "r1", blob("a new note"), isCreate = false) }
+        changedBy("a rebase") { assertTrue(store.rebase("n1", entry("n1").version, "r2", "r3", blob("rebased"))) }
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.READ_ONLY, now = 5))
+        changedBy("a release from holding") { assertTrue(store.release("n1")) }
+    }
+
+    @Test fun `a hold, a recorded failure or a completed send since the shown answer leaves it covered`() {
+        for (uid in listOf("n1", "n2", "n3")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val shown = store.unsyncedInNotebook("b1")
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.NOTEBOOK_DELETED, now = 5))
+        assertTrue(store.recordFailure("n2", entry("n2").version, "NETWORK", now = 6))
+        assertEquals(SendOutcome.Done, store.completeSend("n3", store.beginSend("n3")!!.version, "r1", blob("landed")))
+        assertEquals(NotebookDiscard.Done(2, 0), store.discardNotebook("b1", shown))
+        assertEquals(UnsyncedNotes.NOTHING, store.unsyncedInNotebook("b1"))
+    }
+
+    @Test fun `a confirmation given while the store could not be listed deletes nothing of a notebook once it lists`() {
+        val s = identityStore()
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
+        unlisted(s)
+        val shown = s.unsyncedInNotebook("b1")
+        val empty = s.unsyncedInNotebook("b2")
+        assertFalse(shown.listed || empty.listed)
+        PendingNotesStore.listFilesForTesting = null
+        val before = filesOf(s.dir)
+        assertEquals("asked again with the real count", NotebookDiscard.Changed(s.unsyncedInNotebook("b1")),
+            s.discardNotebook("b1", shown))
+        assertEquals("nothing of that notebook is there", NotebookDiscard.Done(0, 0), s.discardNotebook("b2", empty))
+        assertEquals("nothing was deleted, byte for byte", before, filesOf(s.dir))
+    }
+
+    @Test fun `while the store cannot be listed a notebook's discard deletes and records nothing`() {
+        identifyDirectories()
+        val noBackup = tmp.newFolder("no_backup")
+        val s = identityStore(noBackup)
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        val before = filesOf(s.dir)
+        val root = File(noBackup, PendingNotesDiscardPermits.ROOT)
+        val records = namesIn(root)
+        unlisted(s)
+        val shown = s.unsyncedInNotebook("b1")
+        assertEquals(NotebookDiscard.NotListed, s.discardNotebook("b1", shown))
+        assertEquals("no acknowledgement", RemovalCheck.Unlisted, s.removalCheck())
+        // A new instance runs its recovery first, which cannot list the store, so it throws before anything goes.
+        PendingNotesStore.resetForTesting()
+        val fresh = identityStore(noBackup)
+        assertThrows(java.io.IOException::class.java) { fresh.discardNotebook("b1", shown) }
+        assertEquals(RemovalCheck.Unlisted, fresh.removalCheck())
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals("nothing was deleted, byte for byte", before, filesOf(s.dir))
+        assertEquals("and nothing was recorded", records, namesIn(root))
+    }
+
+    /** Records every listing and permit read, and fails any record or withdrawal, while [block] runs. */
+    private fun <T> unseen(block: () -> T): Triple<T, List<String>, List<String>> {
+        val listed = ArrayList<String>()
+        val read = ArrayList<String>()
+        PendingNotesStore.listFilesForTesting = { d -> listed += d.path; d.listFiles() }
+        PendingNotesDiscardPermits.onReadForTesting = { read += it.name }
+        PendingNotesDiscardPermits.beforeRecordForTesting = { throw AssertionError("a record of ${it.name}") }
+        PendingNotesDiscardPermits.beforeDeleteForTesting = { throw AssertionError("a withdrawal of ${it.name}") }
+        try {
+            return Triple(block(), listed, read)
+        } finally {
+            PendingNotesStore.listFilesForTesting = null
+            PendingNotesDiscardPermits.onReadForTesting = null
+            PendingNotesDiscardPermits.beforeRecordForTesting = null
+            PendingNotesDiscardPermits.beforeDeleteForTesting = null
+        }
+    }
+
+    /**
+     * Store A's folder made a link to [target], given store B beside it, which holds a saved note in notebook b1, and
+     * A acknowledged. A notebook's count lists nothing, reads nothing (B's counter included, so the sequence is A's
+     * own 0), reads no permit, records and withdraws nothing, and changes nothing on disk, B and the target included:
+     * for every notebook it could not be counted and is not listed, in a new instance as well. A's discard throws for
+     * every confirmation, B's own count of b1 included, and changes nothing.
+     */
+    private fun assertNotebookNeverFollowsLink(target: (PendingNotesStore) -> File) {
+        identifyWithoutFollowing()
+        val noBackup = tmp.newFolder("no_backup")
+        val b = identityStore(noBackup, creationId = "gen-2")
+        b.saveLocal("n1", "b1", "r1", blob("B's own note"), isCreate = false, notebookCopy = blob("key b1"))
+        val bCount = b.unsyncedInNotebook("b1")
+        val to = target(b)
+        val folder = PendingNotesStore.identityDir(noBackup, "io.silentsuite", "alice@example.invalid", "gen-1")
+        linked(folder, to)
+        val a = identityStore(noBackup)
+        assertEquals(DiscardOutcome.Acknowledged, a.discardStore(a.unsynced()))
+        val before = treeOf(noBackup) + treeOf(to)
+        val unlistedLink = UnsyncedNotes(0, 0, unreadable = true, listed = false)
+        for (s in listOf(a, PendingNotesStore.resetForTesting().let { identityStore(noBackup) })) {
+            val (answers, listed, read) = unseen { listOf("b1", "b2").map { s.unsyncedInNotebook(it) } }
+            assertEquals(listOf(unlistedLink, unlistedLink), answers)
+            assertEquals("nothing is listed", emptyList<String>(), listed)
+            assertEquals("no permit or acknowledgement is read", emptyList<String>(), read)
+            for (confirmed in listOf(answers[0], bCount)) {
+                val (thrown, discardListed, discardRead) = unseen {
+                    assertThrows(java.io.IOException::class.java) { s.discardNotebook("b1", confirmed) }
+                }
+                assertNotNull(thrown)
+                assertEquals("nothing is listed", emptyList<String>(), discardListed)
+                assertEquals("nothing is read", emptyList<String>(), discardRead)
+            }
+            assertEquals("nothing changes on disk", before, treeOf(noBackup) + treeOf(to))
+            assertTrue("the acknowledgement still holds", s.acknowledged())
+        }
+        assertEquals("B's count", bCount, b.unsyncedInNotebook("b1"))
+        assertTrue("the link is still a link", Files.isSymbolicLink(folder.toPath()))
+    }
+
+    @Test fun `a notebook's count and discard of a store folder that is a link to another store follow nothing`() =
+        assertNotebookNeverFollowsLink { b -> b.dir }
+
+    @Test fun `a notebook's count and discard of a store folder that is a link to a file follow nothing`() =
+        assertNotebookNeverFollowsLink { tmp.newFile("plain").also { it.writeBytes(blob("not a store")) } }
+
+    @Test fun `a notebook's count and discard of a store folder that is a link to nothing follow nothing`() =
+        assertNotebookNeverFollowsLink { File(tmp.root, "missing") }
+
+    @Test fun `a notebook's count of a store folder whose lstat cannot tell lists, reads and withdraws nothing`() {
+        identifyDirectories()
+        val noBackup = tmp.newFolder("no_backup")
+        val s = identityStore(noBackup)
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
+        val v = saved(s.saveLocal("n2", "b2", "r1", blob("b"), isCreate = false))
+        val counted = s.unsyncedInNotebook("b1")
+        assertEquals(UnsyncedNotes(1, v, false, names = notes("n1")), counted)
+        val asked = HashSet<String>()
+        PendingNotesStore.linkForTesting = { d -> asked += d.path; null }
+        assertEquals(DiscardOutcome.Acknowledged, s.discardStore(s.unsynced()))
+        val before = treeOf(noBackup)
+        val (answers, listed, read) = unseen { listOf("b1", "b2").map { s.unsyncedInNotebook(it) } }
+        assertEquals("the instance's own sequence", List(2) { UnsyncedNotes(0, v, unreadable = true, listed = false) },
+            answers)
+        assertEquals("nothing is listed", emptyList<String>(), listed)
+        assertEquals("no permit or acknowledgement is read", emptyList<String>(), read)
+        for (confirmed in listOf(answers[0], counted)) {
+            assertThrows(java.io.IOException::class.java) { unseen { s.discardNotebook("b1", confirmed) } }
+        }
+        assertEquals("nothing changes on disk", before, treeOf(noBackup))
+        assertTrue("the acknowledgement still holds", s.acknowledged())
+        assertEquals("only the store's own folder was asked about", setOf(s.dir.path), asked)
+
+        // Once lstat tells, the folder is followed: the count withdraws the acknowledgement, and the discard goes.
+        PendingNotesStore.linkForTesting = null
+        assertEquals(counted, s.unsyncedInNotebook("b1"))
+        assertFalse(s.acknowledged())
+        assertEquals(NotebookDiscard.Done(1, 0), s.discardNotebook("b1", counted))
+    }
+
+    @Test fun `a removal that fails keeps that entry while the others go, and the same confirmation finishes later`() {
+        val failures = listOf(java.io.IOException("could not remove it"), IllegalStateException("a removal that broke"))
+        for ((n, failure) in failures.withIndex()) {
+            val s = open(tmp.newFolder("store$n"))
+            for (uid in listOf("n1", "n2", "n3")) s.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+            val shown = s.unsyncedInNotebook("b1")
+            PendingNotesStore.beforeRemoveForTesting = { if (it.name == "n2.note") throw failure }
+            assertEquals("$failure", NotebookDiscard.Partly(2, 1), s.discardNotebook("b1", shown))
+            PendingNotesStore.beforeRemoveForTesting = null
+            assertEquals("$failure", setOf("n2.note", "sequence"), s.dir.list()!!.toSet())
+            assertEquals("$failure", NotebookDiscard.Done(1, 0), s.discardNotebook("b1", shown))
+            assertEquals("$failure", setOf("sequence"), s.dir.list()!!.toSet())
+        }
+    }
+
+    @Test fun `running out of memory on one entry keeps it and the rest, and nothing is thrown`() {
+        for (uid in listOf("n1", "n2", "n3")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val shown = store.unsyncedInNotebook("b1")
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "n2.note") throw OutOfMemoryError("a large entry") }
+        assertEquals(NotebookDiscard.Partly(1, 2), store.discardNotebook("b1", shown))
+        PendingNotesStore.beforeRemoveForTesting = null
+        assertEquals(setOf("n2.note", "n3.note", "sequence"), dir.list()!!.toSet())
+        assertEquals(NotebookDiscard.Done(2, 0), store.discardNotebook("b1", shown))
+    }
+
+    @Test fun `a cleared store counts a notebook from disk and refuses its discard, and a dropped one refuses both`() {
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        PendingNotesStore.beforeClearForTesting = { throw java.io.IOException("could not clear the pending store") }
+        assertThrows(java.io.IOException::class.java) { store.clearAll() }
+        PendingNotesStore.beforeClearForTesting = null
+        val left = store.unsyncedInNotebook("b1")
+        assertEquals(UnsyncedNotes(1, 1, false, names = notes("n1")), left)
+        val before = filesOf(dir)
+        assertThrows(PendingNotesStore.Cleared::class.java) { store.discardNotebook("b1", left) }
+        assertEquals(before, filesOf(dir))
+
+        val other = open(tmp.newFolder("other"))
+        other.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        assertEquals(DiscardOutcome.Done, other.discardStore(other.unsynced()))
+        other.unregister()
+        assertThrows(IllegalStateException::class.java) { other.unsyncedInNotebook("b1") }
+        assertThrows(IllegalStateException::class.java) { other.discardNotebook("b1", UnsyncedNotes.NOTHING) }
+    }
+
+    @Test fun `a save that holds the lock first is seen as Changed by a notebook's discard`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        val shown = store.unsyncedInNotebook("b1")
+        val inSave = java.util.concurrent.CountDownLatch(1)
+        val finishSave = java.util.concurrent.CountDownLatch(1)
+        // The save stops at its first rename, the counter's, while it holds the lock.
+        PendingNotesStore.beforeRenameForTesting = { target ->
+            if (target.name == "sequence" && inSave.count > 0) {
+                inSave.countDown()
+                finishSave.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }
+        var saved: SaveOutcome? = null
+        val saving = kotlin.concurrent.thread {
+            saved = store.saveLocal("n1", "b1", "r2", blob("typed while the question was open"), isCreate = false)
+        }
+        var outcome: NotebookDiscard? = null
+        var discarding: Thread? = null
+        try {
+            assertTrue(inSave.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            val thread = kotlin.concurrent.thread { outcome = store.discardNotebook("b1", shown) }
+            discarding = thread
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10)
+            while (thread.state != Thread.State.BLOCKED) {
+                assertTrue("the discard waits for the lock the save holds", System.nanoTime() < deadline)
+                Thread.sleep(1)
+            }
+        } finally {
+            // On every path, so that neither thread outlives this test and meets the next one's seams.
+            finishSave.countDown()
+            saving.join(10_000)
+            discarding?.join(10_000)
+            PendingNotesStore.beforeRenameForTesting = null
+        }
+        assertTrue(saved is SaveOutcome.Saved)
+        assertEquals(NotebookDiscard.Changed(store.unsyncedInNotebook("b1")), outcome)
+        assertArrayEquals(blob("typed while the question was open"), entry("n1").blob)
+    }
+
+    @Test fun `a notebook's count whose listing lacks the counter could not be counted, and its discard deletes only what that listing placed`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        store.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        val v = saved(store.saveLocal("n3", "b2", "r1", blob("c"), isCreate = false))
+        val counted = store.unsyncedInNotebook("b1")
+        assertEquals(UnsyncedNotes(2, v, false, names = notes("n1", "n2")), counted)
+        val before = filesOf(dir)
+        // A listing that comes back with nothing, and says nothing, while the counter is there by path.
+        listingKeeps(store)
+        for (notebook in listOf("b1", "b2", "b3")) {
+            assertEquals(notebook, UnsyncedNotes(0, v, unreadable = true), store.unsyncedInNotebook(notebook))
+        }
+        val empty = store.unsyncedInNotebook("b1")
+        assertEquals("the counted answer covers none that could not be counted", NotebookDiscard.Changed(empty),
+            store.discardNotebook("b1", counted))
+        assertEquals(NotebookDiscard.Done(0, 0, uncounted = true), store.discardNotebook("b1", empty))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals("nothing was deleted, byte for byte", before, filesOf(dir))
+        // One that stopped after n1.note, before n2.note and the counter.
+        listingKeeps(store, "n1.note")
+        val short = store.unsyncedInNotebook("b1")
+        assertEquals(UnsyncedNotes(1, v, unreadable = true, names = notes("n1")), short)
+        assertEquals(UnsyncedNotes(0, v, unreadable = true), store.unsyncedInNotebook("b2"))
+        assertEquals("only what that listing placed goes", NotebookDiscard.Done(1, 0, uncounted = true),
+            store.discardNotebook("b1", short))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals("every other file stays, byte for byte", before - "n1.note", filesOf(dir))
+    }
+
+    @Test fun `a lost counter, a store never made and an empty folder are no short listing for a notebook, and a counter check that fails is no absence`() {
+        val noBackup = tmp.newFolder("no_backup")
+        assertEquals("a store never made", UnsyncedNotes.NOTHING,
+            identityStore(noBackup, "gen-never").unsyncedInNotebook("b1"))
+        val empty = identityStore(noBackup, "gen-empty")
+        assertTrue(empty.dir.mkdirs())
+        assertEquals("an empty folder", UnsyncedNotes.NOTHING, empty.unsyncedInNotebook("b1"))
+        val s = identityStore(noBackup)
+        val v = saved(s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false))
+        val counter = File(s.dir, "sequence")
+        // Its listing leaves out the counter, and the counter's check fails: that is no absence.
+        PendingNotesStore.listFilesForTesting = { d ->
+            if (d.name == s.dir.name) d.listFiles()?.filter { it.name != "sequence" }?.toTypedArray() else d.listFiles()
+        }
+        PendingNotesStore.presenceForTesting = { f -> if (f == counter) PendingNotesStore.Presence.UNKNOWN else null }
+        assertEquals(UnsyncedNotes(1, v, unreadable = true, names = notes("n1")), s.unsyncedInNotebook("b1"))
+        // With the counter shown absent, as for one lost after the listing, the notebook is counted.
+        PendingNotesStore.presenceForTesting = { f -> if (f == counter) PendingNotesStore.Presence.ABSENT else null }
+        assertEquals(UnsyncedNotes(1, v, false, names = notes("n1")), s.unsyncedInNotebook("b1"))
+        PendingNotesStore.presenceForTesting = null
+        PendingNotesStore.listFilesForTesting = null
+        // A counter that is lost: counted from its listing, as before, and its discard finishes.
+        assertTrue(counter.delete())
+        val lost = s.unsyncedInNotebook("b1")
+        assertEquals(UnsyncedNotes(1, v, false, names = notes("n1")), lost)
+        assertEquals(NotebookDiscard.Done(1, 0), s.discardNotebook("b1", lost))
+    }
+
+    @Test fun `a notebook's discard lists again, and what the first listing left out stays and is reported`() {
+        for (uid in listOf("n1", "n2")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val shown = store.unsyncedInNotebook("b1")
+        assertEquals(notes("n1", "n2"), shown.names)
+        val n2 = File(dir, "n2.note").readBytes()
+        // Only the discard's own count leaves out n2.note, and it still lists the counter.
+        var listings = 0
+        PendingNotesStore.listFilesForTesting = { d ->
+            val all = d.listFiles()
+            if (d.name == dir.name && listings++ == 0) all?.filter { it.name != "n2.note" }?.toTypedArray() else all
+        }
+        assertEquals("n2 stays, and is not said to be gone", NotebookDiscard.Partly(1, 1),
+            store.discardNotebook("b1", shown))
+        assertEquals("the discard's two listings", 2, listings)
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n2.note", "sequence"), dir.list()!!.toSet())
+        assertArrayEquals("nothing more was deleted for it", n2, File(dir, "n2.note").readBytes())
+
+        // A second listing that comes back with nothing cannot count the notebook, and the discard says so. The read
+        // runs the recovery the removal left owed, so that only the discard lists below.
+        val again = store.unsyncedInNotebook("b1")
+        assertTrue(store.read("n2") is Read.Present)
+        listings = 0
+        PendingNotesStore.listFilesForTesting = { d ->
+            val all = d.listFiles()
+            if (d.name == dir.name && listings++ > 0) emptyArray() else all
+        }
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), store.discardNotebook("b1", again))
+        PendingNotesStore.listFilesForTesting = null
+
+        // A removal that fails keeps its entry and gives Partly by itself, also when the second listing leaves it out.
+        for (uid in listOf("n3", "n4", "n5")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val three = store.unsyncedInNotebook("b1")
+        listings = 0
+        PendingNotesStore.listFilesForTesting = { d ->
+            val all = d.listFiles()
+            if (d.name == dir.name && listings++ > 0) all?.filter { it.name != "n4.note" }?.toTypedArray() else all
+        }
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "n4.note") throw java.io.IOException("stopped") }
+        assertEquals(NotebookDiscard.Partly(2, 1), store.discardNotebook("b1", three))
+        PendingNotesStore.beforeRemoveForTesting = null
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n4.note", "sequence"), dir.list()!!.toSet())
+    }
+
+    @Test fun `a discard whose two listings leave out a confirmed entry finds it by path, and never says it went`() {
+        fun leaveOut(name: String, folder: File = dir) {
+            PendingNotesStore.listFilesForTesting = { d ->
+                val all = d.listFiles()
+                if (d.name == folder.name) all?.filter { it.name != name }?.toTypedArray() else all
+            }
+        }
+        for (uid in listOf("n1", "n2")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val shown = store.unsyncedInNotebook("b1")
+        val n2 = File(dir, "n2.note").readBytes()
+        leaveOut("n2.note")
+        assertEquals("n2 stays, and is not said to be gone", NotebookDiscard.Partly(1, 1),
+            store.discardNotebook("b1", shown))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n2.note", "sequence"), dir.list()!!.toSet())
+        assertArrayEquals("nothing more was deleted for it", n2, File(dir, "n2.note").readBytes())
+
+        // With the only entry left out the notebook reads as holding nothing, and that is not taken for gone.
+        val alone = store.unsyncedInNotebook("b1")
+        assertEquals(notes("n2"), alone.names)
+        leaveOut("n2.note")
+        assertEquals(NotebookDiscard.Partly(0, 1), store.discardNotebook("b1", alone))
+        PendingNotesStore.listFilesForTesting = null
+        assertArrayEquals(n2, File(dir, "n2.note").readBytes())
+
+        // Gone from the folder and from both listings: a look that fails counts as there, and only one shown absent is gone.
+        assertTrue(File(dir, "n2.note").delete())
+        PendingNotesStore.presenceForTesting = { f ->
+            if (f.name == "n2.note") PendingNotesStore.Presence.UNKNOWN else null
+        }
+        assertEquals(NotebookDiscard.Partly(0, 1), store.discardNotebook("b1", alone))
+        PendingNotesStore.presenceForTesting = null
+        assertEquals(NotebookDiscard.Done(0, 0), store.discardNotebook("b1", alone))
+
+        // A first write that stopped before its rename counts under its entry's name, and is found as that write.
+        val d = tmp.newFolder("left-out-first-write")
+        val s = PendingNotesStore.open(d, rename = atomicMove)
+        s.saveLocal("n3", "b1", "r1", blob("c"), isCreate = false)
+        val first = PendingEntry("n4", "b1", PendingEntry.State.UPSERT, 1, "r1", false, blob = blob("d"))
+        File(d, "n4.note.new").writeBytes(PendingCodec.encodeEntry(first))
+        val both = s.unsyncedInNotebook("b1")
+        assertEquals(notes("n3", "n4"), both.names)
+        leaveOut("n4.note.new", d)
+        assertEquals(NotebookDiscard.Partly(1, 1), s.discardNotebook("b1", both))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n4.note.new", "sequence"), d.list()!!.toSet())
+
+        // A first write cut short shows nothing of its entry, so the entry left out beside it is still looked up.
+        val b = tmp.newFolder("left-out-beside-cut-write")
+        val r = PendingNotesStore.open(b, rename = atomicMove)
+        for (uid in listOf("n7", "n8")) r.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val beside = r.unsyncedInNotebook("b1")
+        File(b, "n8.note.new").writeBytes(byteArrayOf(0))
+        leaveOut("n8.note", b)
+        assertEquals(NotebookDiscard.Partly(1, 1), r.discardNotebook("b1", beside))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n8.note", "n8.note.new", "sequence"), b.list()!!.toSet())
+
+        // A link that takes the folder's place during the discard: n6 counts, not looked up, and n5, which went, does not.
+        val e = tmp.newFolder("left-out-link")
+        val t = PendingNotesStore.open(e, rename = atomicMove)
+        for (uid in listOf("n5", "n6")) t.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val linked = t.unsyncedInNotebook("b1")
+        leaveOut("n6.note", e)
+        val asked = ArrayList<String>()
+        PendingNotesStore.presenceForTesting = { f ->
+            asked += f.name
+            null
+        }
+        PendingNotesStore.beforeRemoveForTesting = { PendingNotesStore.linkForTesting = { true } }
+        assertEquals(NotebookDiscard.Partly(1, 1), t.discardNotebook("b1", linked))
+        assertFalse("nothing is looked up through it", "n6.note" in asked)
+    }
+
+    @Test fun `a discard's second listing reports what the confirmation does not name, and a file it cannot place stays uncounted`() {
+        // The shown count and the discard's own both leave out n2.note, so only the second listing shows it.
+        for (uid in listOf("n1", "n2")) store.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        var hidden = 2
+        PendingNotesStore.listFilesForTesting = { d ->
+            val all = d.listFiles()
+            if (d.name == dir.name && hidden-- > 0) all?.filter { it.name != "n2.note" }?.toTypedArray() else all
+        }
+        val shown = store.unsyncedInNotebook("b1")
+        assertEquals(notes("n1"), shown.names)
+        assertEquals("n2 is reported, though nothing names it", NotebookDiscard.Partly(1, 1),
+            store.discardNotebook("b1", shown))
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals(setOf("n2.note", "sequence"), dir.list()!!.toSet())
+
+        // n4 is named and left out of the discard's own count, and its second listing cannot place it: the file stays,
+        // which Done's uncounted says, and it is not a Partly as well.
+        val d = tmp.newFolder("second-listing-cannot-place")
+        val s = PendingNotesStore.open(d, rename = atomicMove)
+        for (uid in listOf("n3", "n4")) s.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        val named = s.unsyncedInNotebook("b1")
+        assertEquals(notes("n3", "n4"), named.names)
+        val damaged = byteArrayOf(0)
+        File(d, "n4.note").writeBytes(damaged)
+        hidden = 1
+        PendingNotesStore.listFilesForTesting = { f ->
+            val all = f.listFiles()
+            if (f.name == d.name && hidden-- > 0) all?.filter { it.name != "n4.note" }?.toTypedArray() else all
+        }
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), s.discardNotebook("b1", named))
+        PendingNotesStore.listFilesForTesting = null
+        assertArrayEquals(damaged, File(d, "n4.note").readBytes())
+
+        // n6 the other way round: the discard's own count cannot place it, and its second listing leaves it out.
+        val e = tmp.newFolder("first-listing-cannot-place")
+        val t = PendingNotesStore.open(e, rename = atomicMove)
+        for (uid in listOf("n5", "n6")) t.saveLocal(uid, "b1", "r1", blob(uid), isCreate = false)
+        File(e, "n6.note").writeBytes(damaged)
+        val uncounted = t.unsyncedInNotebook("b1")
+        assertEquals(notes("n5", "n6"), uncounted.names)
+        var listings = 0
+        PendingNotesStore.listFilesForTesting = { f ->
+            val all = f.listFiles()
+            if (f.name == e.name && listings++ > 0) all?.filter { it.name != "n6.note" }?.toTypedArray() else all
+        }
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), t.discardNotebook("b1", uncounted))
+        PendingNotesStore.listFilesForTesting = null
+
+        // A first write that cannot be placed is listed under its own name and named under its entry's.
+        val g = tmp.newFolder("first-write-cannot-place")
+        val u = PendingNotesStore.open(g, rename = atomicMove)
+        u.saveLocal("n7", "b1", "r1", blob("g"), isCreate = false)
+        val other = PendingEntry("n9", "b1", PendingEntry.State.UPSERT, 1, "r1", false, blob = blob("h"))
+        File(g, "n8.note.new").writeBytes(PendingCodec.encodeEntry(other))
+        val written = u.unsyncedInNotebook("b1")
+        assertEquals(notes("n7", "n8"), written.names)
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), u.discardNotebook("b1", written))
+        assertEquals(setOf("n8.note.new", "sequence"), g.list()!!.toSet())
+
+        // A file of a kind this build does not know is listed and named by the same name, whatever it ends in.
+        val h = tmp.newFolder("unknown-kind-write")
+        val w = PendingNotesStore.open(h, rename = atomicMove)
+        w.saveLocal("n9", "b1", "r1", blob("i"), isCreate = false)
+        File(h, "x.draft.new").writeBytes(blob("a newer build's"))
+        val kinds = w.unsyncedInNotebook("b1")
+        assertEquals(notes("n9") + "x.draft.new", kinds.names)
+        assertEquals(NotebookDiscard.Done(1, 0, uncounted = true), w.discardNotebook("b1", kinds))
+        assertEquals(setOf("x.draft.new", "sequence"), h.list()!!.toSet())
+    }
+
+    @Test fun `a discard looks up no confirmed name that a listing shows in another notebook`() {
+        store.saveLocal("n1", "b2", "r1", blob("a"), isCreate = false)
+        assertEquals("not this notebook's now", NotebookDiscard.Done(0, 0),
+            store.discardNotebook("b1", UnsyncedNotes(1, 1, unreadable = false, names = notes("n1"))))
+        assertTrue(File(dir, "n1.note").exists())
+
+        // The same for a first write, which a listing shows by its own name and the confirmation names by its entry's.
+        val d = tmp.newFolder("first-write-elsewhere")
+        val s = PendingNotesStore.open(d, rename = atomicMove)
+        s.saveLocal("n3", "b2", "r1", blob("c"), isCreate = false)
+        val first = PendingEntry("n2", "b2", PendingEntry.State.UPSERT, 1, "r1", false, blob = blob("b"))
+        File(d, "n2.note.new").writeBytes(PendingCodec.encodeEntry(first))
+        assertEquals(NotebookDiscard.Done(0, 0),
+            s.discardNotebook("b1", UnsyncedNotes(1, 1, unreadable = false, names = notes("n2"))))
+        assertTrue(File(d, "n2.note.new").exists())
+    }
+
+    @Test fun `a discard of nothing owes no directory sync, whoever left an unlink unsynced`() {
+        var failing = 0
+        val syncs = ArrayList<String>()
+        val s = PendingNotesStore.open(dir, syncDirectory = { d ->
+            syncs += d.name
+            if (failing > 0) {
+                failing--
+                throw java.io.IOException("could not sync the store's directory")
+            }
+        }, rename = atomicMove)
+        // An upload that landed removes its entry, and that removal's sync fails: no unsynced text went.
+        s.saveLocal("n9", "b9", "r1", blob("a"), isCreate = false)
+        val version = s.beginSend("n9")!!.version
+        failing = 1
+        assertThrows(java.io.IOException::class.java) { s.completeSend("n9", version, "r2", blob("a")) }
+        assertFalse(File(dir, "n9.note").exists())
+        // A leave or delete of a notebook that holds nothing confirmed no discard, so it reports none, with or without
+        // the sync the store still owes.
+        failing = 1
+        syncs.clear()
+        assertEquals(NotebookDiscard.Done(0, 0), s.discardNotebook("b1", UnsyncedNotes.NOTHING))
+        assertEquals("that sync stays owed", emptyList<String>(), syncs)
+        // The same for an acknowledgement given while the store could not be listed: the notebook's loop walked nothing.
+        val unlisted = UnsyncedNotes(0, 0, unreadable = true, listed = false)
+        assertEquals(NotebookDiscard.Done(0, 0), s.discardNotebook("b1", unlisted))
+        assertEquals("that sync stays owed", emptyList<String>(), syncs)
+        failing = 0
+        assertEquals(NotebookDiscard.Done(0, 0), s.discardNotebook("b1", UnsyncedNotes(1, 0, false)))
+        assertEquals("the next confirmed discard makes it", listOf(dir.name), syncs)
+    }
+
+    @Test fun `a removal that failed after its unlink never says nothing was deleted, and Done waits for the sync it owes`() {
+        var failing = 0
+        val syncs = ArrayList<String>()
+        val s = PendingNotesStore.open(dir, syncDirectory = { d ->
+            syncs += d.name
+            if (failing > 0) {
+                failing--
+                throw java.io.IOException("could not sync the store's directory")
+            }
+        }, rename = atomicMove)
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        s.saveLocal("n2", "b2", "r1", blob("b"), isCreate = false)
+        val shown = s.unsyncedInNotebook("b1")
+        // The sync right after n1.note's unlink fails: the entry is gone from the folder, and that may not last.
+        failing = 1
+        assertEquals(NotebookDiscard.Partly(0, 1, unsure = true), s.discardNotebook("b1", shown))
+        assertEquals(setOf("n2.note", "sequence"), dir.list()!!.toSet())
+        // The same confirmation again finds nothing left in the notebook, and is Done only once that sync worked.
+        failing = 1
+        syncs.clear()
+        assertEquals(NotebookDiscard.Partly(0, 0, unsure = true), s.discardNotebook("b1", shown))
+        assertEquals(listOf(dir.name), syncs)
+        syncs.clear()
+        assertEquals(NotebookDiscard.Done(0, 0), s.discardNotebook("b1", shown))
+        assertEquals("the sync it owed", listOf(dir.name), syncs)
+        syncs.clear()
+        assertEquals("and none once nothing is owed", NotebookDiscard.Done(0, 0), s.discardNotebook("b1", shown))
+        assertEquals(emptyList<String>(), syncs)
+
+        // A conflict copy whose removal fails after its original went is not said to have deleted nothing either.
+        PendingNotesStore.resetForTesting()
+        val next = linkedCopyWhoseOriginalReadsAgain()
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, next.hold("copy1", HeldReason.NOTEBOOK_DELETED, now = 5))
+        val linked = next.unsyncedInNotebook("b1")
+        assertEquals(notes("copy1", "orig"), linked.names)
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "copy1.note") throw java.io.IOException("stopped") }
+        assertEquals(NotebookDiscard.Partly(0, 1, unsure = true), next.discardNotebook("b1", linked))
+        PendingNotesStore.beforeRemoveForTesting = null
+        assertEquals("the original went, and the copy stays", setOf("copy1.note", "n2.note"),
+            dir.list()!!.filter { it.endsWith(".note") }.toSet())
+    }
+
+    @Test fun `an Error right after an unlink ends a notebook's discard as Partly unsure, is never thrown, and the same confirmation finishes`() {
+        var failing: Throwable? = null
+        val s = PendingNotesStore.open(dir, syncDirectory = { d ->
+            val error = failing
+            if (error != null && d.name == dir.name && "n1.note" !in dir.list()!!) {
+                failing = null
+                throw error
+            }
+        }, rename = atomicMove)
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        s.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        val shown = s.unsyncedInNotebook("b1")
+        // The sync right after n1.note's unlink runs out of memory: n1 is gone from the folder, and n2 was not tried.
+        failing = OutOfMemoryError("the sync after an unlink")
+        assertEquals(NotebookDiscard.Partly(0, 2, unsure = true), s.discardNotebook("b1", shown))
+        assertEquals(null, failing)
+        assertEquals(setOf("n2.note", "sequence"), dir.list()!!.toSet())
+        assertEquals(NotebookDiscard.Done(1, 0), s.discardNotebook("b1", shown))
+        assertEquals(setOf("sequence"), dir.list()!!.toSet())
+    }
+
     @Test fun `outside the store's package only the sign-out seam and the Settings discard call discardStore`() {
         // A discard deletes unsynced text, so each caller comes with a change and a review of its own. Any code
         // line that names the function counts, so a call inside a scope function or a reference is found too;
@@ -5130,11 +5902,14 @@ class PendingNotesStoreTest {
         // finished.
         assertEquals(listOf(signOut), callersOf("unregister"))
         assertEquals(listOf(settings), callersOf("unregisterIfFinishedOnce"))
-        assertEquals("only the Settings way out asks whether a discard stopped", listOf(settings),
-            callersOf("clearStopped"))
-        // The Settings list and the removal guard read from memory which stores stopped.
+        // The Settings way out, and a notebook's leave or delete before it words a failure of its server call.
+        val notebook = "io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"
+        assertEquals("only these ask whether a discard stopped", listOf(settings, notebook), callersOf("clearStopped"))
+        // The removal guard also reads from memory which stores stopped.
         val guard = "io/silentsuite/sync/ui/PendingNotesRemovalGuard.kt"
-        assertEquals(listOf(guard, settings), callersOf("stoppedIn"))
+        assertEquals(listOf(guard, settings, notebook), callersOf("stoppedIn"))
         assertEquals("clearAll is for test teardown only", emptyList<String>(), callersOf("clearAll"))
+        assertEquals("a notebook's leave or delete only",
+            listOf("io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"), callersOf("discardNotebook"))
     }
 }

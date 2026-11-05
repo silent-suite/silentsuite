@@ -39,7 +39,9 @@ const editorTheme = EditorView.theme({
   '.cm-line': { padding: '0' },
   '&.cm-focused': { outline: 'none' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'rgb(var(--foreground))' },
-  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+  // The focused selector mirrors CodeMirror's base theme rule; anything less
+  // specific loses to its pale light-mode colour, even in dark mode.
+  '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
     backgroundColor: 'rgba(16, 185, 129, 0.25)',
   },
   '.cm-selectionMatch': { backgroundColor: 'rgba(16, 185, 129, 0.15)' },

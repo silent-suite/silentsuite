@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
 import { EventDialog, formatEventDateInput, formatEventTimeInput, parseEventDateInput, parseEventTimeInput } from '../EventDialog'
@@ -363,5 +363,98 @@ describe('EventDialog edit calendar selection', () => {
       instanceDate,
     )
     expect(mocks.onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// #295: the mobile bottom nav sits outside the calendar page's `main`, which is its own stacking
+// context, so a dialog rendered inside the page paints under the nav and the nav stays tappable.
+// This checks where the dialog is mounted; it does not measure painted geometry.
+
+describe('EventDialog mounts above the bottom nav', () => {
+  beforeEach(() => {
+    mocks.createEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  /** The outermost `fixed` element between the role=dialog card and <body>: the overlay's own wrapper. */
+  function outerOverlay(dialog: HTMLElement): HTMLElement | null {
+    let outer: HTMLElement | null = null
+    for (let node: HTMLElement | null = dialog; node && node !== document.body; node = node.parentElement) {
+      if (node.classList.contains('fixed')) outer = node
+    }
+    return outer
+  }
+
+  it('portals the dialog and its backdrop to <body>, closes through onClose, and leaves nothing behind on unmount', () => {
+    const view = renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'New event' })
+    expect(screen.getByLabelText('Event title')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument()
+
+    expect(view.container.contains(dialog), 'dialog is rendered inside the render container').toBe(false)
+    const outer = outerOverlay(dialog)
+    expect(outer, 'fixed overlay wrapper').not.toBeNull()
+    expect(outer!.parentElement, 'overlay wrapper is a direct child of <body>').toBe(document.body)
+    const backdrop = document.querySelector<HTMLElement>('div[aria-hidden="true"][class*="z-[200]"]')
+    expect(backdrop, 'EventDialog backdrop').not.toBeNull()
+    expect(backdrop!.parentElement, 'backdrop is a direct child of <body>').toBe(document.body)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(mocks.onClose).toHaveBeenCalledTimes(1)
+    expect(mocks.createEvent).not.toHaveBeenCalled()
+
+    view.unmount()
+    expect(screen.queryByRole('dialog', { name: 'New event' })).not.toBeInTheDocument()
+    expect(document.querySelector('div[aria-hidden="true"][class*="z-[200]"]')).toBeNull()
+  })
+})
+
+// #295: on a 320px phone the location and labels fields sat in a grid with no explicit column below
+// `sm`, so its implicit column grew to the fields' minimum content width and pushed both past the
+// Details card and the screen edge. jsdom does not lay out CSS; this checks the grid's column classes.
+
+describe('EventDialog details fit narrow screens', () => {
+  beforeEach(() => {
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  it('keeps location and labels in one grid with a shrinkable single column below sm and two columns from sm', () => {
+    renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    const locationCell = screen.getByLabelText('Event location').parentElement!
+    const grid = locationCell.parentElement!
+    expect(grid.className).toMatch(/(^|\s)grid(\s|$)/)
+    const cells = Array.from(grid.children) as HTMLElement[]
+    expect(cells).toHaveLength(2)
+    expect(cells[0]).toBe(locationCell)
+    const labelsCell = cells[1]!
+    expect(labelsCell.querySelector('svg[class*="lucide-tag"]'), 'labels field icon').not.toBeNull()
+    expect(within(labelsCell).getAllByRole('textbox').length).toBeGreaterThan(0)
+
+    // Two columns from sm stay as they are.
+    expect(grid.className).toContain('sm:grid-cols-[minmax(0,1fr)_auto]')
+    // Below sm the single column is explicit and may shrink to the card width.
+    expect(grid.className).toMatch(/(^|\s)(grid-cols-1|grid-cols-\[minmax\(0,1fr\)\])(\s|$)/)
   })
 })

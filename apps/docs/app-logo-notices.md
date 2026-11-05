@@ -6,7 +6,7 @@ The files are served locally so loading the documentation does not contact third
 
 | Asset | Owner / creator | Source | Asset terms |
 |---|---|---|---|
-| SilentSuite | SilentSuite | Existing [`apps/docs/public/logo.svg`](https://github.com/silent-suite/silentsuite/blob/dev/apps/docs/public/logo.svg) | AGPL-3.0-only repository asset; SilentSuite mark |
+| SilentSuite | SilentSuite | Existing [`apps/docs/public/logo.svg`](https://github.com/silent-suite/silentsuite/blob/main/apps/docs/public/logo.svg) | AGPL-3.0-only repository asset; SilentSuite mark |
 | Tasks.org | Tasks.org contributors | [`graphics/icon.svg`](https://github.com/tasks/tasks/blob/767db19685b060362a2a15f37da974013a28d195/graphics/icon.svg) | [GPL-3.0](https://github.com/tasks/tasks/blob/767db19685b060362a2a15f37da974013a28d195/LICENSE); external DTD declaration removed as non-visual sanitization; Tasks.org mark |
 | Evolution | GNOME Evolution contributors | [`hicolor_apps_scalable_evolution.svg`](https://gitlab.gnome.org/GNOME/evolution/-/blob/f1e780fbce3309559898a02a8f5d07485a158804/data/icons/hicolor_apps_scalable_evolution.svg) | Repository default for files without a separate header: LGPL-2.1 or LGPL-3.0; Evolution/GNOME marks |
 | GNOME Calendar | GNOME Calendar contributors | [`org.gnome.Calendar.svg`](https://gitlab.gnome.org/GNOME/gnome-calendar/-/blob/a8258b09cb09f6ec0c2188e7a3d0e321c810b59a/data/icons/hicolor/scalable/apps/org.gnome.Calendar.svg) | [GPL-3.0](https://gitlab.gnome.org/GNOME/gnome-calendar/-/blob/a8258b09cb09f6ec0c2188e7a3d0e321c810b59a/COPYING); Calendar/GNOME marks |

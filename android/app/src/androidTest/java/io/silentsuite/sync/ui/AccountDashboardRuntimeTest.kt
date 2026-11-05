@@ -33,10 +33,12 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.utils.AndroidCompat
 import java.net.URI
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -131,6 +133,8 @@ class AccountDashboardRuntimeTest {
     }
 
     @Test fun missingTaskProviderOutranksTaskLifecycleWithoutChangingSiblingsOrEvidence() {
+        assertMaintenanceDoesNotBackdateNewerRequests()
+        assertMaintenancePreservesRollbackInterruptionWindow()
         val phase = AtomicInteger(0)
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
             SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
@@ -526,6 +530,9 @@ class AccountDashboardRuntimeTest {
         }
     }
 
+    /** One dashboard delivery as rendered: its count, the calendar row status and the status-row live region. */
+    private data class DashboardDelivery(val count: Int, val calendarStatus: String, val liveRegion: Int)
+
     private val generation = "dashboard-generation"
     private val launchedCollectionIntents = mutableListOf<Intent>()
     private val syncRequests = mutableListOf<Pair<Account, String?>>()
@@ -534,39 +541,92 @@ class AccountDashboardRuntimeTest {
     fun truthfulDashboardTransitionsUseDurableEvidenceAndDedupeAcrossRecreation() {
         withDashboardAccount { context, account, scenario ->
             var deliveryCount = 0
-            scenario.onActivity { activity ->
-                assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
-                assertEquals("First sync pending", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertFalse(activity.findViewById<View>(R.id.subscription_card).isShown)
-                deliveryCount = activity.accountInfoDeliveryCount
-                activity.refresh()
-            }
-            waitForDeliveryAfter(scenario, deliveryCount)
-            scenario.onActivity { activity ->
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
-            }
+            // The ViewModel also loads unprompted (service bind, platform sync-status callbacks). Such a
+            // delivery repeats the same state, so the deduper rightly sets the live region to NONE and
+            // can replace the transition's POLITE before the test reads the row. Record every delivery
+            // instead: renderDashboard sets the live region just before it writes the headline, so this
+            // watcher reads the calendar status, live region and delivery count of one delivery together.
+            val deliveries = CopyOnWriteArrayList<DashboardDelivery>()
+            val recorder = AtomicReference<TextWatcher>()
+            // The watcher captures this Activity: remove it and drop the reference before recreation,
+            // also when a phase fails. A cleanup failure never replaces the phase's own failure.
+            var failure: Throwable? = null
+            try {
+                scenario.onActivity { activity ->
+                    assertEquals(account.name, activity.findViewById<TextView>(R.id.dashboard_account_identity).text.toString())
+                    assertEquals("First sync pending", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                    assertFalse(activity.findViewById<View>(R.id.subscription_card).isShown)
+                    val watcher = object : TextWatcher {
+                        override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                        override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) {
+                            deliveries += DashboardDelivery(
+                                activity.accountInfoDeliveryCount,
+                                activity.findViewById<TextView>(R.id.caldav_status).text.toString(),
+                                ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)),
+                            )
+                        }
+                        override fun afterTextChanged(text: Editable?) = Unit
+                    }
+                    activity.findViewById<TextView>(R.id.dashboard_overall_status).addTextChangedListener(watcher)
+                    recorder.set(watcher)
+                    deliveryCount = activity.accountInfoDeliveryCount
+                    activity.refresh()
+                }
+                waitForDeliveryAfter(scenario, deliveryCount)
+                scenario.onActivity { activity ->
+                    assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE,
+                        ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
+                }
 
-            val store = SyncStatusStore(context)
-            assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, 100))
-            scenario.onActivity { it.refresh() }
-            waitForText(scenario, R.id.caldav_status) { it == "Up to date" }
-            scenario.onActivity { activity ->
-                assertEquals("Up to date", activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
-            }
+                // The first delivery showing the new calendar state is the meaningful transition and must
+                // announce; every later delivery of that same state must not. The current row must match the
+                // latest recorded delivery, so no delivery escaped the record.
+                fun assertTransitionAnnouncedOnceThenDeduped(calendarStatus: String) {
+                    waitUntil("a dashboard delivery showing $calendarStatus") {
+                        deliveries.any { it.calendarStatus == calendarStatus }
+                    }
+                    scenario.onActivity { activity ->
+                        val recorded = deliveries.toList()
+                        val transition = recorded.indexOfFirst { it.calendarStatus == calendarStatus }
+                        assertTrue("$calendarStatus must follow a delivery with another calendar state",
+                            transition > 0 && recorded[transition - 1].calendarStatus != calendarStatus)
+                        assertEquals("$calendarStatus transition delivery #${recorded[transition].count} must announce",
+                            ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE, recorded[transition].liveRegion)
+                        recorded.drop(transition + 1).forEach {
+                            assertEquals("repeat delivery #${it.count} keeps $calendarStatus", calendarStatus, it.calendarStatus)
+                            assertEquals("repeat delivery #${it.count} of $calendarStatus must not announce again",
+                                ViewCompat.ACCESSIBILITY_LIVE_REGION_NONE, it.liveRegion)
+                        }
+                        assertEquals(calendarStatus, activity.findViewById<TextView>(R.id.caldav_status).text.toString())
+                        assertEquals("the latest delivery was recorded", activity.accountInfoDeliveryCount, recorded.last().count)
+                        assertEquals(recorded.last().liveRegion,
+                            ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
+                    }
+                }
 
-            assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
-                SyncStatusStore.FailureCategory.NETWORK, 200))
-            scenario.onActivity { it.refresh() }
-            waitForText(scenario, R.id.caldav_status) { it == context.getString(R.string.dashboard_status_network) }
-            scenario.onActivity { activity ->
-                assertEquals(activity.getString(R.string.dashboard_status_network), activity.findViewById<TextView>(R.id.caldav_status).text.toString())
-                assertEquals(ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE,
-                    ViewCompat.getAccessibilityLiveRegion(activity.findViewById(R.id.dashboard_status_row)))
-            }
+                val store = SyncStatusStore(context)
+                assertTrue(store.recordSuccess(account, SyncStatusStore.Service.CALENDAR, 100))
+                scenario.onActivity { it.refresh() }
+                assertTransitionAnnouncedOnceThenDeduped("Up to date")
 
+                assertTrue(store.recordFailure(account, SyncStatusStore.Service.CALENDAR,
+                    SyncStatusStore.FailureCategory.NETWORK, 200))
+                scenario.onActivity { it.refresh() }
+                assertTransitionAnnouncedOnceThenDeduped(context.getString(R.string.dashboard_status_network))
+            } catch (e: Throwable) {
+                failure = e
+                throw e
+            } finally {
+                try {
+                    recorder.getAndSet(null)?.let { watcher ->
+                        scenario.onActivity {
+                            it.findViewById<TextView>(R.id.dashboard_overall_status).removeTextChangedListener(watcher)
+                        }
+                    }
+                } catch (cleanup: Throwable) {
+                    failure?.addSuppressed(cleanup) ?: throw cleanup
+                }
+            }
             scenario.recreate()
             waitForModel(scenario)
             scenario.onActivity { activity ->
@@ -582,102 +642,152 @@ class AccountDashboardRuntimeTest {
 
     @Test
     fun serviceModulesAndCompleteActionsPreserveMetadataAndExactAccountRouting() {
-        withDashboardAccount { context, account, scenario ->
-            scenario.onActivity { activity ->
-                val calendarModule = activity.findViewById<View>(R.id.calendar_service_module)
-                val contactsModule = activity.findViewById<View>(R.id.contacts_service_module)
-                val tasksModule = activity.findViewById<View>(R.id.tasks_service_module)
-                val calendarCollections = activity.findViewById<View>(R.id.caldav)
-                assertTrue(calendarModule.top < contactsModule.top)
-                assertTrue(contactsModule.top < tasksModule.top)
-                assertTrue(tasksModule.top < calendarCollections.top)
-                listOf(calendarModule, contactsModule, tasksModule).forEach {
-                    assertFalse(it.isClickable)
-                    assertFalse(it.hasOnClickListeners())
+        val launched = mutableListOf<Intent>()
+        AccountActivity.taskAppLaunchIntentOverride = {
+            Intent(Intent.ACTION_MAIN).setPackage("org.tasks")
+        }
+        AccountActivity.dashboardExternalAppLauncherOverride = { launched += Intent(it) }
+        try {
+            withDashboardAccount { context, account, scenario ->
+                // Exercise all three Open actions within this test's existing ActivityScenario.
+                // The previous nested fixtures created and removed two extra accounts and launched
+                // two additional Activities, increasing API 29 instrumentation memory pressure.
+                scenario.onActivity { activity ->
+                    val calendarOpen = activity.findViewById<View>(R.id.caldav_open)
+                    val contactsOpen = activity.findViewById<View>(R.id.carddav_open)
+                    val tasksOpen = activity.findViewById<View>(R.id.taskdav_open)
+                    assertEquals(View.VISIBLE, calendarOpen.visibility)
+                    assertEquals(View.VISIBLE, contactsOpen.visibility)
+                    assertEquals(View.VISIBLE, tasksOpen.visibility)
+                    calendarOpen.performClick()
+                    contactsOpen.performClick()
+                    tasksOpen.performClick()
                 }
 
-                val calendarList = activity.listCalDAV!!
-                val row = calendarList.adapter.getView(0, null, calendarList)
-                assertEquals("Private calendar", row.findViewById<TextView>(R.id.title).text.toString())
-                assertEquals("Personal events", row.findViewById<TextView>(R.id.description).text.toString())
-                assertEquals(View.VISIBLE, row.findViewById<View>(R.id.color).visibility)
-                assertEquals(View.VISIBLE, row.findViewById<View>(R.id.read_only).visibility)
-                assertTrue(row.contentDescription.toString().contains("Read-only collection"))
-                assertTrue(activity.findViewById<View>(R.id.account_swipe_refresh).isShown)
-                assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown)
+                assertEquals(3, launched.size)
+                assertEquals(Intent.ACTION_MAIN, launched[0].action)
+                assertTrue(launched[0].selector?.hasCategory(Intent.CATEGORY_APP_CALENDAR) == true)
+                assertEquals(Intent.ACTION_MAIN, launched[1].action)
+                assertTrue(launched[1].selector?.hasCategory(Intent.CATEGORY_APP_CONTACTS) == true)
+                assertEquals("org.tasks", launched[2].getPackage())
 
-                // Invoke collection management and creation through the production listeners. The
-                // launch seam captures both intents before a destination Activity can load a session.
-                assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
-                val createCalendar = requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
-                )
-                activity.onMenuItemClick(createCalendar)
+                AccountActivity.dashboardExternalAppLauncherOverride = {
+                    throw android.content.ActivityNotFoundException()
+                }
+                // The production click handler must absorb ActivityNotFoundException rather
+                // than crashing the account dashboard. Snackbar rendering is owned by UI tests.
+                scenario.onActivity { it.findViewById<View>(R.id.caldav_open).performClick() }
 
-                // Invoke the explicit toolbar sync control. The seam prevents provider scheduling
-                // while proving the exact account selected by the production action.
-                val syncNow = requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
-                )
-                assertTrue(syncNow.isVisible)
-                assertTrue(activity.onOptionsItemSelected(syncNow))
+                // Recreate the same Activity with no launchable Tasks app instead of creating a
+                // second account fixture. Calendar and Contacts remain available; Tasks is hidden.
+                AccountActivity.taskAppLaunchIntentOverride = { null }
+                scenario.recreate()
+                waitForModel(scenario)
+                scenario.onActivity { activity ->
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.caldav_open).visibility)
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.carddav_open).visibility)
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.taskdav_open).visibility)
+                }
+
+                scenario.onActivity { activity ->
+                    val calendarModule = activity.findViewById<View>(R.id.calendar_service_module)
+                    val contactsModule = activity.findViewById<View>(R.id.contacts_service_module)
+                    val tasksModule = activity.findViewById<View>(R.id.tasks_service_module)
+                    val calendarCollections = activity.findViewById<View>(R.id.caldav)
+                    assertTrue(calendarModule.top < contactsModule.top)
+                    assertTrue(contactsModule.top < tasksModule.top)
+                    assertTrue(tasksModule.top < calendarCollections.top)
+                    listOf(calendarModule, contactsModule, tasksModule).forEach {
+                        assertFalse(it.isClickable)
+                        assertFalse(it.hasOnClickListeners())
+                    }
+
+                    val calendarList = activity.listCalDAV!!
+                    val row = calendarList.adapter.getView(0, null, calendarList)
+                    assertEquals("Private calendar", row.findViewById<TextView>(R.id.title).text.toString())
+                    assertEquals("Personal events", row.findViewById<TextView>(R.id.description).text.toString())
+                    assertEquals(View.VISIBLE, row.findViewById<View>(R.id.color).visibility)
+                    assertEquals(View.VISIBLE, row.findViewById<View>(R.id.read_only).visibility)
+                    assertTrue(row.contentDescription.toString().contains("Read-only collection"))
+                    assertTrue(activity.findViewById<View>(R.id.account_swipe_refresh).isShown)
+                    assertTrue(activity.findViewById<View>(R.id.dashboard_context_action).isShown)
+
+                    // Invoke collection management and creation through the production listeners. The
+                    // launch seam captures both intents before a destination Activity can load a session.
+                    assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
+                    val createCalendar = requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
+                    )
+                    activity.onMenuItemClick(createCalendar)
+
+                    // Invoke the explicit toolbar sync control. The seam prevents provider scheduling
+                    // while proving the exact account selected by the production action.
+                    val syncNow = requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
+                    )
+                    assertTrue(syncNow.isVisible)
+                    assertTrue(activity.onOptionsItemSelected(syncNow))
+                }
+
+                assertEquals(2, launchedCollectionIntents.size)
+                val manage = launchedCollectionIntents[0]
+                assertEquals(CollectionActivity::class.java.name, manage.component?.className)
+                assertEquals(account,
+                    manage.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
+                assertEquals(generation,
+                    manage.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
+                assertEquals("uid-CALENDAR",
+                    manage.getStringExtra(CollectionActivity.EXTRA_COLLECTION_UID))
+                assertFalse(manage.hasExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
+
+                val create = launchedCollectionIntents[1]
+                assertEquals(CollectionActivity::class.java.name, create.component?.className)
+                assertEquals(account,
+                    create.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
+                assertEquals(generation,
+                    create.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
+                assertEquals(Constants.ETEBASE_TYPE_CALENDAR,
+                    create.getStringExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
+                assertFalse(create.hasExtra(CollectionActivity.EXTRA_COLLECTION_UID))
+
+                assertEquals(listOf(account to generation), syncRequests)
+
+                val manager = AccountManager.get(context)
+                scenario.onActivity { activity ->
+                    assertFalse(activity.hasObservedRetainedGenerationInvalidation())
+                }
+                removeAccountAndWait(manager, account)
+                waitForRetainedGenerationInvalidation(scenario)
+                val replacementGeneration = "dashboard-replacement-generation"
+                assertTrue(manager.addAccountExplicitly(account, null, null))
+                assertTrue(AccountSettings.writeVerified(manager, account,
+                    AccountSettings.KEY_CREATION_ID, replacementGeneration))
+                val replacementRow = manager.getAccountsByType(account.type)
+                    .single { it.name == account.name }
+                assertEquals(replacementGeneration,
+                    manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
+                launchedCollectionIntents.clear()
+                syncRequests.clear()
+
+                scenario.onActivity { activity ->
+                    val calendarList = activity.listCalDAV!!
+                    val row = calendarList.adapter.getView(0, null, calendarList)
+                    assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
+                    activity.onMenuItemClick(requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
+                    ))
+                    assertTrue(activity.onOptionsItemSelected(requireNotNull(
+                        activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
+                    )))
+                }
+
+                assertTrue(launchedCollectionIntents.isEmpty())
+                assertTrue(syncRequests.isEmpty())
+                assertTrue(account in manager.getAccountsByType(account.type))
             }
-
-            assertEquals(2, launchedCollectionIntents.size)
-            val manage = launchedCollectionIntents[0]
-            assertEquals(CollectionActivity::class.java.name, manage.component?.className)
-            assertEquals(account,
-                manage.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
-            assertEquals(generation,
-                manage.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
-            assertEquals("uid-CALENDAR",
-                manage.getStringExtra(CollectionActivity.EXTRA_COLLECTION_UID))
-            assertFalse(manage.hasExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
-
-            val create = launchedCollectionIntents[1]
-            assertEquals(CollectionActivity::class.java.name, create.component?.className)
-            assertEquals(account,
-                create.getParcelableExtra<Account>(CollectionActivity.EXTRA_ACCOUNT))
-            assertEquals(generation,
-                create.getStringExtra(CollectionActivity.EXTRA_CREATION_ID))
-            assertEquals(Constants.ETEBASE_TYPE_CALENDAR,
-                create.getStringExtra(CollectionActivity.EXTRA_COLLECTION_TYPE))
-            assertFalse(create.hasExtra(CollectionActivity.EXTRA_COLLECTION_UID))
-
-            assertEquals(listOf(account to generation), syncRequests)
-
-            val manager = AccountManager.get(context)
-            scenario.onActivity { activity ->
-                assertFalse(activity.hasObservedRetainedGenerationInvalidation())
-            }
-            removeAccountAndWait(manager, account)
-            waitForRetainedGenerationInvalidation(scenario)
-            val replacementGeneration = "dashboard-replacement-generation"
-            assertTrue(manager.addAccountExplicitly(account, null, null))
-            assertTrue(AccountSettings.writeVerified(manager, account,
-                AccountSettings.KEY_CREATION_ID, replacementGeneration))
-            val replacementRow = manager.getAccountsByType(account.type)
-                .single { it.name == account.name }
-            assertEquals(replacementGeneration,
-                manager.getUserData(replacementRow, AccountSettings.KEY_CREATION_ID))
-            launchedCollectionIntents.clear()
-            syncRequests.clear()
-
-            scenario.onActivity { activity ->
-                val calendarList = activity.listCalDAV!!
-                val row = calendarList.adapter.getView(0, null, calendarList)
-                assertTrue(calendarList.performItemClick(row, 0, calendarList.adapter.getItemId(0)))
-                activity.onMenuItemClick(requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar)
-                ))
-                assertTrue(activity.onOptionsItemSelected(requireNotNull(
-                    activity.findViewById<Toolbar>(R.id.toolbar).menu.findItem(R.id.sync_now)
-                )))
-            }
-
-            assertTrue(launchedCollectionIntents.isEmpty())
-            assertTrue(syncRequests.isEmpty())
-            assertTrue(account in manager.getAccountsByType(account.type))
+        } finally {
+            AccountActivity.dashboardExternalAppLauncherOverride = null
+            AccountActivity.taskAppLaunchIntentOverride = null
         }
     }
 
@@ -904,6 +1014,100 @@ class AccountDashboardRuntimeTest {
                 AccountActivity.exportDocumentLauncherOverride = null
                 AccountActivity.exportWriterOverride = null
             }
+        }
+    }
+
+    private fun assertMaintenanceDoesNotBackdateNewerRequests() {
+        val clock = AtomicLong(System.currentTimeMillis())
+        val injectRequest = AtomicBoolean(false)
+        val injectedOnThisThread = ThreadLocal<Boolean>()
+        val maintenanceFinished = CountDownLatch(1)
+        val expected = AtomicReference<Map<SyncStatusStore.Service, SyncStatusStore.Status>>()
+        val writeSucceeded = AtomicBoolean(false)
+        AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
+            SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            // doLoad invokes this seam only after its production maintenance pass.
+            if (injectedOnThisThread.get() == true) {
+                injectedOnThisThread.remove()
+                maintenanceFinished.countDown()
+            }
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            val store = SyncStatusStore(context)
+            val services = SyncStatusStore.Service.values().toSet()
+            AccountActivity.AccountInfoViewModel.lifecycleNowOverride = {
+                val observed = clock.get()
+                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() &&
+                    injectRequest.compareAndSet(true, false)) {
+                    // Model a request admitted after an older clock observation, before the
+                    // maintenance pass acquires its per-service store locks. Time only advances.
+                    injectedOnThisThread.set(true)
+                    val requestedAt = clock.addAndGet(100)
+                    writeSucceeded.set(store.recordRequested(account, services, "after-clock-sample", requestedAt))
+                    expected.set(services.associateWith { store.status(account, it) })
+                }
+                observed
+            }
+            injectRequest.set(true)
+            scenario.onActivity { it.refresh() }
+            assertTrue("the injected production maintenance pass did not finish",
+                maintenanceFinished.await(10, TimeUnit.SECONDS))
+            assertTrue("the newer request must commit before testing preservation", writeSucceeded.get())
+            val admitted = requireNotNull(expected.get())
+            services.forEach { service ->
+                assertEquals("maintenance must not backdate the newer $service request",
+                    admitted.getValue(service), store.status(account, service))
+            }
+        }
+    }
+
+    private fun assertMaintenancePreservesRollbackInterruptionWindow() {
+        val clock = AtomicLong(System.currentTimeMillis())
+        val rollBack = AtomicBoolean(false)
+        val rolledBackOnThisThread = ThreadLocal<Boolean>()
+        val maintenanceFinished = CountDownLatch(1)
+        withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            if (rolledBackOnThisThread.get() == true) {
+                rolledBackOnThisThread.remove()
+                maintenanceFinished.countDown()
+            }
+            val store = SyncStatusStore(loaderContext)
+            AccountActivity.AccountInfo().apply {
+                caldav = service(CollectionInfo.Type.CALENDAR, store.status(exact, SyncStatusStore.Service.CALENDAR))
+                carddav = service(CollectionInfo.Type.ADDRESS_BOOK, store.status(exact, SyncStatusStore.Service.CONTACTS))
+                taskdav = service(CollectionInfo.Type.TASKS, store.status(exact, SyncStatusStore.Service.TASKS))
+            }
+        }) { context, account, scenario ->
+            val store = SyncStatusStore(context)
+            assertTrue(store.recordRequested(account, setOf(SyncStatusStore.Service.NOTES),
+                "after-clock-rollback", clock.get() - 1))
+            AccountActivity.AccountInfoViewModel.lifecycleNowOverride = {
+                val observed = clock.get()
+                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() &&
+                    rollBack.compareAndSet(true, false)) {
+                    // The wall clock moves back after the pass's first observation. Rebase
+                    // must still grant its full interruption window, not expire against that old time.
+                    rolledBackOnThisThread.set(true)
+                    clock.addAndGet(-TimeUnit.HOURS.toMillis(1))
+                }
+                observed
+            }
+            rollBack.set(true)
+            scenario.onActivity { it.refresh() }
+            assertTrue("the rollback maintenance pass did not finish",
+                maintenanceFinished.await(10, TimeUnit.SECONDS))
+            val status = store.status(account, SyncStatusStore.Service.NOTES)
+            assertEquals("clock rollback must keep the newly rebased request active",
+                "after-clock-rollback", status.activeRequestId)
+            assertEquals(clock.get(), requireNotNull(status.requestedAt))
+            assertFalse("rebasing must not consume the interruption window",
+                status.lastFailureCategory == SyncStatusStore.FailureCategory.INTERRUPTED)
         }
     }
 

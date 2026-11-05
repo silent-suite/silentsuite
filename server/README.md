@@ -37,13 +37,13 @@ The server implements the Etebase protocol. All data is encrypted client-side be
 
 ## Quick Start (Docker)
 
-A production-ready `docker-compose.yml` is coming soon. For now, see the [from source](#quick-start-from-source) instructions below, or refer to the upstream [Docker wiki](https://github.com/etesync/server/wiki) for container-based setups.
+For the Docker Compose setup, follow the [self-hosting guide](../self-host/SELF-HOSTING.md).
 
 ## Quick Start (from source)
 
 ```bash
-git clone https://github.com/silent-suite/silentsuite-server.git
-cd silentsuite-server
+git clone https://github.com/silent-suite/silentsuite.git
+cd silentsuite/server
 
 # Set up Python environment
 python3 -m venv .venv

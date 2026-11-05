@@ -29,4 +29,13 @@ describe('ConfirmDialog', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onCancel).toHaveBeenCalledTimes(3)
   })
+
+  it('gives both buttons a mobile-only 44px height', () => {
+    render(<ConfirmDialog title="Delete note?" message="Gone for good." onConfirm={() => {}} onCancel={() => {}} />)
+    for (const name of ['Cancel', 'Delete']) {
+      const button = screen.getByRole('button', { name })
+      expect(button.className).toContain('max-md:min-h-[44px]')
+      expect(button.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+    }
+  })
 })

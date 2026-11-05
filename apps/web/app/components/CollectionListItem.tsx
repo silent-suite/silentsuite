@@ -128,7 +128,7 @@ export function CollectionListItem({
       <button
         type="button"
         onClick={onToggleVisibility}
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded max-md:min-h-[44px] max-md:min-w-[44px] focus:outline-none focus:ring-2 focus:ring-emerald-500"
         aria-label={`${visible ? 'Hide' : 'Show'} ${name}`}
       >
         <span
@@ -170,7 +170,7 @@ export function CollectionListItem({
         )}
       </div>
 
-      <div className="flex w-10 shrink-0 items-center justify-end gap-0.5">
+      <div className="flex w-10 shrink-0 items-center justify-end gap-0.5 max-md:w-auto">
         {isDefault && (
           <Star
             className="h-3 w-3 fill-current text-amber-500"
@@ -181,7 +181,7 @@ export function CollectionListItem({
           ref={menuButtonRef}
           type="button"
           onClick={() => setMenuOpen((open) => !open)}
-          className="rounded p-0.5 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="rounded p-0.5 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           aria-label={`Open ${name} actions`}
@@ -201,7 +201,7 @@ export function CollectionListItem({
             type="button"
             role="menuitem"
             onClick={startRename}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none"
+            className="flex w-full items-center gap-2 px-3 py-1.5 max-md:min-h-[44px] text-left text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none"
           >
             <Pencil className="h-3.5 w-3.5 text-[rgb(var(--muted))]" />
             Rename
@@ -215,7 +215,7 @@ export function CollectionListItem({
               menuButtonRef.current?.focus()
             }}
             disabled={isDefault}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none disabled:cursor-default disabled:text-[rgb(var(--muted))]"
+            className="flex w-full items-center gap-2 px-3 py-1.5 max-md:min-h-[44px] text-left text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none disabled:cursor-default disabled:text-[rgb(var(--muted))]"
           >
             <Star className={`h-3.5 w-3.5 ${isDefault ? 'fill-current text-amber-500' : 'text-[rgb(var(--muted))]'}`} />
             {isDefault ? defaultLabel : 'Set as default'}
@@ -224,7 +224,7 @@ export function CollectionListItem({
             type="button"
             role="menuitem"
             onClick={() => colorInputRef.current?.click()}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none"
+            className="flex w-full items-center gap-2 px-3 py-1.5 max-md:min-h-[44px] text-left text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] focus:bg-[rgb(var(--surface))] focus:outline-none"
           >
             <Palette className="h-3.5 w-3.5 text-[rgb(var(--muted))]" />
             Change color
@@ -246,11 +246,12 @@ export function CollectionListItem({
             role="menuitem"
             onClick={() => {
               if (!canDelete) return
+              menuButtonRef.current?.focus()
               setMenuOpen(false)
               onDelete()
             }}
             disabled={!canDelete}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-red-500 hover:bg-red-500/10 focus:bg-red-500/10 focus:outline-none disabled:cursor-not-allowed disabled:text-[rgb(var(--muted))] disabled:hover:bg-transparent"
+            className="flex w-full items-center gap-2 px-3 py-1.5 max-md:min-h-[44px] text-left text-xs text-red-500 hover:bg-red-500/10 focus:bg-red-500/10 focus:outline-none disabled:cursor-not-allowed disabled:text-[rgb(var(--muted))] disabled:hover:bg-transparent"
           >
             <Trash2 className="h-3.5 w-3.5" />
             {deleteLabel}

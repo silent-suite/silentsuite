@@ -71,4 +71,12 @@ describe('CalendarListPanel', () => {
     expect(mockCalendarListState.toggleVisibility).toHaveBeenCalledWith('cal-2')
     expect(mockCalendarListState.setDefaultCalendar).toHaveBeenCalledWith('cal-2')
   })
+
+  it('gives the add button a mobile-only 44px hit area', () => {
+    render(<CalendarListPanel />)
+    const add = screen.getByRole('button', { name: 'Add calendar' })
+    expect(add.className).toContain('max-md:min-h-[44px]')
+    expect(add.className).toContain('max-md:min-w-[44px]')
+    expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
 })

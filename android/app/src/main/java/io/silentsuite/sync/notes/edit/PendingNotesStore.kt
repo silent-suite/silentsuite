@@ -23,9 +23,10 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Unpushed Notes changes for one exact account identity, kept apart from the Etebase cache so a
  * fetch can never overwrite them. One self-describing file per note (`<uid>.note`), a landed record
- * per note after a successful push (`<uid>.landed`), an encrypted copy of each notebook that still
- * has entries (`<uid>.notebook`), so held text stays decryptable after the Etebase cache drops the
- * notebook, and a store-wide version counter (`sequence`).
+ * per note after a successful push (`<uid>.landed`), an encrypted copy of each notebook that has
+ * had entries (`<uid>.notebook`), so held text stays decryptable after the Etebase cache drops the
+ * notebook, and a store-wide version counter (`sequence`). A copy stays until the store is discarded
+ * or cleared: a listing can come back short and leave out a note that needs it.
  *
  * There is exactly one instance per directory in a process ([open]), so its lock is the one lock per
  * identity. Every operation runs under it. Callers must never hold the Etebase cache monitor or the
@@ -40,10 +41,10 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * A store folder that is a symbolic link is never followed: [open] keeps the link's own path and name, and lstat(2),
  * which does not follow it, tells a link apart ([followable]). Nothing is read, written or deleted through it. While
- * the folder is a link, or lstat cannot tell, it cannot be counted and is not listed ([unsynced], [removalCheck]),
- * every read and write of it fails at its start, also in an instance that recovered before the link came ([locked]),
- * and [clearAll] deletes nothing. Its only step is an acknowledgement ([discardStore]), bound to the link's own
- * identity under its own name, which deletes nothing. Removing the link itself is not offered.
+ * the folder is a link, or lstat cannot tell, it cannot be counted and is not listed ([unsynced], [removalCheck],
+ * [unsyncedInNotebook]), every read and write of it fails at its start, also in an instance that recovered before the
+ * link came ([locked]), and [clearAll] deletes nothing. Its only step is an acknowledgement ([discardStore]), bound to
+ * the link's own identity under its own name, which deletes nothing. Removing the link itself is not offered.
  *
  * A confirmed discard of the whole store ([discardStore]) runs under the same lock and, when the store holds
  * anything a removal would lose ([UnsyncedNotes.anything]), records a permit outside the store before any
@@ -111,6 +112,19 @@ internal class PendingNotesStore private constructor(
 
     /** Set by [unregister]: another instance may own the directory now. */
     private var dropped = false
+
+    /**
+     * How many files [remove] has unlinked in this instance: [discardNotebook] tells by it whether a removal that
+     * failed had deleted a file already.
+     */
+    private var unlinks = 0L
+
+    /**
+     * Set once [remove] has unlinked a file and no sync of the store's directory by [remove] or [discardNotebook] has
+     * worked since, so that unlink can still come back after a power loss; [discardNotebook] syncs the directory
+     * before it says Done under a confirmation from a listed store that holds anything.
+     */
+    private var unlinkUnsynced = false
 
     /**
      * New directory levels whose entry in their parent is not synced yet. A level stays here until that
@@ -241,13 +255,18 @@ internal class PendingNotesStore private constructor(
         object Done : SendOutcome()
         /** The user changed the note while it was being sent; rebase this entry onto the landed item. */
         data class NewerLocalChange(val entry: PendingEntry) : SendOutcome()
+        /**
+         * The upload landed, and the entry's file cannot be read now. It is kept as it is: nothing shows
+         * whether the user changed the note meanwhile.
+         */
+        object Unreadable : SendOutcome()
     }
 
     /**
-     * What every operation but [unsynced], [removalCheck], [discardStore], [acknowledged], [clearedInFull],
-     * [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll] throws once [clearAll], or a
-     * [discardStore] that got as far as deleting, has closed the store: nothing in it is read, pushed, pruned or
-     * written from then on. An IllegalStateException, as before it had a type of its own.
+     * What every operation but [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [acknowledged],
+     * [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll] throws once
+     * [clearAll], or a [discardStore] that got as far as deleting, has closed the store: nothing in it is read,
+     * pushed or written from then on. An IllegalStateException, as before it had a type of its own.
      */
     class Cleared : IllegalStateException("the pending store was cleared")
 
@@ -329,8 +348,12 @@ internal class PendingNotesStore private constructor(
 
     // ---- the one primitive every change goes through ----
 
-    /** Reads the entry and applies [transform] atomically under the store lock. Returns the new state. */
-    fun update(noteUid: String, transform: (Read) -> Change): Read = locked {
+    /**
+     * Reads the entry and applies [transform] atomically under the store lock. Returns the new state.
+     * Private, so every write of new text is in the store, where each takes a new version ([nextVersion]):
+     * a confirmation covers a sequence, and only a new version moves it on and withdraws the permit.
+     */
+    private fun update(noteUid: String, transform: (Read) -> Change): Read = locked {
         val current = readEntry(noteUid)
         when (val change = transform(current)) {
             Change.Keep -> current
@@ -376,8 +399,7 @@ internal class PendingNotesStore private constructor(
     /**
      * A save by note uid. An open editor saves through its handle instead (above), which is what keeps
      * a late save away from a note that a conflict copy replaced. Resets the failure backoff, since new
-     * content may push where the old did not. [notebookCopy], when given, is written in the same step,
-     * so no prune can remove it in between.
+     * content may push where the old did not. [notebookCopy], when given, is written in the same step.
      */
     fun saveLocal(
         noteUid: String,
@@ -400,14 +422,14 @@ internal class PendingNotesStore private constructor(
                 is Read.Present -> when (read.entry.state) {
                     PendingEntry.State.UPSERT -> {
                         notebookCopy?.let { putNotebookLocked(read.entry.notebookUid, it) }
-                        val version = nextVersion()
+                        val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.Saved(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob,
                             failureCount = 0, lastFailureAt = null, lastFailureCategory = null))
                     }
                     PendingEntry.State.HELD -> {
                         // The editor's latest text joins the held text instead of being lost.
-                        val version = nextVersion()
+                        val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.SavedToHolding(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob))
                     }
@@ -519,6 +541,9 @@ internal class PendingNotesStore private constructor(
      * the rebase that follows still applies, and the outcome carries the entry as written. If the write
      * fails, the upload has still landed: the outcome carries the entry with its mark, and the rebase
      * clears it.
+     *
+     * An entry whose file cannot be read now is kept as it is, and the outcome says so
+     * ([SendOutcome.Unreadable]) rather than [SendOutcome.Done], so the run does not record success over it.
      */
     fun completeSend(noteUid: String, sentVersion: Long, revision: String, blob: ByteArray): SendOutcome = locked {
         if (hasEditor(noteUid)) {
@@ -526,8 +551,10 @@ internal class PendingNotesStore private constructor(
         } else {
             remove(landedFile(noteUid))
         }
-        val e = (readEntry(noteUid) as? Read.Present)?.entry
+        val read = readEntry(noteUid)
+        val e = (read as? Read.Present)?.entry
         when {
+            read is Read.Unreadable -> SendOutcome.Unreadable
             e == null -> SendOutcome.Done
             e.version == sentVersion -> {
                 remove(noteFile(noteUid))
@@ -567,7 +594,8 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.version != expectedVersion || e.state == PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.withNewestSent(onto).copy(version = nextRunVersion(), revision = revision, blob = blob, fromConflict = false))
+                Change.Write(e.withNewestSent(onto).copy(version = nextRunVersion(above = e.version), revision = revision, blob = blob,
+                    fromConflict = false))
             }
         }
         applied
@@ -637,7 +665,7 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.state != PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(), held = null,
+                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(above = e.version), held = null,
                     failureCount = 0, lastFailureAt = null, lastFailureCategory = null, fromConflict = false))
             }
         }
@@ -648,8 +676,14 @@ internal class PendingNotesStore private constructor(
      * The user's explicit discard of held or unreadable text. Throws, and discards nothing, when the text
      * is a conflict copy whose original is not shown gone and cannot be removed or read ([removeReplacedOriginal]).
      */
-    fun discard(noteUid: String): Unit = locked {
-        (readEntry(noteUid) as? Read.Present)?.entry?.let { removeReplacedOriginal(it) }
+    fun discard(noteUid: String): Unit = locked { removeEntry(noteUid, (readEntry(noteUid) as? Read.Present)?.entry) }
+
+    /**
+     * Removes [noteUid]'s entry as the user's discard does, whose full read gave [entry], or null when it read as
+     * missing or unreadable: a conflict copy takes the original it replaced with it ([removeReplacedOriginal]).
+     */
+    private fun removeEntry(noteUid: String, entry: PendingEntry?) {
+        entry?.let { removeReplacedOriginal(it) }
         remove(noteFile(noteUid))
         // A conflict copy keeps its origin link, and so is not sent, while its original cannot be read.
         // If this was that original, the recovery before the next operation clears the link.
@@ -767,36 +801,6 @@ internal class PendingNotesStore private constructor(
     fun notebook(notebookUid: String): ByteArray? = locked {
         val bytes = readIfPresent(notebookFile(notebookUid)) ?: return@locked null
         (PendingCodec.decodeNotebook(bytes) as? PendingCodec.Decoded.Ok)?.value?.second
-    }
-
-    /**
-     * Removes notebook copies no entry references, decided from one listing: a listing that reads as
-     * empty then has no copy to remove either. Skipped entirely while anything is unreadable, since its
-     * notebook is unknown and its copy may be the only way to decrypt it, and while the listing holds a
-     * first write that is not committed yet ("<uid>.note.new"), which may be the only copy of a note
-     * whose notebook no committed entry names. A listing that fails throws, as every listing of the store
-     * does, and nothing is removed. Skipped as well while a file the store's discard permit names is there, or a
-     * permit that may be there cannot be read or was recorded as for an answer that could not be counted
-     * ([Snapshot.discardUnfinished]): the listing can come back short and leave out such a file, whose notebook
-     * copy may be the only key to its text once a save withdraws the permit. Skipping a prune is always safe.
-     *
-     * It runs no recovery: while one is owed, it lists and removes nothing and returns at once. The runner
-     * only logs a prune that fails, so a recovery that failed here would be logged and nothing more. The
-     * next other call runs it instead, at the latest the snapshot of the next run, where a failure counts.
-     */
-    fun pruneNotebooks(): List<String> = synchronized(lock) {
-        if (closed) throw Cleared()
-        if (!recovered) emptyList() else locked {
-            if (namedThere(permitNames())) return@locked emptyList()
-            val listed = listing()
-            if (listed.any { it.name.endsWith(NOTE + NEW) }) return@locked emptyList()
-            val scan = scanOf(withSuffix(listed, NOTE))
-            if (scan.unreadable.isNotEmpty()) return@locked emptyList()
-            val referenced = scan.entries.map { it.notebookUid }.toSet()
-            withSuffix(listed, NOTEBOOK).filter { it.isFile }.map { it.name.removeSuffix(NOTEBOOK) }
-                .filter { it !in referenced }
-                .onEach { remove(notebookFile(it)) }
-        }
     }
 
     // ---- the whole store ----
@@ -1199,8 +1203,8 @@ internal class PendingNotesStore private constructor(
      *    version to withdraw, and a permit from before stays unless its presence check shows it not there
      *    ([PendingNotesDiscardPermits.mayHold]), read or not.
      * 4. The instance is closed for the rest of the process, as by [clearAll]: every operation but [unsynced],
-     *    [removalCheck], [discardStore], [unregister], [unregisterIfFinishedOnce], [acknowledged], [clearedInFull],
-     *    [clearStopped] and [clearAll] is refused.
+     *    [unsyncedInNotebook], [removalCheck], [discardStore], [unregister], [unregisterIfFinishedOnce],
+     *    [acknowledged], [clearedInFull], [clearStopped] and [clearAll] is refused.
      * 5. The files the count listed go ([deleteAll]), each of a kind this build writes with its write beside it, in
      *    this order: entries and first writes, landed records, then, once a second listing works (or the directory
      *    is shown gone) and shows no note and nothing the count's listing did not hold, notebook copies and anything
@@ -1411,9 +1415,10 @@ internal class PendingNotesStore private constructor(
     /**
      * Drops this instance from the registry once [discardStore] has finished, so the next [open] of the
      * directory gets a new instance, over a directory that is not there, which takes saves again. This one
-     * refuses every operation from then on, [unsynced], [removalCheck], [discardStore], [acknowledged] and [clearAll]
-     * included, since the new instance may own the directory by then. Only [clearedInFull] and [clearStopped] still
-     * answer, from memory. A second call does nothing, and so does [unregisterIfFinishedOnce].
+     * refuses every operation from then on, [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore],
+     * [acknowledged] and [clearAll] included, since the new instance may own the directory by then. Only
+     * [clearedInFull] and [clearStopped] still answer, from memory. A second call does nothing, and so does
+     * [unregisterIfFinishedOnce].
      */
     fun unregister() {
         synchronized(lock) {
@@ -1440,27 +1445,315 @@ internal class PendingNotesStore private constructor(
 
     private fun checkNotDropped() = check(!dropped) { "the pending store was dropped" }
 
+    // ---- one notebook ----
+
+    /**
+     * What one notebook holds that has not synced, for the user who leaves or deletes it, decided from one
+     * listing. Like [unsynced], it runs no recovery, writes nothing in the store, answers on a cleared instance from
+     * what is on disk, and withdraws the store's acknowledgement once the store lists ([withdrawAcknowledgement]):
+     * - A folder that is a link, or whose lstat cannot tell ([followable]), is not listed and nothing in it is read,
+     *   the counter included: every notebook's answer is the one [unsynced] gives for it, "could not be counted" with
+     *   [UnsyncedNotes.listed] false, no names, and [highWater] for its sequence, and the acknowledgement is not
+     *   withdrawn.
+     * - A store whose directory cannot be listed, and is not shown gone, answers as [unsynced] does, with
+     *   [UnsyncedNotes.listed] false, for every notebook.
+     * - A listing that lacks the store's counter while its presence check, by path, does not show it absent came back
+     *   short, as [unsynced] takes it ([shortOfCounter]): every notebook's answer is "could not be counted", naming
+     *   what the listing placed in it. A lost counter, a store never made and an empty folder are no such listing. One
+     *   that skipped an entry and still listed the counter is taken as it comes, so a count can be low, and an answer
+     *   of nothing is no proof that the notebook holds nothing.
+     * - An entry file counts in the notebook its header names, read alone ([readHeader]), when the header names the
+     *   note its file is named for: a held entry and a conflict copy too. A first write with no entry beside it counts
+     *   the same way under its entry's name when it is intact, and nowhere when it is cut short, since recovery drops
+     *   it. Landed records, notebook copies, the counter and their writes hold no unsynced text.
+     * - A file that cannot be placed in a notebook may hold this notebook's text, so it leaves every notebook's answer
+     *   "could not be counted" ([UnsyncedNotes.unreadable]), with each entry, first write and file of an unknown kind
+     *   named as in [unsynced]: an entry whose header cannot be read or names another note, a name that is not an
+     *   Etebase uid, a first write whose header cannot be read, and a file of a kind this build does not know. So does
+     *   a withdrawal of the acknowledgement that cannot be shown. A sequence that cannot be read gives "could not be
+     *   counted" only for a notebook that holds anything; one that holds nothing counts nothing then.
+     *
+     * That one such file leaves every notebook uncountable is my chosen default; [countNotebook] holds that rule in
+     * one branch. A header carries its own checksum and the text does not, so an entry counted here can turn out
+     * unreadable at [discardNotebook], which keeps it.
+     */
+    fun unsyncedInNotebook(notebookUid: String): UnsyncedNotes = synchronized(lock) {
+        checkNotDropped()
+        countNotebook(checkedUid(notebookUid)).answer
+    }
+
+    /** What [discardNotebook] did. */
+    sealed class NotebookDiscard {
+        /**
+         * Every entry of the notebook that could be read went, [deleted] of them, as far as a second listing in the same
+         * hold of the store lock shows, and a look by path at what the confirmation names and neither listing showed:
+         * an entry that the confirmation does not name, and that two listings leave out while they still list the
+         * counter, is not seen. The [unreadable] ones, whose header names the notebook and whose text cannot be read,
+         * stay.
+         * [uncounted] when the notebook could not be counted, by the count the confirmation was compared with or by the
+         * second listing: the files that could not be placed in a notebook, which may hold its text, stay too.
+         */
+        data class Done(val deleted: Int, val unreadable: Int, val uncounted: Boolean = false) : NotebookDiscard()
+
+        /** The notebook holds what the confirmation does not cover: [now]. Nothing was deleted. */
+        data class Changed(val now: UnsyncedNotes) : NotebookDiscard()
+
+        /**
+         * The store's directory cannot be listed. None of the notebook's entries was deleted, and nothing was
+         * recorded. While its folder is a link, or lstat cannot tell, [discardNotebook] throws instead, before
+         * anything is read; the count checks again, so a link that takes the folder's place after that first check
+         * gives this answer too.
+         */
+        object NotListed : NotebookDiscard()
+
+        /**
+         * [deleted] entries went, and [kept] of the notebook's entries stay: a removal failed, the loop stopped, a
+         * throw after the loop stopped the discard, the second listing still places an entry in the notebook that this
+         * call did not keep for being unreadable, or the confirmation names one that neither listing showed and that a
+         * look by path does not show gone. [unsure] when a removal that failed had unlinked a file already, such as an
+         * entry whose directory sync then failed or a conflict copy's original whose copy then stayed, or when the
+         * directory sync owed before Done failed: some of the notebook's text may be gone that [deleted] does not
+         * count, and an unlink whose sync failed can come back after a power loss. [unsure] too when a throw after the
+         * loop stopped a discard that had unlinked a file, before it could check what went.
+         */
+        data class Partly(val deleted: Int, val kept: Int, val unsure: Boolean = false) : NotebookDiscard()
+    }
+
+    /**
+     * The user's confirmed discard of one notebook's unsynced Notes changes, once their leave or delete of it went
+     * through on the server. [confirmed] is the answer of [unsyncedInNotebook] they were shown. Like [discard], it runs
+     * any recovery that is owed first and refuses a cleared instance ([Cleared]); a recovery that cannot list the store
+     * throws before anything goes. While the store's folder is a link, or lstat cannot tell ([followable]), it throws
+     * IOException at its start, before recovery, and nothing is listed, read, recorded or deleted ([locked]). Its count
+     * checks again, so a link that takes the folder's place after that check and before the count gives
+     * [NotebookDiscard.NotListed], and the loop deletes nothing; the recovery that runs in between when one is owed
+     * does not check again, so it does not see a link that comes while it runs, as no operation does ([followable]).
+     * Then, in the same hold of the store lock:
+     * 1. The notebook is counted again, as [unsyncedInNotebook] counts it.
+     * 2. While the store's directory cannot be listed, nothing is deleted and nothing is recorded, neither a permit
+     *    nor an acknowledgement ([NotebookDiscard.NotListed]).
+     * 3. A notebook that holds nothing now has nothing to delete, also under a confirmation given while the store could
+     *    not be listed, and goes on to step 6 with none.
+     * 4. When [confirmed] does not cover what the notebook holds now ([UnsyncedNotes.covers], which compares
+     *    [UnsyncedNotes.listed] too), nothing is deleted ([NotebookDiscard.Changed]).
+     * 5. Each entry placed in the notebook is read in full. One whose text cannot be read is kept and reported, as
+     *    the maintainer's rule for unreadable drafts asks; keeping it in a notebook's discard is my chosen default,
+     *    held in that one branch. Any other goes as [discard] removes it, a conflict copy's original with
+     *    it. A removal that throws an IOException or a RuntimeException keeps that entry while the others still go;
+     *    any other throw, such as running out of memory on a large entry, keeps it and the rest
+     *    ([NotebookDiscard.Partly]), and is not passed on. A removal that throws after it unlinked a file, such as one
+     *    whose directory sync failed, or a conflict copy whose original went first, marks that outcome
+     *    [NotebookDiscard.Partly.unsure].
+     * 6. [NotebookDiscard.Done] comes only after two more steps. Under a [confirmed] from a listed store that holds
+     *    anything, while an unlink by [remove], in this call or an earlier one, has had no directory sync that worked
+     *    since, the store's directory is synced, so a retry after a partial success makes that durability step too; a
+     *    sync that fails gives [NotebookDiscard.Partly] with [NotebookDiscard.Partly.unsure]. Under any other
+     *    [confirmed] the loop walked nothing, so there is no discard to make last, and the unlink stays owed. Then the
+     *    notebook is listed again, and an entry that listing places in it, other than one kept for being unreadable,
+     *    stays and gives [NotebookDiscard.Partly], since the first listing can have come back short; nothing more is
+     *    deleted for it. So does a name in [confirmed] that neither listing showed, which the loop did not walk, unless
+     *    its path is shown absent ([namesThere]). An entry that [confirmed] does not name, and that two listings leave
+     *    out while they still list the counter, gets past this. A second listing that cannot count the notebook, or
+     *    cannot list the store, otherwise gives Done with [NotebookDiscard.Done.uncounted].
+     *
+     * From step 5 on nothing is passed on, since a caller takes a throw for a discard that deleted nothing: a throw
+     * that no step turns into an outcome of its own gives [NotebookDiscard.Partly], in the loop as step 5 says, and
+     * after it, such as running out of memory while an outcome is made, with [NotebookDiscard.Partly.unsure] once
+     * this call unlinked a file.
+     *
+     * It records no permit and no acknowledgement, hands out no version, and never closes or drops the instance, so
+     * what it keeps is held by the next push step. The notebook's copy stays too, as every copy does until the store is
+     * discarded or cleared. Other notebooks' entries, files that cannot be placed, landed records and the counter
+     * stay. Anything it throws comes before an entry went, except an Error: memory can run out again while that last
+     * [NotebookDiscard.Partly] is made.
+     */
+    fun discardNotebook(notebookUid: String, confirmed: UnsyncedNotes): NotebookDiscard = locked {
+        val uid = checkedUid(notebookUid)
+        val count = countNotebook(uid)
+        val now = count.answer
+        // No permit and no acknowledgement, here or below: my chosen default.
+        val placed = count.placed ?: return@locked NotebookDiscard.NotListed
+        if (now.anything && !confirmed.covers(now)) return@locked NotebookDiscard.Changed(now)
+        var deleted = 0
+        val unreadable = HashSet<String>()
+        var failed = 0
+        var unsure = false
+        // For a throw that stops the discard: the entries from [reached] on stay, the one being tried among them, and
+        // [unlinksBefore] is the count of unlinks before that one, or before the loop once it ended.
+        var reached = 0
+        val unlinksAtStart = unlinks
+        var unlinksBefore = unlinksAtStart
+        try {
+            for (entry in placed.sorted()) {
+                unlinksBefore = unlinks
+                val noteUid = entry.removeSuffix(NOTE)
+                try {
+                    when (val read = readEntry(noteUid)) {
+                        // Kept, as unreadable drafts are: my chosen default for this discard.
+                        is Read.Unreadable -> unreadable += entry
+                        is Read.Present -> {
+                            removeEntry(noteUid, read.entry)
+                            deleted++
+                        }
+                        Read.Missing -> Unit
+                    }
+                } catch (e: IOException) {
+                    failed++
+                    if (unlinks != unlinksBefore) unsure = true
+                } catch (e: RuntimeException) {
+                    failed++
+                    if (unlinks != unlinksBefore) unsure = true
+                }
+                reached++
+            }
+            unlinksBefore = unlinksAtStart
+            if (failed > 0) return@locked NotebookDiscard.Partly(deleted, failed + unreadable.size, unsure)
+            // Step 6: an unlink whose directory sync has not worked since, in this call or an earlier one, lasts only
+            // once the directory is synced. A confirmation of nothing, or one from a store that could not be listed,
+            // walked nothing, so it has no discard to make last.
+            if (confirmed.anything && confirmed.listed && unlinkUnsynced) {
+                try {
+                    syncDirectory(dir)
+                    unlinkUnsynced = false
+                } catch (e: Throwable) {
+                    return@locked NotebookDiscard.Partly(deleted, unreadable.size, unsure = true)
+                }
+            }
+            // The listing the count came from can have come back short: what a second one still places in the
+            // notebook stays, and nothing more is deleted for it. That one can leave out the same entry, so what the
+            // confirmation names and neither listing showed, which the loop did not walk, is looked up by path.
+            val again = try {
+                countNotebook(uid)
+            } catch (e: Throwable) {
+                null
+            }
+            val left = again?.placed.orEmpty().toHashSet()
+            left += namesThere(confirmed.names - count.shown - again?.shown.orEmpty())
+            left -= unreadable
+            if (left.isNotEmpty()) return@locked NotebookDiscard.Partly(deleted, unreadable.size + left.size)
+            NotebookDiscard.Done(deleted, unreadable.size,
+                uncounted = now.unreadable || again?.answer?.unreadable != false)
+        } catch (e: Throwable) {
+            // Any other throw, such as running out of memory on a large entry or once the loop ended, stops the discard
+            // and is not passed on: the entry being tried and those after it stay, and the outcome is unsure when that
+            // entry had unlinked a file or, once the loop ended, when this call had unlinked any.
+            NotebookDiscard.Partly(deleted, failed + unreadable.size + placed.size - reached,
+                unsure || unlinks != unlinksBefore)
+        }
+    }
+
+    /**
+     * An answer of [unsyncedInNotebook], the entries it placed in the notebook, null when not listed, and the names
+     * its listing showed, as [UnsyncedNotes.names] gives them: every entry placed in any notebook, and what could not
+     * be placed. A first write cut short gives no name, so it shows nothing of its entry.
+     */
+    private class NotebookCount(
+        val answer: UnsyncedNotes,
+        val placed: List<String>?,
+        val shown: Set<String> = emptySet(),
+    )
+
+    /** [unsyncedInNotebook] for [notebookUid], a checked uid, under the store lock. */
+    private fun countNotebook(notebookUid: String): NotebookCount {
+        if (!followable()) return NotebookCount(UnsyncedNotes(0, highWater, unreadable = true, listed = false), null)
+        val listed = listDirectory(dir)
+        if (listed == null && !shownGone(dir)) {
+            return NotebookCount(UnsyncedNotes(0, uncountedSequence(), unreadable = true, listed = false), null)
+        }
+        val names = listed.orEmpty().map { it.name }
+        val withdrawn = try {
+            withdrawAcknowledgement()
+            true
+        } catch (e: IOException) {
+            false
+        }
+        // A listing that lacks the counter while its presence check does not show it absent came back short.
+        val short = shortOfCounter(names)
+        val held = names.toHashSet()
+        val shown = HashSet<String>()
+        val placed = ArrayList<String>()
+        val unplaced = ArrayList<String>()
+        for (name in names) {
+            when (val placement = placementOf(name, held)) {
+                is Placement.In -> {
+                    shown += placement.entry
+                    if (placement.notebookUid == notebookUid) placed += placement.entry
+                }
+                Placement.Unknown -> unplaced += name
+                Placement.Nowhere -> Unit
+            }
+        }
+        shown += uncountedNames(unplaced)
+        // One file that cannot be placed leaves every notebook uncountable, since it may hold this notebook's text, and
+        // so does a listing that came back short, which may have left out this notebook's entries.
+        if (withdrawn && unplaced.isEmpty() && !short) {
+            if (placed.isEmpty()) return NotebookCount(UnsyncedNotes.NOTHING, placed, shown)
+            try {
+                return NotebookCount(UnsyncedNotes(placed.size, currentSequence(strict = true), unreadable = false,
+                    names = placed.toSet()), placed, shown)
+            } catch (e: IOException) {
+                // A sequence that cannot be read: the notebook could not be counted.
+            }
+        }
+        return NotebookCount(UnsyncedNotes(placed.size + unplaced.size, uncountedSequence(), unreadable = true,
+            names = placed.toSet() + uncountedNames(unplaced)), placed, shown)
+    }
+
+    /** The notebook a listed file's unsynced text belongs to: [In] one, [Nowhere], or [Unknown]. */
+    private sealed class Placement {
+        /** In the notebook [notebookUid], as the entry [entry] ("<uid>.note"). */
+        data class In(val notebookUid: String, val entry: String) : Placement()
+
+        /** It holds no unsynced text. */
+        object Nowhere : Placement()
+
+        /** It may hold unsynced text, and its notebook cannot be told. */
+        object Unknown : Placement()
+    }
+
+    /**
+     * Where the file [name] belongs, from a listing of the store that worked and held [held]. An entry's own header
+     * decides, and must name the note its file is named for. A first write beside its entry holds nothing, since
+     * recovery drops it unread, and neither does one that is cut short; an intact one counts as its entry would.
+     */
+    private fun placementOf(name: String, held: Set<String>): Placement {
+        if (!isKnownKind(name)) return Placement.Unknown
+        val first = name.endsWith(NOTE + NEW)
+        if (!first && !name.endsWith(NOTE)) return Placement.Nowhere
+        val entry = name.removeSuffix(NEW)
+        if (first && entry in held) return Placement.Nowhere
+        val noteUid = entry.removeSuffix(NOTE)
+        if (!UID.matches(noteUid)) return Placement.Unknown
+        val header = if (!first) readHeader(File(dir, name)) else {
+            val bytes = try {
+                File(dir, name).readBytes()
+            } catch (e: IOException) {
+                return Placement.Unknown
+            }
+            if (!PendingCodec.isIntact(bytes)) return Placement.Nowhere
+            (PendingCodec.decodeEntryHeader(bytes) as? PendingCodec.Decoded.Ok)?.value
+        }
+        return if (header == null || header.noteUid != noteUid) Placement.Unknown
+        else Placement.In(header.notebookUid, entry)
+    }
+
     // ---- internals ----
 
     /**
-     * Every public operation except [unsynced], [removalCheck], [discardStore], [acknowledged], [clearedInFull],
-     * [clearStopped], [unregister], [unregisterIfFinishedOnce], [clearAll] and [pruneNotebooks]: refuse ([Cleared])
-     * once [clearAll], or a [discardStore] that got as far as deleting, has closed the store, and finish any
-     * interrupted work first. Recovery runs again before the next operation for as long as anything in it did not
-     * work out, including a write or removal inside recovery itself, or a listing it works from. A recovery whose
-     * listing fails throws, so the operation fails with it and the recovery is not taken for done: a first write it
-     * did not see may be the only copy of a note's text, and an original it did not see may still wait for its
-     * conflict copy. A listing also fails while the store's acknowledgement cannot be shown gone ([listing]), so a
-     * new instance does nothing while notes-discard is there but cannot be listed.
+     * Every public operation except [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [acknowledged],
+     * [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll]:
+     * refuse ([Cleared]) once [clearAll], or a [discardStore] that got as far as deleting, has closed the store, and
+     * finish any interrupted work first. Recovery runs again before the next operation for as long as anything in it
+     * did not work out, including a write or removal inside recovery itself, or a listing it works from. A recovery
+     * whose listing fails throws, so the operation fails with it and the recovery is not taken for done: a first
+     * write it did not see may be the only copy of a note's text, and an original it did not see may still wait for
+     * its conflict copy. A listing also fails while the store's acknowledgement cannot be shown gone ([listing]), so
+     * a new instance does nothing while notes-discard is there but cannot be listed.
      *
      * While the store's folder is a link, or lstat cannot tell ([followable]), every such operation throws
      * IOException at its start, before recovery and on every call, also in an instance that recovered before the
      * link came, so nothing is read, written or deleted through the link. Recovery is then owed again, so it runs
      * over whatever the folder holds once it can be followed.
-     *
-     * [pruneNotebooks] refuses ([Cleared]) after [clearAll] as well, but runs no recovery: while one is owed it does
-     * nothing, and it comes here only when none is, so no recovery runs inside a prune, where a failure
-     * would show only as a log line.
      *
      * Recovery runs once per operation, at its start. An operation that calls another one under the lock (a
      * save through a handle, anything that goes through [update]) does not recover again in between:
@@ -1524,10 +1817,18 @@ internal class PendingNotesStore private constructor(
      * restart holds only while the counter reads, as [UnsyncedNotes.covers] says, and one shown before a
      * discard that finished, which deletes the counter, does not hold at all. The push order, which compares
      * versions across notes, is bounded the same way.
+     *
+     * And it is above [above], the version of the entry the new one replaces, which the caller read by name.
+     * In a new instance, as after a restart, that first reads the store once the counter is lost, [highWater]
+     * is the rebuild, and the rebuild rests on a listing, which can come back short and leave that entry out.
+     * Every check of an entry's version (a drop, a rebase, a recorded failure, a hold, a conflict copy and its
+     * recovery) compares it only with an earlier one of the same note, so a new version above the one it
+     * replaces is what they need, whatever the listing showed. A new entry has no version to replace. What is
+     * compared across notes, the push order and the store-wide sequence, gets only the [highWater] bound.
      */
-    private fun nextVersion(): Long {
+    private fun nextVersion(above: Long = 0): Long {
         withdrawPermit()
-        val next = currentSequence(strict = true) + 1
+        val next = maxOf(currentSequence(strict = true), above) + 1
         writeAtomically(File(dir, SEQUENCE), PendingCodec.encodeSequence(next))
         highWater = next
         return next
@@ -1542,9 +1843,9 @@ internal class PendingNotesStore private constructor(
      * release from holding still withdraw the permit. Once this instance has shown the permit gone
      * ([withdrawPermit]), nothing holds a new version back, and the permit is not read again ([permitNames]).
      */
-    private fun nextRunVersion(): Long {
+    private fun nextRunVersion(above: Long = 0): Long {
         if (namedThere(permitNames())) throw HeldBack()
-        return nextVersion()
+        return nextVersion(above)
     }
 
     /**
@@ -1621,11 +1922,17 @@ internal class PendingNotesStore private constructor(
         if (names == null) return true
         if (names.isEmpty()) return false
         if (!followable()) return true
-        return names.any { name ->
-            name.isEmpty() || name == "." || name == ".." || '\u0000' in name || File(name).name != name ||
-                listOf(name, name + NEW).any { presenceOf(File(dir, it)) != Presence.ABSENT }
-        }
+        return names.any { fileThere(it) }
     }
+
+    /** The ones of [names] that are there, as [namedThere] asks it: all of them while the folder may not be followed. */
+    private fun namesThere(names: Set<String>): Set<String> =
+        if (followable()) names.filterTo(HashSet()) { fileThere(it) } else names
+
+    /** Whether the file [name], or the write beside it, is there, as [namedThere] asks it for each name. */
+    private fun fileThere(name: String): Boolean =
+        name.isEmpty() || name == "." || name == ".." || '\u0000' in name || File(name).name != name ||
+            listOf(name, name + NEW).any { presenceOf(File(dir, it)) != Presence.ABSENT }
 
     /**
      * An acknowledgement holds only while the store cannot be listed and is not written ([acknowledged]), so
@@ -1844,8 +2151,9 @@ internal class PendingNotesStore private constructor(
         // away (design 3.1). An entry file this build cannot read is then reported like every committed
         // entry that cannot be read. The other kinds are kept for a build that can read them but not
         // reported. A landed record goes in step 2 unless an editor is open, and a notebook copy lasts until
-        // a run prunes or rewrites it. A counter this build cannot read stays as it is, and every write that
-        // needs a new version fails while it does: the build that wrote it may have handed out higher ones.
+        // a run rewrites it or the store is discarded or cleared. A counter this build cannot read stays as it
+        // is, and every write that needs a new version fails while it does: the build that wrote it may have
+        // handed out higher ones.
         // A ".new" of any other kind is left as it is: not deleted, not committed and not reported, since
         // this build cannot judge it and a newer build may keep versions in it. With the counter lost, the
         // version rebuild ([versionOf]) then takes it for a file of a kind this build does not know.
@@ -1873,8 +2181,7 @@ internal class PendingNotesStore private constructor(
         }
         // 2. A landed record only matters while an editor for its note is open. Any other is left from an
         // editor that closed without clearing it, or from an earlier process (no editor survives one),
-        // and would otherwise keep a full copy of the note on the device. Only regular files are removed,
-        // as in [pruneNotebooks].
+        // and would otherwise keep a full copy of the note on the device. Only regular files are removed.
         for (file in files(LANDED).filter { it.isFile && !hasEditor(it.name.removeSuffix(LANDED)) }) {
             try {
                 remove(file)
@@ -1923,9 +2230,9 @@ internal class PendingNotesStore private constructor(
 
     /**
      * The files in [listed] with [suffix], chosen by name alone. File.isFile also answers false when its
-     * check fails, and an entry dropped for that would be neither reported nor pushed, its version would
-     * be passed over, and its notebook copy would look unreferenced. A caller that removes what it lists
-     * keeps only regular files on top, since there a shorter list can only keep more.
+     * check fails, and an entry dropped for that would be neither reported nor pushed, and its version
+     * would be passed over. A caller that removes what it lists keeps only regular files on top, since
+     * there a shorter list can only keep more.
      */
     private fun withSuffix(listed: Array<out File>, suffix: String): List<File> =
         listed.filter { it.name.endsWith(suffix) }.sortedBy { it.name }
@@ -2042,16 +2349,27 @@ internal class PendingNotesStore private constructor(
         try {
             beforeRemoveForTesting?.invoke(file)
             val tmp = File(dir, file.name + NEW)
-            if (isPresent(tmp) && !tmp.delete()) throw IOException("could not remove ${tmp.name}")
+            if (isPresent(tmp)) {
+                if (!tmp.delete()) throw IOException("could not remove ${tmp.name}")
+                unlinked()
+            }
             if (isPresent(file)) {
                 if (!file.delete()) throw IOException("could not remove ${file.name}")
+                unlinked()
                 syncDirectory(dir)
+                unlinkUnsynced = false
             }
         } catch (e: Throwable) {
             // A removal stopped halfway (for example inside a conflict copy) is finished by recovery.
             recovered = false
             throw e
         }
+    }
+
+    /** A file [remove] unlinked, whose removal lasts only once the store's directory is synced. */
+    private fun unlinked() {
+        unlinks++
+        unlinkUnsynced = true
     }
 
     /** [remove] for [file] alone: a write beside it stays. */

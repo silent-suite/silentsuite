@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useTranslations } from 'next-intl'
 import {
   Search, ArrowLeft, Phone, Mail, MapPin, Building2, Cake,
@@ -361,7 +362,11 @@ function ContactForm({
     if (given.trim() || family.trim()) setNameError(false)
   }, [given, family])
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  // Rendered into the body: the page's `main` is its own stacking context, so
+  // inside it the form painted under the bottom nav and the nav stayed tappable.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-start md:p-4 md:pt-16">
       {/* Backdrop */}
       <div className="fixed inset-0" aria-hidden="true" onClick={onClose} />
@@ -370,7 +375,7 @@ function ContactForm({
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[rgb(var(--border))] md:hidden" />
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-lg font-semibold text-[rgb(var(--foreground))]">New Contact</h3>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors" aria-label="Close">
+          <button type="button" onClick={onClose} className="rounded-lg p-2 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -451,7 +456,7 @@ function ContactForm({
                 <TypeSelector value={p.type} options={PHONE_TYPES} onChange={(t) => { const next = [...phones]; next[i] = { ...p, type: t }; setPhones(next) }} />
                 <input value={p.value} onChange={(e) => { const next = [...phones]; next[i] = { ...p, value: e.target.value }; setPhones(next) }} placeholder="Phone number" className={INPUT_CLASS} />
                 {phones.length > 1 && (
-                  <button type="button" onClick={() => setPhones(phones.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove phone">
+                  <button type="button" onClick={() => setPhones(phones.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove phone">
                     <X className="h-4 w-4" />
                   </button>
                 )}
@@ -470,7 +475,7 @@ function ContactForm({
                 <TypeSelector value={em.type} options={EMAIL_TYPES} onChange={(t) => { const next = [...emails]; next[i] = { ...em, type: t }; setEmails(next) }} />
                 <input value={em.value} onChange={(e) => { const next = [...emails]; next[i] = { ...em, value: e.target.value }; setEmails(next) }} placeholder="Email address" className={INPUT_CLASS} />
                 {emails.length > 1 && (
-                  <button type="button" onClick={() => setEmails(emails.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove email">
+                  <button type="button" onClick={() => setEmails(emails.filter((_, j) => j !== i))} className="shrink-0 rounded p-1 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove email">
                     <X className="h-4 w-4" />
                   </button>
                 )}
@@ -488,7 +493,7 @@ function ContactForm({
               <div key={i} className="space-y-1.5 rounded-md border border-[rgb(var(--border))] p-2">
                 <div className="flex items-center justify-between">
                   <TypeSelector value={a.type} options={ADDRESS_TYPES} onChange={(t) => { const next = [...addresses]; next[i] = { ...a, type: t }; setAddresses(next) }} />
-                  <button type="button" onClick={() => setAddresses(addresses.filter((_, j) => j !== i))} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove address">
+                  <button type="button" onClick={() => setAddresses(addresses.filter((_, j) => j !== i))} className="rounded p-1 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove address">
                     <X className="h-4 w-4" />
                   </button>
                 </div>
@@ -577,7 +582,8 @@ function ContactForm({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -850,14 +856,16 @@ function ContactDetail({
     [contact.id, contact.addresses, updateContact],
   )
 
-  const deleteConfirmDialog = confirmDelete ? (
+  // In the body so it paints above the bottom nav.
+  const deleteConfirmDialog = confirmDelete && typeof document !== 'undefined' ? createPortal(
     <ConfirmDialog
       title="Delete contact?"
       message={`"${contact.displayName}" will be permanently deleted along with all their information.`}
       confirmLabel="Delete contact"
       onConfirm={handleDeleteConfirmed}
       onCancel={() => setConfirmDelete(false)}
-    />
+    />,
+    document.body,
   ) : null
 
   // ── Read-only view ──
@@ -889,7 +897,7 @@ function ContactDetail({
                 <button
                   type="button"
                   onClick={() => setEditing(true)}
-                  className="rounded p-1.5 text-[rgb(var(--muted))] hover:text-emerald-400 transition-colors"
+                  className="rounded p-1.5 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-emerald-400 transition-colors"
                   aria-label="Edit contact"
                 >
                   <Pencil className="h-4 w-4" />
@@ -897,7 +905,7 @@ function ContactDetail({
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(true)}
-                  className="rounded p-1.5 text-[rgb(var(--muted))] hover:text-red-400 transition-colors"
+                  className="rounded p-1.5 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400 transition-colors"
                   aria-label="Delete contact"
                 >
                   <Trash2 className="h-4 w-4" />
@@ -1043,7 +1051,7 @@ function ContactDetail({
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
-              className="rounded p-1.5 text-[rgb(var(--muted))] hover:text-red-400 transition-colors"
+              className="rounded p-1.5 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400 transition-colors"
               aria-label="Delete contact"
             >
               <Trash2 className="h-4 w-4" />
@@ -1087,7 +1095,7 @@ function ContactDetail({
               <TypeSelector value={p.type} options={PHONE_TYPES} onChange={(t) => handlePhoneUpdate(i, 'type', t)} />
               <EditableField value={p.value} onChange={(v) => handlePhoneUpdate(i, 'value', v)} placeholder="Phone number" />
               {canWrite && (
-                <button type="button" onClick={() => handleRemovePhone(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove phone">
+                <button type="button" onClick={() => handleRemovePhone(i)} className="shrink-0 rounded p-1 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove phone">
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -1107,7 +1115,7 @@ function ContactDetail({
               <TypeSelector value={em.type} options={EMAIL_TYPES} onChange={(t) => handleEmailUpdate(i, 'type', t)} />
               <EditableField value={em.value} onChange={(v) => handleEmailUpdate(i, 'value', v)} placeholder="Email address" />
               {canWrite && (
-                <button type="button" onClick={() => handleRemoveEmail(i)} className="shrink-0 rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove email">
+                <button type="button" onClick={() => handleRemoveEmail(i)} className="shrink-0 rounded p-1 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove email">
                   <X className="h-4 w-4" />
                 </button>
               )}
@@ -1127,7 +1135,7 @@ function ContactDetail({
               <div className="flex items-center justify-between">
                 <TypeSelector value={a.type} options={ADDRESS_TYPES} onChange={(t) => handleAddressUpdate(i, 'type', t)} />
                 {canWrite && (
-                  <button type="button" onClick={() => handleRemoveAddress(i)} className="rounded p-1 text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove address">
+                  <button type="button" onClick={() => handleRemoveAddress(i)} className="rounded p-1 max-md:min-h-[44px] max-md:min-w-[44px] max-md:flex max-md:items-center max-md:justify-center text-[rgb(var(--muted))] hover:text-red-400" aria-label="Remove address">
                     <X className="h-4 w-4" />
                   </button>
                 )}
@@ -1276,7 +1284,7 @@ export default function ContactsPage() {
             type="button"
             onClick={() => setShowNewForm(true)}
             disabled={!canWrite}
-            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
+            className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
             title={!canWrite ? 'Subscription required' : undefined}
           >
             <Plus className="h-4 w-4" />

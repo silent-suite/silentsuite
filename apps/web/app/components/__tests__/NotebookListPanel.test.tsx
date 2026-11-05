@@ -123,4 +123,12 @@ describe('NotebookListPanel', () => {
     expect(mockEtebaseState.createCollection).toHaveBeenCalledWith('notes', 'Recipes', '#10b981')
     await vi.waitFor(() => expect(screen.queryByLabelText('Notebook name')).not.toBeInTheDocument())
   })
+
+  it('gives the add button a mobile-only 44px hit area', () => {
+    renderWithIntl(<NotebookListPanel />)
+    const add = screen.getByRole('button', { name: 'Add notebook' })
+    expect(add.className).toContain('max-md:min-h-[44px]')
+    expect(add.className).toContain('max-md:min-w-[44px]')
+    expect(add.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+  })
 })

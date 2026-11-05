@@ -1,11 +1,12 @@
-import { act, fireEvent, screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ContactsPage from '../page'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 import messages from '@/messages/en.json'
 import type { Contact } from '@silentsuite/core'
 import type { ContactList } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useContactStore } from '@/app/stores/use-contact-store'
 
 // Mobile reachability smoke test for the Contacts page (epic #295). jsdom does
 // not evaluate CSS media queries, so these assert that the primary create
@@ -215,5 +216,160 @@ describe('ContactsPage mobile reachability', () => {
     // Mobile-only control that meets the minimum touch target.
     expect(folderButton.className).toContain('md:hidden')
     expect(folderButton.className).toContain('touch-target')
+  })
+
+  it('uses mobile-only 44px classes on contact actions', () => {
+    const expectHeight = (element: HTMLElement) => {
+      expect(element.className).toContain('max-md:min-h-[44px]')
+      expect(element.className).not.toMatch(/(^|\s)min-h-\[44px\](\s|$)/)
+    }
+    const expectSquare = (element: HTMLElement) => {
+      expectHeight(element)
+      expect(element.className).toContain('max-md:min-w-[44px]')
+    }
+    const expectAllSquare = (root: HTMLElement, name: string) => {
+      const buttons = within(root).getAllByRole('button', { name })
+      expect(buttons.length).toBeGreaterThan(0)
+      buttons.forEach(expectSquare)
+    }
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.contactState.contacts = [{
+      id: 'ada',
+      uid: 'ada',
+      displayName: 'Ada',
+      name: { prefix: '', given: 'Ada', family: '', suffix: '' },
+      phones: [{ type: 'cell', value: '111' }],
+      emails: [{ type: 'home', value: 'ada@example.invalid' }],
+      addresses: [{ type: 'home', street: '1 Road', city: '', state: '', postalCode: '', country: '' }],
+      organization: '',
+      title: '',
+      notes: '',
+      birthday: null,
+      photoUrl: null,
+      listId: 'book',
+      created_at: new Date(),
+      updated_at: new Date(),
+    }]
+    renderWithIntl(<ContactsPage />)
+
+    expectHeight(screen.getByRole('button', { name: 'New Contact' }))
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    const form = screen.getByRole('dialog', { name: 'New Contact' })
+    expectSquare(within(form).getByRole('button', { name: 'Close' }))
+    fireEvent.click(within(form).getByRole('button', { name: '+ Add phone' }))
+    fireEvent.click(within(form).getByRole('button', { name: '+ Add email' }))
+    fireEvent.click(within(form).getByRole('button', { name: '+ Add address' }))
+    expectAllSquare(form, 'Remove phone')
+    expectAllSquare(form, 'Remove email')
+    expectAllSquare(form, 'Remove address')
+
+    fireEvent.click(within(form).getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getByText('Ada'))
+    expectSquare(screen.getByRole('button', { name: 'Edit contact' }))
+    expectSquare(screen.getByRole('button', { name: 'Delete contact' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit contact' }))
+    expectAllSquare(document.body, 'Delete contact')
+    expectAllSquare(document.body, 'Remove phone')
+    expectAllSquare(document.body, 'Remove email')
+    expectAllSquare(document.body, 'Remove address')
+  })
+})
+
+// #295: the mobile bottom nav sits outside the page's `main`, which is its own stacking context. An
+// overlay rendered inside the page paints under the nav, and the nav stays tappable while it is open.
+// These check where each contact overlay is mounted; they do not measure painted geometry.
+
+/** The outermost `fixed` element between the role=dialog card and <body>: the overlay's own wrapper. */
+function outerOverlay(dialog: HTMLElement): HTMLElement | null {
+  let outer: HTMLElement | null = null
+  for (let node: HTMLElement | null = dialog; node && node !== document.body; node = node.parentElement) {
+    if (node.classList.contains('fixed')) outer = node
+  }
+  return outer
+}
+
+function expectPortaledOverlay(dialog: HTMLElement, pageContainer: HTMLElement) {
+  expect(pageContainer.contains(dialog), 'dialog is rendered inside the page container').toBe(false)
+  const outer = outerOverlay(dialog)
+  expect(outer, 'fixed overlay wrapper').not.toBeNull()
+  expect(outer!.parentElement, 'overlay wrapper is a direct child of <body>').toBe(document.body)
+}
+
+describe('ContactsPage overlays mount above the bottom nav', () => {
+  const ada: Contact = {
+    id: 'ada',
+    uid: 'ada',
+    displayName: 'Ada',
+    name: { prefix: '', given: 'Ada', family: '', suffix: '' },
+    phones: [{ type: 'cell', value: '111' }],
+    emails: [],
+    addresses: [],
+    organization: '',
+    title: '',
+    notes: '',
+    birthday: null,
+    photoUrl: null,
+    listId: 'book',
+    created_at: new Date(),
+    updated_at: new Date(),
+  }
+  // The detail's confirmed delete reads the store once the delete settles; the shared selector mock has
+  // no getState, so this block supplies one for its own tests only and removes it afterwards.
+  const storeWithState = useContactStore as unknown as { getState?: () => typeof storeMock.contactState }
+
+  beforeEach(() => {
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    storeMock.contactState.searchQuery = ''
+    storeMock.contactState.contacts = [ada]
+    storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
+    storeMock.authState.canWrite.mockReturnValue(true)
+    storeMock.contactState.createContact.mockReset()
+    storeMock.contactState.deleteContact.mockReset()
+    storeMock.contactState.deleteContact.mockResolvedValue(true)
+    storeWithState.getState = () => storeMock.contactState
+  })
+
+  afterEach(() => {
+    delete storeWithState.getState
+  })
+
+  it('portals the New Contact form to <body>, and Close or Cancel dismiss it without creating a contact', () => {
+    const { container } = renderWithIntl(<ContactsPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    const form = screen.getByRole('dialog', { name: 'New Contact' })
+    expect(within(form).getByRole('textbox', { name: 'Given name' })).toBeInTheDocument()
+    expect(within(form).getByRole('textbox', { name: 'Family name' })).toBeInTheDocument()
+    expect(within(form).getByRole('button', { name: 'Save Contact' })).toBeInTheDocument()
+
+    expectPortaledOverlay(form, container)
+
+    fireEvent.click(within(form).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog', { name: 'New Contact' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'New Contact' })).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'New Contact' })).not.toBeInTheDocument()
+    expect(storeMock.contactState.createContact).not.toHaveBeenCalled()
+  })
+
+  it('portals the contact delete confirmation at its call site; cancel keeps the contact and confirm deletes once', async () => {
+    const { container } = renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('Ada'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete contact' }))
+    const confirm = screen.getByRole('dialog', { name: 'Delete contact?' })
+    expect(within(confirm).getByRole('button', { name: 'Delete contact' })).toBeInTheDocument()
+    expectPortaledOverlay(confirm, container)
+
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Delete contact?' })).not.toBeInTheDocument()
+    expect(storeMock.contactState.deleteContact).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete contact' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete contact?' })).getByRole('button', { name: 'Delete contact' }))
+    expect(screen.queryByRole('dialog', { name: 'Delete contact?' })).not.toBeInTheDocument()
+    await waitFor(() => expect(storeMock.contactState.deleteContact).toHaveBeenCalledTimes(1))
+    expect(storeMock.contactState.deleteContact).toHaveBeenCalledWith('ada')
   })
 })
