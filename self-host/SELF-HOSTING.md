@@ -355,6 +355,10 @@ labels:
 cloudflared tunnel --url http://localhost:3735
 ```
 
+### NetBird
+
+NetBird can either publish the server through its own reverse proxy, or act as the private network for one of the proxies above. Three things matter. If the proxy connects over the tunnel (NetBird's proxy, or your proxy on another machine), the default `127.0.0.1` port mapping can't be reached. Replace it with the host's NetBird IP, never all interfaces. The proxy must pass the original `Host` header. And `TRUSTED_PROXY_IPS` must contain the exact address the proxy connects from. The full guide, including Cloud versus self-hosted NetBird and troubleshooting, is at [docs.silentsuite.io/self-hosting/netbird](https://docs.silentsuite.io/self-hosting/netbird).
+
 ### Recommended Security Headers
 
 Add these in your reverse proxy for defense in depth if your proxy example does
