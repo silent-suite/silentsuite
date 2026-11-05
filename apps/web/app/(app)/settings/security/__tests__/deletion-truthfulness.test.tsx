@@ -459,6 +459,22 @@ describe('Security page password change billing boundary', () => {
     }
   })
 
+  it('stops before verifying the password in a self-hosted build when the stored server URL cannot be read', async () => {
+    mocks.selfHosted = true
+    authStore.setState({ user: SELF_HOSTED_USER })
+    renderWithIntl(<SecurityPage />)
+    const getItem = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('Storage access denied', 'SecurityError')
+    })
+    try {
+      submitPasswordChange()
+      expect(await screen.findByText(SERVER_UNKNOWN)).toBeInTheDocument()
+      expectAbortedBeforeAnyChange()
+    } finally {
+      getItem.mockRestore()
+    }
+  })
+
   it('stops before verifying the password for a self-hosted marker user with no stored server URL', async () => {
     authStore.setState({ user: SELF_HOSTED_USER })
     renderWithIntl(<SecurityPage />)

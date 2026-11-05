@@ -63,6 +63,9 @@ function resolveAccountServerUrl(mode: AccountMode): string | null {
   if (mode === 'hosted') return ETEBASE_SERVER_URL
   if (mode !== 'local') return null
   const stored = readStoredServerUrl()
+  // Unreadable storage leaves the chosen server unknown; only an absent value
+  // means the build's own server.
+  if (stored === undefined) return null
   if (isSelfHosted) return stored || ETEBASE_SERVER_URL
   return stored && isCustomServer(stored) ? stored : null
 }
