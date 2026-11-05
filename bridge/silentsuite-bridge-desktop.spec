@@ -251,6 +251,9 @@ a = Analysis(  # noqa: F821
         "PySide6.QtDataVisualization",
         "PySide6.QtGraphs",
         "PySide6.QtGraphsWidgets",
+        # Qt Quick 3D is GPL-only and not shipped (P2); the only PySide6 binding
+        # among the P2 families. Qt 3D (PySide6.Qt3D*) is a different module.
+        "PySide6.QtQuick3D",
     ],
     noarchive=False,
     optimize=1,
@@ -259,12 +262,33 @@ a = Analysis(  # noqa: F821
 # The PySide6 QML helper collects those families' libraries, QML plugins and
 # QML data separately from the bindings, so drop every binary or data entry
 # whose destination has a path segment naming one of them. The lookahead keeps
-# unrelated names such as QtGraphicalEffects.
+# unrelated names such as QtGraphicalEffects. The P2 rules below extend the
+# same filter.
 EXCLUDED_QT_FAMILY = re.compile(r"^(lib)?Qt6?(Charts|DataVisualization|Graphs)(?![a-z])")
+
+# P2: the GPL-only Qt Quick 3D (every Quick3D* module, Physics included, plus
+# Quick3DSpatialAudio, which links Quick3DPrivate), Qt Quick Timeline, Qt Virtual
+# Keyboard and Qt Wayland Compositor families. Their libraries, frameworks and
+# qml/QtQuick3D tree carry the family name in a path segment. Qt 3D (Qt63D*,
+# qml/Qt3D), QuickTest, Qt SpatialAudio and the rest of Qt Quick do not match.
+P2_QT_FAMILY = re.compile(r"^(lib)?Qt6?(Quick3D|QuickTimeline|VirtualKeyboard|WaylandCompositor)(?![a-z])")
+# QML module directories whose names are not library names. The compositor's
+# QtShell and TextureSharingExtension modules live under QtWayland/Compositor and
+# link the compositor; Wayland client content (qml/QtWayland/Client/...,
+# platforms/qwayland, the client shell, decoration and graphics plugins) stays.
+P2_QML_DIRS = {("QtQuick", "Timeline"), ("QtQuick", "VirtualKeyboard"), ("QtWayland", "Compositor")}
+# The two family plugins installed outside those directories
+# (platforminputcontexts/ and qmltooling/).
+P2_PLUGIN_FILE = re.compile(r"^(lib)?(qtvirtualkeyboardplugin|qmldbg_quick3dprofiler)\.(so|dll|dylib)$")
 
 
 def _excluded_qt_family(destination):
-    return any(EXCLUDED_QT_FAMILY.match(part) for part in destination.replace("\\", "/").split("/"))
+    parts = destination.replace("\\", "/").split("/")
+    if any(EXCLUDED_QT_FAMILY.match(part) or P2_QT_FAMILY.match(part) for part in parts):
+        return True
+    if P2_PLUGIN_FILE.match(parts[-1]):
+        return True
+    return any(pair in P2_QML_DIRS for pair in zip(parts, parts[1:]))
 
 
 a.binaries = [entry for entry in a.binaries if not _excluded_qt_family(entry[0])]
