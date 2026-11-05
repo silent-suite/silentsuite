@@ -32,8 +32,8 @@ import java.io.IOException
  * Beside its permit, a store may have an acknowledgement ("<store>.acknowledgement", in a record kind of its
  * own): what [PendingNotesStore.discardStore] records in place of a permit when the store's directory cannot
  * be listed, so that nothing in it can be deleted. It is no permit and never authority for a deletion:
- * [read] never takes it for one, and nothing else may either, the planned sweep of stores whose account is
- * gone included, which must read permits through [read] alone. It binds to one store directory and that
+ * [read] never takes it for one, and nothing else may either, the startup sweep ([PendingNotesStore.discardOrphan])
+ * included, which must read permits through [read] alone. It binds to one store directory and that
  * directory's identity, and the store withdraws it once it lists or writes the store again
  * ([PendingNotesStore.acknowledged]).
  *
