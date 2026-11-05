@@ -341,19 +341,26 @@ internal object ContactLabelReproduction {
         return out
     }
 
+    /**
+     * [column] of the single row at [uri]. A null cursor or a missing row is a FIXTURE error; an existing row
+     * whose column is NULL (for example an uncertified SYNC4) returns null.
+     */
+    private fun singleRowColumn(ab: LocalAddressBook, uri: Uri, column: String, what: String): String? {
+        val cursor = ab.requireProvider().query(uri, arrayOf(column), null, null, null)
+            ?: throw IllegalStateException("FIXTURE #934: null $what cursor")
+        return cursor.use {
+            if (!it.moveToNext()) throw IllegalStateException("FIXTURE #934: $what row missing")
+            if (it.isNull(0)) null else it.getString(0)
+        }
+    }
+
     private fun rawString(ab: LocalAddressBook, id: Long, column: String): String? =
-        ab.requireProvider().query(ab.syncAdapterURI(ContentUris.withAppendedId(RawContacts.CONTENT_URI, id)),
-            arrayOf(column), null, null, null)
-            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getString(0) else null }
-            ?: throw IllegalStateException("FIXTURE #934: null raw contact cursor")
+        singleRowColumn(ab, ab.syncAdapterURI(ContentUris.withAppendedId(RawContacts.CONTENT_URI, id)), column, "raw contact $id")
 
     private fun rawInt(ab: LocalAddressBook, id: Long, column: String): Int? = rawString(ab, id, column)?.toInt()
 
     private fun groupString(ab: LocalAddressBook, groupId: Long, column: String): String? =
-        ab.requireProvider().query(ab.syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, groupId)),
-            arrayOf(column), null, null, null)
-            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getString(0) else null }
-            ?: throw IllegalStateException("FIXTURE #934: null group cursor")
+        singleRowColumn(ab, ab.syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, groupId)), column, "group $groupId")
 
     /** A group as a downloaded group vCard leaves it: with a filename and vCard UID. */
     private fun insertGroupVcardGroup(ab: LocalAddressBook, title: String, fileName: String, uid: String): Long {
