@@ -481,6 +481,13 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         ("36", "x86_64", "first-run-setup"), ("36", "x86_64", "launcher-recovery"),
         ("36", "x86_64", "status-routes"), ("36", "x86_64", "sibling-routes"),
     ]
+    # Only API 29 account-dashboard models a named phone; every other row keeps the generic AVD.
+    # The runner's heap-size input writes hw.heapSize, which does not set the Android app heap.
+    assert re.findall(r"^\s+profile:\s*(.+)$", step, re.MULTILINE) == ["${{ matrix.avd-profile }}"]
+    assert re.findall(r"^\s+(?:heap-size|ram-size):", step, re.MULTILINE) == []
+    profiled = re.findall(r"- api-level: (\d+)\n\s+arch: \S+\n\s+shard: (\S+)\n(?:\s+#.*\n)*\s+avd-profile: (\S+)", job)
+    assert profiled == [("29", "account-dashboard", "pixel")]
+    assert job.count("avd-profile:") == 1
     assert "name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})" in job
     artifact = re.search(r"^\s+name: (account-recreation-androidTest-.+)$", job, re.MULTILINE).group(1)
     assert artifact == "account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}"

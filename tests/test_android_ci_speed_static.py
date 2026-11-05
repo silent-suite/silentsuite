@@ -333,10 +333,10 @@ def _without_admission(job: dict) -> dict:
     return job
 
 
-# The approved changes since both predecessors: the focused runtime ledger grew from 172 to 180 methods,
-# seven in a new fresh-emulator API 36 launcher-recovery shard that API 29 runs with its account-dashboard
-# shard (#898), and one Notes startup sweep case in status-routes. Only the matrix row after API 36
-# first-run-setup and these four exact lines of the runtime job's final assertion are carried forward;
+# The first approved runtime-job change since both predecessors: the focused runtime ledger grew from 172 to
+# 180 methods, seven in a new fresh-emulator API 36 launcher-recovery shard that API 29 runs with its
+# account-dashboard shard (#898), and one Notes startup sweep case in status-routes. Only the matrix row after
+# API 36 first-run-setup and these four exact lines of the runtime job's final assertion are carried forward;
 # every other byte must still match.
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
@@ -361,8 +361,35 @@ RUNTIME_LEDGER_COUNT_LINES = (
 )
 
 
+# The other approved runtime-job change since both predecessors: only the API 29 account-dashboard row names
+# an emulator hardware profile, and only the focused emulator step passes that matrix key to the runner. Every
+# other row keeps the generic AVD, and every other byte of the job must still match.
+RUNTIME_PROFILE_MATRIX_ROW = {"api-level": 29, "arch": "x86", "shard": "account-dashboard"}
+RUNTIME_PROFILE_KEY = "avd-profile"
+RUNTIME_PROFILE_VALUE = "pixel"
+RUNTIME_PROFILE_STEP_ID = "focused-runtime"
+RUNTIME_PROFILE_INPUT = ("profile", "${{ matrix.avd-profile }}")
+
+
+def _with_approved_runtime_profile(job: dict) -> dict:
+    """A predecessor runtime job with only the one API 29 account-dashboard emulator profile applied, exactly once."""
+    job = copy.deepcopy(job)
+    include = job["strategy"]["matrix"]["include"]
+    assert include.count(RUNTIME_PROFILE_MATRIX_ROW) == 1, "exactly one predecessor row must be API 29 account-dashboard"
+    assert all(RUNTIME_PROFILE_KEY not in row for row in include), "no predecessor row may name an AVD profile"
+    include[include.index(RUNTIME_PROFILE_MATRIX_ROW)][RUNTIME_PROFILE_KEY] = RUNTIME_PROFILE_VALUE
+    steps = job.get("steps") or []
+    owners = [step for step in steps if step.get("id") == RUNTIME_PROFILE_STEP_ID]
+    assert len(owners) == 1, "exactly one predecessor step must run the focused emulator"
+    key, value = RUNTIME_PROFILE_INPUT
+    assert all(key not in (step.get("with") or {}) for step in steps), "no predecessor step may pass a profile"
+    owners[0]["with"][key] = value
+    return job
+
+
 def _with_approved_runtime_ledger_changes(job: dict) -> dict:
-    """A predecessor runtime job with only the approved matrix row and ledger lines applied, each exactly once."""
+    """A predecessor runtime job with only the approved matrix row, ledger lines and API 29 account-dashboard
+    emulator profile applied, each exactly once."""
     job = copy.deepcopy(job)
     include = job["strategy"]["matrix"]["include"]
     assert include.count(RUNTIME_LEDGER_MATRIX_ANCHOR) == 1 and RUNTIME_LEDGER_MATRIX_ROW not in include
@@ -377,7 +404,7 @@ def _with_approved_runtime_ledger_changes(job: dict) -> dict:
         assert run.count(old) == 1 and new not in run, old
         run = run.replace(old, new)
     owners[0]["run"] = run
-    return job
+    return _with_approved_runtime_profile(job)
 
 
 # The second approved build-pr change since both predecessors: one step that inspects the merged release
@@ -588,6 +615,57 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
     navigated = copy.deepcopy(current)
     navigated["strategy"]["matrix"]["include"][row]["navigation-mode"] = 0
     assert carried != navigated
+
+    # The profile transport also applies once: the carried row already names its profile.
+    with pytest.raises(AssertionError):
+        _with_approved_runtime_profile(current)
+    profiled = dict(RUNTIME_PROFILE_MATRIX_ROW, **{RUNTIME_PROFILE_KEY: RUNTIME_PROFILE_VALUE})
+    assert include.count(profiled) == 1
+    assert sum(RUNTIME_PROFILE_KEY in entry for entry in include) == 1
+    profile_row = include.index(profiled)
+    key, value = RUNTIME_PROFILE_INPUT
+
+    def runner_input(job: dict) -> dict:
+        return next(step for step in job["steps"] if step.get("id") == RUNTIME_PROFILE_STEP_ID)["with"]
+
+    def other_step_with_inputs(job: dict) -> dict:
+        return next(
+            step for step in job["steps"]
+            if step.get("id") != RUNTIME_PROFILE_STEP_ID and isinstance(step.get("with"), dict)
+        )["with"]
+
+    def row_named(job: dict, wanted: dict) -> dict:
+        rows = job["strategy"]["matrix"]["include"]
+        assert rows.count(wanted) == 1, wanted
+        return rows[rows.index(wanted)]
+
+    # A missing, wrong, moved or broadened profile, or a missing, wrong, moved or added runner input, still fails.
+    unprofiled = copy.deepcopy(current)
+    del unprofiled["strategy"]["matrix"]["include"][profile_row][RUNTIME_PROFILE_KEY]
+    wrong_profile = copy.deepcopy(current)
+    wrong_profile["strategy"]["matrix"]["include"][profile_row][RUNTIME_PROFILE_KEY] = "pixel_6"
+    moved_profile = copy.deepcopy(current)
+    del moved_profile["strategy"]["matrix"]["include"][profile_row][RUNTIME_PROFILE_KEY]
+    row_named(moved_profile, {"api-level": 29, "arch": "x86", "shard": "mixed"})[RUNTIME_PROFILE_KEY] = RUNTIME_PROFILE_VALUE
+    broadened_profile = copy.deepcopy(current)
+    row_named(broadened_profile, {"api-level": 36, "arch": "x86_64", "shard": "account-dashboard"})[
+        RUNTIME_PROFILE_KEY] = RUNTIME_PROFILE_VALUE
+    no_input = copy.deepcopy(current)
+    del runner_input(no_input)[key]
+    literal_input = copy.deepcopy(current)
+    runner_input(literal_input)[key] = RUNTIME_PROFILE_VALUE
+    moved_input = copy.deepcopy(current)
+    del runner_input(moved_input)[key]
+    other_step_with_inputs(moved_input)[key] = value
+    duplicated_input = copy.deepcopy(current)
+    other_step_with_inputs(duplicated_input)[key] = value
+    heap_input = copy.deepcopy(current)
+    runner_input(heap_input)["heap-size"] = "512M"
+    for drifted in (
+        unprofiled, wrong_profile, moved_profile, broadened_profile,
+        no_input, literal_input, moved_input, duplicated_input, heap_input,
+    ):
+        assert carried != drifted
 
 
 def test_static_job_runs_the_suite_build_pr_ran_before(predecessor, candidate):

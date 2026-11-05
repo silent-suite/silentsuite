@@ -84,6 +84,7 @@ export default defineConfig({
             { text: 'Requirements', link: '/self-hosting/requirements' },
             { text: 'Quick Start', link: '/self-hosting/quick-start' },
             { text: 'Manual Setup', link: '/self-hosting/manual-setup' },
+            { text: 'Using NetBird', link: '/self-hosting/netbird' },
             { text: 'Configuration', link: '/self-hosting/configuration' },
             { text: 'Admin Dashboard', link: '/self-hosting/admin-dashboard' },
           ],
