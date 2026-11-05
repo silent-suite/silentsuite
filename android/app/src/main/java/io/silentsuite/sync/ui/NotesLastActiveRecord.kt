@@ -8,20 +8,20 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.StandardCopyOption
 
 /**
- * The store folder the active-account preference named at the last startup sweep that went ahead
- * ([NotesStartupSweep]), so that a sweep still keeps that folder's store once the preference has moved on, as a read of
- * the active account moves it off a name whose row is gone ([ActiveAccountManager.getActiveIdentity]), which can come
- * before the sweep in the same start. One file in noBackupFilesDir, beside notes-pending and never inside it, where
- * every listing of notes-pending would show it as a name of a kind this build does not know. It holds one store folder
- * name ([PendingNotesStore.STORE_DIRECTORY]) or nothing: no account name and no text. It is a file of its own, so a
- * record that cannot be read is told apart from one that is not there.
+ * The last store folder the active-account preference named at a startup sweep that went ahead ([NotesStartupSweep]),
+ * so that a sweep still keeps that folder's store once the preference has moved on, as a read of the active account
+ * moves it off a name whose row is gone ([ActiveAccountManager.getActiveIdentity]), which can come before the sweep in
+ * the same start. A sweep that finds the preference empty leaves the record as it was. One file in noBackupFilesDir,
+ * beside notes-pending and never inside it, where every listing of notes-pending would show it as a name of a kind this
+ * build does not know. It holds one store folder name ([PendingNotesStore.STORE_DIRECTORY]) or nothing: no account name
+ * and no text. It is a file of its own, so a record that cannot be read is told apart from one that is not there.
  */
 internal object NotesLastActiveRecord {
     const val FILE = "notes-last-active"
 
     /** What a read of the record found. */
     sealed class Read {
-        /** There is no record: no sweep has gone ahead on this device yet. */
+        /** There is no record: no write of it has landed on this device yet ([write]), so it names none. */
         object Missing : Read()
 
         /** The record names [folder], or none when it is empty. */

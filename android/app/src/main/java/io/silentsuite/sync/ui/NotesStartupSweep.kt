@@ -23,11 +23,11 @@ import java.io.File
  *
  * Ownership is read once, before the first store lock: the account rows of the main type, each with its creation id
  * ([PendingNotesRemovalGuard.rows]), the active-account preference, read from the preference alone
- * ([ActiveAccountManager.savedIdentity]), and the folder that preference named at the last sweep that went ahead
+ * ([ActiveAccountManager.savedIdentity]), and the last folder that preference named at a sweep that went ahead
  * ([NotesLastActiveRecord]). The store of any of them is never opened. The sweep reads no acknowledgement and no
- * allowance as authority and records none, reads neither the names in notes-discard nor the creation registry, and
- * never builds AccountSettings or takes the Etebase cache's monitor. Its one log line holds counts, a reason or a class
- * name only.
+ * allowance as authority and records none, takes no candidate from the names in notes-discard, never reads the creation
+ * registry, and never builds AccountSettings or takes the Etebase cache's monitor. Its one log line holds counts, a
+ * reason or a class name only.
  */
 internal object NotesStartupSweep {
     /** What holds a whole run back, before any store is opened, so that it deletes nothing. */
@@ -129,11 +129,11 @@ internal object NotesStartupSweep {
      *    creation id does not read [HoldBack.ROW_WITHOUT_ID], and no row [HoldBack.NO_ACCOUNTS].
      * 3. [active]: the name and creation id the active-account preference holds, or null for none; a throw gives
      *    [HoldBack.ACTIVE_UNREADABLE].
-     * 4. [lastActive]: the folder the preference named at the last run that went ahead. A record that is not there
-     *    names none; one that cannot be read gives [HoldBack.LAST_ACTIVE_UNREADABLE]. When the preference names a
-     *    folder other than the one the record holds, [remember] writes it, before any store is opened, and a write
-     *    that fails gives [HoldBack.RECORD_WRITE_FAILED]; a preference that names none never writes. This step comes
-     *    last, so a run held back for any other reason writes nothing.
+     * 4. [lastActive]: the last folder the preference named at a run that went ahead. A record that is not there names
+     *    none; one that cannot be read gives [HoldBack.LAST_ACTIVE_UNREADABLE]. When the preference names a folder
+     *    other than the one the record holds, [remember] writes it, before any store is opened, and a write that fails
+     *    gives [HoldBack.RECORD_WRITE_FAILED]; a preference that names none never writes. This step comes last, so a
+     *    run held back for any other reason writes nothing.
      * 5. Every store folder that none of the rows, the preference or the record as it was read names is opened by
      *    [open], in name order, and discarded as a store whose account is gone ([PendingNotesStore.discardOrphan]),
      *    under its own lock, one store at a time, with no account read under it. A throw from either counts that

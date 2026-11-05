@@ -268,8 +268,9 @@ internal class PendingNotesStore private constructor(
     /**
      * What every operation but [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [discardOrphan],
      * [acknowledged], [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll] throws
-     * once [clearAll], or a [discardStore] that got as far as deleting, has closed the store: nothing in it is read,
-     * pushed or written from then on. An IllegalStateException, as before it had a type of its own.
+     * once [clearAll], or a [discardStore] or [discardOrphan] that got as far as deleting, has closed the store:
+     * nothing in it is read, pushed or written from then on. An IllegalStateException, as before it had a type of its
+     * own.
      */
     class Cleared : IllegalStateException("the pending store was cleared")
 
@@ -1452,32 +1453,32 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * Whether a clear of this instance finished: [clearAll] returned, or [discardStore] gave [DiscardOutcome.Done].
-     * Told by this instance's state alone, never by a listing or a count, which can come back short, and an unlink
-     * whose sync failed can come back. So a clear or a discard that stopped answers false for the rest of the
-     * process, also once nothing is left to list, until another one finishes. It reads memory only, so it answers on
-     * a cleared instance and on a dropped one, which had [DiscardOutcome.Done].
+     * Whether a clear of this instance finished: [clearAll] returned, or [discardStore] or [discardOrphan] gave
+     * [DiscardOutcome.Done]. Told by this instance's state alone, never by a listing or a count, which can come back
+     * short, and an unlink whose sync failed can come back. So a clear or a discard that stopped answers false for the
+     * rest of the process, also once nothing is left to list, until another one finishes. It reads memory only, so it
+     * answers on a cleared instance and on a dropped one, which had [DiscardOutcome.Done].
      */
     fun clearedInFull(): Boolean = synchronized(lock) { discarded || clearReturned }
 
     /**
      * Whether a clear or a discard of this instance got as far as deleting and has not finished: [clearAll], or a
-     * [discardStore] that got as far as deleting, closed it, and [clearedInFull] answers false. Told by this
-     * instance's state alone, as [clearedInFull] is, never by a listing or a count: a discard that stopped can leave
-     * nothing to count while an unlink whose sync failed can come back. So it holds for the rest of the process,
+     * [discardStore] or [discardOrphan] that got as far as deleting, closed it, and [clearedInFull] answers false. Told
+     * by this instance's state alone, as [clearedInFull] is, never by a listing or a count: a discard that stopped can
+     * leave nothing to count while an unlink whose sync failed can come back. So it holds for the rest of the process,
      * whatever [unsynced] answers, until another call finishes. It reads memory only, so it answers on a cleared
-     * instance, and false on a dropped one, which had [DiscardOutcome.Done]. A new instance, as after a restart,
-     * starts with it false, and the discard permit holds back what it names, or every note for a permit recorded as
-     * for an answer that could not be counted ([startSend], [permitNames]).
+     * instance, and false on a dropped one, which had [DiscardOutcome.Done]. A new instance, as after a restart, starts
+     * with it false, and the discard permit holds back what it names, or every note for a permit recorded as for an
+     * answer that could not be counted ([startSend], [permitNames]).
      */
     fun clearStopped(): Boolean = synchronized(lock) { closed && !discarded && !clearReturned }
 
     /**
-     * Drops this instance from the registry once [discardStore] has finished, so the next [open] of the
-     * directory gets a new instance, over a directory that is not there, which takes saves again. This one
-     * refuses every operation from then on, [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore],
-     * [discardOrphan], [acknowledged] and [clearAll] included, since the new instance may own the directory by then.
-     * Only [clearedInFull] and [clearStopped] still answer, from memory. A second call does nothing, and so does
+     * Drops this instance from the registry once [discardStore] or [discardOrphan] has finished, so the next [open] of
+     * the directory gets a new instance, over a directory that is not there, which takes saves again. This one refuses
+     * every operation from then on, [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [discardOrphan],
+     * [acknowledged] and [clearAll] included, since the new instance may own the directory by then. Only
+     * [clearedInFull] and [clearStopped] still answer, from memory. A second call does nothing, and so does
      * [unregisterIfFinishedOnce].
      */
     fun unregister() {
@@ -1491,11 +1492,11 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * [unregister], only when one clear of this instance finished, and that was a [discardStore] that gave
-     * [DiscardOutcome.Done]; it answers whether it dropped the instance. For a caller that has just had that Done:
-     * told under the store lock, so it never drops an instance that another call finished as well, before that Done
-     * or after it, such as the sign-out's, which keeps the instance it cleared closed for the rest of the process so
-     * that a late save for a removed account is refused. On a dropped instance it does nothing and answers false.
+     * [unregister], only when one clear of this instance finished, and that was a [discardStore] or [discardOrphan]
+     * that gave [DiscardOutcome.Done]; it answers whether it dropped the instance. For a caller that has just had that
+     * Done: told under the store lock, so it never drops an instance that another call finished as well, before that
+     * Done or after it, such as the sign-out's, which keeps the instance it cleared closed for the rest of the process
+     * so that a late save for a removed account is refused. On a dropped instance it does nothing and answers false.
      */
     fun unregisterIfFinishedOnce(): Boolean = synchronized(lock) {
         if (dropped || !discarded || finishes != 1) return@synchronized false
@@ -1802,13 +1803,13 @@ internal class PendingNotesStore private constructor(
     /**
      * Every public operation except [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [discardOrphan],
      * [acknowledged], [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll]:
-     * refuse ([Cleared]) once [clearAll], or a [discardStore] that got as far as deleting, has closed the store, and
-     * finish any interrupted work first. Recovery runs again before the next operation for as long as anything in it
-     * did not work out, including a write or removal inside recovery itself, or a listing it works from. A recovery
-     * whose listing fails throws, so the operation fails with it and the recovery is not taken for done: a first
-     * write it did not see may be the only copy of a note's text, and an original it did not see may still wait for
-     * its conflict copy. A listing also fails while the store's acknowledgement cannot be shown gone ([listing]), so
-     * a new instance does nothing while notes-discard is there but cannot be listed.
+     * refuse ([Cleared]) once [clearAll], or a [discardStore] or [discardOrphan] that got as far as deleting, has
+     * closed the store, and finish any interrupted work first. Recovery runs again before the next operation for as
+     * long as anything in it did not work out, including a write or removal inside recovery itself, or a listing it
+     * works from. A recovery whose listing fails throws, so the operation fails with it and the recovery is not taken
+     * for done: a first write it did not see may be the only copy of a note's text, and an original it did not see may
+     * still wait for its conflict copy. A listing also fails while the store's acknowledgement cannot be shown gone
+     * ([listing]), so a new instance does nothing while notes-discard is there but cannot be listed.
      *
      * While the store's folder is a link, or lstat cannot tell ([followable]), every such operation throws
      * IOException at its start, before recovery and on every call, also in an instance that recovered before the
