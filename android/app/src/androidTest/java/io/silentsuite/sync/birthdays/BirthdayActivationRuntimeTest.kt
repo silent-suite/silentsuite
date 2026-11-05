@@ -66,6 +66,8 @@ class BirthdayActivationRuntimeTest {
     private val fake = FakeEtebaseServer()
     private val syncRequests = CopyOnWriteArrayList<Account>()
     private val invoked = AtomicBoolean(false)
+    /** The exact account and generation the current dashboard fixture owns; set by [withActivationDashboard]. */
+    private var activationIdentity: Pair<Account, String>? = null
 
     private val server by lazy {
         com.etebase.client.Account.restore(Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl), session, null)
@@ -175,6 +177,83 @@ class BirthdayActivationRuntimeTest {
         }
     }
 
+    @Test fun turningOnAfterARecentCollectionRefreshPublishesTheNewCalendarToTheDashboard() {
+        val colMgr = server.collectionManager
+        val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
+        val contact = uploadItem(book, "contact-alex", VCARD)
+        val shared = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(shared.uid, listOf(OTHER_MEMBER to ADMIN, username to READ_WRITE))
+        uploadItem(shared, "shared-dentist", ORDINARY_ICS)
+        // Received from its owner: this user may write but is not Admin, so C3 rejects it on access alone.
+        fake.setAccessLevel(shared.uid, READ_WRITE)
+        // Preconditions, read fresh through the SDK: the role the run will see (as BirthdayReconciliationRuntimeTest).
+        val listedCalendars = colMgr.list(Constants.ETEBASE_TYPE_CALENDAR)
+        assertTrue("PREREQUISITE: the calendar listing is complete", listedCalendars.isDone)
+        assertEquals("PREREQUISITE: the received calendar is listed as ReadWrite for this user", CollectionAccessLevel.ReadWrite,
+            listedCalendars.data.single { it.uid == shared.uid }.accessLevel)
+        assertEquals("PREREQUISITE: the received calendar is fetched as ReadWrite for this user", CollectionAccessLevel.ReadWrite,
+            colMgr.fetch(shared.uid).accessLevel)
+        val seeded = fake.collectionUids()
+        val birthday = BirthdayCalendar.birthdayOf(VCARD)
+        assertNotNull("PREREQUISITE: the fixture contact has a birthday", birthday)
+        val expectedUid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val expectedIcs = BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(expectedUid, birthday!!.name, birthday.month, birthday.day))
+        val known = seeded.joinToString("|") { Regex.escape(it) }
+        val newCalendarMembers = fake.hold("GET", Regex("collection/(?!($known)/)[^/]+/member/"))
+
+        withActivationDashboard(seeded) { scenario ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            val fetchKey = "${account.name}\u0000$generation"
+            val since = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_ON)
+            assertTrue("FEATURE_ACTIVATION: turning on verifies a new calendar's members before filling it",
+                newCalendarMembers.arrivesWithin(60_000))
+            val created = MEMBER_PATH.find(newCalendarMembers.request!!)!!.groupValues[1]
+            assertTrue("FEATURE_ACTIVATION: the verified calendar is a newly created one", created !in seeded && created in fake.collectionUids())
+            assertBusy(scenario)
+            assertFalse("PREREQUISITE: the new calendar is not in this account's cache yet", created in cachedCalendarUids(account, colMgr))
+
+            // While the action is parked after its create and before its fill: this exact generation has just
+            // finished a full collection-list refresh, as CollectionListRefresh.run leaves it.
+            assertTrue("PREREQUISITE: the discovery-complete key is written",
+                AccountSettings.writeCollectionListTypes(manager, account, CollectionListRefresh.discoveryTypesKey))
+            assertEquals("PREREQUISITE: the discovery-complete key reads back", CollectionListRefresh.discoveryTypesKey,
+                AccountSettings.collectionListTypes(manager, account))
+            val recentFetch = System.currentTimeMillis()
+            CollectionListRefresh.collectionLastFetchMap[fetchKey] = recentFetch
+            // A normal, non-forced refresh of this generation now skips: it sends nothing, caches nothing and leaves
+            // the entry. The action is parked, so no other request can arrive meanwhile.
+            val requestsBefore = fake.requests.size
+            CollectionListRefresh.run(context, account, AccountSettings(context, account),
+                OkHttpClient.Builder().addInterceptor(fake).build(), false, generation)
+            assertEquals("PREREQUISITE: a normal refresh of this generation is skipped now", requestsBefore, fake.requests.size)
+            assertEquals("PREREQUISITE: the skipped refresh leaves the recent-fetch entry", recentFetch,
+                CollectionListRefresh.collectionLastFetchMap[fetchKey])
+            assertFalse("PREREQUISITE: the skipped refresh caches nothing", created in cachedCalendarUids(account, colMgr))
+
+            // The server lists a collection's creator as its only, Admin, member.
+            fake.setMembers(created, listOf(username to ADMIN))
+            newCalendarMembers.release()
+            awaitIdle(scenario, "FEATURE_ACTIVATION: the turn-on to finish and its action to be available again")
+
+            // The server side succeeded before the cache is looked at.
+            assertEquals("FEATURE_ACTIVATION: exactly one calendar is created", seeded + created, fake.collectionUids())
+            val fresh = colMgr.fetch(created)
+            assertFalse(fresh.isDeleted)
+            assertEquals("FEATURE_ACTIVATION: it carries the active marker", MARKER_ACTIVE, String(fresh.content, Charsets.UTF_8))
+            val itemMgr = colMgr.getItemManager(fresh)
+            val live = fake.itemUids(created).map { itemMgr.fetch(it) }.filter { !it.isDeleted }
+            assertEquals("FEATURE_ACTIVATION: it holds exactly the contact's generated birthday", listOf(expectedIcs),
+                live.map { String(it.content, Charsets.UTF_8) })
+            assertTrue("FEATURE_ACTIVATION: written fenced on the new calendar's root", listOf(created) in fake.uploadDeps.drop(since))
+
+            val entryUnchanged = CollectionListRefresh.collectionLastFetchMap[fetchKey] == recentFetch
+            assertTrue("FEATURE_ACTIVATION_CACHE: the new calendar is published in this account's cache after the turn-on " +
+                "[recentFetchEntryUnchanged=$entryUnchanged]", created in cachedCalendarUids(account, colMgr))
+            waitUntil("FEATURE_ACTIVATION_CACHE: the dashboard to list the new calendar") { created in dashboardCalendarUids(scenario) }
+        }
+    }
+
     // ---- fixture ----
 
     private data class ItemState(val deleted: Boolean, val content: String, val name: String?, val mtime: Long?)
@@ -234,12 +313,29 @@ class BirthdayActivationRuntimeTest {
     private fun awaitIdle(scenario: ActivityScenario<AccountActivity>, description: String) =
         waitUntil(description) { birthdayActions(scenario).let { it.isNotEmpty() && it.all { action -> action.second } } }
 
+    /** The calendar uids this account's own collection cache holds now, decoded with the SDK user's keys. */
+    private fun cachedCalendarUids(account: Account, colMgr: CollectionManager): Set<String> {
+        val cache = EtebaseLocalCache.getInstance(context, account.name)
+        return synchronized(cache) { cache.collectionList(colMgr, type = Constants.ETEBASE_TYPE_CALENDAR) }.map { it.col.uid }.toSet()
+    }
+
+    /** The calendar uids the dashboard's Calendars list shows now. */
+    private fun dashboardCalendarUids(scenario: ActivityScenario<AccountActivity>): Set<String> {
+        var uids = emptySet<String>()
+        scenario.onActivity { activity ->
+            val adapter = activity.listCalDAV?.adapter ?: return@onActivity
+            uids = (0 until adapter.count).map { (adapter.getItem(it) as AccountActivity.CollectionListItemInfo).uid }.toSet()
+        }
+        return uids
+    }
+
     /** Runs [block] on the real dashboard of a fresh account whose cache holds the [published] collections. */
     private fun withActivationDashboard(published: Set<String>, block: (ActivityScenario<AccountActivity>) -> Unit) {
         val generation = "birthday-activation-${System.nanoTime()}"
         val account = Account("birthday-activation-${System.nanoTime()}@example.invalid", App.accountType)
         val other = Account("birthday-activation-other-${System.nanoTime()}@example.invalid", App.accountType)
         val otherGeneration = "birthday-activation-other-${System.nanoTime()}"
+        activationIdentity = account to generation
         // Everything this fixture changes is captured first and restored from these values, never to a default.
         val previousMasterSync = ContentResolver.getMasterSyncAutomatically()
         val previousInterceptor = HttpClient.testInterceptor
