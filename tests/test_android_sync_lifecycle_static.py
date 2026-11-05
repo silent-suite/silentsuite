@@ -522,13 +522,13 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         for key in ("36:account-dashboard", "36:first-run-setup", "36:launcher-recovery", "36:status-routes", "36:sibling-routes")
     }
     assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (
-        1, 1, ledger_size - 2, ledger_size
+        2, 1, ledger_size - 3, ledger_size
     )
     assert tuple(len(api36[key]) for key in api36) == tuple(
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 177, 179)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (2, 1, 176, 179)
     assert tuple(len(api36[key]) for key in api36) == (33, 19, 7, 72, 48)
     assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
     # The launcher recovery class runs on its own fresh API 36 emulator (#898).
