@@ -1,0 +1,264 @@
+name: Test Bridge desktop dev build contracts and facts (receipts only)
+
+# S2-F for #171 development artifacts. Receipts only: JUnit, text and JSON.
+# No bundle, binary, source archive, release, tag, signing, deploy or secret.
+#   contracts-permissions: the existing root reusable-workflow permission test,
+#     with its existing dependency setup (as in ci-server.yml).
+#   contracts: the dev-build workflow and licence-gate contract tests.
+#   facts: text facts about the real desktop bundle. It needs the admitted
+#     collector bridge/dev-build/collect_bundle_facts.py; until that exists it
+#     fails as NOT REACHED without building anything.
+# Also reusable (workflow_call) so the later dev caller can require it at the
+# same SHA. The concurrency group carries the caller's name, so a standalone run
+# and a called run never cancel each other.
+
+on:
+  push:
+    branches: [feat/bridge-gui-171]
+    paths:
+      - '.github/workflows/test-bridge-desktop-dev.yml'
+      - '.github/workflows/build-bridge-desktop-dev.yml'
+      - '.github/workflows/test-bridge-linux.yml'
+      - '.github/workflows/test-bridge-windows.yml'
+      - '.github/workflows/test-bridge-macos.yml'
+      - '.github/workflows/test-bridge-desktop.yml'
+      - '.github/workflows/test-bridge-desktop-frozen.yml'
+      - 'bridge/tests/test_desktop_dev_build_workflow.py'
+      - 'bridge/tests/test_desktop_dev_licence_gate.py'
+      - 'bridge/dev-build/**'
+      - 'bridge/entrypoint_desktop.py'
+      - 'bridge/silentsuite-bridge-desktop.spec'
+      - 'bridge/pyproject.toml'
+      - 'bridge/tests/desktop_smoke/requirements.txt'
+      - 'tests/test_reusable_workflow_caller_permissions.py'
+  workflow_call:
+    inputs:
+      caller:
+        description: Name of the calling workflow; keeps called and standalone runs in separate concurrency groups.
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-desktop-dev-${{ inputs.caller || 'standalone' }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts-permissions:
+    name: Reusable-workflow permission subsets
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install contract test dependencies
+        run: python -m pip install --disable-pip-version-check pytest PyYAML==6.0.3
+
+      - name: Check reusable-workflow caller/callee permission subsets
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/dev-permissions"
+          python -m pytest -q tests/test_reusable_workflow_caller_permissions.py -p no:cacheprovider \
+            --junitxml="$RUNNER_TEMP/dev-permissions/junit.xml" 2>&1 | tee "$RUNNER_TEMP/dev-permissions/pytest.txt"
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/dev-permissions/pytest.txt"
+          exit "$status"
+
+      - name: Upload permission receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-permissions
+          path: |
+            ${{ runner.temp }}/dev-permissions/junit.xml
+            ${{ runner.temp }}/dev-permissions/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  contracts:
+    name: Dev build workflow and licence-gate contracts
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    env:
+      SILENTSUITE_REQUIRE_DESKTOP_DEV: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: "1.63.0"
+
+      # bridge/tests/conftest.py imports the Bridge package, so the tests need
+      # the same install as the ordinary Linux suite, plus PyYAML for parsing.
+      - name: Install dependencies
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest PyYAML==6.0.3
+
+      # A failure here is a missing prerequisite, not a contract RED.
+      - name: Check prerequisites
+        id: prereq
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c "import pytest, yaml, peewee; import silentsuite_bridge.config; print('prerequisites ok')"
+
+      - name: Run dev build contract tests
+        if: ${{ !cancelled() && steps.prereq.outcome == 'success' }}
+        timeout-minutes: 10
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/dev-contracts"
+          python -m pytest tests/test_desktop_dev_build_workflow.py tests/test_desktop_dev_licence_gate.py \
+            -v --tb=long -p no:cacheprovider \
+            --junitxml="$RUNNER_TEMP/dev-contracts/junit.xml" 2>&1 | tee "$RUNNER_TEMP/dev-contracts/pytest.txt"
+          status=${PIPESTATUS[0]}
+          echo "pytest exit status: $status" | tee -a "$RUNNER_TEMP/dev-contracts/pytest.txt"
+          exit "$status"
+
+      - name: Upload contract receipt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-contracts
+          path: |
+            ${{ runner.temp }}/dev-contracts/junit.xml
+            ${{ runner.temp }}/dev-contracts/pytest.txt
+          if-no-files-found: warn
+          retention-days: 14
+
+  facts:
+    name: Desktop bundle facts (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+          - runner: windows-latest
+            label: windows-x86_64
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No build and no facts until the admitted collector exists.
+      - name: Check for the admitted collector
+        id: helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dev-facts"
+          if [ -f bridge/dev-build/collect_bundle_facts.py ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "NOT REACHED: bridge/dev-build/collect_bundle_facts.py is absent; nothing was built or collected" \
+              | tee "$RUNNER_TEMP/dev-facts/not-reached.txt"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Python 3.10
+        if: ${{ steps.helper.outputs.present == 'true' }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        if: ${{ steps.helper.outputs.present == 'true' }}
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: "1.63.0"
+
+      - name: Install Linux Qt runtime libraries (runner only)
+        if: ${{ steps.helper.outputs.present == 'true' && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          # Same list the frozen and native desktop jobs use.
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xkb1 libegl1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libxkbfile1 libasound2
+
+      - name: Install dependencies
+        if: ${{ steps.helper.outputs.present == 'true' }}
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+          pip install -r tests/desktop_smoke/requirements.txt
+          pip install pyinstaller
+
+      # Builds into RUNNER_TEMP only; the bundle is read by the collector and
+      # never uploaded.
+      - name: Build the desktop bundle and collect text facts
+        if: ${{ steps.helper.outputs.present == 'true' }}
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/dev-facts"
+          build="$RUNNER_TEMP/dev-facts-build"
+          python -m PyInstaller --version > "$out/pyinstaller-version.txt"
+          (cd bridge && python -m PyInstaller silentsuite-bridge-desktop.spec --noconfirm --clean \
+            --distpath "$build/dist" --workpath "$build/work") > "$out/build.log" 2>&1
+          python bridge/dev-build/collect_bundle_facts.py --dist "$build/dist" --workpath "$build/work" \
+            --out "$out/facts.json" 2>&1 | tee "$out/collector.txt"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload facts receipt (text and JSON only)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dev-facts-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/dev-facts/*.txt
+            ${{ runner.temp }}/dev-facts/*.json
+            ${{ runner.temp }}/dev-facts/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Fail when the collector was not reached
+        if: ${{ steps.helper.outputs.present != 'true' }}
+        shell: bash
+        run: |
+          echo "::error::NOT REACHED: the bundle-facts collector is not admitted yet (not a contract RED)"
+          exit 1
