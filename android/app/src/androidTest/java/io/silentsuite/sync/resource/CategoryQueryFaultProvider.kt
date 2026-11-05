@@ -132,7 +132,18 @@ class CategoryQueryFaultProvider : ContentProvider() {
     }
 
     override fun query(uri: Uri, projection: Array<String>?, selection: String?, selectionArgs: Array<String>?, sortOrder: String?): Cursor? =
-        query(uri, projection, ContentResolver.createSqlQueryBundle(selection, selectionArgs, sortOrder), null)
+        query(uri, projection, sqlQueryArgs(selection, selectionArgs, sortOrder), null)
+
+    /** The legacy query arguments as public QUERY_ARG_SQL_* extras; null when there are none. */
+    private fun sqlQueryArgs(selection: String?, selectionArgs: Array<String>?, sortOrder: String?): Bundle? {
+        if (selection == null && selectionArgs == null && sortOrder == null)
+            return null
+        return Bundle().apply {
+            if (selection != null) putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+            if (selectionArgs != null) putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, selectionArgs)
+            if (sortOrder != null) putString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER, sortOrder)
+        }
+    }
 
     override fun getType(uri: Uri): String? = real.getType(uri)
 
