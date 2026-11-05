@@ -21,6 +21,7 @@
 #   macOS:   SilentSuite Bridge.app (Contents/MacOS/SilentSuite Bridge)
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -244,10 +245,30 @@ a = Analysis(  # noqa: F821
         "PyQt5",
         "PyQt6",
         "PySide2",
+        # Qt Charts / Data Visualization / Graphs are unused and not shipped
+        # (s2-delivery-plan-v9 section 3; tests/test_desktop_frozen.py).
+        "PySide6.QtCharts",
+        "PySide6.QtDataVisualization",
+        "PySide6.QtGraphs",
+        "PySide6.QtGraphsWidgets",
     ],
     noarchive=False,
     optimize=1,
 )
+
+# The PySide6 QML helper collects those families' libraries, QML plugins and
+# QML data separately from the bindings, so drop every binary or data entry
+# whose destination has a path segment naming one of them. The lookahead keeps
+# unrelated names such as QtGraphicalEffects.
+EXCLUDED_QT_FAMILY = re.compile(r"^(lib)?Qt6?(Charts|DataVisualization|Graphs)(?![a-z])")
+
+
+def _excluded_qt_family(destination):
+    return any(EXCLUDED_QT_FAMILY.match(part) for part in destination.replace("\\", "/").split("/"))
+
+
+a.binaries = [entry for entry in a.binaries if not _excluded_qt_family(entry[0])]
+a.datas = [entry for entry in a.datas if not _excluded_qt_family(entry[0])]
 
 pyz = PYZ(a.pure)  # noqa: F821
 
