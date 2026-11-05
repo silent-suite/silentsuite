@@ -226,6 +226,91 @@ def test_frozen_bundle_excludes_qt_charts_datavisualization_and_graphs(canonical
     )
 
 
+# P2 (s2-delivery-plan-v9 section 3; post-p1-component-review-final-answer.md):
+# Qt Quick 3D (with its helper/asset/effects/particles/runtime/utils/Xr modules),
+# Qt Quick 3D Physics, Qt Quick Timeline, Qt Virtual Keyboard and, on Linux, Qt
+# Wayland Compositor, plus their source-proven dependency closure: Quick3DSpatialAudio
+# (links Qt::Quick3DPrivate) and the compositor's QtShell and TextureSharingExtension
+# QML modules. Matched forms: library/framework/binding names (libQt6Quick3D*.so.*,
+# Qt6Quick3D*.dll, QtQuick3D.framework, QtQuick3D.abi3.so), their QML URI directories
+# (qml/QtQuick3D/..., qml/QtQuick/Timeline/..., qml/QtQuick/VirtualKeyboard/...,
+# qml/QtWayland/Compositor/...) and two plugins outside those directories. Qt3D
+# (Qt63D*, qml/Qt3D), QuickTest, WaylandClient and its client plugins/URI, WebEngine
+# and the rest of QtQuick are deliberately not matched.
+P2_LIBRARY_FAMILY = re.compile(r"^(lib)?Qt6?(Quick3D|QuickTimeline|VirtualKeyboard|WaylandCompositor)(?![a-z])")
+P2_QML_URI_PAIRS = {("QtQuick", "Timeline"), ("QtQuick", "VirtualKeyboard"), ("QtWayland", "Compositor")}
+P2_PLUGIN_NAME = re.compile(r"^(lib)?(qtvirtualkeyboardplugin|qmldbg_quick3dprofiler)\.(so|dll|dylib)$")
+QT_WEBENGINE_CORE_NAME = re.compile(r"^(lib)?Qt6?WebEngineCore(?![A-Za-z])")
+
+
+def _p2_family_path(path):
+    parts = path.split("/")
+    if any(P2_LIBRARY_FAMILY.match(part) for part in parts) or P2_PLUGIN_NAME.match(parts[-1]):
+        return True
+    return any(pair in P2_QML_URI_PAIRS for pair in zip(parts, parts[1:]))
+
+
+def _has_sequence(paths, sequence):
+    width = len(sequence)
+    for path in paths:
+        parts = path.split("/")
+        if any(tuple(parts[i:i + width]) == sequence for i in range(len(parts) - width + 1)):
+            return True
+    return False
+
+
+def test_frozen_bundle_excludes_quick3d_timeline_virtualkeyboard_and_waylandcompositor(canonical):
+    bundle = canonical["bundle"]
+    if bundle is None:
+        pytest.fail("NOT REACHED: no canonical bundle was built")
+    # Controls (not RED if they fail): the rule matches every family form and
+    # leaves the retained neighbours alone.
+    for path in ("libQt6Quick3DXr.so.6", "Qt6Quick3DSpatialAudio.dll", "QtQuick3DPhysics.framework/QtQuick3DPhysics",
+                 "PySide6/QtQuick3D.abi3.so", "libQt6QuickTimelineBlendTrees.so.6", "Qt6VirtualKeyboardSettings.dll",
+                 "libQt6WaylandCompositor.so.6", "PySide6/Qt/qml/QtQuick3D/SpatialAudio/qmldir",
+                 "PySide6/qml/QtQuick/Timeline/BlendTrees/qtquicktimelineblendtreesplugin.dll",
+                 "PySide6/Qt/qml/QtQuick/VirtualKeyboard/Styles/Builtin/libqtvkbbuiltinstylesplugin.so",
+                 "PySide6/Qt/qml/QtWayland/Compositor/QtShell/libwaylandcompositorqtshellplugin.so",
+                 "PySide6/Qt/qml/QtWayland/Compositor/TextureSharingExtension/libwaylandtexturesharingextensionplugin.so",
+                 "PySide6/Qt/plugins/platforminputcontexts/libqtvirtualkeyboardplugin.so",
+                 "PySide6/plugins/qmltooling/qmldbg_quick3dprofiler.dll"):
+        if not _p2_family_path(path):
+            pytest.fail(f"control failed (not RED): the P2 rule misses {path}")
+    for path in ("libQt63DQuick.so.6", "libQt63DQuickScene3D.so.6", "Qt63DCore.dll", "PySide6/Qt/qml/Qt3D/Input/libquick3dinputplugin.so",
+                 "libQt6QuickTest.so.6", "PySide6/qml/QtTest/quicktestplugin.dll", "libQt6WaylandClient.so.6",
+                 "PySide6/Qt/qml/QtWayland/Client/TextureSharing/libwaylandtexturesharingplugin.so",
+                 "PySide6/Qt/plugins/platforms/libqwayland.so", "PySide6/Qt/plugins/wayland-shell-integration/libxdg-shell.so",
+                 "libQt6Quick.so.6", "QtQuick.framework/QtQuick", "PySide6/Qt/qml/QtQuick/Layouts/qmldir",
+                 "Qt6WebEngineCore.dll", "QtGraphicalEffects", "PySide6/Qt/plugins/qmltooling/libqmldbg_quickprofiler.so"):
+        if _p2_family_path(path):
+            pytest.fail(f"control failed (not RED): the P2 rule wrongly matches {path}")
+    root = bundle["root"]
+    paths = [p.relative_to(root).as_posix() for p in sorted(root.rglob("*"))]
+    parts = [part for path in paths for part in path.split("/")]
+    if not any(QT_CORE_NAME.match(part) for part in parts):
+        pytest.fail("control failed (not RED): no Qt Core library found, so the scan would be vacuous")
+    if not any(QT_WEBENGINE_CORE_NAME.match(part) for part in parts):
+        pytest.fail("control failed (not RED): no Qt WebEngine Core library found in the bundle")
+    # Retained neighbours that the current Linux/Windows facts show in this bundle;
+    # P2 must not remove them (asserted only where they were observed).
+    if sys.platform in ("win32",) or sys.platform.startswith("linux"):
+        assert _has_sequence(paths, ("qml", "Qt3D")), "retained Qt3D QML content is missing (not a family RED)"
+        assert any(re.match(r"^(lib)?Qt6QuickTest(?![A-Za-z])", part) for part in parts), (
+            "retained QuickTest library is missing (not a family RED)")
+    if sys.platform.startswith("linux"):
+        assert any(re.match(r"^libQt6WaylandClient(?![A-Za-z])", part) for part in parts), (
+            "retained WaylandClient library is missing (not a family RED)")
+        assert any(path.endswith("platforms/libqwayland.so") for path in paths), (
+            "retained Wayland client platform plugin is missing (not a family RED)")
+        assert _has_sequence(paths, ("QtWayland", "Client", "TextureSharing")), (
+            "retained Wayland client TextureSharing QML module is missing (not a family RED)")
+    found = [path for path in paths if _p2_family_path(path)]
+    assert not found, (
+        f"the bundle contains {len(found)} Qt Quick3D/QuickTimeline/VirtualKeyboard/WaylandCompositor paths, "
+        f"e.g. {found[:20]}"
+    )
+
+
 # --- the real bootloader launch ------------------------------------------------
 
 
