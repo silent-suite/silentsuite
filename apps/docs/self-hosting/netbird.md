@@ -10,9 +10,17 @@ This guide covers the SilentSuite sync server (the URL you enter in the apps und
 |---|---|---|
 | Who handles HTTPS | NetBird | Caddy, nginx or Traefik |
 | Public URL | A NetBird proxy domain or your own domain (CNAME) | Your own domain |
-| Who can connect | Anyone on the internet, or only NetBird peers if you choose NetBird-Only Access | Only NetBird peers (private), or anyone if the proxy runs on a public server |
-| Works with NetBird Cloud | Yes | Yes |
-| Works with self-hosted NetBird | Yes, once NetBird's proxy is deployed | Yes |
+| Who can connect | Anyone on the internet; NetBird peers only if you run a private-capable proxy and turn on NetBird-Only Access | NetBird peers (B1, with the host filtering described in common step 2), or anyone if the proxy runs on a public server (B2) |
+| Works with NetBird Cloud | Public services: yes, using NetBird's managed proxy. Peer-only: needs your own account proxy cluster | Yes |
+| Works with self-hosted NetBird | Yes, once NetBird's proxy is deployed (in private mode for peer-only) | Yes |
+
+**Supported setup.** This guide assumes NetBird runs directly on each machine involved, as a normal install with its own network interface (`wt0` by default) and NetBird IP. That means the SilentSuite host, and in B2 the proxy machine too. Some setups change which address the server sees, so the steps below don't fit them:
+
+- SilentSuite reached through a NetBird routing peer or network resource
+- NetBird in userspace forwarding mode or inside a container
+- NetBird's "Direct Upstream" or Proxy Cluster targets
+
+NetBird's [backend configuration page](https://docs.netbird.io/manage/reverse-proxy/service-configuration#identify-the-source-ip) explains those cases. If you use one, work out the real source address from there rather than from the table in common step 3.
 
 **Public versus peer-only.** If the URL is public, phones and laptops can sync from anywhere without running NetBird. If access is peer-only, every device that syncs must be connected to your NetBird network, including the phone in your pocket and the browser you use for [app.silentsuite.io](https://app.silentsuite.io). A device that drops off the mesh simply can't reach the server until it reconnects.
 
@@ -44,7 +52,7 @@ Only programs on the same machine can reach that address. Traffic arriving throu
 - **Path A**, and **path B with the proxy on a different machine**: you need this step.
 - **Path B with the proxy on the same machine as SilentSuite**: skip it and keep the loopback mapping. A proxy installed on the host uses that mapping. A proxy running in a Docker container joins SilentSuite's Docker network instead (see [B1](#b1-private-proxy-on-the-silentsuite-machine-peers-only)).
 
-To make the server reachable on the NetBird network only:
+To publish the server on the machine's NetBird address:
 
 1. Find this machine's NetBird IP (shown by `netbird status`; by default it's in the `100.64.0.0/10` range).
 2. Open `docker-compose.yml` in your install directory and edit the `server` service's `ports:` entry. **Replace** the loopback line with one that uses the NetBird IP:
@@ -67,11 +75,19 @@ To make the server reachable on the NetBird network only:
 Things to watch:
 
 - **Edit the line; don't add an override.** Putting a new `ports:` entry in `docker-compose.override.yml` doesn't replace the original. Compose adds it to the list, so the server ends up published on both addresses. The installer may already have created an override file for a proxy network; leave it alone.
-- **Never publish on all interfaces.** A mapping without an IP, or with `0.0.0.0`, exposes the port on every address, including public ones. Ordinary host firewall rules such as `ufw` don't protect Docker-published ports, because Docker routes that traffic before those rules see it. Binding to the NetBird IP is the control. On top of that, you can use NetBird access control policies to decide which peers may reach this machine.
+- **Never publish on all interfaces.** A mapping without an IP, or with `0.0.0.0`, exposes the port on every address, including public ones. Ordinary host firewall rules such as `ufw` don't protect Docker-published ports, because Docker routes that traffic before those rules see it.
+- **The NetBird IP binding is not a guaranteed mesh-only boundary on its own.** It keeps the port off your public and LAN addresses. But Docker turns on IP forwarding, and its documentation notes that a port published on one host address can then also be reached through another interface. A machine that routes packets for the NetBird address to this host can do that. In practice that is a neighbour on a network the host is directly attached to, such as your LAN or a cloud provider's private network, not the internet at large. Those packets never pass through NetBird, so NetBird access policies don't filter them. If peer-only access must be guaranteed, add Docker-aware filtering on the host that accepts this port only from the NetBird interface. With iptables, that means the `DOCKER-USER` chain described in [Docker with iptables](https://docs.docker.com/engine/network/firewall-iptables/). Other firewall setups differ, so follow your platform's documentation. Alternatively, run the server where it has no untrusted network neighbours. NetBird access control policies still decide which peers may reach the machine through the tunnel.
+- **Checking the boundary (optional).** From a Linux machine on the same LAN that is not on NetBird, route the NetBird address through the host's LAN address and try to connect, then remove the route:
+
+  ```bash
+  sudo ip route add 100.x.y.z/32 via 192.168.1.10
+  curl -sS --max-time 5 -D - -o /dev/null http://100.x.y.z:3735/
+  sudo ip route del 100.x.y.z/32 via 192.168.1.10
+  ```
+
+  With filtering in place, `curl` should time out or be refused. Any HTTP response, even a `301`, means the port is reachable without NetBird.
 - **Startup order.** Docker can only bind to the NetBird IP once NetBird has brought its interface up. If the server container fails to start after a reboot, check `docker compose ps`. Once `netbird status` shows the machine connected, start it again with `docker compose up -d server`.
 - **Future upgrades.** If you replace `docker-compose.yml` with a newer copy, make this edit again.
-
-If the SilentSuite machine isn't a NetBird peer itself and is reached through a NetBird routing peer instead, publish on its LAN address rather than the NetBird IP. Keep it to a private address, never a public one.
 
 ### 3. Tell SilentSuite which proxy to trust
 
@@ -119,22 +135,27 @@ Don't fix a redirect by turning HTTPS enforcement off. The apps expect `https://
 NetBird's proxy holds the certificate, accepts HTTPS from clients and forwards requests through the WireGuard tunnel to your server.
 
 1. Complete common steps 1 and 2.
-2. **Cloud:** nothing to deploy. **Self-hosted NetBird:** deploy NetBird's proxy first by following [Enable the reverse proxy](https://docs.netbird.io/selfhosted/migration/enable-reverse-proxy). In its `proxy.env`, set `NB_PROXY_FORWARDED_PROTO=https`, as NetBird's own example does. That pins the scheme NetBird reports to SilentSuite. On NetBird Cloud there's no equivalent setting to change. NetBird's proxy sets the header itself, and the HTTPS check in [Check your setup](#check-your-setup) shows whether SilentSuite accepted it.
+2. Decide where the proxy runs:
+   - **Cloud, public service:** nothing to deploy. NetBird's managed proxy handles it. There's no forwarded-scheme setting to change; NetBird's proxy sets the header itself.
+   - **Cloud, peer-only service:** NetBird's shared Cloud clusters don't offer the *Private* capability that NetBird-Only Access needs. Run your own account cluster with NetBird's [Bring Your Own Proxy](https://docs.netbird.io/manage/reverse-proxy/bring-your-own-proxy) guide, started in private mode (`NB_PROXY_PRIVATE=true`, which the guide's setup sets).
+   - **Self-hosted NetBird:** deploy NetBird's proxy by following [Enable the reverse proxy](https://docs.netbird.io/selfhosted/migration/enable-reverse-proxy). For a peer-only service it also needs private mode (`NB_PROXY_PRIVATE=true`).
+
+   When you run the proxy yourself (self-hosted, or a Cloud account cluster), it's the `netbirdio/reverse-proxy` image. Set `NB_PROXY_FORWARDED_PROTO=https` in its configuration, as NetBird's self-hosted example does. That pins the scheme NetBird reports to SilentSuite. Either way, the HTTPS check in [Check your setup](#check-your-setup) shows whether SilentSuite accepted it.
 3. In the NetBird dashboard, create an HTTP reverse proxy service:
-   - **Domain:** a NetBird-provided domain, or your own domain with a `CNAME` to the proxy cluster (see NetBird's [custom domains](https://docs.netbird.io/manage/reverse-proxy/custom-domains)). Whichever you choose must be in `[allowed_hosts]`.
-   - **Target:** type **Peer**, choose the SilentSuite machine, protocol **HTTP**, port **3735** (or your `SERVER_PORT`).
+   - **Domain:** a NetBird-provided domain, or your own domain with a `CNAME` to the proxy cluster (see NetBird's [custom domains](https://docs.netbird.io/manage/reverse-proxy/custom-domains)). For a peer-only service, pick a base domain that belongs to your private-capable cluster. Whichever you choose must be in `[allowed_hosts]`.
+   - **Target:** type **Peer**, choose the SilentSuite machine (a NetBird peer itself, as described under [Supported setup](#choose-your-path)), protocol **HTTP**, port **3735** (or your `SERVER_PORT`).
    - **Pass Host Header:** on. Without it, NetBird sends the target's address as the host name, and the server either rejects the request or redirects the browser to that internal address.
    - **Rewrite Redirects:** optional. It doesn't replace common step 3.
    - **Authentication:** see below.
 4. Complete common step 3. When the target connects straight to the peer, NetBird documents that the server sees the proxy's NetBird IP. Read the exact address from the log before you trust it, as described there.
 5. Run the [checks](#check-your-setup).
 
-**Authentication on the service.** Don't turn on NetBird's SSO, password or PIN protection for the sync service. These are browser login screens in front of every request. The SilentSuite apps talk to the server's API directly and can't get past them, so sync fails. SilentSuite's own sign-in still protects accounts. If you want to limit who can reach the server at the network level, you have two options:
+**Authentication on the service.** Don't turn on NetBird's SSO, password or PIN protection for the sync service. These are browser login screens in front of every request. The SilentSuite apps talk to the server's API directly and can't get past them, so sync fails. SilentSuite's own sign-in still protects accounts. Leaving those login screens off doesn't make the service private: without the options below, anyone on the internet can reach it, the same as any public sync server. If you want to limit who can reach the server at the network level, you have two options:
 
-- **NetBird-Only Access**: only selected NetBird peers can use the service. Every syncing device must then be on the mesh. On self-hosted NetBird this needs the proxy's private mode (`NB_PROXY_PRIVATE`).
+- **NetBird-Only Access**: only NetBird peers in the groups you choose can use the service, and every syncing device must then be on the mesh. It only works on a cluster with the *Private* capability (see step 2); otherwise the option is greyed out. SilentSuite accounts and sign-in work exactly as before.
 - **Access restrictions** (IP ranges, countries): evaluated before any login.
 
-NetBird also has a "Direct Upstream" option, where its proxy dials the backend from its own host instead of through the tunnel. It only applies to NetBird-Only services, and this guide doesn't cover it.
+NetBird also has a "Direct Upstream" option and a Proxy Cluster target type, where its proxy dials the backend from its own host instead of through the tunnel. This guide doesn't cover them; keep the Peer target with Direct Upstream off.
 
 ## Path B: your own proxy, NetBird as the network
 
@@ -144,7 +165,7 @@ Here NetBird is just the private network. Your usual Caddy, nginx or Traefik ter
 
 - **DNS:** point the domain at the machine's NetBird IP with an `A` record. You can use your public DNS or any private DNS your devices use. The name only works for devices connected to NetBird.
 - **TLS:** a certificate authority can't reach a NetBird address, so the usual HTTP-based Let's Encrypt challenge fails. Use your proxy's DNS-challenge support with your DNS provider, or another certificate your devices trust. The apps need a valid certificate for the name they use.
-- **Listening address:** have the proxy listen on the NetBird IP, not on every interface, if you want the service to stay private. A proxy installed directly on the host is covered by your host firewall rules. A proxy running in Docker with published ports is not, so bind its published ports to the NetBird IP too.
+- **Listening address:** have the proxy listen on the NetBird IP, not on every interface, if you want the service to stay private. As in common step 2, that alone isn't a guaranteed boundary, because a neighbour that routes to the NetBird address can still reach it. A proxy installed directly on the host is covered by your normal host firewall; allow its ports only from the NetBird interface. A proxy running in Docker with published ports isn't covered by those rules. Bind its published ports to the NetBird IP and use the Docker-aware filtering from common step 2.
 - **SilentSuite port:** keep the default loopback mapping (skip common step 2).
 - **Upstream:** this depends on how the proxy runs.
   - **Installed on the host** (or a container using Docker's host networking): forward to `127.0.0.1:3735`, exactly as in the examples.
@@ -165,7 +186,7 @@ For example, a small public VPS runs Caddy and is a NetBird peer, and SilentSuit
 - **SilentSuite port:** do common step 2 on the SilentSuite machine, then point the proxy at `http://<SilentSuite NetBird IP>:3735` instead of `localhost:3735`.
 - **Headers:** the proxy must pass the original `Host` and send `X-Forwarded-Proto: https`. The nginx example sets both explicitly. Caddy does both by default when the upstream is plain HTTP. For Traefik, check its host-header and forwarded-header settings.
 - **Trust:** `TRUSTED_PROXY_IPS` gets the VPS's NetBird IP (shown by `netbird status` on the VPS). Confirm it with the pre-trust log check in common step 3.
-- **Access policies:** a NetBird access policy that allows only the VPS peer to reach port 3735 keeps the rest of your mesh out.
+- **Access policies:** a NetBird access policy that allows only the VPS peer to reach port 3735 keeps the rest of your mesh out of the tunnel path. Traffic that bypasses NetBird is a separate question; see the binding note in common step 2.
 
 ## Check your setup
 
@@ -198,12 +219,15 @@ If you're still working out which address to trust, use the log check in common 
 | `400 Invalid host header` / "Invalid HTTP_HOST" | The name in the request isn't in `[allowed_hosts]`, often because Pass Host Header is off or a NetBird-provided domain wasn't added | Turn on Pass Host Header; add the public name (not an internal IP) to `[allowed_hosts]` and `docker compose restart server` |
 | `502`, timeout, or "connection refused" through NetBird | The server is still published on `127.0.0.1` only, the container didn't start after a reboot, the target port is wrong, a NetBird policy blocks the peer, or a proxy container forwards to `127.0.0.1` | Common step 2; `docker compose ps`; check target type/port; for a proxy container use `silentsuite-server:3735` (see B1); check NetBird policies and NetBird's [troubleshooting guide](https://docs.netbird.io/manage/reverse-proxy/troubleshooting) |
 | Website loads in a browser but the apps can't sign in or sync | NetBird SSO, password or PIN is enabled on the service, or the device isn't on the mesh with NetBird-Only Access | Turn off those login methods for the sync service; connect the device to NetBird |
+| NetBird-Only Access is greyed out | The service's base domain is on a cluster without the *Private* capability, such as NetBird Cloud's shared clusters | Run a private-capable proxy (Path A step 2) and choose its base domain for the service |
 | Apps reach the server but the account is refused | SilentSuite account issue, not NetBird: missing bootstrap token on first signup, or signups closed | See [Troubleshooting](./troubleshooting.md) and the first-admin steps in the Quick Start |
 
 ## NetBird references
 
 - [Reverse proxy overview](https://docs.netbird.io/manage/reverse-proxy): targets, Pass Host Header, Rewrite Redirects, authentication, NetBird-Only Access
+- [Authentication](https://docs.netbird.io/manage/reverse-proxy/authentication): login methods, NetBird-Only Access and the Private-capability requirement
+- [Bring Your Own Proxy](https://docs.netbird.io/manage/reverse-proxy/bring-your-own-proxy): running your own account proxy cluster, including on NetBird Cloud
 - [Backend service configuration](https://docs.netbird.io/manage/reverse-proxy/service-configuration): which address a backend sees, and trusting it
 - [Reverse proxy troubleshooting](https://docs.netbird.io/manage/reverse-proxy/troubleshooting): unreachable backends and loopback-only services
 - [Enable the reverse proxy on self-hosted NetBird](https://docs.netbird.io/selfhosted/migration/enable-reverse-proxy): deployment and `NB_PROXY_*` settings
-- Docker: [packet filtering and firewalls](https://docs.docker.com/engine/network/packet-filtering-firewalls/) and [merging Compose files](https://docs.docker.com/reference/compose-file/merge/)
+- Docker: [port publishing](https://docs.docker.com/engine/network/port-publishing/), [packet filtering and firewalls](https://docs.docker.com/engine/network/packet-filtering-firewalls/), [Docker with iptables](https://docs.docker.com/engine/network/firewall-iptables/) and [merging Compose files](https://docs.docker.com/reference/compose-file/merge/)
