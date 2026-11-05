@@ -6167,10 +6167,10 @@ class PendingNotesStoreTest {
         val signOut = "io/silentsuite/sync/ui/AndroidCurrentAccountSignOut.kt"
         val settings = "io/silentsuite/sync/ui/UnsyncedNotesStores.kt"
         assertEquals(listOf(signOut, settings), callersOf("discardStore"))
-        // The discard of a store whose account is gone has no caller yet.
-        assertEquals(emptyList<String>(), callersOf("discardOrphan"))
+        // The discard of a store whose account is gone is the startup sweep's alone.
+        assertEquals(listOf("io/silentsuite/sync/ui/NotesStartupSweep.kt"), callersOf("discardOrphan"))
         // The sign-out drops its instance after a removal that failed, Settings only one that its own discard alone
-        // finished.
+        // finished; the startup sweep drops none.
         assertEquals(listOf(signOut), callersOf("unregister"))
         assertEquals(listOf(settings), callersOf("unregisterIfFinishedOnce"))
         // The Settings way out, and a notebook's leave or delete before it words a failure of its server call.
