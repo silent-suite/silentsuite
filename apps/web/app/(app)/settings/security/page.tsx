@@ -323,7 +323,9 @@ function ChangePasswordSection() {
         }
       }
 
-      setSuccess(true)
+      // The success line says other sessions were signed out; when that was not
+      // confirmed, the warning alone reports the changed password.
+      setSuccess(!billingWarning)
       if (billingWarning) {
         setApiError('Password changed, but other sessions may not have been signed out.')
       }
@@ -433,8 +435,12 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
       }
 
       // The DELETE already went out with the session it was sent under; never
-      // sign out an account that became current while it was pending.
-      if (!isAccountOwner(owner)) return
+      // sign out an account that became current while it was pending. Clear
+      // the pending state so a still-mounted dialog can be used again.
+      if (!isAccountOwner(owner)) {
+        setDeleting(false)
+        return
+      }
 
       // Clear local auth state
       await signOutAndLeave()

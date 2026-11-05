@@ -421,6 +421,8 @@ describe('Security page password change billing boundary', () => {
     expect(mocks.core.changePassword).toHaveBeenCalledWith(LIVE_ACCOUNT, 'NewPassw0rd')
     expect(mocks.secureStorage.secureSet).toHaveBeenCalledWith('etebase_session', 'saved-session')
     expect(passwordPatchCalls()).toEqual([])
+    // Nothing here signed other sessions out, so that claim must not appear.
+    expect(screen.queryByText(SUCCESS_TEXT)).not.toBeInTheDocument()
   })
 
   // Characterization: standalone self-hosted builds never sent the PATCH.
@@ -606,6 +608,28 @@ describe('Security page account action across account boundaries', () => {
 
     expect(mocks.logout).not.toHaveBeenCalled()
     expect(mocks.push).not.toHaveBeenCalled()
+  })
+
+  it('lets deletion be confirmed again after a pending DELETE result is discarded for a same-id account replacement', async () => {
+    const pendingDelete = deferred<{ ok: boolean; json: () => Promise<unknown> }>()
+    fetchMock.mockReturnValue(pendingDelete.promise)
+    openAndConfirmReady(ACTION_MODES[1])
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Delete' }))
+
+    expect(billingAccountDeleteCalls()).toHaveLength(1)
+    const pendingButton = screen.getByRole('button', { name: 'Deleting...' })
+    // Same id and mode: the section stays mounted with its request still pending.
+    act(() => { authStore.setState({ user: { ...HOSTED_USER } }) })
+    expect(screen.getByRole('button', { name: 'Deleting...' })).toBe(pendingButton)
+
+    await act(async () => pendingDelete.resolve({ ok: true, json: async () => ({}) }))
+
+    expect(mocks.logout).not.toHaveBeenCalled()
+    expect(mocks.push).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete my account' }))
+    fireEvent.change(screen.getByPlaceholderText('Type DELETE'), { target: { value: 'DELETE' } })
+    expect(screen.getByRole('button', { name: 'Confirm Delete' })).toBeEnabled()
   })
 })
 
