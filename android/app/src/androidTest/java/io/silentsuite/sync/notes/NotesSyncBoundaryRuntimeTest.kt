@@ -53,6 +53,7 @@ import io.silentsuite.sync.ui.AndroidCurrentAccountSignOut
 import io.silentsuite.sync.ui.CurrentAccountSignOutCoordinator
 import io.silentsuite.sync.ui.CurrentAccountSignOutState
 import io.silentsuite.sync.ui.ExactAccountIdentity
+import io.silentsuite.sync.ui.NotesStartupSweep
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteListFragment
 import io.silentsuite.sync.ui.notes.NoteViewFragment
@@ -62,6 +63,7 @@ import io.silentsuite.sync.ui.notes.NotesLoad
 import io.silentsuite.sync.ui.notes.NotesLoader
 import io.silentsuite.sync.ui.notes.notesFixtureOverride
 import io.silentsuite.sync.utils.AndroidCompat
+import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -155,6 +157,8 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     @Before fun setUp() {
+        // The startup sweep of this process is over before a case makes a store folder.
+        runBlocking { NotesStartupSweep.startup?.join() }
         previousMasterSync = ContentResolver.getMasterSyncAutomatically()
         // No platform adapter sync may reach the stand-in server while a test holds a request.
         ContentResolver.setMasterSyncAutomatically(false)

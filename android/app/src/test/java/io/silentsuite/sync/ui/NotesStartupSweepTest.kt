@@ -21,10 +21,10 @@ import java.io.File
 import java.io.IOException
 
 /**
- * The startup sweep of Notes stores whose account is gone: what it reads and in which order, when it holds back, and
- * which stores it removes. Real stores in a temporary no_backup folder, opened by folder name as on a device, and the
- * real record beside them unless a case passes its own; the account list and the active-account preference are
- * stand-ins.
+ * The startup sweep of Notes stores whose account is gone: what it reads and in which order, when it holds back, which
+ * stores it removes, and where the app starts it. Real stores in a temporary no_backup folder, opened by folder name
+ * as on a device, and the real record beside them unless a case passes its own; the account list and the
+ * active-account preference are stand-ins.
  */
 class NotesStartupSweepTest {
     @get:Rule val tmp = TemporaryFolder()
@@ -351,6 +351,30 @@ class NotesStartupSweepTest {
             assertFalse(word, record.contains(word))
         }
         assertFalse(Regex("""\bPENDING\b""").containsMatchIn(record))
+    }
+
+    @Test fun `the app starts the sweep in one place, after the bootstrap and after its other background checks`() {
+        val main = File("src/main/java")
+        val app = code(File(main, "io/silentsuite/sync/App.kt"))
+        val call = "io.silentsuite.sync.ui.NotesStartupSweep.launchIn(applicationScope, this)"
+        assertEquals(listOf(call), app.lines().filter { "NotesStartupSweep" in it }.map { it.trim() })
+        val at = app.indexOf(call)
+        assertTrue(app.indexOf("PostLoginStartupChecks.runAtLaunch(this)") in 0 until at)
+        // Not inside the other launch, where a throw from the task checks would skip it.
+        val launch = app.indexOf("applicationScope.launch(Dispatchers.IO) {")
+        assertTrue(launch >= 0)
+        var depth = 0
+        val end = (app.indexOf('{', launch) until app.length).first { i ->
+            when (app[i]) { '{' -> depth++; '}' -> depth-- }
+            depth == 0
+        }
+        assertTrue(end < at)
+        fun naming(word: String) = main.walk().filter { it.isFile && it.extension in setOf("kt", "java") }
+            .filter { Regex("""\b$word\b""").containsMatchIn(code(it)) }
+            .map { it.relativeTo(main).invariantSeparatorsPath }.sorted().toList()
+        assertEquals(listOf("io/silentsuite/sync/App.kt", "io/silentsuite/sync/ui/NotesStartupSweep.kt"),
+            naming("launchIn"))
+        assertEquals(listOf("io/silentsuite/sync/ui/NotesStartupSweep.kt"), naming("atStart"))
     }
 
     private companion object {
