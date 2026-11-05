@@ -45,6 +45,7 @@ silentsuite/
   android/           # Kotlin Android sync adapter
   bridge/            # CalDAV/CardDAV bridge daemon
   packages/          # Shared packages
+  server/            # Etebase sync server
   self-host/         # Self-hosting configuration (Docker Compose)
   deploy/            # Deployment scripts and configuration
 ```
