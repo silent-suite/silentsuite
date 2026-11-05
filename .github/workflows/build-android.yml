@@ -603,6 +603,9 @@ jobs:
           - api-level: 29
             arch: x86
             shard: account-dashboard
+            # Without a profile this lane ran on a generic 320x640, 160 dpi AVD and the app hit a
+            # 16 MiB heap growth limit. This lane runs on the named pixel profile instead.
+            avd-profile: pixel
           - api-level: 29
             arch: x86
             shard: first-run-setup
@@ -694,6 +697,7 @@ jobs:
           api-level: ${{ matrix.api-level }}
           arch: ${{ matrix.arch }}
           target: google_apis
+          profile: ${{ matrix.avd-profile }}
           emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
           disable-animations: true
           script: bash android/scripts/run-focused-runtime-with-navigation.sh "${{ matrix.api-level }}" "${{ matrix.shard }}" "${{ matrix.navigation-mode }}"
