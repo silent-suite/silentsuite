@@ -279,26 +279,35 @@ def _origin(relative: str, source: str | None, build: dict) -> dict:
     return {"class": "unknown", "source": source}
 
 
-def _link_origin(entry: dict, link_source: str, entries_by_path: dict, file_origins: dict) -> dict:
+def _link_origin(entry: dict, link_source: str, entries_by_path: dict, file_origins: dict, root: Path) -> dict:
     """A source-backed in-bundle link, or unknown.
 
     PyInstaller 6.22.3 records a preserved link as (dest, rel_link, 'SYMLINK') with
     rel_link relative to dirname(dest) (building/datastruct.py:453-454), and COLLECT
-    creates os.symlink(rel_link, dest) (building/api.py:1213). Both must agree, and
-    the target must be an existing regular file inside the bundle.
+    creates os.symlink(rel_link, dest) (building/api.py:1213). Both must agree under
+    this platform's path rules, and the link must actually reach the existing regular
+    in-bundle file whose origin it inherits. On POSIX a backslash is an ordinary
+    filename character, so it is never treated as a separator here.
     """
     unknown = {"class": "unknown", "source": link_source}
     observed = entry.get("symlink")
     if observed is None or entry.get("symlink_outside_bundle") or entry.get("symlink_dangling"):
         return unknown
-    wanted = link_source.replace("\\", "/")
-    if observed.replace("\\", "/") != wanted or PurePosixPath(wanted).is_absolute():
+    wanted = link_source
+    if os.sep == "\\":  # Windows only: backslash is a separator in both spellings
+        observed, wanted = observed.replace("\\", "/"), wanted.replace("\\", "/")
+    if observed != wanted or PurePosixPath(wanted).is_absolute():
         return unknown
     target = posixpath.normpath(posixpath.join(posixpath.dirname(entry["path"]), wanted))
     if target == ".." or target.startswith("../"):
         return unknown
     target_entry = entries_by_path.get(target)
     if target_entry is None or "symlink" in target_entry or target not in file_origins:
+        return unknown
+    try:  # the file the link really reaches must be that very target, not a same-named lookalike
+        if not os.path.samefile(root / entry["path"], root / target):
+            return unknown
+    except OSError:
         return unknown
     return {"class": "bundle-link", "source": link_source, "target": target,
             "target_origin": dict(file_origins[target])}
@@ -385,8 +394,9 @@ def collect(bundle_root, modules, search_path=None, build=None) -> dict:
             file_origins[relative] = _origin(relative, source, build)
 
     entries_by_path = {entry["path"]: entry for entry in bundle_files}
+    resolved_root = bundle_root.resolve()  # the root _bundle_files made every entry path relative to
     for entry, link_source in pending_links:
-        file_origins[entry["path"]] = _link_origin(entry, link_source, entries_by_path, file_origins)
+        file_origins[entry["path"]] = _link_origin(entry, link_source, entries_by_path, file_origins, resolved_root)
 
     stdlib = getattr(sys, "stdlib_module_names", frozenset())
     module_owners = {}
