@@ -77,9 +77,12 @@ internal object BirthdayMaintenance {
      * check. The gate is that check, the exact generation still being the listed row's, and an uninterrupted
      * thread: nothing runs unless it holds, and the engine asks it before every request (C1-C5). After a
      * run that wrote something, while the gate still holds, this account's collection cache is refreshed for
-     * that generation so the dashboard can show the result; a refresh that fails changes nothing about the
-     * run. Returns the run's result, or null when it did not run. Never throws; logs only an outcome or an
-     * exception class.
+     * that generation so the dashboard can show the result. The refresh is forced: the run changed calendars
+     * through its own SDK reads and writes, so a recent refresh of this generation no longer describes the
+     * server, and its burst window must not skip this one. A forced refresh records its full-refresh
+     * obligation before any request, so one that fails or stops leaves it for the next refresh; it changes
+     * nothing about the run. Returns the run's result, or null when it did not run. Never throws; logs only
+     * an outcome or an exception class.
      */
     fun turn(context: Context, main: Account, creationId: String, on: Boolean, stillWanted: () -> Boolean): BirthdayReconciler.RunResult? {
         val action = if (on) "turn-on" else "turn-off"
@@ -99,7 +102,7 @@ internal object BirthdayMaintenance {
                 Logger.log.info("Birthdays $action: ${result.status} ${result.reason ?: ""}")
                 if (result.written.isNotEmpty() && gate()) {
                     try {
-                        CollectionListRefresh.run(context, main, settings, httpClient, false, creationId, gate)
+                        CollectionListRefresh.run(context, main, settings, httpClient, true, creationId, gate)
                     } catch (e: Exception) {
                         Logger.log.info("Birthdays $action cache refresh deferred (${e.javaClass.simpleName})")
                     }
