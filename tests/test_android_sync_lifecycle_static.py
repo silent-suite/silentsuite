@@ -522,13 +522,13 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         for key in ("36:account-dashboard", "36:first-run-setup", "36:launcher-recovery", "36:status-routes", "36:sibling-routes")
     }
     assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (
-        1, 1, ledger_size - 2, ledger_size
+        2, 1, ledger_size - 3, ledger_size
     )
     assert tuple(len(api36[key]) for key in api36) == tuple(
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 177, 179)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (2, 1, 176, 179)
     assert tuple(len(api36[key]) for key in api36) == (33, 19, 7, 72, 48)
     assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
     # The launcher recovery class runs on its own fresh API 36 emulator (#898).
@@ -558,8 +558,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         "29:sibling-routes": api36["36:sibling-routes"],
     }
     assert requested <= api29["29:account-dashboard"]
-    assert tuple(len(part) for part in api29.values()) == (1, 39, 19, 72, 48)
-    assert len(api29["29:account-dashboard"] - requested) == 38
+    assert tuple(len(part) for part in api29.values()) == (2, 38, 19, 72, 48)
+    assert len(api29["29:account-dashboard"] - requested) == 37
     assert sum(len(part) for part in api29.values()) == len(set().union(*api29.values())) == len(canonical)
     assert set().union(*api29.values()) == canonical
     wrapper_pairs = {tuple(wrapper.split("#", 1)) for wrapper in wrappers}
@@ -621,10 +621,10 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}" in assertion
+    assert "expected_sizes={'29:mixed':2,'29:account-dashboard':38,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}" in assertion
     assert "API 29 execution shards are not a disjoint cover of the canonical runtime ledger" in assertion
     assert "elif key == '29:remaining'" not in assertion
-    assert '"29:account-dashboard": 38' in script and '"29:remaining":' not in script
+    assert '"29:account-dashboard": 37' in script and '"29:remaining":' not in script
     assert "io.silentsuite.sync.ui.ColorParityRuntimeTest" in ledger["shards"]["36:status-routes"]
     assert "com.android.internal.systemui.navbar.gestural" in navigation_wrapper
     assert "com.android.internal.systemui.navbar.threebutton" in navigation_wrapper

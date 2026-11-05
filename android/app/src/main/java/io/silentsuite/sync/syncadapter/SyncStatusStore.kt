@@ -453,8 +453,14 @@ class SyncStatusStore internal constructor(
 
     @Synchronized
     internal fun rebaseFutureLifecycle(identity: MainIdentity, service: Service, clock: () -> Long): Boolean = synchronized(STORE_LOCK) {
-        // Sample under the record lock: a newer request must not look like a clock rollback.
-        return@synchronized rebaseFutureLifecycleResult(identity, service, clock()) == MutationResult.RECORDED
+        // Capture the record before sampling time. A re-entrant clock seam (or callback) can
+        // admit a newer request while the lock is held; never rebase that newly written record
+        // using the older sample returned by the callback.
+        val beforeSample = readOrLegacy(identity.storageKey, service)
+        val now = clock()
+        val current = readOrLegacy(identity.storageKey, service)
+        if (current != beforeSample) return@synchronized true
+        return@synchronized rebaseFutureLifecycleResult(identity, service, now) == MutationResult.RECORDED
     }
 
     private fun rebaseFutureLifecycleResult(identity: MainIdentity, service: Service, now: Long): MutationResult {

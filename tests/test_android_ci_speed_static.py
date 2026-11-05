@@ -333,17 +333,17 @@ def _without_admission(job: dict) -> dict:
     return job
 
 
-# The one approved change since both predecessors (#898): the focused runtime ledger grew from 172 to
-# 179 methods, the seven new ones owned by a new fresh-emulator API 36 launcher-recovery shard that API 29
-# runs with its account-dashboard shard. Only the matrix row after API 36 first-run-setup and these four
-# exact lines of the runtime job's final assertion are carried forward; every other byte must still match.
+# The approved runtime-ledger changes since both predecessors (#898): the focused ledger grew from 172 to
+# 179 methods, adding the API 36 launcher-recovery shard; API 29 owns that class too. The API 29 reminder
+# recreation test is isolated in the small mixed shard to avoid API 29 dashboard memory pressure. Only the
+# matrix row and these exact ledger lines are carried forward; every other byte must still match.
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}\n",
+        "expected_sizes={'29:mixed':2,'29:account-dashboard':38,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
@@ -568,6 +568,8 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
     # Any other change to the same step, including another count, still fails the comparison.
     for old, new in (
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
+        ("'29:mixed':2", "'29:mixed':3"),
+        ("'29:account-dashboard':38", "'29:account-dashboard':39"),
         ("'36:account-dashboard':33", "'36:account-dashboard':34"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
         ("if len(canonical) != 179 or", "if len(canonical) < 179 or"),
