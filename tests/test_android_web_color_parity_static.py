@@ -930,7 +930,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("213", '"29:account-dashboard": 38', "106", "48"):
+    for count in ("215", '"29:account-dashboard": 38', "108", "48"):
         assert count in runner
 
 
