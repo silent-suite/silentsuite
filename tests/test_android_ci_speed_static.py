@@ -342,8 +342,8 @@ RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "fir
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     (
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
         "expected_sizes={'29:mixed':2,'29:account-dashboard':38,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
