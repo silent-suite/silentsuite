@@ -19,6 +19,14 @@ on:
     branches: [main]
     paths:
       - 'bridge/**'
+  # Reusable so the #171 dev caller can require it at the same SHA (s2-delivery-plan-v9 §1-2).
+  workflow_call:
+    inputs:
+      suppress_cli_artifact_upload:
+        description: Skip only the CLI binary upload; tests, build and smokes still run.
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   test:
@@ -120,7 +128,10 @@ jobs:
           dist/silentsuite-bridge --version
           dist/silentsuite-bridge --help
 
+      # No CLI binary upload for the #171 feature branch or its dev caller; standalone
+      # main/other-branch runs are unchanged (s2-delivery-plan-v9 §1).
       - name: Upload artifact
+        if: ${{ inputs.suppress_cli_artifact_upload != true && github.head_ref != 'feat/bridge-gui-171' && github.ref_name != 'feat/bridge-gui-171' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: silentsuite-bridge-linux-x86_64-test

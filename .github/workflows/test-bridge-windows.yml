@@ -38,6 +38,8 @@ on:
       - 'tests/test_release_versions_static.py'
       - 'tests/test_windows_installer_static.py'
       - '.github/workflows/test-bridge-windows.yml'
+  # Reusable so the #171 dev caller can require it at the same SHA (s2-delivery-plan-v9 §2).
+  workflow_call:
 
 jobs:
   installer:

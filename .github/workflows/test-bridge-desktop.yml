@@ -49,12 +49,20 @@ on:
       - 'bridge/pyproject.toml'
       - '.github/workflows/test-bridge-desktop.yml'
   workflow_dispatch:
+  # Reusable so the #171 dev caller can require it at the same SHA (s2-delivery-plan-v9 §2).
+  workflow_call:
+    inputs:
+      caller:
+        description: Name of the calling workflow; keeps called and standalone runs in separate concurrency groups.
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: bridge-desktop-tracers-${{ github.ref }}
+  group: bridge-desktop-tracers-${{ inputs.caller || 'standalone' }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

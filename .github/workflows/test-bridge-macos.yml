@@ -20,6 +20,8 @@ on:
       - 'bridge/tests/test_autostart_macos_lifecycle.py'
       - 'bridge/tests/test_autostart_macos_native.py'
       - '.github/workflows/test-bridge-macos.yml'
+  # Reusable so the #171 dev caller can require it at the same SHA (s2-delivery-plan-v9 §2).
+  workflow_call:
 
 permissions:
   contents: read
