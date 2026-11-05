@@ -178,6 +178,10 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         // that group's creation to the next ordinary run.
         if (keepsLocalEditsOfThisRun)
             localDirty = localDirty.filterNot { it is LocalGroup && it.fileName != null }
+
+        // A held edit keeps its dirty flag but is not uploaded until its labels have a safe basis.
+        if (heldIds.isNotEmpty())
+            localDirty = localDirty.filterNot { it is LocalContact && it.id?.let { id -> id in heldIds } == true }
     }
 
     /**
@@ -226,6 +230,88 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             Logger.log.info("Assigning memberships of downloaded contact groups")
             LocalGroup.applyPendingMemberships(localAddressBook())
         }
+        val removed = localAddressBook().removeEmptyCategoryGroups()
+        if (removed > 0)
+            Logger.log.info("Removed $removed unused label group(s)")
+    }
+
+    /**
+     * Raw IDs of dirty, server-backed contacts whose labels have no safe basis yet. They are not uploaded
+     * this run, which lists the address book from the start to obtain one.
+     */
+    private val heldIds = HashSet<Long>()
+
+    /**
+     * Before any upload, restores the label memberships of rows not (or not completely) projected, from the
+     * cached server item of exactly the revision the row records, parsed without downloading anything.
+     * Rows never confirmed by the server and rows whose cached item is deleted are left as they are; dirty rows
+     * without a matching cached item are held, clean ones wait for the server to deliver them again.
+     */
+    private fun reconcileCategoryProjection() {
+        heldIds.clear()
+        if (cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly)
+            return
+        val addressBook = localAddressBook()
+
+        class Candidate(val id: Long, val fileName: String?, val eTag: String?, val dirty: Boolean, val released: Boolean)
+        val candidates = ArrayList<Candidate>()
+        addressBook.provider!!.query(addressBook.syncAdapterURI(ContactsContract.RawContacts.CONTENT_URI),
+                arrayOf(ContactsContract.RawContacts._ID, at.bitfire.vcard4android.AndroidContact.COLUMN_FILENAME,
+                        at.bitfire.vcard4android.AndroidContact.COLUMN_ETAG, ContactsContract.RawContacts.DIRTY,
+                        LocalContact.COLUMN_CATEGORIES),
+                "${ContactsContract.RawContacts.DELETED}=0 AND " +
+                        "(${LocalContact.COLUMN_CATEGORIES} IS NULL OR ${LocalContact.COLUMN_CATEGORIES}=?)",
+                arrayOf(LocalContact.CATEGORIES_RELEASED), null)?.use { cursor ->
+            while (cursor.moveToNext())
+                candidates += Candidate(cursor.getLong(0), cursor.getString(1), cursor.getString(2),
+                        !cursor.isNull(3) && cursor.getInt(3) != 0, cursor.getString(4) == LocalContact.CATEGORIES_RELEASED)
+        }
+
+        var recovered = 0
+        var waiting = 0
+        for (candidate in candidates) {
+            val fileName = candidate.fileName
+            // Never confirmed by the server: its own memberships are what its upload certifies.
+            if (candidate.eTag == null || fileName == null)
+                continue
+            val cached = synchronized(etebaseLocalCache) {
+                etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, fileName)
+            }
+            // Deleted on the server: there are no server labels to protect.
+            if (cached != null && cached.item.isDeleted)
+                continue
+            val basis = cached?.takeIf { it.item.etag == candidate.eTag }
+                    ?.let { Contact.fromReader(StringReader(it.content), null).firstOrNull() }
+            if (basis != null && !basis.group) {
+                addressBook.findContactByID(candidate.id).replaceCategoryProjection(basis.categories)
+                recovered++
+            } else if (candidate.dirty && !candidate.released)
+                heldIds += candidate.id
+            else
+                waiting++
+        }
+        if (recovered > 0 || heldIds.isNotEmpty() || waiting > 0)
+            Logger.log.info("Label projection: $recovered recovered from the cache, ${heldIds.size} held, $waiting awaiting delivery")
+    }
+
+    /**
+     * After a completed listing, a held edit whose live item never arrived is released to the ordinary upload
+     * path. Without an exactly current destination the edits stay held and the run fails rather than succeeds.
+     */
+    private fun releaseHeldRows() {
+        if (heldIds.isEmpty())
+            return
+        if (!exactDestinationCurrent())
+            throw ContactsStorageException("${heldIds.size} contact edit(s) held for label recovery")
+        val addressBook = localAddressBook()
+        val values = ContentValues(1)
+        values.put(LocalContact.COLUMN_CATEGORIES, LocalContact.CATEGORIES_RELEASED)
+        for (id in heldIds)
+            addressBook.provider!!.update(
+                    addressBook.syncAdapterURI(ContentUris.withAppendedId(ContactsContract.RawContacts.CONTENT_URI, id)),
+                    values, "${LocalContact.COLUMN_CATEGORIES} IS NULL", null)
+        Logger.log.info("Released ${heldIds.size} held contact edit(s) that a complete listing did not return")
+        heldIds.clear()
     }
 
     /**
@@ -274,7 +360,12 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             syncStateFaultFor(false)?.let { throw it }
             localAddressBook().syncState
         }
+        reconcileCategoryProjection()
         val exact = destination ?: return true
+        if (heldIds.isNotEmpty()) {
+            Logger.log.info("Listing this address book from the start for ${heldIds.size} contact edit(s) held for label recovery")
+            return true
+        }
         if (stored != null && stored.contentEquals(marker(exact)))
             return false
         Logger.log.info("Listing this address book from the start, as it isn't marked complete")
@@ -283,6 +374,7 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
 
     @Throws(ContactsStorageException::class)
     override fun onReplayCompleted() {
+        releaseHeldRows()
         val exact = destination ?: return
         if (!destinationStillCurrent(exact)) {
             Logger.log.info("Not marking an address book whose generation changed during this run")
@@ -330,6 +422,15 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
 
     override fun processItem(item: Item) {
         val local = localCollection!!.findByFilename(item.uid)
+
+        // A held edit takes the listed item's labels as its basis; the rules below then keep the edit itself.
+        if (local is LocalContact && !item.isDeleted && local.id?.let { it in heldIds } == true) {
+            val listed = Contact.fromReader(StringReader(String(item.content)), null).firstOrNull()
+            if (listed != null && !listed.group) {
+                local.replaceCategoryProjection(listed.categories)
+                heldIds -= local.id!!
+            }
+        }
 
         if (local != null && !item.isDeleted && keepsLocalEditsOfThisRun && isDirty(local)) {
             Logger.log.info("Keeping a local change made during this listing for the next upload")
