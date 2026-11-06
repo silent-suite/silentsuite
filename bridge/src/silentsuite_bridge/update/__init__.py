@@ -8,7 +8,7 @@ behaviour with fakes/spies.
 from __future__ import annotations
 
 import os
-import platform
+import platform as _stdlib_platform
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -36,7 +36,7 @@ def _detect_platform() -> Platform:
     os_name = {"linux": "linux", "darwin": "macos", "win32": "windows"}.get(
         sys.platform, sys.platform
     )
-    m = os.environ.get("SILENTSUITE_BRIDGE_TEST_MACHINE", platform.machine())
+    m = os.environ.get("SILENTSUITE_BRIDGE_TEST_MACHINE", _stdlib_platform.machine())
     return Platform(os_name=os_name, arch=m)
 
 
