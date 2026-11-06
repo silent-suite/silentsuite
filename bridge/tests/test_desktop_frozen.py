@@ -866,6 +866,20 @@ def _c5_record_owners(site_root, relative, problems, name):
     return owners
 
 
+_C5_RUN_SOURCES = {"problems": None, "by_name": {}}  # in memory for one observation run; never serialized
+
+
+def _c5_note_source_identity(path, problems, name):
+    """Distinct real files under one module name conflict even when their redacted records match
+    (same bytes, both 'other'). The resolved path is compared in memory only and never written."""
+    if _C5_RUN_SOURCES["problems"] is not problems:  # each observation run starts a new problems list
+        _C5_RUN_SOURCES.update(problems=problems, by_name={})
+    seen = _C5_RUN_SOURCES["by_name"].setdefault(name, set())
+    seen.add(os.path.normcase(str(path.resolve())))
+    if len(seen) == 2:
+        problems.append(f"{name}: conflicting TOC sources (distinct source files)")
+
+
 def _c5_source_record(source, problems, name):
     if source is None or source == "-":
         return {"kind": "namespace-or-no-source", "raw": source}
@@ -886,6 +900,7 @@ def _c5_source_record(source, problems, name):
         problems.append(f"{name}: TOC source could not be hashed ({type(exc).__name__})")
         entry["kind"] = "unhashable"
         return entry
+    _c5_note_source_identity(path, problems, name)
     if label == "site-packages":
         entry["owners"] = _c5_record_owners(root, relative, problems, name)
         if len(entry["owners"]) > 1:
