@@ -1,10 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import {
   partsInZone,
   formatDateForInputInZone,
   formatTimeForInputInZone,
   instantFromWallClock,
   resolveUserTimezone,
+  shortTimezoneLabel,
 } from '../tz'
 
 describe('tz helpers', () => {
@@ -50,4 +51,30 @@ describe('tz helpers', () => {
     expect(resolveUserTimezone('Not/A_Real_Zone')).toBe(browser)
     expect(resolveUserTimezone('Europe/Berlin')).toBe('Europe/Berlin')
   })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  describe('shortTimezoneLabel', () => {
+    it('returns the short label for a valid timezone at a fixed reference date', () => {
+      const fixedDate = new Date('2026-01-15T12:00:00Z')
+      expect(shortTimezoneLabel('UTC', fixedDate)).toBe('UTC')
+    })
+
+    it('returns the original timezone when the zone is invalid', () => {
+      const fixedDate = new Date('2026-01-15T12:00:00Z')
+      expect(shortTimezoneLabel('Not/A_Real_Zone', fixedDate)).toBe('Not/A_Real_Zone')
+    })
+
+    it('uses the current date when the reference date is omitted', () => {
+      const fixedDate = new Date('2026-01-15T12:00:00Z')
+      vi.useFakeTimers()
+      vi.setSystemTime(fixedDate)
+
+      expect(shortTimezoneLabel('Europe/Berlin')).toBe(
+        shortTimezoneLabel('Europe/Berlin', fixedDate),
+      )
+    })
+  })
+
 })
