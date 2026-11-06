@@ -966,3 +966,243 @@ def test_policy_observation_tests_module_and_qt_conf(canonical):
     if problems:
         pytest.fail(f"prerequisite failed (not RED): {problems}")
     # Characterization only: nothing about licence, ownership or removal is asserted.
+
+
+# C5 diagnostic-contract regressions (stage A, tests only). Each test builds a small synthetic
+# frozen-out tree and calls the existing C5 case and helpers above directly: no build, Qt, network
+# or product import. The tests use the module's own _out() gate (frozen workflow only), so they
+# never touch the real receipt (OUT_ENV is repointed at tmp_path). Like the case itself, they are
+# not run on macOS. Only the single controlled fault a test injects is caught; anything else
+# propagates as an error. "RED:" marks a defect assertion; "not RED" marks a setup or control failure.
+C5D_PLATFORM = "win32" if sys.platform == "win32" else "linux"
+C5D_QT_CONF_BYTES = b"[Paths]\nPrefix = ..\n"
+C5D_EMPTY_RECORD_ROW = "tests/__init__.py,sha256=47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU,0"
+C5D_NOT_DARWIN = pytest.mark.skipif(
+    sys.platform == "darwin",
+    reason="the C5 case under test is itself skipped on macOS (Linux and Windows scope only)")
+
+
+def _c5d_layout(tmp_path, monkeypatch):
+    """A synthetic out tree that the existing C5 case accepts once a TOC is written."""
+    out = tmp_path / "out"
+    repo = tmp_path / "repo"
+    root = out / "dist" / "SilentSuiteBridge"
+    exe = root / ("SilentSuiteBridge.exe" if sys.platform == "win32" else "SilentSuiteBridge")
+    tests_init = repo / "bridge" / "tests" / "__init__.py"
+    files = {
+        out / "pyinstaller-version.txt": b"6.22.3\n",
+        exe: b"synthetic executable\n",
+        root / C5_WEBENGINE_HELPER[C5D_PLATFORM]: b"synthetic helper\n",
+        root / C5_QT_CONF[C5D_PLATFORM]: C5D_QT_CONF_BYTES,
+        repo / "bridge" / C5_ENTRY_PACKAGE / "__init__.py": b"",
+        tests_init: b"",
+    }
+    for path, data in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    monkeypatch.setenv(OUT_ENV, str(out))
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(repo))
+    monkeypatch.setenv("GITHUB_SHA", "0" * 40)
+    return {"out": out, "repo": repo, "root": root, "tests_init": tests_init,
+            "toc": out / "build" / "silentsuite-bridge-desktop" / "Analysis-00.toc",
+            "canonical": {"rc": "0", "bundle": {"root": root, "exe": exe, "info": None}, "log_tail": ""}}
+
+
+def _c5d_write_toc(layout, tests_entries):
+    """A literal shaped like the real TOC: a tuple of lists, where a 3-string input list is never an entry."""
+    entry = (C5_ENTRY_PACKAGE, str(layout["repo"] / "bridge" / C5_ENTRY_PACKAGE / "__init__.py"), "PYMODULE")
+    pure = [entry] + [(name, source if source is None or isinstance(source, str) else str(source), typecode)
+                      for name, source, typecode in tests_entries]
+    layout["toc"].parent.mkdir(parents=True, exist_ok=True)
+    layout["toc"].write_text(repr(("synthetic", [["a", "b", "c"]], pure)), encoding="utf-8")
+
+
+def _c5d_site(tmp_path, monkeypatch):
+    """A synthetic site-packages: sysconfig paths repointed so _c5_path_class classifies it."""
+    import sysconfig
+
+    site = tmp_path / "site"
+    source = site / "tests" / "__init__.py"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"")
+    paths = {"purelib": str(site), "platlib": str(site), "stdlib": str(tmp_path / "stdlib")}
+    monkeypatch.setattr(sysconfig, "get_paths", lambda *args, **kwargs: dict(paths))
+    if _c5_path_class(str(source))[0] != "site-packages":
+        pytest.fail("setup failed (not RED): the synthetic site-packages is not classified as site-packages")
+    return site, source
+
+
+def _c5d_record(site, dist_info, row):
+    record = site / dist_info / "RECORD"
+    record.parent.mkdir(parents=True)
+    record.write_text(row + "\n", encoding="utf-8")
+
+
+def _c5d_run(canonical, fault_target=None):
+    """Run the existing case. Returns (outcome, detail). Only an OSError naming fault_target is caught."""
+    try:
+        test_policy_observation_tests_module_and_qt_conf(canonical)
+    except pytest.fail.Exception as exc:
+        return "failed", str(exc)
+    except OSError as exc:
+        if fault_target is None or exc.filename is None or Path(exc.filename) != Path(fault_target):
+            raise
+        return "escaped", type(exc).__name__
+    return "passed", None
+
+
+def _c5d_receipt(layout):
+    path = layout["out"] / C5_RECEIPT_NAME
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def _c5d_leaks(receipt, tmp_path):
+    """How many receipt strings contain the absolute temporary root (any spelling)."""
+    roots = {str(tmp_path), str(tmp_path.resolve()), tmp_path.as_posix(), tmp_path.resolve().as_posix()}
+    leaks, stack = 0, [receipt]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            stack.extend(node.keys())
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+        elif isinstance(node, str) and any(root in node for root in roots):
+            leaks += 1
+    return leaks
+
+
+def _c5d_assert_diagnosed(outcome, detail, receipt, tmp_path, defect, mention):
+    """The fixed contract: a prerequisite failure, a kept receipt that names it, no absolute paths."""
+    assert outcome == "failed", f"RED: {defect} (case outcome: {outcome}{'; ' + detail if detail else ''})"
+    assert "prerequisite failed (not RED)" in detail, f"RED: {defect}: failed outside the prerequisite contract"
+    assert receipt is not None, f"RED: {defect}: no receipt was kept"
+    errors = receipt.get("prerequisite_errors")
+    assert isinstance(errors, list) and any(mention.lower() in str(e).lower() for e in errors), \
+        f"RED: {defect}: the receipt's prerequisite_errors do not name it: {errors}"
+    assert not _c5d_leaks(receipt, tmp_path), f"RED: {defect}: the receipt holds an absolute temporary path"
+    return receipt
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_ordinary_observation_control(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    _c5d_write_toc(layout, [("tests", layout["tests_init"], "PYMODULE-1")])
+    outcome, detail = _c5d_run(layout["canonical"])
+    receipt = _c5d_receipt(layout)
+    assert outcome == "passed", f"control failed (not RED): {outcome}: {detail}"
+    assert receipt is not None, "control failed (not RED): no receipt"
+    seen = [(e["name"], e["typecode"], e["source"].get("path_class"), e["source"].get("relative_path"),
+             e["source"].get("bytes")) for e in receipt["tests_entries"]]
+    assert seen == [("tests", "PYMODULE-1", "repo", "bridge/tests/__init__.py", 0)], f"control failed (not RED): {seen}"
+    assert receipt["qt_conf_expected"].get("text") == C5D_QT_CONF_BYTES.decode("utf-8"), \
+        "control failed (not RED): expected qt.conf text not observed"
+    assert receipt["prerequisite_errors"] == [], f"control failed (not RED): {receipt['prerequisite_errors']}"
+    assert not _c5d_leaks(receipt, tmp_path), "the ordinary receipt holds an absolute temporary path"
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_accept_distinct_descendants_and_namespace_sentinels(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    sub = layout["repo"] / "bridge" / "tests" / "test_sub.py"
+    sub.write_bytes(b"# a distinct descendant\n")
+    _c5d_write_toc(layout, [("tests", layout["tests_init"], "PYMODULE-1"), ("tests.test_sub", sub, "PYMODULE-1"),
+                            ("tests.ns_dash", "-", "PYMODULE"), ("tests.ns_none", None, "PYMODULE")])
+    outcome, detail = _c5d_run(layout["canonical"])
+    receipt = _c5d_receipt(layout)
+    assert outcome == "passed", \
+        f"over-rejection: descendants and namespace sentinels must stay valid: {outcome}: {detail}"
+    names = sorted(e["name"] for e in receipt["tests_entries"])
+    assert names == ["tests", "tests.ns_dash", "tests.ns_none", "tests.test_sub"], f"entries not all recorded: {names}"
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_reject_conflicting_sources_for_one_module(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    other = layout["repo"] / "vendor" / "tests" / "__init__.py"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(b"# a different tests package\n")
+    _c5d_write_toc(layout, [("tests", layout["tests_init"], "PYMODULE-1"), ("tests", other, "PYMODULE-1")])
+    outcome, detail = _c5d_run(layout["canonical"])
+    receipt = _c5d_assert_diagnosed(outcome, detail, _c5d_receipt(layout), tmp_path,
+                                    "conflicting sources for module 'tests' were not rejected", "tests")
+    assert [e["name"] for e in receipt["tests_entries"]].count("tests") == 2, \
+        "RED: the conflicting evidence was not kept in the receipt"
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_reject_ambiguous_record_owners(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    site, source = _c5d_site(tmp_path, monkeypatch)
+    _c5d_record(site, "alpha-1.0.dist-info", C5D_EMPTY_RECORD_ROW)
+    _c5d_write_toc(layout, [("tests", source, "PYMODULE")])
+    outcome, detail = _c5d_run(layout["canonical"])
+    control = _c5d_receipt(layout)
+    assert outcome == "passed" and control is not None, \
+        f"setup failed (not RED): one-owner control: {outcome}: {detail}"
+    owned = control["tests_entries"][0]["source"]
+    assert owned.get("path_class") == "site-packages" and len(owned.get("owners", [])) == 1, \
+        f"setup failed (not RED): one-owner control observed {owned}"
+    (layout["out"] / C5_RECEIPT_NAME).unlink()
+    _c5d_record(site, "beta-2.0.dist-info", C5D_EMPTY_RECORD_ROW)
+    outcome, detail = _c5d_run(layout["canonical"])
+    _c5d_assert_diagnosed(outcome, detail, _c5d_receipt(layout), tmp_path,
+                          "two dist-info RECORD owners of one 'tests' source were not rejected", "tests")
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_unreadable_toc_keeps_partial_receipt(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    layout["toc"].mkdir(parents=True)  # controlled read fault: the single TOC path is a directory
+    found = sorted((layout["out"] / "build").glob("*/Analysis-00.toc"))
+    assert found == [layout["toc"]] and layout["toc"].is_dir(), f"setup failed (not RED): {len(found)} TOC paths"
+    outcome, detail = _c5d_run(layout["canonical"], fault_target=layout["toc"])
+    receipt = _c5d_assert_diagnosed(outcome, detail, _c5d_receipt(layout), tmp_path,
+                                    "an unreadable Analysis-00.toc bypassed the receipt", "toc")
+    assert receipt.get("executable", {}).get("sha256"), "RED: the partial receipt lost the executable identity"
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_unreadable_qt_conf_keeps_partial_receipt(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    _c5d_write_toc(layout, [("tests", layout["tests_init"], "PYMODULE-1")])
+    target = layout["root"] / C5_QT_CONF[C5D_PLATFORM]
+    module = sys.modules[__name__]
+    original = module._w1_sha256
+    hits = []
+
+    def faulty(path):  # controlled read fault on the expected qt.conf only; its message holds the absolute path
+        if Path(path) == target:
+            hits.append(1)
+            raise PermissionError(13, "injected qt.conf read fault", str(path))
+        return original(path)
+
+    monkeypatch.setattr(module, "_w1_sha256", faulty)
+    outcome, detail = _c5d_run(layout["canonical"], fault_target=target)
+    assert hits, "setup failed (not RED): the injected qt.conf fault was never reached"
+    receipt = _c5d_assert_diagnosed(outcome, detail, _c5d_receipt(layout), tmp_path,
+                                    "an unreadable qt.conf bypassed the receipt", "qt.conf")
+    assert receipt.get("toc", {}).get("sha256") and receipt.get("tests_entries"), \
+        "RED: the partial receipt lost the TOC evidence gathered before the fault"
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_unreadable_record_keeps_partial_receipt(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    site, source = _c5d_site(tmp_path, monkeypatch)
+    record = site / "alpha-1.0.dist-info" / "RECORD"
+    record.mkdir(parents=True)  # controlled read fault: the RECORD path is a directory
+    assert sorted(site.glob("*.dist-info/RECORD")) == [record] and record.is_dir(), \
+        "setup failed (not RED): the faulty RECORD is not the only one found"
+    _c5d_write_toc(layout, [("tests", source, "PYMODULE")])
+    outcome, detail = _c5d_run(layout["canonical"], fault_target=record)
+    receipt = _c5d_assert_diagnosed(outcome, detail, _c5d_receipt(layout), tmp_path,
+                                    "an unreadable dist-info RECORD bypassed the receipt", "RECORD")
+    assert receipt.get("toc", {}).get("sha256"), "RED: the partial receipt lost the TOC identity"
