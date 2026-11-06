@@ -425,6 +425,70 @@ class BirthdayActivationRuntimeTest {
         }
     }
 
+    @Test fun anExplicitTurnOffAndAnOverlappingMaintenanceTriggerRunOnePassAtATime() {
+        val colMgr = server.collectionManager
+        val qualifying = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(qualifying.uid, listOf(username to ADMIN))
+        uploadItem(qualifying, "ordinary-dentist", ORDINARY_ICS)
+        // Active and Admin but shared with another member: every engine pass checks its complete member list (C3) and
+        // it never qualifies, so a turn-off leaves it untouched. Its member checks count the passes that were run.
+        val witness = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(witness.uid, listOf(username to ADMIN, OTHER_MEMBER to ADMIN))
+        uploadItem(witness, "shared-dentist", ORDINARY_ICS)
+        val seeded = fake.collectionUids()
+        val witnessBefore = state(colMgr, witness.uid)
+        val memberCheck = Regex("collection/${Regex.escape(witness.uid)}/member/")
+        val passes = { fake.requests.count { memberCheck.matches(it.substringAfter(' ').substringBefore('?')) } }
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            val admitted = SyncStatusStore(context).identity(account, generation)
+
+            // Positive control: one uncontended maintenance trigger is exactly one pass.
+            val beforeControl = passes()
+            BirthdayMaintenance.run(context, account, admitted, "control trigger")
+            assertEquals("PREREQUISITE: one uncontended trigger runs exactly one pass", beforeControl + 1, passes())
+
+            // A genuine explicit turn-off pass is parked at its member check; a maintenance trigger arrives meanwhile.
+            val turnCheck = fake.hold("GET", memberCheck)
+            val start = passes()
+            val turnResult = java.util.concurrent.atomic.AtomicReference<BirthdayReconciler.RunResult?>()
+            val turnRun = Thread { turnResult.set(BirthdayMaintenance.turn(context, account, generation, false) { true }) }
+            val maintenance = Thread { BirthdayMaintenance.run(context, account, admitted, "address-book sync") }
+            try {
+                turnRun.start()
+                assertTrue("PREREQUISITE: the turn-off's pass has started and is parked at its member check",
+                    turnCheck.arrivesWithin(60_000))
+                assertTrue("PREREQUISITE: the parked pass is the turn-off's own", turnCheck.parkedThread === turnRun)
+                maintenance.start()
+                maintenance.join(60_000)
+                assertFalse("PREREQUISITE: the maintenance trigger has returned", maintenance.isAlive)
+                assertTrue("PREREQUISITE: the turn-off's pass is still parked", turnRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_TURN_SERIALIZATION: no maintenance pass for the account starts while an explicit turn is running",
+                    start + 1, passes())
+                turnCheck.release()
+                turnRun.join(60_000)
+                assertFalse("the turn-off, with any follow-up, has finished", turnRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_TURN_SERIALIZATION: the trigger that arrived during the turn is coalesced into exactly one more pass",
+                    start + 2, passes())
+            } finally {
+                // No Birthdays thread may outlive this block: the fixture then removes the account and its transport.
+                turnCheck.release()
+                listOf(turnRun, maintenance).forEach { it.join(60_000) }
+            }
+            assertTrue("no Birthdays thread is still running", listOf(turnRun, maintenance).none { it.isAlive })
+
+            // The explicit action's own outcome is kept.
+            val result = turnResult.get()
+            assertEquals("the turn-off finished", BirthdayReconciler.RunStatus.DONE, result?.status)
+            assertEquals("the turn-off wrote exactly the qualifying calendar", listOf(qualifying.uid), result?.written)
+            assertEquals("the qualifying calendar is retired", MARKER_RETIRED, String(colMgr.fetch(qualifying.uid).content, Charsets.UTF_8))
+            assertEquals("the shared active calendar is untouched", witnessBefore, state(colMgr, witness.uid))
+            assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+            assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+        }
+    }
+
     @Test fun birthdaysWritesRequestACalendarSyncForTheirOwnAccountOnly() {
         val colMgr = server.collectionManager
         val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
