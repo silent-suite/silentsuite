@@ -44,7 +44,65 @@ internal fun birthdayOwnership(
  * logged.
  */
 internal object BirthdayMaintenance {
+    /** The run of one main account in progress in this process, and whether one more pass was asked for meanwhile. */
+    private class Slot {
+        var pending = false
+        var pendingAdmitted: SyncStatusStore.MainIdentity? = null
+        var pendingTrigger = ""
+    }
+
+    private val slots = HashMap<Pair<String, String>, Slot>()
+
+    /**
+     * One run at a time per main account in this process (plan2 §2 step 10). A trigger that arrives while a run of the
+     * same account is in progress only asks for one more pass, with its own admitted identity, and returns at once;
+     * the running caller then runs exactly one more pass for all such triggers before it finishes. Every pass is
+     * [runOnce], with its own ownership and gate checks. An interrupted caller starts no further pass. The slot is
+     * released in the same locked step that finds nothing pending, so a trigger is never coalesced into a run that
+     * has already decided to stop.
+     */
     fun run(context: Context, main: Account, admitted: SyncStatusStore.MainIdentity?, trigger: String) {
+        val key = main.type to main.name
+        val mine = Slot()
+        synchronized(slots) {
+            val running = slots[key]
+            if (running != null) {
+                running.pending = true
+                running.pendingAdmitted = admitted
+                running.pendingTrigger = trigger
+                Logger.log.info("Birthdays after the $trigger coalesced into the running pass")
+                return
+            }
+            slots[key] = mine
+        }
+        var nextAdmitted = admitted
+        var nextTrigger = trigger
+        try {
+            while (true) {
+                runOnce(context, main, nextAdmitted, nextTrigger)
+                synchronized(slots) {
+                    if (!mine.pending) {
+                        slots.remove(key)
+                        return
+                    }
+                    if (Thread.currentThread().isInterrupted) {
+                        Logger.log.info("Birthdays follow-up after the ${mine.pendingTrigger} not started (stopped)")
+                        slots.remove(key)
+                        return
+                    }
+                    nextAdmitted = mine.pendingAdmitted
+                    nextTrigger = mine.pendingTrigger
+                    mine.pending = false
+                }
+            }
+        } finally {
+            // Normal exits already released the slot above; this releases it only after an abnormal end (an Error),
+            // and never removes a later run's slot.
+            synchronized(slots) { if (slots[key] === mine) slots.remove(key) }
+        }
+    }
+
+    private fun runOnce(context: Context, main: Account, admitted: SyncStatusStore.MainIdentity?, trigger: String) {
         try {
             val manager = AccountManager.get(context)
             val row = manager.getAccountsByType(App.accountType).singleOrNull { it.name == main.name && it.type == main.type }
