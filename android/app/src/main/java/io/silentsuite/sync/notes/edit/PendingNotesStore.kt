@@ -13,9 +13,12 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.lang.ref.WeakReference
+import java.nio.file.DirectoryIteratorException
+import java.nio.file.DirectoryStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
+import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -263,10 +266,11 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * What every operation but [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [acknowledged],
-     * [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll] throws once
-     * [clearAll], or a [discardStore] that got as far as deleting, has closed the store: nothing in it is read,
-     * pushed or written from then on. An IllegalStateException, as before it had a type of its own.
+     * What every operation but [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [discardOrphan],
+     * [acknowledged], [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll] throws
+     * once [clearAll], or a [discardStore] or [discardOrphan] that got as far as deleting, has closed the store:
+     * nothing in it is read, pushed or written from then on. An IllegalStateException, as before it had a type of its
+     * own.
      */
     class Cleared : IllegalStateException("the pending store was cleared")
 
@@ -1115,7 +1119,8 @@ internal class PendingNotesStore private constructor(
 
         /**
          * The store holds what the confirmation does not cover, or it lists now where the confirmation was for a
-         * store that could not be listed, or the reverse: [now]. Nothing was written or deleted.
+         * store that could not be listed, or the reverse, or, for [discardOrphan], the store could not be listed, or
+         * a listing of another kind failed or did not hold the same names: [now]. Nothing was written or deleted.
          */
         data class Changed(val now: UnsyncedNotes) : DiscardOutcome()
 
@@ -1203,8 +1208,8 @@ internal class PendingNotesStore private constructor(
      *    version to withdraw, and a permit from before stays unless its presence check shows it not there
      *    ([PendingNotesDiscardPermits.mayHold]), read or not.
      * 4. The instance is closed for the rest of the process, as by [clearAll]: every operation but [unsynced],
-     *    [unsyncedInNotebook], [removalCheck], [discardStore], [unregister], [unregisterIfFinishedOnce],
-     *    [acknowledged], [clearedInFull], [clearStopped] and [clearAll] is refused.
+     *    [unsyncedInNotebook], [removalCheck], [discardStore], [discardOrphan], [unregister],
+     *    [unregisterIfFinishedOnce], [acknowledged], [clearedInFull], [clearStopped] and [clearAll] is refused.
      * 5. The files the count listed go ([deleteAll]), each of a kind this build writes with its write beside it, in
      *    this order: entries and first writes, landed records, then, once a second listing works (or the directory
      *    is shown gone) and shows no note and nothing the count's listing did not hold, notebook copies and anything
@@ -1224,17 +1229,57 @@ internal class PendingNotesStore private constructor(
      */
     fun discardStore(confirmed: UnsyncedNotes?): DiscardOutcome = synchronized(lock) {
         checkNotDropped()
+        discardLocked(confirmed, orphan = false)
+    }
+
+    /**
+     * The discard of a store whose account is gone, for the startup sweep, which asks no one. It runs as [discardStore]
+     * does, in one hold of the store lock, with the store's own permit for the confirmation, a second listing of
+     * another kind, and no acknowledgement:
+     *
+     * 1. The confirmation is the store's discard permit, read in the same hold ([PendingNotesDiscardPermits.read]). So
+     *    a store that holds anything goes only while a permit of a discard the user confirmed covers what is there, as
+     *    after one that stopped; one that holds nothing goes without one. A permit that cannot be read is none, and an
+     *    acknowledgement is never read as one. Anything else gives [DiscardOutcome.Changed], with nothing written or
+     *    deleted, as in [discardStore], step 1.
+     * 2. A store that cannot be listed, or whose folder is a link or lstat cannot tell ([followable]), gives
+     *    [DiscardOutcome.Changed] in place of [discardStore]'s acknowledgement, also when one recorded earlier still
+     *    holds ([acknowledged]).
+     * 3. Before any permit is recorded and before the instance is closed, the store is listed again through java.nio,
+     *    read to the end ([streamed]), which reports a read that fails partway where File.listFiles returns what it
+     *    read so far. Unless that listing works and holds exactly the names the count was made from, the answer is
+     *    [DiscardOutcome.Changed], with nothing written or deleted and the instance left open: a listing that fails at
+     *    its open, the folder not there included, or partway, or that holds other names. Both kinds read the folder
+     *    through the same system call, so a read that skips a name without an error passes both, and the discard's own
+     *    second listing too ([deleteAll]).
+     * 4. The rest is [discardStore]'s, steps 3 to 6: a permit for what is there is recorded before any file goes, the
+     *    files go with the counter last, and [DiscardOutcome.Done] only once the directory is shown gone and its
+     *    removal synced.
+     *
+     * Like [discardStore], it runs on an instance that a clear or a discard closed, so a discard that stopped can be
+     * finished, and a dropped instance refuses it ([unregister]).
+     */
+    fun discardOrphan(): DiscardOutcome = synchronized(lock) {
+        checkNotDropped()
+        discardLocked(permits.read(dir.name), orphan = true)
+    }
+
+    /** [discardStore], or [discardOrphan] when [orphan], under the store lock, with [confirmed] for what covers it. */
+    private fun discardLocked(confirmed: UnsyncedNotes?, orphan: Boolean): DiscardOutcome {
         // Whatever happens below may leave a permit on disk, so the next new version withdraws it again.
         permitWithdrawn = false
         val count = countUnsynced()
         val now = count.answer
         // A confirmation given as an acknowledgement is no authority for a deletion, also once the store lists and
         // holds nothing it counts: what is left is not deleted under it.
-        if (confirmed != null && confirmed.listed != now.listed) return@synchronized DiscardOutcome.Changed(now)
+        if (confirmed != null && confirmed.listed != now.listed) return DiscardOutcome.Changed(now)
         if (now.anything && (confirmed == null || !confirmed.covers(now))) {
-            return@synchronized DiscardOutcome.Changed(now)
+            return DiscardOutcome.Changed(now)
         }
-        val names = count.names ?: return@synchronized acknowledge()
+        val names = count.names ?: return if (orphan) DiscardOutcome.Changed(now) else acknowledge()
+        // File.listFiles returns what it read so far when a read fails partway, and says nothing; a listing of another
+        // kind, read to the end, says so.
+        if (orphan && streamed(dir) != names.toSet()) return DiscardOutcome.Changed(now)
         if (now.anything) {
             // Told by path, not by a read: a permit from before whose read fails is still there, and may be what
             // holds back the text the user confirmed.
@@ -1262,17 +1307,17 @@ internal class PendingNotesStore private constructor(
                         // Then it covers only what the user confirmed, until the next new version withdraws it.
                     }
                 }
-                return@synchronized DiscardOutcome.PermitNotRecorded
+                return DiscardOutcome.PermitNotRecorded
             }
         }
         closed = true
         try {
             beforeClearForTesting?.invoke()
             deleteAll(names)
-            if (!shownGone(dir)) return@synchronized DiscardOutcome.NotFinished
+            if (!shownGone(dir)) return DiscardOutcome.NotFinished
             syncRemoval()
         } catch (e: IOException) {
-            return@synchronized DiscardOutcome.NotFinished
+            return DiscardOutcome.NotFinished
         }
         discarded = true
         finishes++
@@ -1285,7 +1330,23 @@ internal class PendingNotesStore private constructor(
             // each of its runs records a storage failure.
             Logger.log.warning("Pending notes discard permit could not be removed")
         }
-        DiscardOutcome.Done
+        return DiscardOutcome.Done
+    }
+
+    /**
+     * The names in [d] by a listing through java.nio, read to the end, or null when it fails: at its open, [d] not
+     * there included, or partway, which File.listFiles does not report ([listDirectory]). The stream is closed on every
+     * path.
+     */
+    private fun streamed(d: File): Set<String>? = try {
+        val path = d.toPath()
+        directoryStreamForTesting.let { if (it != null) it(path) else Files.newDirectoryStream(path) }.use { stream ->
+            stream.mapTo(HashSet()) { it.fileName.toString() }
+        }
+    } catch (e: DirectoryIteratorException) {
+        null
+    } catch (e: IOException) {
+        null
     }
 
     /**
@@ -1392,30 +1453,30 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * Whether a clear of this instance finished: [clearAll] returned, or [discardStore] gave [DiscardOutcome.Done].
-     * Told by this instance's state alone, never by a listing or a count, which can come back short, and an unlink
-     * whose sync failed can come back. So a clear or a discard that stopped answers false for the rest of the
-     * process, also once nothing is left to list, until another one finishes. It reads memory only, so it answers on
-     * a cleared instance and on a dropped one, which had [DiscardOutcome.Done].
+     * Whether a clear of this instance finished: [clearAll] returned, or [discardStore] or [discardOrphan] gave
+     * [DiscardOutcome.Done]. Told by this instance's state alone, never by a listing or a count, which can come back
+     * short, and an unlink whose sync failed can come back. So a clear or a discard that stopped answers false for the
+     * rest of the process, also once nothing is left to list, until another one finishes. It reads memory only, so it
+     * answers on a cleared instance and on a dropped one, which had [DiscardOutcome.Done].
      */
     fun clearedInFull(): Boolean = synchronized(lock) { discarded || clearReturned }
 
     /**
      * Whether a clear or a discard of this instance got as far as deleting and has not finished: [clearAll], or a
-     * [discardStore] that got as far as deleting, closed it, and [clearedInFull] answers false. Told by this
-     * instance's state alone, as [clearedInFull] is, never by a listing or a count: a discard that stopped can leave
-     * nothing to count while an unlink whose sync failed can come back. So it holds for the rest of the process,
+     * [discardStore] or [discardOrphan] that got as far as deleting, closed it, and [clearedInFull] answers false. Told
+     * by this instance's state alone, as [clearedInFull] is, never by a listing or a count: a discard that stopped can
+     * leave nothing to count while an unlink whose sync failed can come back. So it holds for the rest of the process,
      * whatever [unsynced] answers, until another call finishes. It reads memory only, so it answers on a cleared
-     * instance, and false on a dropped one, which had [DiscardOutcome.Done]. A new instance, as after a restart,
-     * starts with it false, and the discard permit holds back what it names, or every note for a permit recorded as
-     * for an answer that could not be counted ([startSend], [permitNames]).
+     * instance, and false on a dropped one, which had [DiscardOutcome.Done]. A new instance, as after a restart, starts
+     * with it false, and the discard permit holds back what it names, or every note for a permit recorded as for an
+     * answer that could not be counted ([startSend], [permitNames]).
      */
     fun clearStopped(): Boolean = synchronized(lock) { closed && !discarded && !clearReturned }
 
     /**
-     * Drops this instance from the registry once [discardStore] has finished, so the next [open] of the
-     * directory gets a new instance, over a directory that is not there, which takes saves again. This one
-     * refuses every operation from then on, [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore],
+     * Drops this instance from the registry once [discardStore] or [discardOrphan] has finished, so the next [open] of
+     * the directory gets a new instance, over a directory that is not there, which takes saves again. This one refuses
+     * every operation from then on, [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [discardOrphan],
      * [acknowledged] and [clearAll] included, since the new instance may own the directory by then. Only
      * [clearedInFull] and [clearStopped] still answer, from memory. A second call does nothing, and so does
      * [unregisterIfFinishedOnce].
@@ -1431,11 +1492,11 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * [unregister], only when one clear of this instance finished, and that was a [discardStore] that gave
-     * [DiscardOutcome.Done]; it answers whether it dropped the instance. For a caller that has just had that Done:
-     * told under the store lock, so it never drops an instance that another call finished as well, before that Done
-     * or after it, such as the sign-out's, which keeps the instance it cleared closed for the rest of the process so
-     * that a late save for a removed account is refused. On a dropped instance it does nothing and answers false.
+     * [unregister], only when one clear of this instance finished, and that was a [discardStore] or [discardOrphan]
+     * that gave [DiscardOutcome.Done]; it answers whether it dropped the instance. For a caller that has just had that
+     * Done: told under the store lock, so it never drops an instance that another call finished as well, before that
+     * Done or after it, such as the sign-out's, which keeps the instance it cleared closed for the rest of the process
+     * so that a late save for a removed account is refused. On a dropped instance it does nothing and answers false.
      */
     fun unregisterIfFinishedOnce(): Boolean = synchronized(lock) {
         if (dropped || !discarded || finishes != 1) return@synchronized false
@@ -1740,15 +1801,15 @@ internal class PendingNotesStore private constructor(
     // ---- internals ----
 
     /**
-     * Every public operation except [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [acknowledged],
-     * [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll]:
-     * refuse ([Cleared]) once [clearAll], or a [discardStore] that got as far as deleting, has closed the store, and
-     * finish any interrupted work first. Recovery runs again before the next operation for as long as anything in it
-     * did not work out, including a write or removal inside recovery itself, or a listing it works from. A recovery
-     * whose listing fails throws, so the operation fails with it and the recovery is not taken for done: a first
-     * write it did not see may be the only copy of a note's text, and an original it did not see may still wait for
-     * its conflict copy. A listing also fails while the store's acknowledgement cannot be shown gone ([listing]), so
-     * a new instance does nothing while notes-discard is there but cannot be listed.
+     * Every public operation except [unsynced], [unsyncedInNotebook], [removalCheck], [discardStore], [discardOrphan],
+     * [acknowledged], [clearedInFull], [clearStopped], [unregister], [unregisterIfFinishedOnce] and [clearAll]:
+     * refuse ([Cleared]) once [clearAll], or a [discardStore] or [discardOrphan] that got as far as deleting, has
+     * closed the store, and finish any interrupted work first. Recovery runs again before the next operation for as
+     * long as anything in it did not work out, including a write or removal inside recovery itself, or a listing it
+     * works from. A recovery whose listing fails throws, so the operation fails with it and the recovery is not taken
+     * for done: a first write it did not see may be the only copy of a note's text, and an original it did not see may
+     * still wait for its conflict copy. A listing also fails while the store's acknowledgement cannot be shown gone
+     * ([listing]), so a new instance does nothing while notes-discard is there but cannot be listed.
      *
      * While the store's folder is a link, or lstat cannot tell ([followable]), every such operation throws
      * IOException at its start, before recovery and on every call, also in an instance that recovered before the
@@ -2444,6 +2505,13 @@ internal class PendingNotesStore private constructor(
          * [PendingNotesDiscardPermits.listNames]).
          */
         @Volatile internal var listFilesForTesting: ((File) -> Array<File>?)? = null
+
+        /**
+         * Test seam: what opens the java.nio listing of a store's directory that [discardOrphan] checks its count
+         * against, in place of Files.newDirectoryStream. It may throw as that open does, and the stream it gives is
+         * read to the end and closed as the real one is, so it can fail partway, from hasNext().
+         */
+        @Volatile internal var directoryStreamForTesting: ((Path) -> DirectoryStream<Path>)? = null
 
         /**
          * The files in [d], or null when the listing fails, as File.listFiles answers: [d] is not there, is

@@ -460,7 +460,7 @@ internal object PendingNotesRemovalGuard {
     fun allows(context: Context, account: Account?): Boolean = decision(context, account).verdict == Verdict.ALLOW
 
     /** The rows of the main type with each one's creation id, or null when the list cannot be read. */
-    private fun rows(manager: AccountManager): List<Row>? {
+    internal fun rows(manager: AccountManager): List<Row>? {
         val accounts = try {
             manager.getAccountsByType(App.accountType)
         } catch (e: Exception) {
