@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, it, expect } from 'vitest';
-import { expandRecurrence } from './recurrence.js';
+import { expandRecurrence, occurrenceWallClock } from './recurrence.js';
+import { fromVEvent, expandEventRecurrence } from '../models/calendar-event.js';
 
 // Host-default path (option omitted: floating, all-day and legacy callers) when an occurrence's
 // wall time falls in a host DST gap. Admitted correction (plan-v2 §4.3): only that day's occurrence
@@ -134,5 +135,53 @@ describe('host-default DATE recurrence across a skipped host date (Pacific/Apia 
   it('control: MONTHLY;COUNT=3 from Nov 30 yields Nov 30, the resolved Dec 31 and Jan 30', () => {
     const out = expandRecurrence('FREQ=MONTHLY;COUNT=3', new Date(2011, 10, 30), winter);
     expect(localDays(out)).toEqual(['2011-11-30', '2011-12-31', '2012-1-30']);
+  });
+});
+
+// Event-zone (TZID) path in a zone that skipped a whole date. Pacific/Apia had no 2011-12-30;
+// the civil Dec 30 10:00 candidate resolves (pre-gap offset) to the same instant as Dec 31 10:00.
+// Consumers must see each occurrence instant once. COUNT still counts civil candidates in order
+// (no refund), and the occurrence lookup still reports the collision as ambiguous.
+describe('TZID recurrence across a skipped zone date emits unique occurrences (Pacific/Apia)', () => {
+  const apiaDaily = (count: number) => fromVEvent([
+    'BEGIN:VEVENT',
+    'UID:apia-daily',
+    'SUMMARY:Synthetic',
+    'DTSTART;TZID=Pacific/Apia:20111229T100000',
+    'DTEND;TZID=Pacific/Apia:20111229T110000',
+    `RRULE:FREQ=DAILY;COUNT=${count}`,
+    'END:VEVENT',
+  ].join('\r\n'));
+  const window = { start: new Date('2011-12-28T00:00:00.000Z'), end: new Date('2012-01-03T00:00:00.000Z') };
+
+  it('setup: DTSTART resolves to 2011-12-29T20:00Z', () => {
+    expect(apiaDaily(3).startDate.toISOString()).toBe('2011-12-29T20:00:00.000Z');
+  });
+
+  it('DAILY;COUNT=3 emits the two distinct instants once each', () => {
+    const out = iso(expandEventRecurrence(apiaDaily(3), window));
+    expect(out).toEqual(['2011-12-29T20:00:00.000Z', '2011-12-30T20:00:00.000Z']);
+  });
+
+  it('DAILY;COUNT=4 keeps civil COUNT ordering: Jan 1 is the last candidate, no refund to Jan 2', () => {
+    const out = iso(expandEventRecurrence(apiaDaily(4), window));
+    expect(out).toEqual(['2011-12-29T20:00:00.000Z', '2011-12-30T20:00:00.000Z', '2011-12-31T20:00:00.000Z']);
+  });
+
+  it('control: the occurrence lookup reports the colliding instant as ambiguous and resolves a unique one', () => {
+    const event = apiaDaily(3);
+    const options = { timeZone: 'Pacific/Apia' };
+    expect(occurrenceWallClock(event.recurrenceRule!, event.startDate, new Date('2011-12-30T20:00:00.000Z'), options)).toBeUndefined();
+    expect(occurrenceWallClock(event.recurrenceRule!, event.startDate, new Date('2011-12-29T20:00:00.000Z'), options)).toBe('20111229T100000');
+  });
+
+  it('control: an Apia DAILY series after the skip emits each day once', () => {
+    const event = fromVEvent([
+      'BEGIN:VEVENT', 'UID:apia-jan', 'SUMMARY:Synthetic',
+      'DTSTART;TZID=Pacific/Apia:20120102T100000', 'DTEND;TZID=Pacific/Apia:20120102T110000',
+      'RRULE:FREQ=DAILY;COUNT=3', 'END:VEVENT',
+    ].join('\r\n'));
+    const out = iso(expandEventRecurrence(event, { start: new Date('2012-01-01T00:00:00.000Z'), end: new Date('2012-01-10T00:00:00.000Z') }));
+    expect(out).toEqual(['2012-01-01T20:00:00.000Z', '2012-01-02T20:00:00.000Z', '2012-01-03T20:00:00.000Z']);
   });
 });

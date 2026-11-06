@@ -220,7 +220,16 @@ export function expandRecurrence(
   exdates?: Date[],
   options?: RecurrenceOptions,
 ): Date[] {
-  return expandWithCivil(rrule, dtstart, range, exdates, options).map((o) => new Date(o.at));
+  // Each occurrence instant is emitted once. In a zone that skipped a whole date, a missing civil
+  // day can resolve onto the next day's instant; COUNT has already counted both civil candidates.
+  const seen = new Set<number>();
+  const out: Date[] = [];
+  for (const o of expandWithCivil(rrule, dtstart, range, exdates, options)) {
+    if (seen.has(o.at)) continue;
+    seen.add(o.at);
+    out.push(new Date(o.at));
+  }
+  return out;
 }
 
 /**
