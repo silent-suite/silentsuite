@@ -34,6 +34,7 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.notes.FakeEtebaseServer
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
+import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.etebase.AddMemberFragment
 import io.silentsuite.sync.ui.etebase.CollectionActivity
@@ -419,6 +420,70 @@ class BirthdayActivationRuntimeTest {
                     requests.any(::isInvitationRequest))
                 assertTrue("FEATURE_BIRTHDAY_INVITE_PRIVACY: the refused add-member step has ended", ended)
             }
+        }
+    }
+
+    @Test fun overlappingMaintenanceTriggersForOneAccountRunOnePassAtATimeAndCoalesceIntoOneRerun() {
+        val colMgr = server.collectionManager
+        val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
+        val contact = uploadItem(book, "contact-alex", VCARD)
+        val calendar = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(calendar.uid, listOf(username to ADMIN))
+        uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val seeded = fake.collectionUids()
+        val birthday = BirthdayCalendar.birthdayOf(VCARD)
+        assertNotNull("PREREQUISITE: the fixture contact has a birthday", birthday)
+        val expectedIcs = BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(
+            BirthdayCalendar.eventUid(book.uid, contact.uid), birthday!!.name, birthday.month, birthday.day))
+        val expectedContents = listOf(ORDINARY_ICS, expectedIcs).sorted()
+        // Every engine pass checks the destination's complete member list exactly once (C3); the post-check does not.
+        // So the member-list requests for this calendar count the passes that were run.
+        val memberCheck = Regex("collection/${Regex.escape(calendar.uid)}/member/")
+        val passes = { fake.requests.count { memberCheck.matches(it.substringAfter(' ').substringBefore('?')) } }
+        fun liveContents() = state(colMgr, calendar.uid).items.values.filter { !it.deleted }.map { it.content }.sorted()
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            val admitted = SyncStatusStore(context).identity(account, generation)
+
+            // Positive control: one uncontended trigger through the real maintenance entry point is one pass, and it
+            // fills the calendar with the contact's birthday.
+            val beforeControl = passes()
+            BirthdayMaintenance.run(context, account, admitted, "control trigger")
+            assertEquals("PREREQUISITE: one uncontended trigger runs exactly one pass", beforeControl + 1, passes())
+            assertEquals("PREREQUISITE: that pass wrote the contact's birthday next to the ordinary event", expectedContents, liveContents())
+
+            // The first trigger's pass is parked at its member check; two more triggers for the same account arrive.
+            val firstCheck = fake.hold("GET", memberCheck)
+            val start = passes()
+            val firstRun = Thread { BirthdayMaintenance.run(context, account, admitted, "first trigger") }
+            val overlapping = listOf("second trigger", "third trigger").map { trigger ->
+                Thread { BirthdayMaintenance.run(context, account, admitted, trigger) }
+            }
+            try {
+                firstRun.start()
+                assertTrue("PREREQUISITE: the first trigger's pass has started and is parked at its member check",
+                    firstCheck.arrivesWithin(60_000))
+                overlapping.forEach { it.start() }
+                overlapping.forEach { it.join(60_000) }
+                assertTrue("PREREQUISITE: the overlapping triggers have returned", overlapping.none { it.isAlive })
+                assertTrue("PREREQUISITE: the first trigger's pass is still parked", firstRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_SERIALIZATION: no second Birthdays pass for the account starts while one is running",
+                    start + 1, passes())
+                firstCheck.release()
+                firstRun.join(60_000)
+                assertFalse("the first trigger's run, with its follow-up, has finished", firstRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_SERIALIZATION: the triggers that arrived during the run are coalesced into exactly one more pass",
+                    start + 2, passes())
+            } finally {
+                // No maintenance thread may outlive this block: the fixture then removes the account and its transport.
+                firstCheck.release()
+                (overlapping + firstRun).forEach { it.join(60_000) }
+            }
+            assertTrue("no maintenance thread is still running", (overlapping + firstRun).none { it.isAlive })
+            assertEquals("the calendar still holds exactly the ordinary event and one generated birthday", expectedContents, liveContents())
+            assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+            assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
         }
     }
 
