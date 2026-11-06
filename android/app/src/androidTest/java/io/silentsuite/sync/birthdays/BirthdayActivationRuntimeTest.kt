@@ -5,11 +5,14 @@ import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentResolver
 import android.content.Context
+import android.os.Bundle
 import android.os.SystemClock
 import android.provider.CalendarContract
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.view.menu.MenuBuilder
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -491,11 +494,26 @@ class BirthdayActivationRuntimeTest {
                     identity, CollectionLifecycleIdentity.from(screen.arguments))
                 assertEquals("PREREQUISITE: the loaded calendar is Admin for this user", CollectionAccessLevel.Admin,
                     requireNotNull(ViewModelProvider(activity).get(CollectionViewModel::class.java).value).col.accessLevel)
-                val token = ViewModelProvider(activity).get(MemberActionViewModel::class.java).put(invitee, CollectionAccessLevel.ReadWrite)
-                AddMemberFragment.newInstance(identity, token).show(activity.supportFragmentManager, ADD_MEMBER_TAG)
-                activity.supportFragmentManager.executePendingTransactions()
-                assertNotNull("PREREQUISITE: the add-member step has started",
-                    activity.supportFragmentManager.findFragmentByTag(ADD_MEMBER_TAG))
+                val actions = ViewModelProvider(activity).get(MemberActionViewModel::class.java)
+                val token = actions.put(invitee, CollectionAccessLevel.ReadWrite)
+                // The step may refuse and dismiss itself within this same transaction (its launch runs on the immediate
+                // main dispatcher), so it is witnessed through its own lifecycle: the real fragment, under this tag, was
+                // created and its onCreate accepted the action (an action it rejects is removed there).
+                var started = false
+                val fragments = activity.supportFragmentManager
+                val witness = object : FragmentManager.FragmentLifecycleCallbacks() {
+                    override fun onFragmentCreated(fm: FragmentManager, f: Fragment, savedInstanceState: Bundle?) {
+                        if (f is AddMemberFragment && f.tag == ADD_MEMBER_TAG && actions.get(token) != null) started = true
+                    }
+                }
+                fragments.registerFragmentLifecycleCallbacks(witness, false)
+                try {
+                    AddMemberFragment.newInstance(identity, token).show(fragments, ADD_MEMBER_TAG)
+                    fragments.executePendingTransactions()
+                } finally {
+                    fragments.unregisterFragmentLifecycleCallbacks(witness)
+                }
+                assertTrue("PREREQUISITE: the add-member step has started", started)
             }
             var ended = false
             waitUntil("the add-member step to send an invitation request or to end") {
