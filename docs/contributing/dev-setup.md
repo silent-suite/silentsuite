@@ -7,7 +7,7 @@ Get a local SilentSuite development environment running. You should be able to g
 | Tool | Version | Install |
 |---|---|---|
 | **Node.js** | 22.12+ | [nodejs.org](https://nodejs.org/) |
-| **pnpm** | 10.6+ | `corepack enable && corepack prepare pnpm@latest --activate` |
+| **pnpm** | 10.6.5 | `corepack enable && corepack prepare pnpm@10.6.5 --activate` |
 | **Docker** | 24+ | [docs.docker.com](https://docs.docker.com/engine/install/) (for running services locally) |
 
 ## 1. Clone the Repository
@@ -65,7 +65,7 @@ silentsuite/
 
 ### `pnpm install` fails
 
-Make sure you're using the correct pnpm version (10.6+). Run `corepack enable` first.
+Use the pnpm version declared in the root `package.json` `packageManager` field (currently `pnpm@10.6.5`). Run `corepack enable` first.
 
 ### Port conflicts
 
