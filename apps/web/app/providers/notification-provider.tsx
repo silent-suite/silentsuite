@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { NOTIFICATION_LOOKAHEAD_MS, NOTIFICATION_MAX_FUTURE_MS, MS_PER_MINUTE } from '@/app/lib/constants'
-import { expandRecurrence } from '@silentsuite/core'
+import { expandEventRecurrence } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 
 interface NotificationContextValue {
@@ -137,12 +137,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       let occurrences: Date[]
       if (event.recurrenceRule) {
         try {
-          occurrences = expandRecurrence(
-            event.recurrenceRule,
-            event.startDate,
-            range,
-            event.exceptions,
-          )
+          occurrences = expandEventRecurrence(event, range)
         } catch {
           occurrences = [event.startDate]
         }

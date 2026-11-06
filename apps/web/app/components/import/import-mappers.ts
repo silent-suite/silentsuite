@@ -1,4 +1,4 @@
-import { parseICalDateValue } from '@silentsuite/core'
+import { gapWallClock, isFloatingICalDateTime, parseICalDateValue } from '@silentsuite/core'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
 import { normalizeLabels } from '@/app/components/LabelEditor'
 
@@ -15,6 +15,10 @@ export interface ImportEventPayload {
   categories: string[]
   calendarId: string
   timezone: string | undefined
+  /** Present (true) only when the source DTSTART is a floating DATE-TIME (no TZID, no Z). */
+  floating?: true
+  /** Present only when a timed TZID DTSTART lies in a DST gap: its original wall clock. */
+  startWallClock?: string
 }
 
 function addDays(date: Date, days: number): Date {
@@ -64,6 +68,8 @@ export function vEventToImportEvent(
       : defaultEndDate(start, isAllDay)
   const exdateTzid = event.exdateParams?.['TZID'] ?? startTzid
   const exceptions = event.exdate?.map((date) => parseICalDateValue(date, exdateTzid).date) ?? []
+  // A DST-gap DTSTART's wall clock is taken from the source value before it is normalized.
+  const startWallClock = isAllDay ? undefined : gapWallClock(startTzid, event.dtstart)
 
   return {
     title: event.summary || 'Untitled Event',
@@ -78,6 +84,8 @@ export function vEventToImportEvent(
     categories: normalizeLabels(event.categories ?? []),
     calendarId,
     timezone: isAllDay ? undefined : startTzid,
+    ...(!isAllDay && isFloatingICalDateTime(event.dtstart, event.dtstartParams) ? { floating: true as const } : {}),
+    ...(startWallClock ? { startWallClock } : {}),
   }
 }
 

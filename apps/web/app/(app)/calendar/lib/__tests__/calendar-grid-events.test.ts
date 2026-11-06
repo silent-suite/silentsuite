@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
+import { fromVEvent } from '@silentsuite/core'
 import {
   expandEventsForRange,
   expandGridEventsForRange,
@@ -54,6 +55,145 @@ function calendarEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
     ...overrides,
   }
 }
+
+// ── #886: grid/agenda expansion repeats each event in its own anchor zone ──
+// Expectations are UTC instants, independent of the host zone. Before the caller passes the
+// event anchor, these follow the host zone instead (RED on hosts whose calendar differs).
+
+describe('recurring events expand in their anchor zone (#886)', () => {
+  const springRange = { start: new Date('2026-02-20T00:00:00.000Z'), end: new Date('2026-04-05T00:00:00.000Z') }
+
+  it('a UTC-anchored weekly series stays at 18:00Z across the US DST start (grid semantics)', () => {
+    const event = calendarEvent({
+      id: 'utc-weekly',
+      startDate: new Date('2026-02-23T18:00:00.000Z'),
+      endDate: new Date('2026-02-23T19:00:00.000Z'),
+      recurrenceRule: 'FREQ=WEEKLY;COUNT=6',
+      timezone: undefined,
+    })
+    const starts = expandGridEventsForRange([event], springRange).events.map((e) => e.startDate.toISOString())
+    expect(starts).toHaveLength(6)
+    expect(starts).toEqual([
+      '2026-02-23T18:00:00.000Z',
+      '2026-03-02T18:00:00.000Z',
+      '2026-03-09T18:00:00.000Z',
+      '2026-03-16T18:00:00.000Z',
+      '2026-03-23T18:00:00.000Z',
+      '2026-03-30T18:00:00.000Z',
+    ])
+  })
+
+  it('an America/Los_Angeles series keeps 10:00 local across 2026-03-08 (list semantics)', () => {
+    const event = calendarEvent({
+      id: 'la-weekly',
+      startDate: new Date('2026-03-02T18:00:00.000Z'),
+      endDate: new Date('2026-03-02T19:00:00.000Z'),
+      recurrenceRule: 'FREQ=WEEKLY;COUNT=3',
+      timezone: 'America/Los_Angeles',
+    })
+    const starts = expandEventsForRange([event], springRange).map((e) => e.startDate.toISOString())
+    expect(starts).toHaveLength(3)
+    expect(starts).toEqual(['2026-03-02T18:00:00.000Z', '2026-03-09T17:00:00.000Z', '2026-03-16T17:00:00.000Z'])
+  })
+
+  it('an Asia/Tokyo BYDAY=MO series lands on Tokyo Mondays, not host Mondays', () => {
+    const event = calendarEvent({
+      id: 'tokyo-monday',
+      startDate: new Date('2026-01-04T23:00:00.000Z'), // Mon 2026-01-05 08:00 JST
+      endDate: new Date('2026-01-05T00:00:00.000Z'),
+      recurrenceRule: 'FREQ=WEEKLY;BYDAY=MO;COUNT=3',
+      timezone: 'Asia/Tokyo',
+    })
+    const range = { start: new Date('2026-01-01T00:00:00.000Z'), end: new Date('2026-02-01T00:00:00.000Z') }
+    const expanded = expandGridEventsForRange([event], range).events
+    expect(expanded.map((e) => e.startDate.toISOString())).toEqual([
+      '2026-01-04T23:00:00.000Z',
+      '2026-01-11T23:00:00.000Z',
+      '2026-01-18T23:00:00.000Z',
+    ])
+    expect(expanded.every((e) => e.timezone === 'Asia/Tokyo')).toBe(true)
+  })
+
+  it('control: a floating series keeps host-local wall times', () => {
+    const event = calendarEvent({
+      id: 'floating-weekly',
+      startDate: new Date(2026, 0, 5, 10, 0, 0),
+      endDate: new Date(2026, 0, 5, 11, 0, 0),
+      recurrenceRule: 'FREQ=WEEKLY;COUNT=2',
+      timezone: undefined,
+      floating: true,
+    })
+    const range = { start: new Date(2026, 0, 1), end: new Date(2026, 1, 1) }
+    expect(expandEventsForRange([event], range).map((e) => e.startDate.getTime())).toEqual([
+      new Date(2026, 0, 5, 10, 0, 0).getTime(),
+      new Date(2026, 0, 12, 10, 0, 0).getTime(),
+    ])
+  })
+
+  it('guard: an old daily LA series viewed for one week stays within the Intl budget', () => {
+    const event = calendarEvent({
+      id: 'old-daily',
+      startDate: new Date('2020-01-01T18:00:00.000Z'), // 10:00 PST
+      endDate: new Date('2020-01-01T19:00:00.000Z'),
+      recurrenceRule: 'FREQ=DAILY',
+      timezone: 'America/Los_Angeles',
+    })
+    const week = { start: new Date('2026-03-02T00:00:00.000Z'), end: new Date('2026-03-09T00:00:00.000Z') }
+
+    const Original = Intl.DateTimeFormat
+    const originalFormatToParts = Original.prototype.formatToParts
+    let constructions = 0
+    let formatToParts = 0
+    const counting = new Proxy(Original, {
+      construct(target, args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
+        constructions++
+        return new target(...args)
+      },
+      apply(target, _thisArg, args: ConstructorParameters<typeof Intl.DateTimeFormat>) {
+        constructions++
+        return target(...args)
+      },
+    })
+    Original.prototype.formatToParts = function (this: Intl.DateTimeFormat, ...args: [Date | number | undefined]) {
+      formatToParts++
+      return originalFormatToParts.apply(this, args)
+    }
+    // At most one per-zone formatter may be constructed on first use; the bound allows two.
+    ;(Intl as { DateTimeFormat: typeof Intl.DateTimeFormat }).DateTimeFormat = counting
+    let count: number
+    try {
+      count = expandGridEventsForRange([event], week).events.length
+    } finally {
+      ;(Intl as { DateTimeFormat: typeof Intl.DateTimeFormat }).DateTimeFormat = Original
+      Original.prototype.formatToParts = originalFormatToParts
+    }
+    expect(count).toBe(7)
+    expect(constructions).toBeLessThanOrEqual(2)
+    expect(formatToParts).toBeLessThanOrEqual(60)
+  })
+})
+
+// #886 F1 row 8: the grid expands a series whose own DTSTART is in a DST gap at the original
+// wall clock, so the ordinary-time EXDATE still matches.
+describe('grid expansion of a gap-start series (#886 F1)', () => {
+  it('row 8: shows 03-08 10:30Z and 03-22 09:30Z with 03-15 excluded', () => {
+    const event = fromVEvent([
+      'BEGIN:VEVENT',
+      'UID:grid-gap-start',
+      'SUMMARY:Synthetic gap series',
+      'DTSTART;TZID=America/Los_Angeles:20260308T023000',
+      'DTEND;TZID=America/Los_Angeles:20260308T043000',
+      'RRULE:FREQ=WEEKLY;COUNT=3',
+      'EXDATE;TZID=America/Los_Angeles:20260315T023000',
+      'END:VEVENT',
+    ].join('\r\n'))
+    const range = { start: new Date('2026-03-01T00:00:00.000Z'), end: new Date('2026-04-01T00:00:00.000Z') }
+    expect(expandGridEventsForRange([event], range).events.map((e) => e.startDate.toISOString())).toEqual([
+      '2026-03-08T10:30:00.000Z',
+      '2026-03-22T09:30:00.000Z',
+    ])
+  })
+})
 
 describe('expandEventsForRange', () => {
   it('includes a recurring occurrence that starts before the range and ends inside it', () => {
