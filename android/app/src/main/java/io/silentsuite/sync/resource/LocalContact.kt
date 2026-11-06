@@ -37,9 +37,25 @@ class LocalContact : AndroidContact, LocalAddress {
         init {
             Contact.productID = Constants.PRODID_BASE + " ez-vcard/" + Ezvcard.VERSION
         }
+
+        /**
+         * Whether this row's label-group memberships (vCard CATEGORIES) are complete. Cleared by the first
+         * operation of every add/update; set only after a fully committed write or a successful upload.
+         */
+        const val COLUMN_CATEGORIES = ContactsContract.RawContacts.SYNC4
+        const val CATEGORIES_CERTIFIED = "silentsuite.categories.v1"
+        /** Uncertified, but a completed listing found no live server item for this row. */
+        const val CATEGORIES_RELEASED = "silentsuite.categories.released.v1"
     }
 
     private var saveAsDirty = false // When true, the resource will be saved as dirty
+
+    /** This address book's label groups (ID → title), read at most once per contact load. */
+    private var categoryGroupTitles: Map<Long, String>? = null
+
+    private fun categoryGroupTitles(): Map<Long, String> =
+            categoryGroupTitles ?: ((addressBook as? LocalAddressBook)?.categoryGroups() ?: emptyMap())
+                    .also { categoryGroupTitles = it }
 
     internal val cachedGroupMemberships: MutableSet<Long> = HashSet()
     internal val groupMemberships: MutableSet<Long> = HashSet()
@@ -88,6 +104,8 @@ class LocalContact : AndroidContact, LocalAddress {
             values.put(AndroidContact.COLUMN_ETAG, eTag)
         }
         values.put(ContactsContract.RawContacts.DIRTY, 0)
+        // The upload just made the provider's label memberships the server's labels.
+        values.put(COLUMN_CATEGORIES, CATEGORIES_CERTIFIED)
 
         addressBook.provider?.update(rawContactSyncURI(), values, null, null)
 
@@ -107,13 +125,79 @@ class LocalContact : AndroidContact, LocalAddress {
     override fun populateData(mimeType: String, row: ContentValues) {
         when (mimeType) {
             CachedGroupMembership.CONTENT_ITEM_TYPE -> cachedGroupMemberships.add(row.getAsLong(CachedGroupMembership.GROUP_ID))
-            GroupMembership.CONTENT_ITEM_TYPE -> groupMemberships.add(row.getAsLong(GroupMembership.GROUP_ROW_ID))
+            GroupMembership.CONTENT_ITEM_TYPE -> {
+                val groupId = row.getAsLong(GroupMembership.GROUP_ROW_ID)
+                val label = categoryGroupTitles()[groupId]
+                if (label != null) {
+                    // A label group membership is the contact's CATEGORIES value, not a group-vCard membership.
+                    contact?.let { if (label !in it.categories) it.categories += label }
+                } else
+                    groupMemberships.add(groupId)
+            }
             UnknownProperties.CONTENT_ITEM_TYPE -> contact?.unknownProperties = row.getAsString(UnknownProperties.UNKNOWN_PROPERTIES)
         }
     }
 
+    override fun add(): Uri {
+        val uri = super.add()
+        certifyCategories()
+        return uri
+    }
+
+    override fun update(contact: Contact): Uri {
+        val uri = super.update(contact)
+        certifyCategories()
+        return uri
+    }
+
+    /**
+     * Replaces only this row's label memberships with [categories], then certifies them. Other rows,
+     * group-vCard memberships and the DIRTY flag are untouched; a partial commit stays uncertified.
+     */
+    fun replaceCategoryProjection(categories: Collection<String>) {
+        val book = addressBook as? LocalAddressBook
+                ?: throw ContactsStorageException("Label projection needs a SilentSuite address book")
+        requireNotNull(id)
+        val batch = BatchOperation(book.requireProvider())
+        enqueueCategoryReplacement(batch, book, categories)
+        batch.commit()
+        certifyCategories()
+        // A loaded copy no longer matches the provider.
+        contact = null
+    }
+
+    /** Marks the label memberships complete; called only after the whole write has committed. */
+    private fun certifyCategories() {
+        val values = ContentValues(1)
+        values.put(COLUMN_CATEGORIES, CATEGORIES_CERTIFIED)
+        if (addressBook.requireProvider().update(rawContactSyncURI(), values, null, null) != 1)
+            throw ContactsStorageException("Couldn't certify the label projection")
+    }
+
+    private fun enqueueCategoryReplacement(batch: BatchOperation, book: LocalAddressBook, categories: Collection<String>) {
+        val labelGroups = book.categoryGroups().keys
+        if (id != null && labelGroups.isNotEmpty())
+            batch.enqueue(BatchOperation.CpoBuilder.newDelete(dataSyncURI())
+                    .withSelection(
+                            "${Data.RAW_CONTACT_ID}=? AND ${Data.MIMETYPE}=? AND " +
+                                    "${GroupMembership.GROUP_ROW_ID} IN (${labelGroups.joinToString(",")})",
+                            arrayOf(id.toString(), GroupMembership.CONTENT_ITEM_TYPE)
+                    )
+            )
+        for (label in categories.filter { it.isNotBlank() }.distinct())
+            batch.enqueue(insertDataBuilder(GroupMembership.RAW_CONTACT_ID)
+                    .withValue(GroupMembership.MIMETYPE, GroupMembership.CONTENT_ITEM_TYPE)
+                    .withValue(GroupMembership.GROUP_ROW_ID, book.findOrCreateCategoryGroup(label))
+            )
+        categoryGroupTitles = null
+    }
+
     override fun insertDataRows(batch: BatchOperation) {
         super.insertDataRows(batch)
+
+        (addressBook as? LocalAddressBook)?.let { book ->
+            enqueueCategoryReplacement(batch, book, requireNotNull(contact).categories)
+        }
 
         if (id != null) {
             batch.enqueue(BatchOperation.CpoBuilder.newDelete(dataSyncURI())
@@ -146,6 +230,8 @@ class LocalContact : AndroidContact, LocalAddress {
     override fun buildContact(builder: BatchOperation.CpoBuilder, update: Boolean) {
         super.buildContact(builder, update)
         builder.withValue(ContactsContract.RawContacts.DIRTY, if (saveAsDirty) 1 else 0)
+        // Uncertified first: this raw-row operation commits before any membership row can.
+        builder.withValue(COLUMN_CATEGORIES, null)
     }
 
 
