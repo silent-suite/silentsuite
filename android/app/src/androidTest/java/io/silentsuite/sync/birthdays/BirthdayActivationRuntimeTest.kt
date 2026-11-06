@@ -20,6 +20,7 @@ import com.etebase.client.Client
 import com.etebase.client.Collection
 import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.CollectionManager
+import com.etebase.client.FetchOptions
 import com.etebase.client.Item
 import com.etebase.client.ItemMetadata
 import com.etebase.client.User
@@ -31,9 +32,11 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.notes.FakeEtebaseServer
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
 import io.silentsuite.sync.ui.AccountActivity
+import io.silentsuite.sync.ui.etebase.AddMemberFragment
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 import io.silentsuite.sync.ui.etebase.CollectionViewModel
+import io.silentsuite.sync.ui.etebase.MemberActionViewModel
 import io.silentsuite.sync.ui.etebase.ViewCollectionFragment
 import io.silentsuite.sync.ui.etebase.runtimeFixtureOverride
 import io.silentsuite.sync.utils.AndroidCompat
@@ -373,6 +376,49 @@ class BirthdayActivationRuntimeTest {
         }
     }
 
+    @Test fun anActiveBirthdaysCalendarSendsNoInvitationRequest() {
+        val colMgr = server.collectionManager
+        val active = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        val ordinary = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Family", "")
+        val calendars = listOf(active, ordinary)
+        for (calendar in calendars) {
+            fake.setMembers(calendar.uid, listOf(username to ADMIN))
+            uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        }
+        val seeded = fake.collectionUids()
+        val before = calendars.associate { it.uid to state(colMgr, it.uid) }
+        val membersBefore = calendars.associate { it.uid to members(colMgr, it.uid) }
+        assertNull("PREREQUISITE: no runtime collection fixture replaces the loaded collection", runtimeFixtureOverride)
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            assertNotEquals("PREREQUISITE: the account name is not the SDK principal", username, account.name)
+            assertEquals("PREREQUISITE: the account's settings hold the SDK principal", username, AccountSettings(context, account).username())
+            assertEquals("PREREQUISITE: the row holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+
+            // Positive control first: for an ordinary Admin calendar the real add-member step reaches the invitation
+            // service (the stand-in answers that user lookup with a not-found error, so nothing is invited).
+            withInvitationAttempt(account, generation, ordinary.uid, "Family", OTHER_MEMBER) { requests, _ ->
+                assertTrue("PREREQUISITE: the add-member step for the ordinary calendar reaches the invitation service",
+                    requests.any(::isInvitationRequest))
+            }
+
+            withInvitationAttempt(account, generation, active.uid, "Birthdays", OTHER_MEMBER) { requests, ended ->
+                // While the active screen is live: nothing was changed, and the exact account generation still owns it.
+                for (calendar in calendars) {
+                    assertEquals("calendar ${calendar.uid} is unchanged", before.getValue(calendar.uid), state(colMgr, calendar.uid))
+                    assertEquals("the members of ${calendar.uid} are unchanged", membersBefore.getValue(calendar.uid), members(colMgr, calendar.uid))
+                }
+                assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+                assertTrue("this exact account row is still present", account in manager.getAccountsByType(account.type))
+                assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+                assertFalse("FEATURE_BIRTHDAY_INVITE_PRIVACY: active Birthdays calendar sends no invitation request",
+                    requests.any(::isInvitationRequest))
+                assertTrue("FEATURE_BIRTHDAY_INVITE_PRIVACY: the refused add-member step has ended", ended)
+            }
+        }
+    }
+
     // ---- fixture ----
 
     /**
@@ -416,6 +462,56 @@ class BirthdayActivationRuntimeTest {
             inspect(sample)
         }
     }
+
+    /**
+     * Opens the real collection screen for exactly [uid] of this account generation, waits until its own
+     * [ViewCollectionFragment] shows the loaded calendar [name], then starts the real [AddMemberFragment] for
+     * [invitee] with a ReadWrite action from the activity's own [MemberActionViewModel], as the members screen's Add
+     * dialog does. It waits until an invitation request reaches the stand-in or that step has ended, and hands
+     * [inspect] every request sent since the step started and whether the step has ended, while the screen is live.
+     */
+    private fun withInvitationAttempt(account: Account, generation: String, uid: String, name: String, invitee: String,
+        inspect: (List<String>, Boolean) -> Unit) {
+        ActivityScenario.launch<CollectionActivity>(CollectionActivity.newIntent(context, account, generation, uid)).use { scenario ->
+            waitUntil("PREREQUISITE: the collection screen to show the loaded calendar \"$name\"") {
+                var shown = false
+                scenario.onActivity { activity ->
+                    val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? ViewCollectionFragment
+                    val loaded = ViewModelProvider(activity).get(CollectionViewModel::class.java).value
+                    shown = screen != null && screen.isResumed && loaded?.col?.uid == uid &&
+                        screen.view?.findViewById<TextView>(R.id.display_name)?.text?.toString() == name
+                }
+                shown
+            }
+            val since = fake.requests.size
+            scenario.onActivity { activity ->
+                val identity = CollectionLifecycleIdentity.existing(account, generation, uid, Constants.ETEBASE_TYPE_CALENDAR)
+                val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment
+                assertEquals("PREREQUISITE: the screen belongs to this account, generation and calendar",
+                    identity, CollectionLifecycleIdentity.from(screen.arguments))
+                assertEquals("PREREQUISITE: the loaded calendar is Admin for this user", CollectionAccessLevel.Admin,
+                    requireNotNull(ViewModelProvider(activity).get(CollectionViewModel::class.java).value).col.accessLevel)
+                val token = ViewModelProvider(activity).get(MemberActionViewModel::class.java).put(invitee, CollectionAccessLevel.ReadWrite)
+                AddMemberFragment.newInstance(identity, token).show(activity.supportFragmentManager, ADD_MEMBER_TAG)
+                activity.supportFragmentManager.executePendingTransactions()
+                assertNotNull("PREREQUISITE: the add-member step has started",
+                    activity.supportFragmentManager.findFragmentByTag(ADD_MEMBER_TAG))
+            }
+            var ended = false
+            waitUntil("the add-member step to send an invitation request or to end") {
+                scenario.onActivity { ended = it.supportFragmentManager.findFragmentByTag(ADD_MEMBER_TAG) == null }
+                ended || fake.requests.drop(since).any(::isInvitationRequest)
+            }
+            inspect(fake.requests.drop(since), ended)
+        }
+    }
+
+    /** A request line ("<method> <path>?<query>") the stand-in recorded for the invitation service. */
+    private fun isInvitationRequest(line: String): Boolean = line.substringAfter(' ').startsWith("invitation/")
+
+    /** The member list (username, access level) of [uid], read fresh through the pinned SDK. */
+    private fun members(colMgr: CollectionManager, uid: String): List<Pair<String, CollectionAccessLevel>> =
+        colMgr.getMemberManager(colMgr.fetch(uid)).list(FetchOptions()).data.map { it.username to it.accessLevel }
 
     private data class ItemState(val deleted: Boolean, val content: String, val name: String?, val mtime: Long?)
     private data class CollectionState(val root: String, val content: String, val name: String?, val items: Map<String, ItemState>)
@@ -663,6 +759,7 @@ class BirthdayActivationRuntimeTest {
         private const val ACTIVE_ACCOUNT_PREFS = "active_account"
         private val ACTIVE_ACCOUNT_KEYS = listOf("account_name", "creation_id")
         private const val OTHER_MEMBER = "birthday-activation-sharer"
+        private const val ADD_MEMBER_TAG = "birthday-activation-add-member"
         private val MEMBER_PATH = Regex("collection/([^/]+)/member/")
         private const val MARKER_ACTIVE = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"active\"}"
         private const val MARKER_RETIRED = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"retired\"}"
