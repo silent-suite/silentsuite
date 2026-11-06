@@ -794,3 +794,175 @@ def test_windows_bundle_omits_w1b_openssl3_family(w1_closure):
     assert not info["present"], (
         f"{info['label']} family still bundled: {len(info['present'])} of {info['expected_names']} exact basenames "
         f"under _internal: {info['present']}")
+
+
+# --- C5 policy characterization: the 'tests' module and qt.conf (measurement only) ---------
+#
+# Approved as a characterization (policy-c5-review-finalize-answer.md, C5_MINIMAL_PLAN). It
+# records, into the uploaded frozen/*.txt receipt, the Analysis-TOC entries for the top-level
+# 'tests' package and the generated qt.conf bytes of THIS job's canonical build. It asserts no
+# licence, ownership or removal; a PASS means the observation was made, not that anything is
+# permitted. Same head and PyInstaller version do not prove identical 'tests' provenance in
+# another build; final-package and runtime-rule proof are still required later.
+C5_RECEIPT_NAME = "policy-observation.txt"
+C5_ENTRY_PACKAGE = "silentsuite_bridge"
+C5_QT_CONF = {"linux": "_internal/PySide6/Qt/libexec/qt.conf", "win32": "_internal/PySide6/qt.conf"}
+C5_WEBENGINE_HELPER = {"linux": "_internal/PySide6/Qt/libexec/QtWebEngineProcess",
+                       "win32": "_internal/PySide6/QtWebEngineProcess.exe"}
+C5_TEXT_LIMIT = 4096
+
+
+def _c5_toc_entries(node, found):
+    """Every (name, source, typecode) 3-tuple in the parsed TOC. Entries are tuples; the TOC's
+    input lists (scripts, pathex, hiddenimports) are lists, so a 3-item list is never an entry."""
+    if isinstance(node, (list, tuple)):
+        if isinstance(node, tuple) and len(node) == 3 and isinstance(node[0], str) and isinstance(node[2], str):
+            found.append(node)
+            return found
+        for child in node:
+            _c5_toc_entries(child, found)
+    return found
+
+
+def _c5_path_class(source):
+    """A privacy-safe class and relative path for a build source; never an absolute runner path."""
+    import sysconfig
+
+    path = Path(source).resolve()
+    roots = []
+    workspace = os.environ.get("GITHUB_WORKSPACE")
+    if workspace:
+        roots.append(("repo", Path(workspace).resolve()))
+    for key in ("purelib", "platlib"):
+        roots.append(("site-packages", Path(sysconfig.get_paths()[key]).resolve()))
+    roots.append(("stdlib", Path(sysconfig.get_paths()["stdlib"]).resolve()))
+    for label, root in roots:
+        if root == path or root in path.parents:
+            return label, path.relative_to(root).as_posix(), root
+    return "other", None, None
+
+
+def _c5_record_owners(site_root, relative):
+    """RECORD rows naming ``relative`` in site-packages *.dist-info (files read only, nothing imported)."""
+    owners = []
+    for record in sorted(site_root.glob("*.dist-info/RECORD")):
+        for line in record.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.split(",", 1)[0] == relative:
+                owners.append({"dist_info": record.parent.name, "record_row": line})
+    return owners
+
+
+def _c5_source_record(source, problems, name):
+    if source is None or source == "-":
+        return {"kind": "namespace-or-no-source", "raw": source}
+    if not isinstance(source, str):
+        problems.append(f"{name}: unexpected source type {type(source).__name__}")
+        return {"kind": "unexpected", "type": type(source).__name__}
+    label, relative, root = _c5_path_class(source)
+    entry = {"kind": "file", "path_class": label, "relative_path": relative}
+    path = Path(source)
+    if not path.is_file():
+        problems.append(f"{name}: TOC source is not an existing regular file ({label})")
+        entry["kind"] = "absent-or-not-regular"
+        return entry
+    try:
+        entry["sha256"] = _w1_sha256(path)
+        entry["bytes"] = path.stat().st_size
+    except OSError as exc:
+        problems.append(f"{name}: TOC source could not be hashed ({type(exc).__name__})")
+        entry["kind"] = "unhashable"
+        return entry
+    if label == "site-packages":
+        entry["owners"] = _c5_record_owners(root, relative)
+    return entry
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="policy observation scope is Linux and Windows; no macOS facts")
+def test_policy_observation_tests_module_and_qt_conf(canonical):
+    import ast
+
+    out = _out()
+    receipt = out / C5_RECEIPT_NAME
+    platform = "win32" if sys.platform == "win32" else "linux"
+    record = {
+        "scope": "C5 characterization of this frozen job's own canonical build; not a licence, ownership or "
+                 "removal decision; separate builds at the same head do not prove identical 'tests' provenance",
+        "head": os.environ.get("GITHUB_SHA"),
+        "pyinstaller": _read(out / "pyinstaller-version.txt"),
+        "platform": platform,
+    }
+    problems = []
+    bundle = canonical["bundle"]
+    if bundle is None:
+        record["error"] = "NOT REACHED: no canonical bundle was built"
+        _w1_write(receipt, record)
+        pytest.fail("NOT REACHED: no canonical bundle was built")
+    root = bundle["root"]
+    try:
+        record["executable"] = {"path": bundle["exe"].relative_to(root.parent).as_posix(),
+                                "sha256": _w1_sha256(bundle["exe"])}
+    except OSError as exc:
+        problems.append(f"canonical executable could not be hashed ({type(exc).__name__})")
+
+    # Observation A: the Analysis TOC of the canonical build (workflow: --workpath "$out/build").
+    tocs = sorted((out / "build").glob("*/Analysis-00.toc"))
+    record["toc_count"] = len(tocs)
+    if len(tocs) != 1:
+        problems.append(f"expected exactly one build/*/Analysis-00.toc, found {len(tocs)}")
+    else:
+        toc = tocs[0]
+        record["toc"] = {"path": toc.relative_to(out).as_posix(), "sha256": _w1_sha256(toc)}
+        try:
+            parsed = ast.literal_eval(toc.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError, SyntaxError) as exc:
+            problems.append(f"Analysis-00.toc is not a readable literal ({type(exc).__name__})")
+            parsed = None
+        if parsed is not None:
+            entries = _c5_toc_entries(parsed, [])
+            record["toc_entry_count"] = len(entries)
+            if not any(e[0] == C5_ENTRY_PACKAGE or e[0].startswith(C5_ENTRY_PACKAGE + ".") for e in entries):
+                problems.append(f"control: entry package {C5_ENTRY_PACKAGE} is not in the TOC")
+            observed = []
+            for name, source, typecode in entries:
+                if name == "tests" or name.startswith("tests."):
+                    observed.append({"name": name, "typecode": typecode,
+                                     "source": _c5_source_record(source, problems, name)})
+            record["tests_entries"] = sorted(observed, key=lambda e: (e["name"], e["typecode"]))
+            if not observed:
+                problems.append("no top-level 'tests' entry in this TOC, unlike the dev facts (observation differs)")
+
+    # Observation B: the generated qt.conf bytes, with the WebEngine helper as a control.
+    helper = root / C5_WEBENGINE_HELPER[platform]
+    record["webengine_helper"] = {"path": C5_WEBENGINE_HELPER[platform], "present": helper.is_file()}
+    if not helper.is_file():
+        problems.append(f"control: WebEngine helper {C5_WEBENGINE_HELPER[platform]} is missing")
+    record["qt_conf_matches"] = [{"path": p.relative_to(root).as_posix(), "sha256": _w1_sha256(p),
+                                  "bytes": p.stat().st_size}
+                                 for p in sorted(root.rglob("qt.conf")) if p.is_file()]
+    expected = root / C5_QT_CONF[platform]
+    record["qt_conf_expected"] = {"path": C5_QT_CONF[platform]}
+    if not expected.is_file():
+        problems.append(f"expected qt.conf {C5_QT_CONF[platform]} is absent")
+    else:
+        try:
+            data = expected.read_bytes()
+        except OSError as exc:
+            problems.append(f"expected qt.conf is unreadable ({type(exc).__name__})")
+        else:
+            record["qt_conf_expected"].update({"sha256": _w1_sha256(expected), "bytes": len(data)})
+            if len(data) <= C5_TEXT_LIMIT:
+                try:
+                    record["qt_conf_expected"]["text"] = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    record["qt_conf_expected"]["text"] = None
+                    record["qt_conf_expected"]["note"] = "not UTF-8; hash only"
+            else:
+                record["qt_conf_expected"]["note"] = f"larger than {C5_TEXT_LIMIT} bytes; hash only"
+
+    record["prerequisite_errors"] = problems
+    _w1_write(receipt, record)  # written before any failure, so the evidence survives
+    if not receipt.is_file():
+        pytest.fail("prerequisite failed (not RED): the observation receipt is absent")
+    if problems:
+        pytest.fail(f"prerequisite failed (not RED): {problems}")
+    # Characterization only: nothing about licence, ownership or removal is asserted.
