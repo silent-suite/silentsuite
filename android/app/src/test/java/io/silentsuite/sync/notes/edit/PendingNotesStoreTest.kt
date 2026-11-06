@@ -22,8 +22,10 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.nio.file.DirectoryStream
 import java.nio.file.Files
 import java.nio.file.LinkOption
+import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 
 class PendingNotesStoreTest {
@@ -49,6 +51,7 @@ class PendingNotesStoreTest {
         PendingNotesStore.beforeRemoveForTesting = null
         PendingNotesStore.beforeClearForTesting = null
         PendingNotesStore.listFilesForTesting = null
+        PendingNotesStore.directoryStreamForTesting = null
         PendingNotesStore.presenceForTesting = null
         PendingNotesStore.identityForTesting = null
         PendingNotesStore.linkForTesting = null
@@ -5051,6 +5054,272 @@ class PendingNotesStoreTest {
         assertEquals("nothing was made", emptySet<String>(), namesIn(noBackup))
     }
 
+    // ---- a store whose account is gone: discarded only when two kinds of listing agree ----
+
+    /** Leaves [s] with b1's notebook copy and the counter, and nothing unsynced: its one note was pushed. */
+    private fun pushedOne(s: PendingNotesStore = store) {
+        s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
+        assertEquals(SendOutcome.Done, s.completeSend("n1", s.beginSend("n1")!!.version, "r1", blob("landed")))
+    }
+
+    /**
+     * n1's entry, its landed record, b1's notebook copy and the counter, as an editor open over a push keeps them: a
+     * listing that leaves out n1.note shows a store that holds nothing unsynced.
+     */
+    private fun entryBesideLanded() {
+        val editor = store.editorOpened("n1")
+        store.saveLocal(editor, "n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
+        val sent = store.beginSend("n1")!!
+        store.saveLocal(editor, "n1", "b1", "r2", blob("typed during the push"), isCreate = false)
+        store.completeSend("n1", sent.version, "r1", blob("landed"))
+        assertEquals(setOf("n1.note", "n1.landed", "b1.notebook", "sequence"), dir.list()!!.toSet())
+    }
+
+    /** What an orphan's discard that gave Changed leaves: [dir] as [before], no permit or record, the instance open. */
+    private fun assertOrphanKept(before: Map<String, List<Byte>>) {
+        assertEquals("byte for byte", before, filesOf(dir))
+        assertEquals("no permit and no acknowledgement", emptySet<String>(), namesIn(permitsOf(store).root))
+        assertFalse("nothing closed the instance", store.clearStopped())
+    }
+
+    @Test fun `an orphan's discard deletes nothing when a listing through java nio holds a note the count's listing left out`() {
+        entryBesideLanded()
+        // The count's listing leaves out n1.note, as File.listFiles can when a read fails partway, so it shows nothing
+        // unsynced. The second listing is the real one.
+        listingLeavesOut("n1.note")
+        val before = filesOf(dir)
+        assertEquals(DiscardOutcome.Changed(UnsyncedNotes.NOTHING), store.discardOrphan())
+        assertOrphanKept(before)
+    }
+
+    @Test fun `an orphan's discard deletes nothing when the second listing cannot be opened`() {
+        entryBesideLanded()
+        listingLeavesOut("n1.note")
+        PendingNotesStore.directoryStreamForTesting = { throw java.nio.file.AccessDeniedException(it.toString()) }
+        val before = filesOf(dir)
+        assertEquals(DiscardOutcome.Changed(UnsyncedNotes.NOTHING), store.discardOrphan())
+        assertOrphanKept(before)
+    }
+
+    @Test fun `an orphan's discard deletes nothing when the second listing fails partway, after the names the count's listing holds`() {
+        entryBesideLanded()
+        listingLeavesOut("n1.note")
+        val listed = dir.list()!!.filter { it != "n1.note" }
+        var closes = 0
+        // The same names as the count's listing, and then the failure from hasNext() that java.nio reports and
+        // File.listFiles does not.
+        PendingNotesStore.directoryStreamForTesting = { d ->
+            object : DirectoryStream<Path> {
+                override fun iterator(): MutableIterator<Path> = object : MutableIterator<Path> {
+                    var at = 0
+
+                    override fun hasNext(): Boolean {
+                        if (at < listed.size) return true
+                        throw java.nio.file.DirectoryIteratorException(java.io.IOException("the read failed partway"))
+                    }
+
+                    override fun next(): Path = d.resolve(listed[at++])
+
+                    override fun remove() = throw UnsupportedOperationException()
+                }
+
+                override fun close() {
+                    closes++
+                }
+            }
+        }
+        val before = filesOf(dir)
+        assertEquals(DiscardOutcome.Changed(UnsyncedNotes.NOTHING), store.discardOrphan())
+        assertOrphanKept(before)
+        assertEquals("the stream was closed", 1, closes)
+    }
+
+    @Test fun `an orphan that holds nothing unsynced goes whole, notebook copies, a landed record, the counter and a first write cut short included`() {
+        val editor = store.editorOpened("n1")
+        store.saveLocal(editor, "n1", "b1", "r1", blob("a"), isCreate = false, notebookCopy = blob("key b1"))
+        assertEquals(SendOutcome.Done, store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed")))
+        store.putNotebook("b2", blob("key b2"))
+        // Behind the store's back, a first write that was cut short: recovery drops it, and no count counts it.
+        val cut = PendingEntry("n2", "b2", PendingEntry.State.UPSERT, 9, "r9", false, blob = blob("c"))
+        File(dir, "n2.note.new").writeBytes(PendingCodec.encodeEntry(cut).copyOf(20))
+        assertEquals(setOf("n1.landed", "b1.notebook", "b2.notebook", "sequence", "n2.note.new"), dir.list()!!.toSet())
+        assertEquals(UnsyncedNotes.NOTHING, store.unsynced())
+        assertEquals(DiscardOutcome.Done, store.discardOrphan())
+        assertFalse("the folder is gone", dir.exists())
+        assertEquals("no permit", emptySet<String>(), namesIn(permitsOf(store).root))
+    }
+
+    @Test fun `an orphan's discard deletes nothing when the second listing finds no folder where the count listed one`() {
+        pushedOne()
+        PendingNotesStore.directoryStreamForTesting = { throw java.nio.file.NoSuchFileException(it.toString()) }
+        val before = filesOf(dir)
+        assertEquals(DiscardOutcome.Changed(UnsyncedNotes.NOTHING), store.discardOrphan())
+        assertOrphanKept(before)
+    }
+
+    @Test fun `an orphan's discard reads its permit under the store lock, so a save waits for it and is then refused`() {
+        pushedOne()
+        val first = java.util.concurrent.atomic.AtomicBoolean(true)
+        var saving: Thread? = null
+        var state: Thread.State? = null
+        var thrown: Throwable? = null
+        // At the permit's read, a save starts on another thread: it waits for the lock this discard holds, or, were
+        // the permit read before the lock, it would finish first.
+        PendingNotesDiscardPermits.onReadForTesting = {
+            if (first.getAndSet(false)) {
+                val thread = kotlin.concurrent.thread {
+                    try {
+                        store.saveLocal("n2", "b1", "r1", blob("typed while the sweep ran"), isCreate = false)
+                    } catch (e: Throwable) {
+                        thrown = e
+                    }
+                }
+                saving = thread
+                val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+                while (thread.state != Thread.State.BLOCKED && thread.state != Thread.State.TERMINATED &&
+                    System.nanoTime() < deadline) {
+                    Thread.sleep(1)
+                }
+                state = thread.state
+            }
+        }
+        try {
+            assertEquals(DiscardOutcome.Done, store.discardOrphan())
+        } finally {
+            // On every path, so that the thread does not outlive this test and meet the next one's seams.
+            saving?.join(10_000)
+            PendingNotesDiscardPermits.onReadForTesting = null
+        }
+        assertEquals("the save waited for the lock", Thread.State.BLOCKED, state)
+        assertTrue("and was refused once the store was closed", thrown is PendingNotesStore.Cleared)
+        assertFalse("nothing was written back", dir.exists())
+    }
+
+    @Test fun `an orphan's discard that stopped finishes at the next start under its permit, and not once a save withdrew it`() {
+        val other = open(tmp.newFolder("other"))
+        for (s in listOf(store, other)) {
+            s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+            s.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        }
+        // A confirmed discard of each stops at its second removal, and keeps its permit.
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "n2.note") throw java.io.IOException("stopped") }
+        for (s in listOf(store, other)) {
+            assertEquals(DiscardOutcome.NotFinished, s.discardStore(s.unsynced()))
+            assertNotNull(permitsOf(s).read(s.dir.name))
+        }
+        PendingNotesStore.beforeRemoveForTesting = null
+
+        PendingNotesStore.resetForTesting()
+        assertEquals(DiscardOutcome.Done, open(dir).discardOrphan())
+        assertFalse(dir.exists())
+        assertFalse("the permit went with the folder", File(permitsOf(store).root, "${dir.name}.permit").exists())
+
+        // A save since withdrew the other's permit and added a note, which nothing covers.
+        val s = open(other.dir)
+        assertTrue(s.saveLocal("n3", "b1", "r1", blob("typed later"), isCreate = false) is SaveOutcome.Saved)
+        assertNull(permitsOf(s).read(s.dir.name))
+        val now = s.unsynced()
+        val before = filesOf(s.dir)
+        assertEquals(DiscardOutcome.Changed(now), s.discardOrphan())
+        assertEquals("byte for byte", before, filesOf(s.dir))
+        assertNull("no permit", permitsOf(s).read(s.dir.name))
+        assertFalse(s.clearStopped())
+    }
+
+    @Test fun `an orphan's permit that cannot be read covers nothing, and an orphan that holds nothing still goes`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        permitsOf(store).record(dir.name, store.unsynced())
+        val permit = File(permitsOf(store).root, "${dir.name}.permit")
+        val recorded = permit.readBytes()
+        val clean = open(tmp.newFolder("clean"))
+        pushedOne(clean)
+        permitsOf(clean).record(clean.dir.name, UnsyncedNotes(1, 1, false, names = notes("n1")))
+        permitReadsFail()
+        PendingNotesStore.resetForTesting()
+
+        // Its permit would cover n1, if it could be read.
+        val s = open(dir)
+        val now = s.unsynced()
+        val before = filesOf(dir)
+        assertEquals(DiscardOutcome.Changed(now), s.discardOrphan())
+        assertEquals("byte for byte", before, filesOf(dir))
+        assertArrayEquals("and the permit", recorded, permit.readBytes())
+        assertFalse(s.clearStopped())
+        // A store that holds nothing needs no permit, and the one left goes with the folder.
+        assertEquals(DiscardOutcome.Done, open(clean.dir).discardOrphan())
+        assertFalse(clean.dir.exists())
+        assertFalse("its permit is gone", File(permitsOf(clean).root, "${clean.dir.name}.permit").exists())
+    }
+
+    @Test fun `an orphan whose folder is a link is not followed, and no acknowledgement is recorded`() {
+        pushedOne()
+        val before = filesOf(dir)
+        PendingNotesStore.linkForTesting = { it.name == dir.name }
+        val shown = store.unsynced()
+        assertFalse("not listed through the link", shown.listed)
+        assertEquals(DiscardOutcome.Changed(shown), store.discardOrphan())
+        assertOrphanKept(before)
+    }
+
+    /**
+     * A store in the app's layout in [noBackup] that holds nothing unsynced, acknowledged while it could not be listed
+     * ([unlisted]), which it still cannot be on return.
+     */
+    private fun acknowledgedWhileUnlisted(noBackup: File): PendingNotesStore {
+        identifyDirectories()
+        val s = identityStore(noBackup)
+        pushedOne(s)
+        unlisted(s)
+        assertEquals(DiscardOutcome.Acknowledged, s.discardStore(s.unsynced()))
+        assertEquals(listOf(s.dir.name + ".acknowledgement"), File(noBackup, "notes-discard").list()!!.toList())
+        return s
+    }
+
+    @Test fun `an orphan acknowledged while it could not be listed goes once it lists and holds nothing, with no confirmation`() {
+        val noBackup = tmp.newFolder("no_backup")
+        val s = acknowledgedWhileUnlisted(noBackup)
+        // At the next start it lists. The acknowledgement gives no authority; the count and the second listing do.
+        PendingNotesStore.listFilesForTesting = null
+        PendingNotesStore.resetForTesting()
+        assertEquals(DiscardOutcome.Done, identityStore(noBackup).discardOrphan())
+        assertFalse(s.dir.exists())
+        assertEquals("the acknowledgement is gone", emptySet<String>(), namesIn(File(noBackup, "notes-discard")))
+    }
+
+    @Test fun `an orphan acknowledged while it could not be listed is kept while it still cannot be`() {
+        val noBackup = tmp.newFolder("no_backup")
+        val s = acknowledgedWhileUnlisted(noBackup)
+        val before = filesOf(s.dir)
+        PendingNotesStore.resetForTesting()
+        val next = identityStore(noBackup)
+        val shown = next.unsynced()
+        assertFalse(shown.listed)
+        assertEquals(DiscardOutcome.Changed(shown), next.discardOrphan())
+        assertTrue("the acknowledgement still holds", next.acknowledged())
+        assertNull("no permit", permitsOf(next).read(next.dir.name))
+        assertEquals("byte for byte", before, filesOf(s.dir))
+        assertFalse(next.clearStopped())
+    }
+
+    @Test fun `pins the accepted limit that listings of both kinds skipping a note alike let an orphan's discard take its notebook copy and counter`() {
+        entryBesideLanded()
+        val note = File(dir, "n1.note").readBytes()
+        // Not fixed: every listing leaves out n1.note without an error, File.listFiles and java.nio alike, the count's,
+        // the second one and the discard's own last one, as a read under both that skips a name would.
+        listingLeavesOut("n1.note")
+        PendingNotesStore.directoryStreamForTesting = { d ->
+            Files.newDirectoryStream(d, DirectoryStream.Filter<Path> { it.fileName.toString() != "n1.note" })
+        }
+        assertEquals(DiscardOutcome.NotFinished, store.discardOrphan())
+        assertEquals("the copy, the landed record and the counter went", setOf("n1.note"), dir.list()!!.toSet())
+        assertArrayEquals("the note is as it was", note, File(dir, "n1.note").readBytes())
+        PendingNotesStore.listFilesForTesting = null
+        PendingNotesStore.directoryStreamForTesting = null
+        val left = restarted().unsynced()
+        assertEquals(1, left.count)
+        assertEquals(notes("n1"), left.names)
+    }
+
     // ---- one notebook: what it holds, and the discard of it after a leave or delete ----
 
     @Test fun `a notebook's count names only its own entries, held entries and conflict copies included`() {
@@ -5898,8 +6167,10 @@ class PendingNotesStoreTest {
         val signOut = "io/silentsuite/sync/ui/AndroidCurrentAccountSignOut.kt"
         val settings = "io/silentsuite/sync/ui/UnsyncedNotesStores.kt"
         assertEquals(listOf(signOut, settings), callersOf("discardStore"))
+        // The discard of a store whose account is gone is the startup sweep's alone.
+        assertEquals(listOf("io/silentsuite/sync/ui/NotesStartupSweep.kt"), callersOf("discardOrphan"))
         // The sign-out drops its instance after a removal that failed, Settings only one that its own discard alone
-        // finished.
+        // finished; the startup sweep drops none.
         assertEquals(listOf(signOut), callersOf("unregister"))
         assertEquals(listOf(settings), callersOf("unregisterIfFinishedOnce"))
         // The Settings way out, and a notebook's leave or delete before it words a failure of its server call.

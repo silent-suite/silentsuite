@@ -49,10 +49,15 @@ import io.silentsuite.sync.syncadapter.SyncManager
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
+import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.AndroidCurrentAccountSignOut
 import io.silentsuite.sync.ui.CurrentAccountSignOutCoordinator
 import io.silentsuite.sync.ui.CurrentAccountSignOutState
 import io.silentsuite.sync.ui.ExactAccountIdentity
+import io.silentsuite.sync.ui.NotesLastActiveRecord
+import io.silentsuite.sync.ui.NotesStartupSweep
+import io.silentsuite.sync.ui.PendingNotesRemovalGuard
+import io.silentsuite.sync.ui.UnsyncedNotesStores
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteListFragment
 import io.silentsuite.sync.ui.notes.NoteViewFragment
@@ -62,6 +67,7 @@ import io.silentsuite.sync.ui.notes.NotesLoad
 import io.silentsuite.sync.ui.notes.NotesLoader
 import io.silentsuite.sync.ui.notes.notesFixtureOverride
 import io.silentsuite.sync.utils.AndroidCompat
+import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -107,7 +113,9 @@ import kotlin.concurrent.thread
  * them hold the fetch of the notebook that would confirm it, and cancel the run, switch Notes off
  * or replace the account before its answer arrives. Some cases also read the pending store's files
  * from disk: none holds a title, a text or a notebook name in plain form, and they are still there, byte for byte, after a cache clear and
- * after a same-name account replaced the one that saved them. One case sends nothing: it compares
+ * after a same-name account replaced the one that saved them. One case runs the startup sweep
+ * ([NotesStartupSweep]) over the stores of removed accounts, and checks which it removed and which
+ * it kept byte for byte. One case sends nothing: it compares
  * the raw metadata codec with the binding's typed encoder and decoder
  * ([NoteMetaBindingComparison]), on a notebook that is never uploaded.
  */
@@ -155,6 +163,8 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     @Before fun setUp() {
+        // The startup sweep of this process is over before a case makes a store folder.
+        runBlocking { NotesStartupSweep.startup?.join() }
         previousMasterSync = ContentResolver.getMasterSyncAutomatically()
         // No platform adapter sync may reach the stand-in server while a test holds a request.
         ContentResolver.setMasterSyncAutomatically(false)
@@ -2551,6 +2561,78 @@ class NotesSyncBoundaryRuntimeTest {
         assertSucceeded(status(account, "gen-push-new"))
     }
 
+    @Test fun theStartupSweepRemovesOnlyCleanStoresOfRemovedAccountsAndKeepsEveryStoreWithText() {
+        // The app start launched this process's sweep, and setUp waited for it.
+        val startup = NotesStartupSweep.startup
+        assertNotNull("the app start launched the startup sweep", startup)
+        assertTrue("and it is over", startup!!.isCompleted)
+        // Every row on the device has a creation id that reads, and notes-pending holds no store and no other name.
+        val rows = PendingNotesRemovalGuard.rows(manager)
+        assertTrue("every row of the main type has a creation id that reads: $rows",
+            rows != null && rows.all { it.id is PendingNotesRemovalGuard.CreationId.Readable })
+        val found = PendingNotesStore.storeDirectories(context)
+        assertTrue("stores left on this device: ${found.stores}, a name of another kind: ${found.unknown}",
+            found.stores.isEmpty() && !found.unknown)
+        // A run that goes ahead can write the record, which outlives this class in no_backup.
+        val record = File(context.noBackupFilesDir, NotesLastActiveRecord.FILE)
+        val recordBefore = lastActiveRecord()
+        try {
+            // A, whose account stays, holds a note and its notebook's copy. R1's note was saved and then
+            // discarded, so its store holds a notebook copy and the counter and nothing unsynced. R2 holds a note.
+            val a = newAccount("gen-sweep-a")
+            val r1 = newAccount("gen-sweep-r1")
+            val r2 = newAccount("gen-sweep-r2")
+            val aStore = pending(a, "gen-sweep-a")
+            val r1Store = pending(r1, "gen-sweep-r1")
+            val r2Store = pending(r2, "gen-sweep-r2")
+            assertTrue(aStore.saveLocal("a-note", "a-notebook", "r1", ByteArray(8), isCreate = false,
+                notebookCopy = ByteArray(4)) is PendingNotesStore.SaveOutcome.Saved)
+            assertTrue(r1Store.saveLocal("r1-note", "r1-notebook", "r1", ByteArray(8), isCreate = false)
+                is PendingNotesStore.SaveOutcome.Saved)
+            r1Store.discard("r1-note")
+            r1Store.putNotebook("r1-notebook", ByteArray(4))
+            assertTrue(r2Store.saveLocal("r2-note", "r2-notebook", "r1", ByteArray(8), isCreate = false)
+                is PendingNotesStore.SaveOutcome.Saved)
+            assertEquals(setOf("sequence", "r1-notebook.notebook"), filesOnDisk(r1Store).keys)
+            assertFalse("R1's store holds nothing unsynced", r1Store.unsynced().anything)
+            val saved = ActiveAccountManager.savedIdentity(context)
+            val fixtures = listOf(aStore, r1Store, r2Store).map { it.dir.name }
+            assertFalse("the active-account preference names none of them: $saved", saved != null &&
+                PendingNotesStore.identityDir(context.noBackupFilesDir, App.accountType, saved.first, saved.second)
+                    .name in fixtures)
+
+            // 1. A row of the main type whose creation id does not read holds the whole run back, and nothing in
+            // notes-pending, notes-discard or the record changes.
+            val onDisk = sweepFilesOnDisk()
+            val withoutId = newAccount(null)
+            try {
+                assertEquals(NotesStartupSweep.Outcome.HeldBack(NotesStartupSweep.HoldBack.ROW_WITHOUT_ID),
+                    NotesStartupSweep.run(context))
+            } finally {
+                removeAccount(withoutId)
+            }
+            assertSameFiles("a run held back changes nothing", onDisk, sweepFilesOnDisk())
+
+            // 2. Once R1 and R2 are removed, a run removes R1's clean store and keeps R2's, whose note no
+            // confirmed discard covers, byte for byte. A's store, whose row is there, stays as it was.
+            val aFiles = filesOnDisk(aStore)
+            val r2Files = filesOnDisk(r2Store)
+            removeAccount(r1)
+            removeAccount(r2)
+            assertEquals(NotesStartupSweep.Outcome.Swept(1, 1, 0, 0, 0), NotesStartupSweep.run(context))
+            assertEquals("R1's folder is gone", PendingNotesStore.Presence.ABSENT,
+                PendingNotesStore.presenceOnDevice(r1Store.dir))
+            assertSameFiles("R2's store is as it was", r2Files, filesOnDisk(r2Store))
+            assertEquals("and the Settings list shows its note", 1,
+                UnsyncedNotesStores.read(context).rows.single { it.directory == r2Store.dir.name }.answer?.count)
+            assertSameFiles("A's store is as it was", aFiles, filesOnDisk(aStore))
+            assertTrue("and it takes a save", aStore.saveLocal("a-note", "a-notebook", "r2", ByteArray(8),
+                isCreate = false) is PendingNotesStore.SaveOutcome.Saved)
+        } finally {
+            if (recordBefore == null) record.delete() else record.writeBytes(recordBefore)
+        }
+    }
+
     @Test fun theRawMetadataCodecAgreesWithTheBindingsTypedEncoderAndDecoderExceptWhereStated() {
         // Pure Kotlin first: the screens and the comparison must report hand-made differences before
         // any call into the binding.
@@ -2572,7 +2654,8 @@ class NotesSyncBoundaryRuntimeTest {
 
     // ---- helpers ----
 
-    private fun newAccount(generation: String, name: String = "notes-boundary-${System.nanoTime()}@example.invalid",
+    /** An account row for the stand-in server; with no [generation], a row whose creation id was never written. */
+    private fun newAccount(generation: String?, name: String = "notes-boundary-${System.nanoTime()}@example.invalid",
                            discoveryKey: Boolean = true): Account {
         val account = Account(name, App.accountType)
         names += name
@@ -2584,7 +2667,7 @@ class NotesSyncBoundaryRuntimeTest {
         check(manager.addAccountExplicitly(account, null, null))
         silenceSyncAdapters(account)
         AccountSettings.setUserData(manager, account, URI(fake.baseUrl), account.name)
-        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+        if (generation != null) check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
         check(AccountSettings.writeNotesEnabled(manager, account, true))
         AccountSettings(context, account).etebaseSession = session
         // With the discovery key in place a listing starts from the saved cursor, as it does on a
@@ -2822,6 +2905,22 @@ class NotesSyncBoundaryRuntimeTest {
         val names = above.list() ?: throw AssertionError("${above.name} could not be listed")
         if (dir.name !in names) return emptySet()
         return (dir.list() ?: throw AssertionError("${dir.name} could not be listed")).toSet()
+    }
+
+    /** The startup sweep's record in no_backup as it is on disk now, or null when a listing shows it is not there. */
+    private fun lastActiveRecord(): ByteArray? = File(context.noBackupFilesDir, NotesLastActiveRecord.FILE)
+        .takeIf { it.name in namesIn(context.noBackupFilesDir) }?.readBytes()
+
+    /**
+     * What the startup sweep could change, as it is on disk now: every file of every store in notes-pending and every
+     * file of notes-discard, by path, and the sweep's record.
+     */
+    private fun sweepFilesOnDisk(): Map<String, ByteArray> {
+        val pendingRoot = File(context.noBackupFilesDir, PendingNotesStore.PENDING)
+        val dirs = namesIn(pendingRoot).map { File(pendingRoot, it) } +
+            File(context.noBackupFilesDir, PendingNotesDiscardPermits.ROOT)
+        val files = dirs.flatMap { dir -> namesIn(dir).map { File(dir, it) } }.associate { it.path to it.readBytes() }
+        return files + listOfNotNull(lastActiveRecord()?.let { NotesLastActiveRecord.FILE to it })
     }
 
     private fun assertSameFiles(what: String, expected: Map<String, ByteArray>, actual: Map<String, ByteArray>) {

@@ -57,6 +57,7 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1199,10 +1200,11 @@ private class UnsyncedNotesOnDevice(private val context: Context) {
     }
 
     /**
-     * Master sync off, every request refused and counted, every Notes run counted, the [probe] installed, and the
-     * first removals noted.
+     * The startup sweep of this process over, master sync off, every request refused and counted, every Notes run
+     * counted, the [probe] installed, and the first removals noted.
      */
     fun isolate() {
+        runBlocking { NotesStartupSweep.startup?.join() }
         previousMasterSync = ContentResolver.getMasterSyncAutomatically()
         ContentResolver.setMasterSyncAutomatically(false)
         HttpClient.testInterceptor = object : okhttp3.Interceptor {
