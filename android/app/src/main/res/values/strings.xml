@@ -486,6 +486,8 @@
     <string name="create_addressbook">Create address book</string>
     <string name="create_addressbook_display_name_hint">My Address Book</string>
     <string name="create_calendar">Create calendar</string>
+    <string name="birthdays_turn_on">Turn on Birthdays calendar</string>
+    <string name="birthdays_turn_off">Turn off Birthdays calendar</string>
     <string name="create_calendar_display_name_hint">My Calendar</string>
     <string name="create_tasklist">Create task list</string>
     <string name="create_tasklist_display_name_hint">My Task List</string>

@@ -115,6 +115,13 @@ vi.mock('@schedule-x/react', () => ({
 
 vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'light' }) }))
 
+// #738: which calendars are managed Birthdays calendars (identity is tested in the birthday library).
+const birthdayGrid = vi.hoisted(() => ({ managed: [] as string[] }))
+vi.mock('@/app/lib/birthday-calendar/session', () => ({
+  isManagedBirthdayCalendar: (calendarId: string | null | undefined) => Boolean(calendarId && birthdayGrid.managed.includes(calendarId)),
+  useManagedBirthdayCalendarIds: () => birthdayGrid.managed,
+}))
+
 vi.mock('@/app/stores/use-auth-store', () => ({
   useAuthStore: (selector: (state: { canWrite: () => boolean }) => unknown) => selector({ canWrite: () => true }),
 }))
@@ -380,6 +387,40 @@ describe('CalendarGrid timed-event integration', () => {
     expect(navigator.vibrate).not.toHaveBeenCalled()
     expect(timeoutSpy.mock.calls.length).toBe(initialTimeoutCalls)
     expect(mocks.requestAnimationFrame.mock.calls.length).toBe(initialRafCalls)
+  })
+
+  it('#738: a generated birthday in a managed calendar cannot be dragged, moved or resized', () => {
+    birthdayGrid.managed = ['bday-1']
+    mocks.calendarState.updateEvent.mockClear()
+    try {
+      mocks.projectedSegment = false
+      const birthday = event({ startDate: new Date(2026, 6, 13, 9, 0), endDate: new Date(2026, 6, 13, 10, 0), calendarId: 'bday-1' })
+      render(<StrictMode><CalendarGrid events={[birthday]} /></StrictMode>)
+      const target = screen.getByTestId('projected-segment')
+      const eventElement = screen.getByTestId('projected-event')
+      const grid = screen.getByTestId('time-grid')
+      vi.spyOn(eventElement, 'getBoundingClientRect').mockReturnValue(rect(0, 100, 200, 200))
+      vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+      vi.spyOn(screen.getByTestId('day-column'), 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+      vi.spyOn(screen.getByTestId('schedule-x').parentElement as HTMLElement, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+      Object.defineProperty(grid, 'scrollHeight', { configurable: true, value: 1600 })
+      Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 0, writable: true })
+
+      // Move (same gesture that drags the ordinary event in the next test).
+      fireEvent.mouseDown(target, { button: 0, clientX: 20, clientY: 200 })
+      fireEvent.mouseMove(target, { clientX: 25, clientY: 260 })
+      expect(document.body.classList.contains('is-drag-moving')).toBe(false)
+      fireEvent.mouseUp(target, { clientX: 25, clientY: 260 })
+      // Bottom-edge resize.
+      fireEvent.mouseDown(target, { button: 0, clientX: 20, clientY: 296 })
+      fireEvent.mouseMove(target, { clientX: 20, clientY: 360 })
+      expect(document.body.classList.contains('is-drag-resizing')).toBe(false)
+      fireEvent.mouseUp(target, { clientX: 20, clientY: 360 })
+
+      expect(mocks.calendarState.updateEvent).not.toHaveBeenCalled()
+    } finally {
+      birthdayGrid.managed = []
+    }
   })
 
   it('proves the unguarded mouse-move path activates, cancels, and completes', () => {

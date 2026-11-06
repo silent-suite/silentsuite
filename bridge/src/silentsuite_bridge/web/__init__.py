@@ -526,6 +526,35 @@ def _account_mutation_response(action, result):
     })
 
 
+def _handle_birthdays_request(environ):
+    data, error_response = _read_json_body(environ)
+    if error_response:
+        return error_response
+    if not isinstance(data, dict):
+        return _json_response(400, {"error": "A JSON object is required"})
+    username = data.get("username") if isinstance(data.get("username"), str) else ""
+    username = username.strip()
+    if not username:
+        return _json_response(400, {"error": "Account username is required"})
+    action = data.get("action")
+    if action not in ("on", "off"):
+        return _json_response(400, {"error": "Action must be on or off"})
+
+    try:
+        from .. import birthdays
+
+        outcome = birthdays.set_dashboard_birthdays(username, action)
+    except Exception as exc:  # noqa: BLE001 - never reveal account or request details
+        logger.warning("Birthdays dashboard action failed (%s)", bounded_exception_class(exc))
+        return _json_response(500, {"ok": False, "status": "failed"})
+
+    # Only "done" is completion; anything else (or nothing) is reported as not done.
+    status = outcome.get("status") if isinstance(outcome, dict) else None
+    if status not in ("done", "skipped", "pending"):
+        status = "failed"
+    return _json_response(200, {"ok": status == "done", "status": status})
+
+
 def _handle_account_mutation(environ, action):
     data, error_response = _read_json_body(environ)
     if error_response:
@@ -1162,6 +1191,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     'Remove {account}? This deletes local bridge credentials and that account\\'s local decrypted bridge cache on this computer. Other accounts are not affected.'
                 );
             }
+            function setBirthdays(button) {
+                var account = button.getAttribute('data-birthdays-account');
+                var action = button.getAttribute('data-birthdays-action');
+                if (!account || (action !== 'on' && action !== 'off')) return;
+                if (action === 'off' && !confirm('Turn off the Birthdays calendar for ' + account + '? Generated birthdays are removed; your own events are kept.')) return;
+                button.disabled = true;
+                setAccountStatus('Updating the Birthdays calendar for ' + account + '...', false);
+                fetch('/.web/api/accounts/birthdays', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF},
+                    body: JSON.stringify({username: account, action: action})
+                })
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        if (data && data.ok === true && data.status === 'done') {
+                            setAccountStatus('Birthdays calendar turned ' + action + ' for ' + account + '.', false);
+                        } else {
+                            var status = (data && data.status) ? data.status : 'failed';
+                            setAccountStatus('Birthdays calendar for ' + account + ' was not changed yet (' + status + '). Try again after the next sync.', true);
+                        }
+                        button.disabled = false;
+                    })
+                    .catch(function(error) {
+                        setAccountStatus(error.message || ('Birthdays calendar update failed for ' + account + '.'), true);
+                        button.disabled = false;
+                    });
+            }
             function toggleFingerprint(id, button) {
                 var el = document.getElementById(id);
                 if (!el) return;
@@ -1636,6 +1692,10 @@ def _render_dashboard():
                 'onclick="logoutAccount(this)">Log out</button>'
                 f'<button class="account-action-btn danger" data-account="{account_attr}" '
                 'onclick="removeAccount(this)">Remove account</button>'
+                f'<button class="account-action-btn" data-birthdays-account="{account_attr}" '
+                'data-birthdays-action="on" onclick="setBirthdays(this)">Turn on Birthdays calendar</button>'
+                f'<button class="account-action-btn" data-birthdays-account="{account_attr}" '
+                'data-birthdays-action="off" onclick="setBirthdays(this)">Turn off Birthdays calendar</button>'
                 '</div>'
                 '</div>'
             )
@@ -1920,6 +1980,12 @@ class Web(BaseWeb):
             if not _has_valid_csrf(environ):
                 return _csrf_error()
             return _handle_account_mutation(environ, "remove")
+
+        # Turn one account's Birthdays calendar on or off (#738)
+        if path == "/.web/api/accounts/birthdays":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            return _handle_birthdays_request(environ)
 
         # Update settings
         if path == "/.web/api/settings":

@@ -18,7 +18,9 @@ import android.provider.CalendarContract
 import android.provider.CalendarContract.*
 import at.bitfire.ical4android.*
 import com.etebase.client.CollectionAccessLevel
+import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.CachedCollection
+import io.silentsuite.sync.birthdays.BirthdayCalendar
 import io.silentsuite.sync.log.Logger
 
 import io.silentsuite.sync.resource.LocalEvent.Companion.COLUMN_UID
@@ -92,18 +94,38 @@ class LocalCalendar private constructor(
             if (withColor)
                 values.put(Calendars.CALENDAR_COLOR, parseColor(meta.color))
 
-            if (col.accessLevel == CollectionAccessLevel.ReadOnly)
+            putAccessLevel(values, col.accessLevel, cachedBirthdaysActive(cachedCollection))
+
+            values.put(Calendars.ALLOWED_REMINDERS, Reminders.METHOD_ALERT)
+            values.put(Calendars.ALLOWED_AVAILABILITY, StringUtils.join(intArrayOf(Reminders.AVAILABILITY_TENTATIVE, Reminders.AVAILABILITY_FREE, Reminders.AVAILABILITY_BUSY), ","))
+            values.put(Calendars.ALLOWED_ATTENDEE_TYPES, StringUtils.join(intArrayOf(CalendarContract.Attendees.TYPE_OPTIONAL, CalendarContract.Attendees.TYPE_REQUIRED, CalendarContract.Attendees.TYPE_RESOURCE), ", "))
+            return values
+        }
+
+        /**
+         * Read-only for a read-only collection and for the active Birthdays calendar, whose events
+         * are generated from contacts: calendar apps then offer no edits, and the calendar sync
+         * restores any change made anyway instead of uploading it.
+         */
+        private fun putAccessLevel(values: ContentValues, collectionAccess: CollectionAccessLevel, birthdaysActive: Boolean) {
+            if (collectionAccess == CollectionAccessLevel.ReadOnly || birthdaysActive)
                 values.put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_READ)
             else {
                 values.put(Calendars.CALENDAR_ACCESS_LEVEL, Calendars.CAL_ACCESS_OWNER)
                 values.put(Calendars.CAN_MODIFY_TIME_ZONE, 1)
                 values.put(Calendars.CAN_ORGANIZER_RESPOND, 1)
             }
+        }
 
-            values.put(Calendars.ALLOWED_REMINDERS, Reminders.METHOD_ALERT)
-            values.put(Calendars.ALLOWED_AVAILABILITY, StringUtils.join(intArrayOf(Reminders.AVAILABILITY_TENTATIVE, Reminders.AVAILABILITY_FREE, Reminders.AVAILABILITY_BUSY), ","))
-            values.put(Calendars.ALLOWED_ATTENDEE_TYPES, StringUtils.join(intArrayOf(CalendarContract.Attendees.TYPE_OPTIONAL, CalendarContract.Attendees.TYPE_REQUIRED, CalendarContract.Attendees.TYPE_RESOURCE), ", "))
-            return values
+        /**
+         * Whether the cached collection's own content is the active Birthdays marker. Content the
+         * cache does not hold reads as not active here; the calendar sync reads the marker afresh
+         * before it pushes anything and corrects the access level ([updateAccessLevel]).
+         */
+        private fun cachedBirthdaysActive(cachedCollection: CachedCollection): Boolean = try {
+            BirthdayCalendar.markerState(cachedCollection.col.content) == BirthdayCalendar.MarkerState.ACTIVE
+        } catch (e: EtebaseException) {
+            false
         }
     }
 
@@ -112,6 +134,26 @@ class LocalCalendar private constructor(
 
     fun update(cachedCollection: CachedCollection, updateColor: Boolean) =
             update(valuesFromCachedCollection(cachedCollection, updateColor))
+
+    /**
+     * Brings the provider's access level in line with the collection's access and whether it is
+     * the active Birthdays calendar, as read by the calendar sync. Writes only on a change.
+     */
+    @Throws(CalendarStorageException::class)
+    fun updateAccessLevel(collectionAccess: CollectionAccessLevel, birthdaysActive: Boolean) {
+        val values = ContentValues()
+        putAccessLevel(values, collectionAccess, birthdaysActive)
+        val current = try {
+            provider.query(syncAdapterURI(ContentUris.withAppendedId(Calendars.CONTENT_URI, id)),
+                    arrayOf(Calendars.CALENDAR_ACCESS_LEVEL), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getInt(0) else null
+            }
+        } catch (e: RemoteException) {
+            throw CalendarStorageException("Couldn't read the calendar's access level", e)
+        }
+        if (current != values.getAsInteger(Calendars.CALENDAR_ACCESS_LEVEL))
+            update(values)
+    }
 
 
     override fun findDeleted() =

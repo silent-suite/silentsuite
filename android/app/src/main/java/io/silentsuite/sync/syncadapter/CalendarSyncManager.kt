@@ -20,6 +20,7 @@ import com.etebase.client.Item
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.birthdays.BirthdayCalendar
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalCalendar
@@ -51,12 +52,56 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         return Constants.NOTIFICATION_CALENDAR_SYNC
     }
 
+    /** Whether this calendar is the active Birthdays calendar, as read afresh in [prepare]. */
+    private var birthdaysActive = false
+
     @Throws(ContactsStorageException::class, CalendarStorageException::class)
     override fun prepare(): Boolean {
         if (!super.prepare())
             return false
 
+        // The Birthdays marker is the collection's own content, which the cached collection need not
+        // hold. It is read afresh before any local change is pushed; a read that fails ends the sync
+        // before anything is uploaded, so an unreadable marker never makes the calendar writable.
+        val content = colMgr.fetch(cachedCollection.col.uid).content
+        birthdaysActive = BirthdayCalendar.markerState(content) == BirthdayCalendar.MarkerState.ACTIVE
+        localCalendar().updateAccessLevel(cachedCollection.col.accessLevel, birthdaysActive)
+        if (birthdaysActive)
+            Logger.log.info("Active Birthdays calendar: local changes are restored from the server, never uploaded")
+
         return true
+    }
+
+    /** The active Birthdays calendar's local edits and deletions are restored, never uploaded. */
+    override fun discardsLocalChanges(): Boolean = birthdaysActive || super.discardsLocalChanges()
+
+    /**
+     * For the active Birthdays calendar, reapplies the cached server event (already downloaded by
+     * an earlier sync) over a discarded local change, keeping its file name, so the provider shows
+     * the server's content again before the dirty flag is cleared. Other calendars keep the default.
+     */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    override fun restoreLocalFromRemote(local: LocalEvent): String? {
+        if (!birthdaysActive)
+            return super.restoreLocalFromRemote(local)
+        // The Etebase cache is keyed by the item/file UID, not the iCalendar UID.
+        val itemUid = local.fileName
+            ?: throw CalendarStorageException("Cannot restore a Birthdays event without its cached item UID")
+
+        val cached = synchronized(etebaseLocalCache) {
+            etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, itemUid)
+        }
+        if (cached == null || cached.item.isDeleted)
+            throw CalendarStorageException("The server copy of a Birthdays event is unavailable")
+
+        val remote = Event.eventsFromReader(StringReader(cached.content))
+        if (remote.isEmpty())
+            throw CalendarStorageException("The server copy of a Birthdays event is invalid")
+
+        Logger.log.info("Reapplying the server's Birthdays event over a discarded local change")
+        local.eTag = cached.item.etag
+        local.update(remote[0])
+        return cached.item.etag
     }
 
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
