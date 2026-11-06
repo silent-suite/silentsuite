@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, untilDateBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -28,6 +29,10 @@ interface NewCalendarEvent {
   categories?: string[]
   calendarId?: string
   timezone?: string
+  /** True only for a floating DATE-TIME source (no TZID, no Z); kept so it is written back floating. */
+  floating?: true
+  /** Original wall clock of a DST-gap TZID DTSTART (YYYYMMDDTHHMMSS); kept so it is written back. */
+  startWallClock?: string
 }
 
 interface CalendarState {
@@ -79,20 +84,43 @@ function addMonths(date: Date, months: number): Date {
   return result
 }
 
-/** Format a Date as YYYYMMDD for RRULE UNTIL */
-function formatUntilDate(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  return `${y}${m}${d}`
+/**
+ * Apply an edit patch. A start-instant change that does not set `startWallClock` explicitly drops
+ * any retained gap wall clock, so it never revives after later edits. An explicit key (including
+ * undefined) wins; an absent or unchanged start keeps it.
+ */
+function mergeEventPatch(base: CalendarEvent, patch: Partial<CalendarEvent>): CalendarEvent {
+  const merged: CalendarEvent = { ...base, ...patch }
+  if (
+    patch.startDate !== undefined
+    && !('startWallClock' in patch)
+    && patch.startDate.getTime() !== base.startDate.getTime()
+  ) {
+    delete merged.startWallClock
+  }
+  return merged
 }
 
-/** Add UNTIL to an existing RRULE, replacing any existing UNTIL or COUNT */
-function addUntilToRRule(rrule: string, untilDate: Date): string {
+/**
+ * A scoped copy (this / this and future) takes the selected occurrence as its DTSTART. Its wall
+ * clock comes from the series itself; it is kept only when that wall time lies in a DST gap, and
+ * the master's own retained wall clock never carries over.
+ */
+function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, instanceDate: Date): CalendarEvent {
+  const intended = eventOccurrenceWallClock(master, instanceDate)
+  const wall = intended ? gapWallClock(master.timezone, intended) : undefined
+  const copy: CalendarEvent = { ...base }
+  if (wall) copy.startWallClock = wall
+  else delete copy.startWallClock
+  return copy
+}
+
+/** Add a date-only UNTIL (YYYYMMDD) to an existing RRULE, replacing any existing UNTIL or COUNT */
+function addUntilToRRule(rrule: string, untilDate: string): string {
   const parts = rrule.split(';').filter(
     (p) => !p.startsWith('UNTIL=') && !p.startsWith('COUNT='),
   )
-  parts.push(`UNTIL=${formatUntilDate(untilDate)}`)
+  parts.push(`UNTIL=${untilDate}`)
   return parts.join(';')
 }
 
@@ -201,6 +229,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       categories: newEvent.categories ?? [],
       calendarId: newEvent.calendarId ?? defaultCalendarId(),
       timezone: newEvent.timezone,
+      ...(newEvent.floating === true ? { floating: true as const } : {}),
+      ...(newEvent.startWallClock ? { startWallClock: newEvent.startWallClock } : {}),
       created: now,
       updated: now,
     }
@@ -230,7 +260,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     if (index === -1) return
 
     // Optimistic update
-    const updated = { ...events[index], ...patch, updated: new Date() }
+    const updated = { ...mergeEventPatch(events[index]!, patch), updated: new Date() }
     const next = [...events]
     next[index] = updated
     set({ events: next })
@@ -319,7 +349,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         }
         const duration = master.endDate.getTime() - master.startDate.getTime()
         const newTempId = crypto.randomUUID()
-        const standaloneEvent: CalendarEvent = {
+        const standaloneBase = withOccurrenceWallClock({
           ...master,
           id: newTempId,
           uid: newTempId,
@@ -327,7 +357,9 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           exceptions: [],
           startDate: instanceDate,
           endDate: new Date(instanceDate.getTime() + duration),
-          ...patch,
+        }, master, instanceDate)
+        const standaloneEvent: CalendarEvent = {
+          ...mergeEventPatch(standaloneBase, patch),
           created: now,
           updated: now,
         }
@@ -350,7 +382,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       }
       case 'this_and_future': {
         // Add UNTIL to master's RRULE (day before instanceDate)
-        const dayBefore = addDays(instanceDate, -1)
+        // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
+        const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
         const masterIndex = events.findIndex((e) => e.id === id)
         const updatedMaster = {
           ...master,
@@ -363,14 +396,16 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         // Create new recurring event from instanceDate with the patch applied
         const duration = master.endDate.getTime() - master.startDate.getTime()
         const newTempId = crypto.randomUUID()
-        const newRecurring: CalendarEvent = {
+        const newRecurringBase = withOccurrenceWallClock({
           ...master,
           id: newTempId,
           uid: newTempId,
           startDate: instanceDate,
           endDate: new Date(instanceDate.getTime() + duration),
           exceptions: [],
-          ...patch,
+        }, master, instanceDate)
+        const newRecurring: CalendarEvent = {
+          ...mergeEventPatch(newRecurringBase, patch),
           created: now,
           updated: now,
         }
@@ -395,7 +430,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       case 'all': {
         // Update the master event directly
         const masterIndex = events.findIndex((e) => e.id === id)
-        const updated = { ...master, ...patch, updated: now }
+        const updated = { ...mergeEventPatch(master, patch), updated: now }
         const next = [...events]
         next[masterIndex] = updated
         set({ events: next })
@@ -446,7 +481,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       }
       case 'this_and_future': {
         // Add UNTIL to master's RRULE (day before instanceDate)
-        const dayBefore = addDays(instanceDate, -1)
+        // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
+        const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
         const masterIndex = events.findIndex((e) => e.id === id)
         const updatedMaster = {
           ...master,
@@ -561,6 +597,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         categories: ne.categories ?? [],
         calendarId: ne.calendarId ?? defaultCalendarId(),
         timezone: ne.timezone,
+        ...(ne.floating === true ? { floating: true as const } : {}),
+        ...(ne.startWallClock ? { startWallClock: ne.startWallClock } : {}),
         created: now,
         updated: now,
       }

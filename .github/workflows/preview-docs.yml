@@ -30,7 +30,6 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      pull-requests: write
 
     steps:
       - name: Checkout
@@ -70,45 +69,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Comment preview URL on PR
-        if: github.event_name == 'push'
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const { data: prs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${context.ref.replace('refs/heads/', '')}`,
-              state: 'open'
-            });
-
-            if (prs.length === 0) return;
-
-            const body = `**Docs preview deployed** to https://silentsuite-docs-preview.workers.dev\n\nCommit: \`${context.sha.substring(0, 7)}\``;
-            const pr = prs[0];
-
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number
-            });
-
-            const existing = comments.find(c =>
-              c.user.type === 'Bot' && c.body.includes('Docs preview deployed')
-            );
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                body
-              });
-            }
+      # The URL goes to the run summary, not a PR comment: each new bot
+      # comment emails the PR's participants on every routine success.
+      - name: Record preview URL in the run summary
+        run: echo "**Docs preview deployed** to https://silentsuite-docs-preview.workers.dev (commit \`${GITHUB_SHA:0:7}\`)" >> "$GITHUB_STEP_SUMMARY"

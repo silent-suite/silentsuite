@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { expandRecurrence, type CalendarEvent } from '@silentsuite/core'
+import { expandEventRecurrence, type CalendarEvent } from '@silentsuite/core'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
@@ -75,12 +75,7 @@ function addEventDots(
 
   const durationMs = Math.max(0, event.endDate.getTime() - event.startDate.getTime())
   const expansionStart = new Date(rangeStart.getTime() - Math.max(durationMs, 86400000))
-  const occurrences = expandRecurrence(
-    event.recurrenceRule,
-    event.startDate,
-    { start: expansionStart, end: rangeEnd },
-    event.exceptions,
-  )
+  const occurrences = expandEventRecurrence(event, { start: expansionStart, end: rangeEnd })
 
   for (const occurrenceStart of occurrences) {
     addSpan(occurrenceStart, new Date(occurrenceStart.getTime() + durationMs))

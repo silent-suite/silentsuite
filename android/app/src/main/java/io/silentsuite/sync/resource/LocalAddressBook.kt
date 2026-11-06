@@ -51,6 +51,17 @@ class LocalAddressBook(
         const val USER_DATA_CREATION_ID = "sync_status_child_creation_id"
         private val CHILD_ID_LOCK = Any()
 
+        /**
+         * Marks a group holding the contacts of one whole-contact label (vCard CATEGORIES). Such a group
+         * has no filename, is never uploaded as a group vCard and is never one.
+         */
+        const val CATEGORY_GROUP_COLUMN = Groups.SYNC4
+        const val CATEGORY_GROUP_MARKER = "silentsuite.category.v1"
+
+        /** Selects every group except label groups, for the group-vCard scans. */
+        private const val NOT_CATEGORY_GROUP =
+                "($CATEGORY_GROUP_COLUMN IS NULL OR $CATEGORY_GROUP_COLUMN<>'$CATEGORY_GROUP_MARKER')"
+
         fun create(context: Context, provider: ContentProviderClient, mainAccount: Account, cachedCollection: CachedCollection): LocalAddressBook {
             val col = cachedCollection.col
             val accountManager = AccountManager.get(context)
@@ -270,7 +281,7 @@ class LocalAddressBook(
                 findAllContacts()
 
     fun findAllContacts() = queryContacts("${RawContacts.DELETED}==0", null)
-    fun findAllGroups() = queryGroups("${Groups.DELETED}==0", null)
+    fun findAllGroups() = queryGroups("${Groups.DELETED}==0 AND $NOT_CATEGORY_GROUP", null)
 
     /**
      * Returns an array of local contacts/groups which have been deleted locally. (DELETED != 0).
@@ -283,7 +294,7 @@ class LocalAddressBook(
                 findDeletedContacts()
 
     fun findDeletedContacts() = queryContacts("${RawContacts.DELETED}!=0", null)
-    fun findDeletedGroups() = queryGroups("${Groups.DELETED}!=0", null)
+    fun findDeletedGroups() = queryGroups("${Groups.DELETED}!=0 AND $NOT_CATEGORY_GROUP", null)
 
     /**
      * Returns an array of local contacts/groups which have been changed locally (DIRTY != 0).
@@ -296,7 +307,7 @@ class LocalAddressBook(
                 findDirtyContacts(limit)
 
     fun findDirtyContacts(limit: Int? = null) = queryContacts("${RawContacts.DIRTY}!=0 AND ${RawContacts.DELETED}==0", null, if (limit != null) "${RawContacts._ID} ASC LIMIT $limit" else null)
-    fun findDirtyGroups(limit: Int? = null) = queryGroups("${Groups.DIRTY}!=0 AND ${Groups.DELETED}==0", null, if (limit != null) "${Groups._ID} ASC LIMIT $limit" else null)
+    fun findDirtyGroups(limit: Int? = null) = queryGroups("${Groups.DIRTY}!=0 AND ${Groups.DELETED}==0 AND $NOT_CATEGORY_GROUP", null, if (limit != null) "${Groups._ID} ASC LIMIT $limit" else null)
 
     /**
      * Returns an array of local contacts which don't have a file name yet.
@@ -308,7 +319,7 @@ class LocalAddressBook(
                 findWithoutFileNameContacts()
 
     fun findWithoutFileNameContacts() = queryContacts("${AndroidContact.COLUMN_FILENAME} IS NULL", null)
-    fun findWithoutFileNameGroups() = queryGroups("${AndroidGroup.COLUMN_FILENAME} IS NULL", null)
+    fun findWithoutFileNameGroups() = queryGroups("${AndroidGroup.COLUMN_FILENAME} IS NULL AND $NOT_CATEGORY_GROUP", null)
 
 
     override fun findByUid(uid: String): LocalAddress? {
@@ -395,6 +406,63 @@ class LocalAddressBook(
         values.put(Groups.TITLE, title)
         val uri = (provider as ContentProviderClient).insert(syncAdapterURI(Groups.CONTENT_URI), values)
         return ContentUris.parseId(uri!!)
+    }
+
+    /** This account's label groups (vCard CATEGORIES) by row ID, lowest ID first; never group vCards. */
+    fun categoryGroups(): Map<Long, String> {
+        val groups = LinkedHashMap<Long, String>()
+        // Unknown is not empty: without this list, label memberships would be read as ordinary ones.
+        val cursor = provider!!.query(syncAdapterURI(Groups.CONTENT_URI), arrayOf(Groups._ID, Groups.TITLE),
+                "${Groups.ACCOUNT_NAME}=? AND ${Groups.ACCOUNT_TYPE}=? AND $CATEGORY_GROUP_COLUMN=? AND ${Groups.DELETED}=0",
+                arrayOf(account.name, account.type, CATEGORY_GROUP_MARKER), "${Groups._ID} ASC")
+                ?: throw ContactsStorageException("Couldn't read label groups")
+        cursor.use {
+            while (it.moveToNext())
+                it.getString(1)?.let { title -> groups[it.getLong(0)] = title }
+        }
+        return groups
+    }
+
+    /**
+     * The label group with exactly [title] (case-sensitive) in this account, created when missing.
+     * Among duplicates, the lowest ID wins.
+     */
+    fun findOrCreateCategoryGroup(title: String): Long {
+        categoryGroups().entries.firstOrNull { it.value == title }?.let { return it.key }
+
+        val values = ContentValues(6)
+        values.put(Groups.ACCOUNT_NAME, account.name)
+        values.put(Groups.ACCOUNT_TYPE, account.type)
+        values.put(Groups.TITLE, title)
+        values.put(Groups.SHOULD_SYNC, 1)
+        // Visible on creation only, so labelled contacts stay as visible as they were when ungrouped;
+        // a visibility later chosen for an existing group is never reset.
+        values.put(Groups.GROUP_VISIBLE, 1)
+        values.put(CATEGORY_GROUP_COLUMN, CATEGORY_GROUP_MARKER)
+        val uri = provider!!.insert(syncAdapterURI(Groups.CONTENT_URI), values)
+                ?: throw ContactsStorageException("Couldn't create label group")
+        return ContentUris.parseId(uri)
+    }
+
+    /** Deletes this account's label groups that no contact belongs to; ordinary groups are never touched. */
+    fun removeEmptyCategoryGroups(): Int {
+        val groups = categoryGroups().keys
+        if (groups.isEmpty())
+            return 0
+        val used = HashSet<Long>()
+        // Unknown is not unused: without this list no label group may be deleted.
+        val cursor = provider!!.query(syncAdapterURI(ContactsContract.Data.CONTENT_URI), arrayOf(GroupMembership.GROUP_ROW_ID),
+                "${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID} IN (${groups.joinToString(",")})",
+                arrayOf(GroupMembership.CONTENT_ITEM_TYPE), null)
+                ?: throw ContactsStorageException("Couldn't read label group memberships")
+        cursor.use {
+            while (it.moveToNext())
+                used += it.getLong(0)
+        }
+        var removed = 0
+        for (id in groups - used)
+            removed += provider!!.delete(syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, id)), null, null)
+        return removed
     }
 
     fun removeEmptyGroups() {
