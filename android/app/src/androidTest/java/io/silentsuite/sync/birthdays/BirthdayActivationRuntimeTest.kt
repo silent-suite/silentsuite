@@ -1,0 +1,992 @@
+package io.silentsuite.sync.birthdays
+
+import android.Manifest
+import android.accounts.Account
+import android.accounts.AccountManager
+import android.content.ContentResolver
+import android.content.Context
+import android.os.Bundle
+import android.os.SystemClock
+import android.provider.CalendarContract
+import android.view.View
+import android.widget.TextView
+import androidx.appcompat.view.menu.MenuBuilder
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentManager
+import androidx.lifecycle.ViewModelProvider
+import androidx.test.core.app.ActivityScenario
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.rule.GrantPermissionRule
+import at.bitfire.ical4android.TaskProvider
+import com.etebase.client.Client
+import com.etebase.client.Collection
+import com.etebase.client.CollectionAccessLevel
+import com.etebase.client.CollectionManager
+import com.etebase.client.FetchOptions
+import com.etebase.client.Item
+import com.etebase.client.ItemMetadata
+import com.etebase.client.User
+import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.App
+import io.silentsuite.sync.Constants
+import io.silentsuite.sync.EtebaseLocalCache
+import io.silentsuite.sync.HttpClient
+import io.silentsuite.sync.notes.FakeEtebaseServer
+import io.silentsuite.sync.syncadapter.CollectionListRefresh
+import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
+import io.silentsuite.sync.syncadapter.syncMainIdentity
+import io.silentsuite.sync.ui.AccountActivity
+import io.silentsuite.sync.ui.etebase.AddMemberFragment
+import io.silentsuite.sync.ui.etebase.CollectionActivity
+import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
+import io.silentsuite.sync.ui.etebase.CollectionViewModel
+import io.silentsuite.sync.ui.etebase.MemberActionViewModel
+import io.silentsuite.sync.ui.etebase.ViewCollectionFragment
+import io.silentsuite.sync.ui.etebase.runtimeFixtureOverride
+import io.silentsuite.sync.utils.AndroidCompat
+import androidx.appcompat.widget.Toolbar
+import io.silentsuite.sync.R
+import io.silentsuite.sync.billing.BillingManager
+import io.silentsuite.sync.ui.setup.PostLoginSetupState
+import okhttp3.OkHttpClient
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.net.URI
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * The Android Birthdays switch (plan3 §3), end to end: the rendered Calendars menu of the real
+ * dashboard, its real listener, the account's real stored session and the pinned SDK against the
+ * in-process [FakeEtebaseServer]. Server state is seeded and read back through the SDK.
+ */
+@RunWith(AndroidJUnit4::class)
+class BirthdayActivationRuntimeTest {
+    @get:Rule
+    val permissions: GrantPermissionRule = GrantPermissionRule.grant(
+        Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS,
+        Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR,
+    )
+
+    private val context = InstrumentationRegistry.getInstrumentation().targetContext
+    private val manager = AccountManager.get(context)
+    private val fake = FakeEtebaseServer()
+    private val syncRequests = CopyOnWriteArrayList<Account>()
+    private val invoked = AtomicBoolean(false)
+    /** The exact account and generation the current dashboard fixture owns; set by [withActivationDashboard]. */
+    private var activationIdentity: Pair<Account, String>? = null
+
+    private val server by lazy {
+        com.etebase.client.Account.restore(Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl), session, null)
+    }
+
+    @Test fun turningOnFromTheCalendarsMenuCreatesOnePrivateMarkedCalendarFilledFromContacts() {
+        val colMgr = server.collectionManager
+        val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
+        val contact = uploadItem(book, "contact-alex", VCARD)
+        val ordinary = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", "")
+        fake.setMembers(ordinary.uid, listOf(username to ADMIN))
+        uploadItem(ordinary, "ordinary-dentist", ORDINARY_ICS)
+        val shared = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(shared.uid, listOf(OTHER_MEMBER to ADMIN, username to READ_WRITE))
+        uploadItem(shared, "shared-dentist", ORDINARY_ICS)
+        uploadItem(shared, "shared-generated", GENERATED_ICS)
+        // Received from its owner: this user may write but is not Admin, so C3 rejects it on access alone.
+        fake.setAccessLevel(shared.uid, READ_WRITE)
+        // Preconditions, read fresh through the SDK: the role the run will see (as BirthdayReconciliationRuntimeTest).
+        val listedCalendars = colMgr.list(Constants.ETEBASE_TYPE_CALENDAR)
+        assertTrue("PREREQUISITE: the calendar listing is complete", listedCalendars.isDone)
+        assertEquals("PREREQUISITE: the received calendar is listed as ReadWrite for this user", CollectionAccessLevel.ReadWrite,
+            listedCalendars.data.single { it.uid == shared.uid }.accessLevel)
+        assertEquals("PREREQUISITE: the received calendar is fetched as ReadWrite for this user", CollectionAccessLevel.ReadWrite,
+            colMgr.fetch(shared.uid).accessLevel)
+        val seeded = fake.collectionUids()
+        val held = mapOf("address book" to book.uid, "ordinary calendar named Birthdays" to ordinary.uid,
+            "received read-write active calendar" to shared.uid).mapValues { (_, uid) -> uid to state(colMgr, uid) }
+        val birthday = BirthdayCalendar.birthdayOf(VCARD)
+        assertNotNull("PREREQUISITE: the fixture contact has a birthday", birthday)
+        val expectedUid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val expectedIcs = BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(expectedUid, birthday!!.name, birthday.month, birthday.day))
+        val known = seeded.joinToString("|") { Regex.escape(it) }
+        val newCalendarMembers = fake.hold("GET", Regex("collection/(?!($known)/)[^/]+/member/"))
+
+        withActivationDashboard(seeded) { scenario ->
+            val since = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_ON)
+            assertTrue("FEATURE_ACTIVATION: turning on verifies a new calendar's members before filling it",
+                newCalendarMembers.arrivesWithin(60_000))
+            val created = MEMBER_PATH.find(newCalendarMembers.request!!)!!.groupValues[1]
+            assertTrue("FEATURE_ACTIVATION: the verified calendar is a newly created one", created !in seeded && created in fake.collectionUids())
+            assertTrue("nothing is written into it before its members are verified", fake.itemUids(created).isEmpty())
+            assertBusy(scenario)
+            // The server lists a collection's creator as its only, Admin, member.
+            fake.setMembers(created, listOf(username to ADMIN))
+            newCalendarMembers.release()
+            awaitIdle(scenario, "FEATURE_ACTIVATION: the turn-on to finish and its action to be available again")
+
+            assertEquals("FEATURE_ACTIVATION: exactly one calendar is created", seeded + created, fake.collectionUids())
+            val fresh = colMgr.fetch(created)
+            assertFalse(fresh.isDeleted)
+            assertEquals("it is a calendar", Constants.ETEBASE_TYPE_CALENDAR, fresh.collectionType)
+            assertEquals("FEATURE_ACTIVATION: it carries the active marker", MARKER_ACTIVE, String(fresh.content, Charsets.UTF_8))
+            val itemMgr = colMgr.getItemManager(fresh)
+            val live = fake.itemUids(created).map { itemMgr.fetch(it) }.filter { !it.isDeleted }
+            assertEquals("FEATURE_ACTIVATION: it holds exactly the contact's generated birthday", listOf(expectedIcs),
+                live.map { String(it.content, Charsets.UTF_8) })
+            assertTrue("FEATURE_ACTIVATION: written fenced on the new calendar's root", listOf(created) in fake.uploadDeps.drop(since))
+            for ((label, entry) in held) assertEquals("the $label is unchanged", entry.second, state(colMgr, entry.first))
+        }
+    }
+
+    @Test fun turningOffFromTheCalendarsMenuRetiresEveryQualifyingCalendarAndRemovesOnlyGeneratedEvents() {
+        val colMgr = server.collectionManager
+        val qualifying = (1..2).map { collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE) }
+        val generated = HashMap<String, Item>()
+        val ordinaryBefore = HashMap<String, Pair<String, ItemState>>()
+        for (calendar in qualifying) {
+            fake.setMembers(calendar.uid, listOf(username to ADMIN))
+            generated[calendar.uid] = uploadItem(calendar, "generated", GENERATED_ICS)
+            val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+            ordinaryBefore[calendar.uid] = ordinary.uid to state(colMgr, calendar.uid).items.getValue(ordinary.uid)
+        }
+        val shared = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(shared.uid, listOf(username to ADMIN, OTHER_MEMBER to ADMIN))
+        uploadItem(shared, "shared-dentist", ORDINARY_ICS)
+        uploadItem(shared, "shared-generated", GENERATED_ICS)
+        val sharedBefore = state(colMgr, shared.uid)
+        val rootsBefore = qualifying.associate { it.uid to colMgr.fetch(it.uid).etag }
+        val seeded = fake.collectionUids()
+        val alternatives = qualifying.joinToString("|") { Regex.escape(it.uid) }
+        val verify = fake.hold("GET", Regex("collection/($alternatives)/member/"))
+
+        withActivationDashboard(seeded) { scenario ->
+            val since = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_OFF)
+            assertTrue("FEATURE_ACTIVATION: turning off verifies a qualifying calendar's members", verify.arrivesWithin(60_000))
+            assertEquals("nothing is written before the members are verified", since, fake.uploadDeps.size)
+            assertBusy(scenario)
+            verify.release()
+            awaitIdle(scenario, "FEATURE_ACTIVATION: the turn-off to finish and its action to be available again")
+
+            for (calendar in qualifying) {
+                val fresh = colMgr.fetch(calendar.uid)
+                assertFalse("FEATURE_ACTIVATION: a turned-off calendar is kept", fresh.isDeleted)
+                assertEquals("FEATURE_ACTIVATION: every qualifying calendar is retired", MARKER_RETIRED, String(fresh.content, Charsets.UTF_8))
+                assertNotEquals("its root moved", rootsBefore.getValue(calendar.uid), fresh.etag)
+                val itemMgr = colMgr.getItemManager(fresh)
+                assertTrue("FEATURE_ACTIVATION: its generated event is removed", itemMgr.fetch(generated.getValue(calendar.uid).uid).isDeleted)
+                val (ordinaryUid, before) = ordinaryBefore.getValue(calendar.uid)
+                assertEquals("its ordinary event and metadata are unchanged", before, state(colMgr, calendar.uid).items.getValue(ordinaryUid))
+                assertTrue("FEATURE_ACTIVATION: its cleanup is fenced on its root", listOf(calendar.uid) in fake.uploadDeps.drop(since))
+            }
+            assertEquals("the extra-member active calendar is untouched", sharedBefore, state(colMgr, shared.uid))
+            assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+        }
+    }
+
+    @Test fun turningOnAfterARecentCollectionRefreshPublishesTheNewCalendarToTheDashboard() {
+        val colMgr = server.collectionManager
+        val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
+        val contact = uploadItem(book, "contact-alex", VCARD)
+        val shared = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(shared.uid, listOf(OTHER_MEMBER to ADMIN, username to READ_WRITE))
+        uploadItem(shared, "shared-dentist", ORDINARY_ICS)
+        // Received from its owner: this user may write but is not Admin, so C3 rejects it on access alone.
+        fake.setAccessLevel(shared.uid, READ_WRITE)
+        // Preconditions, read fresh through the SDK: the role the run will see (as BirthdayReconciliationRuntimeTest).
+        val listedCalendars = colMgr.list(Constants.ETEBASE_TYPE_CALENDAR)
+        assertTrue("PREREQUISITE: the calendar listing is complete", listedCalendars.isDone)
+        assertEquals("PREREQUISITE: the received calendar is listed as ReadWrite for this user", CollectionAccessLevel.ReadWrite,
+            listedCalendars.data.single { it.uid == shared.uid }.accessLevel)
+        assertEquals("PREREQUISITE: the received calendar is fetched as ReadWrite for this user", CollectionAccessLevel.ReadWrite,
+            colMgr.fetch(shared.uid).accessLevel)
+        val seeded = fake.collectionUids()
+        val birthday = BirthdayCalendar.birthdayOf(VCARD)
+        assertNotNull("PREREQUISITE: the fixture contact has a birthday", birthday)
+        val expectedUid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        val expectedIcs = BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(expectedUid, birthday!!.name, birthday.month, birthday.day))
+        val known = seeded.joinToString("|") { Regex.escape(it) }
+        val newCalendarMembers = fake.hold("GET", Regex("collection/(?!($known)/)[^/]+/member/"))
+
+        withActivationDashboard(seeded) { scenario ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            val fetchKey = "${account.name}\u0000$generation"
+            val since = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_ON)
+            assertTrue("FEATURE_ACTIVATION: turning on verifies a new calendar's members before filling it",
+                newCalendarMembers.arrivesWithin(60_000))
+            val created = MEMBER_PATH.find(newCalendarMembers.request!!)!!.groupValues[1]
+            assertTrue("FEATURE_ACTIVATION: the verified calendar is a newly created one", created !in seeded && created in fake.collectionUids())
+            assertBusy(scenario)
+            assertFalse("PREREQUISITE: the new calendar is not in this account's cache yet", created in cachedCalendarUids(account, colMgr))
+
+            // While the action is parked after its create and before its fill: this exact generation has just
+            // finished a full collection-list refresh, as CollectionListRefresh.run leaves it.
+            assertTrue("PREREQUISITE: the discovery-complete key is written",
+                AccountSettings.writeCollectionListTypes(manager, account, CollectionListRefresh.discoveryTypesKey))
+            assertEquals("PREREQUISITE: the discovery-complete key reads back", CollectionListRefresh.discoveryTypesKey,
+                AccountSettings.collectionListTypes(manager, account))
+            val recentFetch = System.currentTimeMillis()
+            CollectionListRefresh.collectionLastFetchMap[fetchKey] = recentFetch
+            // A normal, non-forced refresh of this generation now skips: it sends nothing, caches nothing and leaves
+            // the entry. The action is parked, so no other request can arrive meanwhile.
+            val requestsBefore = fake.requests.size
+            CollectionListRefresh.run(context, account, AccountSettings(context, account),
+                OkHttpClient.Builder().addInterceptor(fake).build(), false, generation)
+            assertEquals("PREREQUISITE: a normal refresh of this generation is skipped now", requestsBefore, fake.requests.size)
+            assertEquals("PREREQUISITE: the skipped refresh leaves the recent-fetch entry", recentFetch,
+                CollectionListRefresh.collectionLastFetchMap[fetchKey])
+            assertFalse("PREREQUISITE: the skipped refresh caches nothing", created in cachedCalendarUids(account, colMgr))
+
+            // The server lists a collection's creator as its only, Admin, member.
+            fake.setMembers(created, listOf(username to ADMIN))
+            newCalendarMembers.release()
+            awaitIdle(scenario, "FEATURE_ACTIVATION: the turn-on to finish and its action to be available again")
+
+            // The server side succeeded before the cache is looked at.
+            assertEquals("FEATURE_ACTIVATION: exactly one calendar is created", seeded + created, fake.collectionUids())
+            val fresh = colMgr.fetch(created)
+            assertFalse(fresh.isDeleted)
+            assertEquals("FEATURE_ACTIVATION: it carries the active marker", MARKER_ACTIVE, String(fresh.content, Charsets.UTF_8))
+            val itemMgr = colMgr.getItemManager(fresh)
+            val live = fake.itemUids(created).map { itemMgr.fetch(it) }.filter { !it.isDeleted }
+            assertEquals("FEATURE_ACTIVATION: it holds exactly the contact's generated birthday", listOf(expectedIcs),
+                live.map { String(it.content, Charsets.UTF_8) })
+            assertTrue("FEATURE_ACTIVATION: written fenced on the new calendar's root", listOf(created) in fake.uploadDeps.drop(since))
+
+            val entryUnchanged = CollectionListRefresh.collectionLastFetchMap[fetchKey] == recentFetch
+            assertTrue("FEATURE_ACTIVATION_CACHE: the new calendar is published in this account's cache after the turn-on " +
+                "[recentFetchEntryUnchanged=$entryUnchanged]", created in cachedCalendarUids(account, colMgr))
+            waitUntil("FEATURE_ACTIVATION_CACHE: the dashboard to list the new calendar") { created in dashboardCalendarUids(scenario) }
+        }
+    }
+
+    @Test fun turningOffAgainAfterAnUnfinishedCleanupRemovesTheRemainingGeneratedEvents() {
+        val colMgr = server.collectionManager
+        val calendar = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(calendar.uid, listOf(username to ADMIN))
+        val generatedItem = uploadItem(calendar, "generated", GENERATED_ICS)
+        val ordinary = uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val ordinaryBefore = state(colMgr, calendar.uid).items.getValue(ordinary.uid)
+        val activeRoot = colMgr.fetch(calendar.uid).etag
+        val seeded = fake.collectionUids()
+        val writes = Regex("collection/${Regex.escape(calendar.uid)}/item/(batch|transaction)/")
+        // The retirement (the calendar's own root-item transaction) passes; the cleanup after it is parked.
+        val cleanup = fake.hold("POST", writes, skip = 1)
+        assertEquals("PREREQUISITE: no scripted answer is armed", 0, fake.pendingAnswers())
+
+        withActivationDashboard(seeded) { scenario ->
+            val since = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_OFF)
+            assertTrue("PREREQUISITE: the first turn-off reaches the cleanup of the retired calendar", cleanup.arrivesWithin(60_000))
+            val retired = colMgr.fetch(calendar.uid)
+            assertEquals("PREREQUISITE: the calendar is retired before its cleanup", MARKER_RETIRED, String(retired.content, Charsets.UTF_8))
+            assertNotEquals("PREREQUISITE: the retirement moved the root", activeRoot, retired.etag)
+            assertFalse("PREREQUISITE: its generated event is still there", colMgr.getItemManager(retired).fetch(generatedItem.uid).isDeleted)
+            assertBusy(scenario)
+            try {
+                // Only the parked cleanup of this calendar is answered with a server error, and it is not applied.
+                fake.answer("POST", writes, 500)
+                cleanup.release()
+                awaitIdle(scenario, "PREREQUISITE: the first turn-off to end and its actions to be available again")
+                assertEquals("PREREQUISITE: the armed failure was consumed by that cleanup", 0, fake.pendingAnswers())
+            } finally {
+                fake.clearAnswers()
+            }
+            val afterFirst = colMgr.fetch(calendar.uid)
+            assertEquals("PREREQUISITE: the calendar stays retired", MARKER_RETIRED, String(afterFirst.content, Charsets.UTF_8))
+            assertEquals("PREREQUISITE: the failed cleanup changed no root", retired.etag, afterFirst.etag)
+            assertFalse("PREREQUISITE: the failed cleanup left the generated event",
+                colMgr.getItemManager(afterFirst).fetch(generatedItem.uid).isDeleted)
+            assertFalse("PREREQUISITE: no fenced cleanup was routed", listOf(calendar.uid) in fake.uploadDeps.drop(since))
+            assertEquals("PREREQUISITE: the ordinary event and metadata are unchanged", ordinaryBefore,
+                state(colMgr, calendar.uid).items.getValue(ordinary.uid))
+            assertEquals("PREREQUISITE: no calendar is created or removed", seeded, fake.collectionUids())
+
+            // The same action again, for the same account and generation, with every route answering normally.
+            val inventory = fake.hold("POST", Regex("collection/list_multi/"))
+            val again = fake.uploadDeps.size
+            invokeCalendarsAction(scenario, TURN_OFF)
+            assertTrue("PREREQUISITE: the repeated turn-off reads the inventory fresh", inventory.arrivesWithin(60_000))
+            assertBusy(scenario)
+            inventory.release()
+            awaitIdle(scenario, "the repeated turn-off to end and its actions to be available again")
+
+            val after = colMgr.fetch(calendar.uid)
+            assertFalse("the retired calendar is kept", after.isDeleted)
+            assertEquals("it stays retired", MARKER_RETIRED, String(after.content, Charsets.UTF_8))
+            assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+            assertEquals("the ordinary event and metadata are unchanged", ordinaryBefore,
+                state(colMgr, calendar.uid).items.getValue(ordinary.uid))
+            assertTrue("FEATURE_ACTIVATION_OFF_RETRY: the repeated turn-off removes the retired calendar's remaining generated event",
+                colMgr.getItemManager(after).fetch(generatedItem.uid).isDeleted)
+            assertTrue("FEATURE_ACTIVATION_OFF_RETRY: that cleanup is fenced on the retired calendar's current root",
+                listOf(calendar.uid) in fake.uploadDeps.drop(again))
+            assertEquals("the retired calendar itself is not updated again", afterFirst.etag, after.etag)
+        }
+    }
+
+    @Test fun anActiveBirthdaysCalendarScreenOffersNeitherImportNorMemberManagement() {
+        val colMgr = server.collectionManager
+        val active = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        val ordinary = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Family", "")
+        val retired = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Old birthdays", MARKER_RETIRED)
+        val calendars = listOf(active, ordinary, retired)
+        for (calendar in calendars) {
+            fake.setMembers(calendar.uid, listOf(username to ADMIN))
+            uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        }
+        val seeded = fake.collectionUids()
+        val before = calendars.associate { it.uid to state(colMgr, it.uid) }
+        assertNull("PREREQUISITE: no runtime collection fixture replaces the loaded collection", runtimeFixtureOverride)
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            assertNotEquals("PREREQUISITE: the account name is not the SDK principal", username, account.name)
+            assertEquals("PREREQUISITE: the account's settings hold the SDK principal", username, AccountSettings(context, account).username())
+            assertEquals("PREREQUISITE: the row holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+
+            // Positive controls first: an ordinary and a retired Admin calendar keep both actions present, visible
+            // and enabled (plan3 §3: a retired calendar is ordinary).
+            for ((calendar, name, content) in listOf(Triple(ordinary, "Family", ""), Triple(retired, "Old birthdays", MARKER_RETIRED))) {
+                withCollectionScreen(account, generation, calendar.uid, name, content) { sample ->
+                    assertTrue("PREREQUISITE: the $name screen offers Import",
+                        sample.getValue(R.id.on_import).let { (visible, enabled) -> visible && enabled })
+                    assertTrue("PREREQUISITE: the $name screen offers Manage members",
+                        sample.getValue(R.id.on_manage_members).let { (visible, enabled) -> visible && enabled })
+                }
+            }
+
+            withCollectionScreen(account, generation, active.uid, "Birthdays", MARKER_ACTIVE) { sample ->
+                // While the active screen is live: nothing was changed, and the exact account generation still owns it.
+                for (calendar in calendars) assertEquals("calendar ${calendar.uid} is unchanged", before.getValue(calendar.uid), state(colMgr, calendar.uid))
+                assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+                assertTrue("this exact account row is still present", account in manager.getAccountsByType(account.type))
+                assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+                // plan2 §4: hidden (not visible, or removed), not merely disabled. Enablement of a hidden entry is not asserted.
+                assertFalse("FEATURE_BIRTHDAY_MENU_PRIVACY: active Birthdays calendar does not offer Import", sample.getValue(R.id.on_import).first)
+                assertFalse("FEATURE_BIRTHDAY_MENU_PRIVACY: active Birthdays calendar does not offer Manage members",
+                    sample.getValue(R.id.on_manage_members).first)
+            }
+        }
+    }
+
+    @Test fun anActiveBirthdaysCalendarSendsNoInvitationRequest() {
+        val colMgr = server.collectionManager
+        val active = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        val ordinary = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Family", "")
+        val calendars = listOf(active, ordinary)
+        for (calendar in calendars) {
+            fake.setMembers(calendar.uid, listOf(username to ADMIN))
+            uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        }
+        val seeded = fake.collectionUids()
+        val before = calendars.associate { it.uid to state(colMgr, it.uid) }
+        val membersBefore = calendars.associate { it.uid to members(colMgr, it.uid) }
+        assertNull("PREREQUISITE: no runtime collection fixture replaces the loaded collection", runtimeFixtureOverride)
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            assertNotEquals("PREREQUISITE: the account name is not the SDK principal", username, account.name)
+            assertEquals("PREREQUISITE: the account's settings hold the SDK principal", username, AccountSettings(context, account).username())
+            assertEquals("PREREQUISITE: the row holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+
+            // Positive control first: for an ordinary Admin calendar the real add-member step reaches the invitation
+            // service (the stand-in answers that user lookup with a not-found error, so nothing is invited).
+            withInvitationAttempt(account, generation, ordinary.uid, "Family", OTHER_MEMBER) { requests, _ ->
+                assertTrue("PREREQUISITE: the add-member step for the ordinary calendar reaches the invitation service",
+                    requests.any(::isInvitationRequest))
+            }
+
+            withInvitationAttempt(account, generation, active.uid, "Birthdays", OTHER_MEMBER) { requests, ended ->
+                // While the active screen is live: nothing was changed, and the exact account generation still owns it.
+                for (calendar in calendars) {
+                    assertEquals("calendar ${calendar.uid} is unchanged", before.getValue(calendar.uid), state(colMgr, calendar.uid))
+                    assertEquals("the members of ${calendar.uid} are unchanged", membersBefore.getValue(calendar.uid), members(colMgr, calendar.uid))
+                }
+                assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+                assertTrue("this exact account row is still present", account in manager.getAccountsByType(account.type))
+                assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+                assertFalse("FEATURE_BIRTHDAY_INVITE_PRIVACY: active Birthdays calendar sends no invitation request",
+                    requests.any(::isInvitationRequest))
+                assertTrue("FEATURE_BIRTHDAY_INVITE_PRIVACY: the refused add-member step has ended", ended)
+            }
+        }
+    }
+
+    @Test fun anExplicitTurnOffAndAnOverlappingMaintenanceTriggerRunOnePassAtATime() {
+        val colMgr = server.collectionManager
+        val qualifying = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(qualifying.uid, listOf(username to ADMIN))
+        uploadItem(qualifying, "ordinary-dentist", ORDINARY_ICS)
+        // Active and Admin but shared with another member: every engine pass checks its complete member list (C3) and
+        // it never qualifies, so a turn-off leaves it untouched. Its member checks count the passes that were run.
+        val witness = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(witness.uid, listOf(username to ADMIN, OTHER_MEMBER to ADMIN))
+        uploadItem(witness, "shared-dentist", ORDINARY_ICS)
+        val seeded = fake.collectionUids()
+        val witnessBefore = state(colMgr, witness.uid)
+        val memberCheck = Regex("collection/${Regex.escape(witness.uid)}/member/")
+        val passes = { fake.requests.count { memberCheck.matches(it.substringAfter(' ').substringBefore('?')) } }
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            val admitted = SyncStatusStore(context).identity(account, generation)
+
+            // Positive control: one uncontended maintenance trigger is exactly one pass.
+            val beforeControl = passes()
+            BirthdayMaintenance.run(context, account, admitted, "control trigger")
+            assertEquals("PREREQUISITE: one uncontended trigger runs exactly one pass", beforeControl + 1, passes())
+
+            // A genuine explicit turn-off pass is parked at its member check; a maintenance trigger arrives meanwhile.
+            val turnCheck = fake.hold("GET", memberCheck)
+            val start = passes()
+            val turnResult = java.util.concurrent.atomic.AtomicReference<BirthdayReconciler.RunResult?>()
+            val turnRun = Thread { turnResult.set(BirthdayMaintenance.turn(context, account, generation, false) { true }) }
+            val maintenance = Thread { BirthdayMaintenance.run(context, account, admitted, "address-book sync") }
+            try {
+                turnRun.start()
+                assertTrue("PREREQUISITE: the turn-off's pass has started and is parked at its member check",
+                    turnCheck.arrivesWithin(60_000))
+                assertTrue("PREREQUISITE: the parked pass is the turn-off's own", turnCheck.parkedThread === turnRun)
+                maintenance.start()
+                maintenance.join(60_000)
+                assertFalse("PREREQUISITE: the maintenance trigger has returned", maintenance.isAlive)
+                assertTrue("PREREQUISITE: the turn-off's pass is still parked", turnRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_TURN_SERIALIZATION: no maintenance pass for the account starts while an explicit turn is running",
+                    start + 1, passes())
+                turnCheck.release()
+                turnRun.join(60_000)
+                assertFalse("the turn-off, with any follow-up, has finished", turnRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_TURN_SERIALIZATION: the trigger that arrived during the turn is coalesced into exactly one more pass",
+                    start + 2, passes())
+            } finally {
+                // No Birthdays thread may outlive this block: the fixture then removes the account and its transport.
+                turnCheck.release()
+                listOf(turnRun, maintenance).forEach { it.join(60_000) }
+            }
+            assertTrue("no Birthdays thread is still running", listOf(turnRun, maintenance).none { it.isAlive })
+
+            // The explicit action's own outcome is kept.
+            val result = turnResult.get()
+            assertEquals("the turn-off finished", BirthdayReconciler.RunStatus.DONE, result?.status)
+            assertEquals("the turn-off wrote exactly the qualifying calendar", listOf(qualifying.uid), result?.written)
+            assertEquals("the qualifying calendar is retired", MARKER_RETIRED, String(colMgr.fetch(qualifying.uid).content, Charsets.UTF_8))
+            assertEquals("the shared active calendar is untouched", witnessBefore, state(colMgr, witness.uid))
+            assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+            assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+        }
+    }
+
+    @Test fun birthdaysWritesRequestACalendarSyncForTheirOwnAccountOnly() {
+        val colMgr = server.collectionManager
+        val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
+        val contact = uploadItem(book, "contact-alex", VCARD)
+        val calendar = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(calendar.uid, listOf(username to ADMIN))
+        uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val seeded = fake.collectionUids()
+        assertNotNull("PREREQUISITE: the fixture contact has a birthday", BirthdayCalendar.birthdayOf(VCARD))
+        val generatedUid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        fun generatedLive() = state(colMgr, calendar.uid).items.values
+            .count { !it.deleted && BirthdayCalendar.eventFields(it.content)?.uid == generatedUid }
+
+        // Every sync request the app dispatches passes this existing test-only hold instead of ContentResolver.
+        val previousDispatch = requestSyncDispatchOverride
+        val dispatched = CopyOnWriteArrayList<Triple<Account?, String, Bundle>>()
+        requestSyncDispatchOverride = { requested, authority, extras -> dispatched += Triple(requested, authority, Bundle(extras)) }
+        try {
+            withActivationDashboard(seeded) { _ ->
+                val (account, generation) = checkNotNull(activationIdentity)
+                val store = SyncStatusStore(context)
+                fun calendarRequests() = dispatched.filter { it.second == CalendarContract.AUTHORITY }
+                // Only requests from here on are this test's subject; whatever the fixture's setup dispatched is not.
+                dispatched.clear()
+
+                // Control: a trigger admitted for another generation is skipped; it writes and requests nothing.
+                BirthdayMaintenance.run(context, account, store.identity(account, "not-$generation"), "stale trigger")
+                assertEquals("PREREQUISITE: a skipped run writes nothing", 0, generatedLive())
+                assertTrue("a skipped run requests no sync", dispatched.isEmpty())
+
+                // The real maintenance entry point, admitted as a sync hook admits it, writes the contact's birthday.
+                BirthdayMaintenance.run(context, account, store.identity(account, generation), "address-book sync")
+                assertEquals("PREREQUISITE: the run wrote the contact's birthday", 1, generatedLive())
+                assertEquals("FEATURE_BIRTHDAY_CALENDAR_SYNC: a maintenance run that wrote requests a calendar sync for its own account",
+                    listOf(account), calendarRequests().map { it.first })
+                assertEquals("the calendar request carries the account's current identity, so a replaced account skips it",
+                    store.identity(account), syncMainIdentity(calendarRequests().single().third))
+                assertTrue("only the calendar authority is requested (no contacts sync that would trigger Birthdays again)",
+                    dispatched.all { it.second == CalendarContract.AUTHORITY })
+
+                // Control: a run with nothing left to write requests no further sync.
+                BirthdayMaintenance.run(context, account, store.identity(account, generation), "address-book sync")
+                assertEquals("a run with nothing to write leaves the birthday as it was", 1, generatedLive())
+                assertEquals("a run that wrote nothing requests no further sync", 1, calendarRequests().size)
+
+                // The explicit turn-off writes (retirement, then cleanup of the generated event).
+                BirthdayMaintenance.turn(context, account, generation, false) { true }
+                assertEquals("the turn-off removed the generated birthday", 0, generatedLive())
+                assertEquals("FEATURE_BIRTHDAY_CALENDAR_SYNC: an explicit turn-off that wrote requests a calendar sync for its own account",
+                    listOf(account, account), calendarRequests().map { it.first })
+                assertTrue("no sync is requested for any other account", dispatched.all { it.first == account })
+                assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+                assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            }
+        } finally {
+            requestSyncDispatchOverride = previousDispatch
+        }
+    }
+
+    @Test fun overlappingMaintenanceTriggersForOneAccountRunOnePassAtATimeAndCoalesceIntoOneRerun() {
+        val colMgr = server.collectionManager
+        val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
+        val contact = uploadItem(book, "contact-alex", VCARD)
+        val calendar = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(calendar.uid, listOf(username to ADMIN))
+        uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val seeded = fake.collectionUids()
+        val birthday = BirthdayCalendar.birthdayOf(VCARD)
+        assertNotNull("PREREQUISITE: the fixture contact has a birthday", birthday)
+        val expectedIcs = BirthdayCalendar.eventIcs(BirthdayCalendar.BirthdayEvent(
+            BirthdayCalendar.eventUid(book.uid, contact.uid), birthday!!.name, birthday.month, birthday.day))
+        val expectedContents = listOf(ORDINARY_ICS, expectedIcs).sorted()
+        // Every engine pass checks the destination's complete member list exactly once (C3); the post-check does not.
+        // So the member-list requests for this calendar count the passes that were run.
+        val memberCheck = Regex("collection/${Regex.escape(calendar.uid)}/member/")
+        val passes = { fake.requests.count { memberCheck.matches(it.substringAfter(' ').substringBefore('?')) } }
+        fun liveContents() = state(colMgr, calendar.uid).items.values.filter { !it.deleted }.map { it.content }.sorted()
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            val admitted = SyncStatusStore(context).identity(account, generation)
+
+            // Positive control: one uncontended trigger through the real maintenance entry point is one pass, and it
+            // fills the calendar with the contact's birthday.
+            val beforeControl = passes()
+            BirthdayMaintenance.run(context, account, admitted, "control trigger")
+            assertEquals("PREREQUISITE: one uncontended trigger runs exactly one pass", beforeControl + 1, passes())
+            assertEquals("PREREQUISITE: that pass wrote the contact's birthday next to the ordinary event", expectedContents, liveContents())
+
+            // The first trigger's pass is parked at its member check; two more triggers for the same account arrive.
+            val firstCheck = fake.hold("GET", memberCheck)
+            val start = passes()
+            val firstRun = Thread { BirthdayMaintenance.run(context, account, admitted, "first trigger") }
+            val overlapping = listOf("second trigger", "third trigger").map { trigger ->
+                Thread { BirthdayMaintenance.run(context, account, admitted, trigger) }
+            }
+            try {
+                firstRun.start()
+                assertTrue("PREREQUISITE: the first trigger's pass has started and is parked at its member check",
+                    firstCheck.arrivesWithin(60_000))
+                overlapping.forEach { it.start() }
+                overlapping.forEach { it.join(60_000) }
+                assertTrue("PREREQUISITE: the overlapping triggers have returned", overlapping.none { it.isAlive })
+                assertTrue("PREREQUISITE: the first trigger's pass is still parked", firstRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_SERIALIZATION: no second Birthdays pass for the account starts while one is running",
+                    start + 1, passes())
+                firstCheck.release()
+                firstRun.join(60_000)
+                assertFalse("the first trigger's run, with its follow-up, has finished", firstRun.isAlive)
+                assertEquals("FEATURE_BIRTHDAY_SERIALIZATION: the triggers that arrived during the run are coalesced into exactly one more pass",
+                    start + 2, passes())
+            } finally {
+                // No maintenance thread may outlive this block: the fixture then removes the account and its transport.
+                firstCheck.release()
+                (overlapping + firstRun).forEach { it.join(60_000) }
+            }
+            assertTrue("no maintenance thread is still running", (overlapping + firstRun).none { it.isAlive })
+            assertEquals("the calendar still holds exactly the ordinary event and one generated birthday", expectedContents, liveContents())
+            assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+            assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+        }
+    }
+
+    // ---- fixture ----
+
+    /**
+     * Opens the real collection screen for exactly [uid] of this account generation, waits until its own
+     * [ViewCollectionFragment] shows the loaded calendar [name], checks the loaded model, and hands [inspect] the raw
+     * (visible, enabled) state of Import and Manage members that the fragment's own onCreateOptionsMenu and
+     * onPrepareOptionsMenu leave on its real menu, while the screen is still live. An entry absent from the menu is
+     * (false, false). This samples the fragment's menu code, not the rendered action-bar popup. Nothing is invoked.
+     */
+    private fun withCollectionScreen(account: Account, generation: String, uid: String, name: String, content: String,
+        inspect: (Map<Int, Pair<Boolean, Boolean>>) -> Unit) {
+        ActivityScenario.launch<CollectionActivity>(CollectionActivity.newIntent(context, account, generation, uid)).use { scenario ->
+            waitUntil("PREREQUISITE: the collection screen to show the loaded calendar \"$name\"") {
+                var shown = false
+                scenario.onActivity { activity ->
+                    val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? ViewCollectionFragment
+                    val loaded = ViewModelProvider(activity).get(CollectionViewModel::class.java).value
+                    shown = screen != null && screen.isResumed && loaded?.col?.uid == uid &&
+                        screen.view?.findViewById<TextView>(R.id.display_name)?.text?.toString() == name
+                }
+                shown
+            }
+            var sample = emptyMap<Int, Pair<Boolean, Boolean>>()
+            scenario.onActivity { activity ->
+                val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment
+                val loaded = requireNotNull(ViewModelProvider(activity).get(CollectionViewModel::class.java).value)
+                assertEquals("PREREQUISITE: the screen belongs to this account, generation and calendar",
+                    CollectionLifecycleIdentity.existing(account, generation, uid, Constants.ETEBASE_TYPE_CALENDAR),
+                    CollectionLifecycleIdentity.from(screen.arguments))
+                assertEquals("PREREQUISITE: the loaded collection is a calendar", Constants.ETEBASE_TYPE_CALENDAR, loaded.collectionType)
+                assertEquals("PREREQUISITE: the loaded calendar is Admin for this user", CollectionAccessLevel.Admin, loaded.col.accessLevel)
+                assertEquals("PREREQUISITE: the loaded calendar keeps its content", content, String(loaded.col.content, Charsets.UTF_8))
+                val menu = MenuBuilder(activity)
+                screen.onCreateOptionsMenu(menu, activity.menuInflater)
+                screen.onPrepareOptionsMenu(menu)
+                assertNotNull("PREREQUISITE: the screen's own menu is inflated", menu.findItem(R.id.on_export))
+                sample = listOf(R.id.on_import, R.id.on_manage_members).associateWith { id ->
+                    menu.findItem(id)?.let { it.isVisible to it.isEnabled } ?: (false to false)
+                }
+            }
+            inspect(sample)
+        }
+    }
+
+    /**
+     * Opens the real collection screen for exactly [uid] of this account generation, waits until its own
+     * [ViewCollectionFragment] shows the loaded calendar [name], then starts the real [AddMemberFragment] for
+     * [invitee] with a ReadWrite action from the activity's own [MemberActionViewModel], as the members screen's Add
+     * dialog does. It waits until an invitation request reaches the stand-in or that step has ended, and hands
+     * [inspect] every request sent since the step started and whether the step has ended, while the screen is live.
+     */
+    private fun withInvitationAttempt(account: Account, generation: String, uid: String, name: String, invitee: String,
+        inspect: (List<String>, Boolean) -> Unit) {
+        ActivityScenario.launch<CollectionActivity>(CollectionActivity.newIntent(context, account, generation, uid)).use { scenario ->
+            waitUntil("PREREQUISITE: the collection screen to show the loaded calendar \"$name\"") {
+                var shown = false
+                scenario.onActivity { activity ->
+                    val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? ViewCollectionFragment
+                    val loaded = ViewModelProvider(activity).get(CollectionViewModel::class.java).value
+                    shown = screen != null && screen.isResumed && loaded?.col?.uid == uid &&
+                        screen.view?.findViewById<TextView>(R.id.display_name)?.text?.toString() == name
+                }
+                shown
+            }
+            val since = fake.requests.size
+            scenario.onActivity { activity ->
+                val identity = CollectionLifecycleIdentity.existing(account, generation, uid, Constants.ETEBASE_TYPE_CALENDAR)
+                val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment
+                assertEquals("PREREQUISITE: the screen belongs to this account, generation and calendar",
+                    identity, CollectionLifecycleIdentity.from(screen.arguments))
+                assertEquals("PREREQUISITE: the loaded calendar is Admin for this user", CollectionAccessLevel.Admin,
+                    requireNotNull(ViewModelProvider(activity).get(CollectionViewModel::class.java).value).col.accessLevel)
+                val actions = ViewModelProvider(activity).get(MemberActionViewModel::class.java)
+                val token = actions.put(invitee, CollectionAccessLevel.ReadWrite)
+                // The step may refuse and dismiss itself within this same transaction (its launch runs on the immediate
+                // main dispatcher), so it is witnessed through its own lifecycle: the real fragment, under this tag, was
+                // created and its onCreate accepted the action (an action it rejects is removed there).
+                var started = false
+                val fragments = activity.supportFragmentManager
+                val witness = object : FragmentManager.FragmentLifecycleCallbacks() {
+                    override fun onFragmentCreated(fm: FragmentManager, f: Fragment, savedInstanceState: Bundle?) {
+                        if (f is AddMemberFragment && f.tag == ADD_MEMBER_TAG && actions.get(token) != null) started = true
+                    }
+                }
+                fragments.registerFragmentLifecycleCallbacks(witness, false)
+                try {
+                    AddMemberFragment.newInstance(identity, token).show(fragments, ADD_MEMBER_TAG)
+                    fragments.executePendingTransactions()
+                } finally {
+                    fragments.unregisterFragmentLifecycleCallbacks(witness)
+                }
+                assertTrue("PREREQUISITE: the add-member step has started", started)
+            }
+            var ended = false
+            waitUntil("the add-member step to send an invitation request or to end") {
+                scenario.onActivity { ended = it.supportFragmentManager.findFragmentByTag(ADD_MEMBER_TAG) == null }
+                ended || fake.requests.drop(since).any(::isInvitationRequest)
+            }
+            inspect(fake.requests.drop(since), ended)
+        }
+    }
+
+    /** A request line ("<method> <path>?<query>") the stand-in recorded for the invitation service. */
+    private fun isInvitationRequest(line: String): Boolean = line.substringAfter(' ').startsWith("invitation/")
+
+    /** The member list (username, access level) of [uid], read fresh through the pinned SDK. */
+    private fun members(colMgr: CollectionManager, uid: String): List<Pair<String, CollectionAccessLevel>> =
+        colMgr.getMemberManager(colMgr.fetch(uid)).list(FetchOptions()).data.map { it.username to it.accessLevel }
+
+    private data class ItemState(val deleted: Boolean, val content: String, val name: String?, val mtime: Long?)
+    private data class CollectionState(val root: String, val content: String, val name: String?, val items: Map<String, ItemState>)
+
+    private fun state(colMgr: CollectionManager, uid: String): CollectionState {
+        val collection = colMgr.fetch(uid)
+        val itemMgr = colMgr.getItemManager(collection)
+        return CollectionState(collection.etag, String(collection.content, Charsets.UTF_8), collection.meta.name,
+            fake.itemUids(uid).associateWith { itemUid ->
+                itemMgr.fetch(itemUid).let { ItemState(it.isDeleted, String(it.content, Charsets.UTF_8), it.meta.name, it.meta.mtime) }
+            })
+    }
+
+    private fun collection(colMgr: CollectionManager, type: String, name: String, content: String): Collection =
+        colMgr.create(type, ItemMetadata().apply { this.name = name }, content).also { colMgr.upload(it) }
+
+    private fun uploadItem(collection: Collection, name: String, content: String): Item {
+        val itemMgr = server.collectionManager.getItemManager(collection)
+        val item = itemMgr.create(ItemMetadata().apply {
+            this.name = name
+            mtime = 1_000L
+        }, content)
+        itemMgr.batch(arrayOf(item))
+        return item
+    }
+
+    /** The visible Birthdays actions of the Calendars menu, as (title, enabled). */
+    private fun birthdayActions(scenario: ActivityScenario<AccountActivity>): List<Pair<String, Boolean>> {
+        var actions = emptyList<Pair<String, Boolean>>()
+        scenario.onActivity { activity ->
+            val menu = activity.findViewById<Toolbar>(R.id.caldav_menu).menu
+            actions = (0 until menu.size()).map { menu.getItem(it) }
+                .filter { it.isVisible && it.title?.toString() in setOf(TURN_ON, TURN_OFF) }
+                .map { it.title.toString() to it.isEnabled }
+        }
+        return actions
+    }
+
+    private fun invokeCalendarsAction(scenario: ActivityScenario<AccountActivity>, title: String) {
+        scenario.onActivity { activity ->
+            val menu = activity.findViewById<Toolbar>(R.id.caldav_menu).menu
+            val item = (0 until menu.size()).map { menu.getItem(it) }.firstOrNull { it.title?.toString() == title }
+            assertNotNull("FEATURE_ACTIVATION: the Calendars menu offers \"$title\"", item)
+            assertTrue("FEATURE_ACTIVATION: \"$title\" is visible and enabled", item!!.isVisible && item.isEnabled)
+            assertTrue("FEATURE_ACTIVATION: \"$title\" is its own menu action",
+                item.itemId != View.NO_ID && item.itemId != R.id.create_calendar)
+            invoked.set(true)
+            menu.performIdentifierAction(item.itemId, 0)
+        }
+    }
+
+    private fun assertBusy(scenario: ActivityScenario<AccountActivity>) =
+        assertTrue("FEATURE_ACTIVATION: no Birthdays action can be started while a run is in progress",
+            birthdayActions(scenario).none { it.second })
+
+    private fun awaitIdle(scenario: ActivityScenario<AccountActivity>, description: String) =
+        waitUntil(description) { birthdayActions(scenario).let { it.isNotEmpty() && it.all { action -> action.second } } }
+
+    /** The calendar uids this account's own collection cache holds now, decoded with the SDK user's keys. */
+    private fun cachedCalendarUids(account: Account, colMgr: CollectionManager): Set<String> {
+        val cache = EtebaseLocalCache.getInstance(context, account.name)
+        return synchronized(cache) { cache.collectionList(colMgr, type = Constants.ETEBASE_TYPE_CALENDAR) }.map { it.col.uid }.toSet()
+    }
+
+    /** The calendar uids the dashboard's Calendars list shows now. */
+    private fun dashboardCalendarUids(scenario: ActivityScenario<AccountActivity>): Set<String> {
+        var uids = emptySet<String>()
+        scenario.onActivity { activity ->
+            val adapter = activity.listCalDAV?.adapter ?: return@onActivity
+            uids = (0 until adapter.count).map { (adapter.getItem(it) as AccountActivity.CollectionListItemInfo).uid }.toSet()
+        }
+        return uids
+    }
+
+    /** Runs [block] on the real dashboard of a fresh account whose cache holds the [published] collections. */
+    private fun withActivationDashboard(published: Set<String>, block: (ActivityScenario<AccountActivity>) -> Unit) {
+        val generation = "birthday-activation-${System.nanoTime()}"
+        val account = Account("birthday-activation-${System.nanoTime()}@example.invalid", App.accountType)
+        val other = Account("birthday-activation-other-${System.nanoTime()}@example.invalid", App.accountType)
+        val otherGeneration = "birthday-activation-other-${System.nanoTime()}"
+        activationIdentity = account to generation
+        // Everything this fixture changes is captured first and restored from these values, never to a default.
+        val previousMasterSync = ContentResolver.getMasterSyncAutomatically()
+        val previousInterceptor = HttpClient.testInterceptor
+        val previousBootstrap = App.postLoginBootstrapSucceeded
+        // ActiveAccountManager's two preference keys exactly as found: absent, or their literal string. One getAll()
+        // copy; a stored non-string fails here, before anything is changed, and is never normalized.
+        val previousActive: Map<String, String?> = context.getSharedPreferences(ACTIVE_ACCOUNT_PREFS, Context.MODE_PRIVATE).all
+            .let { all ->
+                ACTIVE_ACCOUNT_KEYS.associateWith { key ->
+                    all[key]?.let { value -> value as? String ?: error("PREREQUISITE: the active-account preference $key is not a string") }
+                }
+            }
+        val previousLoader = AccountActivity.AccountInfoViewModel.accountLoaderOverride
+        val previousSyncActive = AccountActivity.syncActiveOverride
+        val previousSyncRequest = AccountActivity.syncRequestOverride
+        val previousCollectionLauncher = AccountActivity.collectionIntentLauncherOverride
+        val previousPermissionRequest = AccountActivity.permissionRequestOverride
+        val previousBilling = AccountActivity.billingStatusOverride
+        var scenario: ActivityScenario<AccountActivity>? = null
+        var primary: Throwable? = null
+        try {
+            ContentResolver.setMasterSyncAutomatically(false)
+            HttpClient.testInterceptor = fake
+            for (row in listOf(account, other)) {
+                check(manager.addAccountExplicitly(row, null, null))
+                for (authority in TaskProvider.TASK_PROVIDERS.map { it.authority } + CalendarContract.AUTHORITY + App.addressBooksAuthority) {
+                    ContentResolver.setIsSyncable(row, authority, 0)
+                }
+            }
+            AccountSettings.setUserData(manager, account, URI(fake.baseUrl), username)
+            check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+            check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.COMPLETE))
+            AccountSettings(context, account).etebaseSession = session
+            check(AccountSettings.writeVerified(manager, other, AccountSettings.KEY_CREATION_ID, otherGeneration))
+            // The dashboard lists collections from this account's cache only (EtebaseLocalCache.collections). Publish
+            // the seeded server state there through the cache's own write path, as a collection refresh does.
+            val colMgr = server.collectionManager
+            val cache = EtebaseLocalCache.getInstance(context, account.name)
+            val calendars = synchronized(cache) {
+                published.sorted().map { colMgr.fetch(it) }.onEach { cache.collectionSet(colMgr, it) }
+                    .count { it.collectionType == Constants.ETEBASE_TYPE_CALENDAR }
+            }
+            App.postLoginBootstrapSucceeded = true
+            AccountActivity.AccountInfoViewModel.accountLoaderOverride = null
+            AccountActivity.syncActiveOverride = { false }
+            AccountActivity.syncRequestOverride = { _, exact -> syncRequests += exact }
+            AccountActivity.collectionIntentLauncherOverride = { }
+            AccountActivity.permissionRequestOverride = { }
+            AccountActivity.billingStatusOverride = { _, _, _ -> BillingManager.SubscriptionStatus.unreachable() }
+            val launched = ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account))
+            scenario = launched
+            waitUntil("PREREQUISITE: the dashboard to load this account through its stored session") {
+                var delivered = false
+                launched.onActivity { delivered = it.hasDeliveredAccountInfo }
+                delivered
+            }
+            assertEquals("PREREQUISITE: the account's stored username is the SDK user", username, AccountSettings(context, account).username())
+            assertEquals("PREREQUISITE: the account holds the SDK user's session", session, AccountSettings(context, account).etebaseSession)
+            assertTrue("PREREQUISITE: this exact account row is present", account in manager.getAccountsByType(account.type))
+            assertEquals("PREREQUISITE: the row holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            launched.onActivity { activity ->
+                assertEquals("PREREQUISITE: the dashboard holds this generation", generation,
+                    activity.intent.getStringExtra(AccountActivity.EXTRA_CREATION_ID))
+                assertEquals("PREREQUISITE: the dashboard decoded every published calendar through the stored session",
+                    calendars, activity.listCalDAV!!.adapter.count)
+                assertNotNull("PREREQUISITE: the Calendars menu is rendered with Create calendar",
+                    activity.findViewById<Toolbar>(R.id.caldav_menu).menu.findItem(R.id.create_calendar))
+            }
+
+            block(launched)
+
+            assertEquals("the account generation is unchanged", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            assertTrue("the other account is still present", other in manager.getAccountsByType(other.type))
+            assertEquals("the other account's generation is unchanged", otherGeneration,
+                manager.getUserData(other, AccountSettings.KEY_CREATION_ID))
+            assertFalse("no sync is requested for the other account", other in syncRequests)
+        } catch (t: Throwable) {
+            primary = t
+        }
+
+        // Every step is attempted. A started action must finish before its account, session and
+        // transport go. A body failure stays the reported failure, with cleanup failures attached.
+        val cleanup = ArrayList<Throwable>()
+        fun attempt(step: () -> Unit) {
+            try {
+                step()
+            } catch (t: Throwable) {
+                cleanup += t
+            }
+        }
+        attempt { fake.releaseAll() }
+        if (invoked.get()) attempt { scenario?.let { awaitIdle(it, "the Birthdays action to finish before teardown") } }
+        attempt { scenario?.close() }
+        attempt {
+            AccountActivity.AccountInfoViewModel.accountLoaderOverride = previousLoader
+            AccountActivity.syncActiveOverride = previousSyncActive
+            AccountActivity.syncRequestOverride = previousSyncRequest
+            AccountActivity.collectionIntentLauncherOverride = previousCollectionLauncher
+            AccountActivity.permissionRequestOverride = previousPermissionRequest
+            AccountActivity.billingStatusOverride = previousBilling
+        }
+        attempt { removeAccount(account) }
+        attempt { removeAccount(other) }
+        attempt {
+            EtebaseLocalCache.clearUserCache(context, account.name)
+            CollectionListRefresh.collectionLastFetchMap.keys.filter { it.startsWith("${account.name}\u0000") }
+                .forEach { CollectionListRefresh.collectionLastFetchMap.remove(it) }
+        }
+        attempt {
+            // Exactly the captured keys: each removed or written back as found, committed, then read back.
+            val prefs = context.getSharedPreferences(ACTIVE_ACCOUNT_PREFS, Context.MODE_PRIVATE)
+            val editor = prefs.edit()
+            for ((key, value) in previousActive) {
+                if (value == null) editor.remove(key) else editor.putString(key, value)
+            }
+            check(editor.commit()) { "the active-account preference could not be committed back" }
+            val restored = prefs.all
+            check(ACTIVE_ACCOUNT_KEYS.all { key -> restored[key] == previousActive[key] }) {
+                "the active-account preference was not restored exactly"
+            }
+        }
+        attempt { HttpClient.testInterceptor = previousInterceptor }
+        attempt { App.postLoginBootstrapSucceeded = previousBootstrap }
+        attempt { ContentResolver.setMasterSyncAutomatically(previousMasterSync) }
+        primary?.let { failure ->
+            cleanup.forEach(failure::addSuppressed)
+            throw failure
+        }
+        cleanup.firstOrNull()?.let { failure ->
+            cleanup.drop(1).forEach(failure::addSuppressed)
+            throw failure
+        }
+    }
+
+    private fun removeAccount(account: Account) {
+        if (account !in manager.getAccountsByType(account.type)) return
+        val removed = CountDownLatch(1)
+        var confirmed = false
+        AndroidCompat.removeAccount(manager, account) {
+            confirmed = it
+            removed.countDown()
+        }
+        assertTrue("account removal callback timed out", removed.await(10, TimeUnit.SECONDS))
+        assertTrue("account removal was not confirmed", confirmed)
+        assertFalse("the account is still present after its confirmed removal", account in manager.getAccountsByType(account.type))
+    }
+
+    private fun waitUntil(description: String, timeoutMillis: Long = 60_000, predicate: () -> Boolean) {
+        val deadline = SystemClock.uptimeMillis() + timeoutMillis
+        while (SystemClock.uptimeMillis() < deadline) {
+            if (predicate()) return
+            SystemClock.sleep(50)
+        }
+        assertTrue("Timed out waiting for $description", predicate())
+    }
+
+    companion object {
+        private const val TURN_ON = "Turn on Birthdays calendar"
+        private const val TURN_OFF = "Turn off Birthdays calendar"
+        private const val ADMIN = 1L
+        /** The server's access level for read-write (Etebase: read-only 0, admin 1, read-write 2). */
+        private const val READ_WRITE = 2L
+        /** ActiveAccountManager's preference file and its two keys (ActiveAccountManager.kt:11-13), for an exact restore. */
+        private const val ACTIVE_ACCOUNT_PREFS = "active_account"
+        private val ACTIVE_ACCOUNT_KEYS = listOf("account_name", "creation_id")
+        private const val OTHER_MEMBER = "birthday-activation-sharer"
+        private const val ADD_MEMBER_TAG = "birthday-activation-add-member"
+        private val MEMBER_PATH = Regex("collection/([^/]+)/member/")
+        private const val MARKER_ACTIVE = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"active\"}"
+        private const val MARKER_RETIRED = "{\"type\":\"silentsuite.birthdays\",\"v\":1,\"state\":\"retired\"}"
+        private const val VCARD = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:contact-alex\r\nFN:Alex Example\r\nBDAY:19900315\r\nEND:VCARD\r\n"
+        private const val GENERATED_ICS = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//Birthdays v1//EN\r\n" +
+            "BEGIN:VEVENT\r\nUID:ss-bday1-c8970a5b3457981540f4ee428f84a1f4\r\nDTSTAMP:19720101T000000Z\r\n" +
+            "DTSTART;VALUE=DATE:19720315\r\nDTEND;VALUE=DATE:19720316\r\nRRULE:FREQ=YEARLY\r\n" +
+            "SUMMARY:🎂 Alex Example\r\nTRANSP:TRANSPARENT\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+        private const val ORDINARY_ICS = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Other client//EN\r\n" +
+            "BEGIN:VEVENT\r\nUID:ordinary-dentist\r\nDTSTAMP:20261031T120000Z\r\n" +
+            "DTSTART:20261105T090000Z\r\nDTEND:20261105T100000Z\r\nSUMMARY:Dentist\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+
+        private val username = "birthday-activation-${System.nanoTime()}"
+
+        /** One Etebase signup for the whole class; the session works against any stand-in server. */
+        private val session: String by lazy {
+            val fake = FakeEtebaseServer()
+            val client = Client.create(OkHttpClient.Builder().addInterceptor(fake).build(), fake.baseUrl)
+            com.etebase.client.Account.signup(client, User(username, "birthday-activation@example.invalid"), "stand-in-server-only").save(null)
+        }
+    }
+}
