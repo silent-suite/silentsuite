@@ -1598,6 +1598,12 @@ class SiblingRoutesRuntimeTest {
         }
 
         /** Runs [sync] on its own thread; [join] returns its outcome, or the throwable it ended with. */
+        /** One direct run, as [sync], whose address book and manager use [client] instead of a fresh real one. */
+        fun syncThrough(native: Account, client: android.content.ContentProviderClient): SyncManager.ProviderOutcome =
+            ContactsSyncManager(context, native, AccountSettings(context, requireNotNull(main)), Bundle(),
+                ContactsContract.AUTHORITY, client, SyncResult(), LocalAddressBook(context, native, client),
+                fake.baseUrl.toHttpUrl()).use { it.performSync() }
+
         fun syncInBackground(native: Account): Pair<Thread, AtomicReference<Any?>> {
             val outcome = AtomicReference<Any?>()
             val thread = Thread { outcome.set(try { sync(native) } catch (t: Throwable) { t }) }
@@ -1821,6 +1827,118 @@ class SiblingRoutesRuntimeTest {
             }
         }
 
+        // ---- #934 whole-contact label helpers ----
+        // Label groups are identified only as groups of the native account without a filename (SOURCE_ID).
+        // The helpers that list or fetch server items issue their own requests: callers take request counts
+        // around a measured sync only, never across these helpers.
+
+        fun itemUid(uid: String): String = itemUids.getValue(uid)
+
+        /** Really removes the cached copy of [uid]'s item, as a lost cache entry would leave it. */
+        fun unsetCached(uid: String) = synchronized(cache) { cache.itemUnset(items(), colUid, itemUids.getValue(uid)) }
+
+        fun cachedEtag(uid: String): String? = synchronized(cache) {
+            cache.itemGet(items(), colUid, itemUids.getValue(uid))?.item?.etag
+        }
+
+        fun serverEtag(uid: String): String = items().fetch(itemUids.getValue(uid)).etag
+
+        fun serverItemContent(itemUid: String): String = items().fetch(itemUid).contentString
+
+        /** Live items of the current book as "itemUid name" from a complete paged listing; duplicates kept, sorted. */
+        fun liveServerItems(): List<String> {
+            val itemMgr = items()
+            val out = mutableListOf<String>()
+            var stoken: String? = null
+            var pages = 0
+            do {
+                val page = itemMgr.list(com.etebase.client.FetchOptions().stoken(stoken))
+                page.data.filterNot { it.isDeleted }.forEach { out += "${it.uid} ${it.meta.name}" }
+                stoken = page.stoken
+                check(++pages < 100) { "FIXTURE #934: the server item listing did not finish" }
+            } while (!page.isDone)
+            return out.sorted()
+        }
+
+        fun rawString(rawId: Long, column: String): String? = context.contentResolver.query(
+            ContentUris.withAppendedId(ContactsContract.RawContacts.CONTENT_URI, rawId), arrayOf(column), null, null, null)!!
+            .use { c -> if (c.moveToNext() && !c.isNull(0)) c.getString(0) else null }
+
+        fun updateRawAsSyncAdapter(native: Account, rawId: Long, values: ContentValues) {
+            val updated = context.contentResolver.update(
+                asSyncAdapter(ContentUris.withAppendedId(ContactsContract.RawContacts.CONTENT_URI, rawId), native), values, null, null)
+            check(updated == 1) { "FIXTURE #934: raw row update affected $updated rows" }
+        }
+
+        fun unfiledGroups(native: Account): Map<Long, String> = context.contentResolver.query(
+            ContactsContract.Groups.CONTENT_URI, arrayOf(ContactsContract.Groups._ID, ContactsContract.Groups.TITLE),
+            "${ContactsContract.Groups.ACCOUNT_NAME}=? AND ${ContactsContract.Groups.ACCOUNT_TYPE}=? AND " +
+                "${ContactsContract.Groups.SOURCE_ID} IS NULL AND ${ContactsContract.Groups.DELETED}=0",
+            ofAccount(native), null)!!.use { c ->
+            generateSequence { if (c.moveToNext()) c.getLong(0) to c.getString(1).orEmpty() else null }.toList().toMap()
+        }
+
+        fun filedGroupCount(native: Account): Int = context.contentResolver.query(
+            ContactsContract.Groups.CONTENT_URI, arrayOf(ContactsContract.Groups._ID),
+            "${ContactsContract.Groups.ACCOUNT_NAME}=? AND ${ContactsContract.Groups.ACCOUNT_TYPE}=? AND " +
+                "${ContactsContract.Groups.SOURCE_ID} IS NOT NULL AND ${ContactsContract.Groups.DELETED}=0",
+            ofAccount(native), null)!!.use { it.count }
+
+        fun groupRowIds(rawId: Long): List<Long> = context.contentResolver.query(ContactsContract.Data.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.GroupMembership.GROUP_ROW_ID),
+            "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+            arrayOf(rawId.toString(), ContactsContract.CommonDataKinds.GroupMembership.CONTENT_ITEM_TYPE), null)!!.use { c ->
+            generateSequence { if (c.moveToNext()) c.getLong(0) else null }.toList()
+        }
+
+        /** Titles of the label groups [rawId] belongs to, one entry per membership row, sorted. */
+        fun unfiledMembershipTitles(native: Account, rawId: Long): List<String> {
+            val groups = unfiledGroups(native)
+            return groupRowIds(rawId).mapNotNull { groups[it] }.sorted()
+        }
+
+        fun phoneLabels(rawId: Long): List<Pair<Int?, String?>> = context.contentResolver.query(ContactsContract.Data.CONTENT_URI,
+            arrayOf(ContactsContract.CommonDataKinds.Phone.TYPE, ContactsContract.CommonDataKinds.Phone.LABEL),
+            "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=?",
+            arrayOf(rawId.toString(), ContactsContract.CommonDataKinds.Phone.CONTENT_ITEM_TYPE), null)!!.use { c ->
+            generateSequence {
+                if (c.moveToNext()) (if (c.isNull(0)) null else c.getInt(0)) to (if (c.isNull(1)) null else c.getString(1)) else null
+            }.toList()
+        }
+
+        /**
+         * Models rows an earlier app version populated: no label memberships, no label groups and no marker,
+         * written as a sync adapter so nothing becomes dirty. Applies to every row of the book passed in.
+         */
+        fun stripCategoryProjectionAsSyncAdapter(native: Account, rawIds: List<Long>) {
+            val groups = unfiledGroups(native).keys
+            for (rawId in rawIds) {
+                for (groupId in groupRowIds(rawId).filter { it in groups })
+                    context.contentResolver.delete(asSyncAdapter(ContactsContract.Data.CONTENT_URI, native),
+                        "${ContactsContract.Data.RAW_CONTACT_ID}=? AND ${ContactsContract.Data.MIMETYPE}=? AND " +
+                            "${ContactsContract.CommonDataKinds.GroupMembership.GROUP_ROW_ID}=?",
+                        arrayOf(rawId.toString(), ContactsContract.CommonDataKinds.GroupMembership.CONTENT_ITEM_TYPE, groupId.toString()))
+                updateRawAsSyncAdapter(native, rawId, ContentValues().apply { putNull(ContactsContract.RawContacts.SYNC4) })
+            }
+            for (groupId in groups)
+                context.contentResolver.delete(asSyncAdapter(ContentUris.withAppendedId(ContactsContract.Groups.CONTENT_URI, groupId), native), null, null)
+        }
+
+        /** A contact created the way a Contacts app creates one: non-sync-adapter inserts, so the row starts dirty. */
+        fun createNativeContact(native: Account, name: String): Long {
+            val uri = context.contentResolver.insert(ContactsContract.RawContacts.CONTENT_URI, ContentValues().apply {
+                put(ContactsContract.RawContacts.ACCOUNT_NAME, native.name)
+                put(ContactsContract.RawContacts.ACCOUNT_TYPE, native.type)
+            }) ?: throw IllegalStateException("FIXTURE #934: native raw contact insert failed")
+            val rawId = ContentUris.parseId(uri)
+            context.contentResolver.insert(ContactsContract.Data.CONTENT_URI, ContentValues().apply {
+                put(ContactsContract.Data.RAW_CONTACT_ID, rawId)
+                put(ContactsContract.Data.MIMETYPE, ContactsContract.CommonDataKinds.StructuredName.CONTENT_ITEM_TYPE)
+                put(ContactsContract.CommonDataKinds.StructuredName.DISPLAY_NAME, name)
+            }) ?: throw IllegalStateException("FIXTURE #934: native name insert failed")
+            return rawId
+        }
+
         /** Removes a row as a sync adapter would, without leaving a local deletion to upload. */
         fun hardDelete(native: Account, uid: String) {
             context.contentResolver.delete(ContentUris.withAppendedId(ContactsContract.RawContacts.CONTENT_URI, rawId(native, uid))
@@ -1851,6 +1969,585 @@ class SiblingRoutesRuntimeTest {
         }
     }
 
+    // ---- #934 whole-contact labels (vCard CATEGORIES) through real syncs ----
+    // Each scenario uses its own book, appended after a host method's original assertions. Desired-behavior
+    // failures are collected as "BEHAVIOR #934" so later scenarios still run; FIXTURE problems and any other
+    // exception propagate at once with earlier collected failures attached as suppressed.
+
+    private class CategoryChecks(private val scenario: String) {
+        val failures = mutableListOf<AssertionError>()
+        fun check(ok: Boolean, what: () -> String) {
+            if (!ok) failures += AssertionError("BEHAVIOR #934 $scenario: ${what()}")
+        }
+        fun <T> expect(expected: T, actual: T, what: String) =
+            check(expected == actual) { "$what: expected <$expected> but was <$actual>" }
+        /** Records a failure after which this scenario cannot meaningfully continue. */
+        fun stop(what: String): Nothing {
+            failures += AssertionError("BEHAVIOR #934 $scenario: $what")
+            throw CategoryScenarioStopped()
+        }
+    }
+
+    private class CategoryScenarioStopped : RuntimeException()
+
+    private fun categoryFixture(ok: Boolean, what: () -> String) {
+        if (!ok) throw IllegalStateException("FIXTURE #934: ${what()}")
+    }
+
+    private fun runCategoryScenarios(vararg scenarios: Pair<String, (CategoryChecks) -> Unit>) {
+        val failures = mutableListOf<AssertionError>()
+        for ((name, body) in scenarios) {
+            val checks = CategoryChecks(name)
+            try {
+                body(checks)
+            } catch (stopped: CategoryScenarioStopped) {
+                // recorded in checks
+            } catch (e: AssertionError) {
+                checks.failures += AssertionError("BEHAVIOR #934 $name: ${e.message}", e)
+            } catch (t: Throwable) {
+                (failures + checks.failures).forEach { t.addSuppressed(it) }
+                throw t
+            }
+            failures += checks.failures
+        }
+        if (failures.isNotEmpty()) {
+            val all = AssertionError("BEHAVIOR #934: ${failures.size} failure(s): " +
+                failures.joinToString(" | ") { it.message.orEmpty() })
+            failures.forEach { all.addSuppressed(it) }
+            throw all
+        }
+    }
+
+    private val catAmisEte = "Amis été"
+
+    private fun catCard(uid: String, vararg lines: String) =
+        "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:$uid\r\nFN:Label $uid\r\nN:$uid;Label;;;\r\n" +
+            lines.joinToString("") { "$it\r\n" } + "END:VCARD\r\n"
+
+    private fun serverCategories(content: String): List<String> =
+        at.bitfire.vcard4android.Contact.fromReader(java.io.StringReader(content), null).firstOrNull()?.categories?.sorted()
+            ?: emptyList()
+
+    private fun NativeStore.syncOk(native: Account, c: CategoryChecks, step: String) {
+        val outcome = sync(native)
+        if (outcome != success) c.stop("$step: sync outcome $outcome")
+    }
+
+    private fun NativeStore.certifiedLike(rawId: Long, reference: String?) =
+        reference != null && rawString(rawId, ContactsContract.RawContacts.SYNC4) == reference
+
+    /** #934 S1: download, remote replacement/removal, native field and label edits and uploads, beside a same-title group vCard. */
+    private fun categoryLabelRoundTrip(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Category labels", listOf(
+            "cat-a" to catCard("cat-a", "CATEGORIES:Family,Work", "item1.TEL:+1 555 0110", "item1.X-ABLabel:Emergency", "X-TESTA:keep"),
+            "cat-b" to catCard("cat-b", "CATEGORIES:Team\\, West"),
+            "cat-u" to catCard("cat-u", "CATEGORIES:$catAmisEte"),
+            "cat-r" to catCard("cat-r", "CATEGORIES:Work", "CATEGORIES:Garden"),
+            "cat-lg" to nativeGroupVcard("cat-lg", "Family", listOf("cat-a"))))
+        val a = f.rawId(native, "cat-a")
+        val b = f.rawId(native, "cat-b")
+        val u = f.rawId(native, "cat-u")
+        val r = f.rawId(native, "cat-r")
+        val ref = f.rawString(a, ContactsContract.RawContacts.SYNC4)
+        c.check(ref != null) { "a downloaded contact is certified" }
+        c.expect(listOf(catAmisEte, "Family", "Garden", "Team, West", "Work"), f.unfiledGroups(native).values.sorted(),
+            "one label group per distinct downloaded label")
+        c.expect(listOf("Family", "Work"), f.unfiledMembershipTitles(native, a), "cat-a labels")
+        c.expect(listOf("Team, West"), f.unfiledMembershipTitles(native, b), "cat-b labels")
+        c.expect(listOf(catAmisEte), f.unfiledMembershipTitles(native, u), "cat-u labels")
+        c.expect(listOf("Garden", "Work"), f.unfiledMembershipTitles(native, r), "cat-r labels from repeated properties")
+        for (row in listOf(b, u, r)) c.check(f.certifiedLike(row, ref)) { "row $row certified after download" }
+        c.check((ContactsContract.CommonDataKinds.Phone.TYPE_CUSTOM to "Emergency") in f.phoneLabels(a)) { "the phone label is kept" }
+        val lg = f.groupId(native, "cat-lg")
+        c.expect(setOf("cat-a"), f.members(native, lg), "group vCard membership")
+        c.expect("Family", f.groupTitle(lg), "group vCard title")
+        c.expect(1, f.filedGroupCount(native), "only the group vCard has a filename")
+
+        f.changeRemote("cat-a", catCard("cat-a", "CATEGORIES:Work", "item1.TEL:+1 555 0110", "item1.X-ABLabel:Emergency", "X-TESTA:keep"))
+        f.recache()
+        f.syncOk(native, c, "remote replacement")
+        c.expect(listOf("Work"), f.unfiledMembershipTitles(native, a), "cat-a after the remote replacement")
+        c.check(f.certifiedLike(a, ref)) { "cat-a certified after the remote replacement" }
+        c.expect(setOf("cat-a"), f.members(native, lg), "group vCard membership after the remote replacement")
+        c.check("Family" !in f.unfiledGroups(native).values) { "the unused Family label group is removed" }
+
+        val groupCardBefore = f.serverContent("cat-lg")
+        val itemsBefore = f.liveServerItems()
+        f.addPhone(a, "5550111")
+        f.addPhone(b, "5550112")
+        f.addPhone(u, "5550113")
+        f.syncOk(native, c, "native field edits")
+        val serverA = f.serverContent("cat-a")
+        c.expect(listOf("Work"), serverCategories(serverA), "cat-a uploaded labels")
+        c.check(serverA.contains("5550111") && serverA.contains("X-TESTA:keep") &&
+            Regex("(?im)^[^:\\r\\n]*X-ABLabel:Emergency\\r?$").containsMatchIn(serverA)) {
+            "cat-a upload keeps the edit, the phone label and the unknown property"
+        }
+        val serverB = f.serverContent("cat-b")
+        c.check(Regex("(?m)^CATEGORIES:Team\\\\, West\\r?$").containsMatchIn(serverB)) { "the literal comma stays escaped on upload" }
+        c.expect(listOf("Team, West"), serverCategories(serverB), "cat-b uploaded labels")
+        c.expect(listOf(catAmisEte), serverCategories(f.serverContent("cat-u")), "cat-u uploaded labels")
+        c.expect(groupCardBefore, f.serverContent("cat-lg"), "the group vCard is untouched by contact edits")
+        c.expect(itemsBefore, f.liveServerItems(), "edits update the original items and no label group is uploaded")
+        c.expect(1, f.filedGroupCount(native), "label groups gain no filename")
+
+        val work = f.unfiledGroups(native).entries.firstOrNull { it.value == "Work" }?.key ?: c.stop("no Work label group to edit")
+        f.addToGroup(b, work)
+        f.syncOk(native, c, "native label addition")
+        c.expect(listOf("Team, West", "Work"), serverCategories(f.serverContent("cat-b")), "a native label addition is uploaded")
+        c.check(!f.dirty(b)) { "cat-b is clean after the label addition upload" }
+        f.removeFromGroup(b, work)
+        f.syncOk(native, c, "native label removal")
+        c.expect(listOf("Team, West"), serverCategories(f.serverContent("cat-b")), "a native label removal is uploaded")
+        c.expect(listOf("Team, West"), f.unfiledMembershipTitles(native, b), "cat-b provider labels after the removal")
+        c.expect(itemsBefore, f.liveServerItems(), "label edits create no server item")
+
+        f.deleteRemote("cat-b")
+        f.recache()
+        f.syncOk(native, c, "remote deletion")
+        c.check("cat-b" !in f.liveUids(native)) { "the remotely deleted contact is gone" }
+        c.check("Team, West" !in f.unfiledGroups(native).values) { "its now unused label group is removed" }
+    }
+
+    /** #934 S4 (F4): a provider-created contact's labels survive its first upload and a later native label edit. */
+    private fun nativeCreatedFirstUpload(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Native-created labels", listOf(
+            "nat-a" to catCard("nat-a", "CATEGORIES:Family"),
+            "nat-b" to catCard("nat-b", "CATEGORIES:Work"),
+            "nat-g" to nativeGroupVcard("nat-g", "Club", listOf("nat-a"))))
+        val ref = f.rawString(f.rawId(native, "nat-a"), ContactsContract.RawContacts.SYNC4)
+        c.check(ref != null) { "a downloaded contact is certified" }
+        val groups = f.unfiledGroups(native)
+        val family = groups.entries.firstOrNull { it.value == "Family" }?.key ?: c.stop("no downloaded Family label group")
+        val work = groups.entries.firstOrNull { it.value == "Work" }?.key ?: c.stop("no downloaded Work label group")
+        val club = f.groupId(native, "nat-g")
+        val created = f.createNativeContact(native, "Native Created")
+        f.addToGroup(created, family)
+        f.addToGroup(created, club)
+        categoryFixture(f.dirty(created) && f.rawString(created, ContactsContract.RawContacts.SYNC4) == null &&
+            f.rawString(created, ContactsContract.RawContacts.SYNC2) == null &&
+            f.rawString(created, ContactsContract.RawContacts.SOURCE_ID) == null) {
+            "a provider-created row starts dirty without marker, eTag or filename"
+        }
+        val itemsBefore = f.liveServerItems()
+        val listsBefore = f.itemListRequests().size
+        f.syncOk(native, c, "first upload")
+        c.expect(listsBefore, f.itemListRequests().size, "the first-upload run lists no items (no remote re-delivery)")
+        val fileName = f.rawString(created, ContactsContract.RawContacts.SOURCE_ID) ?: c.stop("the created row got no filename")
+        val itemsAfter = f.liveServerItems()
+        val added = itemsAfter.toMutableList().also { list -> itemsBefore.forEach { list.remove(it) } }
+        c.expect(1, added.size, "exactly one new server item")
+        c.check(added.singleOrNull()?.startsWith("$fileName ") == true) { "the new item is the created row's: $added" }
+        c.check(!f.dirty(created)) { "the created row is clean after its first upload" }
+        c.check(f.certifiedLike(created, ref)) { "a successful first upload certifies the created row" }
+        c.expect(listOf("Family"), serverCategories(f.serverItemContent(fileName)), "first upload labels")
+        val createdUid = f.rawString(created, ContactsContract.RawContacts.SYNC1) ?: c.stop("the created row got no vCard UID")
+
+        f.removeFromGroup(created, family)
+        f.addToGroup(created, work)
+        categoryFixture(f.dirty(created)) { "the native label edit marks the row dirty" }
+        val listsBeforeSecond = f.itemListRequests().size
+        f.syncOk(native, c, "second upload")
+        c.expect(listsBeforeSecond, f.itemListRequests().size, "the second-upload run lists no items")
+        val second = f.serverItemContent(fileName)
+        c.expect(listOf("Work"), serverCategories(second), "the native label edit is uploaded, not replaced from the first upload")
+        c.expect(listOf("Work"), f.unfiledMembershipTitles(native, created), "provider labels after the second upload")
+        c.check(!f.dirty(created)) { "the created row is clean after its second upload" }
+        c.check(f.certifiedLike(created, ref)) { "the created row stays certified" }
+        c.expect(setOf("nat-a", createdUid), f.members(native, club), "group vCard membership is unchanged by label edits")
+        c.check(f.serverContent("nat-g").contains("urn:uuid:$createdUid")) { "the group vCard carries the created contact as a member" }
+        c.expect(itemsAfter, f.liveServerItems(), "the second upload creates no server item")
+    }
+
+    /** #934 S2: rows populated before the fix recover their labels from the cache, offline, before a native edit uploads. */
+    private fun legacyRowsRecoverFromCache(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Legacy labels", listOf(
+            "leg-l" to catCard("leg-l", "CATEGORIES:Family"),
+            "leg-m" to catCard("leg-m", "CATEGORIES:Work")))
+        val l = f.rawId(native, "leg-l")
+        val m = f.rawId(native, "leg-m")
+        val ref = f.rawString(l, ContactsContract.RawContacts.SYNC4)
+        c.check(ref != null) { "a downloaded contact is certified" }
+        f.stripCategoryProjectionAsSyncAdapter(native, listOf(l, m))
+        categoryFixture(f.unfiledGroups(native).isEmpty() && listOf(l, m).all {
+            f.groupRowIds(it).isEmpty() && f.rawString(it, ContactsContract.RawContacts.SYNC4) == null && !f.dirty(it)
+        }) { "rows modelled as populated before the fix" }
+        categoryFixture(f.cachedEtag("leg-l") != null && f.cachedEtag("leg-m") != null) { "cached items present" }
+        f.addPhone(l, "5550130")
+        val itemsBefore = f.liveServerItems()
+        val lists = f.itemListRequests().size
+        val uploads = f.itemUploadRequests().size
+        f.syncOk(native, c, "first sync after the update")
+        c.expect(lists, f.itemListRequests().size, "recovery from the cache needs no listing")
+        c.check(f.itemUploadRequests().size > uploads) { "the native edit is uploaded" }
+        val server = f.serverContent("leg-l")
+        c.expect(listOf("Family"), serverCategories(server), "the native edit uploads the recovered labels")
+        c.check(server.contains("5550130")) { "the native edit is on the server" }
+        c.expect(itemsBefore, f.liveServerItems(), "the upload updates the original item")
+        c.expect(listOf("Family"), f.unfiledMembershipTitles(native, l), "the edited row's provider labels")
+        c.expect(listOf("Work"), f.unfiledMembershipTitles(native, m), "a clean legacy row recovers its labels")
+        c.check(!f.dirty(l)) { "the edited row is clean after upload" }
+        c.check(!f.dirty(m)) { "recovering a clean row does not make it dirty" }
+        for (row in listOf(l, m)) c.check(f.certifiedLike(row, ref)) { "row $row certified after recovery" }
+        c.expect(listOf("Work"), serverCategories(f.serverContent("leg-m")), "the clean row's server labels are untouched")
+    }
+
+    /**
+     * #934 S5 (F5): a row whose provider revision (B) is newer than its cached item (A), as a download's committed
+     * prefix leaves it, never uploads A's labels. The prefix is deliberately modelled here as sync-adapter writes,
+     * not an injected provider fault; the real splitter is exercised by ContactLabelReproduction P9.
+     */
+    private fun staleCacheBasisNeverUploads(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Stale basis labels", listOf(
+            "stale-f" to catCard("stale-f", "CATEGORIES:Family", "TEL:5550140")))
+        val row = f.rawId(native, "stale-f")
+        val ref = f.rawString(row, ContactsContract.RawContacts.SYNC4)
+        c.check(ref != null) { "a downloaded contact is certified" }
+        f.changeRemote("stale-f", catCard("stale-f", "CATEGORIES:Work", "TEL:5550140", "NOTE:revision B"))
+        val etagB = f.serverEtag("stale-f")
+        val etagA = f.cachedEtag("stale-f")
+        categoryFixture(etagA != null && etagA != etagB) { "cache holds revision A while the server holds B" }
+        f.updateRawAsSyncAdapter(native, row, ContentValues().apply {
+            put(ContactsContract.RawContacts.SYNC2, etagB)
+            putNull(ContactsContract.RawContacts.SYNC4)
+            put(ContactsContract.RawContacts.DIRTY, 0)
+        })
+        categoryFixture(f.rawString(row, ContactsContract.RawContacts.SYNC2) == etagB &&
+            f.rawString(row, ContactsContract.RawContacts.SYNC4) == null && !f.dirty(row)) { "modelled committed prefix of revision B" }
+        f.recache()
+        f.addPhone(row, "5550141")
+        val itemsBefore = f.liveServerItems()
+        val uploads = f.itemUploadRequests().size
+        f.syncOk(native, c, "first sync after the edit")
+        val afterFirst = serverCategories(f.serverContent("stale-f"))
+        c.check("Family" !in afterFirst) { "the obsolete cached labels are never uploaded (run 1): $afterFirst" }
+        c.expect(listOf("Work"), afterFirst, "the server's current labels survive run 1")
+        c.expect(uploads, f.itemUploadRequests().size, "nothing is uploaded from an unsuitable basis in run 1")
+        c.expect(listOf("Work"), f.unfiledMembershipTitles(native, row), "the current server labels are projected")
+        c.check(f.dirty(row) && f.phones(row).contains("5550141")) { "the local edit is kept pending" }
+        f.syncOk(native, c, "second sync after the edit")
+        val final = f.serverContent("stale-f")
+        c.check("Family" !in serverCategories(final)) { "the obsolete cached labels are never uploaded (run 2)" }
+        c.expect(listOf("Work"), serverCategories(final), "run 2 uploads the current labels")
+        c.check(final.contains("5550141")) { "the local edit reaches the server" }
+        c.check(!f.dirty(row)) { "the row is clean after run 2" }
+        c.check(f.certifiedLike(row, ref)) { "the row is certified after run 2" }
+        c.expect(itemsBefore, f.liveServerItems(), "the original item is updated, no copy is created")
+    }
+
+    /** #934 S3 (F2): dirty rows whose cached item is missing are held, recovered by a listing, then uploaded once. */
+    private fun cacheMissHoldsThenRecovers(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Held labels", listOf(
+            "held-h" to catCard("held-h", "CATEGORIES:Family", "TEL:5550150"),
+            "held-c" to catCard("held-c", "CATEGORIES:Work"),
+            "held-x" to catCard("held-x", "CATEGORIES:Garden")))
+        val h = f.rawId(native, "held-h")
+        val clean = f.rawId(native, "held-c")
+        val x = f.rawId(native, "held-x")
+        val ref = f.rawString(h, ContactsContract.RawContacts.SYNC4)
+        c.check(ref != null) { "a downloaded contact is certified" }
+        f.stripCategoryProjectionAsSyncAdapter(native, listOf(h, clean, x))
+        f.deleteRemote("held-x")
+        f.recache()
+        for (uid in listOf("held-h", "held-c", "held-x")) f.unsetCached(uid)
+        categoryFixture(listOf("held-h", "held-c", "held-x").all { f.cachedEtag(it) == null }) { "cache entries removed" }
+        categoryFixture(f.unfiledGroups(native).isEmpty() && listOf(h, clean, x).all {
+            f.groupRowIds(it).isEmpty() && f.rawString(it, ContactsContract.RawContacts.SYNC4) == null && !f.dirty(it)
+        }) { "rows modelled as populated before the fix" }
+        val original = f.serverContent("held-h")
+        val heldItem = f.itemUid("held-h")
+        val itemsBefore = f.liveServerItems()
+        f.addPhone(h, "5550151")
+        f.addPhone(x, "5550152")
+        val uploads = f.itemUploadRequests().size
+        val lists = f.itemListRequests().size
+        f.syncOk(native, c, "run 1")
+        c.expect(uploads, f.itemUploadRequests().size, "held rows are not uploaded in the recovery run")
+        c.check(f.itemListRequests().size > lists) { "a held row makes the run list items" }
+        c.expect(original, f.serverContent("held-h"), "the original item is untouched in run 1")
+        c.expect(itemsBefore, f.liveServerItems(), "no copy is created in run 1")
+        c.check(f.dirty(h) && f.phones(h).contains("5550151")) { "the held row keeps its edit and stays dirty" }
+        c.expect(listOf("Family"), f.unfiledMembershipTitles(native, h), "the held row takes its labels from the listed item")
+        c.expect(listOf("Work"), f.unfiledMembershipTitles(native, clean), "a clean cache-miss row recovers when listed")
+        c.check(!f.dirty(clean) && f.certifiedLike(clean, ref)) { "the listed clean row is clean and certified" }
+        c.check("held-x" in f.liveUids(native) && f.dirty(x) && f.phones(x).contains("5550152")) {
+            "a held row whose item was deleted on the server keeps its local edit"
+        }
+        f.syncOk(native, c, "run 2")
+        val final = f.serverContent("held-h")
+        c.check(final.contains("5550151")) { "the held edit reaches the original item" }
+        c.expect(listOf("Family"), serverCategories(final), "the held row uploads its recovered labels")
+        c.expect(heldItem, f.rawString(h, ContactsContract.RawContacts.SOURCE_ID), "the held row stays bound to its original item")
+        c.check(!f.dirty(h) && f.certifiedLike(h, ref)) { "the held row is clean and certified after run 2" }
+        val itemsAfter = f.liveServerItems()
+        val added = itemsAfter.toMutableList().also { list -> itemsBefore.forEach { list.remove(it) } }
+        val releasedFile = f.rawString(x, ContactsContract.RawContacts.SOURCE_ID)
+        c.check(added.size <= 1 && added.all { releasedFile != null && it.startsWith("$releasedFile ") }) {
+            "at most one new item, and only for the row released after its server deletion: $added"
+        }
+        c.expect(1, itemsAfter.count { it.endsWith(" held-h") }, "exactly one server item carries the held contact")
+        c.check(!f.dirty(x) && f.certifiedLike(x, ref)) { "the released row's edit uploads and certifies it" }
+    }
+
+    /**
+     * #934 S6 (code review F2): a held edit whose listed live item cannot supply individual labels (here the
+     * same item has become a group vCard on the server) was observed, not absent. It must stay held: never
+     * released, never uploaded over that item, and the run is not reported as a success.
+     */
+    private fun observedLiveUnusableItemStaysHeld(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Type-changed labels", listOf(
+            "tc-i" to catCard("tc-i", "CATEGORIES:Family", "TEL:5550160")))
+        val row = f.rawId(native, "tc-i")
+        val itemUid = f.itemUid("tc-i")
+        f.stripCategoryProjectionAsSyncAdapter(native, listOf(row))
+        f.changeRemote("tc-i", nativeGroupVcard("tc-i", "Converted group", emptyList()))
+        f.recache()
+        f.unsetCached("tc-i")
+        categoryFixture(f.cachedEtag("tc-i") == null && f.rawString(row, ContactsContract.RawContacts.SYNC4) == null &&
+            !f.dirty(row) && f.rawString(row, ContactsContract.RawContacts.SOURCE_ID) == itemUid) {
+            "an unprojected server-backed row whose cached item is missing"
+        }
+        val groupCard = f.serverContent("tc-i")
+        categoryFixture(groupCard.contains("X-ADDRESSBOOKSERVER-KIND:group")) { "the same server item is now a group vCard" }
+        val itemsBefore = f.liveServerItems()
+        f.addPhone(row, "5550161")
+        for (run in 1..2) {
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.sync(native)
+            c.check(outcome != success) { "run $run: a held edit whose listed item is unusable is not reported as a successful sync" }
+            c.expect(uploads, f.itemUploadRequests().size, "run $run: nothing is uploaded over the observed item")
+            c.expect(groupCard, f.serverContent("tc-i"), "run $run: the server's group vCard is untouched")
+            c.expect(itemsBefore, f.liveServerItems(), "run $run: no server item is created")
+            c.check(f.dirty(row) && f.phones(row).contains("5550161")) { "run $run: the local edit stays pending" }
+            c.check(f.rawString(row, ContactsContract.RawContacts.SYNC4) == null) { "run $run: the row is neither released nor certified" }
+            c.expect(itemUid, f.rawString(row, ContactsContract.RawContacts.SOURCE_ID), "run $run: the row stays bound to its item")
+        }
+    }
+
+    /**
+     * #934 S7 (code review F3): a child address book without the creation metadata a run captures its exact
+     * destination from (as an older version left it), whose owner still resolves. A held edit whose item a
+     * completed listing does not return live must not be released there: the run fails and the edit is kept.
+     */
+    private fun uncapturedDestinationNeverReleases(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Uncaptured labels", listOf(
+            "unc-r" to catCard("unc-r", "CATEGORIES:Family", "TEL:5550170")))
+        val row = f.rawId(native, "unc-r")
+        f.stripCategoryProjectionAsSyncAdapter(native, listOf(row))
+        f.deleteRemote("unc-r")
+        f.recache()
+        f.unsetCached("unc-r")
+        f.manager.setUserData(native, LocalAddressBook.USER_DATA_CREATION_ID, null)
+        categoryFixture(f.manager.getUserData(native, LocalAddressBook.USER_DATA_CREATION_ID) == null &&
+            LocalAddressBook(f.context, native, null).mainAccountOrNull == f.main) {
+            "an uncorrelated child row that still resolves its owner"
+        }
+        categoryFixture(f.cachedEtag("unc-r") == null && f.rawString(row, ContactsContract.RawContacts.SYNC4) == null && !f.dirty(row)) {
+            "an unprojected server-backed row whose cached item is missing"
+        }
+        val itemsBefore = f.liveServerItems()
+        f.addPhone(row, "5550171")
+        for (run in 1..2) {
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.sync(native)
+            c.expect(SyncManager.ProviderOutcome.FAILURE, outcome, "run $run: a release without a captured destination fails the run")
+            c.expect(uploads, f.itemUploadRequests().size, "run $run: nothing is uploaded")
+            c.expect(itemsBefore, f.liveServerItems(), "run $run: no server item is created")
+            c.check(f.dirty(row) && f.phones(row).contains("5550171")) { "run $run: the local edit stays pending" }
+            c.check(f.rawString(row, ContactsContract.RawContacts.SYNC4) == null) { "run $run: the held row is not released" }
+        }
+    }
+
+    /**
+     * Runs [block] with a forwarding fault session of the real Contacts provider. The session is always closed;
+     * a cleanup failure is thrown as a FIXTURE error with the block's own failure attached, never swallowed.
+     */
+    private fun <T> withFaultSession(f: NativeStore, block: (io.silentsuite.sync.resource.CategoryQueryFaultProvider.Session) -> T): T {
+        val session = io.silentsuite.sync.resource.CategoryQueryFaultProvider.open(f.context)
+        var primary: Throwable? = null
+        try {
+            return block(session)
+        } catch (t: Throwable) {
+            primary = t
+            throw t
+        } finally {
+            val cleanup = runCatching { session.close() }.exceptionOrNull()
+            if (cleanup != null) {
+                primary?.let { cleanup.addSuppressed(it) }
+                throw cleanup
+            }
+        }
+    }
+
+    /** One forwarded run with nothing armed: proves the transport before a fault is measured. */
+    private fun NativeStore.unarmedTransportSync(native: Account, session: io.silentsuite.sync.resource.CategoryQueryFaultProvider.Session) {
+        val before = session.forwardedQueries
+        val outcome = syncThrough(native, session.client)
+        categoryFixture(outcome == success && session.forwardedQueries > before) {
+            "an unarmed sync through the forwarding client succeeds and forwards queries (outcome $outcome)"
+        }
+    }
+
+    /** One run with [fault] armed; the fault must be reached, otherwise the scenario measured nothing. */
+    private fun NativeStore.faultedSync(native: Account, session: io.silentsuite.sync.resource.CategoryQueryFaultProvider.Session,
+                                        fault: io.silentsuite.sync.resource.CategoryQueryFaultProvider.Fault): SyncManager.ProviderOutcome {
+        session.arm(fault)
+        val outcome = try {
+            syncThrough(native, session.client)
+        } finally {
+            session.disarm()
+        }
+        categoryFixture(fault.hits.get() > 0) { "the ${fault.name} query was reached and answered with no cursor" }
+        return outcome
+    }
+
+    /** #934 S8 (code review F1): an unreadable label-group classification never uploads a contact without its labels. */
+    private fun nullClassificationNeverUploads(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Null classification labels", listOf(
+            "nc-a" to catCard("nc-a", "CATEGORIES:Family,Work", "TEL:5550180")))
+        val row = f.rawId(native, "nc-a")
+        if (f.unfiledMembershipTitles(native, row) != listOf("Family", "Work")) c.stop("the downloaded labels are projected before the fault")
+        val serverBefore = f.serverContent("nc-a")
+        val itemsBefore = f.liveServerItems()
+        withFaultSession(f) { session ->
+            f.unarmedTransportSync(native, session)
+            f.addPhone(row, "5550181")
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.faultedSync(native, session, io.silentsuite.sync.resource.CategoryQueryFaultProvider.categoryGroupClassification())
+            c.check(outcome != success) { "an unknown label classification is not reported as a successful sync" }
+            c.expect(uploads, f.itemUploadRequests().size, "nothing is uploaded while labels are unknown")
+            c.expect(serverBefore, f.serverContent("nc-a"), "the server's labels are untouched")
+            c.expect(itemsBefore, f.liveServerItems(), "no server item is created")
+            c.expect(listOf("Family", "Work"), f.unfiledMembershipTitles(native, row), "the provider label memberships are kept")
+            c.check(f.dirty(row) && f.phones(row).contains("5550181")) { "the local edit stays pending" }
+        }
+        f.syncOk(native, c, "recovery sync without a fault")
+        val final = f.serverContent("nc-a")
+        c.expect(listOf("Family", "Work"), serverCategories(final), "the kept edit uploads with its labels once they are readable")
+        c.check(final.contains("5550181") && !f.dirty(row)) { "the kept edit reaches the server" }
+    }
+
+    /** #934 S9 (code review F1): an unreadable used-membership enumeration deletes no label group. */
+    private fun nullMembershipEnumerationDeletesNothing(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Null enumeration labels", listOf(
+            "ne-a" to catCard("ne-a", "CATEGORIES:Family"),
+            "ne-b" to catCard("ne-b", "CATEGORIES:Work")))
+        val a = f.rawId(native, "ne-a")
+        val b = f.rawId(native, "ne-b")
+        val groupsBefore = f.unfiledGroups(native)
+        if (groupsBefore.values.sorted() != listOf("Family", "Work")) c.stop("the downloaded label groups exist before the fault")
+        withFaultSession(f) { session ->
+            f.unarmedTransportSync(native, session)
+            c.expect(groupsBefore, f.unfiledGroups(native), "a readable enumeration with every label group in use deletes nothing")
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.faultedSync(native, session, io.silentsuite.sync.resource.CategoryQueryFaultProvider.usedMembershipEnumeration())
+            c.check(outcome != success) { "an unknown membership enumeration is not reported as a successful sync" }
+            c.expect(groupsBefore, f.unfiledGroups(native), "no label group is deleted while memberships are unknown")
+            c.expect(listOf("Family"), f.unfiledMembershipTitles(native, a), "ne-a keeps its label membership")
+            c.expect(listOf("Work"), f.unfiledMembershipTitles(native, b), "ne-b keeps its label membership")
+            c.expect(uploads, f.itemUploadRequests().size, "nothing is uploaded")
+        }
+        f.addPhone(a, "5550190")
+        f.syncOk(native, c, "native edit after the fault")
+        c.expect(listOf("Family"), serverCategories(f.serverContent("ne-a")), "a later edit uploads the kept labels")
+    }
+
+    /** #934 S10 (code review F1): an unreadable unprojected-row scan stops recovery and upload instead of skipping them. */
+    private fun nullCandidateScanStopsRecovery(f: NativeStore, c: CategoryChecks) {
+        val native = f.populated("Null scan labels", listOf(
+            "ns-l" to catCard("ns-l", "CATEGORIES:Family", "TEL:5550200")))
+        val row = f.rawId(native, "ns-l")
+        val serverBefore = f.serverContent("ns-l")
+        val itemsBefore = f.liveServerItems()
+        withFaultSession(f) { session ->
+            f.unarmedTransportSync(native, session)
+            f.stripCategoryProjectionAsSyncAdapter(native, listOf(row))
+            categoryFixture(f.cachedEtag("ns-l") != null && f.rawString(row, ContactsContract.RawContacts.SYNC4) == null &&
+                f.groupRowIds(row).isEmpty() && !f.dirty(row)) { "a row modelled as populated before the fix, with its cached item" }
+            f.addPhone(row, "5550201")
+            val uploads = f.itemUploadRequests().size
+            val outcome = f.faultedSync(native, session, io.silentsuite.sync.resource.CategoryQueryFaultProvider.unprojectedCandidateScan())
+            c.check(outcome != success) { "an unknown unprojected-row scan is not reported as a successful sync" }
+            c.expect(uploads, f.itemUploadRequests().size, "nothing is uploaded while unprojected rows are unknown")
+            c.expect(serverBefore, f.serverContent("ns-l"), "the server's labels are untouched")
+            c.expect(itemsBefore, f.liveServerItems(), "no server item is created")
+            c.check(f.dirty(row) && f.phones(row).contains("5550201")) { "the local edit stays pending" }
+            c.check(f.rawString(row, ContactsContract.RawContacts.SYNC4) == null) { "the row is not certified without recovery" }
+        }
+        f.syncOk(native, c, "recovery sync without a fault")
+        val final = f.serverContent("ns-l")
+        c.expect(listOf("Family"), serverCategories(final), "recovery restores the labels before the kept edit uploads")
+        c.check(final.contains("5550201") && !f.dirty(row)) { "the kept edit reaches the server" }
+        c.expect(listOf("Family"), f.unfiledMembershipTitles(native, row), "the provider labels are recovered")
+    }
+
+    /**
+     * #934 S11 (visibility): before labels were mapped, a labelled contact without group-vCard membership was
+     * ungrouped and shown through the address book's UNGROUPED_VISIBLE=1 setting. Its new label-group
+     * memberships must keep it visible (the provider uses MAX(GROUP_VISIBLE) once a contact has any membership),
+     * and a visibility the user later chooses for a label group must not be reset by a sync.
+     */
+    private fun labelledContactsStayVisible(f: NativeStore, c: CategoryChecks) {
+        val resolver = f.context.contentResolver
+        fun <T> settle(timeoutMillis: Long, read: () -> T?, done: (T?) -> Boolean): T? {
+            val deadline = SystemClock.uptimeMillis() + timeoutMillis
+            var value = read()
+            while (!done(value) && SystemClock.uptimeMillis() < deadline) {
+                SystemClock.sleep(25)
+                value = read()
+            }
+            return value
+        }
+        fun contactId(rawId: Long): Long? = f.rawString(rawId, ContactsContract.RawContacts.CONTACT_ID)?.toLong()
+        fun inVisibleGroup(contactId: Long): Int? = resolver.query(
+            ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId),
+            arrayOf(ContactsContract.Contacts.IN_VISIBLE_GROUP), null, null, null)
+            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getInt(0) else null }
+            ?: throw IllegalStateException("FIXTURE #934: null contacts cursor")
+        fun groupVisible(groupId: Long): Int? = resolver.query(
+            ContentUris.withAppendedId(ContactsContract.Groups.CONTENT_URI, groupId),
+            arrayOf(ContactsContract.Groups.GROUP_VISIBLE), null, null, null)
+            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getInt(0) else null }
+            ?: throw IllegalStateException("FIXTURE #934: null groups cursor")
+
+        val native = f.populated("Visible labels", listOf(
+            "vis-u" to catCard("vis-u", "TEL:5550210"),
+            "vis-l" to catCard("vis-l", "CATEGORIES:Family", "TEL:5550211")))
+        val ungroupedVisible = resolver.query(ContactsContract.Settings.CONTENT_URI,
+            arrayOf(ContactsContract.Settings.UNGROUPED_VISIBLE),
+            "${ContactsContract.Settings.ACCOUNT_NAME}=? AND ${ContactsContract.Settings.ACCOUNT_TYPE}=?",
+            arrayOf(native.name, native.type), null)
+            ?.use { cursor -> if (cursor.moveToNext() && !cursor.isNull(0)) cursor.getInt(0) else null }
+        categoryFixture(ungroupedVisible == 1) { "the address book has the production UNGROUPED_VISIBLE=1 setting (was $ungroupedVisible)" }
+        val unlabelled = f.rawId(native, "vis-u")
+        val labelled = f.rawId(native, "vis-l")
+        categoryFixture(f.groupRowIds(unlabelled).isEmpty()) { "the control contact has no group membership" }
+        val family = f.unfiledGroups(native).entries.firstOrNull { it.value == "Family" }?.key
+            ?: c.stop("the downloaded label has no label group")
+        if (family !in f.groupRowIds(labelled)) c.stop("the labelled contact is not in its label group")
+
+        val controlId = settle(10_000, { contactId(unlabelled) }) { it != null }
+        val labelledId = settle(10_000, { contactId(labelled) }) { it != null }
+        categoryFixture(controlId != null && labelledId != null) { "both raw contacts were aggregated" }
+        val control = settle(5_000, { inVisibleGroup(controlId!!) }) { it == 1 }
+        categoryFixture(control == 1) { "the unlabelled control contact is visible as ungrouped (was $control)" }
+
+        val visible = settle(5_000, { inVisibleGroup(labelledId!!) }) { it == 1 }
+        c.expect(1, visible, "a contact whose only memberships are label groups stays visible")
+        c.expect(1, groupVisible(family), "a new label group is created visible")
+
+        // A visibility the user chooses for a label group (a non-sync-adapter update, as a Contacts app makes it)
+        // is theirs: a later sync that re-delivers the contact keeps it.
+        val chosen = resolver.update(ContentUris.withAppendedId(ContactsContract.Groups.CONTENT_URI, family),
+            ContentValues().apply { put(ContactsContract.Groups.GROUP_VISIBLE, 0) }, null, null)
+        categoryFixture(chosen == 1 && groupVisible(family) == 0) { "the user's visibility choice was stored" }
+        f.changeRemote("vis-l", catCard("vis-l", "CATEGORIES:Family", "TEL:5550212"))
+        f.recache()
+        f.syncOk(native, c, "re-delivery after a visibility choice")
+        categoryFixture(f.phones(labelled).contains("5550212")) { "the re-delivered contact was applied" }
+        c.expect(0, groupVisible(family), "a sync keeps the visibility the user chose for a label group")
+    }
+
     /** Populates [entries] into a new native address book through a real sync and returns it. */
     private fun NativeStore.populated(name: String, entries: List<Pair<String, String>>): Account {
         book(name, entries)
@@ -1873,6 +2570,14 @@ class SiblingRoutesRuntimeTest {
         assertEquals("every live remote contact is in the recreated native address book",
             listOf("a", "b", "c", "d", "e"), f.liveUids(recreated))
         assertEquals(setOf("a", "b"), f.members(recreated, f.groupId(recreated, "g")))
+        // #934 additions, each in its own book after the original assertions above.
+        runCategoryScenarios(
+            "S2 legacy live-cache recovery" to { c: CategoryChecks -> legacyRowsRecoverFromCache(f, c) },
+            "S5 stale cache basis" to { c: CategoryChecks -> staleCacheBasisNeverUploads(f, c) },
+            "S8 null label-group classification" to { c: CategoryChecks -> nullClassificationNeverUploads(f, c) },
+            "S9 null used-membership enumeration" to { c: CategoryChecks -> nullMembershipEnumerationDeletesNothing(f, c) },
+            "S10 null unprojected-candidate scan" to { c: CategoryChecks -> nullCandidateScanStopsRecovery(f, c) },
+        )
     }
 
     @Test
@@ -1891,6 +2596,12 @@ class SiblingRoutesRuntimeTest {
         assertTrue(f.phones(f.rawId(native, "c")).contains("5550102"))
         assertTrue(f.serverContent("c").contains("5550102"))
         assertTrue(f.serverDeleted("d"))
+        // #934 additions, each in its own book after the original assertions above.
+        runCategoryScenarios(
+            "S1 label round trip" to { c: CategoryChecks -> categoryLabelRoundTrip(f, c) },
+            "S4 provider-created first upload" to { c: CategoryChecks -> nativeCreatedFirstUpload(f, c) },
+            "S11 labelled contacts stay visible" to { c: CategoryChecks -> labelledContactsStayVisible(f, c) },
+        )
     }
 
     @Test
@@ -2330,6 +3041,12 @@ class SiblingRoutesRuntimeTest {
         assertTrue(f.dirty(f.rawId(native, "f")))
         assertEquals(success, f.sync(native))
         assertTrue(f.serverContent("f").contains("5550104"))
+        // #934 addition, in its own book after the original assertions above.
+        runCategoryScenarios(
+            "S3 dirty cache-miss hold, listing and release" to { c: CategoryChecks -> cacheMissHoldsThenRecovers(f, c) },
+            "S6 observed live unusable item stays held" to { c: CategoryChecks -> observedLiveUnusableItemStaysHeld(f, c) },
+            "S7 uncaptured destination never releases" to { c: CategoryChecks -> uncapturedDestinationNeverReleases(f, c) },
+        )
     }
 
     @Test
