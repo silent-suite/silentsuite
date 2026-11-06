@@ -257,6 +257,16 @@ interface CivilOccurrence {
   civil: number;
 }
 
+/**
+ * True when the host calendar has the civil date of `civil` (civil ms). A host that skipped an
+ * entire day (e.g. Pacific/Apia on 2011-12-30) resolves that date's midnight to a later date;
+ * hour gaps, including a gap at midnight, resolve within the same date.
+ */
+function hostDateExists(civil: number): boolean {
+  const day = Math.floor(civil / DAY_MS);
+  return Math.floor(HOST_ZONE.toCivil(HOST_ZONE.fromCivil(day * DAY_MS)) / DAY_MS) === day;
+}
+
 function expandWithCivil(
   rrule: string,
   dtstart: Date,
@@ -286,15 +296,25 @@ function expandWithCivil(
       : zone.toCivil(dtstart.getTime()),
   );
   const dtstartDay = Math.floor(civilDtstart.getTime() / DAY_MS);
-  let current = new Date(civilDtstart.getTime());
+  const firstCivil = civilDtstart.getTime();
+  let current = new Date(firstCivil);
   let count = 0;
   let iterations = 0;
 
   while (iterations < MAX_ITERATIONS) {
     iterations++;
 
+    // Host calendar: a date the host skipped entirely is not a candidate of its own. It takes
+    // the real date the host resolves it to (as native Date stepping does) before filtering,
+    // counting and stepping, so no duplicate or impossible weekday/month-day occurs.
+    if (zone === HOST_ZONE && !hostDateExists(current.getTime())) {
+      current = new Date(HOST_ZONE.toCivil(HOST_ZONE.fromCivil(current.getTime())));
+    }
+
     const civil = current.getTime();
-    let instant: number | undefined;
+    // The supplied DTSTART instant is the first occurrence (an ambiguous local time keeps the
+    // instant given rather than the one its wall clock would resolve to).
+    let instant: number | undefined = civil === firstCivil ? dtstart.getTime() : undefined;
     const instantOf = (): number => (instant ??= zone.fromCivil(civil));
 
     // Stop conditions (instant semantics; civil prefilter avoids conversion far from bounds)
