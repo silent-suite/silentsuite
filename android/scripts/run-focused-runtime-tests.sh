@@ -281,6 +281,51 @@ elif [[ "${api_level}:${shard}" == "29:account-dashboard" ]]; then
   }
   trap restore_requested_results EXIT
 
+  # Read-only observation before any test runs: zygote start order against the init "boot" action
+  # that sets dalvik.vm.heapsize, and system_server's effective GC limit for this boot. It changes no
+  # device state and its outcome never affects the shard result.
+  observe_boot_heap() (
+    set +e
+    tag="boot-heap[pretest]"
+    for prop in dalvik.vm.heapsize dalvik.vm.heapgrowthlimit dalvik.vm.heapstartsize \
+        ro.kernel.qemu.dalvik.vm.heapsize ro.boottime.zygote ro.boottime.qemu-props; do
+      printf '%s getprop.%s=%s\n' "${tag}" "${prop}" "$(timeout 20s adb shell getprop "${prop}" | tr -d '\r')"
+    done
+    avd_dir="${ANDROID_AVD_HOME:-${HOME}/.android/avd}"
+    for ini in "${avd_dir}"/*.avd/config.ini "${avd_dir}"/*.avd/hardware-qemu.ini; do
+      [[ -f "${ini}" ]] || continue
+      grep -E '^(vm\.heapSize|hw\.ramSize|hw\.device\.name|hw\.lcd\.(width|height|density))[ =]' "${ini}" \
+        | sed "s|^|${tag} $(basename "${ini}") |"
+    done
+    kernel_log="$(timeout 20s adb shell dmesg 2>/dev/null)"
+    [[ -n "${kernel_log}" ]] || kernel_log="$(timeout 20s adb shell su 0 dmesg 2>/dev/null)"
+    printf '%s\n' "${kernel_log}" | tr -d '\r' \
+      | grep -E "starting service '(zygote|zygote_secondary|qemu-props)'|processing action \((zygote-start|early-boot|boot)\)" \
+      | head -n 20 | sed "s|^|${tag} dmesg |"
+    for prop in ro.zygote init.svc.zygote init.svc.qemu-props; do
+      printf '%s getprop.%s=%s\n' "${tag}" "${prop}" "$(timeout 20s adb shell getprop "${prop}" | tr -d '\r')"
+    done
+    # The image's own init sources and heap defaults: hash plus whitelisted lines only, never whole files.
+    for guest_path in /vendor/etc/init/hw/init.ranchu.rc /system/etc/init/hw/init.rc \
+        /system/etc/init/hw/init.zygote32.rc /system/build.prop /vendor/build.prop /vendor/bin/qemu-props; do
+      digest="$(timeout 20s adb shell sha256sum "${guest_path}" 2>/dev/null | tr -d '\r' | cut -d ' ' -f 1)"
+      printf '%s file %s sha256=%s\n' "${tag}" "${guest_path}" "${digest:-unreadable}"
+      [[ -n "${digest}" && "${guest_path}" != */qemu-props ]] || continue
+      timeout 20s adb shell cat "${guest_path}" 2>/dev/null | tr -d '\r' \
+        | grep -nE 'dalvik\.vm\.heap|^on (late-init|zygote-start|early-boot|boot)|trigger (zygote-start|early-boot|boot)$|start zygote|^service (zygote|qemu-props)|^ +class (core|main)' \
+        | head -n 40 | sed "s|^|${tag} line ${guest_path}:|"
+    done
+    server_pid="$(timeout 20s adb shell pidof system_server | tr -d '\r')"
+    if [[ -n "${server_pid}" ]]; then
+      timeout 20s adb logcat -d -b main -v threadtime | tr -d '\r' \
+        | grep -E "^[0-9-]+ [0-9:.]+ +${server_pid} +[0-9]+ I system_server: .*(Clamp target GC heap|[0-9]+MB/[0-9]+MB)" \
+        | head -n 5 | sed "s|^|${tag} system_server |"
+    fi
+    timeout 20s adb logcat -d -b all -v threadtime | tr -d '\r' \
+      | grep -E ">>>>>> START com\.android\.internal\.os\.ZygoteInit" | head -n 4 | sed "s|^|${tag} logcat |"
+  )
+  observe_boot_heap || true
+
   timeout --signal=TERM --kill-after=10s 600s \
     ./gradlew app:connectedDebugAndroidTest --no-daemon -PrequireEtebase16Kb=true -Pandroid.testInstrumentationRunnerArguments.class="${requested_selector}" "${scenario_args[@]}"
   save_requested_results

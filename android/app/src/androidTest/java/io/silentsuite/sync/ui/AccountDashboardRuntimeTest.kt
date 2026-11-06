@@ -46,6 +46,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
+private val appHeapObserved = AtomicBoolean(false)
+
 @RunWith(AndroidJUnit4::class)
 class AccountDashboardRuntimeTest {
     @Test fun requestedQueuedRunningSettlingAndTerminalStatesNeverFlashGenericAttention() {
@@ -1117,6 +1119,7 @@ class AccountDashboardRuntimeTest {
         block: (android.content.Context, Account, ActivityScenario<AccountActivity>) -> Unit,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
+        observeApi29AppHeapOnce(context)
         val manager = AccountManager.get(context)
         val account = Account("dashboard-${System.nanoTime()}@example.invalid", App.accountType)
         check(manager.addAccountExplicitly(account, null, null))
@@ -1178,6 +1181,21 @@ class AccountDashboardRuntimeTest {
             context.getSharedPreferences("sync_status_v1", 0).edit().clear().commit()
             AppPreferences(context).hideTaskAppReminder = previousHideTaskAppReminder
         }
+    }
+
+    // Content-free API 29 observation for CI heap diagnosis: this process's actual VM limit next to the
+    // public memory-class values. Logged once per instrumentation process, before any Activity work.
+    // It reads no account data and asserts nothing.
+    private fun observeApi29AppHeapOnce(context: Context) {
+        if (Build.VERSION.SDK_INT != 29 || !appHeapObserved.compareAndSet(false, true)) return
+        val runtime = Runtime.getRuntime()
+        val activityManager = context.getSystemService(android.app.ActivityManager::class.java)
+        android.util.Log.i(
+            "AppHeapObservation",
+            "pid=${android.os.Process.myPid()} maxMemoryBytes=${runtime.maxMemory()} " +
+                "totalMemoryBytes=${runtime.totalMemory()} memoryClassMb=${activityManager?.memoryClass} " +
+                "largeMemoryClassMb=${activityManager?.largeMemoryClass}",
+        )
     }
 
     private fun removeAccountAndWait(manager: AccountManager, account: Account) {
