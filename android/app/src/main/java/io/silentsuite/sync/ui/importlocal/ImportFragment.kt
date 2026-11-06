@@ -11,7 +11,6 @@ import android.provider.ContactsContract
 import androidx.fragment.app.DialogFragment
 import androidx.fragment.app.commit
 import at.bitfire.ical4android.*
-import at.bitfire.vcard4android.BatchOperation
 import at.bitfire.vcard4android.Contact
 import at.bitfire.vcard4android.ContactsStorageException
 import ezvcard.io.CannotParseException
@@ -438,17 +437,7 @@ class ImportFragment : DialogFragment() {
                                     }
 
                                     uidToLocalId[contact.uid] = localContact.id!!
-
-                                    // Apply categories
-                                    val batch = BatchOperation(localAddressBook.provider!!)
-                                    for (category in contact.categories) {
-                                        if (!identity.validate(context))
-                                            return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
-                                        localContact.addToGroup(batch, localAddressBook.findOrCreateGroup(category))
-                                    }
-                                    if (!identity.validate(context))
-                                        return safeFailureResult(R.string.import_dialog_failed_generic, "The account route is no longer valid.")
-                                    batch.commit()
+                                    // The contact's labels (CATEGORIES) are projected by createAsDirty/updateAsDirty.
 
                                     if (addedContact)
                                         result.added++
