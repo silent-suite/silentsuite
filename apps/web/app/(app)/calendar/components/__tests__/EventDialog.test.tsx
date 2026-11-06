@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
 import { deserializeCalendarEvent, serializeCalendarEvent } from '@silentsuite/core'
+import { expandEventRecurrence, fromVEvent } from '@silentsuite/core'
 import { EventDialog, formatEventDateInput, formatEventTimeInput, parseEventDateInput, parseEventTimeInput } from '../EventDialog'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
@@ -488,6 +489,127 @@ describe('EventDialog anchor transitions (#886)', () => {
       'DTSTART:20260601T090000Z',
       'DTEND:20260601T100000Z',
     ])
+  })
+})
+
+// #886 F1: a gap-start DTSTART keeps its original wall clock through the editor. Recurring
+// saves go through the real "Edit recurring event" scope dialog to updateRecurringEvent;
+// standalone saves reach updateEvent. The captured patch is merged as the store does and
+// serialized/reloaded with the real codec.
+
+describe('EventDialog gap-start DTSTART (#886 F1)', () => {
+  beforeEach(() => {
+    mocks.createEvent.mockReset()
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.updateRecurringEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  const gapEvent = (start: string, end: string, rrule: string | null, uid = 'gap-dialog'): CalendarEvent =>
+    fromVEvent([
+      'BEGIN:VEVENT', `UID:${uid}`, 'SUMMARY:Gap event',
+      `DTSTART;TZID=America/Los_Angeles:${start}`, `DTEND;TZID=America/Los_Angeles:${end}`,
+      ...(rrule ? [`RRULE:${rrule}`] : []),
+      'END:VEVENT',
+    ].join('\r\n'))
+  const G = () => gapEvent('20260308T023000', '20260308T043000', 'FREQ=WEEKLY;COUNT=3')
+  const GS = () => gapEvent('20260308T023045', '20260308T043045', 'FREQ=WEEKLY;COUNT=3')
+  const S = () => gapEvent('20260308T023000', '20260308T043000', null, 'gap-standalone')
+  const march = { start: new Date('2026-03-01T00:00:00Z'), end: new Date('2026-04-01T00:00:00Z') }
+  const dtstart = (ics: string) => ics.split('\r\n').find((l) => l.startsWith('DTSTART'))
+
+  async function savedRecurringPatch(scope: RegExp) {
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+    fireEvent.click(within(scopeDialog).getByRole('button', { name: scope }))
+    await waitFor(() => expect(mocks.updateRecurringEvent).toHaveBeenCalledTimes(1))
+    return mocks.updateRecurringEvent.mock.calls[0]! as [string, Partial<CalendarEvent>, string, Date]
+  }
+
+  it('row 18: shows the original 02:30 start for a recurring gap-start event', () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    expect(screen.getByLabelText('Start time')).toHaveValue('02:30')
+  })
+
+  it.each([
+    [/All events/, 'all'],
+    [/This event/, 'this'],
+  ] as const)('row 19: a title-only save with seconds keeps exact instants (scope %s)', async (scopeName, scope) => {
+    const event = GS()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed gap' } })
+
+    const [id, patch, chosenScope, instance] = await savedRecurringPatch(scopeName)
+
+    expect(id).toBe(event.id)
+    expect(chosenScope).toBe(scope)
+    expect(instance.getTime()).toBe(event.startDate.getTime())
+    expect(patch.title).toBe('Renamed gap')
+    expect(patch).not.toHaveProperty('startDate')
+    expect(patch).not.toHaveProperty('endDate')
+    expect(patch).not.toHaveProperty('startWallClock')
+    const ics = serializeCalendarEvent({ ...event, ...patch })
+    expect(dtstart(ics)).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023045')
+    expect(expandEventRecurrence(deserializeCalendarEvent(ics), march).map((d) => d.toISOString())).toEqual([
+      '2026-03-08T10:30:45.000Z',
+      '2026-03-15T09:30:45.000Z',
+      '2026-03-22T09:30:45.000Z',
+    ])
+  })
+
+  it('row 20a (field): retyping the start time explicitly clears the wall clock', async () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '03:30' } })
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Retimed' } })
+
+    const [, patch] = await savedRecurringPatch(/All events/)
+
+    expect('startWallClock' in patch).toBe(true)
+    expect(patch.startWallClock).toBeUndefined()
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toBe('DTSTART;TZID=America/Los_Angeles:20260308T033000')
+  })
+
+  it('row 20b (field): a non-equivalent zone change explicitly clears the wall clock', async () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event timezone'), { target: { value: 'Europe/Berlin' } })
+
+    const [, patch] = await savedRecurringPatch(/All events/)
+
+    expect(patch.timezone).toBe('Europe/Berlin')
+    expect('startWallClock' in patch).toBe(true)
+    expect(patch.startWallClock).toBeUndefined()
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toMatch(/^DTSTART;TZID=Europe\/Berlin:/)
+  })
+
+  it('row 20c (field): switching to all-day explicitly clears the wall clock', async () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.click(screen.getByLabelText('All day'))
+
+    const [, patch] = await savedRecurringPatch(/All events/)
+
+    expect(patch.allDay).toBe(true)
+    expect('startWallClock' in patch).toBe(true)
+    expect(patch.startWallClock).toBeUndefined()
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toMatch(/^DTSTART;VALUE=DATE:/)
+  })
+
+  it('row 20s: a standalone title-only save keeps the original gap DTSTART', async () => {
+    const event = S()
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed standalone' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+
+    const patch = mocks.updateEvent.mock.calls[0]![1] as Partial<CalendarEvent>
+    expect(patch).not.toHaveProperty('startDate')
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
   })
 })
 

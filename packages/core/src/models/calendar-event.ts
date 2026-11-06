@@ -1,7 +1,7 @@
 import { parseVEvent, generateVEvent } from '../utils/ical-parser.js';
 import type { VEvent, VAlarm } from '../utils/ical-parser.js';
-import { wallTimeToInstant } from '../utils/zoned-time.js';
-import { expandRecurrence } from '../utils/recurrence.js';
+import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
+import { expandRecurrence, occurrenceWallClock } from '../utils/recurrence.js';
 import type { DateRange } from './types.js';
 
 export interface CalendarEvent {
@@ -28,6 +28,10 @@ export interface CalendarEvent {
    *  Such events keep host-local semantics and are written back floating. Omitted otherwise.
    *  `allDay` and `timezone` take precedence over this flag. */
   floating?: true;
+  /** Intended DTSTART wall clock (`YYYYMMDDTHHMMSS`) of a timed TZID event whose wall time does
+   *  not exist in its zone (a DST gap), so it cannot be recovered from `startDate`. Present only
+   *  in that case. Used only while it still resolves to `startDate` in `timezone`. */
+  startWallClock?: string;
   created: Date;
   updated: Date;
 }
@@ -131,6 +135,66 @@ export function isFloatingICalDateTime(value: string, params?: Record<string, st
   return !params?.['TZID'];
 }
 
+/** Decode a `YYYYMMDDTHHMMSS` wall clock to civil ms (`Date.UTC(fields)`), or null. */
+function wallClockToCivil(wall: string): number | null {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(wall);
+  if (!m) return null;
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]));
+}
+
+function civilToWallClock(civil: number): string {
+  const d = new Date(civil);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}`;
+}
+
+/**
+ * For a timed iCalendar wall-clock value (Z-less DATE-TIME text) in a zone Intl knows: returns the
+ * normalized `YYYYMMDDTHHMMSS` value when that wall time does not round-trip through its resolved
+ * instant (it lies in a DST gap); otherwise undefined.
+ */
+export function gapWallClock(timeZone: string | undefined, value: string): string | undefined {
+  if (!timeZone || !isKnownTimeZone(timeZone)) return undefined;
+  const clean = value.replace(/[^0-9TZ]/g, '');
+  if (clean.length < 15 || clean.endsWith('Z')) return undefined;
+  const wall = clean.slice(0, 15);
+  const civil = wallClockToCivil(wall);
+  if (civil === null) return undefined;
+  const instant = wallTimeToInstant(timeZone, civil);
+  if (instant === null) return undefined;
+  return civilToWallClock(wallTimeInZone(timeZone, instant)) === wall ? undefined : wall;
+}
+
+/**
+ * The event's `startWallClock` if it is still consistent with the event: timed, with a known
+ * `timezone`, and resolving to exactly `startDate`. Otherwise undefined (callers then derive the
+ * wall clock from `startDate`).
+ */
+export function validStartWallClock(
+  event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'startDate' | 'startWallClock'>,
+): string | undefined {
+  const wall = event.startWallClock;
+  const timeZone = event.timezone;
+  if (!wall || event.allDay || !timeZone || !isKnownTimeZone(timeZone)) return undefined;
+  const civil = wallClockToCivil(wall);
+  if (civil === null) return undefined;
+  return wallTimeToInstant(timeZone, civil) === event.startDate.getTime() ? wall : undefined;
+}
+
+/**
+ * The series wall clock (`YYYYMMDDTHHMMSS`) of the occurrence of a recurring TZID event at
+ * `instance`, derived from the series' own recurrence stepping. Undefined when the event is not a
+ * timed recurring event in a known zone, or `instance` is not exactly one generated occurrence.
+ */
+export function eventOccurrenceWallClock(master: CalendarEvent, instance: Date): string | undefined {
+  const timeZone = master.timezone;
+  if (!master.recurrenceRule || master.allDay || !timeZone || !isKnownTimeZone(timeZone)) return undefined;
+  return occurrenceWallClock(master.recurrenceRule, master.startDate, instance, {
+    timeZone,
+    startWallClock: validStartWallClock(master),
+  });
+}
+
 /**
  * The zone in which an event's recurrence repeats DTSTART's wall clock.
  * Precedence: all-day (host-local dates) > TZID > floating (host-local) > explicit UTC.
@@ -153,6 +217,7 @@ export function expandEventRecurrence(event: CalendarEvent, range: DateRange): D
   if (!event.recurrenceRule) return [];
   return expandRecurrence(event.recurrenceRule, event.startDate, range, event.exceptions, {
     timeZone: recurrenceTimeZone(event),
+    startWallClock: validStartWallClock(event),
   });
 }
 
@@ -173,7 +238,8 @@ export function toVEvent(event: CalendarEvent): string {
 
   const vevent: VEvent = {
     uid: event.uid,
-    dtstart: formatTimed(event.startDate),
+    // A DST-gap DTSTART is written with its intended wall clock, which the instant cannot recover.
+    dtstart: validStartWallClock(event) ?? formatTimed(event.startDate),
     dtend: formatTimed(event.endDate),
     summary: event.title,
     description: event.description || undefined,
@@ -226,6 +292,8 @@ export function fromVEvent(veventStr: string): CalendarEvent {
   );
 
   const startIsFloating = !isAllDay && isFloatingICalDateTime(vevent.dtstart, vevent.dtstartParams);
+  // Captured from the wire value before parsing: a gap wall time cannot be recovered later.
+  const startWallClock = isAllDay ? undefined : gapWallClock(startTzid, vevent.dtstart);
 
   const now = new Date();
 
@@ -246,6 +314,7 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     // Preserve the TZID from DTSTART so we can round-trip it correctly
     timezone: startTzid ?? undefined,
     ...(startIsFloating ? { floating: true as const } : {}),
+    ...(startWallClock ? { startWallClock } : {}),
     created: vevent.created ? parseICalDateValue(vevent.created).date : now,
     updated: vevent.lastModified ? parseICalDateValue(vevent.lastModified).date : now,
   };

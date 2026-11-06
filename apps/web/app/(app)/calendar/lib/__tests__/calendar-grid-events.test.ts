@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
+import { fromVEvent } from '@silentsuite/core'
 import {
   expandEventsForRange,
   expandGridEventsForRange,
@@ -169,6 +170,28 @@ describe('recurring events expand in their anchor zone (#886)', () => {
     expect(count).toBe(7)
     expect(constructions).toBeLessThanOrEqual(2)
     expect(formatToParts).toBeLessThanOrEqual(60)
+  })
+})
+
+// #886 F1 row 8: the grid expands a series whose own DTSTART is in a DST gap at the original
+// wall clock, so the ordinary-time EXDATE still matches.
+describe('grid expansion of a gap-start series (#886 F1)', () => {
+  it('row 8: shows 03-08 10:30Z and 03-22 09:30Z with 03-15 excluded', () => {
+    const event = fromVEvent([
+      'BEGIN:VEVENT',
+      'UID:grid-gap-start',
+      'SUMMARY:Synthetic gap series',
+      'DTSTART;TZID=America/Los_Angeles:20260308T023000',
+      'DTEND;TZID=America/Los_Angeles:20260308T043000',
+      'RRULE:FREQ=WEEKLY;COUNT=3',
+      'EXDATE;TZID=America/Los_Angeles:20260315T023000',
+      'END:VEVENT',
+    ].join('\r\n'))
+    const range = { start: new Date('2026-03-01T00:00:00.000Z'), end: new Date('2026-04-01T00:00:00.000Z') }
+    expect(expandGridEventsForRange([event], range).events.map((e) => e.startDate.toISOString())).toEqual([
+      '2026-03-08T10:30:00.000Z',
+      '2026-03-22T09:30:00.000Z',
+    ])
   })
 })
 

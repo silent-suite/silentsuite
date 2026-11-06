@@ -9,6 +9,10 @@ export interface RecurrenceOptions {
    *  (floating and all-day events, and legacy callers). A zone Intl does not know falls back
    *  to host-local, matching how the parser reads such a TZID. */
   timeZone?: string;
+  /** DTSTART's intended wall clock (`YYYYMMDDTHHMMSS`) in `timeZone`, for a DTSTART inside a DST
+   *  gap whose wall time cannot be recovered from the instant. Used only with an IANA zone and only
+   *  when it resolves exactly to `dtstart`; otherwise ignored. */
+  startWallClock?: string;
 }
 
 /**
@@ -216,9 +220,53 @@ export function expandRecurrence(
   exdates?: Date[],
   options?: RecurrenceOptions,
 ): Date[] {
+  return expandWithCivil(rrule, dtstart, range, exdates, options).map((o) => new Date(o.at));
+}
+
+/**
+ * The series wall clock (`YYYYMMDDTHHMMSS`, in `options.timeZone`) of the occurrence generated at
+ * exactly `instance`, taken from the same recurrence stepping as {@link expandRecurrence} (EXDATEs
+ * ignored). Undefined unless exactly one generated occurrence has that instant.
+ */
+export function occurrenceWallClock(
+  rrule: string,
+  dtstart: Date,
+  instance: Date,
+  options?: RecurrenceOptions,
+): string | undefined {
+  const matches = expandWithCivil(rrule, dtstart, { start: instance, end: instance }, [], options)
+    .filter((o) => o.at === instance.getTime());
+  if (matches.length !== 1) return undefined;
+  const c = new Date(matches[0]!.civil);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${c.getUTCFullYear()}${pad(c.getUTCMonth() + 1)}${pad(c.getUTCDate())}T${pad(c.getUTCHours())}${pad(c.getUTCMinutes())}${pad(c.getUTCSeconds())}`;
+}
+
+/** Decode a `YYYYMMDDTHHMMSS` wall clock to civil ms, or undefined. */
+function parseWallClock(wall: string | undefined): number | undefined {
+  if (!wall) return undefined;
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/.exec(wall);
+  if (!m) return undefined;
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]));
+}
+
+interface CivilOccurrence {
+  /** Occurrence instant (ms). */
+  at: number;
+  /** Occurrence wall clock in the expansion zone, as civil ms. */
+  civil: number;
+}
+
+function expandWithCivil(
+  rrule: string,
+  dtstart: Date,
+  range: DateRange,
+  exdates?: Date[],
+  options?: RecurrenceOptions,
+): CivilOccurrence[] {
   const zone = resolveZone(options?.timeZone);
   const rule = parseRRule(rrule);
-  const results: Date[] = [];
+  const results: CivilOccurrence[] = [];
   const exdateSet = new Set(exdates?.map((d) => d.getTime()) ?? []);
   const MAX_ITERATIONS = 10000; // safety limit
 
@@ -229,7 +277,14 @@ export function expandRecurrence(
   const rangeStartCivil = zone.toCivil(rangeStartMs);
   const rangeEndCivil = zone.toCivil(rangeEndMs);
 
-  const civilDtstart = new Date(zone.toCivil(dtstart.getTime()));
+  // A DST-gap DTSTART's intended wall clock cannot be recovered from the instant; when supplied
+  // and consistent with DTSTART, later occurrences repeat it instead of the normalized clock.
+  const suppliedCivil = zone !== HOST_ZONE && zone !== UTC_ZONE ? parseWallClock(options?.startWallClock) : undefined;
+  const civilDtstart = new Date(
+    suppliedCivil !== undefined && zone.fromCivil(suppliedCivil) === dtstart.getTime()
+      ? suppliedCivil
+      : zone.toCivil(dtstart.getTime()),
+  );
   const dtstartDay = Math.floor(civilDtstart.getTime() / DAY_MS);
   let current = new Date(civilDtstart.getTime());
   let count = 0;
@@ -268,7 +323,7 @@ export function expandRecurrence(
       if (civil >= rangeStartCivil - CIVIL_MARGIN_MS) {
         const at = instantOf();
         if (at >= rangeStartMs && !exdateSet.has(at)) {
-          results.push(new Date(at));
+          results.push({ at, civil });
         }
       }
       if (rule.count !== undefined && count >= rule.count) break;

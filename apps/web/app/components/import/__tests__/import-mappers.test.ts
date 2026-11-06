@@ -60,6 +60,37 @@ describe('vEventToImportEvent DTSTART kind (#886)', () => {
   })
 })
 
+// #886 F1 row 21 (field-only): the import payload carries a gap DTSTART's original wall clock.
+// Behavioural proof is the store import journey (row 9); this only checks mapper carry-through.
+describe('vEventToImportEvent gap-start wall clock (#886 F1)', () => {
+  it('row 21: carries the original wall clock for a gap DTSTART', () => {
+    const payload = vEventToImportEvent({
+      uid: 'gap@example',
+      summary: 'Gap series',
+      dtstart: '20260308T023000',
+      dtend: '20260308T043000',
+      dtstartParams: { TZID: 'America/Los_Angeles' },
+      dtendParams: { TZID: 'America/Los_Angeles' },
+      rrule: 'FREQ=WEEKLY;COUNT=3',
+    }, 'cal-1')
+
+    expect(payload.startDate.toISOString()).toBe('2026-03-08T10:30:00.000Z')
+    expect(payload).toMatchObject({ startWallClock: '20260308T023000' })
+  })
+
+  it('control: an ordinary TZID DTSTART carries no wall-clock field', () => {
+    const payload = vEventToImportEvent({
+      uid: 'ordinary@example',
+      summary: 'Ordinary',
+      dtstart: '20260302T100000',
+      dtend: '20260302T110000',
+      dtstartParams: { TZID: 'America/Los_Angeles' },
+    }, 'cal-1')
+
+    expect(payload).not.toHaveProperty('startWallClock')
+  })
+})
+
 describe('vEventToImportEvent', () => {
   it('propagates source TZID into the import payload', () => {
     const event: VEvent = {
