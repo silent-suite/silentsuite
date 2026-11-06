@@ -35,6 +35,8 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.notes.FakeEtebaseServer
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
+import io.silentsuite.sync.syncadapter.syncMainIdentity
 import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.etebase.AddMemberFragment
 import io.silentsuite.sync.ui.etebase.CollectionActivity
@@ -420,6 +422,65 @@ class BirthdayActivationRuntimeTest {
                     requests.any(::isInvitationRequest))
                 assertTrue("FEATURE_BIRTHDAY_INVITE_PRIVACY: the refused add-member step has ended", ended)
             }
+        }
+    }
+
+    @Test fun birthdaysWritesRequestACalendarSyncForTheirOwnAccountOnly() {
+        val colMgr = server.collectionManager
+        val book = collection(colMgr, Constants.ETEBASE_TYPE_ADDRESS_BOOK, "Contacts", "")
+        val contact = uploadItem(book, "contact-alex", VCARD)
+        val calendar = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        fake.setMembers(calendar.uid, listOf(username to ADMIN))
+        uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        val seeded = fake.collectionUids()
+        assertNotNull("PREREQUISITE: the fixture contact has a birthday", BirthdayCalendar.birthdayOf(VCARD))
+        val generatedUid = BirthdayCalendar.eventUid(book.uid, contact.uid)
+        fun generatedLive() = state(colMgr, calendar.uid).items.values
+            .count { !it.deleted && BirthdayCalendar.eventFields(it.content)?.uid == generatedUid }
+
+        // Every sync request the app dispatches passes this existing test-only hold instead of ContentResolver.
+        val previousDispatch = requestSyncDispatchOverride
+        val dispatched = CopyOnWriteArrayList<Triple<Account?, String, Bundle>>()
+        requestSyncDispatchOverride = { requested, authority, extras -> dispatched += Triple(requested, authority, Bundle(extras)) }
+        try {
+            withActivationDashboard(seeded) { _ ->
+                val (account, generation) = checkNotNull(activationIdentity)
+                val store = SyncStatusStore(context)
+                fun calendarRequests() = dispatched.filter { it.second == CalendarContract.AUTHORITY }
+                // Only requests from here on are this test's subject; whatever the fixture's setup dispatched is not.
+                dispatched.clear()
+
+                // Control: a trigger admitted for another generation is skipped; it writes and requests nothing.
+                BirthdayMaintenance.run(context, account, store.identity(account, "not-$generation"), "stale trigger")
+                assertEquals("PREREQUISITE: a skipped run writes nothing", 0, generatedLive())
+                assertTrue("a skipped run requests no sync", dispatched.isEmpty())
+
+                // The real maintenance entry point, admitted as a sync hook admits it, writes the contact's birthday.
+                BirthdayMaintenance.run(context, account, store.identity(account, generation), "address-book sync")
+                assertEquals("PREREQUISITE: the run wrote the contact's birthday", 1, generatedLive())
+                assertEquals("FEATURE_BIRTHDAY_CALENDAR_SYNC: a maintenance run that wrote requests a calendar sync for its own account",
+                    listOf(account), calendarRequests().map { it.first })
+                assertEquals("the calendar request carries the account's current identity, so a replaced account skips it",
+                    store.identity(account), syncMainIdentity(calendarRequests().single().third))
+                assertTrue("only the calendar authority is requested (no contacts sync that would trigger Birthdays again)",
+                    dispatched.all { it.second == CalendarContract.AUTHORITY })
+
+                // Control: a run with nothing left to write requests no further sync.
+                BirthdayMaintenance.run(context, account, store.identity(account, generation), "address-book sync")
+                assertEquals("a run with nothing to write leaves the birthday as it was", 1, generatedLive())
+                assertEquals("a run that wrote nothing requests no further sync", 1, calendarRequests().size)
+
+                // The explicit turn-off writes (retirement, then cleanup of the generated event).
+                BirthdayMaintenance.turn(context, account, generation, false) { true }
+                assertEquals("the turn-off removed the generated birthday", 0, generatedLive())
+                assertEquals("FEATURE_BIRTHDAY_CALENDAR_SYNC: an explicit turn-off that wrote requests a calendar sync for its own account",
+                    listOf(account, account), calendarRequests().map { it.first })
+                assertTrue("no sync is requested for any other account", dispatched.all { it.first == account })
+                assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+                assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+            }
+        } finally {
+            requestSyncDispatchOverride = previousDispatch
         }
     }
 
