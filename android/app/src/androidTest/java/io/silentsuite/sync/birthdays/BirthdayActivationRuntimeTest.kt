@@ -8,6 +8,9 @@ import android.content.Context
 import android.os.SystemClock
 import android.provider.CalendarContract
 import android.view.View
+import android.widget.TextView
+import androidx.appcompat.view.menu.MenuBuilder
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -28,6 +31,11 @@ import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.notes.FakeEtebaseServer
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
 import io.silentsuite.sync.ui.AccountActivity
+import io.silentsuite.sync.ui.etebase.CollectionActivity
+import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
+import io.silentsuite.sync.ui.etebase.CollectionViewModel
+import io.silentsuite.sync.ui.etebase.ViewCollectionFragment
+import io.silentsuite.sync.ui.etebase.runtimeFixtureOverride
 import io.silentsuite.sync.utils.AndroidCompat
 import androidx.appcompat.widget.Toolbar
 import io.silentsuite.sync.R
@@ -38,6 +46,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -319,7 +328,94 @@ class BirthdayActivationRuntimeTest {
         }
     }
 
+    @Test fun anActiveBirthdaysCalendarScreenOffersNeitherImportNorMemberManagement() {
+        val colMgr = server.collectionManager
+        val active = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Birthdays", MARKER_ACTIVE)
+        val ordinary = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Family", "")
+        val retired = collection(colMgr, Constants.ETEBASE_TYPE_CALENDAR, "Old birthdays", MARKER_RETIRED)
+        val calendars = listOf(active, ordinary, retired)
+        for (calendar in calendars) {
+            fake.setMembers(calendar.uid, listOf(username to ADMIN))
+            uploadItem(calendar, "ordinary-dentist", ORDINARY_ICS)
+        }
+        val seeded = fake.collectionUids()
+        val before = calendars.associate { it.uid to state(colMgr, it.uid) }
+        assertNull("PREREQUISITE: no runtime collection fixture replaces the loaded collection", runtimeFixtureOverride)
+
+        withActivationDashboard(seeded) { _ ->
+            val (account, generation) = checkNotNull(activationIdentity)
+            assertNotEquals("PREREQUISITE: the account name is not the SDK principal", username, account.name)
+            assertEquals("PREREQUISITE: the account's settings hold the SDK principal", username, AccountSettings(context, account).username())
+            assertEquals("PREREQUISITE: the row holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+
+            // Positive controls first: an ordinary and a retired Admin calendar keep both actions present, visible
+            // and enabled (plan3 §3: a retired calendar is ordinary).
+            for ((calendar, name, content) in listOf(Triple(ordinary, "Family", ""), Triple(retired, "Old birthdays", MARKER_RETIRED))) {
+                withCollectionScreen(account, generation, calendar.uid, name, content) { sample ->
+                    assertTrue("PREREQUISITE: the $name screen offers Import",
+                        sample.getValue(R.id.on_import).let { (visible, enabled) -> visible && enabled })
+                    assertTrue("PREREQUISITE: the $name screen offers Manage members",
+                        sample.getValue(R.id.on_manage_members).let { (visible, enabled) -> visible && enabled })
+                }
+            }
+
+            withCollectionScreen(account, generation, active.uid, "Birthdays", MARKER_ACTIVE) { sample ->
+                // While the active screen is live: nothing was changed, and the exact account generation still owns it.
+                for (calendar in calendars) assertEquals("calendar ${calendar.uid} is unchanged", before.getValue(calendar.uid), state(colMgr, calendar.uid))
+                assertEquals("no calendar is created or removed", seeded, fake.collectionUids())
+                assertTrue("this exact account row is still present", account in manager.getAccountsByType(account.type))
+                assertEquals("the row still holds this generation", generation, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
+                // plan2 §4: hidden (not visible, or removed), not merely disabled. Enablement of a hidden entry is not asserted.
+                assertFalse("FEATURE_BIRTHDAY_MENU_PRIVACY: active Birthdays calendar does not offer Import", sample.getValue(R.id.on_import).first)
+                assertFalse("FEATURE_BIRTHDAY_MENU_PRIVACY: active Birthdays calendar does not offer Manage members",
+                    sample.getValue(R.id.on_manage_members).first)
+            }
+        }
+    }
+
     // ---- fixture ----
+
+    /**
+     * Opens the real collection screen for exactly [uid] of this account generation, waits until its own
+     * [ViewCollectionFragment] shows the loaded calendar [name], checks the loaded model, and hands [inspect] the raw
+     * (visible, enabled) state of Import and Manage members that the fragment's own onCreateOptionsMenu and
+     * onPrepareOptionsMenu leave on its real menu, while the screen is still live. An entry absent from the menu is
+     * (false, false). This samples the fragment's menu code, not the rendered action-bar popup. Nothing is invoked.
+     */
+    private fun withCollectionScreen(account: Account, generation: String, uid: String, name: String, content: String,
+        inspect: (Map<Int, Pair<Boolean, Boolean>>) -> Unit) {
+        ActivityScenario.launch<CollectionActivity>(CollectionActivity.newIntent(context, account, generation, uid)).use { scenario ->
+            waitUntil("PREREQUISITE: the collection screen to show the loaded calendar \"$name\"") {
+                var shown = false
+                scenario.onActivity { activity ->
+                    val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? ViewCollectionFragment
+                    val loaded = ViewModelProvider(activity).get(CollectionViewModel::class.java).value
+                    shown = screen != null && screen.isResumed && loaded?.col?.uid == uid &&
+                        screen.view?.findViewById<TextView>(R.id.display_name)?.text?.toString() == name
+                }
+                shown
+            }
+            var sample = emptyMap<Int, Pair<Boolean, Boolean>>()
+            scenario.onActivity { activity ->
+                val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment
+                val loaded = requireNotNull(ViewModelProvider(activity).get(CollectionViewModel::class.java).value)
+                assertEquals("PREREQUISITE: the screen belongs to this account, generation and calendar",
+                    CollectionLifecycleIdentity.existing(account, generation, uid, Constants.ETEBASE_TYPE_CALENDAR),
+                    CollectionLifecycleIdentity.from(screen.arguments))
+                assertEquals("PREREQUISITE: the loaded collection is a calendar", Constants.ETEBASE_TYPE_CALENDAR, loaded.collectionType)
+                assertEquals("PREREQUISITE: the loaded calendar is Admin for this user", CollectionAccessLevel.Admin, loaded.col.accessLevel)
+                assertEquals("PREREQUISITE: the loaded calendar keeps its content", content, String(loaded.col.content, Charsets.UTF_8))
+                val menu = MenuBuilder(activity)
+                screen.onCreateOptionsMenu(menu, activity.menuInflater)
+                screen.onPrepareOptionsMenu(menu)
+                assertNotNull("PREREQUISITE: the screen's own menu is inflated", menu.findItem(R.id.on_export))
+                sample = listOf(R.id.on_import, R.id.on_manage_members).associateWith { id ->
+                    menu.findItem(id)?.let { it.isVisible to it.isEnabled } ?: (false to false)
+                }
+            }
+            inspect(sample)
+        }
+    }
 
     private data class ItemState(val deleted: Boolean, val content: String, val name: String?, val mtime: Long?)
     private data class CollectionState(val root: String, val content: String, val name: String?, val items: Map<String, ItemState>)
