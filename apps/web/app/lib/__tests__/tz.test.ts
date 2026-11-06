@@ -9,6 +9,8 @@ import {
 } from '../tz'
 
 describe('tz helpers', () => {
+  afterEach(() => vi.useRealTimers())
+
   it('reads wall-clock parts in the requested zone', () => {
     // 2025-06-15 12:00 UTC = 14:00 Europe/Berlin (CEST)
     const utcInstant = new Date(Date.UTC(2025, 5, 15, 12, 0, 0))
@@ -51,10 +53,6 @@ describe('tz helpers', () => {
     expect(resolveUserTimezone('Not/A_Real_Zone')).toBe(browser)
     expect(resolveUserTimezone('Europe/Berlin')).toBe('Europe/Berlin')
   })
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
   describe('shortTimezoneLabel', () => {
     it('returns the short label for a valid timezone at a fixed reference date', () => {
       const fixedDate = new Date('2026-01-15T12:00:00Z')
@@ -76,5 +74,4 @@ describe('tz helpers', () => {
       )
     })
   })
-
 })
