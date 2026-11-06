@@ -3,6 +3,7 @@ import { useCalendarStore } from '../use-calendar-store'
 import { serializeCalendarEvent, deserializeCalendarEvent } from '@silentsuite/core'
 import type { CalendarEvent } from '@silentsuite/core'
 import { expandEventsForRange } from '@/app/(app)/calendar/lib/calendar-grid-events'
+import { vEventToImportEvent } from '@/app/components/import/import-mappers'
 import { _setEncryptedQueuePersistenceAvailableForTests, getAll } from '@/app/lib/offline-queue'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 
@@ -89,6 +90,413 @@ function makeRecurringEvent(overrides?: Partial<CalendarEvent>): CalendarEvent {
     ...overrides,
   }
 }
+
+// ── #886: anchor preservation through the real store paths ──
+
+const DTSTART_KIND_LINES = /^(DTSTART|DTEND|EXDATE)[:;]/
+const timedLines = (ics: string) => ics.split('\r\n').filter((line) => DTSTART_KIND_LINES.test(line))
+
+describe('useCalendarStore anchor preservation (#886)', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('(a) a floating import stays floating through mapper -> importEvents -> serializer -> reload', async () => {
+    acknowledgeImports()
+    const payload = vEventToImportEvent({
+      uid: 'floating-import@example',
+      summary: 'Floating weekly',
+      dtstart: '20260302T100000',
+      dtend: '20260302T110000',
+      rrule: 'FREQ=WEEKLY;COUNT=3',
+      exdate: ['20260309T100000'],
+    }, 'cal-1')
+
+    await useCalendarStore.getState().importEvents([payload])
+
+    const stored = useCalendarStore.getState().events[0]!
+    expect(stored).toMatchObject({ floating: true })
+    const contents = etebaseMock.state.createItemsBatch.mock.calls[0]![1] as Array<{ content: string; tempId: string }>
+    const uploaded = contents[0]!.content
+    expect(timedLines(uploaded)).toEqual([
+      'DTSTART:20260302T100000',
+      'DTEND:20260302T110000',
+      'EXDATE:20260309T100000',
+    ])
+
+    const reloaded = deserializeCalendarEvent(uploaded)
+    expect(reloaded).toMatchObject({ floating: true })
+    const range = { start: new Date(2026, 1, 1), end: new Date(2026, 3, 1) }
+    const before = expandEventsForRange([stored], range).map((e) => e.startDate.getTime())
+    const after = expandEventsForRange([reloaded], range).map((e) => e.startDate.getTime())
+    expect(before).toEqual([new Date(2026, 2, 2, 10).getTime(), new Date(2026, 2, 16, 10).getTime()])
+    expect(after).toEqual(before)
+  })
+
+  it('(b) createEvent carries a floating anchor to the uploaded item', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.createItem.mockResolvedValue('remote-floating')
+    const input = {
+      title: 'Floating created',
+      startDate: new Date(2026, 2, 2, 10, 0, 0),
+      endDate: new Date(2026, 2, 2, 11, 0, 0),
+      floating: true as const,
+    }
+
+    await useCalendarStore.getState().createEvent(input)
+
+    const uploaded = etebaseMock.state.createItem.mock.calls[0]![1] as string
+    expect(timedLines(uploaded)).toEqual(['DTSTART:20260302T100000', 'DTEND:20260302T110000'])
+    expect(deserializeCalendarEvent(uploaded)).toMatchObject({ floating: true })
+  })
+
+  it('(c1) "this and future" update ends a UTC-anchored master on the previous UTC day', async () => {
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-10-20T00:30:00Z'),
+      endDate: new Date('2026-10-20T01:00:00Z'),
+      recurrenceRule: 'FREQ=DAILY',
+      timezone: undefined,
+    })
+    useCalendarStore.setState({ events: [master] })
+
+    await useCalendarStore.getState().updateRecurringEvent(
+      master.id,
+      { title: 'Later occurrences' },
+      'this_and_future',
+      new Date('2026-11-02T00:30:00Z'),
+    )
+
+    const updatedMaster = useCalendarStore.getState().events.find((e) => e.id === master.id)!
+    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20261101')
+  })
+
+  it('(c2) "this and future" delete ends an Asia/Tokyo master on the previous Tokyo day', async () => {
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-03-01T23:00:00Z'), // 2026-03-02 08:00 JST
+      endDate: new Date('2026-03-01T23:30:00Z'),
+      recurrenceRule: 'FREQ=DAILY',
+      timezone: 'Asia/Tokyo',
+    })
+    useCalendarStore.setState({ events: [master] })
+
+    await useCalendarStore.getState().deleteRecurringEvent(
+      master.id,
+      'this_and_future',
+      new Date('2026-03-09T23:00:00Z'), // 2026-03-10 08:00 JST
+    )
+
+    const updatedMaster = useCalendarStore.getState().events.find((e) => e.id === master.id)!
+    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20260309')
+  })
+
+  it('(d) control: an explicit-zone "this" edit of a floating master serializes consistently', async () => {
+    const master = deserializeCalendarEvent([
+      'BEGIN:VEVENT',
+      'UID:floating-master',
+      'SUMMARY:Floating series',
+      'DTSTART:20260302T100000',
+      'DTEND:20260302T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=4',
+      'END:VEVENT',
+    ].join('\r\n'))
+    useCalendarStore.setState({ events: [master] })
+    const instanceDate = new Date(2026, 2, 9, 10, 0, 0)
+
+    await useCalendarStore.getState().updateRecurringEvent(
+      master.id,
+      {
+        timezone: 'Europe/Berlin',
+        startDate: new Date('2026-03-09T09:00:00Z'),
+        endDate: new Date('2026-03-09T10:00:00Z'),
+      },
+      'this',
+      instanceDate,
+    )
+
+    const events = useCalendarStore.getState().events
+    const updatedMaster = events.find((e) => e.id === master.id)!
+    const standalone = events.find((e) => e.id !== master.id)!
+
+    expect(timedLines(serializeCalendarEvent(updatedMaster))).toContain('EXDATE:20260309T100000')
+    expect(deserializeCalendarEvent(serializeCalendarEvent(updatedMaster))).toMatchObject({ floating: true })
+
+    const standaloneIcs = serializeCalendarEvent(standalone)
+    expect(timedLines(standaloneIcs)).toEqual([
+      'DTSTART;TZID=Europe/Berlin:20260309T100000',
+      'DTEND;TZID=Europe/Berlin:20260309T110000',
+    ])
+    const reloadedStandalone = deserializeCalendarEvent(standaloneIcs)
+    expect(reloadedStandalone.timezone).toBe('Europe/Berlin')
+    expect(reloadedStandalone).not.toHaveProperty('floating')
+  })
+
+  it('(e) deleting a displayed UTC-anchored occurrence after DST removes exactly that occurrence', async () => {
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-02-23T18:00:00Z'),
+      endDate: new Date('2026-02-23T19:00:00Z'),
+      recurrenceRule: 'FREQ=WEEKLY;COUNT=6',
+      timezone: undefined,
+    })
+    useCalendarStore.setState({ events: [master] })
+    const range = { start: new Date('2026-02-20T00:00:00Z'), end: new Date('2026-04-05T00:00:00Z') }
+
+    const displayed = expandEventsForRange([master], range)
+    expect(displayed.map((e) => e.startDate.toISOString())).toEqual([
+      '2026-02-23T18:00:00.000Z',
+      '2026-03-02T18:00:00.000Z',
+      '2026-03-09T18:00:00.000Z',
+      '2026-03-16T18:00:00.000Z',
+      '2026-03-23T18:00:00.000Z',
+      '2026-03-30T18:00:00.000Z',
+    ])
+
+    await useCalendarStore.getState().deleteRecurringEvent(master.id, 'this', displayed[3]!.instanceDate)
+
+    const reloaded = deserializeCalendarEvent(serializeCalendarEvent(useCalendarStore.getState().events[0]!))
+    expect(expandEventsForRange([reloaded], range).map((e) => e.startDate.toISOString())).toEqual([
+      '2026-02-23T18:00:00.000Z',
+      '2026-03-02T18:00:00.000Z',
+      '2026-03-09T18:00:00.000Z',
+      '2026-03-23T18:00:00.000Z',
+      '2026-03-30T18:00:00.000Z',
+    ])
+  })
+})
+
+// ── #886 F1: gap-start DTSTART identity through real store journeys ──
+// Uploads are captured at the mocked Etebase boundary (updateItem arg 2, createItem arg 1,
+// createItemsBatch arg 1 [i].content) and decoded with the real codec.
+
+function gapIcs(lines: string[]): string {
+  return ['BEGIN:VEVENT', ...lines, 'END:VEVENT'].join('\r\n')
+}
+const F1_G2 = gapIcs([
+  'UID:f1-g2', 'SUMMARY:Long gap series',
+  'DTSTART;TZID=America/Los_Angeles:20260308T023000', 'DTEND;TZID=America/Los_Angeles:20260308T043000',
+  'RRULE:FREQ=WEEKLY;COUNT=60',
+])
+const F1_N = gapIcs([
+  'UID:f1-n', 'SUMMARY:Nuuk gap series',
+  'DTSTART;TZID=America/Nuuk:20260328T233000', 'DTEND;TZID=America/Nuuk:20260329T003000',
+  'RRULE:FREQ=WEEKLY;COUNT=60',
+])
+const F1_D = gapIcs([
+  'UID:f1-d', 'SUMMARY:Nuuk daily',
+  'DTSTART;TZID=America/Nuuk:20270325T233000', 'DTEND;TZID=America/Nuuk:20270326T003000',
+  'RRULE:FREQ=DAILY;COUNT=5',
+])
+const F1_S = gapIcs([
+  'UID:f1-s', 'SUMMARY:Gap standalone',
+  'DTSTART;TZID=America/Los_Angeles:20260308T023000', 'DTEND;TZID=America/Los_Angeles:20260308T043000',
+])
+
+const lineOf = (ics: string, name: string) => ics.split('\r\n').find((l) => l.startsWith(name))
+const isoList = (events: Array<{ startDate: Date }>) => events.map((e) => e.startDate.toISOString())
+
+/** Seed one reloaded event as a cached remote item so updates reach updateItem. */
+function seedRemote(ics: string): CalendarEvent {
+  const event = deserializeCalendarEvent(ics)
+  etebaseMock.state.account = {}
+  etebaseMock.state.itemCache = new Map([[event.id, {}]])
+  etebaseMock.state.itemCollectionMap = new Map()
+  etebaseMock.state.updateItem.mockResolvedValue(undefined)
+  etebaseMock.state.createItem.mockResolvedValue('remote-copy')
+  useCalendarStore.setState({ events: [event] })
+  return event
+}
+const lastUpdated = () => etebaseMock.state.updateItem.mock.calls.at(-1)![2] as string
+const lastCreated = () => etebaseMock.state.createItem.mock.calls.at(-1)![1] as string
+
+describe('useCalendarStore gap-start DTSTART identity (#886 F1)', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('row 9: an imported gap series uploads its original DTSTART and reloads with the EXDATE matching', async () => {
+    acknowledgeImports()
+    const payload = vEventToImportEvent({
+      uid: 'f1-import', summary: 'Gap import',
+      dtstart: '20260308T023000', dtend: '20260308T043000',
+      dtstartParams: { TZID: 'America/Los_Angeles' }, dtendParams: { TZID: 'America/Los_Angeles' },
+      rrule: 'FREQ=WEEKLY;COUNT=3', exdate: ['20260315T023000'], exdateParams: { TZID: 'America/Los_Angeles' },
+    }, 'cal-1')
+
+    await useCalendarStore.getState().importEvents([payload])
+
+    const uploaded = (etebaseMock.state.createItemsBatch.mock.calls[0]![1] as Array<{ content: string }>)[0]!.content
+    expect(lineOf(uploaded, 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+    const range = { start: new Date('2026-03-01T00:00:00Z'), end: new Date('2026-04-01T00:00:00Z') }
+    expect(isoList(expandEventsForRange([deserializeCalendarEvent(uploaded)], range))).toEqual([
+      '2026-03-08T10:30:00.000Z',
+      '2026-03-22T09:30:00.000Z',
+    ])
+  })
+
+  it('row 10: createEvent carries a supplied gap wall clock to the uploaded item', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.createItem.mockResolvedValue('remote-created')
+    const input = {
+      title: 'Gap created',
+      startDate: new Date('2026-03-08T10:30:00Z'),
+      endDate: new Date('2026-03-08T11:30:00Z'),
+      timezone: 'America/Los_Angeles',
+      startWallClock: '20260308T023000',
+    }
+
+    await useCalendarStore.getState().createEvent(input)
+
+    expect(lineOf(lastCreated(), 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+  })
+
+  it('row 11: "this" at a later LA gap occurrence writes that occurrence\'s original wall clock', async () => {
+    const master = seedRemote(F1_G2)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2027-03-14T10:30:00Z'))
+
+    const copy = lastCreated()
+    expect(lineOf(copy, 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20270314T023000')
+    expect(deserializeCalendarEvent(copy).startDate.toISOString()).toBe('2027-03-14T10:30:00.000Z')
+  })
+
+  it('row 12: "this and future" at a later LA gap occurrence keeps 02:30 in the new series; master cut unchanged', async () => {
+    const master = seedRemote(F1_G2)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-14T10:30:00Z'))
+
+    const masterIcs = lastUpdated()
+    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=WEEKLY;UNTIL=20270313') // control: existing cutover
+    expect(lineOf(masterIcs, 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+    const series = lastCreated()
+    expect(lineOf(series, 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20270314T023000')
+    const range = { start: new Date('2027-03-10T00:00:00Z'), end: new Date('2027-03-25T00:00:00Z') }
+    expect(isoList(expandEventsForRange([deserializeCalendarEvent(series)], range))).toEqual([
+      '2027-03-14T10:30:00.000Z',
+      '2027-03-21T09:30:00.000Z',
+    ])
+  })
+
+  it('row N3: "this" at the Nuuk midnight-crossing gap writes the intended date and time', async () => {
+    const master = seedRemote(F1_N)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2027-03-28T01:30:00Z'))
+
+    const copy = lastCreated()
+    expect(lineOf(copy, 'DTSTART')).toBe('DTSTART;TZID=America/Nuuk:20270327T233000')
+    expect(deserializeCalendarEvent(copy).startDate.toISOString()).toBe('2027-03-28T01:30:00.000Z')
+  })
+
+  it('row N4: "this and future" at the Nuuk gap keeps 23:30; selected appears once across master and new series', async () => {
+    const master = seedRemote(F1_N)
+    const selected = new Date('2027-03-28T01:30:00Z')
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', selected)
+
+    const masterIcs = lastUpdated()
+    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=WEEKLY;UNTIL=20270327') // control: existing cutover value
+    const series = lastCreated()
+    expect(lineOf(series, 'DTSTART')).toBe('DTSTART;TZID=America/Nuuk:20270327T233000')
+    const range = { start: new Date('2027-03-01T00:00:00Z'), end: new Date('2027-04-30T00:00:00Z') }
+    const masterStarts = isoList(expandEventsForRange([deserializeCalendarEvent(masterIcs)], range))
+    const seriesStarts = isoList(expandEventsForRange([deserializeCalendarEvent(series)], range))
+    expect(seriesStarts.slice(0, 2)).toEqual(['2027-03-28T01:30:00.000Z', '2027-04-04T00:30:00.000Z'])
+    expect(masterStarts).not.toContain(selected.toISOString())
+    expect([...masterStarts, ...seriesStarts].filter((s) => s === selected.toISOString())).toHaveLength(1)
+  })
+
+  it('row D1 (preservation control): the Nuuk daily split keeps the preceding occurrence in the master', async () => {
+    const master = seedRemote(F1_D)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-28T01:30:00Z'))
+
+    const masterIcs = lastUpdated()
+    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20270327')
+    const range = { start: new Date('2027-03-20T00:00:00Z'), end: new Date('2027-04-05T00:00:00Z') }
+    const masterStarts = isoList(expandEventsForRange([deserializeCalendarEvent(masterIcs)], range))
+    expect(masterStarts).toEqual(['2027-03-26T01:30:00.000Z', '2027-03-27T01:30:00.000Z'])
+    const seriesStarts = isoList(expandEventsForRange([deserializeCalendarEvent(lastCreated())], range))
+    const union = [...masterStarts, ...seriesStarts]
+    expect(union.filter((s) => s === '2027-03-27T01:30:00.000Z')).toHaveLength(1)
+    expect(union.filter((s) => s === '2027-03-28T01:30:00.000Z')).toHaveLength(1)
+    expect(seriesStarts).toContain('2027-03-28T01:30:00.000Z')
+    expect(masterStarts).not.toContain('2027-03-28T01:30:00.000Z')
+  })
+
+  it('row D1n: the Nuuk daily new series starts at the intended 23:30 and repeats it', async () => {
+    const master = seedRemote(F1_D)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-28T01:30:00Z'))
+
+    const series = lastCreated()
+    expect(lineOf(series, 'DTSTART')).toBe('DTSTART;TZID=America/Nuuk:20270327T233000')
+    const range = { start: new Date('2027-03-27T00:00:00Z'), end: new Date('2027-03-30T00:00:00Z') }
+    expect(isoList(expandEventsForRange([deserializeCalendarEvent(series)], range))).toEqual([
+      '2027-03-28T01:30:00.000Z',
+      '2027-03-29T00:30:00.000Z',
+    ])
+  })
+
+  it('row N5: a copy at a non-occurrence instant carries no stale anchor; the master keeps its original DTSTART', async () => {
+    const master = seedRemote(F1_N)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Off schedule' }, 'this_and_future', new Date('2027-03-28T02:00:00Z'))
+
+    const copyEvent = useCalendarStore.getState().events.find((e) => e.id !== master.id)!
+    expect(copyEvent).not.toHaveProperty('startWallClock') // control
+    expect(lineOf(lastCreated(), 'DTSTART')).toBe('DTSTART;TZID=America/Nuuk:20270328T010000') // control: derived
+    expect(lineOf(lastUpdated(), 'DTSTART')).toBe('DTSTART;TZID=America/Nuuk:20260328T233000')
+  })
+
+  it('row 13 (control): "this" at a later ordinary occurrence writes its ordinary wall clock', async () => {
+    const master = seedRemote(F1_G2)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2026-03-22T09:30:00Z'))
+
+    expect(lineOf(lastCreated(), 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260322T023000')
+  })
+
+  it('row 14: "this" at the first occurrence writes the original gap DTSTART', async () => {
+    const master = seedRemote(F1_G2)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'First' }, 'this', new Date('2026-03-08T10:30:00Z'))
+
+    expect(lineOf(lastCreated(), 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+  })
+
+  it('row 15: "all" title-only and an end-only edit keep the original DTSTART', async () => {
+    const master = seedRemote(F1_G2)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'All' }, 'all', new Date('2026-03-08T10:30:00Z'))
+    expect(lineOf(lastUpdated(), 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+
+    const standalone = seedRemote(F1_S)
+    await useCalendarStore.getState().updateEvent(standalone.id, { endDate: new Date('2026-03-08T12:30:00Z') })
+    expect(lineOf(lastUpdated(), 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+  })
+
+  it('row 16 (control): move away and back, with or without reload, and move-Undo all write the same DTSTART', async () => {
+    const original = { startDate: new Date('2026-03-08T10:30:00Z'), endDate: new Date('2026-03-08T12:30:00Z') }
+    const away = { startDate: new Date('2026-03-09T17:00:00Z'), endDate: new Date('2026-03-09T19:00:00Z') }
+
+    const a = seedRemote(F1_S)
+    await useCalendarStore.getState().updateEvent(a.id, away)
+    await useCalendarStore.getState().updateEvent(a.id, original)
+    const withoutReload = lineOf(lastUpdated(), 'DTSTART')
+
+    const b = seedRemote(F1_S)
+    await useCalendarStore.getState().updateEvent(b.id, away)
+    useCalendarStore.setState({ events: [deserializeCalendarEvent(lastUpdated())] })
+    await useCalendarStore.getState().updateEvent(b.id, original)
+    const withReload = lineOf(lastUpdated(), 'DTSTART')
+
+    const c = seedRemote(F1_S)
+    await useCalendarStore.getState().updateEvent(c.id, away)
+    await useCalendarStore.getState().updateEvent(c.id, { startDate: original.startDate, endDate: original.endDate }) // Undo payload
+    const afterUndo = lineOf(lastUpdated(), 'DTSTART')
+
+    expect(withoutReload).toBe('DTSTART;TZID=America/Los_Angeles:20260308T033000')
+    expect(withReload).toBe(withoutReload)
+    expect(afterUndo).toBe(withoutReload)
+  })
+
+  it('row 17: a resize-Undo payload with an unchanged start keeps the original DTSTART', async () => {
+    const s = seedRemote(F1_S)
+    await useCalendarStore.getState().updateEvent(s.id, {
+      startDate: new Date('2026-03-08T10:30:00Z'),
+      endDate: new Date('2026-03-08T11:30:00Z'),
+    })
+    expect(lineOf(lastUpdated(), 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+  })
+})
 
 describe('useCalendarStore.importEvents', () => {
   beforeEach(() => {

@@ -6,6 +6,7 @@ import {
   deserializeCalendarEvent,
   buildAlarmTrigger,
   parseAlarmTriggerMinutes,
+  parseICalDateValue,
 } from './calendar-event.js';
 import type { CalendarEvent } from './calendar-event.js';
 import { expandRecurrence } from '../utils/recurrence.js';
@@ -523,7 +524,9 @@ describe('DST timezone conversion (two-pass offset)', () => {
 
   it('handles America/New_York spring-forward DST edge case', () => {
     // 2026-03-08 is spring-forward in America/New_York (EST→EDT, clocks jump 2:00→3:00)
-    // Event at 02:30 local → gap time, Intl resolves to EDT (UTC-4) → 06:30 UTC
+    // Event at 02:30 local → gap time. RFC 5545 §3.3.5 interprets a nonexistent local time with
+    // the offset before the gap (EST, UTC-5) → 07:30 UTC, i.e. 03:30 EDT (the RFC's own
+    // New York example). 06:30 UTC would be 01:30 EST, an hour before the intended time.
     const ical = [
       'BEGIN:VEVENT',
       'UID:dst-nyc',
@@ -534,9 +537,11 @@ describe('DST timezone conversion (two-pass offset)', () => {
     ].join('\r\n');
 
     const event = fromVEvent(ical);
-    expect(event.startDate.getUTCHours()).toBe(6);
+    expect(event.startDate.getUTCHours()).toBe(7);
     expect(event.startDate.getUTCMinutes()).toBe(30);
     expect(event.startDate.getUTCDate()).toBe(8);
+    expect(event.startDate.toISOString()).toBe('2026-03-08T07:30:00.000Z');
+    expect(event.startDate.toISOString()).not.toBe('2026-03-08T06:30:00.000Z');
   });
 
   it('converts normal time (no DST transition) correctly', () => {
@@ -607,5 +612,99 @@ describe('DST timezone conversion (two-pass offset)', () => {
     // Should be interpreted as local time: hour/minute match face value
     expect(event.startDate.getHours()).toBe(10);
     expect(event.startDate.getMinutes()).toBe(0);
+  });
+});
+
+// ── DTSTART kind preservation through toVEvent (#886) ──
+
+function veventLines(...props: string[]): string {
+  return ['BEGIN:VEVENT', 'UID:kind-fixture', 'SUMMARY:Synthetic', ...props, 'END:VEVENT'].join('\r\n');
+}
+
+describe('floating DTSTART identity survives serialization (#886)', () => {
+  const floatingIcs = veventLines(
+    'DTSTART:20260302T100000',
+    'DTEND:20260302T110000',
+    'RRULE:FREQ=WEEKLY;COUNT=3',
+    'EXDATE:20260309T100000',
+  );
+
+  it('writes floating DTSTART, DTEND and EXDATE back as floating wall times (no Z)', () => {
+    const lines = toVEvent(fromVEvent(floatingIcs)).split('\r\n');
+    expect(lines).toContain('DTSTART:20260302T100000');
+    expect(lines).toContain('DTEND:20260302T110000');
+    expect(lines).toContain('EXDATE:20260309T100000');
+    expect(lines.filter((l) => /^(DTSTART|DTEND|EXDATE)[:;].*Z$/.test(l))).toEqual([]);
+  });
+
+  it('control: reloading the written floating event keeps the same host-local instants', () => {
+    const reloaded = fromVEvent(toVEvent(fromVEvent(floatingIcs)));
+    expect(reloaded.startDate.getTime()).toBe(new Date(2026, 2, 2, 10, 0, 0).getTime());
+    expect(reloaded.endDate.getTime()).toBe(new Date(2026, 2, 2, 11, 0, 0).getTime());
+    expect(reloaded.exceptions.map((d) => d.getTime())).toEqual([new Date(2026, 2, 9, 10, 0, 0).getTime()]);
+    expect(reloaded.timezone).toBeUndefined();
+  });
+});
+
+describe('UTC, TZID and all-day DTSTART output stays unchanged (controls)', () => {
+  it('explicit UTC stays Z', () => {
+    const lines = toVEvent(fromVEvent(veventLines('DTSTART:20260223T180000Z', 'DTEND:20260223T190000Z', 'RRULE:FREQ=WEEKLY;COUNT=2'))).split('\r\n');
+    expect(lines).toContain('DTSTART:20260223T180000Z');
+    expect(lines).toContain('DTEND:20260223T190000Z');
+  });
+
+  it('TZID wall time and parameter are kept', () => {
+    const lines = toVEvent(fromVEvent(veventLines(
+      'DTSTART;TZID=America/Los_Angeles:20260302T100000',
+      'DTEND;TZID=America/Los_Angeles:20260302T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=2',
+      'EXDATE;TZID=America/Los_Angeles:20260309T100000',
+    ))).split('\r\n');
+    expect(lines).toContain('DTSTART;TZID=America/Los_Angeles:20260302T100000');
+    expect(lines).toContain('DTEND;TZID=America/Los_Angeles:20260302T110000');
+    expect(lines).toContain('EXDATE;TZID=America/Los_Angeles:20260309T100000');
+  });
+
+  it('all-day VALUE=DATE stays a date', () => {
+    const lines = toVEvent(fromVEvent(veventLines('DTSTART;VALUE=DATE:20260302', 'DTEND;VALUE=DATE:20260303', 'RRULE:FREQ=WEEKLY;COUNT=2'))).split('\r\n');
+    expect(lines).toContain('DTSTART;VALUE=DATE:20260302');
+    expect(lines).toContain('DTEND;VALUE=DATE:20260303');
+  });
+});
+
+// ── TZID wall times inside DST transitions (RFC 5545 §3.3.5 via §3.3.10, Verified Erratum 4271) ──
+// A nonexistent wall time uses the offset before the gap; an ambiguous one is its first occurrence.
+
+describe('parseICalDateValue resolves TZID wall times in DST gaps and overlaps per RFC 5545', () => {
+  it('America/Los_Angeles gap 2026-03-08 02:30 -> 10:30Z (pre-gap -08)', () => {
+    expect(parseICalDateValue('20260308T023000', 'America/Los_Angeles').date.toISOString()).toBe('2026-03-08T10:30:00.000Z');
+  });
+
+  it('Europe/Berlin overlap 2026-10-25 02:30 -> 00:30Z (first occurrence, +02)', () => {
+    expect(parseICalDateValue('20261025T023000', 'Europe/Berlin').date.toISOString()).toBe('2026-10-25T00:30:00.000Z');
+  });
+
+  it('Australia/Sydney overlap 2026-04-05 02:30 -> 15:30Z (first occurrence, +11)', () => {
+    expect(parseICalDateValue('20260405T023000', 'Australia/Sydney').date.toISOString()).toBe('2026-04-04T15:30:00.000Z');
+  });
+
+  it('Australia/Lord_Howe overlap 2026-04-05 01:45 -> 14:45Z (first occurrence, +11)', () => {
+    expect(parseICalDateValue('20260405T014500', 'Australia/Lord_Howe').date.toISOString()).toBe('2026-04-04T14:45:00.000Z');
+  });
+
+  it('control: America/Los_Angeles overlap 2026-11-01 01:30 -> 08:30Z', () => {
+    expect(parseICalDateValue('20261101T013000', 'America/Los_Angeles').date.toISOString()).toBe('2026-11-01T08:30:00.000Z');
+  });
+
+  it('control: Europe/Berlin gap 2026-03-29 02:30 -> 01:30Z', () => {
+    expect(parseICalDateValue('20260329T023000', 'Europe/Berlin').date.toISOString()).toBe('2026-03-29T01:30:00.000Z');
+  });
+
+  it('control: Australia/Sydney gap 2026-10-04 02:30 -> 16:30Z', () => {
+    expect(parseICalDateValue('20261004T023000', 'Australia/Sydney').date.toISOString()).toBe('2026-10-03T16:30:00.000Z');
+  });
+
+  it('control: Australia/Lord_Howe gap 2026-10-04 02:15 -> 15:45Z', () => {
+    expect(parseICalDateValue('20261004T021500', 'Australia/Lord_Howe').date.toISOString()).toBe('2026-10-03T15:45:00.000Z');
   });
 });
