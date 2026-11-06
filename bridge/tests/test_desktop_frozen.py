@@ -1245,3 +1245,39 @@ def test_c5_diagnostics_unreadable_record_keeps_partial_receipt(tmp_path, monkey
     receipt = _c5d_assert_diagnosed(outcome, detail, _c5d_receipt(layout), tmp_path,
                                     "an unreadable dist-info RECORD bypassed the receipt", "RECORD")
     assert receipt.get("toc", {}).get("sha256"), "RED: the partial receipt lost the TOC identity"
+
+
+@C5D_NOT_DARWIN
+def test_c5_diagnostics_reject_equal_bytes_from_distinct_external_sources(tmp_path, monkeypatch):
+    _out()
+    layout = _c5d_layout(tmp_path, monkeypatch)
+    first = tmp_path / "external-a" / "tests" / "__init__.py"
+    second = tmp_path / "external-b" / "tests" / "__init__.py"
+    for path in (first, second):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"")
+    # Setup: two distinct regular files, identical bytes, both outside every recognised source root.
+    assert first.is_file() and second.is_file() and not first.samefile(second), \
+        "setup failed (not RED): the two external sources are not distinct regular files"
+    assert first.read_bytes() == second.read_bytes(), "setup failed (not RED): the external sources differ in bytes"
+    classes = [_c5_path_class(str(path))[:2] for path in (first, second)]
+    assert classes == [("other", None), ("other", None)], f"setup failed (not RED): path classes {classes}"
+
+    # Control: one external source listed twice is repeated evidence, not ambiguity.
+    _c5d_write_toc(layout, [("tests", first, "PYMODULE-1"), ("tests", first, "PYMODULE-1")])
+    outcome, detail = _c5d_run(layout["canonical"])
+    control = _c5d_receipt(layout)
+    assert outcome == "passed" and control is not None, \
+        f"control failed (not RED): one repeated source must pass: {outcome}: {detail}"
+    kept = [(e["name"], e["source"].get("path_class")) for e in control["tests_entries"]]
+    assert kept == [("tests", "other"), ("tests", "other")], f"control failed (not RED): {kept}"
+    assert not _c5d_leaks(control, tmp_path), "control failed (not RED): absolute temporary path in the receipt"
+
+    (layout["out"] / C5_RECEIPT_NAME).unlink()
+    _c5d_write_toc(layout, [("tests", first, "PYMODULE-1"), ("tests", second, "PYMODULE-1")])
+    outcome, detail = _c5d_run(layout["canonical"])
+    receipt = _c5d_assert_diagnosed(
+        outcome, detail, _c5d_receipt(layout), tmp_path,
+        "two distinct external 'tests' sources with equal bytes were not rejected", "tests")
+    assert [e["name"] for e in receipt["tests_entries"]].count("tests") == 2, \
+        "RED: the two external evidence entries were not both kept"
