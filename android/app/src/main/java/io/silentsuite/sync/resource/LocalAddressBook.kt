@@ -430,11 +430,14 @@ class LocalAddressBook(
     fun findOrCreateCategoryGroup(title: String): Long {
         categoryGroups().entries.firstOrNull { it.value == title }?.let { return it.key }
 
-        val values = ContentValues(5)
+        val values = ContentValues(6)
         values.put(Groups.ACCOUNT_NAME, account.name)
         values.put(Groups.ACCOUNT_TYPE, account.type)
         values.put(Groups.TITLE, title)
         values.put(Groups.SHOULD_SYNC, 1)
+        // Visible on creation only, so labelled contacts stay as visible as they were when ungrouped;
+        // a visibility later chosen for an existing group is never reset.
+        values.put(Groups.GROUP_VISIBLE, 1)
         values.put(CATEGORY_GROUP_COLUMN, CATEGORY_GROUP_MARKER)
         val uri = provider!!.insert(syncAdapterURI(Groups.CONTENT_URI), values)
                 ?: throw ContactsStorageException("Couldn't create label group")
