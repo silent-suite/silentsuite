@@ -180,11 +180,14 @@ object BirthdayReconciler {
      * Turn off (plan3 §3) for the account [etebase], signed in as the SDK user [username]: every calendar
      * that qualifies under C3 now, read fresh and completely, is retired in the F2 order, the conditional
      * retirement first and then its generated items, fenced on the new root read back from the server.
-     * Every qualifying calendar's generated items are read completely before anything is written; an
-     * unreadable calendar or item, or an incomplete listing, ends the run with nothing written. Calendars
-     * are never deleted; ordinary items and calendars that do not qualify are never touched. A conflict or
-     * an unknown outcome ends the run [RunStatus.PENDING] and nothing is resent. [mayContinue] is asked
-     * as in [reconcile]. Never throws.
+     * As every run does (F3), it also removes the generated items left in each retired calendar this user
+     * can write to (for example one an earlier turn-off retired whose cleanup did not finish), fenced on
+     * that calendar's root as read now; a retired calendar is not updated again. The generated items of
+     * every calendar it writes are read completely before anything is written; an unreadable calendar or
+     * item, or an incomplete listing, ends the run with nothing written. Calendars are never deleted;
+     * ordinary items and calendars that neither qualify nor are writable retired ones are never touched. A
+     * conflict or an unknown outcome ends the run [RunStatus.PENDING] and nothing is resent. [mayContinue]
+     * is asked as in [reconcile]. Never throws.
      */
     fun disable(etebase: com.etebase.client.Account, username: String, mayContinue: () -> Boolean = { true }): RunResult {
         val written = LinkedHashSet<String>()
@@ -192,10 +195,16 @@ object BirthdayReconciler {
         return endSwitch("turn-off", written) {
             if (!mayContinue()) throw Stopped()
             val inventory = readInventory(colMgr, mayContinue)
-            val qualifying = destinations(colMgr, inventory.calendars, username, mayContinue).first.sortedBy { it.uid }
-            if (qualifying.isEmpty()) throw Stop(RunStatus.SKIPPED, "no-active-calendar")
+            val (active, retired) = destinations(colMgr, inventory.calendars, username, mayContinue)
+            val qualifying = active.sortedBy { it.uid }
+            val repairs = retired.sortedBy { it.uid }
+            if (qualifying.isEmpty() && repairs.isEmpty()) throw Stop(RunStatus.SKIPPED, "no-active-calendar")
+            // Every calendar this run may write, read completely before anything is written.
             val deletes = qualifying.map { calendar -> calendar to deleteAll(generatedItems(colMgr.getItemManager(calendar), mayContinue)) }
+            val leftovers = repairs.map { calendar -> calendar to deleteAll(generatedItems(colMgr.getItemManager(calendar), mayContinue)) }
             for ((calendar, items) in deletes) retire(colMgr, calendar, items, written, mayContinue)
+            // F3: generated leftovers in retired calendars, fenced on each calendar's root as read; never retired again.
+            for ((calendar, items) in leftovers) commitFenced(colMgr.getItemManager(calendar), calendar, items, written, mayContinue)
             RunResult(RunStatus.DONE, written.sorted())
         }
     }
