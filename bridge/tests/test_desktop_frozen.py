@@ -842,11 +842,25 @@ def _c5_path_class(source):
     return "other", None, None
 
 
-def _c5_record_owners(site_root, relative):
+def _c5_listing(base, pattern, problems, label):
+    """Sorted glob matches; a listing fault becomes a sanitized problem (type name only), not an escape."""
+    try:
+        return sorted(base.glob(pattern))
+    except OSError as exc:
+        problems.append(f"{label} could not be listed ({type(exc).__name__})")
+        return []
+
+
+def _c5_record_owners(site_root, relative, problems, name):
     """RECORD rows naming ``relative`` in site-packages *.dist-info (files read only, nothing imported)."""
     owners = []
-    for record in sorted(site_root.glob("*.dist-info/RECORD")):
-        for line in record.read_text(encoding="utf-8", errors="replace").splitlines():
+    for record in _c5_listing(site_root, "*.dist-info/RECORD", problems, f"{name}: dist-info RECORD files"):
+        try:
+            lines = record.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError as exc:
+            problems.append(f"{name}: dist-info RECORD unreadable ({record.parent.name}, {type(exc).__name__})")
+            continue
+        for line in lines:
             if line.split(",", 1)[0] == relative:
                 owners.append({"dist_info": record.parent.name, "record_row": line})
     return owners
@@ -873,7 +887,9 @@ def _c5_source_record(source, problems, name):
         entry["kind"] = "unhashable"
         return entry
     if label == "site-packages":
-        entry["owners"] = _c5_record_owners(root, relative)
+        entry["owners"] = _c5_record_owners(root, relative, problems, name)
+        if len(entry["owners"]) > 1:
+            problems.append(f"{name}: ambiguous dist-info RECORD owners ({len(entry['owners'])})")
     return entry
 
 
@@ -905,18 +921,23 @@ def test_policy_observation_tests_module_and_qt_conf(canonical):
         problems.append(f"canonical executable could not be hashed ({type(exc).__name__})")
 
     # Observation A: the Analysis TOC of the canonical build (workflow: --workpath "$out/build").
-    tocs = sorted((out / "build").glob("*/Analysis-00.toc"))
+    tocs = _c5_listing(out / "build", "*/Analysis-00.toc", problems, "build/*/Analysis-00.toc")
     record["toc_count"] = len(tocs)
     if len(tocs) != 1:
         problems.append(f"expected exactly one build/*/Analysis-00.toc, found {len(tocs)}")
     else:
         toc = tocs[0]
-        record["toc"] = {"path": toc.relative_to(out).as_posix(), "sha256": _w1_sha256(toc)}
+        record["toc"] = {"path": toc.relative_to(out).as_posix()}
+        parsed = None
         try:
-            parsed = ast.literal_eval(toc.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError, SyntaxError) as exc:
-            problems.append(f"Analysis-00.toc is not a readable literal ({type(exc).__name__})")
-            parsed = None
+            record["toc"]["sha256"] = _w1_sha256(toc)
+        except OSError as exc:
+            problems.append(f"Analysis-00.toc could not be hashed ({type(exc).__name__})")
+        else:
+            try:
+                parsed = ast.literal_eval(toc.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, ValueError, SyntaxError) as exc:
+                problems.append(f"Analysis-00.toc is not a readable literal ({type(exc).__name__})")
         if parsed is not None:
             entries = _c5_toc_entries(parsed, [])
             record["toc_entry_count"] = len(entries)
@@ -928,6 +949,14 @@ def test_policy_observation_tests_module_and_qt_conf(canonical):
                     observed.append({"name": name, "typecode": typecode,
                                      "source": _c5_source_record(source, problems, name)})
             record["tests_entries"] = sorted(observed, key=lambda e: (e["name"], e["typecode"]))
+            evidence = {}  # one module name, one source: distinct descendants and sentinels never collide
+            for item in observed:
+                source = item["source"]
+                evidence.setdefault(item["name"], set()).add(
+                    tuple(source.get(key) for key in ("kind", "path_class", "relative_path", "sha256", "raw")))
+            for module, sources in sorted(evidence.items()):
+                if len(sources) > 1:
+                    problems.append(f"{module}: conflicting TOC sources ({len(sources)} distinct)")
             if not observed:
                 problems.append("no top-level 'tests' entry in this TOC, unlike the dev facts (observation differs)")
 
@@ -936,9 +965,18 @@ def test_policy_observation_tests_module_and_qt_conf(canonical):
     record["webengine_helper"] = {"path": C5_WEBENGINE_HELPER[platform], "present": helper.is_file()}
     if not helper.is_file():
         problems.append(f"control: WebEngine helper {C5_WEBENGINE_HELPER[platform]} is missing")
-    record["qt_conf_matches"] = [{"path": p.relative_to(root).as_posix(), "sha256": _w1_sha256(p),
-                                  "bytes": p.stat().st_size}
-                                 for p in sorted(root.rglob("qt.conf")) if p.is_file()]
+    record["qt_conf_matches"] = []
+    for p in _c5_listing(root, "**/qt.conf", problems, "bundle qt.conf files"):  # the same walk as rglob
+        if not p.is_file():
+            continue
+        match = {"path": p.relative_to(root).as_posix()}
+        try:
+            match["sha256"] = _w1_sha256(p)
+            match["bytes"] = p.stat().st_size
+        except OSError as exc:
+            match["error"] = type(exc).__name__
+            problems.append(f"qt.conf {match['path']} could not be hashed ({type(exc).__name__})")
+        record["qt_conf_matches"].append(match)
     expected = root / C5_QT_CONF[platform]
     record["qt_conf_expected"] = {"path": C5_QT_CONF[platform]}
     if not expected.is_file():
@@ -946,10 +984,11 @@ def test_policy_observation_tests_module_and_qt_conf(canonical):
     else:
         try:
             data = expected.read_bytes()
+            digest = _w1_sha256(expected)
         except OSError as exc:
             problems.append(f"expected qt.conf is unreadable ({type(exc).__name__})")
         else:
-            record["qt_conf_expected"].update({"sha256": _w1_sha256(expected), "bytes": len(data)})
+            record["qt_conf_expected"].update({"sha256": digest, "bytes": len(data)})
             if len(data) <= C5_TEXT_LIMIT:
                 try:
                     record["qt_conf_expected"]["text"] = data.decode("utf-8")
@@ -960,7 +999,7 @@ def test_policy_observation_tests_module_and_qt_conf(canonical):
                 record["qt_conf_expected"]["note"] = f"larger than {C5_TEXT_LIMIT} bytes; hash only"
 
     record["prerequisite_errors"] = problems
-    _w1_write(receipt, record)  # written before any failure, so the evidence survives
+    _w1_write(receipt, record)  # written before any prerequisite failure, so the evidence survives
     if not receipt.is_file():
         pytest.fail("prerequisite failed (not RED): the observation receipt is absent")
     if problems:
