@@ -12,15 +12,13 @@ Installing does not create a new account. You sign in with the same email and pa
 2. At the top right of the address bar, select **Install**.
 3. Follow the on-screen instructions.
 
-If you don't see **Install** in the address bar, select **More**, then **Cast, save, and share**, then the install item.
+If you don't see **Install** in the address bar, select **More**, then **Cast, save, and share**, then **Install SilentSuite...**.
 
 ### Microsoft Edge
 
 1. Open [app.silentsuite.io](https://app.silentsuite.io).
-2. Select **Settings and more**, then **More tools**, then **Apps**, then **Install this site as an app**.
-3. Follow the on-screen instructions.
-
-Edge can also show an **App available** icon in the address bar. Select it, then select **Install**.
+2. At the right of the address bar, select the **App available** icon. The label shows for a moment, then only the icon stays.
+3. Select **Install**.
 
 ### Safari on a Mac
 
@@ -44,7 +42,7 @@ This needs Firefox 143 or later on Windows. On a Microsoft Store install of Fire
 
 1. Open [app.silentsuite.io](https://app.silentsuite.io).
 2. To the right of the address bar, tap **More**.
-3. Tap **Install and create shortcut**. Older versions of Chrome show **Add to Home screen** here.
+3. Tap **Install and create shortcut**.
 4. Tap **Install** and follow the on-screen instructions.
 
 ### Firefox
@@ -52,7 +50,7 @@ This needs Firefox 143 or later on Windows. On a Microsoft Store install of Fire
 1. Open [app.silentsuite.io](https://app.silentsuite.io).
 2. Open the browser menu and tap **More**.
 3. Tap **Add app to Home screen**.
-4. Confirm in the panel Android shows.
+4. In the panel that opens from the bottom of the screen, tap **Add to home screen**.
 
 For your calendar, contacts, and tasks in Android's own apps, use [SilentSuite for Android](./android.md) instead. It syncs your data into those apps, which the web app does not do.
 
@@ -63,8 +61,8 @@ Use Safari.
 ### iPhone
 
 1. Open [app.silentsuite.io](https://app.silentsuite.io).
-2. Tap the **Share** button. If you don't see it, tap the **More** button first, then **Share**. On iOS 27 this button is called **Page Menu**.
-3. Scroll down the list and tap **Add to Home Screen**. If it's missing, scroll to the bottom of the list, tap **Edit Actions**, then tap **Add to Home Screen**.
+2. Tap the **Share** button. If you don't see it, tap the **More** button first, then **Share**. On iOS 27, tap the **Page Menu** button at the left of the address bar instead of **More**.
+3. Scroll down the list and tap **Add to Home Screen**. On iOS 27, tap **View More** first. If it's missing, scroll to the bottom of the list, tap **Edit Actions**, then tap **Add to Home Screen**.
 4. On iOS 26 or later, leave **Open as Web App** turned on.
 5. Tap **Add**.
 
