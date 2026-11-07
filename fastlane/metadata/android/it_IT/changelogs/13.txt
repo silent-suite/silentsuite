@@ -1,0 +1,1 @@
+Aggiunge la sincronizzazione crittografata dei contatti preferiti con lo stato speciale nativo di Android e migliora il rilevamento dell'account su macOS Contatti/CardDAV Bridge.
