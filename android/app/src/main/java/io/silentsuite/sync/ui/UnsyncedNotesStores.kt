@@ -18,9 +18,9 @@ import java.io.IOException
 /**
  * One Notes store the Settings way out shows: its folder in notes-pending, the present account it belongs to, if any,
  * and what it holds that has not synced. [answer] is null when reading the store threw: there is nothing to confirm.
- * [stopped]: a discard of the store, from this screen or a sign-out, got as far as deleting and has not finished
- * ([PendingNotesStore.clearStopped]); its row then says so, and is the Retry whatever [answer] says, unless the read
- * threw.
+ * [stopped]: a discard of the store, from this screen, a sign-out or the startup sweep ([NotesStartupSweep]), got as
+ * far as deleting and has not finished ([PendingNotesStore.clearStopped]); its row then says so, and is the Retry
+ * whatever [answer] says, unless the read threw.
  */
 internal data class UnsyncedNotesRow(
     val directory: String,

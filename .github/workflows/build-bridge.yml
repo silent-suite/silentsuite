@@ -35,6 +35,11 @@ on:
         required: false
         default: ''
         type: string
+      packaged_update_check:
+        description: Also run the packaged --check-update characterization on the macOS lanes (one public GitHub read; never self-update).
+        required: false
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -229,6 +234,31 @@ jobs:
           fi
           export SILENTSUITE_PACKAGED_VERSION="${SILENTSUITE_BRIDGE_VERSION#v}"
           python -m pytest tests/test_autostart_macos_packaged.py -v --tb=short
+
+      # -----------------------------------------------------------------------
+      # 8b. Optional packaged update-check characterization (macOS, manual)
+      # -----------------------------------------------------------------------
+      # Off unless an operator dispatches this workflow with
+      # packaged_update_check=true. Release calls (workflow_call) never define
+      # that input, so it is always off for them. One unauthenticated read of
+      # the public releases list; --self-update is never run.
+      - name: Packaged update-check characterization (macOS, manual)
+        if: runner.os == 'macOS' && inputs.packaged_update_check == true
+        timeout-minutes: 10
+        working-directory: bridge
+        shell: bash
+        env:
+          SILENTSUITE_PACKAGED_UPDATE_CHECK: "1"
+          SILENTSUITE_PACKAGED_BINARY: ${{ github.workspace }}/bridge/dist/silentsuite-bridge
+          SILENTSUITE_PACKAGED_ARCH: ${{ matrix.os-label == 'macos-arm64' && 'arm64' || 'x86_64' }}
+        run: |
+          if ! python -m pytest --version >/dev/null 2>&1; then
+            echo "ERROR: pytest is not available in this build environment; packaged update check cannot run." >&2
+            exit 1
+          fi
+          export SILENTSUITE_PACKAGED_VERSION="${SILENTSUITE_BRIDGE_VERSION#v}"
+          export SILENTSUITE_PACKAGED_SOURCE_SHA="$(git rev-parse HEAD)"
+          python -m pytest tests/test_update_macos_packaged.py -v --tb=short -s
 
       # -----------------------------------------------------------------------
       # 9. QEMU arm64 container build (Linux arm64 only)

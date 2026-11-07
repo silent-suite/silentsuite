@@ -64,17 +64,25 @@ def test_material_113_and_product_floor_are_shared_by_app_and_cert4android():
     assert "androidx.multidex:multidex" not in cert_build
 
 
-def test_api21_foundation_keeps_api23_system_bar_flags_out_of_base_resources_and_vcard_tests_compatible():
+def test_api29_foundation_keeps_status_flag_runtime_owned_and_navigation_flag_page_matched_and_vcard_tests_compatible():
     light_themes = read("android/app/src/main/res/values/themes.xml")
     dark_themes = read("android/app/src/main/res/values-night/themes.xml")
     vcard_build = read("android/vcard4android/build.gradle")
 
-    # Base resources are selected on API 21. BaseActivity applies readable system
-    # bars at runtime, so API-23-only window flags must not live in these files.
+    # BaseActivity keeps the navy status bar's light icons at runtime, so the status
+    # flag stays out of the base theme files.
     assert "android:windowLightStatusBar" not in light_themes
     assert "android:windowLightStatusBar" not in dark_themes
-    assert "android:windowLightNavigationBar" not in light_themes
-    assert "android:windowLightNavigationBar" not in dark_themes
+    # The app floor is API 29, above windowLightNavigationBar's API 27, so base themes may
+    # carry it: dark native navigation glyphs on the light page, light glyphs on the dark page.
+    assert "minSdkVersion 29" in read("android/app/build.gradle")
+    families = ("AppTheme", "AppTheme.NoActionBar", "AppTheme.Material3", "AppTheme.Material3.NoActionBar")
+    for path, expected in ((RES / "values/themes.xml", "true"), (RES / "values-night/themes.xml", "false")):
+        themes = styles(path)
+        for family in families:
+            assert themes[family].get("android:windowLightNavigationBar") == expected, (path.name, family)
+    assert light_themes.count("android:windowLightNavigationBar") == len(families)
+    assert dark_themes.count("android:windowLightNavigationBar") == len(families)
 
     # vcard4android intentionally preserves its API-16 library contract. Its
     # instrumentation dependencies therefore cannot share the API-19 test lane.
@@ -119,10 +127,10 @@ def test_semantic_light_and_dark_roles_have_parity_and_preserve_navy_emerald_bra
     assert dark["semantic_system_bar"] == "#0A1018"
 
 
-def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_system_bars():
+def test_incremental_material3_themes_use_semantic_roles_navy_status_and_page_navigation_bars():
     light = styles(RES / "values/themes.xml")
     dark = styles(RES / "values-night/themes.xml")
-    for theme_set in (light, dark):
+    for theme_set, light_navigation in ((light, "true"), (dark, "false")):
         assert "AppTheme.Material3" in theme_set
         assert "AppTheme.Material3.NoActionBar" in theme_set
         for theme_name in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
@@ -134,7 +142,8 @@ def test_incremental_material3_themes_use_semantic_roles_and_readable_navy_syste
                 "colorPrimary": "@color/semantic_primary",
                 "colorOnPrimary": "@color/semantic_on_primary",
                 "android:statusBarColor": "@color/semantic_system_bar",
-                "android:navigationBarColor": "@color/semantic_system_bar",
+                "android:navigationBarColor": "@color/semantic_background",
+                "android:windowLightNavigationBar": light_navigation,
             }.items():
                 assert material3.get(item) == color
 

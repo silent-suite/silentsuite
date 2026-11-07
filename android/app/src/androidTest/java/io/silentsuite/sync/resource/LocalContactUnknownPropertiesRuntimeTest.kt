@@ -92,6 +92,10 @@ class LocalContactUnknownPropertiesRuntimeTest {
         for ((name, value) in listOf("X-TESTA" to "testA", "X-TestB" to "testB", "X-testC" to "testC", "X-testd" to "testD")) {
             assertTrue("BEHAVIOR native: $name kept", Regex("(?im)^${Regex.escape(name)}:${Regex.escape(value)}\\r?$").containsMatchIn(written))
         }
+
+        // #934 diagnostic add-on, separate from the #865 coverage above: provider-path label characterization.
+        // Logs per-case JSON on tag ContactLabelRepro; fails only for fixture/unexpected/cleanup/coverage problems.
+        ContactLabelReproduction.runMatrix(InstrumentationRegistry.getInstrumentation().targetContext)
     }
 
     private fun withAddressBook(block: (LocalAddressBook) -> Unit) {

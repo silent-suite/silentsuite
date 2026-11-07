@@ -548,7 +548,7 @@ open class AndroidContact(
     }
 
 
-    fun add(): Uri {
+    open fun add(): Uri {
         val batch = BatchOperation(addressBook.requireProvider())
 
         val builder = BatchOperation.CpoBuilder.newInsert(addressBook.syncAdapterURI(RawContacts.CONTENT_URI))
@@ -567,7 +567,7 @@ open class AndroidContact(
         return resultUri
     }
 
-    fun update(contact: Contact): Uri {
+    open fun update(contact: Contact): Uri {
         this.contact = contact
 
         val batch = BatchOperation(addressBook.requireProvider())

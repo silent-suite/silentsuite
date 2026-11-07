@@ -481,6 +481,13 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         ("36", "x86_64", "first-run-setup"), ("36", "x86_64", "launcher-recovery"),
         ("36", "x86_64", "status-routes"), ("36", "x86_64", "sibling-routes"),
     ]
+    # Only API 29 account-dashboard models a named phone; every other row keeps the generic AVD.
+    # The runner's heap-size input writes hw.heapSize, which does not set the Android app heap.
+    assert re.findall(r"^\s+profile:\s*(.+)$", step, re.MULTILINE) == ["${{ matrix.avd-profile }}"]
+    assert re.findall(r"^\s+(?:heap-size|ram-size):", step, re.MULTILINE) == []
+    profiled = re.findall(r"- api-level: (\d+)\n\s+arch: \S+\n\s+shard: (\S+)\n(?:\s+#.*\n)*\s+avd-profile: (\S+)", job)
+    assert profiled == [("29", "account-dashboard", "pixel")]
+    assert job.count("avd-profile:") == 1
     assert "name: Account recreation (API ${{ matrix.api-level }}, ${{ matrix.arch }}, ${{ matrix.shard }})" in job
     artifact = re.search(r"^\s+name: (account-recreation-androidTest-.+)$", job, re.MULTILINE).group(1)
     assert artifact == "account-recreation-androidTest-api${{ matrix.api-level }}-${{ matrix.arch }}-${{ matrix.shard }}-${{ github.sha }}"
@@ -509,7 +516,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
     ledger_size = sum(len(methods) for methods in ledger["classes"].values())
-    assert len(canonical) == len(runtime_methods) == ledger_size == 179
+    assert len(canonical) == len(runtime_methods) == ledger_size == 180
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["29:mixed"]}
@@ -528,8 +535,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 177, 179)
-    assert tuple(len(api36[key]) for key in api36) == (33, 19, 7, 72, 48)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 178, 180)
+    assert tuple(len(api36[key]) for key in api36) == (33, 19, 7, 73, 48)
     assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
     # The launcher recovery class runs on its own fresh API 36 emulator (#898).
     assert ledger["shards"]["36:launcher-recovery"] == ["io.silentsuite.sync.ui.LauncherActiveAccountRuntimeTest"]
@@ -558,7 +565,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         "29:sibling-routes": api36["36:sibling-routes"],
     }
     assert requested <= api29["29:account-dashboard"]
-    assert tuple(len(part) for part in api29.values()) == (1, 39, 19, 72, 48)
+    assert tuple(len(part) for part in api29.values()) == (1, 39, 19, 73, 48)
     assert len(api29["29:account-dashboard"] - requested) == 38
     assert sum(len(part) for part in api29.values()) == len(set().union(*api29.values())) == len(canonical)
     assert set().union(*api29.values()) == canonical
@@ -621,7 +628,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}" in assertion
+    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':73,'29:sibling-routes':48,'35:all':180,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':73}" in assertion
     assert "API 29 execution shards are not a disjoint cover of the canonical runtime ledger" in assertion
     assert "elif key == '29:remaining'" not in assertion
     assert '"29:account-dashboard": 38' in script and '"29:remaining":' not in script

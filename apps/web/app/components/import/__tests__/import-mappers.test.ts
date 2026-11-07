@@ -2,6 +2,95 @@ import { describe, it, expect } from 'vitest'
 import { vEventToImportEvent, isCompletedVTodo } from '../import-mappers'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
 
+// #886 / plan-v2 T1: the import payload carries floating identity so the store, serializer and
+// recurrence expansion keep the same meaning the parser gives these bytes.
+describe('vEventToImportEvent DTSTART kind (#886)', () => {
+  it('marks a timed DTSTART with neither TZID nor Z as floating', () => {
+    const payload = vEventToImportEvent({
+      uid: 'floating@example',
+      summary: 'Floating weekly',
+      dtstart: '20260302T100000',
+      dtend: '20260302T110000',
+      rrule: 'FREQ=WEEKLY;COUNT=3',
+    }, 'cal-1')
+
+    expect(payload).toMatchObject({ floating: true })
+    expect(payload.timezone).toBeUndefined()
+    expect(payload.startDate.getTime()).toBe(new Date(2026, 2, 2, 10, 0, 0).getTime())
+  })
+
+  it('control: an explicit UTC DTSTART is not floating', () => {
+    const payload = vEventToImportEvent({
+      uid: 'utc@example',
+      summary: 'UTC weekly',
+      dtstart: '20260223T180000Z',
+      dtend: '20260223T190000Z',
+    }, 'cal-1')
+
+    expect(payload).not.toHaveProperty('floating', true)
+    expect(payload.timezone).toBeUndefined()
+    expect(payload.startDate.toISOString()).toBe('2026-02-23T18:00:00.000Z')
+  })
+
+  it('control: a TZID DTSTART keeps only its timezone', () => {
+    const payload = vEventToImportEvent({
+      uid: 'tzid@example',
+      summary: 'Berlin weekly',
+      dtstart: '20260323T090000',
+      dtend: '20260323T100000',
+      dtstartParams: { TZID: 'Europe/Berlin' },
+      dtendParams: { TZID: 'Europe/Berlin' },
+    }, 'cal-1')
+
+    expect(payload).not.toHaveProperty('floating', true)
+    expect(payload.timezone).toBe('Europe/Berlin')
+    expect(payload.startDate.toISOString()).toBe('2026-03-23T08:00:00.000Z')
+  })
+
+  it('control: an all-day DATE is never floating', () => {
+    const payload = vEventToImportEvent({
+      uid: 'date@example',
+      summary: 'All-day',
+      dtstart: '20260302',
+      dtend: '20260303',
+    }, 'cal-1')
+
+    expect(payload).not.toHaveProperty('floating', true)
+    expect(payload.allDay).toBe(true)
+  })
+})
+
+// #886 F1 row 21 (field-only): the import payload carries a gap DTSTART's original wall clock.
+// Behavioural proof is the store import journey (row 9); this only checks mapper carry-through.
+describe('vEventToImportEvent gap-start wall clock (#886 F1)', () => {
+  it('row 21: carries the original wall clock for a gap DTSTART', () => {
+    const payload = vEventToImportEvent({
+      uid: 'gap@example',
+      summary: 'Gap series',
+      dtstart: '20260308T023000',
+      dtend: '20260308T043000',
+      dtstartParams: { TZID: 'America/Los_Angeles' },
+      dtendParams: { TZID: 'America/Los_Angeles' },
+      rrule: 'FREQ=WEEKLY;COUNT=3',
+    }, 'cal-1')
+
+    expect(payload.startDate.toISOString()).toBe('2026-03-08T10:30:00.000Z')
+    expect(payload).toMatchObject({ startWallClock: '20260308T023000' })
+  })
+
+  it('control: an ordinary TZID DTSTART carries no wall-clock field', () => {
+    const payload = vEventToImportEvent({
+      uid: 'ordinary@example',
+      summary: 'Ordinary',
+      dtstart: '20260302T100000',
+      dtend: '20260302T110000',
+      dtstartParams: { TZID: 'America/Los_Angeles' },
+    }, 'cal-1')
+
+    expect(payload).not.toHaveProperty('startWallClock')
+  })
+})
+
 describe('vEventToImportEvent', () => {
   it('propagates source TZID into the import payload', () => {
     const event: VEvent = {

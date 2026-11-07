@@ -79,6 +79,9 @@ class App : Application() {
                 TaskProviderHandling.updateTaskSync(this@App, it)
             }
         }
+
+        // Removes Notes stores of gone accounts only if clean or covered by a confirmed discard, off the main thread.
+        io.silentsuite.sync.ui.NotesStartupSweep.launchIn(applicationScope, this)
     }
 
     override fun attachBaseContext(base: Context) {

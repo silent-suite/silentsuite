@@ -1,5 +1,6 @@
 package io.silentsuite.sync.ui
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
@@ -53,26 +54,32 @@ open class BaseActivity : AppCompatActivity() {
 
     private fun applyReadableSystemBars() {
         val systemBarColor = ContextCompat.getColor(this, R.color.semantic_system_bar)
+        // The navigation bar blends into the page: semantic_background resolves to the light
+        // page by day and the dark page at night, like the theme's navigationBarColor below 35.
+        val pageColor = ContextCompat.getColor(this, R.color.semantic_background)
+        val nightMode = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
 
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         if (Build.VERSION.SDK_INT >= 35) {
             window.setNavigationBarContrastEnforced(false)
-            installSystemBarScrims(systemBarColor)
+            installSystemBarScrims(systemBarColor, pageColor)
         }
-        // Navy system bars require light clock/battery/connectivity icons. Explicitly
-        // clear light-system-bar appearances so edge-to-edge
-        // defaults or theme inheritance cannot leave dark icons on a dark bar.
+        // The navy status bar requires light clock/battery/connectivity icons. Explicitly
+        // clear the light status appearance so edge-to-edge defaults or theme inheritance
+        // cannot leave dark icons on it. Native navigation glyphs follow the page: dark on the
+        // light page, light on the dark page.
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = false
-            isAppearanceLightNavigationBars = false
+            isAppearanceLightNavigationBars = !nightMode
         }
     }
 
-    private fun installSystemBarScrims(color: Int) {
+    private fun installSystemBarScrims(statusColor: Int, navigationColor: Int) {
         val overlay = window.decorView as ViewGroup
-        fun scrims(existing: Map<Int, View>, tagPrefix: String): Map<Int, View> =
+        fun scrims(existing: Map<Int, View>, tagPrefix: String, color: Int): Map<Int, View> =
             SCRIM_EDGES.associate { (gravity, suffix) ->
                 gravity to (existing[gravity] ?: View(this).also {
                     it.tag = "$tagPrefix-$suffix"
@@ -83,8 +90,8 @@ open class BaseActivity : AppCompatActivity() {
                     overlay.addView(it, FrameLayout.LayoutParams(0, 0))
                 })
             }
-        statusBarScrims = scrims(statusBarScrims, STATUS_BAR_SCRIM_TAG)
-        navigationBarScrims = scrims(navigationBarScrims, NAVIGATION_BAR_SCRIM_TAG)
+        statusBarScrims = scrims(statusBarScrims, STATUS_BAR_SCRIM_TAG, statusColor)
+        navigationBarScrims = scrims(navigationBarScrims, NAVIGATION_BAR_SCRIM_TAG, navigationColor)
         ViewCompat.setOnApplyWindowInsetsListener(overlay) { view, insets ->
             val status = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars())

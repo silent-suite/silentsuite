@@ -8,10 +8,11 @@ This guide is written for people who want to help translate the web app, even if
 
 - The web app source locale is English in `apps/web/messages/en.json`.
 - Translation contributions currently use GitHub pull requests.
-- The first production runtime is still English-only. Maintainers will enable additional languages after there is a real translator/reviewer for that language.
+- The catalogue covers only part of the web app. Many screens still have English text in the components, so a fully translated catalogue does not mean the whole app is translated. Moving that text into the catalogue is separate work.
+- English is the default. Italian (`it`) can be chosen as a partial, experimental option under Settings → Experimental → Language. The choice is stored in a browser cookie for that browser only. Missing Italian messages fall back to English. Maintainers will enable other languages after there is a real translator/reviewer for that language.
 - Android remains on native resources in `android/app/src/main/res/values/strings.xml`.
 - Docs translation is deferred until language maintainers exist.
-- Do not add locale-prefixed routes, a language switcher, Weblate/Crowdin configuration, Android translations, or docs-site localization unless a maintainer explicitly asks for that scope.
+- Do not add locale-prefixed routes, browser language detection, new selectable languages, Weblate/Crowdin configuration, Android translations, or docs-site localization unless a maintainer explicitly asks for that scope.
 
 ## Quick Start For Translators
 
