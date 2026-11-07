@@ -73,7 +73,7 @@ jobs:
         working-directory: bridge
         shell: pwsh
         run: |
-          python -m pytest tests/test_network_profile.py tests/test_autostart_profile.py tests/test_autostart_clean_shell_cli.py -v --tb=short
+          python -m pytest tests/test_network_profile.py tests/test_autostart_profile.py tests/test_autostart_clean_shell_cli.py tests/test_audit_bridge_02_credentials_replace.py -v --tb=short
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
