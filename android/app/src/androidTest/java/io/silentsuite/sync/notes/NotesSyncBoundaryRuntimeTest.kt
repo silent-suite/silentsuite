@@ -1947,6 +1947,64 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("edit 3", itemManager(notebook).fetch(note.uid).contentString)
         assertTrue("nothing is left waiting", pendingHeaders(account, "gen-net").isEmpty())
         assertSucceeded(status(account, "gen-net"))
+
+        // 10. Sync now on Wi-Fi only again, and the dashboard's Sync now off Wi-Fi while an automatic run
+        // is in flight: the tap's own run is refused and records nothing, and the run in flight keeps its
+        // attempt and records its success.
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        edit("edit 4")
+        val beforeTap = status(account, "gen-net")
+        forgetLastListing(account.name)
+        // The automatic run is held at its upload, after it listed. Forgetting that listing before the
+        // tap means a run of the tap that the network rule wrongly let through would list again.
+        val upload = fake.hold("POST", TRANSACTION)
+        val tapMark = fake.requests.size
+        open()
+        upload.awaitArrival()
+        val inFlight = checkNotNull(status(account, "gen-net").activeAttemptId) { "the automatic run has its attempt" }
+        forgetLastListing(account.name)
+        requestSync(context, account)
+        assertEquals("the tap leaves the run in flight its attempt", inFlight, status(account, "gen-net").activeAttemptId)
+        upload.release()
+        awaitSettled(identity)
+        assertEquals("the automatic run sent the change", listOf(transactionOf(notebook)), uploads(tapMark))
+        assertEquals("the refused run of the tap asked the server nothing", 1, listings(tapMark).size)
+        status(account, "gen-net").let {
+            assertEquals("the run in flight recorded its success: $it", SyncStatusStore.TerminalResult.SUCCESS, it.lastTerminalResult)
+            assertTrue("recorded after the tap: $it", (it.lastSuccessAt ?: 0L) > (beforeTap.lastSuccessAt ?: 0L))
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+            assertNull("the refused run closed the tap's request: $it", it.activeRequestId)
+        }
+
+        // 11. Wi-Fi drops between the tap and its run, and the upload of the automatic run in flight fails:
+        // the tap's run is refused off Wi-Fi, and the failure of the run in flight is on record.
+        pin(NotesNetworkPolicy.Connection.WIFI)
+        edit("edit 5")
+        fake.answer("POST", TRANSACTION, code = null)
+        val beforeDrop = status(account, "gen-net")
+        forgetLastListing(account.name)
+        val heldListing = fake.hold("POST", LIST)
+        open()
+        heldListing.awaitArrival()
+        requestSync(context, account)
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        heldListing.release()
+        awaitSettled(identity)
+        status(account, "gen-net").let {
+            assertEquals("the run in flight recorded its failure: $it", SyncStatusStore.TerminalResult.FAILURE, it.lastTerminalResult)
+            assertEquals(SyncStatusStore.FailureCategory.NETWORK, it.lastFailureCategory)
+            assertTrue("recorded after the tap: $it", (it.lastFailureAt ?: 0L) > (beforeDrop.lastFailureAt ?: 0L))
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+            assertNull("the refused run closed the tap's request: $it", it.activeRequestId)
+        }
+        // Back on Wi-Fi with Sync now on any network, a run the user starts sends edit 5.
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        pin(NotesNetworkPolicy.Connection.WIFI)
+        syncNow(account, "gen-net")
+        assertEquals("edit 5", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-net").isEmpty())
+        assertSucceeded(status(account, "gen-net"))
     }
 
     @Test fun anAutomaticRunAlsoNeedsTheAccountsOwnWifiSwitchAndNetworkNameAndARunTheUserStartsDoesNot() {

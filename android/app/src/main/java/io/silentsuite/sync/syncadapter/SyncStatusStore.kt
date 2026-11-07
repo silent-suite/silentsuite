@@ -170,9 +170,16 @@ class SyncStatusStore internal constructor(
         targeted.forEach { service ->
             val current = readOrLegacy(storageKey, service)
             if (current.requestId == requestId) return@forEach
+            // The in-app Notes job serves a new request with a follow-up run once the run in flight
+            // ends (NotesSyncCoordinator), and that follow-up can be refused by the network rule
+            // (NotesNetwork) and then records nothing. So the run in flight keeps its attempt and still
+            // records its outcome; it answers no request any more, which leaves this one open for the
+            // follow-up. An adapter request still replaces an open attempt: its own run records.
+            val keepAttempt = service == Service.NOTES && current.attemptId != null
             puts[v2RecordKey(storageKey, service)] = encodeV2(current.copy(
                 revision = nextRevision(current.revision), requestId = requestId, requestedAt = requestedAt,
-                attemptId = null, attemptStartedAt = null, attemptRequestId = null,
+                attemptId = current.attemptId.takeIf { keepAttempt },
+                attemptStartedAt = current.attemptStartedAt.takeIf { keepAttempt }, attemptRequestId = null,
                 contacts = if (service == Service.CONTACTS) ContactsGeneration() else current.contacts,
             ))
             changed += service
