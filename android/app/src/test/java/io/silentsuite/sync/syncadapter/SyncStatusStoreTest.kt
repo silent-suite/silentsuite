@@ -105,6 +105,36 @@ class SyncStatusStoreTest {
         }
     }
 
+    @Test fun `a notes request keeps the fault of a notes run whose admission failed, which then records its outcome`() {
+        val notes = SyncStatusStore.Service.NOTES
+        // first: the fault sentinel is on disk; second: only this process holds it.
+        for ((account, persisted) in listOf(first to true, second to false)) {
+            assertTrue(store.recordSuccess(account, notes, 5))
+            if (persisted) storage.failNext = true else storage.failAll = true
+            assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE, store.beginAttemptResult(account, notes, "automatic", 10, null))
+            storage.failAll = false
+            assertTrue(store.recordRequested(account, setOf(notes), "sync-now", 11))
+            assertTrue("the fault stays", store.status(account, notes).structuralStorageFailure)
+
+            assertEquals(SyncStatusStore.MutationResult.RECORDED,
+                store.recordFailureResult(account, notes, "automatic", null, SyncStatusStore.FailureCategory.NETWORK, 12))
+            val afterRun = store.status(account, notes)
+            assertEquals(SyncStatusStore.TerminalResult.FAILURE, afterRun.lastTerminalResult)
+            assertEquals(12L, afterRun.lastFailureAt)
+            assertEquals(SyncStatusStore.FailureCategory.NETWORK, afterRun.lastFailureCategory)
+            assertFalse(afterRun.structuralStorageFailure)
+            assertEquals("sync-now", afterRun.activeRequestId)
+
+            // The refused follow-up closes the request and leaves the failure on record.
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(account, notes, "follow-up", 13, "sync-now"))
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.finishWithoutOutcomeResult(account, notes, "follow-up"))
+            val settled = store.status(account, notes)
+            assertNull(settled.activeRequestId)
+            assertEquals(12L, settled.lastTerminalAt)
+            assertEquals(SyncStatusStore.TerminalResult.FAILURE, settled.lastTerminalResult)
+        }
+    }
+
     @Test fun `a newer notes request takes over the request of a notes run in flight, which still records its outcome`() {
         val notes = SyncStatusStore.Service.NOTES
         assertTrue(store.recordRequested(first, setOf(notes), "first-tap", 10))

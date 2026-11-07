@@ -167,9 +167,16 @@ class SyncStatusStore internal constructor(
         if (targeted.isEmpty()) return@synchronized true
         val puts = linkedMapOf<String, String>()
         val changed = linkedSetOf<Service>()
+        val keptFaults = linkedMapOf<String, Long?>()
         targeted.forEach { service ->
             val current = readOrLegacy(storageKey, service)
             if (current.requestId == requestId) return@forEach
+            // A Notes run whose admission could not commit has no attempt, only its fault. That run
+            // repairs the record when it ends, so the fault stays, as an attempt does below.
+            if (service == Service.NOTES && current.attemptId == null && hasLifecycleFault(storageKey, service)) {
+                val key = v2RecordKey(storageKey, service)
+                keptFaults[key] = failedWrites[key]
+            }
             // The in-app Notes job serves a new request with a follow-up run once the run in flight
             // ends (NotesSyncCoordinator), and that follow-up can be refused by the network rule
             // (NotesNetwork) and then records nothing. So the run in flight keeps its attempt and still
@@ -185,7 +192,11 @@ class SyncStatusStore internal constructor(
             changed += service
         }
         if (puts.isEmpty()) return@synchronized true
-        commitLifecycle(puts, changed.mapTo(linkedSetOf()) { v2FaultKey(storageKey, it) })
+        val removes = changed.mapTo(linkedSetOf()) { v2FaultKey(storageKey, it) }
+        keptFaults.keys.forEach { removes.remove(faultKey(it)) }
+        commitLifecycle(puts, removes).also { committed ->
+            if (committed) keptFaults.forEach { (key, at) -> if (at != null) failedWrites[key] = at }
+        }
     }
 
     @Synchronized
