@@ -8,8 +8,10 @@ Usage:
     silentsuite-bridge
 """
 
+import ipaddress
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -508,14 +510,68 @@ IP.1 = 127.0.0.1
 """
 
 _CERT_VALIDITY_DAYS = 398
+_DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
-def _generate_localhost_certificate(cert_path: str, key_path: str) -> None:
-    """Generate a self-signed localhost certificate + key via system openssl.
+def _normalize_certificate_sans(dns_names=(), ip_addresses=()):
+    """Validate and normalize explicitly requested DNS and IP certificate SANs."""
+    normalized_dns = []
+    seen_dns = {"localhost"}
+    for raw in dns_names:
+        if not isinstance(raw, str):
+            raise ValueError("DNS SAN values must be strings.")
+        value = raw.strip()
+        if value.endswith("."):
+            value = value[:-1]
+        value = value.lower()
+        if (
+            not value
+            or len(value) > 253
+            or any(ord(char) < 33 or ord(char) > 126 for char in value)
+            or any(char in value for char in "/\\:@?#[]*%")
+            or any(not _DNS_LABEL_RE.fullmatch(label) for label in value.split("."))
+        ):
+            raise ValueError(f"Invalid DNS SAN value: {raw!r}. Supply a hostname only, without a URL, port, wildcard, or path.")
+        if value not in seen_dns:
+            seen_dns.add(value)
+            normalized_dns.append(value)
 
-    Raises RuntimeError with actionable text on failure. Does not print
-    command output that could include secrets.
-    """
+    normalized_ips = []
+    seen_ips = {"127.0.0.1", "::1"}
+    for raw in ip_addresses:
+        if not isinstance(raw, str):
+            raise ValueError("IP SAN values must be strings.")
+        value = raw.strip()
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise ValueError(f"Invalid IP SAN value: {raw!r}. Supply an IPv4 or IPv6 address only.") from exc
+        canonical = str(address)
+        if canonical not in seen_ips:
+            seen_ips.add(canonical)
+            normalized_ips.append(canonical)
+
+    return normalized_dns, normalized_ips
+
+
+def _certificate_openssl_config(dns_names=(), ip_addresses=(), include_loopback_ipv6=True):
+    """Build a deterministic OpenSSL config while retaining the loopback SANs."""
+    dns_entries = ["DNS.1 = localhost"]
+    dns_entries.extend(f"DNS.{index} = {name}" for index, name in enumerate(dns_names, 2))
+    ip_entries = ["IP.1 = 127.0.0.1"]
+    next_ip = 2
+    if include_loopback_ipv6:
+        ip_entries.append(f"IP.{next_ip} = ::1")
+        next_ip += 1
+    ip_entries.extend(f"IP.{index} = {address}" for index, address in enumerate(ip_addresses, next_ip))
+    template = _OPENSSL_CONFIG_TEMPLATE if include_loopback_ipv6 else _OPENSSL_CONFIG_TEMPLATE_NO_IPV6
+    start = template.index("[alt_names]")
+    return template[:start] + "[alt_names]\\n" + "\\n".join(dns_entries + ip_entries) + "\\n"
+
+
+def _generate_localhost_certificate(cert_path: str, key_path: str, dns_names=(), ip_addresses=()) -> None:
+    """Generate a self-signed localhost certificate plus explicitly requested SANs."""
+    dns_names, ip_addresses = _normalize_certificate_sans(dns_names, ip_addresses)
     parent = os.path.dirname(cert_path)
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -523,32 +579,18 @@ def _generate_localhost_certificate(cert_path: str, key_path: str) -> None:
     if key_parent:
         os.makedirs(key_parent, exist_ok=True)
 
-    # Try IPv6 SAN first; fall back to DNS+IPv4 if the OpenSSL build rejects ::1.
-    for template in (_OPENSSL_CONFIG_TEMPLATE, _OPENSSL_CONFIG_TEMPLATE_NO_IPV6):
+    # Keep the optional loopback ::1 fallback, without dropping requested SANs.
+    for include_ipv6 in (True, False):
+        template = _certificate_openssl_config(dns_names, ip_addresses, include_ipv6)
         with tempfile.NamedTemporaryFile("w", suffix=".cnf", delete=False) as cfg:
             cfg.write(template)
             cfg_path = cfg.name
         try:
             result = subprocess.run(
-                [
-                    "openssl",
-                    "req",
-                    "-x509",
-                    "-newkey",
-                    "rsa:2048",
-                    "-nodes",
-                    "-days",
-                    str(_CERT_VALIDITY_DAYS),
-                    "-keyout",
-                    key_path,
-                    "-out",
-                    cert_path,
-                    "-config",
-                    cfg_path,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
+                ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                 "-days", str(_CERT_VALIDITY_DAYS), "-keyout", key_path,
+                 "-out", cert_path, "-config", cfg_path],
+                capture_output=True, text=True, check=False,
             )
         finally:
             try:
@@ -556,11 +598,8 @@ def _generate_localhost_certificate(cert_path: str, key_path: str) -> None:
             except OSError:
                 pass
         if result.returncode == 0:
-            if template is _OPENSSL_CONFIG_TEMPLATE_NO_IPV6:
-                logger.info(
-                    "Generated localhost certificate with DNS+IPv4 SANs only; "
-                    "use 'localhost' or '127.0.0.1' for Apple Internet Accounts."
-                )
+            if not include_ipv6:
+                logger.info("Generated certificate without the optional IPv6 loopback SAN.")
             _harden_key_permissions(key_path)
             return
 
