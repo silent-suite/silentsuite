@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.provider.CalendarContract
 import android.system.Os
 import android.system.OsConstants
+import android.view.View
 import android.widget.ListView
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
@@ -1126,6 +1127,16 @@ class NotesSyncBoundaryRuntimeTest {
         val agendaBody = "# Monday\n- budget\n- hiring"
         uploadNote(work, "Old plan", "First line of the old plan", mtime = 1_000L)
         val agenda = uploadNote(work, "Agenda", agendaBody, mtime = 2_000L)
+        // A title with a four-byte character, uploaded as the bytes another client writes for it. A
+        // regression check only: the typed name would show the same title here.
+        val cart = "Shopping 🛒"
+        uploadRawNote(work, TestMsgPack.encode(linkedMapOf("name" to cart, "mtime" to 500L)), "eggs")
+        // A name under unsigned integer key 1, which the typed decoder reads as the name. The raw
+        // bytes give no trusted name, so the note shows as Untitled: this is what tells the raw
+        // path from the typed one.
+        val underKeyOne = byteArrayOf(0x82.toByte()) + TestMsgPack.encode(1L) + TestMsgPack.encode("Under key one") +
+            TestMsgPack.encode("mtime") + TestMsgPack.encode(100L)
+        uploadRawNote(work, underKeyOne, "kept under key one")
         // Neither of these is a note to show: an item of another type, and a deleted note.
         uploadNote(work, "Attachment", "not Markdown", mtime = 3_000L, type = "application/octet-stream")
         val deleted = uploadNote(work, "Thrown away", "gone", mtime = 4_000L)
@@ -1142,8 +1153,17 @@ class NotesSyncBoundaryRuntimeTest {
                 val list = activity.findViewById<ListView>(R.id.notebooks_list)
                 list.performItemClick(list.adapter.getView(1, null, list), 1, 1)
             }
-            waitUntil("the cached notes to show") { noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan") }
-            assertEquals(listOf("Monday", "First line of the old plan"), noteList(scenario)!!.renderedNotes.map { it.preview })
+            waitUntil("the cached notes to show") {
+                noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan", cart, "")
+            }
+            assertEquals(listOf("Monday", "First line of the old plan", "eggs", "kept under key one"),
+                noteList(scenario)!!.renderedNotes.map { it.preview })
+            scenario.onActivity { activity ->
+                val notes = activity.findViewById<ListView>(R.id.notes_list)
+                assertEquals(context.getString(R.string.notes_untitled),
+                    notes.adapter.getView(3, null, notes).findViewById<TextView>(R.id.note_title).text.toString())
+                assertEquals("every cached item decoded", View.GONE, activity.findViewById<View>(R.id.notes_unreadable).visibility)
+            }
             scenario.onActivity { activity ->
                 assertEquals("Work", activity.title.toString())
                 val list = activity.findViewById<ListView>(R.id.notes_list)
@@ -2800,6 +2820,14 @@ class NotesSyncBoundaryRuntimeTest {
             this.mtime = mtime
             type?.let { itemType = it }
         }, body)
+        itemMgr.batch(arrayOf(note))
+        return note
+    }
+
+    /** A note with exactly these metadata bytes, as another client could upload it; nothing passes through a typed string. */
+    private fun uploadRawNote(notebook: String, metaRaw: ByteArray, body: String): Item {
+        val itemMgr = itemManager(notebook)
+        val note = itemMgr.create_raw(metaRaw, body.toByteArray(Charsets.UTF_8))
         itemMgr.batch(arrayOf(note))
         return note
     }
