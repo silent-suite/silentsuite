@@ -20,6 +20,8 @@ If you don't see **Install** in the address bar, select **More**, then **Cast, s
 2. At the right of the address bar, select the **App available** icon. The label shows for a moment, then only the icon stays.
 3. Select **Install**.
 
+If you don't see the icon, select **Settings and more**, then **Apps**, then **Install SilentSuite**.
+
 ### Safari on a Mac
 
 This needs macOS Sonoma 14 or later.
