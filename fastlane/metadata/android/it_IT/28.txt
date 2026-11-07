@@ -1,0 +1,3 @@
+- Trova i contatti eliminati in Impostazioni → Recupera contatti eliminati, organizzati per account e rubrica.
+- Conferma prima di ripristinare un contatto, con le rubriche in sola lettura protette dalle modifiche.
+- Mantieni il contatto selezionato quando ruoti lo schermo ed evita un arresto anomalo durante il caricamento dei contatti.
