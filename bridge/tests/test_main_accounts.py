@@ -330,7 +330,7 @@ def test_normalize_certificate_sans_rejects_invalid_dns(value):
         "host.example",
         "1.2.3.4:443",
         "fe80::1%en0",
-        "fe80::1%en0\\n[alt_names]\\nDNS.99 = injected.example",
+        "fe80::1%en0\n[alt_names]\nDNS.99 = injected.example",
     ],
 )
 def test_normalize_certificate_sans_rejects_invalid_ip(value):
