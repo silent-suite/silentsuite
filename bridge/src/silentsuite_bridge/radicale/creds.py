@@ -67,7 +67,7 @@ class Credentials:
                 os.chmod(tmp_path, 0o600)
             except OSError:
                 pass
-            os.rename(tmp_path, self.filename)
+            os.replace(tmp_path, self.filename)
         except BaseException:
             os.unlink(tmp_path)
             raise
