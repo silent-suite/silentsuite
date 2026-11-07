@@ -566,7 +566,7 @@ def _certificate_openssl_config(dns_names=(), ip_addresses=(), include_loopback_
     ip_entries.extend(f"IP.{index} = {address}" for index, address in enumerate(ip_addresses, next_ip))
     template = _OPENSSL_CONFIG_TEMPLATE if include_loopback_ipv6 else _OPENSSL_CONFIG_TEMPLATE_NO_IPV6
     start = template.index("[alt_names]")
-    return template[:start] + "[alt_names]\\n" + "\\n".join(dns_entries + ip_entries) + "\\n"
+    return template[:start] + "[alt_names]\n" + "\n".join(dns_entries + ip_entries) + "\n"
 
 
 def _generate_localhost_certificate(cert_path: str, key_path: str, dns_names=(), ip_addresses=()) -> None:
