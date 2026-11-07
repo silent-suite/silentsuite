@@ -38,12 +38,16 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private var listState: Parcelable? = null
     private var loaded = false
     private var everSynced = false
+    private var unreadable = 0
     private var loadJob: Job? = null
 
     internal var renderedNotes: List<NoteRow> = emptyList()
         private set
 
-    /** What the empty list currently says, or null while rows show; observation point for runtime tests. */
+    /**
+     * What the empty list currently says, or null when it says nothing: while rows show, or after a
+     * sync when the only items here could not be read; observation point for runtime tests.
+     */
     internal var renderedEmptyState: NotesEmptyState? = null
         private set
 
@@ -161,6 +165,7 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
 
     private fun render(view: View, contents: NotebookContents) {
         renderedNotes = contents.notes
+        unreadable = contents.unreadable
         loaded = true
         host()?.title = contents.notebook.name.ifBlank { getString(R.string.notes_untitled) }
         view.findViewById<TextView>(R.id.note_list_read_only).apply {
@@ -188,14 +193,10 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
         val view = view ?: return
         val identity = host()?.identity() ?: return
         val empty = loaded && renderedNotes.isEmpty()
-        view.findViewById<View>(R.id.notes_empty).visibility = if (empty) View.VISIBLE else View.GONE
-        if (!empty) {
-            renderedEmptyState = null
-            return
-        }
-        // A failed load leaves this screen, so only the sync states apply here.
-        val state = NotesEmptyState.of(syncing(identity), loadFailed = false, everSynced)
+        val state = if (empty) NotesEmptyState.ofNoteList(syncing(identity), everSynced, unreadable) else null
         renderedEmptyState = state
+        view.findViewById<View>(R.id.notes_empty).visibility = if (state == null) View.GONE else View.VISIBLE
+        if (state == null) return
         view.findViewById<TextView>(R.id.notes_empty).setText(when (state) {
             NotesEmptyState.SYNCING -> R.string.notes_syncing_notes
             NotesEmptyState.NOT_SYNCED -> R.string.notes_not_synced

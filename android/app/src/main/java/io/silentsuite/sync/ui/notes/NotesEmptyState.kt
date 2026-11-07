@@ -25,5 +25,14 @@ internal enum class NotesEmptyState {
             !everSynced -> NOT_SYNCED
             else -> EMPTY
         }
+
+        /**
+         * What the note list of one notebook says when it has no rows, or null when it says nothing. A
+         * failed load leaves that screen, so only the sync states apply. After a sync, a notebook whose
+         * items could not be read is not empty: the line above the list counts them, and "no notes yet"
+         * would say they are gone.
+         */
+        fun ofNoteList(syncing: Boolean, everSynced: Boolean, unreadable: Int): NotesEmptyState? =
+            of(syncing, loadFailed = false, everSynced).takeUnless { it == EMPTY && unreadable > 0 }
     }
 }
