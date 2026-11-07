@@ -423,8 +423,22 @@ export function parseVTodo(ical: string): VTodo {
 
   const todo: VTodo = { uid: '' };
 
+  // Lines inside a nested component (VALARM or any other) belong to that
+  // component, not to the VTODO, so they are skipped. `depth` counts open
+  // nested blocks; an unclosed block hides the rest of the VTODO.
+  let depth = 0;
   for (const line of lines) {
-    if (line === 'BEGIN:VTODO' || line === 'END:VTODO') continue;
+    const marker = /^(BEGIN|END):/i.exec(line)?.[1]?.toUpperCase();
+    if (depth > 0) {
+      if (marker === 'BEGIN') depth++;
+      else if (marker === 'END') depth--;
+      continue;
+    }
+    if (/^(BEGIN|END):VTODO\s*$/i.test(line)) continue;
+    if (marker === 'BEGIN') {
+      depth++;
+      continue;
+    }
 
     const prop = parseProperty(line);
     switch (prop.name) {

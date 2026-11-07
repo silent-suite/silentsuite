@@ -914,3 +914,224 @@ describe('CATEGORIES (VTodo)', () => {
     expect(generateVTodo(empty)).not.toContain('CATEGORIES');
   });
 });
+
+// ── VTODO nested components (WEBX-02) ──
+// Properties inside a subcomponent (VALARM or any other nested block) belong to
+// that subcomponent, never to the task. These tests only cover which values the
+// parser assigns to the VTODO; they make no claim that subcomponents are kept.
+
+describe('parseVTodo nested components (WEBX-02)', () => {
+  const emailAlarm = [
+    'BEGIN:VALARM',
+    'ACTION:EMAIL',
+    'UID:alarm-uid-1',
+    'SUMMARY:Alarm subject',
+    'DESCRIPTION:Reminder body',
+    'ATTENDEE:mailto:someone@example.com',
+    'TRIGGER:-PT15M',
+    'END:VALARM',
+  ];
+
+  it('keeps parent UID, SUMMARY and DESCRIPTION when a bare VTODO has a conflicting VALARM', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-1',
+      'SUMMARY:Pay rent',
+      'DESCRIPTION:Real description',
+      ...emailAlarm,
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-1');
+    expect(todo.summary).toBe('Pay rent');
+    expect(todo.description).toBe('Real description');
+  });
+
+  it('keeps parent UID, SUMMARY and DESCRIPTION inside a full VCALENDAR with a conflicting VALARM', () => {
+    const ical = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Example//Other Client//EN',
+      'BEGIN:VTODO',
+      'UID:task-1',
+      'SUMMARY:Pay rent',
+      'DESCRIPTION:Real description',
+      ...emailAlarm,
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-1');
+    expect(todo.summary).toBe('Pay rent');
+    expect(todo.description).toBe('Real description');
+  });
+
+  it('ignores properties in multiple and nested subcomponents and resumes top-level parsing after them', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-2',
+      'SUMMARY:Parent summary',
+      'DESCRIPTION:Parent description',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:First alarm',
+      'BEGIN:X-INNER',
+      'SUMMARY:Inner summary',
+      'CATEGORIES:InnerOnly',
+      'END:X-INNER',
+      // Still inside the first VALARM after the inner block ends.
+      'UID:alarm-after-inner',
+      'URL:https://alarm.example.com',
+      'TRIGGER:-PT5M',
+      'END:VALARM',
+      'BEGIN:VALARM',
+      'ACTION:EMAIL',
+      'SUMMARY:Second alarm subject',
+      'DESCRIPTION:Second alarm body',
+      'PRIORITY:9',
+      'TRIGGER:-P1D',
+      'END:VALARM',
+      // Top-level VTODO properties after the subcomponents must still be read.
+      'LOCATION:Office',
+      'PRIORITY:1',
+      'STATUS:IN-PROCESS',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-2');
+    expect(todo.summary).toBe('Parent summary');
+    expect(todo.description).toBe('Parent description');
+    expect(todo.url).toBeUndefined();
+    expect(todo.categories).toBeUndefined();
+    expect(todo.location).toBe('Office');
+    expect(todo.priority).toBe(1);
+    expect(todo.status).toBe('IN-PROCESS');
+  });
+
+  it('control: a bare VTODO without subcomponents parses as before', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-3',
+      'SUMMARY:Plain task',
+      'DESCRIPTION:Plain description',
+      'LOCATION:Home',
+      'PRIORITY:5',
+      'STATUS:NEEDS-ACTION',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-3');
+    expect(todo.summary).toBe('Plain task');
+    expect(todo.description).toBe('Plain description');
+    expect(todo.location).toBe('Home');
+    expect(todo.priority).toBe(5);
+    expect(todo.status).toBe('NEEDS-ACTION');
+  });
+
+  it('control: a VCALENDAR wrapper still yields its first VTODO and ignores components outside it', () => {
+    const ical = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VTIMEZONE',
+      'TZID:Europe/Berlin',
+      'BEGIN:STANDARD',
+      'DTSTART:19701025T030000',
+      'TZOFFSETFROM:+0200',
+      'TZOFFSETTO:+0100',
+      'END:STANDARD',
+      'END:VTIMEZONE',
+      'BEGIN:VTODO',
+      'UID:task-4',
+      'SUMMARY:Wrapped task',
+      'DUE;TZID=Europe/Berlin:20261110T090000',
+      'END:VTODO',
+      'BEGIN:VTODO',
+      'UID:task-5',
+      'SUMMARY:Second task',
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-4');
+    expect(todo.summary).toBe('Wrapped task');
+    expect(todo.due).toBe('20261110T090000');
+    expect(todo.dueParams).toEqual({ TZID: 'Europe/Berlin' });
+  });
+});
+
+// ── VTODO nested components: final regression edges (WEBX-02) ──
+// Malformed-input policy only: nested content is skipped while a nested block is
+// open. These tests do not require component-name validation (for example, that
+// an END matches the BEGIN it closes). Outer VTODO markers stay uppercase here
+// because their handling is unchanged by WEBX-02.
+
+describe('parseVTodo nested component edges (WEBX-02)', () => {
+  it('treats mixed-case nested BEGIN/END markers as a subcomponent and resumes top-level parsing', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-ci',
+      'SUMMARY:Parent summary',
+      'begin:valarm',
+      'ACTION:DISPLAY',
+      'UID:alarm-uid-ci',
+      'SUMMARY:Alarm subject',
+      'TRIGGER:-PT15M',
+      'End:VAlarm',
+      'LOCATION:Office',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-ci');
+    expect(todo.summary).toBe('Parent summary');
+    expect(todo.location).toBe('Office');
+  });
+
+  it('keeps parent values before an unclosed nested block and ignores the values inside it', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-unclosed',
+      'SUMMARY:Parent summary',
+      'DESCRIPTION:Parent description',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'UID:alarm-uid-unclosed',
+      'SUMMARY:Alarm subject',
+      'DESCRIPTION:Alarm description',
+      'LOCATION:Alarm location',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-unclosed');
+    expect(todo.summary).toBe('Parent summary');
+    expect(todo.description).toBe('Parent description');
+    expect(todo.location).toBeUndefined();
+  });
+
+  it('uses the existing UID and summary fallbacks when those properties exist only inside a nested block', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'DESCRIPTION:Parent only',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'UID:alarm-only-uid',
+      'SUMMARY:Alarm-only summary',
+      'TRIGGER:-PT15M',
+      'END:VALARM',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    // Existing fallbacks: a generated crypto.randomUUID() and 'Untitled'.
+    expect(todo.uid).not.toBe('alarm-only-uid');
+    expect(todo.uid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(todo.summary).toBe('Untitled');
+    expect(todo.description).toBe('Parent only');
+  });
+});

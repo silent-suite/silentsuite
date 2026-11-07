@@ -611,3 +611,58 @@ describe('edge cases', () => {
     expect(task.title).toBe('Untitled');
   });
 });
+
+// ── VALARM properties are not task fields (WEBX-02) ──
+// Only checks that parent fields survive deserialize/serialize. It does not
+// claim the VALARM block itself is preserved (it is not; see WEBX-03).
+
+describe('VALARM properties are not promoted to task fields (WEBX-02)', () => {
+  const remoteItem = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Example//Other Client//EN',
+    'BEGIN:VTODO',
+    'UID:task-1',
+    'SUMMARY:Pay rent',
+    'DESCRIPTION:Real description',
+    'LOCATION:Home',
+    'STATUS:NEEDS-ACTION',
+    'BEGIN:VALARM',
+    'ACTION:EMAIL',
+    'UID:alarm-uid-1',
+    'SUMMARY:Alarm subject',
+    'DESCRIPTION:Reminder body',
+    'LOCATION:Alarm location',
+    'ATTENDEE:mailto:someone@example.com',
+    'TRIGGER:-PT15M',
+    'END:VALARM',
+    'END:VTODO',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  it('fromVTodo takes uid, title, description and location from the VTODO, not its VALARM', () => {
+    const task = fromVTodo(remoteItem);
+    expect(task.uid).toBe('task-1');
+    expect(task.id).toBe('task-1');
+    expect(task.title).toBe('Pay rent');
+    expect(task.description).toBe('Real description');
+    expect(task.location).toBe('Home');
+  });
+
+  it('a web save (deserialize then serialize) writes the parent fields, not the alarm values', () => {
+    const task = deserializeTask(remoteItem);
+    const saved = serializeTask({ ...task, completed: true, status: 'completed' });
+
+    expect(saved).toContain('UID:task-1');
+    expect(saved).toContain('SUMMARY:Pay rent');
+    expect(saved).toContain('DESCRIPTION:Real description');
+    expect(saved).toContain('LOCATION:Home');
+
+    const reread = deserializeTask(saved);
+    expect(reread.uid).toBe('task-1');
+    expect(reread.title).toBe('Pay rent');
+    expect(reread.description).toBe('Real description');
+    expect(reread.location).toBe('Home');
+    expect(reread.completed).toBe(true);
+  });
+});
