@@ -726,14 +726,15 @@ def setup_macos_apple_accounts(dns_names=(), ip_addresses=(), replace_existing=F
             print(f"  DNS: {name}")
         for address in ip_addresses:
             print(f"  IP:  {address}")
-        if _cert_and_key_readable(cert_path, key_path) and not replace_existing:
+        existing_material = os.path.exists(cert_path) or os.path.exists(key_path)
+        if existing_material and not replace_existing:
             print(
-                "Error: a certificate already exists. Replacing it invalidates trust "
+                "Error: certificate material already exists. Replacing it invalidates trust "
                 "in DAV clients. Re-run with --replace-existing to confirm replacement."
             )
             return 1
-        if _cert_and_key_readable(cert_path, key_path):
-            print("WARNING: replacing the certificate. DAV clients must trust the new certificate again.")
+        if existing_material:
+            print("WARNING: replacing existing certificate material. DAV clients must trust the new certificate again.")
         try:
             _generate_localhost_certificate(cert_path, key_path, dns_names, ip_addresses)
             status = "generated"
