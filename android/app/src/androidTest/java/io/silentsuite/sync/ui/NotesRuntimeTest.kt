@@ -21,7 +21,9 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NotesNetwork
 import io.silentsuite.sync.notes.NotesNetworkPolicy
+import io.silentsuite.sync.notes.NotesNetworkPolicy.NoticePart
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.syncadapter.SyncStatusStore
@@ -34,6 +36,7 @@ import io.silentsuite.sync.ui.notes.NotebookListFragment
 import io.silentsuite.sync.ui.notes.NotebookRow
 import io.silentsuite.sync.ui.notes.NotesActivity
 import io.silentsuite.sync.ui.notes.NotesEmptyState
+import io.silentsuite.sync.ui.notes.NotesLoader
 import io.silentsuite.sync.ui.notes.NotesRuntimeFixture
 import io.silentsuite.sync.ui.notes.notesFixtureOverride
 import io.silentsuite.sync.ui.settings.SettingsCategory
@@ -56,7 +59,9 @@ import org.junit.runner.RunWith
  * Notes (experimental) runtime contracts: the per-account toggle, the dashboard's conditional
  * fourth service, shared and read-only notebooks in the Notes screen, and exact-generation plus
  * sign-out protections for the in-app sync job. Every test is offline: the network job is
- * replaced by a seam and the Notes screen reads process-local fixtures.
+ * replaced by a seam and the Notes screen reads process-local fixtures. The notebook list also
+ * reads which network the device reports, for its network line; every case that opens the list
+ * pins that reading and takes the pin off again.
  */
 @RunWith(AndroidJUnit4::class)
 class NotesRuntimeTest {
@@ -263,6 +268,10 @@ class NotesRuntimeTest {
         val routes = mutableListOf<Intent>()
         NotebookListFragment.notebookRouteLauncherOverride = { routes += Intent(it) }
         try {
+            // The list reads the network for its network line. Pinned to Wi-Fi, so nothing here
+            // depends on the network of the device: with the defaults the list then says nothing.
+            assertNull("another test left the network reading pinned", NotesNetwork.readingOverride)
+            NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(NotesNetworkPolicy.Connection.WIFI) }
             ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, generation)).use { scenario ->
                 // Before any Notes sync has succeeded, an empty cache is not "no notebooks": no
                 // create prompt, and pull to refresh stays available.
@@ -295,6 +304,9 @@ class NotesRuntimeTest {
                     assertNull(notebookFragment(scenario)?.renderedEmptyState)
                     assertEquals(View.GONE, activity.findViewById<View>(R.id.notebooks_empty).visibility)
                     assertEquals(62, list.adapter.count)
+                    assertTrue("on Wi-Fi with the defaults the list says nothing about the network",
+                        notebookFragment(scenario)!!.renderedNetworkNotice.isEmpty())
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.notebooks_network_notice).visibility)
                     val ownRow = list.adapter.getView(0, null, list)
                     assertEquals(View.GONE, ownRow.findViewById<View>(R.id.read_only).visibility)
                     assertEquals(View.GONE, ownRow.findViewById<View>(R.id.shared).visibility)
@@ -357,6 +369,7 @@ class NotesRuntimeTest {
                 waitUntil("notebook list position restored") { notebookListPosition(scenario) == 20 }
             }
         } finally {
+            NotesNetwork.readingOverride = null
             notesFixtureOverride = null
             NotesSyncCoordinator.runnerOverride = null
             NotebookListFragment.notebookRouteLauncherOverride = null
@@ -364,6 +377,7 @@ class NotesRuntimeTest {
             removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }
+        assertNull("this case leaves the network reading as it found it", NotesNetwork.readingOverride)
     }
 
     @Test fun notesRouteRejectsStaleGenerationAndSignOutCancelsTheRunningSync() {
@@ -403,6 +417,10 @@ class NotesRuntimeTest {
         }
         val identity = ExactAccountIdentity(account.type, account.name, generation)
         try {
+            // The list reads the network for its network line. Pinned to Wi-Fi, so nothing here
+            // depends on the network of the device.
+            assertNull("another test left the network reading pinned", NotesNetwork.readingOverride)
+            NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(NotesNetworkPolicy.Connection.WIFI) }
             // A stale or replaced generation never reaches the Notes screen.
             ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "stale-generation")).use { scenario ->
                 waitUntil("stale route finished") { scenario.state == Lifecycle.State.DESTROYED }
@@ -411,6 +429,8 @@ class NotesRuntimeTest {
 
             ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, generation)).use { scenario ->
                 waitUntil("notebooks rendered") { notebookFragment(scenario)?.renderedNotebooks?.size == 1 }
+                assertTrue("on Wi-Fi with the defaults the list says nothing about the network",
+                    notebookFragment(scenario)!!.renderedNetworkNotice.isEmpty())
                 waitUntil("opening the screen starts the Notes job") { started.count == 1L }
                 waitUntil("run request recorded") { firstRunManual.get() != null }
                 assertEquals("opening the screen is automatic, not a run the user started", false, firstRunManual.get())
@@ -446,12 +466,183 @@ class NotesRuntimeTest {
             }
             assertFalse(NotesSyncCoordinator.isPending(identity) || NotesSyncCoordinator.isActive(identity))
         } finally {
+            NotesNetwork.readingOverride = null
             notesFixtureOverride = null
             NotesSyncCoordinator.runnerOverride = null
             NotesSyncCoordinator.cancelAccount(account.type, account.name)
             removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }
+        assertNull("this case leaves the network reading as it found it", NotesNetwork.readingOverride)
+    }
+
+    @Test fun theNotebookListSaysWhyNotesDoNotSyncByThemselvesAndWhetherPullingDownWould() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("notes-notice-${System.nanoTime()}@example.invalid", App.accountType)
+        check(manager.addAccountExplicitly(account, null, null))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+        check(AccountSettings.writeNotesEnabled(manager, account, true))
+        val settings = AccountSettings(context, account)
+        val row = NotebookRow("nb", "Personal Notes", "", null, readOnly = false, shared = false)
+        val rows = AtomicReference(listOf(row))
+        notesFixtureOverride = { _, exact, creationId ->
+            if (exact == account && creationId == generation) NotesRuntimeFixture(rows.get(), emptyMap()) else null
+        }
+        // The run is a stand-in, so the gate never runs here: the list is the only reader of the network.
+        NotesSyncCoordinator.runnerOverride = { _, _, _, _ -> }
+        // The pinned reading gives the Wi-Fi name only when the list asks for it, and keeps each ask.
+        val asked = java.util.concurrent.CopyOnWriteArrayList<Boolean>()
+        fun pin(connection: NotesNetworkPolicy.Connection, name: String? = null) {
+            NotesNetwork.readingOverride = { withWifiName ->
+                asked += withWifiName
+                NotesNetworkPolicy.Reading(connection, name.takeIf { withWifiName })
+            }
+        }
+        val wifi = NotesNetworkPolicy.Connection.WIFI
+        val other = NotesNetworkPolicy.Connection.OTHER
+        // The test's own list of which text belongs to which sentence.
+        val texts = mapOf(
+            NoticePart.MAY_BE_OUT_OF_DATE to R.string.notes_network_may_be_out_of_date,
+            NoticePart.NOTES_SETTING to R.string.notes_network_notes_setting,
+            NoticePart.ACCOUNT_WIFI_ONLY to R.string.notes_network_account_wifi_only,
+            NoticePart.NO_WIFI_REPORTED to R.string.notes_network_no_wifi_reported,
+            NoticePart.ACCOUNT_NETWORK_NAME to R.string.notes_network_account_network_name,
+            NoticePart.TRY_NOW to R.string.notes_network_try_now,
+            NoticePart.SYNC_NOW_NEEDS_WIFI to R.string.notes_network_sync_now_needs_wifi,
+        )
+        // Waits until the list has rendered exactly these sentences, then reads the line itself. Every
+        // step below expects other sentences than the step before it, so the wait can only end on a
+        // render made after the step changed something. A step changes the settings and the pinned
+        // reading first and the notebook rows last: a load reads the rows before it reads the network.
+        fun awaitLine(scenario: ActivityScenario<NotesActivity>, step: String, vararg expected: NoticePart) {
+            try {
+                waitUntil(step) { notebookFragment(scenario)?.renderedNetworkNotice == expected.toList() }
+            } catch (e: AssertionError) {
+                throw AssertionError("$step: the list last rendered ${notebookFragment(scenario)?.renderedNetworkNotice}", e)
+            }
+            scenario.onActivity { activity ->
+                val line = activity.findViewById<TextView>(R.id.notebooks_network_notice)
+                assertEquals(step, if (expected.isEmpty()) View.GONE else View.VISIBLE, line.visibility)
+                if (expected.isNotEmpty()) {
+                    assertEquals(step, expected.joinToString(" ") { activity.getString(texts.getValue(it)) }, line.text.toString())
+                }
+            }
+        }
+        // The end of the stand-in run reloads the list, as the end of any run does.
+        fun reload() {
+            NotesSyncCoordinator.request(context, account, generation, NotesSyncPolicy.Trigger.SCREEN)
+        }
+        try {
+            assertNull("another test left the network reading pinned", NotesNetwork.readingOverride)
+            pin(wifi)
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, generation)).use { scenario ->
+                // 1. On Wi-Fi with the defaults nothing is said.
+                waitUntil("step 1: the notebook to show") { notebookFragment(scenario)?.renderedNotebooks?.size == 1 }
+                awaitLine(scenario, "step 1: on Wi-Fi with the defaults")
+
+                // 2. Off Wi-Fi with the defaults: the Notes setting, what Android reports, and the pull
+                // down as an attempt.
+                pin(other)
+                reload()
+                awaitLine(scenario, "step 2: off Wi-Fi with the defaults",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
+
+                // 3. Sync now on Wi-Fi only as well: the last sentence says so, and offers the pull down
+                // for Wi-Fi only. No run is requested in this step; the screen is left and shown again.
+                check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+                scenario.moveToState(Lifecycle.State.CREATED)
+                scenario.moveToState(Lifecycle.State.RESUMED)
+                awaitLine(scenario, "step 3: Sync now on Wi-Fi only as well",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.SYNC_NOW_NEEDS_WIFI)
+
+                // 4. The account's own switch on, and Sync now on any network again: both rules are
+                // named, the Notes setting first.
+                settings.setSyncWiFiOnly(true)
+                check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+                reload()
+                awaitLine(scenario, "step 4: the Notes setting and the account switch",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED,
+                    NoticePart.TRY_NOW)
+
+                // 5. Automatic sync on any network and no active network reported: the account switch
+                // alone. No active network is not proof of no connection, so the pull down is still
+                // offered.
+                check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+                pin(NotesNetworkPolicy.Connection.NONE)
+                reload()
+                awaitLine(scenario, "step 5: no active network reported, the account switch on",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
+                // Up to here the account never had a network name.
+                assertTrue("with no network name on the account the list never asked for the Wi-Fi name: $asked",
+                    asked.isNotEmpty() && asked.none { it })
+
+                // 6. A network name on the account, and Wi-Fi under another name: the name sentence, and
+                // nothing says that Wi-Fi is missing.
+                settings.syncWifiOnlySSID = "home"
+                pin(wifi, "\"cafe\"")
+                reload()
+                awaitLine(scenario, "step 6: Wi-Fi under another name than the account's",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_NETWORK_NAME, NoticePart.TRY_NOW)
+
+                // 7. Wi-Fi under the account's own name: no line. The pinned reading gives the name only
+                // when it is asked for, so this also shows that the list asks for it.
+                pin(wifi, "\"home\"")
+                reload()
+                awaitLine(scenario, "step 7: Wi-Fi under the account's own name")
+
+                // 8. Off Wi-Fi on a network that is not Wi-Fi: the same words as for no active network
+                // in step 5.
+                pin(other)
+                reload()
+                awaitLine(scenario, "step 8: off Wi-Fi, the account switch on",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
+
+                // 9. The platform's answer cannot be read: no line, no crash, and the notebook still shows.
+                NotesNetwork.readingOverride = { throw IllegalStateException("the reading fails in this step") }
+                reload()
+                awaitLine(scenario, "step 9: a reading that fails")
+                assertEquals("the notebook still shows after a reading that failed", 1, notebookFragment(scenario)?.renderedNotebooks?.size)
+                assertEquals("the screen is still open", Lifecycle.State.RESUMED, scenario.state)
+
+                // 10. The reading works again, every rule is on, and no notebook is left: the line stays
+                // above the empty list.
+                check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+                check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+                pin(other)
+                rows.set(emptyList())
+                reload()
+                awaitLine(scenario, "step 10: every rule on, above an empty list",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED,
+                    NoticePart.SYNC_NOW_NEEDS_WIFI)
+                scenario.onActivity { activity ->
+                    assertEquals("the empty list shows under the line", View.VISIBLE, activity.findViewById<View>(R.id.notebooks_empty).visibility)
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.notebooks_hint).visibility)
+                }
+
+                // 11. Back on Wi-Fi under the account's name: the line goes at the next reload.
+                pin(wifi, "\"home\"")
+                reload()
+                awaitLine(scenario, "step 11: back on Wi-Fi")
+
+                // 12. The account row is gone: there is nothing to read, and the screen closes. The
+                // fixture still answers for the removed account, so this load reads the network for a
+                // row that is gone, as a real load does when the account goes between its two reads.
+                removeAccountAndWait(manager, account)
+                assertNull("with the account row gone there is no reading", NotesLoader.network(context, account))
+                reload()
+                waitUntil("step 12: the screen to close once its account is gone") { scenario.state == Lifecycle.State.DESTROYED }
+            }
+        } finally {
+            NotesNetwork.readingOverride = null
+            notesFixtureOverride = null
+            NotesSyncCoordinator.runnerOverride = null
+            NotesSyncCoordinator.cancelAccount(account.type, account.name)
+            removeAccountAndWait(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+        assertNull("this case leaves the network reading as it found it", NotesNetwork.readingOverride)
     }
 
     private fun notesToggle(activity: AppSettingsActivity): SwitchPreferenceCompat {

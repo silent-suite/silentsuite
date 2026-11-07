@@ -76,4 +76,58 @@ object NotesNetworkPolicy {
         if (!explicit) accountBlocker(account, reading)?.let { blockers += it }
         return Verdict(blockers, reading.connection)
     }
+
+    /**
+     * One sentence of the line the notebook list shows while Notes do not sync by themselves on the
+     * network the platform reports. The screen has one text for each and shows them in the order
+     * [notice] gives.
+     */
+    enum class NoticePart {
+        /** Opens the line: what the device holds may be old. */
+        MAY_BE_OUT_OF_DATE,
+
+        /** The automatic Notes setting is Wi-Fi only. */
+        NOTES_SETTING,
+
+        /** The account's own Wi-Fi-only switch is on. */
+        ACCOUNT_WIFI_ONLY,
+
+        /**
+         * The reading is not Wi-Fi. NONE gets this sentence too: no active network is what the platform
+         * reports, not proof that there is no connection.
+         */
+        NO_WIFI_REPORTED,
+
+        /** The reading is Wi-Fi, but not the network the account names, or the platform gave no name. */
+        ACCOUNT_NETWORK_NAME,
+
+        /** A run the user starts would not be refused. It is an attempt; it can still fail. */
+        TRY_NOW,
+
+        /** A run the user starts would be refused too: Sync now is Wi-Fi only and the reading is not Wi-Fi. */
+        SYNC_NOW_NEEDS_WIFI,
+    }
+
+    /**
+     * What the notebook list says about the network, sentence by sentence, or nothing when an
+     * automatic run would not be refused now (answer 5 of 2026-10-12 on #709). First that Notes may
+     * be out of date, then every rule that refuses the automatic run with what the platform reports,
+     * then what a run the user starts would get. Network reasons only: a run that is not refused can
+     * still fail.
+     */
+    fun notice(settings: Settings, account: AccountRule, reading: Reading): List<NoticePart> {
+        val automatic = decide(explicit = false, settings, account, reading)
+        if (automatic.run) return emptyList()
+        val parts = ArrayList<NoticePart>()
+        parts += NoticePart.MAY_BE_OUT_OF_DATE
+        if (Blocker.ACCOUNT_NETWORK_NAME in automatic.blockers) {
+            parts += NoticePart.ACCOUNT_NETWORK_NAME
+        } else {
+            if (Blocker.NOTES_SETTING in automatic.blockers) parts += NoticePart.NOTES_SETTING
+            if (Blocker.ACCOUNT_WIFI_ONLY in automatic.blockers) parts += NoticePart.ACCOUNT_WIFI_ONLY
+            parts += NoticePart.NO_WIFI_REPORTED
+        }
+        parts += if (decide(explicit = true, settings, account, reading).run) NoticePart.TRY_NOW else NoticePart.SYNC_NOW_NEEDS_WIFI
+        return parts
+    }
 }

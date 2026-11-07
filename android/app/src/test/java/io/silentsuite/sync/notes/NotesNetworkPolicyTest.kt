@@ -4,6 +4,7 @@ import io.silentsuite.sync.notes.NotesNetworkPolicy.AccountRule
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Allowed
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Blocker
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Connection
+import io.silentsuite.sync.notes.NotesNetworkPolicy.NoticePart
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Reading
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Settings
 import io.silentsuite.sync.notes.NotesNetworkPolicy.Verdict
@@ -34,6 +35,45 @@ class NotesNetworkPolicyTest {
     private class Row(val id: String, val allowed: Allowed, val account: AccountRule, val reading: Reading, vararg blockers: Blocker) {
         val blockers = blockers.toSet()
     }
+
+    /** One row of the notice table: the sentences after the opening one, for every combination the row covers. */
+    private class NoticeRow(val id: String, val automatic: List<Allowed>, val syncNow: List<Allowed>,
+                            val cells: List<Pair<AccountRule, Reading>>, vararg rest: NoticePart) {
+        val rest = rest.toList()
+    }
+
+    private fun cells(accounts: List<AccountRule>, readings: List<Reading>) = accounts.flatMap { account -> readings.map { account to it } }
+
+    private val either = Allowed.values().toList()
+    private val wifiOnly = listOf(Allowed.WIFI_ONLY)
+    private val anyNetwork = listOf(Allowed.ANY_NETWORK)
+    private val notWifi = listOf(other, none)
+    private val switchOff = listOf(off, offHome)
+    private val switchOn = listOf(on, onHome)
+
+    private val noticeRows = listOf(
+        // 1. On Wi-Fi with nothing against it: the switch off, on without a name, or on with the name that matches.
+        NoticeRow("1", either, either, cells(listOf(off, offHome, on), listOf(wifi, wifiHome, wifiCafe, wifiUnknown)) + (onHome to wifiHome)),
+        // 2. On Wi-Fi, but not the account's network: another name, no name, or the platform's unknown-name value.
+        NoticeRow("2", either, either, cells(listOf(onHome), listOf(wifiCafe, wifi, wifiUnknown)),
+            NoticePart.ACCOUNT_NETWORK_NAME, NoticePart.TRY_NOW),
+        // 3 is the defaults off Wi-Fi.
+        NoticeRow("3", wifiOnly, anyNetwork, cells(switchOff, notWifi),
+            NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW),
+        NoticeRow("4", wifiOnly, wifiOnly, cells(switchOff, notWifi),
+            NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.SYNC_NOW_NEEDS_WIFI),
+        NoticeRow("5", wifiOnly, anyNetwork, cells(switchOn, notWifi),
+            NoticePart.NOTES_SETTING, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW),
+        NoticeRow("6", wifiOnly, wifiOnly, cells(switchOn, notWifi),
+            NoticePart.NOTES_SETTING, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.SYNC_NOW_NEEDS_WIFI),
+        NoticeRow("7", anyNetwork, anyNetwork, cells(switchOn, notWifi),
+            NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW),
+        NoticeRow("8", anyNetwork, wifiOnly, cells(switchOn, notWifi),
+            NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.SYNC_NOW_NEEDS_WIFI),
+        // 9 and 10: an automatic run would start, so nothing is said, also where a run the user starts would be refused (10).
+        NoticeRow("9", anyNetwork, anyNetwork, cells(switchOff, notWifi)),
+        NoticeRow("10", anyNetwork, wifiOnly, cells(switchOff, notWifi)),
+    )
 
     @Test fun `the defaults are Wi-Fi only for automatic runs and any network for runs the user starts`() {
         assertEquals(Allowed.WIFI_ONLY, Settings.DEFAULT.automatic)
@@ -237,5 +277,52 @@ class NotesNetworkPolicyTest {
         val at = (0 until maxOf(expected.size, lines.size)).firstOrNull { expected.getOrNull(it) != lines.getOrNull(it) } ?: -1
         assertEquals("$message; first difference at compared line ${at + 1}: " +
             "the test has <${expected.getOrNull(at)}>, the source has <${lines.getOrNull(at)}>", expected, lines)
+    }
+
+    @Test fun `every row of the notebook list's network line`() {
+        val seen = HashSet<String>()
+        for (row in noticeRows) for (automatic in row.automatic) for (syncNow in row.syncNow) for ((account, reading) in row.cells) {
+            val what = "row ${row.id}, automatic $automatic, Sync now $syncNow, $account, $reading"
+            assertTrue("no combination is in two rows: $what", seen.add("$automatic $syncNow $account $reading"))
+            val expected = if (row.rest.isEmpty()) emptyList() else listOf(NoticePart.MAY_BE_OUT_OF_DATE) + row.rest
+            assertEquals(what, expected, NotesNetworkPolicy.notice(Settings(automatic, syncNow), account, reading))
+        }
+        assertEquals("the rows cover every combination of the two settings, the account's rule and the reading",
+            Allowed.values().size * Allowed.values().size * accounts.size * readings.size, seen.size)
+    }
+
+    @Test fun `the line shows exactly when an automatic run would be refused, and it ends with what a run the user starts would get`() {
+        for (automatic in Allowed.values()) for (syncNow in Allowed.values()) for (account in accounts) for (reading in readings) {
+            val settings = Settings(automatic, syncNow)
+            val what = "$settings, $account, $reading"
+            val parts = NotesNetworkPolicy.notice(settings, account, reading)
+            val byItself = NotesNetworkPolicy.decide(explicit = false, settings, account, reading)
+            val byTheUser = NotesNetworkPolicy.decide(explicit = true, settings, account, reading)
+            assertEquals(what, byItself.run, parts.isEmpty())
+            if (parts.isEmpty()) continue
+            assertEquals(what, NoticePart.MAY_BE_OUT_OF_DATE, parts.first())
+            assertEquals(what, if (byTheUser.run) NoticePart.TRY_NOW else NoticePart.SYNC_NOW_NEEDS_WIFI, parts.last())
+            assertEquals(what, Blocker.NOTES_SETTING in byItself.blockers, NoticePart.NOTES_SETTING in parts)
+            assertEquals(what, Blocker.ACCOUNT_WIFI_ONLY in byItself.blockers, NoticePart.ACCOUNT_WIFI_ONLY in parts)
+            assertEquals(what, Blocker.ACCOUNT_NETWORK_NAME in byItself.blockers, NoticePart.ACCOUNT_NETWORK_NAME in parts)
+            assertEquals("Wi-Fi is said to be missing only when the reading is not Wi-Fi: $what",
+                reading.connection != Connection.WIFI, NoticePart.NO_WIFI_REPORTED in parts)
+            assertEquals("no sentence twice: $what", parts.size, parts.toSet().size)
+        }
+    }
+
+    @Test fun `no active network gets the words of any network that is not Wi-Fi, and pulling down now is still offered unless Sync now is Wi-Fi only`() {
+        for (automatic in Allowed.values()) for (syncNow in Allowed.values()) for (account in accounts) {
+            val settings = Settings(automatic, syncNow)
+            assertEquals("$settings, $account",
+                NotesNetworkPolicy.notice(settings, account, other), NotesNetworkPolicy.notice(settings, account, none))
+        }
+        // With the defaults: the reason is what the platform reports, and the run the user can start is on offer.
+        assertEquals(listOf(NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW),
+            NotesNetworkPolicy.notice(Settings.DEFAULT, off, none))
+        for (account in accounts) for (automatic in Allowed.values()) {
+            val parts = NotesNetworkPolicy.notice(Settings(automatic, Allowed.ANY_NETWORK), account, none)
+            assertTrue("$account, automatic $automatic: $parts", parts.isEmpty() || parts.last() == NoticePart.TRY_NOW)
+        }
     }
 }
