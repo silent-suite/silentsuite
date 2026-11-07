@@ -1,6 +1,8 @@
 """CLI tests for bridge account-management commands."""
 
 import datetime as dt
+import ipaddress
+import re
 import os
 import shutil
 import stat
@@ -319,7 +321,18 @@ def test_normalize_certificate_sans_rejects_invalid_dns(value):
         main_module._normalize_certificate_sans([value], [])
 
 
-@pytest.mark.parametrize("value", ["", "127.0.0.999", "2001:db8::zz", "host.example", "1.2.3.4:443"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "127.0.0.999",
+        "2001:db8::zz",
+        "host.example",
+        "1.2.3.4:443",
+        "fe80::1%en0",
+        "fe80::1%en0\\n[alt_names]\\nDNS.99 = injected.example",
+    ],
+)
 def test_normalize_certificate_sans_rejects_invalid_ip(value):
     with pytest.raises(ValueError):
         main_module._normalize_certificate_sans([], [value])
@@ -355,21 +368,20 @@ def test_generate_certificate_includes_exact_requested_sans(tmp_path):
         capture_output=True, text=True, check=True,
     )
     san_text = result.stdout
-    assert "DNS:localhost" in san_text
-    assert "DNS:bridge.tailnet.example" in san_text
-    assert "IP Address:127.0.0.1" in san_text
-    assert "IP Address:100.64.0.10" in san_text
-    assert "IP Address:2001:DB8:0:0:0:0:0:10" in san_text or "IP Address:2001:DB8::10" in san_text
-    assert "192.168." not in san_text
+    actual_dns = set(re.findall(r"DNS:([^,\\s]+)", san_text))
+    actual_ips = {
+        str(ipaddress.ip_address(value))
+        for value in re.findall(r"IP Address:([^,\\s]+)", san_text)
+    }
+    assert actual_dns == {"localhost", "bridge.tailnet.example"}
+    assert actual_ips == {"127.0.0.1", "::1", "100.64.0.10", "2001:db8::10"}
 
 
 def test_custom_san_replacement_requires_explicit_confirmation(tmp_path, monkeypatch, capsys):
     cert_path = str(tmp_path / "cert.pem")
     key_path = str(tmp_path / "key.pem")
-    cert_path_obj = tmp_path / "cert.pem"
-    key_path_obj = tmp_path / "key.pem"
-    cert_path_obj.write_text("existing cert")
-    key_path_obj.write_text("existing key")
+    (tmp_path / "cert.pem").write_text("existing cert")
+    (tmp_path / "key.pem").write_text("existing key")
     monkeypatch.setattr(config, "SSL_CERT_FILE", cert_path)
     monkeypatch.setattr(config, "SSL_KEY_FILE", key_path)
     monkeypatch.setattr(config, "SSL_ENABLED", False)
@@ -386,3 +398,35 @@ def test_custom_san_replacement_requires_explicit_confirmation(tmp_path, monkeyp
     output = capsys.readouterr().out
     assert "bridge.tailnet.example" in output
     assert "--replace-existing" in output
+
+
+def test_custom_san_replacement_succeeds_with_explicit_confirmation(tmp_path, monkeypatch, capsys):
+    cert_path = str(tmp_path / "cert.pem")
+    key_path = str(tmp_path / "key.pem")
+    (tmp_path / "cert.pem").write_text("existing cert")
+    (tmp_path / "key.pem").write_text("existing key")
+    monkeypatch.setattr(config, "SSL_CERT_FILE", cert_path)
+    monkeypatch.setattr(config, "SSL_KEY_FILE", key_path)
+    monkeypatch.setattr(config, "SSL_ENABLED", False)
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    events = []
+
+    def fake_generate(cert, key, dns_names, ip_addresses):
+        events.append("generation")
+        (tmp_path / "cert.pem").write_text("replacement cert")
+        (tmp_path / "key.pem").write_text("replacement key")
+
+    monkeypatch.setattr(main_module, "_generate_localhost_certificate", fake_generate)
+
+    code = main_module.setup_macos_apple_accounts(
+        ["bridge.tailnet.example"], ["100.64.0.10"], replace_existing=True
+    )
+
+    output = capsys.readouterr().out
+    warning = "DAV clients must trust the new certificate again"
+    assert code == 0
+    assert events == ["generation"]
+    assert output.index(warning) < output.index("Advanced")
+    assert (tmp_path / "cert.pem").read_text() == "replacement cert"
+    assert (tmp_path / "key.pem").read_text() == "replacement key"
