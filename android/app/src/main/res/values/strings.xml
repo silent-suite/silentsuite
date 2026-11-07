@@ -747,7 +747,7 @@
     <string name="dashboard_notes_destination">Syncs notebooks for the Notes screen in this app</string>
     <string name="settings_experimental_title">Experimental</string>
     <string name="settings_notes_enabled">Notes (experimental)</string>
-    <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. There is no separate background schedule yet.</string>
+    <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. The two settings below choose the connections they may use. There is no separate background schedule yet.</string>
     <string name="settings_notes_automatic_network">Automatic Notes sync</string>
     <string name="settings_notes_automatic_network_wifi">Wi-Fi only. Notes sync by themselves, when you open Notes and after a calendar, contact, or task sync, only on Wi-Fi.</string>
     <string name="settings_notes_automatic_network_any">Wi-Fi or mobile data. Notes also sync by themselves on mobile data, unless Sync over WiFi only is on for this account.</string>
@@ -782,7 +782,7 @@
     <string name="notes_loading_failed">Could not load notes. Sync and try again.</string>
     <!-- Sign-out while Notes changes have not synced: the count, the separate discard confirmation, what Sync now says, and the message when the account stays after its Notes changes were cleared, a clear of them stopped, or nothing was deleted because the store could not be listed. -->
     <string name="notes_sign_out_unsynced_title">Unsynced Notes changes</string>
-    <string name="notes_sign_out_unsynced_unreadable">This device may hold Notes changes that have not synced, and they could not be counted. Sync now tries to send them first, and it can fail. If you sign out without syncing, they are removed from this device and cannot be recovered.</string>
+    <string name="notes_sign_out_unsynced_unreadable">This device may hold Notes changes that have not synced, and they could not be counted. Sync now tries to send them first. It may not run on this network, and it can fail. If you sign out without syncing, they are removed from this device and cannot be recovered.</string>
     <string name="notes_sign_out_without_syncing">Sign out without syncing</string>
     <string name="notes_discard_title">Discard unsynced changes?</string>
     <string name="notes_discard_unreadable">The unsynced Notes changes on this device could not be counted. All of them will be deleted from this device when you sign out. This cannot be undone.</string>
@@ -841,7 +841,7 @@
     <!-- Leaving or deleting a Notes notebook while its Notes changes have not synced: the count, the separate confirmation, the one more question once the store changed after the server call, Sync now, and a server call that failed. For a store that could not be listed, where going on deletes no unsynced Notes text: never "discard", never "remove", and that no unsynced Notes text is deleted from this device. -->
     <string name="notes_notebook_unsynced_title">Notes changes in this notebook have not synced</string>
     <string name="notes_notebook_maybe_unsynced_title">Notes changes may not have synced</string>
-    <string name="notes_notebook_unsynced_uncounted">Some Notes changes on this device could not be counted, so this notebook may have changes that have not synced. Sync now tries to send them first, and it can fail. If you go on without syncing, this notebook’s changes that can be read are deleted from this device and cannot be recovered. Those that can’t be read stay.</string>
+    <string name="notes_notebook_unsynced_uncounted">Some Notes changes on this device could not be counted, so this notebook may have changes that have not synced. Sync now tries to send them first. It may not run on this network, and it can fail. If you go on without syncing, this notebook’s changes that can be read are deleted from this device and cannot be recovered. Those that can’t be read stay.</string>
     <string name="notes_notebook_unsynced_unlisted">The Notes changes on this device could not be read, so this notebook may have changes that have not synced. Sync now may not be able to send them. While they cannot be read, going on without syncing deletes no unsynced Notes text from this device. Unsynced Notes text may remain on this device and may no longer sync.</string>
     <string name="notes_notebook_delete_without_syncing">Delete without syncing</string>
     <string name="notes_notebook_leave_without_syncing">Leave without syncing</string>

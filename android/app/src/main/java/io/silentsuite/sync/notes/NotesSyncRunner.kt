@@ -30,7 +30,6 @@ import io.silentsuite.sync.syncadapter.PagedListingStalledException
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import io.silentsuite.sync.syncadapter.SyncRunGuard
 import io.silentsuite.sync.syncadapter.SyncStatusStore
-import io.silentsuite.sync.syncadapter.syncConditionsAllow
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import java.io.IOException
 import java.io.InterruptedIOException
@@ -49,8 +48,9 @@ internal object NotesSyncRunner {
     private val pushMemory = ConcurrentHashMap<String, NotePushStep.Memory>()
 
     /**
-     * @property manual user-initiated runs ignore the Wi-Fi-only restriction, like manual adapter syncs,
-     * and try every pending change, whatever its backoff.
+     * @property manual a run the user started: it follows the account's Sync now network setting, not
+     * the automatic one or the account's own Wi-Fi switch, and tries every pending change, whatever
+     * its backoff.
      * @property forceRefresh list the collections from scratch, not from the saved cursor (after an
      * invitation is accepted), so a newly shared notebook is seen whatever ran before.
      * @property stillScheduled false once the coordinator cancelled this run (sign-out, Notes turned
@@ -123,7 +123,17 @@ internal object NotesSyncRunner {
             }
             if (!exactGenerationStillCurrent()) { finishWithoutOutcome(); return false }
             val settings = AccountSettings(appContext, account)
-            if (!request.manual && !syncConditionsAllow(appContext, settings)) {
+            // Design 3.6 and the answers of 2026-10-12 on #709: a run the user started follows the
+            // account's Sync now setting alone; any other run needs its automatic setting and the
+            // account's own Wi-Fi switch and network name. Decided once, before the run's own requests
+            // (the subscription check above comes first). A run that may not start records neither
+            // success nor failure. Opening and closing its attempt are two status commits, and each
+            // clears a recorded lifecycle storage fault.
+            val network = NotesNetwork.verdict(appContext, manager, account, settings, explicit = request.manual)
+            if (!network.run) {
+                // Rule names and the kind of connection only; never a network name. NONE also covers
+                // the reading some VPNs give while the device is online: no active network at all.
+                Logger.log.info("Notes sync not started on this network: ${network.blockers.joinToString()} (${network.connection})")
                 finishWithoutOutcome()
                 return false
             }

@@ -453,7 +453,9 @@ class AppSettingsActivity : BaseActivity() {
                     notesToggleEffectOverride?.invoke(appContext, exact, creationId, enabled) ?: run {
                         if (enabled) {
                             // A service that never synced would pull the dashboard to "First sync
-                            // pending", so enabling runs a Notes sync right away.
+                            // pending", so enabling asks for a Notes sync right away. The account's
+                            // Sync now network setting decides whether that run starts; a run it
+                            // refuses closes this request and records nothing.
                             val requestId = UUID.randomUUID().toString()
                             SyncStatusStore(appContext).recordRequested(exact, setOf(SyncStatusStore.Service.NOTES),
                                 requestId, System.currentTimeMillis())

@@ -29,12 +29,12 @@
         <item quantity="other">%1$d unsynced Notes changes from %2$s will be deleted from this device. This cannot be undone.</item>
     </plurals>
     <plurals name="notes_notebook_unsynced_delete">
-        <item quantity="one">%d Notes change in this notebook has not synced. Sync now tries to send it first, and it can fail. If you delete the notebook without syncing, the change is deleted from this device and cannot be recovered.</item>
-        <item quantity="other">%d Notes changes in this notebook have not synced. Sync now tries to send them first, and it can fail. If you delete the notebook without syncing, they are deleted from this device and cannot be recovered.</item>
+        <item quantity="one">%d Notes change in this notebook has not synced. Sync now tries to send it first. It may not run on this network, and it can fail. If you delete the notebook without syncing, the change is deleted from this device and cannot be recovered.</item>
+        <item quantity="other">%d Notes changes in this notebook have not synced. Sync now tries to send them first. It may not run on this network, and it can fail. If you delete the notebook without syncing, they are deleted from this device and cannot be recovered.</item>
     </plurals>
     <plurals name="notes_notebook_unsynced_leave">
-        <item quantity="one">%d Notes change in this notebook has not synced. Sync now tries to send it first, and it can fail. If you leave the notebook without syncing, the change is deleted from this device and cannot be recovered.</item>
-        <item quantity="other">%d Notes changes in this notebook have not synced. Sync now tries to send them first, and it can fail. If you leave the notebook without syncing, they are deleted from this device and cannot be recovered.</item>
+        <item quantity="one">%d Notes change in this notebook has not synced. Sync now tries to send it first. It may not run on this network, and it can fail. If you leave the notebook without syncing, the change is deleted from this device and cannot be recovered.</item>
+        <item quantity="other">%d Notes changes in this notebook have not synced. Sync now tries to send them first. It may not run on this network, and it can fail. If you leave the notebook without syncing, they are deleted from this device and cannot be recovered.</item>
     </plurals>
     <plurals name="notes_notebook_discard_delete">
         <item quantity="one">%d unsynced Notes change in this notebook will be deleted from this device once the notebook is deleted. This cannot be undone.</item>

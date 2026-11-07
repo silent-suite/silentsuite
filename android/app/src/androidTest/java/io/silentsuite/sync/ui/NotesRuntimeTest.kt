@@ -413,7 +413,7 @@ class NotesRuntimeTest {
                 waitUntil("notebooks rendered") { notebookFragment(scenario)?.renderedNotebooks?.size == 1 }
                 waitUntil("opening the screen starts the Notes job") { started.count == 1L }
                 waitUntil("run request recorded") { firstRunManual.get() != null }
-                assertEquals("opening the screen is automatic and honors Wi-Fi-only", false, firstRunManual.get())
+                assertEquals("opening the screen is automatic, not a run the user started", false, firstRunManual.get())
                 assertFalse("the job must still be sleeping before cancellation", interrupted.await(200, TimeUnit.MILLISECONDS))
                 assertTrue("job active after start: ${NotesSyncCoordinator.snapshotForTesting(identity)}",
                     NotesSyncCoordinator.isActive(identity))

@@ -22,7 +22,7 @@ class NotesSyncPolicyTest {
         val (piggyback, piggybackDecision) = policy.request(NotesSyncPolicy.Slot(), Trigger.PIGGYBACK, null)
         assertEquals(Decision.START, piggybackDecision)
         assertNull(piggyback.queuedRequestId)
-        assertFalse("piggyback runs honor the Wi-Fi-only restriction", piggyback.manual)
+        assertFalse("a run after an adapter sync is automatic", piggyback.manual)
 
         val (screenOpen, _) = policy.request(NotesSyncPolicy.Slot(), Trigger.SCREEN_OPEN, null)
         assertFalse("opening the screen is automatic, not a sync gesture", screenOpen.manual)
@@ -118,16 +118,16 @@ class NotesSyncPolicyTest {
         assertEquals(Decision.COALESCED, automaticDecision)
         assertTrue(afterAutomatic.rerun)
         assertTrue(afterAutomatic.forceRefresh)
-        assertFalse("an automatic request does not bypass Wi-Fi-only", afterAutomatic.manual)
+        assertFalse("an automatic request does not become a run the user started", afterAutomatic.manual)
 
         // The same while a user's run is in progress: the follow-up is still automatic.
         val runningManual = policy.started(policy.request(NotesSyncPolicy.Slot(), Trigger.MANUAL, "sync-now").first)
         val (automaticFollowUp, _) = policy.finished(policy.request(runningManual, Trigger.PIGGYBACK, null, forceRefresh = true).first)
         assertTrue(automaticFollowUp.forceRefresh)
-        assertFalse("it does not inherit the running run's Wi-Fi-only bypass", automaticFollowUp.manual)
+        assertFalse("it does not inherit that the running run was started by the user", automaticFollowUp.manual)
         assertNull("nor its request id, which that run closes", automaticFollowUp.queuedRequestId)
 
-        // A user follow-up that was already queued keeps its request id and bypass.
+        // A user follow-up that was already queued keeps its request id and stays a run the user started.
         val queued = policy.request(runningManual, Trigger.TOGGLE, "toggle").first
         val (userFollowUp, _) = policy.finished(policy.request(queued, Trigger.PIGGYBACK, null, forceRefresh = true).first)
         assertTrue(userFollowUp.forceRefresh)

@@ -10,8 +10,9 @@ package io.silentsuite.sync.notes
 class NotesSyncPolicy {
     /**
      * MANUAL, TOGGLE, and SCREEN are explicit user gestures (Sync now, enabling Notes, pull to
-     * refresh) and bypass the Wi-Fi-only restriction like a manual adapter sync. SCREEN_OPEN and
-     * PIGGYBACK are automatic and honor it.
+     * refresh): they follow the account's Sync now network setting alone. SCREEN_OPEN and PIGGYBACK
+     * are automatic: they need the automatic network setting and the account's own Wi-Fi rule
+     * ([NotesNetworkPolicy]).
      */
     enum class Trigger { MANUAL, TOGGLE, SCREEN, SCREEN_OPEN, PIGGYBACK }
     enum class State { IDLE, PENDING, RUNNING }
@@ -20,7 +21,7 @@ class NotesSyncPolicy {
     /**
      * @property queuedRequestId the durable request the next run must attribute itself to; a
      * later user request replaces an earlier one so the newest request evidence is closed.
-     * @property manual whether the queued run is user-initiated (skips the Wi-Fi-only restriction).
+     * @property manual whether the queued run is user-initiated (it then follows the Sync now network setting).
      * @property forceRefresh whether the queued run must list the collections from scratch rather
      * than from the saved cursor, as the adapters do after an invitation is accepted. While a run
      * is in progress it belongs to the follow-up run only; the running one took its own at start.
@@ -54,7 +55,7 @@ class NotesSyncPolicy {
                 // The running run may already be past its collection refresh, so a forced refresh
                 // is never dropped, even from an automatic trigger: it queues the follow-up run.
                 // Unless a user request queued that follow-up already, it is automatic: it neither
-                // reuses the running run's request id nor skips the Wi-Fi-only restriction.
+                // reuses the running run's request id nor follows the Sync now network setting.
                 forceRefresh -> slot.copy(
                     rerun = true,
                     queuedRequestId = if (slot.rerun) slot.queuedRequestId else requestId,

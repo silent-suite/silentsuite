@@ -79,4 +79,29 @@ class NotesSyncRunnerPushStatusTest {
         assertTrue(incomplete.contains("finishWithoutOutcome()"))
         assertFalse(incomplete.contains("pushPending("))
     }
+
+    @Test fun `the network rule is decided after the attempt opens and before the run's own requests, and a refused run records no outcome`() {
+        val runner = File("src/main/java/io/silentsuite/sync/notes/NotesSyncRunner.kt").readText()
+        assertEquals("the rule is asked in one place", 1, runner.split("NotesNetwork.verdict(").size - 1)
+        val gate = runner.indexOf("NotesNetwork.verdict(")
+        val attempt = runner.indexOf("store.beginAttemptResult(")
+        val subscription = runner.indexOf("BillingManager.getInstance().isSyncAllowed(")
+        val client = runner.indexOf("HttpClient.Builder(appContext, settings)")
+        assertTrue("after the attempt opens", attempt in 0 until gate)
+        assertTrue("after the subscription check", subscription in 0 until gate)
+        assertTrue("before the first network object of the run", gate < client)
+        // From the gate to the generation check that follows it: what a refused run does.
+        val refused = runner.substring(gate).substringBefore("exactGenerationStillCurrent()")
+        assertTrue("a run the user started is told apart", refused.contains("explicit = request.manual)"))
+        assertTrue(refused.contains("if (!network.run) {"))
+        assertTrue(refused.contains("finishWithoutOutcome()"))
+        assertTrue(refused.contains("return false"))
+        assertFalse("a refused run records no failure", refused.contains("recordFailure("))
+        assertFalse("and no success", refused.contains("recordSuccess("))
+        val logLine = "Logger.log.info(\"Notes sync not started on this network: \${network.blockers.joinToString()} (\${network.connection})\")"
+        assertEquals("the refusal's log line, word for word: rule names and the kind of connection, never a network name",
+            1, refused.split(logLine).size - 1)
+        assertEquals("and it is the only log call of the refusal", 1, refused.split("Logger.log.").size - 1)
+        assertFalse("the adapters' function is no longer called from the run", runner.contains("syncConditionsAllow"))
+    }
 }
