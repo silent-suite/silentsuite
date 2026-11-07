@@ -387,6 +387,31 @@ def _with_approved_runtime_profile(job: dict) -> dict:
     return job
 
 
+# The approved conscrypt-runtime change since both predecessors: the existing instrumentation class filter also
+# selects the cert4android binding-lifecycle class, appended once after the original class. Only that one
+# runner-argument token is carried forward; the Conscrypt method assertion and every other byte must still match.
+CONSCRYPT_RUNTIME_JOB = "conscrypt-runtime"
+CONSCRYPT_RUNTIME_STEP_ID = "conscrypt-runtime"
+CONSCRYPT_RUNNER_ARGUMENT = "-Pandroid.testInstrumentationRunnerArguments."
+CONSCRYPT_ORIGINAL_CLASS = "at.bitfire.cert4android.ConscryptProviderRuntimeTest"
+CONSCRYPT_APPENDED_CLASS = "at.bitfire.cert4android.AndroidxU3BindingLifecycleTest"
+CONSCRYPT_ORIGINAL_SELECTOR = f"{CONSCRYPT_RUNNER_ARGUMENT}class={CONSCRYPT_ORIGINAL_CLASS}"
+CONSCRYPT_APPROVED_SELECTOR = f"{CONSCRYPT_ORIGINAL_SELECTOR},{CONSCRYPT_APPENDED_CLASS}"
+
+
+def _with_approved_conscrypt_selection(job: dict) -> dict:
+    """A predecessor conscrypt-runtime job with only the one approved class appended to its class filter, exactly once."""
+    job = copy.deepcopy(job)
+    owners = [step for step in job.get("steps") or [] if step.get("id") == CONSCRYPT_RUNTIME_STEP_ID]
+    assert len(owners) == 1, "exactly one predecessor step must run the Conscrypt instrumentation"
+    script = owners[0]["with"]["script"]
+    arguments = [token for token in script.split() if token.startswith(CONSCRYPT_RUNNER_ARGUMENT)]
+    assert arguments == [CONSCRYPT_ORIGINAL_SELECTOR], f"predecessor must select only {CONSCRYPT_ORIGINAL_CLASS}: {arguments}"
+    assert script.count(CONSCRYPT_ORIGINAL_SELECTOR) == 1
+    owners[0]["with"]["script"] = script.replace(CONSCRYPT_ORIGINAL_SELECTOR, CONSCRYPT_APPROVED_SELECTOR)
+    return job
+
+
 def _with_approved_runtime_ledger_changes(job: dict) -> dict:
     """A predecessor runtime job with only the approved matrix row, ledger lines and API 29 account-dashboard
     emulator profile applied, each exactly once."""
@@ -519,7 +544,10 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
     assert _triggers(candidate) == _triggers(base)
     assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER}
     for name in UNCHANGED_JOBS:
-        assert candidate["jobs"][name] == base["jobs"][name], name
+        original = base["jobs"][name]
+        if name == CONSCRYPT_RUNTIME_JOB:
+            original = _with_approved_conscrypt_selection(original)
+        assert candidate["jobs"][name] == original, name
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
     # the admission steps: NDK, build-tools, JDKs, matrices, runtime scripts,
     # ledgers, producer manifests and every final gate are otherwise identical.
@@ -544,6 +572,8 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
     for name, job in predecessor["jobs"].items():
         if name == RUNTIME_LEDGER_JOB:
             job = _with_approved_runtime_ledger_changes(job)
+        if name == CONSCRYPT_RUNTIME_JOB:
+            job = _with_approved_conscrypt_selection(job)
         if name != "build-pr":
             assert candidate["jobs"][name] == job, name
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
@@ -665,6 +695,65 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
         unprofiled, wrong_profile, moved_profile, broadened_profile,
         no_input, literal_input, moved_input, duplicated_input, heap_input,
     ):
+        assert carried != drifted
+
+
+def test_conscrypt_selection_transport_admits_only_the_one_appended_class(base, predecessor, candidate):
+    current = candidate["jobs"][CONSCRYPT_RUNTIME_JOB]
+    carried = _with_approved_conscrypt_selection(predecessor["jobs"][CONSCRYPT_RUNTIME_JOB])
+    assert carried == current
+    assert _with_approved_conscrypt_selection(base["jobs"][CONSCRYPT_RUNTIME_JOB]) == current
+    # The transport applies once, to the original single-class selector only.
+    with pytest.raises(AssertionError):
+        _with_approved_conscrypt_selection(current)
+
+    def runner_step(job: dict) -> dict:
+        return next(step for step in job["steps"] if step.get("id") == CONSCRYPT_RUNTIME_STEP_ID)
+
+    def reselected(job: dict, old: str, new: str) -> dict:
+        mutated = copy.deepcopy(job)
+        step = runner_step(mutated)
+        assert step["with"]["script"].count(old) == 1, old
+        step["with"]["script"] = step["with"]["script"].replace(old, new)
+        return mutated
+
+    # A predecessor whose selector was already widened, replaced or doubled is not carried.
+    previous = predecessor["jobs"][CONSCRYPT_RUNTIME_JOB]
+    for selector in (
+        f"{CONSCRYPT_ORIGINAL_SELECTOR},at.bitfire.cert4android.CustomCertManagerTest",
+        f"{CONSCRYPT_RUNNER_ARGUMENT}class={CONSCRYPT_APPENDED_CLASS}",
+        f"{CONSCRYPT_ORIGINAL_SELECTOR} {CONSCRYPT_RUNNER_ARGUMENT}package=at.bitfire.cert4android",
+    ):
+        with pytest.raises(AssertionError):
+            _with_approved_conscrypt_selection(reselected(previous, CONSCRYPT_ORIGINAL_SELECTOR, selector))
+
+    # Any other selection than the original class followed once by the appended class still fails.
+    for selector in (
+        CONSCRYPT_ORIGINAL_SELECTOR,
+        f"{CONSCRYPT_RUNNER_ARGUMENT}class={CONSCRYPT_APPENDED_CLASS},{CONSCRYPT_ORIGINAL_CLASS}",
+        f"{CONSCRYPT_APPROVED_SELECTOR},{CONSCRYPT_APPENDED_CLASS}",
+        f"{CONSCRYPT_APPROVED_SELECTOR},at.bitfire.cert4android.CustomCertManagerTest",
+        f"{CONSCRYPT_RUNNER_ARGUMENT}class={CONSCRYPT_APPENDED_CLASS}",
+        f"{CONSCRYPT_RUNNER_ARGUMENT}package=at.bitfire.cert4android",
+        f"{CONSCRYPT_APPROVED_SELECTOR} {CONSCRYPT_RUNNER_ARGUMENT}notClass={CONSCRYPT_ORIGINAL_CLASS}",
+    ):
+        assert carried != reselected(current, CONSCRYPT_APPROVED_SELECTOR, selector), selector
+
+    # Carrying the selector exempts nothing else in the job, including the original Conscrypt method assertion.
+    assertion = next(step for step in current["steps"] if step.get("name") == "Assert Conscrypt runtime methods executed")
+    assert assertion["run"].count('"providerLoadsAndCreatesTlsContext",') == 1
+    widened_assertion = copy.deepcopy(current)
+    _step_named(widened_assertion, assertion["name"])["run"] = assertion["run"].replace(
+        '"providerLoadsAndCreatesTlsContext",',
+        '"providerLoadsAndCreatesTlsContext", "androidxU3_closedManagersReturnBindingsToBaseline",',
+    )
+    longer_timeout = copy.deepcopy(current)
+    longer_timeout["timeout-minutes"] = 60
+    widened_permissions = copy.deepcopy(current)
+    widened_permissions["permissions"] = {"contents": "write"}
+    extra_api = copy.deepcopy(current)
+    extra_api["strategy"]["matrix"]["include"].append({"api-level": "35", "arch": "x86_64"})
+    for drifted in (widened_assertion, longer_timeout, widened_permissions, extra_api):
         assert carried != drifted
 
 
