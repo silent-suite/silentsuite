@@ -61,6 +61,7 @@ import io.silentsuite.sync.ui.PendingNotesRemovalGuard
 import io.silentsuite.sync.ui.UnsyncedNotesStores
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteListFragment
+import io.silentsuite.sync.ui.notes.NoteRow
 import io.silentsuite.sync.ui.notes.NoteViewFragment
 import io.silentsuite.sync.ui.notes.NotebookListFragment
 import io.silentsuite.sync.ui.notes.NotesActivity
@@ -1122,8 +1123,13 @@ class NotesSyncBoundaryRuntimeTest {
         val account = newAccount("gen-read")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-read")
         val work = uploadNotebook("Work")
-        uploadNotebook("Home")
+        val home = uploadNotebook("Home")
         uploadUndecodableNotebook()
+        // An item whose metadata this client cannot decode (a name that is a number), once next to
+        // readable notes and once as the only item of a notebook.
+        val undecodable = TestMsgPack.encode(linkedMapOf("name" to 7L, "mtime" to 100L))
+        uploadRawNote(work, undecodable, "not readable here")
+        uploadRawNote(home, undecodable, "not readable here either")
         val agendaBody = "# Monday\n- budget\n- hiring"
         uploadNote(work, "Old plan", "First line of the old plan", mtime = 1_000L)
         val agenda = uploadNote(work, "Agenda", agendaBody, mtime = 2_000L)
@@ -1136,7 +1142,7 @@ class NotesSyncBoundaryRuntimeTest {
         // path from the typed one.
         val underKeyOne = byteArrayOf(0x82.toByte()) + TestMsgPack.encode(1L) + TestMsgPack.encode("Under key one") +
             TestMsgPack.encode("mtime") + TestMsgPack.encode(100L)
-        uploadRawNote(work, underKeyOne, "kept under key one")
+        val keyOneNote = uploadRawNote(work, underKeyOne, "kept under key one")
         // Neither of these is a note to show: an item of another type, and a deleted note.
         uploadNote(work, "Attachment", "not Markdown", mtime = 3_000L, type = "application/octet-stream")
         val deleted = uploadNote(work, "Thrown away", "gone", mtime = 4_000L)
@@ -1162,7 +1168,9 @@ class NotesSyncBoundaryRuntimeTest {
                 val notes = activity.findViewById<ListView>(R.id.notes_list)
                 assertEquals(context.getString(R.string.notes_untitled),
                     notes.adapter.getView(3, null, notes).findViewById<TextView>(R.id.note_title).text.toString())
-                assertEquals("every cached item decoded", View.GONE, activity.findViewById<View>(R.id.notes_unreadable).visibility)
+                val unreadable = activity.findViewById<TextView>(R.id.notes_unreadable)
+                assertEquals("the undecodable item is counted", View.VISIBLE, unreadable.visibility)
+                assertEquals("1 item in this notebook could not be read", unreadable.text.toString())
             }
             scenario.onActivity { activity ->
                 assertEquals("Work", activity.title.toString())
@@ -1174,6 +1182,30 @@ class NotesSyncBoundaryRuntimeTest {
             scenario.onActivity { activity ->
                 assertEquals("Agenda", activity.findViewById<TextView>(R.id.note_title).text.toString())
                 assertEquals(agendaBody, activity.findViewById<TextView>(R.id.note_body).text.toString())
+            }
+        }
+        // Opening one note reads its title from the raw bytes too.
+        assertEquals("", (NotesLoader.note(context, account, "gen-read", work, keyOneNote.uid) as NotesLoad.Loaded).value.title)
+
+        // A notebook whose only item could not be read, after a sync, is not called empty.
+        ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-read")).use { scenario ->
+            waitUntil("the cached notebooks to show") { notebookList(scenario)?.renderedNotebooks?.map { it.name } == listOf("Home", "Work") }
+            scenario.onActivity { activity ->
+                val list = activity.findViewById<ListView>(R.id.notebooks_list)
+                list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
+            }
+            waitUntil("the unreadable line to show") {
+                var shown = false
+                scenario.onActivity { shown = it.findViewById<View?>(R.id.notes_unreadable)?.visibility == View.VISIBLE }
+                shown
+            }
+            assertEquals(emptyList<NoteRow>(), noteList(scenario)!!.renderedNotes)
+            assertNull("no empty state", noteList(scenario)!!.renderedEmptyState)
+            scenario.onActivity { activity ->
+                assertEquals("Home", activity.title.toString())
+                assertEquals(View.GONE, activity.findViewById<View>(R.id.notes_empty).visibility)
+                assertEquals("1 item in this notebook could not be read",
+                    activity.findViewById<TextView>(R.id.notes_unreadable).text.toString())
             }
         }
         awaitSettled(identity)
