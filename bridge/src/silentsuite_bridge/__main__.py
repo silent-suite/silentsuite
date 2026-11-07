@@ -662,7 +662,7 @@ def _persist_ssl_settings(cert_path: str, key_path: str) -> None:
     config.SSL_KEY_FILE = settings["sslKeyFile"]
 
 
-def setup_macos_apple_accounts() -> int:
+def setup_macos_apple_accounts(dns_names=(), ip_addresses=(), replace_existing=False) -> int:
     """Generate/reuse a localhost cert and print Apple Internet Accounts setup steps.
 
     On macOS: persists sslEnabled=true and opens the cert for Keychain trust.
@@ -675,10 +675,38 @@ def setup_macos_apple_accounts() -> int:
     config.ensure_data_dir()
 
     try:
-        status = _ensure_macos_localhost_certificate(cert_path, key_path)
-    except RuntimeError as exc:
+        dns_names, ip_addresses = _normalize_certificate_sans(dns_names, ip_addresses)
+    except ValueError as exc:
         print(f"Error: {exc}")
         return 1
+
+    custom_sans_requested = bool(dns_names or ip_addresses)
+    if custom_sans_requested:
+        print("Requested certificate SANs:")
+        for name in dns_names:
+            print(f"  DNS: {name}")
+        for address in ip_addresses:
+            print(f"  IP:  {address}")
+        if _cert_and_key_readable(cert_path, key_path) and not replace_existing:
+            print(
+                "Error: a certificate already exists. Replacing it invalidates trust "
+                "in DAV clients. Re-run with --replace-existing to confirm replacement."
+            )
+            return 1
+        if _cert_and_key_readable(cert_path, key_path):
+            print("WARNING: replacing the certificate. DAV clients must trust the new certificate again.")
+        try:
+            _generate_localhost_certificate(cert_path, key_path, dns_names, ip_addresses)
+            status = "generated"
+        except RuntimeError as exc:
+            print(f"Error: {exc}")
+            return 1
+    else:
+        try:
+            status = _ensure_macos_localhost_certificate(cert_path, key_path)
+        except RuntimeError as exc:
+            print(f"Error: {exc}")
+            return 1
 
     if sys.platform == "darwin":
         try:
@@ -989,6 +1017,9 @@ def main():
         print("  --setup-macos-apple-accounts")
         print("                        Generate/reuse a localhost HTTPS certificate")
         print("                        and print Apple Internet Accounts setup steps")
+        print("  --dns-san HOST        Add a DNS name to the certificate (repeatable)")
+        print("  --ip-san ADDRESS      Add an IP address to the certificate (repeatable)")
+        print("  --replace-existing    Confirm replacing an existing certificate")
         print()
         print("Environment variables:")
         print("  SILENTSUITE_SERVER_URL       Etebase server URL")
@@ -1079,7 +1110,30 @@ def main():
     # Handle --setup-macos-apple-accounts before validating existing SSL files:
     # this command is how users create the missing cert/key in the first place.
     if "--setup-macos-apple-accounts" in sys.argv:
-        sys.exit(setup_macos_apple_accounts())
+        dns_names = []
+        ip_addresses = []
+        replace_existing = "--replace-existing" in sys.argv
+        value_flags = {"--dns-san": dns_names, "--ip-san": ip_addresses}
+        allowed = {"--setup-macos-apple-accounts", "--replace-existing", *value_flags}
+        args = sys.argv[1:]
+        index = 0
+        while index < len(args):
+            flag = args[index]
+            if flag in value_flags:
+                if index + 1 >= len(args) or args[index + 1].startswith("--"):
+                    print(f"Error: {flag} requires a value")
+                    sys.exit(1)
+                value_flags[flag].append(args[index + 1])
+                index += 2
+                continue
+            if flag not in allowed:
+                print(f"Error: unsupported option with --setup-macos-apple-accounts: {flag}")
+                sys.exit(1)
+            index += 1
+        if replace_existing and not (dns_names or ip_addresses):
+            print("Error: --replace-existing requires at least one --dns-san or --ip-san value")
+            sys.exit(1)
+        sys.exit(setup_macos_apple_accounts(dns_names, ip_addresses, replace_existing))
 
     # Handle --remove-autostart before network/SSL validation: removal starts
     # no listener and writes no settings, and an operator with a corrupt
