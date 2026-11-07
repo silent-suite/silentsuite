@@ -1,13 +1,13 @@
 # Both stages resolve one approved multi-platform OCI index by digest, so the
 # amd64 and arm64 release jobs cannot pick up two different base generations.
 #
-#   python:3.12-alpine  index sha256:d09d15e6…de7dc31
-#     linux/amd64       child sha256:285a7132…dae76e5
-#     linux/arm64/v8    child sha256:c95cd472…d24fbe1
+#   python:3.12-alpine  index sha256:e064671c…18d0fc7
+#     linux/amd64       child sha256:a61cbd76…3618b20
+#     linux/arm64/v8    child sha256:218ad6ba…d39249b
 #
 # tests/test_self_host_server_image_materials.py re-derives that index and both
 # child descriptors from the registry, so a silent retag is a test failure.
-FROM python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31 AS builder
+FROM python:3.12-alpine@sha256:e064671ca452259bab50e8e2c7bd896e39e9a343bb06ca25234adf6fe18d0fc7 AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 ENV PIP_NO_CACHE_DIR=1
@@ -27,7 +27,7 @@ COPY server/requirements.txt /requirements.txt
 RUN pip install --no-cache-dir --require-hashes --only-binary=:all: -r /requirements.txt
 
 # --- Production stage ---
-FROM python:3.12-alpine@sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31
+FROM python:3.12-alpine@sha256:e064671ca452259bab50e8e2c7bd896e39e9a343bb06ca25234adf6fe18d0fc7
 
 ARG VCS_REF
 LABEL org.opencontainers.image.revision=$VCS_REF
