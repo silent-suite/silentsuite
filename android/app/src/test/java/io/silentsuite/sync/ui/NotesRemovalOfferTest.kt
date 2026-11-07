@@ -483,8 +483,8 @@ class NotesRemovalOfferTest {
         val treeBefore = tree(noBackup)
         val outsideBefore = outside.readBytes().toList()
 
-        // The offer over the real guard, given the maintainer's yes for these names, over this process's folder
-        // counters, which the guard's own listings move at the show, the tap and the answer.
+        // The offer over the real guard, which makes these names eligible, over this process's folder counters,
+        // which the guard's own listings move at the show, the tap and the answer.
         val allowance = NotesRemovalAllowance(AccountRowChanges(), NotesFolderListings::count, { 0 }, { "shown" })
         val answers = ArrayList<Boolean>()
         var gone = false
@@ -493,8 +493,7 @@ class NotesRemovalOfferTest {
                 PendingNotesRemovalGuard.input(noBackup, TYPE, type, name, CreationId.Unreadable,
                     accounts = { if (gone) emptyList() else listOf(Row(name, CreationId.Unreadable)) },
                     active = { null }, records = { emptyList() }, presence = PendingNotesStore.nioPresence,
-                    open = { PendingNotesStore.forNoBackupDirectory(noBackup, it, {}, atomicMove) }),
-                Verdict.UNKNOWN_KIND_ONLY)
+                    open = { PendingNotesStore.forNoBackupDirectory(noBackup, it, {}, atomicMove) }))
             override fun records() = emptyList<AccountCreationRegistry.Record>()
             override fun fingerprint(decision: Decision) = NotesRemovalOffer.fingerprint(noBackup, decision,
                 stat = { nioStat(it, follow = true) }, lstat = { nioStat(it, follow = false) })

@@ -16,8 +16,8 @@ class NotesRemovalNoticeTest {
                 val expected = when {
                     verdict.eligible -> Kind.CONFIRM
                     // Without the account list no store was left out as a live account's: the remedy is another
-                    // attempt, not a review. Names of an unknown kind stay, so another attempt gets the same answer:
-                    // the words that say to try again later are not theirs.
+                    // attempt, not a review. Names of an unknown kind stay, and their reason with them in Unsynced
+                    // Notes: the words that say only to try again later are not theirs.
                     (verdict == Verdict.REFUSE_STORE || verdict == Verdict.REFUSE_UNKNOWN_KIND) && !accountsUnread ->
                         Kind.STORE
                     else -> Kind.UNCHECKED
@@ -30,8 +30,8 @@ class NotesRemovalNoticeTest {
             NotesRemovalNotice.kind(Decision(Verdict.REFUSE_STORE, "id")))
         assertEquals("names of a kind this build cannot read", Kind.STORE,
             NotesRemovalNotice.kind(Decision(Verdict.REFUSE_UNKNOWN_KIND, null, listOf("future.dat"))))
-        assertEquals("its acknowledgement not withdrawn, nothing counted", Kind.UNCHECKED,
-            NotesRemovalNotice.kind(Decision(Verdict.REFUSE_UNREADABLE, "id")))
+        assertEquals("a listing that came back short", Kind.UNCHECKED,
+            NotesRemovalNotice.kind(Decision(Verdict.REFUSE_UNREADABLE, null)))
         assertEquals("a check that threw", Kind.UNCHECKED, NotesRemovalNotice.kind(Decision(Verdict.REFUSE_FAILED, "id")))
         assertEquals("no decision", Kind.UNCHECKED, NotesRemovalNotice.kind(null))
     }

@@ -98,7 +98,7 @@ class NotesRemovalAnswerTest {
             Decision(Verdict.REFUSE_STORE, null) to Kind.STORE,
             Decision(Verdict.REFUSE_STORE, null, accountsUnread = true) to Kind.UNCHECKED,
             Decision(Verdict.REFUSE_ACCOUNTS, null, accountsUnread = true) to Kind.UNCHECKED,
-            Decision(Verdict.REFUSE_UNREADABLE, "id") to Kind.UNCHECKED,
+            Decision(Verdict.REFUSE_UNREADABLE, null) to Kind.UNCHECKED,
             Decision(Verdict.REFUSE_FAILED, null) to Kind.UNCHECKED,
             Decision(Verdict.REFUSE_UNKNOWN_KIND, null) to Kind.STORE,
             Decision(Verdict.ROOT_UNLISTABLE_ONLY, null) to Kind.CONFIRM,

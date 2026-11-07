@@ -26,7 +26,8 @@ internal object NotesRemovalNotice {
     /**
      * Which words explain a refusal: [STORE], the guard's [Verdict.REFUSE_STORE] or [Verdict.REFUSE_UNKNOWN_KIND] with
      * the account list read, so a store on this device holds unsynced text or cannot be read or counted, or
-     * notes-pending holds names this build cannot read and leaves in place, so trying again later gets the same answer;
+     * notes-pending holds names this build cannot read and leaves in place, while notes-discard cannot be listed: the
+     * reason stays in Unsynced Notes, so the words that say only to try again later are not theirs;
      * [CONFIRM], an eligible verdict ([Verdict.eligible]), which only the confirmation in Unsynced Notes lets through;
      * [UNCHECKED], anything else, a check that may pass when tried again later: a [Verdict.REFUSE_STORE] decided
      * without the account list and a decision that threw included.
