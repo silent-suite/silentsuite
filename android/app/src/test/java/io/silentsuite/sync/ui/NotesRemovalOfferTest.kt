@@ -10,6 +10,8 @@ import io.silentsuite.sync.notes.edit.PendingNotesStore.SendOutcome
 import io.silentsuite.sync.ui.NotesRemovalAllowance.FolderStat
 import io.silentsuite.sync.ui.NotesRemovalAllowance.Fingerprint
 import io.silentsuite.sync.ui.NotesRemovalAllowance.Key
+import io.silentsuite.sync.ui.NotesRemovalNotice.Kind
+import io.silentsuite.sync.ui.NotesRemovalOffer.Opened
 import io.silentsuite.sync.ui.NotesRemovalOffer.Outcome
 import io.silentsuite.sync.ui.PendingNotesRemovalGuard.Cause
 import io.silentsuite.sync.ui.PendingNotesRemovalGuard.CreationId
@@ -62,6 +64,9 @@ class NotesRemovalOfferTest {
     private var records: List<AccountCreationRegistry.Record>? = emptyList()
     private val pending = Fingerprint(mapOf(Folder.PENDING to FolderStat.Stat(1, 2, 3, 4)))
     private var present: Boolean? = false
+
+    /** Runs inside the read of the row, as an add or removal elsewhere could. */
+    private var duringPresent: () -> Unit = {}
     private val cleared = ArrayList<String>()
 
     /** The callback of the removal the button started, which the test runs. */
@@ -83,7 +88,11 @@ class NotesRemovalOfferTest {
             asked += "remove $name"
             removal = removed
         }
-        override fun present(type: String, name: String): Boolean? = present.also { asked += "present $name" }
+        override fun present(type: String, name: String): Boolean? {
+            asked += "present $name"
+            duringPresent()
+            return present
+        }
         override fun clearRecord(type: String, name: String, creationId: String): Boolean {
             cleared += "$name $creationId"
             return true
@@ -127,6 +136,52 @@ class NotesRemovalOfferTest {
             assertEquals(verdict.reason, bound.reason)
             assertEquals("fingerprint ${verdict.reason}", asked.last())
         }
+    }
+
+    @Test fun `a tap on the section reads the row after the counters, and offers a confirmation for an eligible verdict`() {
+        present = true
+        assertEquals(Opened.Refused(Kind.UNCHECKED), offer.open("io.silentsuite.address_book", "b"))
+        assertEquals("nothing is read for another type", emptyList<String>(), asked)
+        // A row that went is not offered, and nothing else is read for it.
+        present = false
+        assertEquals(Opened.Gone, offer.open(TYPE, "b"))
+        assertEquals(listOf("present b"), asked)
+        // A read of the rows that fails says nothing either way: the check goes on.
+        for (read in listOf(true, null)) {
+            present = read
+            asked.clear()
+            decision = Decision(Verdict.ALLOW, null)
+            assertEquals("$read", Opened.Allowed, offer.open(TYPE, "b"))
+            assertEquals("$read", listOf("present b", "decision b"), asked)
+        }
+        present = true
+        for ((refused, kind) in listOf(Decision(Verdict.REFUSE_STORE, "gen-b") to Kind.STORE,
+                Decision(Verdict.REFUSE_STORE, null, accountsUnread = true) to Kind.UNCHECKED,
+                Decision(Verdict.REFUSE_FAILED, null) to Kind.UNCHECKED)) {
+            decision = refused
+            assertEquals("$refused", Opened.Refused(kind), offer.open(TYPE, "b"))
+        }
+        decision = Decision(Verdict.ROOT_UNLISTABLE_ONLY, null)
+        records = listOf(record("b", Phase.CREATING))
+        assertEquals("not offered while a creation of the row runs", Opened.Refused(Kind.UNCHECKED),
+            offer.open(TYPE, "b"))
+        records = emptyList()
+        asked.clear()
+        val opened = offer.open(TYPE, "b") as Opened.Confirm
+        assertEquals(listOf("present b", "decision b", "records", "fingerprint [PENDING_UNLISTED]"), asked)
+        assertEquals(Key(TYPE, "b", null), opened.shown.key)
+        assertEquals(opened.shown.id, allowance.shown(opened.shown.id)?.id)
+    }
+
+    @Test fun `a removal while the section's tap reads the row fails the confirmation it offers`() {
+        present = true
+        duringPresent = { rows.before() }
+        val shown = (offer.open(TYPE, "b") as Opened.Confirm).shown
+        duringPresent = {}
+        asked.clear()
+        offer.confirm(TYPE, "b", shown.id) { asked += "done $it" }
+        assertEquals("done CHANGED", asked.last())
+        assertNull(removal)
     }
 
     @Test fun `a decision that read a creation id shows nothing, whatever its verdict`() {
@@ -492,6 +547,12 @@ class NotesRemovalOfferTest {
         assertEquals(listOf(R.string.notes_remove_uncheckable_done, R.string.notes_remove_uncheckable_readable,
             R.string.notes_remove_uncheckable_changed, R.string.notes_remove_uncheckable_retry,
             R.string.notes_remove_uncheckable_unknown), Outcome.entries.map(NotesRemovalOffer::message))
+        // A tap on a confirmation that had ended names no row, so it gets the ended tap's text, never a name left empty.
+        for (outcome in Outcome.entries) {
+            assertEquals(NotesRemovalOffer.message(outcome), NotesRemovalViewModel.Result(outcome, "a").message)
+            assertEquals(R.string.notes_remove_uncheckable_ended_tap,
+                NotesRemovalViewModel.Result(outcome, null).message)
+        }
     }
 
     private companion object {

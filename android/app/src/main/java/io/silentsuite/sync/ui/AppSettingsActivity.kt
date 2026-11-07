@@ -279,8 +279,9 @@ class AppSettingsActivity : BaseActivity() {
                     true
                 }
             }
-            // For every store on this device, whatever the route: shown once the stores are read, while one holds
-            // anything or cannot be read.
+            // For every store on this device, whatever the route: shown once the stores and the removal section are
+            // read, while a store holds anything or cannot be read, or, with no store to show, while an account can't
+            // be removed or the accounts can't be read (UnsyncedNotesFragment.refreshHubRow).
             findPreference<Preference>(UNSYNCED_NOTES_KEY)?.apply {
                 isVisible = false
                 setOnPreferenceClickListener {

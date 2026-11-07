@@ -6,6 +6,8 @@ import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.notes.edit.PendingNotesStore.Companion.StoreFolders
 import io.silentsuite.sync.notes.edit.PendingNotesStore.DiscardOutcome
 import io.silentsuite.sync.notes.edit.PendingNotesStore.RemovalCheck
+import io.silentsuite.sync.notes.edit.PendingNotesStore.RemovalHold
+import io.silentsuite.sync.notes.edit.PendingNotesStore.SaveOutcome
 import io.silentsuite.sync.notes.edit.PendingNotesStore.SendOutcome
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
 import io.silentsuite.sync.ui.PendingNotesRemovalGuard.Cause
@@ -243,6 +245,33 @@ class PendingNotesRemovalGuardTest {
         val unknown = input(accounts = { null }, pending = listed("orphan", unknown = true))
         assertEquals(Verdict.REFUSE_ACCOUNTS, decide(unknown))
         assertEquals(Verdict.REFUSE_ACCOUNTS, yes(unknown))
+    }
+
+    @Test fun `a decision made without the account list is marked, and no other is`() {
+        fun decision(input: Input) = PendingNotesRemovalGuard.decision(input)
+        // A store with text refuses before the account list counts, so the same verdict comes with or without it.
+        answer("orphan", RemovalCheck.Blocks(draft))
+        val unread = decision(input(accounts = { null }, pending = listed("orphan")))
+        assertEquals(Verdict.REFUSE_STORE, unread.verdict)
+        assertTrue("that store may be a live account's", unread.accountsUnread)
+        val read = decision(input(pending = listed("orphan")))
+        assertEquals(Verdict.REFUSE_STORE, read.verdict)
+        assertFalse(read.accountsUnread)
+        answers.clear()
+        val accounts = decision(input(accounts = { null }, pending = unlistable, known = { setOf("orphan") }))
+        assertEquals(Verdict.REFUSE_ACCOUNTS, accounts.verdict)
+        assertTrue(accounts.accountsUnread)
+        assertTrue("an allowed one too", decision(input(accounts = { null }, pending = listed("orphan"))).accountsUnread)
+        // A row whose creation id reads never reads the list, and a list read that throws refuses as failed.
+        answer(a, RemovalCheck.Blocks(draft))
+        asked.clear()
+        val own = decision(own())
+        assertEquals(Verdict.REFUSE_STORE, own.verdict)
+        assertFalse(own.accountsUnread)
+        assertFalse(asked.toString(), "accounts" in asked)
+        val thrown = decision(input(accounts = { throw SecurityException("denied") }))
+        assertEquals(Verdict.REFUSE_FAILED, thrown.verdict)
+        assertFalse(thrown.accountsUnread)
     }
 
     @Test fun `row 7, a name of an unknown kind in notes-pending refuses a row without a creation id for now`() {
@@ -514,9 +543,44 @@ class PendingNotesRemovalGuardTest {
         rows: List<Row>?,
         active: Pair<String, String>? = null,
         records: List<AccountCreationRegistry.Record>? = null,
+        hold: RemovalHold? = null,
     ) = PendingNotesRemovalGuard.input(noBackup, TYPE, TYPE, name, id, accounts = { rows }, active = { active },
         records = { records }, presence = PendingNotesStore.nioPresence,
-        open = { PendingNotesStore.forNoBackupDirectory(noBackup, it, {}, atomicMove) })
+        open = { PendingNotesStore.forNoBackupDirectory(noBackup, it, {}, atomicMove) }, hold = hold)
+
+    @Test fun `each store a decision checks takes its removal hold, and a store another row owns does not`() {
+        val noBackup = tmp.newFolder("no_backup")
+        File(noBackup, PendingNotesDiscardPermits.ROOT).mkdirs()
+        val (a, b, c) = listOf("a" to "gen-a", "b" to "gen-b", "c" to "gen-c").map { (name, id) ->
+            assertTrue(PendingNotesStore.identityDir(noBackup, TYPE, name, id).mkdirs())
+            storeIn(noBackup, name, id)
+        }
+        var saves = 0
+        fun save(s: PendingNotesStore) = s.saveLocal("n${saves++}", "b1", "r1", "text".toByteArray(), isCreate = true)
+        val rows = listOf(Row("a", CreationId.Readable("gen-a")), Row("b", CreationId.Unreadable))
+        // Without a readable id, b's decision checks every store no other row owns: b's own and the orphan c.
+        val narrowed = RemovalHold()
+        assertEquals(Verdict.ALLOW, PendingNotesRemovalGuard.decide(real(noBackup, "b", CreationId.Unreadable, rows,
+            hold = narrowed)))
+        assertEquals(SaveOutcome.RemovalPending, save(b))
+        assertEquals(SaveOutcome.RemovalPending, save(c))
+        assertTrue("a's store is a's", save(a) is SaveOutcome.Saved)
+        narrowed.release()
+        assertTrue(save(b) is SaveOutcome.Saved)
+        assertTrue(save(c) is SaveOutcome.Saved)
+        // With one, a's decision checks a's store alone, and takes its hold whatever it answers.
+        val own = RemovalHold()
+        assertEquals(Verdict.REFUSE_STORE, PendingNotesRemovalGuard.decide(real(noBackup, "a",
+            CreationId.Readable("gen-a"), rows, hold = own)))
+        assertEquals(SaveOutcome.RemovalPending, save(a))
+        assertTrue(save(b) is SaveOutcome.Saved)
+        assertTrue(save(c) is SaveOutcome.Saved)
+        own.release()
+        // A decision asked without a hold, as the Settings list and the confirmation's tap ask it, holds nothing.
+        assertEquals(Verdict.REFUSE_STORE, PendingNotesRemovalGuard.decide(real(noBackup, "a",
+            CreationId.Readable("gen-a"), rows)))
+        assertTrue(save(a) is SaveOutcome.Saved)
+    }
 
     @Test fun `stores are found by path from notes-discard, the active account and the registry`() {
         val noBackup = tmp.newFolder("no_backup")
@@ -585,6 +649,53 @@ class PendingNotesRemovalGuardTest {
                 .toTypedArray() else all
         }
         assertEquals("not caught: no path names b's folder", Verdict.ALLOW, decided())
+    }
+
+    @Test fun `the store the last-active record names is found by path, and its text refuses however listings fail`() {
+        // The startup sweep's record names l's store, which holds a draft and which no other path names; b's creation
+        // id does not read.
+        val noBackup = tmp.newFolder("no_backup")
+        File(noBackup, PendingNotesDiscardPermits.ROOT).mkdirs()
+        val l = storeIn(noBackup, "l", "gen-l")
+        l.saveLocal("n1", "b1", "r1", "draft".toByteArray(), isCreate = false)
+        val rows = listOf(Row("b", CreationId.Unreadable))
+        fun decided() = PendingNotesRemovalGuard.decide(real(noBackup, "b", CreationId.Unreadable, rows))
+        fun known() = PendingNotesRemovalGuard.known(noBackup, TYPE, null, emptyList())
+        val failures = listOf<Pair<String, (File) -> Array<File>?>>(
+            "a notes-pending listing that leaves it out" to { d ->
+                val all = d.listFiles()
+                if (all != null && d.name == PendingNotesStore.PENDING) all.filter { it.name != l.dir.name }
+                    .toTypedArray() else all
+            },
+            "notes-pending unlistable" to { d -> if (d.name == PendingNotesStore.PENDING) null else d.listFiles() },
+            "both folders unlistable" to { d ->
+                if (d.name == PendingNotesStore.PENDING || d.name == PendingNotesDiscardPermits.ROOT) null
+                else d.listFiles()
+            })
+        // Without the record, l's store counts only where a listing of notes-pending finds it.
+        assertEquals(emptySet<String>(), known())
+        assertEquals("listed", Verdict.REFUSE_STORE, decided())
+        val unnamed = failures.map { (what, listing) ->
+            PendingNotesStore.listFilesForTesting = listing
+            what to decided().also { PendingNotesStore.listFilesForTesting = null }
+        }
+        assertEquals(listOf(Verdict.ALLOW, Verdict.ROOT_UNLISTABLE_ONLY, Verdict.BOTH_UNLISTABLE_ONLY),
+            unnamed.map { it.second })
+        // With the record naming it, it is a store whose path is known, checked whatever the listings do.
+        NotesLastActiveRecord.write(noBackup, l.dir.name)
+        assertEquals(setOf(l.dir.name), known())
+        for ((what, listing) in failures) {
+            PendingNotesStore.listFilesForTesting = listing
+            assertEquals(what, Verdict.REFUSE_STORE, decided())
+            PendingNotesStore.listFilesForTesting = null
+        }
+        assertEquals("the Settings list finds it by path as well", setOf(l.dir.name),
+            PendingNotesRemovalGuard.foundByPath(noBackup, TYPE, PendingNotesStore.nioPresence, null, emptyList()))
+        // A record that is empty or cannot be read names none.
+        NotesLastActiveRecord.write(noBackup, null)
+        assertEquals(emptySet<String>(), known())
+        File(noBackup, NotesLastActiveRecord.FILE).writeText("not a store folder")
+        assertEquals(emptySet<String>(), known())
     }
 
     @Test fun `the Settings list finds by path the stores the guard finds, from notes-discard and the known paths`() {

@@ -690,7 +690,7 @@
     <string name="post_login_recovery_body">This incomplete account must be removed before you can sign in again.</string>
     <string name="post_login_removal_pending_body">Keep SilentSuite open while Android finishes.</string>
     <string name="post_login_removal_failed_title">Removal didn\'t finish</string>
-    <string name="post_login_removal_failed_body">Try again; SilentSuite will resume from the confirmed state.</string>
+    <string name="post_login_removal_failed_body">If Notes changes on this device haven\'t synced or can\'t be read, review them in Unsynced Notes in the menu. Then try again; SilentSuite will resume from the confirmed state.</string>
     <string name="post_login_ambiguous_title">Review this account in Android settings</string>
     <string name="post_login_ambiguous_body">SilentSuite can\'t prove that this setup owns the current Android account, so it won\'t change or remove it.</string>
     <string name="post_login_setup_continue">Continue setup</string>
@@ -786,6 +786,9 @@
     <!-- Settings, Unsynced Notes: every Notes store on this device that holds unsynced text or cannot be read, and the confirmed discard of one store, offline and without signing in. A store that could not be listed gets an acknowledgement only, which reuses the title and the button above: never "discard", and never that anything is deleted. Placeholder wording, pending review. -->
     <string name="settings_unsynced_notes">Unsynced Notes</string>
     <string name="settings_unsynced_notes_uncounted">Unsynced Notes changes on this device could not all be counted</string>
+    <!-- Settings, the Unsynced Notes row while no store is listed and Android settings can’t remove a SilentSuite account right now, or the accounts can’t be read, so removing one may be refused: the reason and the way to try again are behind it. -->
+    <string name="settings_unsynced_notes_removal">Android settings can’t remove an account right now</string>
+    <string name="settings_unsynced_notes_accounts">SilentSuite can’t read the accounts on this device right now</string>
     <string name="notes_store_unmatched">Not matched to an account on this device</string>
     <string name="notes_store_unmatched_name">an account not matched on this device</string>
     <string name="notes_store_uncounted">Unsynced changes that could not be counted</string>
@@ -802,7 +805,7 @@
     <string name="notes_discard_not_finished_row">The discard did not finish. Some unsynced Notes changes may already be deleted. Tap to try again.</string>
     <string name="notes_acknowledged">This attempt deleted no Notes text. Unsynced Notes text may remain on this device and may no longer sync.</string>
     <string name="notes_acknowledgement_not_recorded">This attempt deleted no Notes text and could not be recorded. Unsynced Notes text may remain on this device and may no longer sync.</string>
-    <!-- Settings, Unsynced Notes: the one-time confirmed removal of an account whose Notes files can’t be checked, one text for each folder that can’t be read, one for both, one for files of a kind this version can’t read, and what the tap came to. No count, no promise of recovery or of a later sync, and no claim that nothing is deleted. Placeholder wording, pending review. -->
+    <!-- Settings, Unsynced Notes: the one-time confirmed removal of an account whose Notes files can’t be checked, one text for each folder that can’t be read, one for both, one for files of a kind this version can’t read, and what the tap came to. No count, no promise of recovery or of a later sync, and no claim that nothing is deleted. A result that leaves the account says only that this attempt didn’t remove it, and why when that is known; the removed result says only that the account was removed. A confirmation that has ended says only that, as it may follow its own tap, whose removal may be running; a tap on one says that this attempt didn’t remove the account. -->
     <string name="notes_remove_uncheckable_title">Remove %1$s from this device?</string>
     <string name="notes_remove_uncheckable_text_root">SilentSuite can’t read the folder where it keeps Notes changes that haven’t synced, so it can’t check whether %1$s has any. If you remove %1$s, unsynced Notes text may remain on this device and may no longer sync.</string>
     <string name="notes_remove_uncheckable_text_permits">SilentSuite can’t read the folder where it keeps its records of discarded Notes changes, so it can’t finish checking %1$s for unsynced Notes changes. If you remove %1$s, unsynced Notes text may remain on this device and may no longer sync.</string>
@@ -810,11 +813,27 @@
     <string name="notes_remove_uncheckable_text_unknown_kind">The folder where SilentSuite keeps Notes changes that haven’t synced holds files this version of SilentSuite can’t read, so it can’t check whether %1$s has any. If you remove %1$s, unsynced Notes text may remain on this device and may no longer sync.</string>
     <string name="notes_remove_uncheckable_confirm">Remove account</string>
     <string name="notes_remove_uncheckable_done">%1$s was removed from this device.</string>
-    <string name="notes_remove_uncheckable_readable">Nothing was removed. SilentSuite can read its Notes files again. Review the list.</string>
-    <string name="notes_remove_uncheckable_changed">Nothing was removed. The accounts on this device changed. Review the list.</string>
-    <string name="notes_remove_uncheckable_retry">Nothing was removed. Try again.</string>
-    <string name="notes_remove_uncheckable_unknown">SilentSuite couldn’t check whether %1$s was removed. Review the list.</string>
-    <string name="notes_remove_uncheckable_ended">This confirmation has ended. Nothing was removed.</string>
+    <string name="notes_remove_uncheckable_readable">This attempt didn’t remove %1$s, because SilentSuite checked its Notes files again since you were asked. Review the list.</string>
+    <string name="notes_remove_uncheckable_changed">This attempt didn’t remove %1$s, because something changed since you were asked. Review the list.</string>
+    <string name="notes_remove_uncheckable_retry">This attempt didn’t remove %1$s. Try again.</string>
+    <string name="notes_remove_uncheckable_unknown">Couldn’t check whether %1$s was removed. Check your device’s account settings.</string>
+    <string name="notes_remove_uncheckable_ended">This confirmation has ended.</string>
+    <string name="notes_remove_uncheckable_ended_tap">This attempt didn’t remove the account, because this confirmation had ended.</string>
+    <!-- Notification of a refused removal of a SilentSuite account, as from Android settings; while a removal of that account that the confirmation in Unsynced Notes asked for is under way, only if the user has left that screen when the outcome comes, if the outcome can’t say whether the account was removed, or if the screen goes first: no account name or address and no Notes content, as it also shows on the lock screen, and no format argument. One text for unsynced or unreadable Notes changes, one for files only the confirmation in Unsynced Notes can get past, and one for a check that couldn’t finish, which may pass when tried again later. Its tap opens Unsynced Notes. -->
+    <string name="notes_removal_refused_title">Account not removed</string>
+    <string name="notes_removal_refused_store">Notes changes on this device haven’t synced or can’t be read, so the account wasn’t removed. This attempt deleted no Notes text. Tap for details.</string>
+    <string name="notes_removal_refused_confirm">SilentSuite can’t read some of its Notes files, so it couldn’t finish checking and the account wasn’t removed. This attempt deleted no Notes text. Tap to choose whether to remove it.</string>
+    <string name="notes_removal_refused_unchecked">SilentSuite couldn’t finish checking for unsynced Notes, so the account wasn’t removed. This attempt deleted no Notes text. Try again later, or tap for details.</string>
+    <!-- Settings, Unsynced Notes: the accounts Android settings can’t remove right now, read again each time the screen shows, whether or not anyone tried to remove them, so no text says that a removal was tried or refused. One summary for unsynced or unreadable Notes changes, one for files only the confirmation can get past, one for a check that couldn’t finish, a row with no account name when the accounts can’t be read, under a heading that claims no refusal, as a removal may still be allowed then, and what a tap that checks again came to. -->
+    <string name="notes_removal_section_title">Accounts Android settings can’t remove right now</string>
+    <string name="notes_removal_section_title_unread">Removing accounts in Android settings</string>
+    <string name="notes_removal_section_store">Notes changes on this device haven’t synced or can’t be read, so Android settings can’t remove this account now. Tap to check again.</string>
+    <string name="notes_removal_section_confirm">SilentSuite can’t read some of its Notes files, so it can’t finish checking this account. Tap to choose whether to remove it.</string>
+    <string name="notes_removal_section_unchecked">SilentSuite couldn’t finish checking for unsynced Notes, so Android settings can’t remove this account now. Tap to check again.</string>
+    <string name="notes_removal_section_accounts">SilentSuite can’t read the accounts on this device right now. Until it can, removing a SilentSuite account may be refused. Tap to check again.</string>
+    <string name="notes_removal_gone">%1$s is no longer on this device.</string>
+    <string name="notes_removal_allowed">Android settings can remove %1$s now.</string>
+    <string name="notes_removal_still_refused">Checked again: Android settings still can’t remove %1$s.</string>
     <!-- Leaving or deleting a Notes notebook: what came of discarding its unsynced Notes changes once the leave or delete went through on the server. Shown as a message of two lines at most, so each says first what came of the discard. -->
     <string name="notes_notebook_discarded">Unsynced Notes changes from this notebook were deleted from this device.</string>
     <string name="notes_notebook_discarded_readable">Readable unsynced changes were deleted from this device. Those that can’t be read stay.</string>
