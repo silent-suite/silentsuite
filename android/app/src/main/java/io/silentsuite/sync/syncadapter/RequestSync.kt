@@ -30,8 +30,10 @@ fun requestSync(
     account: Account?,
     forceCollectionRefresh: Boolean = false,
     explicitRequestId: String? = null,
+    notesOnly: Boolean = false,
 ) {
-    val authorities = linkedMapOf(
+    // Notes alone, with no adapter recorded or dispatched: Sync now while an adapter sync runs.
+    val authorities = if (notesOnly) linkedMapOf<String, SyncStatusStore.Service>() else linkedMapOf(
         App.addressBooksAuthority to SyncStatusStore.Service.CONTACTS,
         CalendarContract.AUTHORITY to SyncStatusStore.Service.CALENDAR,
     ).apply {

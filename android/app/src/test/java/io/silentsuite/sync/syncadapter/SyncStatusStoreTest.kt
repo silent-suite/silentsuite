@@ -182,6 +182,13 @@ class SyncStatusStoreTest {
         assertEquals("request", store.status(first, SyncStatusStore.Service.TASKS).activeRequestId)
     }
 
+    @Test fun `a request for no service writes nothing and is not a failure`() {
+        // Sync now while an adapter sync runs asks for Notes alone: its request then records no adapter.
+        assertTrue(store.recordRequested(store.identity(first), emptySet(), "no-service-request", 10))
+        assertEquals(0, storage.commits)
+        assertTrue(storage.values.isEmpty())
+    }
+
     @Test fun `replaying the same request id preserves its admitted attempt`() {
         assertTrue(store.recordRequested(
             first,
