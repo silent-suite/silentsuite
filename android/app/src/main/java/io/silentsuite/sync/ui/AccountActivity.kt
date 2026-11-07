@@ -1185,6 +1185,47 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         findViewById<View>(service.rowView).contentDescription =
             "${getString(service.title)}. $statusText. $detailText"
         applyDashboardVisual(findViewById(service.iconView), statusView, presentation)
+
+        val openButtonId = when (service.destination) {
+            R.string.dashboard_calendar_destination -> R.id.caldav_open
+            R.string.dashboard_contacts_destination -> R.id.carddav_open
+            R.string.dashboard_tasks_destination -> R.id.taskdav_open
+            else -> null
+        }
+        openButtonId?.let { id ->
+            val button = findViewById<com.google.android.material.button.MaterialButton>(id)
+            val intent = dashboardOpenIntent(service.destination)
+            button.visibility = if (intent == null) View.GONE else View.VISIBLE
+            button.setOnClickListener { intent?.let(::launchDashboardExternalApp) }
+        }
+    }
+
+    private fun dashboardOpenIntent(destination: Int): Intent? = when (destination) {
+        R.string.dashboard_calendar_destination ->
+            Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CALENDAR)
+        R.string.dashboard_contacts_destination ->
+            Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_CONTACTS)
+        R.string.dashboard_tasks_destination -> {
+            val resolver = taskAppLaunchIntentOverride
+            if (resolver != null) resolver(this)
+            else TaskProviderHandling.getWantedTaskSyncProvider(this)?.let { provider ->
+                packageManager.getLaunchIntentForPackage(provider.packageName)
+            }
+        }
+        else -> null
+    }
+
+    private fun launchDashboardExternalApp(intent: Intent) {
+        if (!exactAccountStillCurrent()) return
+        try {
+            dashboardExternalAppLauncherOverride?.invoke(intent) ?: startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            Snackbar.make(
+                findViewById(R.id.coordinator),
+                R.string.dashboard_open_app_unavailable,
+                Snackbar.LENGTH_LONG,
+            ).show()
+        }
     }
 
     private fun dashboardStatusText(presentation: AccountDashboardPresentation): String = when (presentation.label) {
@@ -1620,8 +1661,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         /** Cold-load lifecycle maintenance is explicit, IO-bound, and never a rendering effect. */
         private fun lifecycleStatus(store: SyncStatusStore, service: SyncStatusStore.Service, active: Boolean, pending: Boolean): SyncStatusStore.Status {
             val now = lifecycleNow()
-            store.rebaseFutureLifecycle(statusIdentity, service, now)
-            store.expireStale(statusIdentity, service, now, active, pending, lifecycleWindows.interruptionAfterMillis)
+            store.rebaseFutureLifecycle(statusIdentity, service, ::lifecycleNow)
+            // Keep the observation's upper bound, but respect a rollback during rebase.
+            store.expireStale(statusIdentity, service, { minOf(now, lifecycleNow()) }, active, pending, lifecycleWindows.interruptionAfterMillis)
             return store.status(statusIdentity, service)
         }
 
@@ -1652,8 +1694,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             )
             val now = lifecycleNow()
             facts.forEach { (service, fact) ->
-                store.rebaseFutureLifecycle(statusIdentity, service, now)
-                store.expireStale(statusIdentity, service, now, fact.first, fact.second, lifecycleWindows.interruptionAfterMillis)
+                store.rebaseFutureLifecycle(statusIdentity, service, ::lifecycleNow)
+                store.expireStale(statusIdentity, service, { minOf(now, lifecycleNow()) }, fact.first, fact.second, lifecycleWindows.interruptionAfterMillis)
             }
         }
 
@@ -1973,6 +2015,10 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         @JvmField internal var billingStatusOverride: ((Context, Account, String) -> BillingManager.SubscriptionStatus)? = null
         @VisibleForTesting
         @JvmField internal var accountRouteLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var dashboardExternalAppLauncherOverride: ((Intent) -> Unit)? = null
+        @VisibleForTesting
+        @JvmField internal var taskAppLaunchIntentOverride: ((Context) -> Intent?)? = null
         @VisibleForTesting
         @JvmField internal var permissionRequestOverride: ((android.app.Activity) -> Unit)? = null
         @VisibleForTesting

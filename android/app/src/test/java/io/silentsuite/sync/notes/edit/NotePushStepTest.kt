@@ -518,6 +518,56 @@ class NotePushStepTest {
         assertEquals(HeldReason.READ_ONLY, entry("a").held?.reason)
     }
 
+    @Test fun `a store listing that leaves out the refused entry while a notebook's entries are held still holds it, by its name`() {
+        save("a", "one")
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        // From the moment the notebook is confirmed read-only, every listing of the store comes back short and leaves
+        // out a.note, the entry the server just refused.
+        server.notebookAnswer = {
+            PendingNotesStore.listFilesForTesting = { d ->
+                if (d.name == dir.name) d.listFiles()?.filter { it.name != "a.note" }?.toTypedArray() else d.listFiles()
+            }
+            NotebookCheck.Found(readOnly = true, deleted = false)
+        }
+        val result = run()
+        PendingNotesStore.listFilesForTesting = null
+        // Held only from that listing, "a" would wait neither held nor failed, and the run would record success.
+        assertEquals(1, result.held)
+        assertEquals(HeldReason.READ_ONLY, entry("a").held?.reason)
+        assertEquals(listOf("a"), uploaded())
+        assertEquals("one confirming fetch of the notebook", listOf("b1"), server.notebookFetches)
+        assertTrue(result.succeeded)
+        // Held, it is not sent again.
+        assertEquals(0, run().pushed)
+        assertEquals(listOf("a"), uploaded())
+    }
+
+    @Test fun `a refused entry whose hold fails is a storage failure, and its hold by name does not try it again`() {
+        save("a", "one")
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        // The listing shows a.note, and its hold fails once, after the notebook is confirmed read-only.
+        var failedOnce = false
+        server.notebookAnswer = {
+            PendingNotesStore.beforeRenameForTesting = {
+                if (!failedOnce && it.name == "a.note") {
+                    failedOnce = true
+                    throw IOException("no space left on device")
+                }
+            }
+            NotebookCheck.Found(readOnly = true, deleted = false)
+        }
+        val result = run()
+        PendingNotesStore.beforeRenameForTesting = null
+        assertTrue(failedOnce)
+        // That failure settles the entry, and the hold by name, which is for an entry the listing left out, does not
+        // try the hold once more in that run: the entry waits with its one failure, as when any other hold fails.
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(0, result.held)
+        assertEquals(PendingEntry.State.UPSERT, entry("a").state)
+        assertEquals(1, entry("a").failureCount)
+        assertEquals(listOf("a"), uploaded())
+    }
+
     @Test fun `the saved item is in the cache before the entry is dropped`() {
         val saved = save("a", "text")
         run()
@@ -1482,6 +1532,123 @@ class NotePushStepTest {
         assertEquals(listOf("b"), uploaded())
         assertEquals(1, result.pushed)
         assertEquals("kept, never deleted", 1L, File(dir, "a.note").length())
+    }
+
+    /** The entry's file no longer reads, as a failing disk can leave it while the step works on the note. */
+    private fun damage(uid: String) = File(dir, "$uid.note").writeBytes(byteArrayOf(0))
+
+    @Test fun `an entry that cannot be read once its upload landed counts as pushed and fails the run`() {
+        save("a", "one")
+        duringUpload = { damage(it) }
+        val result = run()
+        assertEquals("the upload landed", setOf("a"), server.items.keys)
+        assertEquals(1, result.pushed)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertFalse(result.succeeded)
+        assertEquals("kept, never deleted", 1L, File(dir, "a.note").length())
+    }
+
+    @Test fun `an entry that cannot be read once a 409 turns out to be its own upload counts as pushed and fails the run`() {
+        save("a", "one")
+        server.answerConflictAfterLanding = true
+        // The file stops reading while the server's copy goes into the cache, after the step read the entry.
+        duringCache = { damage(it) }
+        val result = run()
+        assertEquals(1, result.pushed)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("kept, never deleted", 1L, File(dir, "a.note").length())
+    }
+
+    @Test fun `a newer change that cannot be read when its rebase onto the landed upload is stored fails the run`() {
+        save("a", "one")
+        duringUpload = { save("a", "one, two") }
+        duringBuild = { damage("a") }
+        val result = run()
+        assertEquals("the upload landed and counts", 1, result.pushed)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("kept, never deleted", 1L, File(dir, "a.note").length())
+    }
+
+    @Test fun `a newer change that cannot be read when its rebase onto the landed upload cannot be built fails the run`() {
+        save("a", "one")
+        duringUpload = { save("a", "one, two") }
+        duringBuild = { damage("a") }
+        rebaseError = IllegalStateException("could not decrypt")
+        val result = run()
+        assertEquals("the upload landed and counts", 1, result.pushed)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("kept, never deleted", 1L, File(dir, "a.note").length())
+    }
+
+    @Test fun `a read that fails while the step checks a change it could not rebase is a storage failure, and the push still counts`() {
+        save("a", "one")
+        store.putNotebook("b1", "key".toByteArray())
+        duringUpload = { save("a", "one, two") }
+        duringBuild = {
+            // A refresh of the notebook copy stops at its rename, so a recovery is owed, and its listing then fails.
+            PendingNotesStore.beforeRenameForTesting = { if (it.name == "b1.notebook") throw IOException("rename refused") }
+            assertThrows(IOException::class.java) { store.putNotebook("b1", "key again".toByteArray()) }
+            PendingNotesStore.beforeRenameForTesting = null
+            PendingNotesStore.listFilesForTesting = { d -> if (d.name == dir.name) null else d.listFiles() }
+        }
+        rebaseError = IllegalStateException("could not decrypt")
+        val result = run()
+        PendingNotesStore.listFilesForTesting = null
+        assertEquals("the upload landed and counts", 1, result.pushed)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("one, two", item(entry("a").blob).text)
+    }
+
+    @Test fun `an entry that cannot be read when a second rejection would hold it fails the run`() {
+        save("a", "one")
+        server.uploadError = { http(413) }
+        run()
+        duringUpload = { damage(it) }
+        val result = run()
+        assertEquals(0, result.held)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("kept, never deleted", 1L, File(dir, "a.note").length())
+    }
+
+    @Test fun `an entry that cannot be read when its notebook is confirmed read-only after a 403 fails the run`() {
+        save("a", "one")
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = true, deleted = false) }
+        duringUpload = { damage(it) }
+        val result = run()
+        assertEquals(0, result.held)
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("kept, never deleted", 1L, File(dir, "a.note").length())
+    }
+
+    @Test fun `an entry that cannot be read once the server copy of its conflict is fetched fails the run`() {
+        editedElsewhere()
+        duringFetch = { damage(it) }
+        val result = run()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertTrue("no note is made from it", built.isEmpty())
+        assertEquals(listOf("n1"), uploaded())
+        assertEquals("kept, never deleted", 1L, File(dir, "n1.note").length())
+    }
+
+    @Test fun `an entry that cannot be read when its rebase after a conflict is stored fails the run`() {
+        landedWithoutAnswerThenSaved()
+        duringBuild = { damage("n1") }
+        val result = run()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertTrue("a rebase, not a new note", built.isEmpty())
+        assertEquals("kept, never deleted", 1L, File(dir, "n1.note").length())
+    }
+
+    @Test fun `an entry that cannot be read when its conflict copy is stored fails the run, and no copy is stored`() {
+        editedElsewhere()
+        duringBuild = { damage("n1") }
+        val result = run()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals("the copy was built, and the store refused it", listOf("copy-1"), built)
+        assertTrue(result.conflicts.isEmpty())
+        assertFalse(File(dir, "copy-1.note").exists())
+        assertEquals("kept, never deleted", 1L, File(dir, "n1.note").length())
     }
 
     // ---- an editor that has not rebound when the copy lands ----

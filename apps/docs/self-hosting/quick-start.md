@@ -114,6 +114,8 @@ matches exact IPs here; CIDR ranges are not supported.
 
 See the [SELF-HOSTING.md](https://github.com/silent-suite/silentsuite/blob/main/self-host/SELF-HOSTING.md) in the repo for more reverse proxy examples (Traefik, security headers).
 
+Using NetBird, either its reverse proxy or as a private network for your own proxy? See [Using NetBird](./netbird.md).
+
 ## 3. Verify
 
 ```bash

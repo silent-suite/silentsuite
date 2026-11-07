@@ -452,8 +452,9 @@ class SyncStatusStore internal constructor(
     }
 
     @Synchronized
-    internal fun rebaseFutureLifecycle(identity: MainIdentity, service: Service, now: Long): Boolean = synchronized(STORE_LOCK) {
-        return@synchronized rebaseFutureLifecycleResult(identity, service, now) == MutationResult.RECORDED
+    internal fun rebaseFutureLifecycle(identity: MainIdentity, service: Service, clock: () -> Long): Boolean = synchronized(STORE_LOCK) {
+        // Sample under the record lock: a newer request must not look like a clock rollback.
+        return@synchronized rebaseFutureLifecycleResult(identity, service, clock()) == MutationResult.RECORDED
     }
 
     private fun rebaseFutureLifecycleResult(identity: MainIdentity, service: Service, now: Long): MutationResult {
@@ -482,9 +483,10 @@ class SyncStatusStore internal constructor(
     }
 
     @Synchronized
-    internal fun expireStale(identity: MainIdentity, service: Service, now: Long, platformActive: Boolean, platformPending: Boolean,
+    internal fun expireStale(identity: MainIdentity, service: Service, clock: () -> Long, platformActive: Boolean, platformPending: Boolean,
         interruptionAfterMillis: Long = DEFAULT_INTERRUPTION_AFTER_MILLIS): Boolean = synchronized(STORE_LOCK) {
-        return@synchronized expireStaleResult(identity, service, now, platformActive, platformPending, interruptionAfterMillis) == MutationResult.RECORDED
+        // Expiry must also observe time alongside the current record after a clock rollback.
+        return@synchronized expireStaleResult(identity, service, clock(), platformActive, platformPending, interruptionAfterMillis) == MutationResult.RECORDED
     }
 
     private fun expireStaleResult(identity: MainIdentity, service: Service, now: Long, platformActive: Boolean, platformPending: Boolean,

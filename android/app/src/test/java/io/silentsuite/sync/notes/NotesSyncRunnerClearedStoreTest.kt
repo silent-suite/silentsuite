@@ -33,6 +33,7 @@ class NotesSyncRunnerClearedStoreTest {
         PendingNotesStore.beforeClearForTesting = null
         PendingNotesStore.beforeRemoveForTesting = null
         PendingNotesStore.listFilesForTesting = null
+        PendingNotesStore.presenceForTesting = null
         PendingNotesStore.identityForTesting = null
         PendingNotesStore.resetForTesting()
     }
@@ -87,9 +88,16 @@ class NotesSyncRunnerClearedStoreTest {
         PendingNotesStore.beforeClearForTesting = null
         // A listing of the store that comes back with nothing, and says nothing.
         PendingNotesStore.listFilesForTesting = { d -> if (d == store.dir) emptyArray() else d.listFiles() }
+        // Its counter is there by path, so the count says that it could not be counted.
+        val short = store.unsynced()
+        assertTrue("could not be counted: $short", short.unreadable && short.listed && short.names.isEmpty())
+        // With the counter shown gone as well, as for a lost one, the count finds nothing, and the state still decides.
+        val counter = File(store.dir, "sequence")
+        PendingNotesStore.presenceForTesting = { f -> if (f == counter) PendingNotesStore.Presence.ABSENT else null }
         assertEquals("the count finds nothing", UnsyncedNotes.NOTHING, store.unsynced())
         assertFalse("but the discard did not finish", store.clearedInFull())
         assertThrows(IOException::class.java) { NotesSyncRunner.waitingIn(store) }
+        PendingNotesStore.presenceForTesting = null
     }
 
     @Test fun `a store whose clear stopped at a note its count missed is a storage failure, though nothing its permit names is left`() {
@@ -183,7 +191,7 @@ class NotesSyncRunnerClearedStoreTest {
         val runner = File("src/main/java/io/silentsuite/sync/notes/NotesSyncRunner.kt").readText()
             .replace("\r\n", "\n")
         val push = runner.substringAfter("private fun pushPending(", "").substringBefore("\n    }\n")
-        assertTrue(push.contains("val waiting = waitingIn(store) ?: return null\n        if (nothingToPush(waiting)) {"))
+        assertTrue(push.contains("val waiting = waitingIn(store) ?: return null\n        if (nothingToPush(waiting)) return null\n"))
     }
 
     @Test fun `a store that was cleared in full has nothing to push either, also once it is dropped`() {

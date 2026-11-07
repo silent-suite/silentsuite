@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { LabelEditor } from '@/app/components/LabelEditor'
@@ -10,7 +11,7 @@ import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
 import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
-import { buildAlarmTrigger, parseAlarmTriggerMinutes } from '@silentsuite/core'
+import { buildAlarmTrigger, gapWallClock, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
@@ -318,9 +319,15 @@ export function EventDialog({
   const [location, setLocation] = useState(isEdit ? (event.location || '') : '')
   const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
-  const initialStartTime = formatTimeForInput(defaultStart, initialFormTz)
+  // A DST-gap start keeps its intended wall clock, which the instant alone would show shifted.
+  const startWallClock = isEdit ? validStartWallClock(event) : undefined
+  const initialStartTime = startWallClock
+    ? `${startWallClock.slice(9, 11)}:${startWallClock.slice(11, 13)}`
+    : formatTimeForInput(defaultStart, initialFormTz)
   const initialEndTime = formatTimeForInput(defaultEnd, initialFormTz)
-  const initialStartDateIso = formatDateForInput(defaultStart, initialFormTz)
+  const initialStartDateIso = startWallClock
+    ? `${startWallClock.slice(0, 4)}-${startWallClock.slice(4, 6)}-${startWallClock.slice(6, 8)}`
+    : formatDateForInput(defaultStart, initialFormTz)
   const initialEndDateIso = formatDateForInput(defaultEnd, initialFormTz)
   const [startDate, setStartDate] = useState(initialStartDateIso)
   const [startDateInput, setStartDateInput] = useState(() => formatEventDateInput(initialStartDateIso, dateFormat))
@@ -476,8 +483,15 @@ export function EventDialog({
     if (!title.trim() || saving) return
     if (startDateError || endDateError) return
 
-    const newStart = buildStartDate()
-    const newEnd = buildEndDate()
+    // For a DST-gap start, unchanged inputs keep the exact stored instants: the form rebuilds
+    // minutes only, which would drop seconds and the original wall clock.
+    const kindAndZoneUnchanged = isEdit && allDay === event.allDay && timezone === (event.timezone ?? defaultTimezone)
+    const startInputsUnchanged = startDate === initialStartDateIso && startTime === initialStartTime
+    const endInputsUnchanged = endDate === initialEndDateIso && endTime === initialEndTime
+    const keepExactStart = !!startWallClock && kindAndZoneUnchanged && startInputsUnchanged
+    const keepExactEnd = !!startWallClock && kindAndZoneUnchanged && endInputsUnchanged
+    const newStart = keepExactStart ? event.startDate : buildStartDate()
+    const newEnd = keepExactEnd ? event.endDate : buildEndDate()
 
     // Ensure end is after start
     const effectiveEnd = newEnd > newStart ? newEnd : new Date(newStart.getTime() + 30 * 60 * 1000)
@@ -498,6 +512,18 @@ export function EventDialog({
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
         if (JSON.stringify(categories) !== JSON.stringify(event.categories ?? [])) patch.categories = categories
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
+        // An all-day event without a zone that becomes timed is anchored in the dialog's zone,
+        // rather than being saved as a UTC instant.
+        if (event.allDay && !allDay && !event.timezone) patch.timezone = timezone
+        // An explicit zone change or an all-day switch replaces a floating start time.
+        if (event.floating && (patch.timezone !== undefined || patch.allDay !== undefined)) patch.floating = undefined
+        // An edited start, zone or kind replaces a DST-gap wall clock with the typed one (kept only if
+        // it is itself in a gap).
+        if (startWallClock && !keepExactStart) {
+          patch.startWallClock = allDay
+            ? undefined
+            : gapWallClock(timezone, `${startDate.replace(/-/g, '')}T${startTime.replace(':', '')}00`)
+        }
         if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
 
         // Compare alarms
@@ -565,6 +591,15 @@ export function EventDialog({
     event,
     buildStartDate,
     buildEndDate,
+    startWallClock,
+    startDate,
+    startTime,
+    endDate,
+    endTime,
+    initialStartDateIso,
+    initialStartTime,
+    initialEndDateIso,
+    initialEndTime,
     createEvent,
     updateEvent,
     onClose,
@@ -758,7 +793,11 @@ export function EventDialog({
   const sectionTitleClass = 'text-[11px] font-semibold uppercase tracking-[0.16em] text-[rgb(var(--muted))]'
   const iconClass = 'h-4 w-4 shrink-0 text-emerald-500/80'
 
-  return (
+  if (typeof document === 'undefined') return null
+
+  // Rendered into the body: the calendar page's `main` is its own stacking context,
+  // so inside it the dialog painted under the bottom nav and the nav stayed tappable.
+  return createPortal(
     <>
       {/* Backdrop */}
       <div
@@ -833,7 +872,7 @@ export function EventDialog({
                   className={`w-full ${fieldClass} text-base font-medium ${disabledClass}`}
                 />
 
-                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
                   <div className="flex items-center gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2.5">
                     <MapPin className={iconClass} />
                     <input
@@ -1175,6 +1214,7 @@ export function EventDialog({
           onCancel={handleScopeCancel}
         />
       )}
-    </>
+    </>,
+    document.body,
   )
 }

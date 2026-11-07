@@ -16,9 +16,11 @@
         <item name="android:textColorPrimary">@color/semantic_on_surface</item>
         <item name="android:textColorSecondary">@color/semantic_on_surface_variant</item>
         <item name="android:textColorHint">@color/semantic_on_surface_variant</item>
+        <item name="actionBarStyle">@style/Widget.AppTheme.WindowActionBar</item>
         <item name="actionBarTheme">@style/ThemeOverlay.AppCompat.Dark.ActionBar</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
-        <item name="android:navigationBarColor">@color/semantic_system_bar</item>
+        <item name="android:navigationBarColor">@color/semantic_background</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
         <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>
@@ -27,7 +29,8 @@
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
-        <item name="android:navigationBarColor">@color/semantic_system_bar</item>
+        <item name="android:navigationBarColor">@color/semantic_background</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <style name="AppTheme.Material3" parent="Theme.Material3.DayNight">
@@ -55,7 +58,8 @@
         <item name="colorOnSurfaceInverse">@color/semantic_inverse_on_surface</item>
         <item name="colorPrimaryInverse">@color/semantic_inverse_primary</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
-        <item name="android:navigationBarColor">@color/semantic_system_bar</item>
+        <item name="android:navigationBarColor">@color/semantic_background</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
         <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>
@@ -85,7 +89,8 @@
         <item name="colorOnSurfaceInverse">@color/semantic_inverse_on_surface</item>
         <item name="colorPrimaryInverse">@color/semantic_inverse_primary</item>
         <item name="android:statusBarColor">@color/semantic_system_bar</item>
-        <item name="android:navigationBarColor">@color/semantic_system_bar</item>
+        <item name="android:navigationBarColor">@color/semantic_background</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="materialAlertDialogTheme">@style/AppTheme.Dialog.Alert</item>
         <item name="alertDialogTheme">@style/AppTheme.Dialog.Alert</item>
     </style>

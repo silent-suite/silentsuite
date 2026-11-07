@@ -1,6 +1,8 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import type { CalendarEvent } from '@silentsuite/core'
+import { deserializeCalendarEvent, serializeCalendarEvent } from '@silentsuite/core'
+import { expandEventRecurrence, fromVEvent } from '@silentsuite/core'
 import { EventDialog, formatEventDateInput, formatEventTimeInput, parseEventDateInput, parseEventTimeInput } from '../EventDialog'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
@@ -363,5 +365,343 @@ describe('EventDialog edit calendar selection', () => {
       instanceDate,
     )
     expect(mocks.onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// #886 / plan-v2 §3.2: editor transitions keep one consistent anchor. Each case applies the real
+// saved patch the way the store does ({ ...event, ...patch }) and serializes it with the real codec.
+
+describe('EventDialog anchor transitions (#886)', () => {
+  beforeEach(() => {
+    mocks.createEvent.mockReset()
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.updateRecurringEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  async function savedPatch(): Promise<Partial<CalendarEvent>> {
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+    return mocks.updateEvent.mock.calls[0]![1] as Partial<CalendarEvent>
+  }
+
+  const timedLines = (ics: string) => ics.split('\r\n').filter((line) => /^(DTSTART|DTEND)[:;]/.test(line))
+
+  it('T2: an explicit zone change on a floating event clears floating and anchors the TZID', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      floating: true,
+      startDate: new Date('2026-06-01T09:00:00Z'),
+      endDate: new Date('2026-06-01T10:00:00Z'),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event timezone'), { target: { value: 'Europe/Berlin' } })
+    const patch = await savedPatch()
+
+    expect(patch.timezone).toBe('Europe/Berlin')
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBeUndefined()
+    const ics = serializeCalendarEvent(merged)
+    expect(timedLines(ics)[0]).toMatch(/^DTSTART;TZID=Europe\/Berlin:/)
+    const reloaded = deserializeCalendarEvent(ics)
+    expect(reloaded.timezone).toBe('Europe/Berlin')
+    expect(reloaded).not.toHaveProperty('floating')
+    expect(reloaded.startDate.getTime()).toBe(merged.startDate.getTime())
+  })
+
+  it('T3 control: a floating event saved without a zone change stays floating', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      floating: true,
+      startDate: new Date(2026, 5, 1, 9, 0, 0),
+      endDate: new Date(2026, 5, 1, 10, 0, 0),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed floating' } })
+    const patch = await savedPatch()
+
+    expect(patch).not.toHaveProperty('floating')
+    expect(patch).not.toHaveProperty('timezone')
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBe(true)
+    expect(timedLines(serializeCalendarEvent(merged))).toEqual(['DTSTART:20260601T090000', 'DTEND:20260601T100000'])
+  })
+
+  it('T4: switching a floating timed event to all-day clears floating', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      floating: true,
+      startDate: new Date(2026, 5, 1, 9, 0, 0),
+      endDate: new Date(2026, 5, 1, 10, 0, 0),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.click(screen.getByLabelText('All day'))
+    const patch = await savedPatch()
+
+    expect(patch.allDay).toBe(true)
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBeUndefined()
+    expect(timedLines(serializeCalendarEvent(merged))[0]).toMatch(/^DTSTART;VALUE=DATE:/)
+  })
+
+  it('T5: switching an all-day event to timed anchors it in the dialog zone, not UTC', async () => {
+    mocks.preferences.defaultTimezone = 'Europe/Berlin'
+    const event = makeEvent({
+      allDay: true,
+      timezone: undefined,
+      startDate: new Date(2026, 5, 1),
+      endDate: new Date(2026, 5, 2),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.click(screen.getByLabelText('All day'))
+    const patch = await savedPatch()
+
+    expect(patch.allDay).toBe(false)
+    expect(patch.timezone).toBe('Europe/Berlin')
+    const merged: CalendarEvent = { ...event, ...patch }
+    expect(merged.floating).toBeUndefined()
+    const ics = serializeCalendarEvent(merged)
+    expect(timedLines(ics)[0]).toMatch(/^DTSTART;TZID=Europe\/Berlin:/)
+    expect(deserializeCalendarEvent(ics).timezone).toBe('Europe/Berlin')
+  })
+
+  it('T6 control: a UTC-anchored event saved with an unchanged zone stays UTC', async () => {
+    const event = makeEvent({
+      timezone: undefined,
+      startDate: new Date('2026-06-01T09:00:00Z'),
+      endDate: new Date('2026-06-01T10:00:00Z'),
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed UTC' } })
+    const patch = await savedPatch()
+
+    expect(patch).not.toHaveProperty('timezone')
+    expect(patch).not.toHaveProperty('floating')
+    expect(timedLines(serializeCalendarEvent({ ...event, ...patch }))).toEqual([
+      'DTSTART:20260601T090000Z',
+      'DTEND:20260601T100000Z',
+    ])
+  })
+})
+
+// #886 F1: a gap-start DTSTART keeps its original wall clock through the editor. Recurring
+// saves go through the real "Edit recurring event" scope dialog to updateRecurringEvent;
+// standalone saves reach updateEvent. The captured patch is merged as the store does and
+// serialized/reloaded with the real codec.
+
+describe('EventDialog gap-start DTSTART (#886 F1)', () => {
+  beforeEach(() => {
+    mocks.createEvent.mockReset()
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.updateRecurringEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  const gapEvent = (start: string, end: string, rrule: string | null, uid = 'gap-dialog'): CalendarEvent =>
+    fromVEvent([
+      'BEGIN:VEVENT', `UID:${uid}`, 'SUMMARY:Gap event',
+      `DTSTART;TZID=America/Los_Angeles:${start}`, `DTEND;TZID=America/Los_Angeles:${end}`,
+      ...(rrule ? [`RRULE:${rrule}`] : []),
+      'END:VEVENT',
+    ].join('\r\n'))
+  const G = () => gapEvent('20260308T023000', '20260308T043000', 'FREQ=WEEKLY;COUNT=3')
+  const GS = () => gapEvent('20260308T023045', '20260308T043045', 'FREQ=WEEKLY;COUNT=3')
+  const S = () => gapEvent('20260308T023000', '20260308T043000', null, 'gap-standalone')
+  const march = { start: new Date('2026-03-01T00:00:00Z'), end: new Date('2026-04-01T00:00:00Z') }
+  const dtstart = (ics: string) => ics.split('\r\n').find((l) => l.startsWith('DTSTART'))
+
+  async function savedRecurringPatch(scope: RegExp) {
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+    fireEvent.click(within(scopeDialog).getByRole('button', { name: scope }))
+    await waitFor(() => expect(mocks.updateRecurringEvent).toHaveBeenCalledTimes(1))
+    return mocks.updateRecurringEvent.mock.calls[0]! as [string, Partial<CalendarEvent>, string, Date]
+  }
+
+  it('row 18: shows the original 02:30 start for a recurring gap-start event', () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    expect(screen.getByLabelText('Start time')).toHaveValue('02:30')
+  })
+
+  it.each([
+    [/All events/, 'all'],
+    [/This event/, 'this'],
+  ] as const)('row 19: a title-only save with seconds keeps exact instants (scope %s)', async (scopeName, scope) => {
+    const event = GS()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed gap' } })
+
+    const [id, patch, chosenScope, instance] = await savedRecurringPatch(scopeName)
+
+    expect(id).toBe(event.id)
+    expect(chosenScope).toBe(scope)
+    expect(instance.getTime()).toBe(event.startDate.getTime())
+    expect(patch.title).toBe('Renamed gap')
+    expect(patch).not.toHaveProperty('startDate')
+    expect(patch).not.toHaveProperty('endDate')
+    expect(patch).not.toHaveProperty('startWallClock')
+    const ics = serializeCalendarEvent({ ...event, ...patch })
+    expect(dtstart(ics)).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023045')
+    expect(expandEventRecurrence(deserializeCalendarEvent(ics), march).map((d) => d.toISOString())).toEqual([
+      '2026-03-08T10:30:45.000Z',
+      '2026-03-15T09:30:45.000Z',
+      '2026-03-22T09:30:45.000Z',
+    ])
+  })
+
+  it('row 20a (field): retyping the start time explicitly clears the wall clock', async () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '03:30' } })
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Retimed' } })
+
+    const [, patch] = await savedRecurringPatch(/All events/)
+
+    expect('startWallClock' in patch).toBe(true)
+    expect(patch.startWallClock).toBeUndefined()
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toBe('DTSTART;TZID=America/Los_Angeles:20260308T033000')
+  })
+
+  it('row 20b (field): a non-equivalent zone change explicitly clears the wall clock', async () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event timezone'), { target: { value: 'Europe/Berlin' } })
+
+    const [, patch] = await savedRecurringPatch(/All events/)
+
+    expect(patch.timezone).toBe('Europe/Berlin')
+    expect('startWallClock' in patch).toBe(true)
+    expect(patch.startWallClock).toBeUndefined()
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toMatch(/^DTSTART;TZID=Europe\/Berlin:/)
+  })
+
+  it('row 20c (field): switching to all-day explicitly clears the wall clock', async () => {
+    const event = G()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={event.startDate} onClose={mocks.onClose} />)
+    fireEvent.click(screen.getByLabelText('All day'))
+
+    const [, patch] = await savedRecurringPatch(/All events/)
+
+    expect(patch.allDay).toBe(true)
+    expect('startWallClock' in patch).toBe(true)
+    expect(patch.startWallClock).toBeUndefined()
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toMatch(/^DTSTART;VALUE=DATE:/)
+  })
+
+  it('row 20s: a standalone title-only save keeps the original gap DTSTART', async () => {
+    const event = S()
+    renderWithIntl(<EventDialog mode="edit" event={event} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed standalone' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledTimes(1))
+
+    const patch = mocks.updateEvent.mock.calls[0]![1] as Partial<CalendarEvent>
+    expect(patch).not.toHaveProperty('startDate')
+    expect(dtstart(serializeCalendarEvent({ ...event, ...patch }))).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
+  })
+})
+
+// #295: the mobile bottom nav sits outside the calendar page's `main`, which is its own stacking
+// context, so a dialog rendered inside the page paints under the nav and the nav stays tappable.
+// This checks where the dialog is mounted; it does not measure painted geometry.
+
+describe('EventDialog mounts above the bottom nav', () => {
+  beforeEach(() => {
+    mocks.createEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  /** The outermost `fixed` element between the role=dialog card and <body>: the overlay's own wrapper. */
+  function outerOverlay(dialog: HTMLElement): HTMLElement | null {
+    let outer: HTMLElement | null = null
+    for (let node: HTMLElement | null = dialog; node && node !== document.body; node = node.parentElement) {
+      if (node.classList.contains('fixed')) outer = node
+    }
+    return outer
+  }
+
+  it('portals the dialog and its backdrop to <body>, closes through onClose, and leaves nothing behind on unmount', () => {
+    const view = renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'New event' })
+    expect(screen.getByLabelText('Event title')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument()
+
+    expect(view.container.contains(dialog), 'dialog is rendered inside the render container').toBe(false)
+    const outer = outerOverlay(dialog)
+    expect(outer, 'fixed overlay wrapper').not.toBeNull()
+    expect(outer!.parentElement, 'overlay wrapper is a direct child of <body>').toBe(document.body)
+    const backdrop = document.querySelector<HTMLElement>('div[aria-hidden="true"][class*="z-[200]"]')
+    expect(backdrop, 'EventDialog backdrop').not.toBeNull()
+    expect(backdrop!.parentElement, 'backdrop is a direct child of <body>').toBe(document.body)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(mocks.onClose).toHaveBeenCalledTimes(1)
+    expect(mocks.createEvent).not.toHaveBeenCalled()
+
+    view.unmount()
+    expect(screen.queryByRole('dialog', { name: 'New event' })).not.toBeInTheDocument()
+    expect(document.querySelector('div[aria-hidden="true"][class*="z-[200]"]')).toBeNull()
+  })
+})
+
+// #295: on a 320px phone the location and labels fields sat in a grid with no explicit column below
+// `sm`, so its implicit column grew to the fields' minimum content width and pushed both past the
+// Details card and the screen edge. jsdom does not lay out CSS; this checks the grid's column classes.
+
+describe('EventDialog details fit narrow screens', () => {
+  beforeEach(() => {
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  it('keeps location and labels in one grid with a shrinkable single column below sm and two columns from sm', () => {
+    renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+
+    const locationCell = screen.getByLabelText('Event location').parentElement!
+    const grid = locationCell.parentElement!
+    expect(grid.className).toMatch(/(^|\s)grid(\s|$)/)
+    const cells = Array.from(grid.children) as HTMLElement[]
+    expect(cells).toHaveLength(2)
+    expect(cells[0]).toBe(locationCell)
+    const labelsCell = cells[1]!
+    expect(labelsCell.querySelector('svg[class*="lucide-tag"]'), 'labels field icon').not.toBeNull()
+    expect(within(labelsCell).getAllByRole('textbox').length).toBeGreaterThan(0)
+
+    // Two columns from sm stay as they are.
+    expect(grid.className).toContain('sm:grid-cols-[minmax(0,1fr)_auto]')
+    // Below sm the single column is explicit and may shrink to the card width.
+    expect(grid.className).toMatch(/(^|\s)(grid-cols-1|grid-cols-\[minmax\(0,1fr\)\])(\s|$)/)
   })
 })

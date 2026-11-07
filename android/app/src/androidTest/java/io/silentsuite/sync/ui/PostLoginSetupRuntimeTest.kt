@@ -68,17 +68,15 @@ class PostLoginSetupRuntimeTest {
         PostLoginSyncConfigurator.configureOverride={ _, _ -> false }
         try {
             ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context,account,id)).use { scenario -> scenario.onActivity { activity ->
-                if (Build.VERSION.SDK_INT >= 35) {
-                    val systemBars = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
-                        .getInsets(WindowInsetsCompat.Type.systemBars())
-                    val actionBar = activity.findViewById<View>(R.id.setup_action_bar)
-                    val location = IntArray(2)
-                    actionBar.getLocationOnScreen(location)
-                    assertTrue(
-                        "Setup actions end under the navigation bar",
-                        location[1] + actionBar.height <= activity.window.decorView.height - systemBars.bottom,
-                    )
-                }
+                val systemBars = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
+                    .getInsets(WindowInsetsCompat.Type.systemBars())
+                val actionBar = activity.findViewById<View>(R.id.setup_action_bar)
+                val location = IntArray(2)
+                actionBar.getLocationOnScreen(location)
+                assertTrue(
+                    "Setup actions end under the navigation bar",
+                    location[1] + actionBar.height <= activity.window.decorView.height - systemBars.bottom,
+                )
                 activity.findViewById<android.widget.Button>(R.id.setup_continue_limited).performClick()
                 assertEquals(PostLoginSetupState.ACCOUNT_CREATED,AccountSettings.setupState(manager,account,true))
                 assertEquals(id,manager.getUserData(account,AccountSettings.KEY_CREATION_ID))

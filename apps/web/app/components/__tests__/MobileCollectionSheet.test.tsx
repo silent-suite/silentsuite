@@ -1,13 +1,31 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { useState } from 'react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 // Mock the three collection panels so the sheet is tested in isolation.
 vi.mock('../CalendarListPanel', () => ({
   CalendarListPanel: () => <div data-testid="cal-panel">calendar</div>,
 }))
-vi.mock('../TaskListPanel', () => ({
-  TaskListPanel: () => <div data-testid="task-panel">tasks</div>,
-}))
+vi.mock('../TaskListPanel', () => {
+  const { useState } = require('react') as typeof import('react')
+  return {
+    TaskListPanel: () => {
+      const [menuOpen, setMenuOpen] = useState(false)
+      return (
+        <div data-testid="task-panel">
+          tasks
+          <input aria-label="Rename task list" />
+          <button type="button" onClick={() => setMenuOpen(true)}>Open row menu</button>
+          {menuOpen ? (
+            <div role="menu">
+              <button type="button" role="menuitem">Rename</button>
+            </div>
+          ) : null}
+        </div>
+      )
+    },
+  }
+})
 vi.mock('../ContactListPanel', () => ({
   ContactListPanel: () => <div data-testid="contact-panel">contacts</div>,
 }))
@@ -83,5 +101,147 @@ describe('MobileCollectionSheet', () => {
       <MobileCollectionSheet type="calendar" open={false} onClose={() => {}} />,
     )
     expect(container).toBeEmptyDOMElement()
+  })
+})
+
+describe('MobileCollectionSheet keyboard ownership', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0))
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => window.clearTimeout(handle))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function Harness({ startOpen = false }: { startOpen?: boolean }) {
+    const [open, setOpen] = useState(startOpen)
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)}>Open collections</button>
+        <MobileCollectionSheet type="tasks" open={open} onClose={() => setOpen(false)} />
+      </>
+    )
+  }
+
+  it('focuses Close collections when opened from a focused opener, and restores that opener on close', async () => {
+    render(<Harness />)
+    const opener = screen.getByRole('button', { name: 'Open collections' })
+    opener.focus()
+    fireEvent.click(opener)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close collections' })).toHaveFocus())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close collections' }))
+    await waitFor(() => expect(opener).toHaveFocus())
+
+    opener.focus()
+    fireEvent.click(opener)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close collections' })).toHaveFocus())
+  })
+
+  it('closes on Escape from a sheet control, but not from an input or an open menu', async () => {
+    render(<Harness startOpen />)
+    screen.getByRole('button', { name: 'Close collections' }).focus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Collections' })).not.toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open collections' }))
+    screen.getByLabelText('Rename task list').focus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('dialog', { name: 'Collections' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open row menu' }))
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('dialog', { name: 'Collections' })).toBeInTheDocument()
+  })
+
+  it('wraps Tab inside the sheet and pulls outside focus back in', async () => {
+    render(<Harness startOpen />)
+    const close = screen.getByRole('button', { name: 'Close collections' })
+    const last = screen.getByRole('button', { name: 'Open row menu' })
+
+    last.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(close).toHaveFocus()
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(last).toHaveFocus()
+
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(close).toHaveFocus()
+  })
+
+  it('keeps a focused rename field when only the close callback identity changes', async () => {
+    const firstClose = vi.fn()
+    const latestClose = vi.fn()
+    const view = render(<MobileCollectionSheet type="tasks" open onClose={firstClose} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close collections' })).toHaveFocus())
+
+    const rename = screen.getByLabelText('Rename task list')
+    rename.focus()
+    expect(rename).toHaveFocus()
+
+    view.rerender(<MobileCollectionSheet type="tasks" open onClose={latestClose} />)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(rename).toHaveFocus()
+
+    screen.getByRole('button', { name: 'Close collections' }).focus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(latestClose).toHaveBeenCalledTimes(1)
+    expect(firstClose).not.toHaveBeenCalled()
+  })
+})
+
+// #295: the sheet moves focus to Close collections on the frame after it opens. If the user (or a
+// nested confirmation's restore) has already put focus on a control inside the sheet by then, that
+// late first-frame focus must not take it away.
+describe('MobileCollectionSheet initial focus timing', () => {
+  // Frames the sheet requests are held here instead of running, so the test decides when the
+  // sheet's own first-frame callback runs.
+  let pendingFrames: Map<number, FrameRequestCallback>
+  let nextFrame: number
+
+  beforeEach(() => {
+    pendingFrames = new Map()
+    nextFrame = 1
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      const handle = nextFrame++
+      pendingFrames.set(handle, callback)
+      return handle
+    })
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => {
+      pendingFrames.delete(handle)
+    })
+  })
+
+  afterEach(() => {
+    pendingFrames.clear()
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps focus on a sheet field the user reached before the first frame runs', () => {
+    render(<MobileCollectionSheet type="tasks" open onClose={() => {}} />)
+
+    // Opening the sheet requested its initial-focus frame; it has not run yet.
+    expect(pendingFrames.size).toBe(1)
+    expect(screen.getByRole('button', { name: 'Close collections' })).not.toHaveFocus()
+
+    const rename = screen.getByLabelText('Rename task list')
+    rename.focus()
+    expect(rename).toHaveFocus()
+
+    // Now the sheet's own first-frame callback runs.
+    const frames = [...pendingFrames.values()]
+    pendingFrames.clear()
+    act(() => {
+      for (const frame of frames) frame(performance.now())
+    })
+
+    expect(rename).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Close collections' })).not.toHaveFocus()
   })
 })

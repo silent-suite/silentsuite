@@ -2839,3 +2839,286 @@ describe('useAuthStore', () => {
     })
   })
 })
+
+// Subscription clarity: accountNotice travels with the existing owned tuple. Test-local casts
+// keep these compiling before the field and the claim action exist.
+describe('accountNotice (store)', () => {
+  const userU = { id: 'notice-u', email: 'u@example.com', planId: 'early_annual', isAdmin: false }
+  const userV = { id: 'notice-v', email: 'v@example.com', planId: 'early_annual', isAdmin: false }
+  const trialEndsAt = '2026-11-02T12:00:00.000Z'
+  const daysLeft = { kind: 'trial_days_left', trialEndsAt, daysRemaining: 3 }
+  type NoticeState = { accountNotice?: unknown; claimTrialExpiryRefresh?: (end: string) => boolean }
+  const readNotice = () => (useAuthStore.getState() as unknown as NoticeState).accountNotice
+  const claim = (end: string) => (useAuthStore.getState() as unknown as NoticeState).claimTrialExpiryRefresh?.(end)
+  const ok = (body: Record<string, unknown>) => ({ ok: true, status: 200, json: async () => body }) as Response
+  const subscriptionCalls = () => vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/subscription')).length
+
+  beforeEach(() => {
+    resetStore()
+    seedStore({ accountNotice: null, trialExpiryRefreshClaim: null } as WithHostedAccess)
+    vi.mocked(fetch).mockReset()
+    localStorage.clear()
+  })
+
+  it('[RED] an owned successful read publishes the notice with the status tuple', async () => {
+    seedStore({ user: userU, isAuthenticated: true })
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', hostedAccess: 'entitled', accountNotice: daysLeft }))
+    const seen: unknown[] = []
+    const unsubscribe = useAuthStore.subscribe((state) => { seen.push([state.subscriptionStatus, (state as unknown as NoticeState).accountNotice]) })
+    try {
+      await useAuthStore.getState().fetchSubscription()
+    } finally {
+      unsubscribe()
+    }
+    expect(seen).toEqual([['trialing', daysLeft]])
+  })
+
+  it.each([
+    ['absent', undefined],
+    ['unknown kind', { kind: 'upsell' }],
+    ['zero days', { ...daysLeft, daysRemaining: 0 }],
+    ['fractional days', { ...daysLeft, daysRemaining: 1.5 }],
+    ['invalid date', { ...daysLeft, trialEndsAt: 'soon' }],
+    ['non-ISO date', { ...daysLeft, trialEndsAt: 'November 2, 2026' }],
+    ['offset-less date', { ...daysLeft, trialEndsAt: '2026-11-02T12:00:00' }],
+    ['extra key', { ...daysLeft, price: 3600 }],
+    ['ended without date key', { kind: 'trial_ended' }],
+  ])('[RED] a %s notice publishes null and replaces an earlier notice', async (_label, notice) => {
+    seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', accountNotice: daysLeft } as WithHostedAccess)
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', ...(notice === undefined ? {} : { accountNotice: notice }) }))
+    await useAuthStore.getState().fetchSubscription()
+    expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
+    expect(readNotice()).toBeNull()
+  })
+
+  it.each([
+    ['non-leap February 29', '2026-02-29T12:00:00Z'],
+    ['February 30', '2026-02-30T12:00:00Z'],
+    ['April 31', '2026-04-31T12:00:00.000Z'],
+    ['month 13', '2026-13-01T12:00:00Z'],
+    ['hour 24', '2026-11-02T24:00:00Z'],
+  ])('rejects an impossible calendar date (%s) in every notice date field', async (_label, date) => {
+    seedStore({ user: userU, isAuthenticated: true })
+    for (const notice of [
+      { kind: 'trial_days_left', trialEndsAt: date, daysRemaining: 3 },
+      { kind: 'trial_ended', endedAt: date },
+      { kind: 'access_ended', endedAt: date },
+    ]) {
+      seedStore({ accountNotice: daysLeft } as WithHostedAccess)
+      vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', accountNotice: notice }))
+      await useAuthStore.getState().fetchSubscription()
+      expect(readNotice()).toBeNull()
+    }
+  })
+
+  it.each([
+    ['leap day', '2028-02-29T12:00:00Z'],
+    ['one fractional digit', '2026-11-02T12:00:00.5Z'],
+    ['three fractional digits', '2026-11-02T12:00:00.123Z'],
+  ])('accepts a real UTC date with %s', async (_label, date) => {
+    seedStore({ user: userU, isAuthenticated: true })
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', accountNotice: { kind: 'trial_ended', endedAt: date } }))
+    await useAuthStore.getState().fetchSubscription()
+    expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: date })
+  })
+
+  it('[RED] accepts the ended notices, including access_ended without a date', async () => {
+    seedStore({ user: userU, isAuthenticated: true })
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'expired', accountNotice: { kind: 'access_ended', endedAt: null } }))
+    await useAuthStore.getState().fetchSubscription()
+    expect(readNotice()).toEqual({ kind: 'access_ended', endedAt: null })
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }))
+    await useAuthStore.getState().fetchSubscription()
+    expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt })
+  })
+
+  it.each([
+    ['non-ok response', () => vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({}) } as Response)],
+    ['network error', () => vi.mocked(fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'))],
+    ['unreadable body', () => vi.mocked(fetch).mockResolvedValueOnce({ ok: true, status: 200, json: async () => { throw new SyntaxError('bad json') } } as unknown as Response)],
+  ])('[RED] an owned %s after success clears only the notice', async (_label, failNext) => {
+    seedStore({ user: userU, isAuthenticated: true })
+    vi.mocked(fetch).mockResolvedValueOnce(ok({ status: 'trialing', hostedAccess: 'entitled', accountNotice: daysLeft }))
+    await useAuthStore.getState().fetchSubscription()
+    expect(readNotice()).toEqual(daysLeft)
+    failNext()
+    await useAuthStore.getState().fetchSubscription()
+    expect(readNotice()).toBeNull()
+    expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
+    expect(readHostedAccess()).toBe('entitled')
+  })
+
+  it('[RED] an older failure after a newer success keeps the newer notice', async () => {
+    seedStore({ user: userU, isAuthenticated: true })
+    const older = deferredValue<Response>()
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => older.promise)
+      .mockResolvedValueOnce(ok({ status: 'trialing', accountNotice: daysLeft }))
+    const first = useAuthStore.getState().fetchSubscription()
+    await useAuthStore.getState().fetchSubscription()
+    older.reject(new TypeError('Failed to fetch'))
+    await first
+    expect(readNotice()).toEqual(daysLeft)
+  })
+
+  it('[CTRL] an older success after a newer success cannot restore its notice', async () => {
+    seedStore({ user: userU, isAuthenticated: true })
+    const older = delayedJsonResponse()
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(older.response)
+      .mockResolvedValueOnce(ok({ status: 'active', accountNotice: null }))
+    const first = useAuthStore.getState().fetchSubscription()
+    await useAuthStore.getState().fetchSubscription()
+    older.body.resolve({ status: 'trialing', accountNotice: daysLeft })
+    await first
+    expect(readNotice()).toBeNull()
+  })
+
+  it('[RED] a response arriving after the account changes is dropped and the replacement starts clear', async () => {
+    seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    const pending = deferredValue<Response>()
+    vi.mocked(fetch).mockImplementationOnce(() => pending.promise)
+    const run = useAuthStore.getState().fetchSubscription()
+    useAuthStore.getState().setUser(userV)
+    expect(readNotice()).toBeNull()
+    pending.resolve(ok({ status: 'trialing', accountNotice: daysLeft }))
+    await run
+    expect(readNotice()).toBeNull()
+  })
+
+  it('[RED] logout clears the notice', async () => {
+    seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', accountNotice: daysLeft } as WithHostedAccess)
+    vi.mocked(fetch).mockResolvedValue(new Response(null, { status: 204 }))
+    await useAuthStore.getState().logout()
+    expect(readNotice()).toBeNull()
+  })
+
+  it('[RED] self-hosted and custom-server reads publish no notice', async () => {
+    seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    localStorage.setItem('silentsuite-server-url', 'https://dav.example.test')
+    await useAuthStore.getState().fetchSubscription()
+    expect(readNotice()).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('never settles an account expiry claim from a billing retry that identifies another account', async () => {
+    seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    const claimRead = deferredValue<Response>()
+    const endedBody = { status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const path = String(url)
+      if (path.endsWith('/auth/refresh')) return ok({ id: userV.id, email: userV.email, planId: userV.planId, isAdmin: false, rememberDevice: true })
+      if (path.endsWith('/subscription')) return subscriptionCalls() === 1 ? claimRead.promise : ok(endedBody)
+      return new Response(null, { status: 204 })
+    })
+    expect(claim(trialEndsAt)).toBe(true)
+    await useAuthStore.getState().retryBillingConnection()
+    claimRead.resolve(ok({ status: 'trialing', accountNotice: daysLeft }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    const current = (useAuthStore.getState() as unknown as { trialExpiryRefreshClaim: { userId: string; response: unknown } | null }).trialExpiryRefreshClaim
+    expect(current === null || (current.userId === userU.id && current.response === null)).toBe(true)
+  })
+
+  it.each([
+    { label: 'non-OK 503', failRead: (): Response => ({ ok: false, status: 503, json: async () => ({}) }) as Response },
+    { label: 'fetch rejection', failRead: (): Response => { throw new Error('network failure') } },
+    { label: 'JSON rejection', failRead: (): Response => ({ ok: true, status: 200, json: async () => { throw new Error('invalid JSON') } }) as Response },
+  ])('re-admits a same-account expiry claim after its newer retry read fails ($label)', async ({ failRead }) => {
+    seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', hostedAccess: null, accountNotice: daysLeft } as WithHostedAccess)
+    const firstClaimRead = deferredValue<Response>()
+    const freshClaimRead = deferredValue<Response>()
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const path = String(url)
+      if (path.endsWith('/auth/refresh')) return ok({ id: userU.id, email: userU.email, planId: userU.planId, isAdmin: false, rememberDevice: true })
+      if (path.endsWith('/subscription')) {
+        const call = subscriptionCalls()
+        if (call === 1) return firstClaimRead.promise
+        if (call === 2) return failRead()
+        if (call === 3) return freshClaimRead.promise
+      }
+      return new Response(null, { status: 204 })
+    })
+    const tuple = () => ({
+      isAuthenticated: useAuthStore.getState().isAuthenticated,
+      subscriptionStatus: useAuthStore.getState().subscriptionStatus,
+      hostedAccess: readHostedAccess(),
+    })
+    const oldTuple = tuple()
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(await useAuthStore.getState().retryBillingConnection()).toBe(false)
+    firstClaimRead.resolve(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: daysLeft }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(tuple()).toEqual(oldTuple)
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(claim(trialEndsAt)).toBe(false)
+    freshClaimRead.resolve(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt })
+    expect(subscriptionCalls()).toBe(3)
+    expect(claim(trialEndsAt)).toBe(false)
+  })
+
+  it('re-admits an expiry claim only after its owned read failed, and still coalesces while it is in flight', async () => {
+    seedStore({ user: userU, isAuthenticated: true, subscriptionStatus: 'trialing', accountNotice: daysLeft } as WithHostedAccess)
+    const claimRead = deferredValue<Response>()
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => claimRead.promise)
+      .mockResolvedValue(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }))
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(claim(trialEndsAt)).toBe(false)
+    claimRead.resolve({ ok: false, status: 503, json: async () => ({}) } as Response)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    // The failure is not expiry: status stays, the notice is only hidden.
+    expect(useAuthStore.getState().subscriptionStatus).toBe('trialing')
+    expect(readNotice()).toBeNull()
+    expect(subscriptionCalls()).toBe(1)
+
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(claim(trialEndsAt)).toBe(false)
+    await vi.waitFor(() => expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt }))
+    expect(subscriptionCalls()).toBe(2)
+    expect(claim(trialEndsAt)).toBe(false)
+  })
+
+  it('makes no expiry continuation when a newer read started after the discarded one', async () => {
+    seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    const claimRead = deferredValue<Response>()
+    const newerRead = deferredValue<Response>()
+    vi.mocked(fetch)
+      .mockImplementationOnce(() => claimRead.promise)
+      .mockImplementationOnce(() => newerRead.promise)
+      .mockResolvedValue(ok({ status: 'trialing', accountNotice: daysLeft }))
+    expect(claim(trialEndsAt)).toBe(true)
+    // A fresh user object for the same account discards the claim's read...
+    useAuthStore.getState().setUser({ ...userU })
+    claimRead.resolve(ok({ status: 'trialing', accountNotice: daysLeft }))
+    // ...and a newer read starts before the claim's continuation would resume.
+    queueMicrotask(() => { void useAuthStore.getState().fetchSubscription() })
+    await vi.waitFor(() => expect(subscriptionCalls()).toBeGreaterThanOrEqual(2))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(subscriptionCalls()).toBe(2)
+
+    newerRead.resolve(ok({ status: 'trialing', hostedAccess: 'trial_ended', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } }))
+    await vi.waitFor(() => expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt }))
+    const settled = (useAuthStore.getState() as unknown as { trialExpiryRefreshClaim: { response: unknown } | null }).trialExpiryRefreshClaim
+    expect(settled?.response).toMatchObject({ hostedAccess: 'trial_ended' })
+    expect(subscriptionCalls()).toBe(2)
+  })
+
+  it('[RED] one expiry claim per account generation and trial end; a replacement account claims afresh', async () => {
+    seedStore({ user: userU, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    vi.mocked(fetch).mockImplementation(async (url) => (String(url).endsWith('/subscription')
+      ? ok({ status: 'trialing', accountNotice: { kind: 'trial_ended', endedAt: trialEndsAt } })
+      : new Response(null, { status: 204 })))
+    expect(claim(trialEndsAt)).toBe(true)
+    expect(claim(trialEndsAt)).toBe(false)
+    await vi.waitFor(() => expect(readNotice()).toEqual({ kind: 'trial_ended', endedAt: trialEndsAt }))
+    expect(claim(trialEndsAt)).toBe(false)
+    expect(subscriptionCalls()).toBe(1)
+
+    await useAuthStore.getState().logout()
+    seedStore({ user: userV, isAuthenticated: true, accountNotice: daysLeft } as WithHostedAccess)
+    expect(claim(trialEndsAt)).toBe(true)
+    await vi.waitFor(() => expect(subscriptionCalls()).toBe(2))
+  })
+})

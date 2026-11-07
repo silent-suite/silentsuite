@@ -13,8 +13,8 @@ pnpm test
 Run tests for a specific app or package:
 
 ```bash
-pnpm test --filter=landing
-pnpm test --filter=web
+pnpm --filter @silentsuite/web test
+pnpm --filter @silentsuite/core test
 ```
 
 ## Type Checking

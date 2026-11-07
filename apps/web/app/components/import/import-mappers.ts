@@ -1,4 +1,4 @@
-import { parseICalDateValue } from '@silentsuite/core'
+import { gapWallClock, isFloatingICalDateTime, parseICalDateValue } from '@silentsuite/core'
 import type { VEvent, VTodo } from '@silentsuite/core/utils/ical-parser'
 import { normalizeLabels } from '@/app/components/LabelEditor'
 
@@ -15,6 +15,10 @@ export interface ImportEventPayload {
   categories: string[]
   calendarId: string
   timezone: string | undefined
+  /** Present (true) only when the source DTSTART is a floating DATE-TIME (no TZID, no Z). */
+  floating?: true
+  /** Present only when a timed TZID DTSTART lies in a DST gap: its original wall clock. */
+  startWallClock?: string
 }
 
 function addDays(date: Date, days: number): Date {
@@ -64,6 +68,8 @@ export function vEventToImportEvent(
       : defaultEndDate(start, isAllDay)
   const exdateTzid = event.exdateParams?.['TZID'] ?? startTzid
   const exceptions = event.exdate?.map((date) => parseICalDateValue(date, exdateTzid).date) ?? []
+  // A DST-gap DTSTART's wall clock is taken from the source value before it is normalized.
+  const startWallClock = isAllDay ? undefined : gapWallClock(startTzid, event.dtstart)
 
   return {
     title: event.summary || 'Untitled Event',
@@ -78,25 +84,9 @@ export function vEventToImportEvent(
     categories: normalizeLabels(event.categories ?? []),
     calendarId,
     timezone: isAllDay ? undefined : startTzid,
+    ...(!isAllDay && isFloatingICalDateTime(event.dtstart, event.dtstartParams) ? { floating: true as const } : {}),
+    ...(startWallClock ? { startWallClock } : {}),
   }
-}
-
-// Date-only on import: the Task model has no timezone field, so a TZID-bearing
-// or UTC datetime would otherwise be parsed in the importer's local zone and
-// land on the wrong instant. Take the wall-clock date from the source value.
-// Full TZID parity for VTODO is tracked in #66.
-export function parseICalDate(d: string): Date | null {
-  if (!d) return null
-  const digits = d.replace(/[^0-9]/g, '')
-  if (digits.length < 8) {
-    const parsed = new Date(d)
-    return isNaN(parsed.getTime()) ? null : parsed
-  }
-  return new Date(
-    parseInt(digits.slice(0, 4)),
-    parseInt(digits.slice(4, 6)) - 1,
-    parseInt(digits.slice(6, 8)),
-  )
 }
 
 export function isCompletedVTodo(task: Pick<VTodo, 'status' | 'completed' | 'percentComplete'>): boolean {

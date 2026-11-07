@@ -88,13 +88,13 @@ export function ConfirmDialog({
           <button
             ref={cancelRef}
             onClick={onCancel}
-            className="rounded-lg px-4 py-2 text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            className="rounded-lg px-4 py-2 max-md:min-h-[44px] text-sm font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
           >
             {cancelLabel}
           </button>
           <button
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
+            className={`rounded-lg px-4 py-2 max-md:min-h-[44px] text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
               variant === 'danger'
                 ? 'bg-red-600 hover:bg-red-500 focus-visible:ring-red-500'
                 : 'bg-amber-600 hover:bg-amber-500 focus-visible:ring-amber-500'

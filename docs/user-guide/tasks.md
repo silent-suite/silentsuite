@@ -7,7 +7,7 @@ Your tasks live at [app.silentsuite.io/tasks](https://app.silentsuite.io/tasks).
 1. Click **+ Add Task** or use the keyboard shortcut.
 2. Fill in:
    - Title (required)
-   - Due date — a calendar day, or a specific date+time
+   - Due date — a calendar day
    - Priority — low / medium / high / urgent
    - Notes
 3. Save. The task is serialized to iCalendar (`VTODO`), encrypted, and synced.
@@ -45,5 +45,5 @@ Multiple task lists are supported. Each list is a separate encrypted collection 
 
 ## Limits in this beta
 
-- Date-only `DUE` values round-trip cleanly. Full timezone (`TZID`) preservation on date-time `DUE` values is being tightened up — see [issue #66](https://github.com/silent-suite/silentsuite/issues/66).
+- Start and due dates are shown and edited as calendar days. Times and time zones (`TZID`) set in other apps or imported from `.ics` files are kept when you rename, complete or otherwise edit a task, but picking a new date in SilentSuite saves it as a date without a time.
 - No subtasks or dependencies — a flat task list per collection.

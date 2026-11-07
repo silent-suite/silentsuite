@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import type { Task, TaskStatus, Priority, SyncStatus } from '@silentsuite/core'
+import type { Task, TaskICalDate, TaskStatus, Priority, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { enqueue, readOutstanding } from '@/app/lib/offline-queue'
@@ -17,6 +17,9 @@ interface NewTask {
   description?: string
   start_date?: Date | null
   due_date?: Date | null
+  /** Source DTSTART/DUE identity, e.g. from an imported file; must describe the matching date. */
+  start_ical?: TaskICalDate
+  due_ical?: TaskICalDate
   priority?: Priority
   completed?: boolean
   status?: TaskStatus
@@ -57,6 +60,22 @@ interface TaskActions {
   syncFromRemote: (tasks: Task[]) => void
 }
 
+/** Source identity for a new task's dates, kept only where the matching date is set. */
+function temporalSources(task: NewTask): Pick<Task, 'start_ical' | 'due_ical'> {
+  return {
+    ...(task.start_date && task.start_ical ? { start_ical: task.start_ical } : {}),
+    ...(task.due_date && task.due_ical ? { due_ical: task.due_ical } : {}),
+  }
+}
+
+/** A date patched without its source no longer matches the old source, so that source is dropped. */
+function applyTaskPatch(task: Task, patch: Partial<Task>): Task {
+  const updated = { ...task, ...patch, updated_at: new Date() }
+  if ('start_date' in patch && !('start_ical' in patch)) delete updated.start_ical
+  if ('due_date' in patch && !('due_ical' in patch)) delete updated.due_ical
+  return updated
+}
+
 function defaultTaskListId(): string | undefined {
   const { lists, activeListId } = useTaskListStore.getState()
   if (activeListId !== 'all' && lists.some((list) => list.id === activeListId)) return activeListId
@@ -80,6 +99,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           description: newTask.description ?? '',
           start_date: newTask.start_date ?? null,
           due_date: newTask.due_date ?? null,
+          ...temporalSources(newTask),
           priority: newTask.priority ?? 'medium',
           completed: newTask.completed ?? false,
           status: newTask.status ?? (newTask.completed ? 'completed' : 'needs-action'),
@@ -149,7 +169,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         const index = tasks.findIndex((t) => t.id === id)
         if (index === -1) return
 
-        const updated = { ...tasks[index], ...patch, updated_at: new Date() }
+        const updated = applyTaskPatch(tasks[index]!, patch)
         const next = [...tasks]
         next[index] = updated
         set({ tasks: next })
@@ -285,6 +305,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             description: nt.description ?? '',
             start_date: nt.start_date ?? null,
             due_date: nt.due_date ?? null,
+            ...temporalSources(nt),
             priority: nt.priority ?? 'medium',
             completed: nt.completed ?? false,
             status: nt.status ?? (nt.completed ? 'completed' : 'needs-action'),

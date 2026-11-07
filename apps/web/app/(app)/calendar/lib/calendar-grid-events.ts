@@ -1,5 +1,5 @@
 import type { CalendarEventExternal } from '@schedule-x/calendar'
-import { expandRecurrence } from '@silentsuite/core'
+import { expandEventRecurrence } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 import { dateToPlainDate, isMultiDayTimedRange, toAllDayEndPlainDate, toTimedMonthEndPlainDate } from './all-day'
 
@@ -91,12 +91,8 @@ function expandEvents(
           end: range.end,
         }
       }
-      const occurrences = expandRecurrence(
-        event.recurrenceRule,
-        event.startDate,
-        recurrenceRange,
-        event.exceptions,
-      )
+      // Occurrences repeat in the event's own anchor zone (TZID, UTC or floating).
+      const occurrences = expandEventRecurrence(event, recurrenceRange)
 
       for (const occDate of occurrences) {
         const occEnd = new Date(occDate.getTime() + duration)

@@ -1,6 +1,9 @@
+'use client'
+
 import Link from 'next/link'
 import { ChevronRight } from 'lucide-react'
 import { isSelfHosted } from '@/app/lib/self-hosted'
+import { formatDaysLeft, useAccountTrialCountdown } from '@/app/hooks/use-trial-countdown'
 
 type SettingsLink = { label: string; href: string; hint: string; hostedOnly?: boolean }
 type SettingsGroup = { id: string; label: string; links: SettingsLink[] }
@@ -58,6 +61,8 @@ const focusRing =
 
 export function SettingsNav({ variant, pathname }: { variant: 'overview' | 'rail'; pathname: string }) {
   const isOverview = variant === 'overview'
+  const countdown = useAccountTrialCountdown()
+  const trialDays = countdown ? formatDaysLeft(countdown.daysLeft) : null
 
   return (
     <nav aria-label="Settings" className={isOverview ? 'space-y-6' : 'space-y-4'}>
@@ -80,6 +85,7 @@ export function SettingsNav({ variant, pathname }: { variant: 'overview' | 'rail
             >
               {group.links.map((link) => {
                 const isActive = !isOverview && isSettingsLinkActive(pathname, link.href)
+                const linkTrialDays = link.href === '/settings/subscription' ? trialDays : null
                 return (
                   <li key={link.href}>
                     {isOverview ? (
@@ -89,7 +95,9 @@ export function SettingsNav({ variant, pathname }: { variant: 'overview' | 'rail
                       >
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-medium text-[rgb(var(--foreground))]">{link.label}</span>
-                          <span className="mt-0.5 block text-xs text-[rgb(var(--muted))]">{link.hint}</span>
+                          <span className={`mt-0.5 block text-xs ${linkTrialDays ? 'text-amber-700 dark:text-amber-400' : 'text-[rgb(var(--muted))]'}`}>
+                            {linkTrialDays ? `Free trial · ${linkTrialDays}` : link.hint}
+                          </span>
                         </span>
                         <ChevronRight className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" aria-hidden="true" />
                       </Link>
@@ -104,6 +112,7 @@ export function SettingsNav({ variant, pathname }: { variant: 'overview' | 'rail
                         }`}
                       >
                         {link.label}
+                        {linkTrialDays && <>{' '}<span className="ml-1 text-xs text-amber-700 dark:text-amber-400">· {linkTrialDays}</span></>}
                       </Link>
                     )}
                   </li>

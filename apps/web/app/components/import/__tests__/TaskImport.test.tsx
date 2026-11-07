@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest'
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import TaskImport from '../TaskImport'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
+import { parseVTodo } from '@silentsuite/core/utils/ical-parser'
 import type { VTodo } from '@silentsuite/core/utils/ical-parser'
+import { taskICalDateFromProperty } from '@silentsuite/core'
+import type { NewTask } from '@/app/stores/use-task-store'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
 
 const mocks = vi.hoisted(() => ({
@@ -77,6 +80,48 @@ describe('TaskImport categories normalization', () => {
 
     const payload = mocks.importTasks.mock.calls[0]![0] as Array<{ categories: string[] }>
     expect(payload[0]!.categories).toEqual(['Work', 'Home'])
+  })
+})
+
+describe('TaskImport keeps source DTSTART and DUE identity (#66)', () => {
+  beforeEach(() => {
+    mocks.importTasks.mockReset().mockResolvedValue(1)
+    mocks.onImportComplete.mockReset()
+  })
+
+  async function importParsed(todo: VTodo) {
+    vi.mocked(parseVTodo).mockReturnValueOnce(todo)
+    const { container } = renderWithIntl(<TaskImport onImportComplete={mocks.onImportComplete} />)
+    const file = new File(['BEGIN:VTODO\nSUMMARY:Zoned\nEND:VTODO'], 'tasks.ics', { type: 'text/calendar' })
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    fireEvent.click(await screen.findByRole('button', { name: /Import 1 tasks/ }))
+    await waitFor(() => expect(mocks.importTasks).toHaveBeenCalledTimes(1))
+    return (mocks.importTasks.mock.calls[0]![0] as NewTask[])[0]!
+  }
+
+  it('maps independently zoned DTSTART and DUE through the shared classifier', async () => {
+    const payload = await importParsed({
+      uid: 'zoned',
+      summary: 'Zoned',
+      dtstart: '20260530T080000',
+      dtstartParams: { TZID: 'Europe/Berlin' },
+      due: '20260601T090000',
+      dueParams: { TZID: 'America/New_York' },
+    })
+
+    const start = taskICalDateFromProperty('20260530T080000', { TZID: 'Europe/Berlin' })
+    const due = taskICalDateFromProperty('20260601T090000', { TZID: 'America/New_York' })
+    expect(payload).toMatchObject({ start_date: start.date, start_ical: start.source, due_date: due.date, due_ical: due.source })
+    expect(payload.due_date!.toISOString()).toBe('2026-06-01T13:00:00.000Z')
+    expect(payload.start_ical).toEqual({ kind: 'tzid', value: '20260530T080000', tzid: 'Europe/Berlin' })
+  })
+
+  it('keeps a date-only DUE as the same local day', async () => {
+    const payload = await importParsed({ uid: 'dated', summary: 'Dated', due: '20260601', dueParams: { VALUE: 'DATE' } })
+
+    expect(payload.due_date).toEqual(new Date(2026, 5, 1))
+    expect(payload.due_ical).toEqual({ kind: 'date', value: '20260601' })
+    expect(payload.start_date).toBeNull()
   })
 })
 

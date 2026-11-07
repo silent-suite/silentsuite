@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
+import { useShallow } from 'zustand/react/shallow'
 import { ChevronLeft, ChevronRight, Plus, Folder, Search as SearchIcon } from 'lucide-react'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate, startOfWeek, getWeekNumber } from '@/app/lib/date'
@@ -229,7 +230,9 @@ function CalendarPageBody() {
   // Search
   const searchQuery = useCalendarStore((s) => s.searchQuery)
   const setSearchQuery = useCalendarStore((s) => s.setSearchQuery)
-  const filteredEvents = useCalendarStore((s) => s.getFilteredEvents())
+  // getFilteredEvents builds a new array for a non-empty query; shallow comparison keeps the
+  // selected snapshot stable while its events are unchanged, so typing a search cannot loop.
+  const filteredEvents = useCalendarStore(useShallow((s) => s.getFilteredEvents()))
   const calendarColors = useMemo(() => {
     const colors = new Map<string, string>()
     for (const calendar of calendars) colors.set(calendar.id, calendar.color)
@@ -285,6 +288,42 @@ function CalendarPageBody() {
     }
     navigateForward()
   }, [currentDate, mobileCalendarMode, navigateForward, setCurrentDate])
+
+  const searchResults = searchQuery.trim() !== '' ? (
+    <div className="mt-2 max-w-md space-y-1">
+      {visibleSearchResults.map((e) => {
+        const calendarId = e.calendarId ?? 'default'
+        const calendarName = calendars.find((calendar) => calendar.id === calendarId)?.name
+        return (
+          <button
+            key={e.id}
+            type="button"
+            onClick={() => {
+              useCalendarStore.getState().setCurrentDate(new Date(e.startDate))
+              useCalendarStore.getState().setSelectedEvent(e.id)
+              setEventInstanceDate(undefined)
+            }}
+            className="w-full text-left rounded-md px-3 py-2 hover:bg-[rgb(var(--surface))]"
+          >
+            <div className="flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: calendarColors.get(calendarId) ?? '#10b981' }}
+              />
+              <span className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</span>
+            </div>
+            <div className="ml-4 text-xs text-[rgb(var(--muted))] truncate">
+              {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.startDate, dateFormat, timeFormat, userTz, e.allDay)}
+            </div>
+          </button>
+        )
+      })}
+      {visibleSearchResults.length === 0 && (
+        <div className="text-xs text-[rgb(var(--muted))]">No results</div>
+      )}
+    </div>
+  ) : null
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -445,41 +484,7 @@ function CalendarPageBody() {
                   className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] pl-9 pr-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                 />
               </div>
-              {searchQuery.trim() !== '' && (
-                <div className="mt-2 max-w-md space-y-1">
-                  {visibleSearchResults.map((e) => {
-                    const calendarId = e.calendarId ?? 'default'
-                    const calendarName = calendars.find((calendar) => calendar.id === calendarId)?.name
-                    return (
-                      <button
-                        key={e.id}
-                        type="button"
-                        onClick={() => {
-                          // Navigate calendar to event date and open event
-                          useCalendarStore.getState().setCurrentDate(new Date(e.startDate))
-                          useCalendarStore.getState().setSelectedEvent(e.id)
-                        }}
-                        className="w-full text-left rounded-md px-3 py-2 hover:bg-[rgb(var(--surface))]"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span
-                            aria-hidden="true"
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: calendarColors.get(calendarId) ?? '#10b981' }}
-                          />
-                          <span className="text-sm font-medium text-[rgb(var(--foreground))] truncate">{e.title || 'Untitled'}</span>
-                        </div>
-                        <div className="ml-4 text-xs text-[rgb(var(--muted))] truncate">
-                          {calendarName ? `${calendarName} · ` : ''}{formatSearchResultDate(e.startDate, dateFormat, timeFormat, userTz, e.allDay)}
-                        </div>
-                      </button>
-                    )
-                  })}
-                  {visibleSearchResults.length === 0 && (
-                    <div className="text-xs text-[rgb(var(--muted))]">No results</div>
-                  )}
-                </div>
-              )}
+              {searchResults}
             </div>
 
             {/* Mobile search: inline above agenda */}
@@ -495,6 +500,7 @@ function CalendarPageBody() {
                   className="w-full rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] pl-9 pr-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
                 />
               </div>
+              {searchResults}
             </div>
           </div>
 

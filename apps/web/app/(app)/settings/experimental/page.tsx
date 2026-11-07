@@ -7,6 +7,7 @@ import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useExperimentalStore } from '@/app/stores/use-experimental-store'
+import { LanguageSetting } from './language-setting'
 
 export default function ExperimentalSettingsPage() {
   const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
@@ -81,6 +82,7 @@ function ExperimentalSettings() {
         {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
         {enabled && <Link href="/notes" className="inline-block text-sm text-[rgb(var(--primary))] underline">Open Notes</Link>}
       </div>
+      <LanguageSetting />
     </section>
   )
 }

@@ -1,18 +1,19 @@
 package io.silentsuite.sync.ui
 
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import io.silentsuite.sync.R
 
@@ -53,29 +54,32 @@ open class BaseActivity : AppCompatActivity() {
 
     private fun applyReadableSystemBars() {
         val systemBarColor = ContextCompat.getColor(this, R.color.semantic_system_bar)
+        // The navigation bar blends into the page: semantic_background resolves to the light
+        // page by day and the dark page at night, like the theme's navigationBarColor below 35.
+        val pageColor = ContextCompat.getColor(this, R.color.semantic_background)
+        val nightMode = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
 
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         if (Build.VERSION.SDK_INT >= 35) {
-            window.statusBarColor = android.graphics.Color.TRANSPARENT
-            window.navigationBarColor = android.graphics.Color.TRANSPARENT
-            window.setStatusBarContrastEnforced(false)
             window.setNavigationBarContrastEnforced(false)
-            installSystemBarScrims(systemBarColor)
-        } else {
-            window.statusBarColor = systemBarColor
-            window.navigationBarColor = systemBarColor
+            installSystemBarScrims(systemBarColor, pageColor)
         }
-        // Navy system bars require light clock/battery/connectivity icons. Explicitly
-        // clear light-system-bar flags so Android 15+ edge-to-edge
-        // defaults or theme inheritance cannot leave dark icons on a dark bar.
-        window.clearLightStatusBar()
-        window.clearLightNavigationBar()
+        // The navy status bar requires light clock/battery/connectivity icons. Explicitly
+        // clear the light status appearance so edge-to-edge defaults or theme inheritance
+        // cannot leave dark icons on it. Native navigation glyphs follow the page: dark on the
+        // light page, light on the dark page.
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = !nightMode
+        }
     }
 
-    private fun installSystemBarScrims(color: Int) {
+    private fun installSystemBarScrims(statusColor: Int, navigationColor: Int) {
         val overlay = window.decorView as ViewGroup
-        fun scrims(existing: Map<Int, View>, tagPrefix: String): Map<Int, View> =
+        fun scrims(existing: Map<Int, View>, tagPrefix: String, color: Int): Map<Int, View> =
             SCRIM_EDGES.associate { (gravity, suffix) ->
                 gravity to (existing[gravity] ?: View(this).also {
                     it.tag = "$tagPrefix-$suffix"
@@ -86,8 +90,8 @@ open class BaseActivity : AppCompatActivity() {
                     overlay.addView(it, FrameLayout.LayoutParams(0, 0))
                 })
             }
-        statusBarScrims = scrims(statusBarScrims, STATUS_BAR_SCRIM_TAG)
-        navigationBarScrims = scrims(navigationBarScrims, NAVIGATION_BAR_SCRIM_TAG)
+        statusBarScrims = scrims(statusBarScrims, STATUS_BAR_SCRIM_TAG, statusColor)
+        navigationBarScrims = scrims(navigationBarScrims, NAVIGATION_BAR_SCRIM_TAG, navigationColor)
         ViewCompat.setOnApplyWindowInsetsListener(overlay) { view, insets ->
             val status = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
@@ -105,12 +109,11 @@ open class BaseActivity : AppCompatActivity() {
     }
 
     /**
-     * API 35+ enforces edge-to-edge for this target SDK. Keep every [BaseActivity] content tree
+     * Keep every edge-to-edge [BaseActivity] content tree
      * outside the system bars, then dispatch only the unclaimed inset space to descendants.
      * Descendants can therefore add IME padding without double-claiming the navigation bar.
      */
     private fun applyContentInsets() {
-        if (Build.VERSION.SDK_INT < 35) return
         val content = window.decorView.findViewById<ViewGroup>(android.R.id.content) ?: return
         content.clipToPadding = false
         ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
@@ -131,14 +134,6 @@ open class BaseActivity : AppCompatActivity() {
             Gravity.RIGHT -> FrameLayout.LayoutParams(insets.right, -1, gravity)
             else -> FrameLayout.LayoutParams(0, 0, Gravity.NO_GRAVITY)
         }
-
-    private fun Window.clearLightStatusBar() {
-        decorView.systemUiVisibility = decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
-    }
-
-    private fun Window.clearLightNavigationBar() {
-        decorView.systemUiVisibility = decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
-    }
 
     companion object {
         const val STATUS_BAR_SCRIM_TAG = "color-parity-status-bar-scrim"

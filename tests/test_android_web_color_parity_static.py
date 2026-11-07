@@ -656,8 +656,10 @@ def test_text_input_refresh_and_system_bar_mechanics_are_bounded():
         assert "R.color.semantic_primary" in body
         assert "ContextCompat.getColor" not in body.split("setColorSchemeResources(", 1)[1].split(")", 1)[0]
     base = source("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
-    for token in ("Build.VERSION.SDK_INT >= 35", "WindowInsetsCompat.Type.statusBars()", "WindowInsetsCompat.Type.navigationBars()", "setStatusBarContrastEnforced(false)", "setNavigationBarContrastEnforced(false)"):
+    for token in ("Build.VERSION.SDK_INT >= 35", "WindowInsetsCompat.Type.statusBars()", "WindowInsetsCompat.Type.navigationBars()", "isAppearanceLightStatusBars = false", "setNavigationBarContrastEnforced(false)"):
         assert token in base
+    # Navigation glyph appearance follows the page (see the navigation-bar contract below).
+    assert "isAppearanceLightNavigationBars = false" not in base
     for token in (
         "statusBarScrims: Map<Int, View>", "navigationBarScrims: Map<Int, View>",
         "FrameLayout.LayoutParams(-1, insets.top, gravity)",
@@ -928,7 +930,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("179", '"29:account-dashboard": 38', "72", "48"):
+    for count in ("180", '"29:account-dashboard": 38', "73", "48"):
         assert count in runner
 
 
@@ -1051,6 +1053,224 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert "for _ in {1..10}; do" in focused_script
     assert focused_script.rstrip().endswith(runner)
     assert all(step.get("name") != "Configure required system navigation mode" for step in focused_job["steps"])
-    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':179,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':72}" in workflow
+    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':73,'29:sibling-routes':48,'35:all':180,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':73}" in workflow
     runner_source = source("android/scripts/run-focused-runtime-tests.sh")
     assert '"29:account-dashboard": 38' in runner_source
+
+
+def test_app_ui_avoids_deprecated_edge_to_edge_window_apis():
+    # Android 15 deprecates window bar colours and the legacy system-UI flags. App code
+    # draws bar protection with scrims and clears light icons via WindowInsetsControllerCompat.
+    deprecated = re.compile(
+        r"\b(?:statusBarColor|navigationBarColor)\s*="
+        r"|setStatusBarColor\(|setNavigationBarColor\("
+        r"|setStatusBarContrastEnforced\("
+        r"|systemUiVisibility|SYSTEM_UI_FLAG_|navigationBarDividerColor|LAYOUT_IN_DISPLAY_CUTOUT_MODE_"
+    )
+    findings = []
+    for module in ("app", "cert4android"):
+        for path in sorted((ROOT / "android" / module / "src/main/java").rglob("*.kt")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                if deprecated.search(line):
+                    findings.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+    assert not findings, "deprecated edge-to-edge window APIs:\n" + "\n".join(findings)
+
+
+ANDROID_NS = "{http://schemas.android.com/apk/res/android}"
+APP_NS = "{http://schemas.android.com/apk/res-auto}"
+TOP_BAR = "@color/semantic_system_bar"
+ON_TOP_BAR = "@color/semantic_on_system_bar"
+LEGACY_WINDOW_BAR_ACTIVITIES = (
+    ".ui.AppSettingsActivity", ".ui.AccountSettingsActivity", ".ui.DebugInfoActivity",
+    ".ui.WebViewActivity", ".ui.ViewCollectionActivity", ".ui.CollectionMembersActivity",
+    ".ui.JournalItemActivity",
+)
+# Attributes that would make the light overflow popup (which inherits the toolbar context
+# unless a popupTheme is set) draw white text on its light surface.
+POPUP_TEXT_ATTRIBUTES = ("android:textColorPrimary", "android:textColor", "colorOnSurface")
+
+
+def app_style(qualifier: str, reference: str) -> dict[str, str]:
+    """Resolve an app @style reference as Android would for qualifier, requiring an explicit parent."""
+    assert reference.startswith("@style/"), (qualifier, reference, "expected an app @style reference")
+    name = reference[len("@style/"):]
+    for candidate in (qualifier, "values"):
+        for file_name in ("themes.xml", "styles.xml"):
+            path = RES / candidate / file_name
+            for style in ET.parse(path).getroot().findall("style") if path.exists() else ():
+                if style.attrib["name"] == name:
+                    assert "parent" in style.attrib, (candidate, name, "declare parent explicitly (or parent=\"\")")
+                    return {item.attrib["name"]: (item.text or "").strip() for item in style.findall("item")}
+    raise AssertionError((qualifier, reference, "undefined app style"))
+
+
+def test_legacy_window_action_bars_are_navy_with_white_foreground_in_both_themes():
+    manifest = ET.parse(ROOT / "android/app/src/main/AndroidManifest.xml").getroot()
+    application = manifest.find("application")
+    assert application.attrib[f"{ANDROID_NS}theme"] == "@style/AppTheme"
+    activities = {activity.attrib[f"{ANDROID_NS}name"]: activity for activity in application.findall("activity")}
+    for name in LEGACY_WINDOW_BAR_ACTIVITIES:
+        assert f"{ANDROID_NS}theme" not in activities[name].attrib, (name, "must keep the AppTheme window action bar")
+
+    for qualifier in ("values", "values-night"):
+        declared = colors(qualifier)
+        assert declared["semantic_system_bar"] == "#0A1018" and declared["semantic_on_system_bar"] == "#FFFFFF"
+        assert contrast_ratio(declared["semantic_on_system_bar"], declared["semantic_system_bar"]) >= 4.5
+        app_theme = styles(qualifier)["AppTheme"]
+        # Material Components otherwise paints this bar colorPrimary (light) or colorSurface (night).
+        bar = app_style(qualifier, app_theme.get("actionBarStyle", ""))
+        assert bar.get("background") == TOP_BAR, (qualifier, "AppTheme actionBarStyle background", bar)
+        overlay = app_theme.get("actionBarTheme", "")
+        if overlay != "@style/ThemeOverlay.AppCompat.Dark.ActionBar":
+            items = app_style(qualifier, overlay)
+            assert items.get("android:textColorPrimary") == ON_TOP_BAR, (qualifier, items)
+            assert items.get("colorControlNormal") == ON_TOP_BAR, (qualifier, items)
+        # White belongs to the bar overlay only; content text and icons keep their surface roles.
+        assert app_theme.get("android:textColorPrimary") == "@color/semantic_on_surface"
+        assert app_theme.get("android:textColorSecondary") == "@color/semantic_on_surface_variant"
+        assert "colorControlNormal" not in app_theme
+        # The About toolbar already uses the approved pair and must stay that way.
+        about = resource_styles(qualifier)["toolbar_style"]
+        assert about.get("android:background") == TOP_BAR and about.get("titleTextColor") == ON_TOP_BAR
+
+
+def test_dashboard_top_bar_is_navy_with_toolbar_scoped_white_foregrounds_in_both_themes():
+    root = ET.parse(RES / "layout/activity_account.xml").getroot()
+    toolbar = next(element for element in root.iter() if element.attrib.get(f"{ANDROID_NS}id") == "@+id/toolbar")
+    assert toolbar.tag == "com.google.android.material.appbar.MaterialToolbar"
+    assert "AccountActivity" in source("android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt")
+    assert "setSupportActionBar(toolbar)" in source("android/app/src/main/java/io/silentsuite/sync/ui/AccountActivity.kt")
+
+    for qualifier in ("values", "values-night"):
+        style = app_style(qualifier, toolbar.attrib["style"]) if "style" in toolbar.attrib else {}
+
+        def effective(attribute: str, style_item: str):
+            return toolbar.attrib.get(attribute, style.get(style_item))
+
+        assert effective(f"{ANDROID_NS}background", "android:background") == TOP_BAR, (qualifier, "dashboard toolbar background")
+        assert effective(f"{APP_NS}titleTextColor", "titleTextColor") == ON_TOP_BAR, (qualifier, "dashboard title")
+        assert effective(f"{APP_NS}navigationIconTint", "navigationIconTint") == ON_TOP_BAR, (qualifier, "dashboard navigation tint")
+
+        # Action icons (ic_sync_light tints ?attr/colorControlNormal) and the overflow glyph resolve
+        # in the toolbar's own themed context, so the overlay must be scoped to this toolbar.
+        theme = (
+            toolbar.attrib.get(f"{ANDROID_NS}theme")
+            or toolbar.attrib.get(f"{APP_NS}theme")
+            or style.get("materialThemeOverlay", "")
+        )
+        overlay = app_style(qualifier, theme)
+        assert overlay.get("colorControlNormal") == ON_TOP_BAR, (qualifier, "dashboard toolbar overlay", overlay)
+        # The drawer toggle is a DrawerArrowDrawable coloured by drawerArrowStyle (default
+        # ?android:textColorSecondary), which navigationIconTint does not reliably recolour.
+        if "drawerArrowStyle" in overlay:
+            assert app_style(qualifier, overlay["drawerArrowStyle"]).get("color") == ON_TOP_BAR, qualifier
+        else:
+            assert overlay.get("android:textColorSecondary") == ON_TOP_BAR, (qualifier, "drawer toggle colour")
+
+        popup = toolbar.attrib.get(f"{APP_NS}popupTheme") or style.get("popupTheme")
+        for attribute in POPUP_TEXT_ATTRIBUTES:
+            assert attribute not in overlay, (qualifier, attribute, "white would leak into the light overflow popup")
+        if popup is None:
+            assert "android:textColorSecondary" not in overlay, (qualifier, "set a light popupTheme or use drawerArrowStyle")
+        else:
+            assert popup.startswith("@style/") and "Dark" not in popup, (qualifier, popup)
+
+        # The content themes keep their own control colours: no global white icons on surfaces.
+        for theme_name in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
+            content_theme = styles(qualifier)[theme_name]
+            assert "colorControlNormal" not in content_theme, (qualifier, theme_name)
+            assert "android:textColorSecondary" not in content_theme, (qualifier, theme_name)
+        declared = colors(qualifier)
+        assert contrast_ratio(declared["semantic_on_system_bar"], declared["semantic_system_bar"]) >= 4.5
+    assert resource_styles("values")["Widget.AppTheme.Dashboard.CollectionToolbar"]["navigationIconTint"] == "@color/semantic_action_text"
+
+
+def test_about_toolbar_controls_are_white_through_the_scoped_top_bar_overlay():
+    root = ET.parse(RES / "layout/activity_about.xml").getroot()
+    toolbar = next(element for element in root.iter() if element.attrib.get(f"{ANDROID_NS}id") == "@+id/toolbar")
+    assert toolbar.tag == "androidx.appcompat.widget.Toolbar"
+    assert toolbar.attrib.get("style") == "@style/toolbar_style"
+    # AppCompat tints the About up arrow with colorControlNormal of the toolbar context. Without a
+    # toolbar-scoped overlay it inherits the light content theme's gray on the navy bar.
+    theme = toolbar.attrib.get(f"{ANDROID_NS}theme")
+    assert theme == "@style/ThemeOverlay.AppTheme.TopBar", (
+        "About up arrow needs the toolbar-scoped white control overlay", theme)
+    assert f"{APP_NS}popupTheme" not in toolbar.attrib
+
+    for qualifier in ("values", "values-night"):
+        # The navy bar and white title are unchanged; only the control colour is scoped in.
+        assert resource_styles(qualifier)["toolbar_style"] == {
+            "android:background": TOP_BAR, "titleTextColor": ON_TOP_BAR,
+        }, qualifier
+        overlay = app_style(qualifier, theme)
+        assert overlay.get("colorControlNormal") == ON_TOP_BAR, (qualifier, overlay)
+        assert app_style(qualifier, overlay["drawerArrowStyle"]).get("color") == ON_TOP_BAR, qualifier
+        # Popup-safe and non-global: the overlay sets no text colours, and content themes keep theirs.
+        for attribute in (*POPUP_TEXT_ATTRIBUTES, "android:textColorSecondary"):
+            assert attribute not in overlay, (qualifier, attribute, "white would leak into the light overflow popup")
+        for theme_name in ("AppTheme.Material3", "AppTheme.Material3.NoActionBar"):
+            assert "colorControlNormal" not in styles(qualifier)[theme_name], (qualifier, theme_name)
+
+
+SYSTEM_BAR_THEME_FAMILIES = ("AppTheme", "AppTheme.NoActionBar", "AppTheme.Material3", "AppTheme.Material3.NoActionBar")
+# Android resource precedence ranks night mode above platform version, so on the API 29+
+# product floor the night definition wins at night and values-v21 wins by day.
+THEME_SOURCES = {
+    "day": (("values-v21", "styles.xml"), ("values", "themes.xml"), ("values", "styles.xml")),
+    "night": (
+        ("values-night", "themes.xml"), ("values-night", "styles.xml"),
+        ("values-v21", "styles.xml"), ("values", "themes.xml"), ("values", "styles.xml"),
+    ),
+}
+
+
+def effective_theme_item(mode: str, style_name: str, item: str):
+    """Return the winning app value of item for style_name, following implicit dotted parents."""
+    for qualifier, file_name in THEME_SOURCES[mode]:
+        path = RES / qualifier / file_name
+        if not path.exists():
+            continue
+        for style in ET.parse(path).getroot().findall("style"):
+            if style.attrib["name"] != style_name:
+                continue
+            items = {entry.attrib["name"]: (entry.text or "").strip() for entry in style.findall("item")}
+            if item in items:
+                return items[item]
+            if "parent" not in style.attrib and "." in style_name:
+                return effective_theme_item(mode, style_name.rsplit(".", 1)[0], item)
+            return None
+    raise AssertionError((mode, style_name, "undefined theme"))
+
+
+def test_navigation_bar_matches_the_page_with_native_glyph_appearance_in_day_and_night():
+    for mode, qualifier in (("day", "values"), ("night", "values-night")):
+        page = colors(qualifier)["semantic_background"]
+        # Dark native glyphs belong wherever black out-contrasts white on the page colour.
+        light_navigation = contrast_ratio("#000000", page) > contrast_ratio("#FFFFFF", page)
+        assert light_navigation == (mode == "day"), (mode, page)
+        for family in SYSTEM_BAR_THEME_FAMILIES:
+            where = (mode, family)
+            page_role = effective_theme_item(mode, family, "android:colorBackground")
+            assert page_role == "@color/semantic_background", (where, page_role)
+            # Below API 35 the platform paints this colour; it must be the page, not the navy bar.
+            assert effective_theme_item(mode, family, "android:navigationBarColor") == page_role, where
+            assert effective_theme_item(mode, family, "android:windowLightNavigationBar") == (
+                "true" if light_navigation else "false"
+            ), where
+            # The status bar stays navy with light icons in both themes.
+            assert effective_theme_item(mode, family, "android:statusBarColor") == "@color/semantic_system_bar", where
+            assert effective_theme_item(mode, family, "android:windowLightStatusBar") in (None, "false"), where
+
+    base = source("android/app/src/main/java/io/silentsuite/sync/ui/BaseActivity.kt")
+    # API 35+ draws both bars with app scrims. The navigation scrims need the page colour and the
+    # navigation glyph appearance must follow the page instead of being forced light.
+    assert "isAppearanceLightStatusBars = false" in base
+    assert "isAppearanceLightNavigationBars = false" not in base
+    assert re.search(r"isAppearanceLightNavigationBars\s*=", base), "navigation glyph appearance is not set"
+    assert any(
+        token in base
+        for token in (
+            "R.color.semantic_background", "android.R.attr.colorBackground",
+            "android.R.attr.navigationBarColor", "android.R.attr.windowLightNavigationBar",
+        )
+    ), "navigation scrims do not resolve a page-matching colour"

@@ -1,5 +1,8 @@
 package io.silentsuite.sync.ui
 
+import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
@@ -7,13 +10,20 @@ import android.os.Build
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.View
+import android.widget.ImageButton
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.appcompat.graphics.drawable.DrawerArrowDrawable
+import androidx.appcompat.widget.ActionMenuView
+import androidx.appcompat.widget.Toolbar
+import androidx.core.graphics.ColorUtils
 import androidx.core.graphics.Insets
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.viewpager.widget.ViewPager
 import io.silentsuite.sync.R
@@ -23,6 +33,8 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import kotlin.math.abs
+import kotlin.math.sqrt
 
 @RunWith(AndroidJUnit4::class)
 class ColorParityRuntimeTest {
@@ -133,42 +145,258 @@ class ColorParityRuntimeTest {
     )
 
     @Test fun dayNightRolesRecreateDeterministically() {
+        assertTopBarCheckersRejectKnownGrayDefaults()
         val prior = AppCompatDelegate.getDefaultNightMode()
         try {
             setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
             about { scenario ->
                 scenario.onActivity { assertRoles(it, dayRoles) }
+                scenario.onActivity { assertDashboardToolbar(it, "dashboard toolbar (day)") }
+                // The real About toolbar: navy, white title, and a white up-arrow glyph checked on its own.
+                scenario.onActivity {
+                    val toolbar = it.findViewById<Toolbar>(R.id.toolbar)
+                    assertToolbarGlyphs("about toolbar (day)", toolbar, minimumActionViews = 0)
+                    assertNavyBarWithWhiteForeground("about toolbar (day)", toolbar)
+                }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRoles(it, nightRoles) }
+                scenario.onActivity { assertDashboardToolbar(it, "dashboard toolbar (night)") }
+                scenario.onActivity {
+                    val toolbar = it.findViewById<Toolbar>(R.id.toolbar)
+                    assertToolbarGlyphs("about toolbar (night)", toolbar, minimumActionViews = 0)
+                    assertNavyBarWithWhiteForeground("about toolbar (night)", toolbar)
+                }
                 setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
                 scenario.recreate()
                 waitForAbout(scenario)
                 scenario.onActivity { assertRoles(it, dayRoles) }
+                scenario.onActivity {
+                    val toolbar = it.findViewById<Toolbar>(R.id.toolbar)
+                    assertToolbarGlyphs("about toolbar (day, recreated)", toolbar, minimumActionViews = 0)
+                    assertNavyBarWithWhiteForeground("about toolbar (day, recreated)", toolbar)
+                }
+            }
+            // The real legacy Settings window action bar, through day -> night -> day recreation.
+            val settingsIntent = AppSettingsActivity.newIntent(InstrumentationRegistry.getInstrumentation().targetContext)
+            ActivityScenario.launch<AppSettingsActivity>(settingsIntent).use { scenario ->
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSettingsBar(it, "settings action bar (day)") }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSettingsBar(it, "settings action bar (night)") }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSettingsBar(it, "settings action bar (day, recreated)") }
             }
         } finally {
             setNightModeOnMainThread(prior)
         }
     }
 
+    private fun waitForSettingsBar(scenario: ActivityScenario<AppSettingsActivity>) {
+        repeat(40) {
+            var ready = false
+            scenario.onActivity { activity ->
+                val bar = activity.findViewById<View>(androidx.appcompat.R.id.action_bar_container)
+                ready = bar != null && bar.isAttachedToWindow && bar.isShown && bar.width > 0 && bar.height > 0 &&
+                    activity.supportFragmentManager.findFragmentById(android.R.id.content) != null
+            }
+            if (ready) return
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            SystemClock.sleep(50)
+        }
+        throw AssertionError("AppSettingsActivity window action bar was not attached, shown, and laid out")
+    }
+
+    private fun assertSettingsBar(activity: AppSettingsActivity, label: String) {
+        val toolbar = activity.findViewById<Toolbar>(androidx.appcompat.R.id.action_bar)
+        // Settings has no options menu; its up arrow comes from parentActivityName.
+        assertToolbarGlyphs(label, toolbar, minimumActionViews = 0)
+        assertNavyBarWithWhiteForeground(label, activity.findViewById(androidx.appcompat.R.id.action_bar_container))
+    }
+
+    /**
+     * Per-glyph evidence, so a white title cannot hide gray or invisible icons: the title text
+     * colour, the navigation button, and every visible enabled action-menu child (action items and
+     * the overflow button) are each rendered on their own and must have a white glyph.
+     */
+    private fun assertToolbarGlyphs(label: String, toolbar: Toolbar, minimumActionViews: Int) {
+        val children = (0 until toolbar.childCount).map { toolbar.getChildAt(it) }
+        val titleText = toolbar.title?.toString()
+        assertTrue("$label title is set", !titleText.isNullOrEmpty())
+        val title = children.filterIsInstance<TextView>().single { it.text?.toString() == titleText }
+        assertEquals("$label title colour", ContextCompat.getColor(toolbar.context, R.color.semantic_on_system_bar), title.currentTextColor)
+
+        val navigationIcon = toolbar.navigationIcon
+        assertNotNull("$label navigation icon", navigationIcon)
+        val navigation = children.filterIsInstance<ImageButton>().single { it.drawable === navigationIcon }
+        assertWhiteGlyph("$label navigation icon", navigation.renderOnTransparent())
+
+        val actions = children.filterIsInstance<ActionMenuView>()
+            .flatMap { menu -> (0 until menu.childCount).map { menu.getChildAt(it) } }
+            .filter { it.visibility == View.VISIBLE && it.isEnabled && it.width > 0 && it.height > 0 }
+        assertTrue("$label has ${actions.size} action views, expected at least $minimumActionViews", actions.size >= minimumActionViews)
+        actions.forEachIndexed { index, view ->
+            assertWhiteGlyph("$label action view $index (${view.javaClass.simpleName} ${view.contentDescription})", view.renderOnTransparent())
+        }
+    }
+
+    private fun View.renderOnTransparent(): Bitmap =
+        Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { draw(Canvas(it)) }
+
+    /**
+     * A glyph rendered alone on a transparent bitmap. getPixel() returns unpremultiplied colour, and
+     * a white source unpremultiplies back to 255 exactly, so every substantially covered pixel must be
+     * white; an opaque core proves the glyph is really drawn rather than faint or empty.
+     */
+    private fun assertWhiteGlyph(label: String, glyph: Bitmap) {
+        var core = 0
+        val nonWhite = mutableListOf<String>()
+        for (y in 0 until glyph.height) {
+            for (x in 0 until glyph.width) {
+                val pixel = glyph.getPixel(x, y)
+                if (Color.alpha(pixel) < GLYPH_COVERED_ALPHA) continue
+                if (!isWhiteGlyphPixel(pixel)) nonWhite += "($x,$y)=#%08X".format(pixel)
+                if (Color.alpha(pixel) >= GLYPH_CORE_ALPHA) core++
+            }
+        }
+        assertTrue("$label has non-white glyph pixels ${nonWhite.take(5)} of ${nonWhite.size}", nonWhite.isEmpty())
+        assertTrue("$label has no opaque white glyph core", core > 0)
+    }
+
+    private fun isWhiteGlyphPixel(pixel: Int) =
+        Color.red(pixel) >= WHITE_GLYPH_MIN && Color.green(pixel) >= WHITE_GLYPH_MIN && Color.blue(pixel) >= WHITE_GLYPH_MIN
+
+    /** Distance of an opaque pixel from the navy-to-white blend line, with its estimated white coverage. */
+    private fun navyWhiteBlend(pixel: Int): Pair<Double, Double> {
+        val delta = intArrayOf(Color.red(pixel) - NAVY_R, Color.green(pixel) - NAVY_G, Color.blue(pixel) - NAVY_B)
+        val coverage = (0..2).sumOf { delta[it] * BLEND_SPAN[it] } / BLEND_SPAN_SQUARED
+        val residual = (0..2).maxOf { abs(delta[it] - coverage * BLEND_SPAN[it]) }
+        return coverage to residual
+    }
+
+    /** Negative and positive controls: the gray defaults this fix replaced must fail both checkers. */
+    private fun assertTopBarCheckersRejectKnownGrayDefaults() {
+        for (gray in arrayOf("#49454F", "#CAC4D0")) {
+            val pixel = Color.parseColor(gray)
+            assertTrue("$gray must be off the navy/white blend line", navyWhiteBlend(pixel).second > BLEND_TOLERANCE)
+            assertFalse("$gray must not count as a white glyph pixel", isWhiteGlyphPixel(pixel))
+        }
+        assertEquals(0.0, navyWhiteBlend(Color.parseColor("#0A1018")).second, 1e-9)
+        assertEquals(0.0, navyWhiteBlend(Color.parseColor("#FFFFFF")).second, 1e-9)
+        // A half-covered blend rounded to 8 bits per channel stays inside the tolerance.
+        val half = Color.rgb(NAVY_R + (BLEND_SPAN[0] + 1) / 2, NAVY_G + (BLEND_SPAN[1] + 1) / 2, NAVY_B + (BLEND_SPAN[2] + 1) / 2)
+        assertTrue("rounded half blend must stay on the line", navyWhiteBlend(half).second <= BLEND_TOLERANCE)
+        assertTrue(isWhiteGlyphPixel(Color.parseColor("#FFFFFF")))
+    }
+
+    /**
+     * AccountActivity needs a signed-in account, so this inflates its real layout in an activity
+     * with the same AppTheme.Material3.NoActionBar theme and mirrors its wiring: the drawer toggle
+     * sets a DrawerArrowDrawable built from the toolbar context, and the support action bar inflates
+     * the options menu with that same themed context. It is not a launched dashboard.
+     */
+    private fun assertDashboardToolbar(activity: AboutActivity, label: String) {
+        val root = activity.layoutInflater.inflate(R.layout.activity_account, null, false)
+        val toolbar = root.findViewById<Toolbar>(R.id.toolbar)
+        toolbar.title = activity.getString(R.string.app_name)
+        toolbar.navigationIcon = DrawerArrowDrawable(toolbar.context)
+        toolbar.inflateMenu(R.menu.activity_account)
+        assertNotNull("$label overflow icon", toolbar.overflowIcon)
+        val width = activity.window.decorView.width
+        val height = toolbar.layoutParams.height
+        assertTrue("$label has a laid-out size", width > 0 && height > 0)
+        toolbar.measure(
+            View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY),
+        )
+        toolbar.layout(0, 0, width, height)
+        // R.menu.activity_account: sync_now is showAsAction="always"; the other two go to overflow.
+        assertToolbarGlyphs(label, toolbar, minimumActionViews = 2)
+        assertNavyBarWithWhiteForeground(label, toolbar)
+    }
+
+    /**
+     * Renders the bar and requires a navy background with every pixel on the navy-to-white blend
+     * line, so the title, navigation, action and overflow glyphs are all white (or their
+     * antialiased edges) and nothing else is painted on the bar.
+     */
+    private fun assertNavyBarWithWhiteForeground(label: String, bar: View) {
+        val navy = ContextCompat.getColor(bar.context, R.color.semantic_system_bar)
+        val white = ContextCompat.getColor(bar.context, R.color.semantic_on_system_bar)
+        assertEquals(Color.parseColor("#0A1018"), navy)
+        assertEquals(Color.parseColor("#FFFFFF"), white)
+        val bitmap = Bitmap.createBitmap(bar.width, bar.height, Bitmap.Config.ARGB_8888)
+        bar.draw(Canvas(bitmap))
+        assertEquals("$label background", navy, bitmap.getPixel(bitmap.width - 1, 0))
+        val stray = mutableListOf<String>()
+        var foreground = 0
+        for (y in 0 until bitmap.height) {
+            for (x in 0 until bitmap.width) {
+                val pixel = bitmap.getPixel(x, y)
+                val (coverage, residual) = navyWhiteBlend(pixel)
+                if (Color.alpha(pixel) != 255 || residual > BLEND_TOLERANCE) stray += "($x,$y)=#%08X".format(pixel)
+                if (coverage > 0.9) foreground++
+            }
+        }
+        assertTrue("$label has non navy/white pixels ${stray.take(5)} of ${stray.size}", stray.isEmpty())
+        assertTrue("$label draws no white foreground", foreground > 0)
+    }
+
     private fun View.bounds() = Rect(left, top, right, bottom)
 
     private fun View.paddingBounds() = Rect(paddingLeft, paddingTop, paddingRight, paddingBottom)
 
-    private fun assertContentInsets(activity: AboutActivity) {
-        if (Build.VERSION.SDK_INT < 35) return
+    private fun assertContentInsets(activity: BaseActivity) {
+        val decor = activity.window.decorView
         val content = activity.findViewById<android.view.ViewGroup>(android.R.id.content)
-        val rootInsets = ViewCompat.getRootWindowInsets(activity.window.decorView)
+        val rootInsets = ViewCompat.getRootWindowInsets(decor)
         assertNotNull(rootInsets)
         val safeDrawing = rootInsets!!.getInsets(
             WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
         )
+        val decorLocation = IntArray(2)
+        decor.getLocationOnScreen(decorLocation)
+        // Toolbar-based (NoActionBar) screens such as About have no window action bar, so their
+        // content top is exactly the status/cutout inset. Legacy AppTheme screens such as Settings
+        // have AppCompat's window action bar above the content; ActionBarOverlayLayout adds its
+        // height to the insets the content receives. Derive that from the bar's actual bounds:
+        // it must sit directly on the safe-drawing top edge, and content starts at its bottom.
+        val windowActionBar = activity.findViewById<View>(androidx.appcompat.R.id.action_bar_container)
+            ?.takeIf { it.isShown && it.height > 0 }
+        val expectedTop = if (windowActionBar == null) {
+            safeDrawing.top
+        } else {
+            val barLocation = IntArray(2)
+            val contentLocation = IntArray(2)
+            windowActionBar.getLocationOnScreen(barLocation)
+            content.getLocationOnScreen(contentLocation)
+            assertEquals(
+                "Window action bar must sit directly below the status/cutout inset",
+                safeDrawing.top,
+                barLocation[1] - decorLocation[1],
+            )
+            barLocation[1] + windowActionBar.height - contentLocation[1]
+        }
         assertEquals(
-            Rect(safeDrawing.left, safeDrawing.top, safeDrawing.right, safeDrawing.bottom),
+            Rect(safeDrawing.left, expectedTop, safeDrawing.right, safeDrawing.bottom),
             content.paddingBounds(),
         )
         assertTrue("Content must retain its inflated child", content.childCount > 0)
+        // The match_parent root must end exactly at the navigation-bar edge: a second
+        // bottom inset claimed by a descendant would lift it further.
+        val child = content.getChildAt(0)
+        val childLocation = IntArray(2)
+        child.getLocationOnScreen(childLocation)
+        assertEquals(
+            "Content root bottom must sit on the safe-drawing edge",
+            decor.height - safeDrawing.bottom,
+            childLocation[1] - decorLocation[1] + child.height,
+        )
     }
 
     private fun expectedScrimBounds(decor: View, insets: Insets, gravity: Int): Rect =
@@ -180,9 +408,8 @@ class ColorParityRuntimeTest {
             else -> Rect()
         }
 
-    private fun assertScrimSet(activity: AboutActivity, prefix: String, insets: Insets) {
+    private fun assertScrimSet(activity: BaseActivity, prefix: String, insets: Insets, expectedColor: Int) {
         val decor = activity.window.decorView
-        val expectedColor = ContextCompat.getColor(activity, R.color.semantic_system_bar)
         for ((gravity, suffix) in BaseActivity.SCRIM_EDGES) {
             val tag = "$prefix-$suffix"
             val scrim = decor.findViewWithTag<View>(tag)
@@ -193,67 +420,162 @@ class ColorParityRuntimeTest {
         }
     }
 
-    private fun assertScrimBounds(activity: AboutActivity) {
+    private fun assertScrimBounds(activity: BaseActivity) {
         val decor = activity.window.decorView
         val insets = ViewCompat.getRootWindowInsets(decor)
         assertNotNull(insets)
         val status = insets!!.getInsets(WindowInsetsCompat.Type.statusBars())
         val navigation = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
-        assertScrimSet(activity, BaseActivity.STATUS_BAR_SCRIM_TAG, status)
-        assertScrimSet(activity, BaseActivity.NAVIGATION_BAR_SCRIM_TAG, navigation)
+        assertScrimSet(activity, BaseActivity.STATUS_BAR_SCRIM_TAG, status, ContextCompat.getColor(activity, R.color.semantic_system_bar))
+        assertScrimSet(activity, BaseActivity.NAVIGATION_BAR_SCRIM_TAG, navigation, pageBackground(activity))
+    }
+
+    /** The page colour from the activity theme (android:colorBackground), independent of any bar decision. */
+    private fun pageBackground(activity: BaseActivity): Int {
+        val attributes = activity.theme.obtainStyledAttributes(intArrayOf(android.R.attr.colorBackground))
+        try {
+            assertTrue("theme must define android:colorBackground", attributes.hasValue(0))
+            return attributes.getColor(0, Color.MAGENTA)
+        } finally {
+            attributes.recycle()
+        }
+    }
+
+    /**
+     * Status bar: navy with light icons. Navigation bar: the page colour, with dark native glyphs
+     * on a light page and light glyphs on a dark page. Content keeps its safe-drawing insets.
+     */
+    private fun assertSystemBars(activity: BaseActivity, label: String, night: Boolean) {
+        val navy = ContextCompat.getColor(activity, R.color.semantic_system_bar)
+        val page = pageBackground(activity)
+        val uiNight = activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        assertEquals("$label night configuration", night, uiNight == Configuration.UI_MODE_NIGHT_YES)
+        assertEquals("$label page role", ContextCompat.getColor(activity, R.color.semantic_background), page)
+        assertEquals("$label page must be opaque", 0xFF, Color.alpha(page))
+        assertTrue("$label page and status bar must differ", page != navy || night)
+        val lightNavigation = ColorUtils.calculateContrast(Color.BLACK, page) > ColorUtils.calculateContrast(Color.WHITE, page)
+        assertEquals("$label page lightness", !night, lightNavigation)
+
+        if (Build.VERSION.SDK_INT >= 35) {
+            assertEquals("$label status bar colour", Color.TRANSPARENT, activity.window.statusBarColor)
+            assertEquals("$label navigation bar colour", Color.TRANSPARENT, activity.window.navigationBarColor)
+            assertFalse(activity.window.isStatusBarContrastEnforced)
+            assertFalse(activity.window.isNavigationBarContrastEnforced)
+            assertScrimBounds(activity)
+        } else {
+            assertEquals("$label status bar colour", navy, activity.window.statusBarColor)
+            assertEquals("$label navigation bar colour", page, activity.window.navigationBarColor)
+        }
+        assertContentInsets(activity)
+
+        val controller = WindowCompat.getInsetsController(activity.window, activity.window.decorView)
+        assertFalse("$label status icons must stay light on navy", controller.isAppearanceLightStatusBars)
+        assertEquals("$label navigation glyph appearance", lightNavigation, controller.isAppearanceLightNavigationBars)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            val flags = activity.window.decorView.systemUiVisibility
+            assertEquals("$label legacy status flag", 0, flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
+            assertEquals("$label legacy navigation flag", lightNavigation, (flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) != 0)
+        }
+    }
+
+    private fun <T> settings(block: (ActivityScenario<AppSettingsActivity>) -> T): T {
+        val intent = AppSettingsActivity.newIntent(InstrumentationRegistry.getInstrumentation().targetContext)
+        return ActivityScenario.launch<AppSettingsActivity>(intent).use { scenario ->
+            waitForSettingsBar(scenario)
+            block(scenario)
+        }
     }
 
     @Test fun systemBarProtectionMatchesApiAndInsets() {
-        about { scenario ->
-            scenario.onActivity { activity ->
-                if (Build.VERSION.SDK_INT >= 35) {
-                    assertEquals(Color.TRANSPARENT, activity.window.statusBarColor)
-                    assertEquals(Color.TRANSPARENT, activity.window.navigationBarColor)
-                    assertFalse(activity.window.isStatusBarContrastEnforced)
-                    assertFalse(activity.window.isNavigationBarContrastEnforced)
-                    assertScrimBounds(activity)
-                    assertContentInsets(activity)
-                } else {
-                    val expected = ContextCompat.getColor(activity, R.color.semantic_system_bar)
-                    assertEquals(expected, activity.window.statusBarColor)
-                    assertEquals(expected, activity.window.navigationBarColor)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    assertEquals(0, activity.window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    assertEquals(0, activity.window.decorView.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR)
-                }
+        val prior = AppCompatDelegate.getDefaultNightMode()
+        try {
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+            about { scenario ->
+                scenario.onActivity { assertSystemBars(it, "about (day)", night = false) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertSystemBars(it, "about (night)", night = true) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertSystemBars(it, "about (day, recreated)", night = false) }
             }
+            // Settings is the screen from the customer screenshot.
+            settings { scenario ->
+                scenario.onActivity { assertSystemBars(it, "settings (day)", night = false) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSystemBars(it, "settings (night)", night = true) }
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+                scenario.recreate()
+                waitForSettingsBar(scenario)
+                scenario.onActivity { assertSystemBars(it, "settings (day, recreated)", night = false) }
+            }
+        } finally {
+            setNightModeOnMainThread(prior)
+        }
+    }
+
+    private fun assertStableContentAndScrims(activity: BaseActivity, label: String, bounds: Rect?, padding: Rect?) {
+        assertEquals("$label content bounds", bounds, activity.findViewById<View>(android.R.id.content).bounds())
+        assertEquals("$label content padding", padding, activity.findViewById<View>(android.R.id.content).paddingBounds())
+        if (Build.VERSION.SDK_INT >= 35) {
+            val decor = activity.window.decorView
+            assertScrimBounds(activity)
+            assertContentInsets(activity)
+            assertEquals(8, BaseActivity.SCRIM_EDGES.sumOf { (_, suffix) ->
+                countTagged(decor, "${BaseActivity.STATUS_BAR_SCRIM_TAG}-$suffix") +
+                    countTagged(decor, "${BaseActivity.NAVIGATION_BAR_SCRIM_TAG}-$suffix")
+            })
         }
     }
 
     @Test fun repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent() {
-        about { scenario ->
-            var before: Rect? = null
-            var paddingBefore: Rect? = null
-            scenario.onActivity { activity ->
-                before = activity.findViewById<View>(android.R.id.content).bounds()
-                paddingBefore = activity.findViewById<View>(android.R.id.content).paddingBounds()
-                ViewCompat.requestApplyInsets(activity.window.decorView)
-            }
-            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-            scenario.recreate()
-            waitForAbout(scenario)
-            scenario.onActivity { activity ->
-                assertEquals(before, activity.findViewById<View>(android.R.id.content).bounds())
-                assertEquals(paddingBefore, activity.findViewById<View>(android.R.id.content).paddingBounds())
-                if (Build.VERSION.SDK_INT >= 35) {
-                    val decor = activity.window.decorView
-                    assertScrimBounds(activity)
-                    assertContentInsets(activity)
-                    assertEquals(8, BaseActivity.SCRIM_EDGES.sumOf { (_, suffix) ->
-                        countTagged(decor, "${BaseActivity.STATUS_BAR_SCRIM_TAG}-$suffix") +
-                            countTagged(decor, "${BaseActivity.NAVIGATION_BAR_SCRIM_TAG}-$suffix")
-                    })
+        val prior = AppCompatDelegate.getDefaultNightMode()
+        try {
+            setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_NO)
+            about { scenario ->
+                var before: Rect? = null
+                var paddingBefore: Rect? = null
+                scenario.onActivity { activity ->
+                    before = activity.findViewById<View>(android.R.id.content).bounds()
+                    paddingBefore = activity.findViewById<View>(android.R.id.content).paddingBounds()
+                    ViewCompat.requestApplyInsets(activity.window.decorView)
                 }
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertStableContentAndScrims(it, "day recreation", before, paddingBefore) }
+                // A theme switch recolours the bars but must not move the content or duplicate scrims.
+                setNightModeOnMainThread(AppCompatDelegate.MODE_NIGHT_YES)
+                scenario.recreate()
+                waitForAbout(scenario)
+                scenario.onActivity { assertStableContentAndScrims(it, "night recreation", before, paddingBefore) }
             }
+        } finally {
+            setNightModeOnMainThread(prior)
         }
+    }
+
+    private companion object {
+        // semantic_system_bar #0A1018 and semantic_on_system_bar #FFFFFF (asserted against resources above).
+        const val NAVY_R = 0x0A
+        const val NAVY_G = 0x10
+        const val NAVY_B = 0x18
+        val BLEND_SPAN = intArrayOf(0xFF - NAVY_R, 0xFF - NAVY_G, 0xFF - NAVY_B)
+        val BLEND_SPAN_SQUARED = BLEND_SPAN.sumOf { it * it }.toDouble()
+        // An 8-bit src-over composite rounds the source and destination terms separately, so each
+        // channel of a true navy/white blend is within e = 2 * 0.5 = 1.0 of the ideal value. Refitting
+        // coverage by projection moves the fitted point by at most |e| <= 1.0 * sqrt(3), giving a
+        // per-channel residual bound of 1.0 * (1 + sqrt(3)) ~= 2.73. The gray defaults sit at ~4.36
+        // (#49454F) and ~5.82 (#CAC4D0), outside it.
+        val BLEND_TOLERANCE = 1.0 * (1.0 + sqrt(3.0))
+        // At alpha >= 128 unpremultiplying a white source stays within 2 of 255 even with rounding.
+        const val GLYPH_COVERED_ALPHA = 128
+        const val GLYPH_CORE_ALPHA = 250
+        const val WHITE_GLYPH_MIN = 250
     }
 
     private fun countTagged(view: View, tag: String): Int {

@@ -3,6 +3,7 @@ package io.silentsuite.sync.ui
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.Context
+import android.content.SharedPreferences
 import io.silentsuite.sync.App
 import io.silentsuite.sync.AccountSettings
 
@@ -62,6 +63,25 @@ object ActiveAccountManager {
             return false
         }
         return true
+    }
+
+    /**
+     * The name and creation id the active-account preference holds, read from the preference alone, with no
+     * AccountManager call, or null when either is missing or blank; a value that is not a String throws.
+     * Nothing says that row is still there.
+     */
+    internal fun savedIdentity(context: Context): Pair<String, String>? =
+        savedIdentity(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE))
+
+    /**
+     * Both values come from one [SharedPreferences.getAll] copy, so a commit between two reads cannot pair one
+     * account's name with another's id. Both casts run first: a value that is there but not a String throws.
+     */
+    internal fun savedIdentity(prefs: SharedPreferences): Pair<String, String>? {
+        val all = prefs.all
+        val name = (all[KEY_NAME] as String?)?.takeIf(String::isNotBlank)
+        val creationId = (all[KEY_CREATION_ID] as String?)?.takeIf(String::isNotBlank)
+        return if (name == null || creationId == null) null else name to creationId
     }
 
     fun setActiveAccount(context: Context, account: Account): Boolean {
