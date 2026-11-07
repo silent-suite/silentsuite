@@ -368,10 +368,10 @@ def test_generate_certificate_includes_exact_requested_sans(tmp_path):
         capture_output=True, text=True, check=True,
     )
     san_text = result.stdout
-    actual_dns = set(re.findall(r"DNS:([^,\\s]+)", san_text))
+    actual_dns = set(re.findall(r"DNS:([^,\s]+)", san_text))
     actual_ips = {
         str(ipaddress.ip_address(value))
-        for value in re.findall(r"IP Address:([^,\\s]+)", san_text)
+        for value in re.findall(r"IP Address:([^,\s]+)", san_text)
     }
     assert actual_dns == {"localhost", "bridge.tailnet.example"}
     assert actual_ips == {"127.0.0.1", "::1", "100.64.0.10", "2001:db8::10"}
