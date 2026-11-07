@@ -9,6 +9,7 @@ import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
+import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import {
   showErrorToast,
   showWarningToast,
@@ -25,6 +26,34 @@ const LARGE_EXPORT_THRESHOLD = 1000
 
 /** Sentinel value meaning "export every collection of this type". */
 const ALL_COLLECTIONS = 'all'
+
+/** Domains this page exports. Notes are not exported, so they never gate it. */
+type ExportDomain = 'calendar' | 'tasks' | 'contacts'
+const EXPORT_DOMAINS: readonly ExportDomain[] = ['calendar', 'tasks', 'contacts']
+const DOMAIN_LABELS: Record<ExportDomain, string> = {
+  calendar: 'Calendar',
+  tasks: 'Tasks',
+  contacts: 'Contacts',
+}
+
+/**
+ * Current load state, read at click time. 'loaded' means this session's last
+ * full enumeration of the domain succeeded. 'unknown' or 'failed' means the
+ * items on screen may be incomplete or stale, so they are not exported as if
+ * they were complete. 'loaded' is not proof of every historical server item,
+ * of later remote changes, or of pending offline edits.
+ */
+function isDomainLoaded(domain: ExportDomain): boolean {
+  return useEtebaseStore.getState().domainLoadState[domain] === 'loaded'
+}
+
+/** Refuse an export whose domains have not finished loading, without writing a file. */
+function refuseUnloaded(domains: readonly ExportDomain[]) {
+  const names = domains.map((domain) => DOMAIN_LABELS[domain]).join(', ')
+  showWarningToast(
+    `${names} ${domains.length === 1 ? "hasn't" : "haven't"} finished loading, so nothing was exported. Sync again, then export.`,
+  )
+}
 
 function downloadFile(content: string | Blob | Uint8Array, filename: string, mimeType: string) {
   const blob =
@@ -150,6 +179,15 @@ export default function ExportPage() {
   const taskLists = useTaskListStore((s) => s.lists)
   const contactLists = useContactListStore((s) => s.lists)
 
+  const domainStatus: Record<ExportDomain, string> = {
+    calendar: useEtebaseStore((s) => s.domainLoadState.calendar),
+    tasks: useEtebaseStore((s) => s.domainLoadState.tasks),
+    contacts: useEtebaseStore((s) => s.domainLoadState.contacts),
+  }
+  // Initialization still running: an 'unknown' domain may load on its own.
+  const initializing = useEtebaseStore((s) => !s.isInitialized && !s.restoreBlocked)
+  const unloadedDomains = EXPORT_DOMAINS.filter((domain) => domainStatus[domain] !== 'loaded')
+
   const [selectedCalendarId, setSelectedCalendarId] = useState(ALL_COLLECTIONS)
   const [selectedTaskListId, setSelectedTaskListId] = useState(ALL_COLLECTIONS)
   const [selectedContactListId, setSelectedContactListId] = useState(ALL_COLLECTIONS)
@@ -180,6 +218,7 @@ export default function ExportPage() {
   )
 
   function exportCalendar() {
+    if (!isDomainLoaded('calendar')) return refuseUnloaded(['calendar'])
     try {
       const { vcomponents, skipped } = serializeEvents(filteredEvents)
       const ics = buildCalendarIcs(vcomponents)
@@ -192,6 +231,7 @@ export default function ExportPage() {
   }
 
   function exportTasks() {
+    if (!isDomainLoaded('tasks')) return refuseUnloaded(['tasks'])
     try {
       const { vcomponents, skipped } = serializeTasks(filteredTasks)
       const ics = buildCalendarIcs(vcomponents)
@@ -204,6 +244,7 @@ export default function ExportPage() {
   }
 
   function exportContacts() {
+    if (!isDomainLoaded('contacts')) return refuseUnloaded(['contacts'])
     try {
       const { vcomponents, skipped } = serializeContacts(filteredContacts)
       const vcf = buildContactsVcf(vcomponents)
@@ -217,6 +258,11 @@ export default function ExportPage() {
 
   async function exportAll() {
     if (isExportingAll) return
+
+    // Every domain in the archive must have loaded, checked before any busy
+    // state or archive work so a refused export writes nothing.
+    const notLoaded = EXPORT_DOMAINS.filter((domain) => !isDomainLoaded(domain))
+    if (notLoaded.length > 0) return refuseUnloaded(notLoaded)
 
     // The ZIP is intentionally an all-data export: it always includes every
     // calendar, task list, and address book regardless of the per-type
@@ -278,7 +324,7 @@ export default function ExportPage() {
   }
 
   const totalItems = events.length + tasks.length + contacts.length
-  const exportAllDisabled = totalItems === 0 || isExportingAll
+  const exportAllDisabled = totalItems === 0 || isExportingAll || unloadedDomains.length > 0
 
   return (
     <div className="space-y-6">
@@ -286,6 +332,18 @@ export default function ExportPage() {
       <p className="text-sm text-[rgb(var(--muted))]">
         Download your data in standard formats (ICS, VCF). Your data is always yours.
       </p>
+
+      {unloadedDomains.length > 0 && (
+        <div role="status" className="space-y-1 text-sm text-amber-600 dark:text-amber-400">
+          {unloadedDomains.map((domain) => (
+            <p key={domain}>
+              {domainStatus[domain] === 'unknown' && initializing
+                ? `${DOMAIN_LABELS[domain]} is still loading, so it can't be exported yet.`
+                : `${DOMAIN_LABELS[domain]} didn't finish loading on this device, so it can't be exported. Sync again, then export.`}
+            </p>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-col gap-5">
         {/* Calendar */}
@@ -312,7 +370,7 @@ export default function ExportPage() {
           </select>
           <Button
             className="w-full sm:w-auto"
-            disabled={filteredEvents.length === 0 || isExportingAll}
+            disabled={filteredEvents.length === 0 || isExportingAll || domainStatus.calendar !== 'loaded'}
             onClick={exportCalendar}
           >
             <Download className="mr-2 h-4 w-4" />
@@ -344,7 +402,7 @@ export default function ExportPage() {
           </select>
           <Button
             className="w-full sm:w-auto"
-            disabled={filteredTasks.length === 0 || isExportingAll}
+            disabled={filteredTasks.length === 0 || isExportingAll || domainStatus.tasks !== 'loaded'}
             onClick={exportTasks}
           >
             <Download className="mr-2 h-4 w-4" />
@@ -376,7 +434,7 @@ export default function ExportPage() {
           </select>
           <Button
             className="w-full sm:w-auto"
-            disabled={filteredContacts.length === 0 || isExportingAll}
+            disabled={filteredContacts.length === 0 || isExportingAll || domainStatus.contacts !== 'loaded'}
             onClick={exportContacts}
           >
             <Download className="mr-2 h-4 w-4" />

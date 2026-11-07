@@ -87,10 +87,22 @@ vi.mock('@/app/stores/use-calendar-store', () => ({
   useCalendarStore: (selector: (s: { events: unknown[] }) => unknown) =>
     selector({ events: mockData.events }),
 }))
-vi.mock('@/app/stores/use-etebase-store', () => ({
-  useEtebaseStore: (selector: (s: { createCollection: unknown }) => unknown) =>
-    selector({ createCollection: vi.fn() }),
-}))
+vi.mock('@/app/stores/use-etebase-store', () => {
+  // The export page reads per-domain load state (WEB-07); every exported domain
+  // is fully loaded here so these byte-level tests exercise the normal path.
+  const loadState = {
+    isInitialized: true,
+    restoreBlocked: false,
+    domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' },
+  }
+  return {
+    useEtebaseStore: Object.assign(
+      (selector: (s: { createCollection: unknown } & typeof loadState) => unknown) =>
+        selector({ createCollection: vi.fn(), ...loadState }),
+      { getState: () => ({ createCollection: vi.fn(), ...loadState }) },
+    ),
+  }
+})
 vi.mock('@/app/stores/use-calendar-list-store', () => ({
   useCalendarListStore: (selector: (s: { calendars: unknown[] }) => unknown) =>
     selector({ calendars: [] }),
