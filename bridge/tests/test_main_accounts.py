@@ -293,3 +293,96 @@ def test_setup_command_dispatched_via_run_main(monkeypatch, capsys):
 
     assert code == 0
     assert "Advanced" in capsys.readouterr().out
+
+
+def test_normalize_certificate_sans_accepts_and_deduplicates_values():
+    dns, ips = main_module._normalize_certificate_sans(
+        [" Home.Example.TS.NET. ", "home.example.ts.net", "localhost"],
+        ["100.64.0.10", "2001:0db8::1", "100.64.0.10", "127.0.0.1"],
+    )
+
+    assert dns == ["home.example.ts.net"]
+    assert ips == ["100.64.0.10", "2001:db8::1"]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "", "https://host.example", "host.example:443", "host.example/path",
+        "*.example.com", "host..example", "-bad.example", "bad-.example",
+        "host name.example", "host%2eexample", "a" * 64 + ".example",
+        "host.example..",
+    ],
+)
+def test_normalize_certificate_sans_rejects_invalid_dns(value):
+    with pytest.raises(ValueError):
+        main_module._normalize_certificate_sans([value], [])
+
+
+@pytest.mark.parametrize("value", ["", "127.0.0.999", "2001:db8::zz", "host.example", "1.2.3.4:443"])
+def test_normalize_certificate_sans_rejects_invalid_ip(value):
+    with pytest.raises(ValueError):
+        main_module._normalize_certificate_sans([], [value])
+
+
+def test_certificate_openssl_config_keeps_loopback_and_custom_sans():
+    config_text = main_module._certificate_openssl_config(
+        ["bridge.tailnet.example"], ["100.64.0.10"]
+    )
+
+    assert "DNS.1 = localhost" in config_text
+    assert "DNS.2 = bridge.tailnet.example" in config_text
+    assert "IP.1 = 127.0.0.1" in config_text
+    assert "IP.2 = ::1" in config_text
+    assert "IP.3 = 100.64.0.10" in config_text
+    assert "192.168." not in config_text
+
+
+@pytest.mark.skipif(not _openssl_available(), reason="openssl not available")
+def test_generate_certificate_includes_exact_requested_sans(tmp_path):
+    cert_path = str(tmp_path / "custom-cert.pem")
+    key_path = str(tmp_path / "custom-key.pem")
+
+    main_module._generate_localhost_certificate(
+        cert_path,
+        key_path,
+        ["Bridge.Tailnet.Example."],
+        ["100.64.0.10", "2001:db8::10"],
+    )
+
+    result = subprocess.run(
+        ["openssl", "x509", "-in", cert_path, "-noout", "-ext", "subjectAltName"],
+        capture_output=True, text=True, check=True,
+    )
+    san_text = result.stdout
+    assert "DNS:localhost" in san_text
+    assert "DNS:bridge.tailnet.example" in san_text
+    assert "IP Address:127.0.0.1" in san_text
+    assert "IP Address:100.64.0.10" in san_text
+    assert "IP Address:2001:DB8:0:0:0:0:0:10" in san_text or "IP Address:2001:DB8::10" in san_text
+    assert "192.168." not in san_text
+
+
+def test_custom_san_replacement_requires_explicit_confirmation(tmp_path, monkeypatch, capsys):
+    cert_path = str(tmp_path / "cert.pem")
+    key_path = str(tmp_path / "key.pem")
+    cert_path_obj = tmp_path / "cert.pem"
+    key_path_obj = tmp_path / "key.pem"
+    cert_path_obj.write_text("existing cert")
+    key_path_obj.write_text("existing key")
+    monkeypatch.setattr(config, "SSL_CERT_FILE", cert_path)
+    monkeypatch.setattr(config, "SSL_KEY_FILE", key_path)
+    monkeypatch.setattr(config, "SSL_ENABLED", False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(main_module, "_cert_and_key_readable", lambda c, k: True)
+    monkeypatch.setattr(
+        main_module, "_generate_localhost_certificate",
+        lambda *args: pytest.fail("certificate must not be replaced without confirmation"),
+    )
+
+    code = main_module.setup_macos_apple_accounts(["bridge.tailnet.example"], [])
+
+    assert code == 1
+    output = capsys.readouterr().out
+    assert "bridge.tailnet.example" in output
+    assert "--replace-existing" in output
