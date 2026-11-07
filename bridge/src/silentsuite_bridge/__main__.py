@@ -542,6 +542,13 @@ def _normalize_certificate_sans(dns_names=(), ip_addresses=()):
         if not isinstance(raw, str):
             raise ValueError("IP SAN values must be strings.")
         value = raw.strip()
+        # IPv6 zone identifiers are not valid certificate IP SANs. Reject the
+        # percent delimiter before ipaddress parsing so scope text can never
+        # reach the OpenSSL configuration (including newline payloads).
+        if "%" in value:
+            raise ValueError(
+                f"Invalid IP SAN value: {raw!r}. IPv6 scope IDs are not supported."
+            )
         try:
             address = ipaddress.ip_address(value)
         except ValueError as exc:
