@@ -27,16 +27,21 @@ wrapper or manager receipts, which can lag a spawn.
 - Custody discovers owned processes by scanning ``/proc/*/environ`` for that
   exact token. Before any signal, it re-verifies the token and the start time.
   A verified process-group leader has its group signalled.
-- While custody is open, this test process is a Linux child subreaper. Orphans
-  whose wrapper, manager or installer exited before writing a receipt are
-  re-parented here and reaped. Only zombies adopted during the window are
-  reaped; pre-existing children are excluded.
+- Subreaper: custody reads this process's exact prior child-subreaper flag. It
+  sets the flag only if it was clear, and restores that exact prior value at
+  teardown. If the flag cannot be read, set or verified, custody fails BEFORE
+  any fixture spawn (a fixture failure, not product evidence).
+- Reaping: an adopted zombie is reaped only if its (pid, start time) pair was
+  previously observed live carrying this run's token. A zombie keeps its PID
+  and start time until it is reaped, so the match proves ownership. Zombies
+  that cannot be attributed this way, and pre-existing children, are never
+  waited on, reaped or claimed; they are only reported.
 
 Teardown terminates (SIGTERM, then SIGKILL) with bounded rescans, reaps the
-installer and adopted children, and fails loudly if any token-bearing process
-survives, an adopted zombie stays unreaped, or the listener is still open.
-Nothing is killed by name or by an unverified PID. Receipts are used only to
-attribute invocations and exit codes.
+installer and proven-owned adopted zombies, and fails loudly if any
+token-bearing process survives, a proven-owned zombie stays unreaped, or the
+listener is still open. Nothing is killed by name or by an unverified PID.
+Receipts are used only to attribute invocations and exit codes.
 
 Bind evidence: the listening socket's inode in /proc/net/tcp is matched to the
 owned daemon's /proc/<pid>/fd. Daemon invocations are counted separately from
@@ -165,6 +170,7 @@ sys.exit(rc)
 
 
 _PR_SET_CHILD_SUBREAPER = 36
+_PR_GET_CHILD_SUBREAPER = 37
 
 
 def _stat(pid):
@@ -220,12 +226,30 @@ def _children_of(parent):
     return children
 
 
-def _set_subreaper(enabled):
+class CustodySetupError(RuntimeError):
+    """Required custody could not be established; nothing has been spawned."""
+
+
+def _libc():
     try:
-        libc = ctypes.CDLL(None, use_errno=True)
-        return libc.prctl(_PR_SET_CHILD_SUBREAPER, 1 if enabled else 0, 0, 0, 0) == 0
-    except (OSError, AttributeError):
-        return False
+        return ctypes.CDLL(None, use_errno=True)
+    except OSError as exc:
+        raise CustodySetupError(f"libc unavailable: {exc!r}") from exc
+
+
+def _get_subreaper():
+    value = ctypes.c_int(-1)
+    if _libc().prctl(_PR_GET_CHILD_SUBREAPER, ctypes.byref(value), 0, 0, 0) != 0:
+        raise CustodySetupError(f"PR_GET_CHILD_SUBREAPER failed: errno={ctypes.get_errno()}")
+    return value.value
+
+
+def _set_subreaper(value):
+    if _libc().prctl(_PR_SET_CHILD_SUBREAPER, int(value), 0, 0, 0) != 0:
+        raise CustodySetupError(f"PR_SET_CHILD_SUBREAPER({value}) failed: errno={ctypes.get_errno()}")
+    current = _get_subreaper()
+    if bool(current) != bool(value):
+        raise CustodySetupError(f"subreaper flag is {current}, expected {value}")
 
 
 def _listen_inodes(port):
@@ -291,15 +315,42 @@ class Custody:
         self.state_dir = state_dir
         self.port = port
         self.popens = []
-        self.seen = {}  # pid -> starttime of every token-bearing process observed
+        self.seen = set()  # (pid, starttime) of every token-bearing process observed live
         self.pre_children = set()
-        self.subreaper = False
+        self.prior_subreaper = None
+        self.set_by_custody = False
+        self.changed_subreaper = False
+        self.restore_error = None
         self.reaped = []
         self.report = {}
 
     def start(self):
+        """Establish required custody before any spawn; raise CustodySetupError otherwise."""
+        prior = _get_subreaper()
+        self.prior_subreaper = prior
         self.pre_children = set(_children_of(os.getpid()))
-        self.subreaper = _set_subreaper(True)
+        if not prior:
+            try:
+                _set_subreaper(1)
+            except CustodySetupError:
+                try:
+                    _set_subreaper(prior)  # leave the caller's flag exactly as it was
+                except CustodySetupError:
+                    pass
+                raise
+            self.set_by_custody = True
+            self.changed_subreaper = True
+
+    def _restore_subreaper(self):
+        if not self.changed_subreaper:
+            return
+        try:
+            _set_subreaper(self.prior_subreaper)
+            if _get_subreaper() != self.prior_subreaper:
+                raise CustodySetupError("subreaper flag not restored to its exact prior value")
+            self.changed_subreaper = False
+        except CustodySetupError as exc:
+            self.restore_error = repr(exc)
 
     def adopt_popen(self, popen, origin):
         self.popens.append(popen)
@@ -316,7 +367,7 @@ class Custody:
             if starttime is None or not _has_token(pid, self.token):
                 continue
             live[pid] = starttime
-            self.seen.setdefault(pid, starttime)
+            self.seen.add((pid, starttime))
         return live
 
     def invocation_lines(self):
@@ -361,22 +412,33 @@ class Custody:
             return False
         return True
 
-    def _reap_adopted(self):
-        """Reap zombie children adopted during the window; return live adopted non-owned pids."""
+    def _adopted_zombies(self):
+        """Split zombie children (excluding Popen-managed and pre-existing) into proven-owned/unattributed."""
         popen_pids = {popen.pid for popen in self.popens}
-        foreign_live = []
-        for pid, state in _children_of(os.getpid()).items():
+        owned, unattributed = [], []
+        for pid in _children_of(os.getpid()):
             if pid in self.pre_children or pid in popen_pids:
                 continue
-            if state == "Z":
-                try:
-                    if os.waitpid(pid, os.WNOHANG)[0] == pid:
-                        self.reaped.append(pid)
-                except ChildProcessError:
-                    pass
-            elif not _has_token(pid, self.token):
-                foreign_live.append(pid)
-        return foreign_live
+            stat = _stat(pid)
+            if stat is None or stat[0] != "Z":
+                continue
+            # An unreaped zombie keeps its PID and start time, so a match with a
+            # live token-bearing observation proves fixture ownership.
+            if (pid, stat[2]) in self.seen:
+                owned.append(pid)
+            else:
+                unattributed.append(pid)
+        return owned, unattributed
+
+    def _reap_adopted(self):
+        """Reap only proven-owned adopted zombies; never touch unattributed or pre-existing children."""
+        owned, _unattributed = self._adopted_zombies()
+        for pid in owned:
+            try:
+                if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                    self.reaped.append(pid)
+            except ChildProcessError:
+                pass
 
     def _terminate(self, sig, grace):
         """Signal every live owned process, rescanning until none remain or the bound expires."""
@@ -409,36 +471,37 @@ class Custody:
                     unreaped_popens.append(popen.pid)
             deadline = time.monotonic() + TERM_GRACE
             while True:
-                foreign_live = self._reap_adopted()
-                adopted_zombies = [
-                    pid for pid, state in _children_of(os.getpid()).items()
-                    if state == "Z" and pid not in self.pre_children
-                    and pid not in {popen.pid for popen in self.popens}
-                ]
-                if not adopted_zombies or time.monotonic() >= deadline:
+                self._reap_adopted()
+                owned_zombies, unattributed_zombies = self._adopted_zombies()
+                if not owned_zombies or time.monotonic() >= deadline:
                     break
                 time.sleep(0.2)
         finally:
-            if self.subreaper:
-                _set_subreaper(False)
+            self._restore_subreaper()
         deadline = time.monotonic() + LISTENER_CLOSE_TIMEOUT
         while time.monotonic() < deadline and (_listen_inodes(self.port) or _port_accepts(self.port)):
             time.sleep(0.2)
         survivors = sorted(self.scan())
         listener_open = bool(_listen_inodes(self.port)) or _port_accepts(self.port)
         self.report = {
-            "subreaper": self.subreaper,
-            "owned_seen": sorted(self.seen),
+            "prior_subreaper": self.prior_subreaper,
+            "subreaper_set_by_custody": self.set_by_custody,
+            "subreaper_restored": not self.changed_subreaper and self.restore_error is None,
+            "restore_error": self.restore_error,
+            "owned_seen": sorted(pid for pid, _ in self.seen),
             "terminated": terminated,
             "escalated": escalated,
-            "reaped_adopted": sorted(self.reaped),
-            "unreaped_adopted_zombies": adopted_zombies,
+            "reaped_owned_adopted": sorted(self.reaped),
+            "unreaped_owned_zombies": owned_zombies,
+            "unattributed_zombies_not_touched": unattributed_zombies,
             "unreaped_popens": unreaped_popens,
-            "foreign_adopted_live_not_signalled": foreign_live,
             "survivors": survivors,
             "listener_open": listener_open,
         }
-        if survivors or listener_open or adopted_zombies or unreaped_popens:
+        if (
+            survivors or listener_open or owned_zombies or unreaped_popens
+            or self.changed_subreaper or self.restore_error
+        ):
             raise AssertionError(f"{RECEIPT} teardown failed: {self.report!r}")
 
 
@@ -516,7 +579,15 @@ def _drive(base: Path, custody: Custody, *, login_exit: int, start_fail: bool) -
             start_new_session=True,
         )
         custody.adopt_popen(installer, "installer-sh")
-        rc = installer.wait(timeout=INSTALLER_TIMEOUT)
+        # Bounded wait that keeps observing owned processes while they are live,
+        # so later zombies can be attributed by (pid, start time).
+        installer_deadline = time.monotonic() + INSTALLER_TIMEOUT
+        while installer.poll() is None:
+            if time.monotonic() >= installer_deadline:
+                raise subprocess.TimeoutExpired(installer.args, INSTALLER_TIMEOUT)
+            custody.scan()
+            time.sleep(0.1)
+        rc = installer.returncode
 
     # Resolve every installer-launched daemon: exit receipt or owned listener (bounded).
     deadline = time.monotonic() + RESOLVE_TIMEOUT
@@ -580,7 +651,10 @@ def _scenario(base: Path, *, login_exit: int, start_fail: bool) -> dict:
     state.mkdir()
     custody = Custody(uuid.uuid4().hex, state, _free_port())  # registered before any spawn
     try:
-        custody.start()  # subreaper + pre-existing-children snapshot, before any spawn
+        custody.start()  # exact prior flag read; subreaper + snapshot established, before any spawn
+    except CustodySetupError as exc:
+        pytest.fail(f"{RECEIPT} fixture custody setup failed before any spawn: {exc}")
+    try:
         observed = _drive(base, custody, login_exit=login_exit, start_fail=start_fail)
     finally:
         custody.teardown()
