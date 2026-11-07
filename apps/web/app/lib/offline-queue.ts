@@ -68,6 +68,18 @@ export class ReplayNotConfirmedError extends Error {
   }
 }
 
+/**
+ * The queue itself refused the entry (plaintext content without encrypted
+ * persistence, or a full queue). Nothing was queued, so this is a save failure,
+ * never a connectivity failure.
+ */
+export class OfflineQueueRefusedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OfflineQueueRefusedError'
+  }
+}
+
 const DB_NAME = 'silentsuite-offline-queue'
 const DB_VERSION = 1
 const STORE_NAME = 'mutations'
@@ -100,7 +112,7 @@ function assertCanPersistEntry(
 ): void {
   if (!hasPersistedPlaintextContent(entry)) return
   if (isEncryptedQueuePersistenceAvailable()) return
-  throw new Error(
+  throw new OfflineQueueRefusedError(
     `Offline queue refuses to persist plaintext ${entry.collectionType} ${entry.type} content without encrypted local persistence.`,
   )
 }
@@ -279,7 +291,7 @@ async function enqueueInternal(
 
   // Enforce queue size limit (count only pending entries)
   if (await isQueueFull(guard)) {
-    throw new Error(`Offline queue is full (max ${MAX_QUEUE_SIZE} pending entries). Connect to the internet to sync your changes.`)
+    throw new OfflineQueueRefusedError(`Offline queue is full (max ${MAX_QUEUE_SIZE} pending entries). Connect to the internet to sync your changes.`)
   }
   assertGuard(guard)
 
@@ -886,6 +898,8 @@ function notifyEnqueueListeners(): void {
 
 /** Helper: returns true if an error looks like a network/offline error */
 export function isOfflineError(err: unknown): boolean {
+  // A queue refusal is never "offline": treating it so would hide a failed save.
+  if (err instanceof OfflineQueueRefusedError) return false
   if (!navigator.onLine) return true
   if (err instanceof TypeError && err.message.includes('fetch')) return true
   if (err instanceof DOMException && err.name === 'NetworkError') return true
