@@ -1,19 +1,10 @@
-# Legacy Docker Stack
+# Retired Docker Stack
 
-This directory is retained for older local-development workflows only. Do not use
-it for new self-hosted deployments.
+The legacy Docker stack is retired. Use [`../self-host/`](../self-host/SELF-HOSTING.md) to run a SilentSuite sync server.
 
-Use `../self-host/` instead. The current self-host stack pins the server image,
-binds the sync server to host loopback by default, generates credentials, and
-documents reverse-proxy/TLS setup.
+If you still run an installation from the legacy compose files:
 
-If you still run this legacy stack locally:
-
-- Copy `.env.example` to `.env` and set a unique `POSTGRES_PASSWORD`.
-- Update `etebase/etebase-server.ini` so its database password matches `.env`,
-  then rebuild the image with `docker compose build etebase` because the legacy
-  Dockerfile copies that INI file at build time.
-- Keep the default loopback-only ports and put any public access behind your
-  reverse proxy/TLS layer.
-- Use `docker-compose.dev.yml` only for disposable local development; it contains
-  intentional dev-only defaults and exposes Postgres on all interfaces.
+- Back it up before you change anything. The `postgres_data` volume holds the database, and the `etebase_data` volume holds the server secret key at `/data/secret.txt`. Without that key, existing encrypted data is unrecoverable.
+- Preserve both volumes. Never run `docker compose down -v`, `docker volume rm`, or `docker volume prune` against them.
+- Stop the legacy containers before you install `self-host/` on the same host. Both stacks use the container name `silentsuite-postgres` and host port 3735.
+- Pulling this change deletes the compose files and leaves your containers and volumes in place. To run compose commands against the installation again, restore the files with `git checkout 3f331069ea2977855dc7440e0dd907673d70041d -- docker`.
