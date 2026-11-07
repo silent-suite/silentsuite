@@ -20,11 +20,23 @@ Declared fixture boundaries (why this is PARTIAL):
 - ``BROWSER`` is a recorder script. The ``etebase`` SDK in the daemons is
   whatever is installed; with no accounts, no SDK calls are made.
 
-Custody: cleanup is registered before any spawn. Every owned process is
-recorded and verified by run token and start time before any signal; nothing
-is killed by name or by an unverified PID. Waits are bounded. Owned processes
-are terminated (with escalation), the installer child is reaped, and the
-listener must be closed at teardown, on every exit path.
+Custody: cleanup is registered before any spawn. Ownership does not depend on
+wrapper or manager receipts, which can lag a spawn.
+- Every fixture process inherits a unique per-run ``AUDIT_RUN_TOKEN`` at fork
+  and exec, before it runs any code. The manager passes it explicitly.
+- Custody discovers owned processes by scanning ``/proc/*/environ`` for that
+  exact token. Before any signal, it re-verifies the token and the start time.
+  A verified process-group leader has its group signalled.
+- While custody is open, this test process is a Linux child subreaper. Orphans
+  whose wrapper, manager or installer exited before writing a receipt are
+  re-parented here and reaped. Only zombies adopted during the window are
+  reaped; pre-existing children are excluded.
+
+Teardown terminates (SIGTERM, then SIGKILL) with bounded rescans, reaps the
+installer and adopted children, and fails loudly if any token-bearing process
+survives, an adopted zombie stays unreaped, or the listener is still open.
+Nothing is killed by name or by an unverified PID. Receipts are used only to
+attribute invocations and exit codes.
 
 Bind evidence: the listening socket's inode in /proc/net/tcp is matched to the
 owned daemon's /proc/<pid>/fd. Daemon invocations are counted separately from
@@ -33,6 +45,7 @@ serving daemons.
 Linux-only platform selection; the platform is recorded in every test id.
 """
 
+import ctypes
 import hashlib
 import json
 import os
@@ -151,24 +164,68 @@ sys.exit(rc)
 # --- /proc helpers ---------------------------------------------------------
 
 
-def _starttime(pid):
-    """Return /proc start time, or None when gone or a zombie."""
+_PR_SET_CHILD_SUBREAPER = 36
+
+
+def _stat(pid):
+    """Return (state, ppid, starttime) from /proc/<pid>/stat, or None when gone."""
     try:
         data = Path(f"/proc/{pid}/stat").read_text()
     except OSError:
         return None
     fields = data.rsplit(")", 1)[1].split()
-    if not fields or fields[0] == "Z":
+    if len(fields) < 20:
         return None
-    return fields[19]
+    return fields[0], int(fields[1]), fields[19]
+
+
+def _starttime(pid):
+    """Return /proc start time, or None when gone or a zombie."""
+    stat = _stat(pid)
+    if stat is None or stat[0] == "Z":
+        return None
+    return stat[2]
+
+
+def _environ(pid):
+    try:
+        return Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        return []
 
 
 def _has_token(pid, token):
+    return f"AUDIT_RUN_TOKEN={token}".encode() in _environ(pid)
+
+
+def _origin(pid):
+    # Service daemons inherit AUDIT_ORIGIN=service from the manager fixture env;
+    # installer-launched processes never carry it.
+    for entry in _environ(pid):
+        if entry.startswith(b"AUDIT_ORIGIN="):
+            return entry.split(b"=", 1)[1].decode(errors="replace")
+    return "installer"
+
+
+def _proc_pids():
+    return [int(entry) for entry in os.listdir("/proc") if entry.isdigit()]
+
+
+def _children_of(parent):
+    children = {}
+    for pid in _proc_pids():
+        stat = _stat(pid)
+        if stat is not None and stat[1] == parent:
+            children[pid] = stat[0]
+    return children
+
+
+def _set_subreaper(enabled):
     try:
-        environ = Path(f"/proc/{pid}/environ").read_bytes()
-    except OSError:
+        libc = ctypes.CDLL(None, use_errno=True)
+        return libc.prctl(_PR_SET_CHILD_SUBREAPER, 1 if enabled else 0, 0, 0, 0) == 0
+    except (OSError, AttributeError):
         return False
-    return f"AUDIT_RUN_TOKEN={token}".encode() in environ.split(b"\0")
 
 
 def _listen_inodes(port):
@@ -222,26 +279,45 @@ def _free_port():
 
 
 class Custody:
-    """Owned-process registry; created before any spawn."""
+    """Owned-process supervision; opened (start()) before any spawn.
+
+    Ownership = exact per-run token in /proc/<pid>/environ, inherited at
+    fork/exec, so no spawn-to-receipt gap exists. Reaping covers orphans via
+    the child-subreaper attribute held for the custody window.
+    """
 
     def __init__(self, token, state_dir, port):
         self.token = token
         self.state_dir = state_dir
         self.port = port
-        self.records = {}  # pid -> {"origin", "kind", "starttime"}
         self.popens = []
+        self.seen = {}  # pid -> starttime of every token-bearing process observed
+        self.pre_children = set()
+        self.subreaper = False
+        self.reaped = []
         self.report = {}
+
+    def start(self):
+        self.pre_children = set(_children_of(os.getpid()))
+        self.subreaper = _set_subreaper(True)
 
     def adopt_popen(self, popen, origin):
         self.popens.append(popen)
-        self._register(popen.pid, origin, "popen")
+        self.scan()
 
-    def _register(self, pid, origin, kind):
-        if pid in self.records:
-            return
-        starttime = _starttime(pid)
-        if starttime is not None and _has_token(pid, self.token):
-            self.records[pid] = {"origin": origin, "kind": kind, "starttime": starttime}
+    def scan(self):
+        """Live (non-zombie) token-bearing processes: pid -> starttime."""
+        me = os.getpid()
+        live = {}
+        for pid in _proc_pids():
+            if pid == me:
+                continue
+            starttime = _starttime(pid)
+            if starttime is None or not _has_token(pid, self.token):
+                continue
+            live[pid] = starttime
+            self.seen.setdefault(pid, starttime)
+        return live
 
     def invocation_lines(self):
         path = self.state_dir / "invocations.log"
@@ -249,33 +325,10 @@ class Custody:
             return []
         return [line.split() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
-    def sync(self):
-        for parts in self.invocation_lines():
-            if parts[0] == "daemon" and len(parts) == 3:
-                self._register(int(parts[1]), parts[2], "wrapper")
-            elif parts[0] == "child" and len(parts) == 4:
-                self._register(int(parts[2]), parts[3], "daemon")
-            elif parts[0] == "manager-spawn" and len(parts) == 3:
-                self._register(int(parts[1]), parts[2], "wrapper")
-
-    def verified_alive(self, pid):
-        record = self.records.get(pid)
-        return (
-            record is not None
-            and _starttime(pid) == record["starttime"]
-            and _has_token(pid, self.token)
-        )
-
-    def daemon_pids(self, origin=None):
-        return [
-            pid for pid, record in self.records.items()
-            if record["kind"] == "daemon" and (origin is None or record["origin"] == origin)
-        ]
-
     def serving(self):
-        """Origins of owned daemons holding the LISTEN socket, plus unowned inodes."""
+        """Origins of owned processes holding the LISTEN socket, plus unowned inodes."""
         inodes = _listen_inodes(self.port)
-        live = [pid for pid in self.daemon_pids() if self.verified_alive(pid)]
+        live = list(self.scan())
         owners = _socket_owner_pids(live, inodes)
         owned_inodes = set()
         for pid in owners:
@@ -291,56 +344,101 @@ class Custody:
                 if target.startswith("socket:["):
                     owned_inodes.add(target[8:-1])
         return {
-            "owners": sorted((self.records[pid]["origin"], pid) for pid in owners),
+            "owners": sorted((_origin(pid), pid) for pid in owners),
             "unowned_listen_inodes": sorted(inodes - owned_inodes),
         }
 
-    def _signal(self, pid, sig):
-        # Only verified owned PIDs are signalled; a race with a natural exit is tolerated.
-        if self.verified_alive(pid):
-            try:
+    def _signal_verified(self, pid, starttime, sig):
+        """Signal one owned process (its group too if it leads one), re-verified just before."""
+        if _starttime(pid) != starttime or not _has_token(pid, self.token):
+            return False
+        try:
+            if os.getpgid(pid) == pid:
+                os.killpg(pid, sig)  # verified owned group leader
+            else:
                 os.kill(pid, sig)
-            except ProcessLookupError:
-                pass
+        except ProcessLookupError:
+            return False
+        return True
+
+    def _reap_adopted(self):
+        """Reap zombie children adopted during the window; return live adopted non-owned pids."""
+        popen_pids = {popen.pid for popen in self.popens}
+        foreign_live = []
+        for pid, state in _children_of(os.getpid()).items():
+            if pid in self.pre_children or pid in popen_pids:
+                continue
+            if state == "Z":
+                try:
+                    if os.waitpid(pid, os.WNOHANG)[0] == pid:
+                        self.reaped.append(pid)
+                except ChildProcessError:
+                    pass
+            elif not _has_token(pid, self.token):
+                foreign_live.append(pid)
+        return foreign_live
+
+    def _terminate(self, sig, grace):
+        """Signal every live owned process, rescanning until none remain or the bound expires."""
+        signalled = set()
+        deadline = time.monotonic() + grace
+        while True:
+            live = self.scan()
+            self._reap_adopted()
+            if not live or time.monotonic() >= deadline:
+                return sorted(signalled)
+            for pid, starttime in live.items():
+                if self._signal_verified(pid, starttime, sig):
+                    signalled.add(pid)
+            for popen in self.popens:
+                popen.poll()
+            time.sleep(0.2)
 
     def teardown(self):
         """Terminate, escalate, reap and verify on every exit path."""
-        self.sync()
-        for popen in self.popens:
-            if popen.poll() is None and self.verified_alive(popen.pid):
+        try:
+            terminated = self._terminate(signal.SIGTERM, TERM_GRACE)
+            escalated = self._terminate(signal.SIGKILL, TERM_GRACE)
+            unreaped_popens = []
+            for popen in self.popens:
+                if popen.poll() is None:
+                    popen.kill()
                 try:
-                    if os.getpgid(popen.pid) == popen.pid:
-                        os.killpg(popen.pid, signal.SIGTERM)
-                    else:
-                        popen.terminate()
-                except ProcessLookupError:
-                    pass
-        for pid in list(self.records):
-            self._signal(pid, signal.SIGTERM)
-        deadline = time.monotonic() + TERM_GRACE
-        while time.monotonic() < deadline:
-            self.sync()
-            if not [pid for pid in self.records if self.verified_alive(pid)] and all(
-                popen.poll() is not None for popen in self.popens
-            ):
-                break
-            time.sleep(0.2)
-        escalated = []
-        for pid in list(self.records):
-            if self.verified_alive(pid):
-                escalated.append(pid)
-                self._signal(pid, signal.SIGKILL)
-        for popen in self.popens:
-            if popen.poll() is None:
-                popen.kill()
-            popen.wait(timeout=TERM_GRACE)
+                    popen.wait(timeout=TERM_GRACE)
+                except subprocess.TimeoutExpired:
+                    unreaped_popens.append(popen.pid)
+            deadline = time.monotonic() + TERM_GRACE
+            while True:
+                foreign_live = self._reap_adopted()
+                adopted_zombies = [
+                    pid for pid, state in _children_of(os.getpid()).items()
+                    if state == "Z" and pid not in self.pre_children
+                    and pid not in {popen.pid for popen in self.popens}
+                ]
+                if not adopted_zombies or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.2)
+        finally:
+            if self.subreaper:
+                _set_subreaper(False)
         deadline = time.monotonic() + LISTENER_CLOSE_TIMEOUT
         while time.monotonic() < deadline and (_listen_inodes(self.port) or _port_accepts(self.port)):
             time.sleep(0.2)
-        survivors = [pid for pid in self.records if self.verified_alive(pid)]
+        survivors = sorted(self.scan())
         listener_open = bool(_listen_inodes(self.port)) or _port_accepts(self.port)
-        self.report = {"escalated": escalated, "survivors": survivors, "listener_open": listener_open}
-        if survivors or listener_open:
+        self.report = {
+            "subreaper": self.subreaper,
+            "owned_seen": sorted(self.seen),
+            "terminated": terminated,
+            "escalated": escalated,
+            "reaped_adopted": sorted(self.reaped),
+            "unreaped_adopted_zombies": adopted_zombies,
+            "unreaped_popens": unreaped_popens,
+            "foreign_adopted_live_not_signalled": foreign_live,
+            "survivors": survivors,
+            "listener_open": listener_open,
+        }
+        if survivors or listener_open or adopted_zombies or unreaped_popens:
             raise AssertionError(f"{RECEIPT} teardown failed: {self.report!r}")
 
 
@@ -423,7 +521,6 @@ def _drive(base: Path, custody: Custody, *, login_exit: int, start_fail: bool) -
     # Resolve every installer-launched daemon: exit receipt or owned listener (bounded).
     deadline = time.monotonic() + RESOLVE_TIMEOUT
     while True:
-        custody.sync()
         lines = custody.invocation_lines()
         launched = [p for p in lines if p[0] == "daemon" and p[2] == "installer"]
         exited = {p[1] for p in lines if p[0] == "exit" and p[4] == "installer"}
@@ -483,6 +580,7 @@ def _scenario(base: Path, *, login_exit: int, start_fail: bool) -> dict:
     state.mkdir()
     custody = Custody(uuid.uuid4().hex, state, _free_port())  # registered before any spawn
     try:
+        custody.start()  # subreaper + pre-existing-children snapshot, before any spawn
         observed = _drive(base, custody, login_exit=login_exit, start_fail=start_fail)
     finally:
         custody.teardown()
