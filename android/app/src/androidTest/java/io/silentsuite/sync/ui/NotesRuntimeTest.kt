@@ -11,6 +11,7 @@ import android.view.View
 import android.widget.ListView
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
+import androidx.preference.ListPreference
 import androidx.preference.SwitchPreferenceCompat
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -20,6 +21,7 @@ import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.R
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.syncadapter.SyncStatusStore
@@ -80,16 +82,53 @@ class NotesRuntimeTest {
                     val toggle = notesToggle(activity)
                     assertTrue(toggle.isEnabled)
                     assertFalse(toggle.isChecked)
+                    // The two network rows under the switch: off with it, and showing the defaults.
+                    val automatic = notesNetworkRow(activity, "notes_automatic_network")
+                    val syncNow = notesNetworkRow(activity, "notes_sync_now_network")
+                    assertFalse("the automatic row is disabled while Notes is off", automatic.isEnabled)
+                    assertFalse("the Sync now row is disabled while Notes is off", syncNow.isEnabled)
+                    assertEquals("WIFI_ONLY", automatic.value)
+                    assertEquals("ANY_NETWORK", syncNow.value)
+                    assertEquals("the sentence under the automatic row is the one for its default",
+                        activity.getString(R.string.settings_notes_automatic_network_wifi), automatic.summary?.toString())
+                    assertEquals("the sentence under the Sync now row is the one for its default",
+                        activity.getString(R.string.settings_notes_sync_now_network_any), syncNow.summary?.toString())
                     toggle.performClick()
+                    assertTrue("the automatic row is enabled once Notes is on", automatic.isEnabled)
+                    assertTrue("the Sync now row is enabled once Notes is on", syncNow.isEnabled)
+                    // What the row's dialog does with a choice: ask the listener, then keep the value.
+                    assertTrue(automatic.callChangeListener("ANY_NETWORK"))
+                    automatic.value = "ANY_NETWORK"
+                    assertEquals("the sentence under the automatic row follows the accepted change",
+                        activity.getString(R.string.settings_notes_automatic_network_any), automatic.summary?.toString())
+                    assertTrue(syncNow.callChangeListener("WIFI_ONLY"))
+                    syncNow.value = "WIFI_ONLY"
+                    assertEquals("the sentence under the Sync now row follows the accepted change",
+                        activity.getString(R.string.settings_notes_sync_now_network_wifi), syncNow.summary?.toString())
+                    assertFalse("a value that is not a choice is refused", automatic.callChangeListener("SOMETHING"))
                 }
                 assertTrue(AccountSettings.notesEnabled(manager, second))
                 assertFalse("the sibling account keeps its own opt-in", AccountSettings.notesEnabled(manager, first))
                 assertEquals(listOf(Triple(second, "notes-settings-1", true)), effects)
+                assertEquals(NotesNetworkPolicy.Settings(NotesNetworkPolicy.Allowed.ANY_NETWORK, NotesNetworkPolicy.Allowed.WIFI_ONLY),
+                    AccountSettings.notesNetworkSettings(manager, second))
+                assertEquals("the sibling account keeps its own network settings",
+                    NotesNetworkPolicy.Settings.DEFAULT, AccountSettings.notesNetworkSettings(manager, first))
                 scenario.recreate()
                 val toggleAfterClick = AtomicReference("")
                 scenario.onActivity { activity ->
                     val toggle = notesToggle(activity)
                     assertTrue("the opt-in survives recreation", toggle.isChecked)
+                    val automatic = notesNetworkRow(activity, "notes_automatic_network")
+                    val syncNow = notesNetworkRow(activity, "notes_sync_now_network")
+                    // After recreation the preference library restores each row's own saved value. The
+                    // fresh screen opened after this one is what shows the read of the account row.
+                    assertEquals("after recreation the automatic row has the value the preference library saved", "ANY_NETWORK", automatic.value)
+                    assertEquals("after recreation the Sync now row has the value the preference library saved", "WIFI_ONLY", syncNow.value)
+                    assertEquals("the sentence under the automatic row after recreation",
+                        activity.getString(R.string.settings_notes_automatic_network_any), automatic.summary?.toString())
+                    assertEquals("the sentence under the Sync now row after recreation",
+                        activity.getString(R.string.settings_notes_sync_now_network_wifi), syncNow.summary?.toString())
                     toggle.performClick()
                     toggleAfterClick.set("checked=${toggle.isChecked} enabled=${toggle.isEnabled} selected=${activity.selectedAccount} " +
                         "exact=${activity.exactSelectedAccount()} raw=${manager.getUserData(second, AccountSettings.KEY_NOTES_ENABLED)}")
@@ -97,7 +136,30 @@ class NotesRuntimeTest {
                 assertEquals("turning Notes off routes through the same exact-account listener; ${toggleAfterClick.get()}",
                     listOf(Triple(second, "notes-settings-1", true), Triple(second, "notes-settings-1", false)), effects)
                 assertFalse("Notes stays enabled after turning it off; ${toggleAfterClick.get()}", AccountSettings.notesEnabled(manager, second))
+                scenario.onActivity { activity ->
+                    assertFalse("the automatic row is disabled again", notesNetworkRow(activity, "notes_automatic_network").isEnabled)
+                    assertFalse("the Sync now row is disabled again", notesNetworkRow(activity, "notes_sync_now_network").isEnabled)
+                }
+                assertEquals("turning Notes off keeps the network choices",
+                    NotesNetworkPolicy.Settings(NotesNetworkPolicy.Allowed.ANY_NETWORK, NotesNetworkPolicy.Allowed.WIFI_ONLY),
+                    AccountSettings.notesNetworkSettings(manager, second))
                 assertFalse(NotesSyncCoordinator.isPending(ExactAccountIdentity(second.type, second.name, "notes-settings-1")))
+            }
+            // A new screen for the same account has no saved state, so what its two rows show is what
+            // it read from the account row.
+            ActivityScenario.launch<AppSettingsActivity>(
+                AppSettingsActivity.newIntent(context, second, "notes-settings-1", SettingsCategory.ACCOUNT)
+            ).use { fresh ->
+                fresh.onActivity { activity ->
+                    val automatic = notesNetworkRow(activity, "notes_automatic_network")
+                    val syncNow = notesNetworkRow(activity, "notes_sync_now_network")
+                    assertEquals("a new screen shows the stored automatic choice", "ANY_NETWORK", automatic.value)
+                    assertEquals("a new screen shows the stored Sync now choice", "WIFI_ONLY", syncNow.value)
+                    assertEquals("a new screen shows the sentence for the stored automatic choice",
+                        activity.getString(R.string.settings_notes_automatic_network_any), automatic.summary?.toString())
+                    assertEquals("a new screen shows the sentence for the stored Sync now choice",
+                        activity.getString(R.string.settings_notes_sync_now_network_wifi), syncNow.summary?.toString())
+                }
             }
         } finally {
             AppSettingsActivity.notesToggleEffectOverride = null
@@ -396,6 +458,12 @@ class NotesRuntimeTest {
         activity.supportFragmentManager.executePendingTransactions()
         val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content) as AppSettingsActivity.CategoryFragment
         return fragment.findPreference("notes_enabled")!!
+    }
+
+    private fun notesNetworkRow(activity: AppSettingsActivity, key: String): ListPreference {
+        activity.supportFragmentManager.executePendingTransactions()
+        val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content) as AppSettingsActivity.CategoryFragment
+        return fragment.findPreference<ListPreference>(key)!!
     }
 
     private fun notebookListPosition(scenario: ActivityScenario<NotesActivity>): Int {

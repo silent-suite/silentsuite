@@ -267,6 +267,9 @@ class NotesSyncBoundaryRuntimeTest {
     @Test fun aSameNameAccountThatReplacedTheOldOneGetsNothingFromTheOldRunsInFlightRequests() {
         val name = "notes-boundary-${System.nanoTime()}@example.invalid"
         val account = newAccount("gen-1", name, discoveryKey = false)
+        // Both Notes network settings are moved off their defaults for the account that will be replaced.
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
         val notebook = uploadNotebook("Shared before the swap")
         // Three pages of notes.
         uploadNotes(notebook, "One", "Two", "Three", "Four", "Five")
@@ -277,6 +280,8 @@ class NotesSyncBoundaryRuntimeTest {
         NotesSyncCoordinator.request(context, account, "gen-1", NotesSyncPolicy.Trigger.MANUAL)
         listing.awaitArrival()
         replaceAccount(account, "gen-2")
+        assertEquals("the replacement starts from the default network settings",
+            NotesNetworkPolicy.Settings.DEFAULT, AccountSettings.notesNetworkSettings(manager, account))
         listing.release()
         assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
         assertNull("no list cursor was saved", listCursor(account))

@@ -12,5 +12,7 @@
     <Preference android:key="manage_account" android:title="@string/settings_account_dashboard" android:summary="@string/settings_account_dashboard_summary" android:persistent="false" />
     <PreferenceCategory android:title="@string/settings_experimental_title">
         <SwitchPreferenceCompat android:key="notes_enabled" android:title="@string/settings_notes_enabled" android:summary="@string/settings_notes_enabled_summary" android:persistent="false" />
+        <ListPreference android:key="notes_automatic_network" android:persistent="false" android:dependency="notes_enabled" android:title="@string/settings_notes_automatic_network" android:entries="@array/settings_notes_network_names" android:entryValues="@array/settings_notes_network_values" />
+        <ListPreference android:key="notes_sync_now_network" android:persistent="false" android:dependency="notes_enabled" android:title="@string/settings_notes_sync_now_network" android:entries="@array/settings_notes_network_names" android:entryValues="@array/settings_notes_network_values" />
     </PreferenceCategory>
 </PreferenceScreen>
