@@ -46,6 +46,12 @@ export interface VTodo {
   url?: string;
   /** CATEGORIES (RFC 5545) — comma-separated user labels */
   categories?: string[];
+  /** Unsupported VTODO property lines (logical, unfolded), kept for round trip.
+   *  Absent when there are none. Revalidated when generating. */
+  unknownProperties?: string[];
+  /** Unsupported VTODO subcomponents such as VALARM: one array of logical
+   *  lines per complete BEGIN..END block. Absent when there are none. */
+  unknownComponents?: string[][];
 }
 
 export interface VAlarm {
@@ -409,34 +415,44 @@ export function generateVEvent(event: VEvent): string {
  */
 export function parseVTodo(ical: string): VTodo {
   const trimmed = ical.trimStart();
+  let lines: string[];
   if (trimmed.startsWith('BEGIN:VCALENDAR')) {
-    // Extract the first VTODO block from the VCALENDAR wrapper
-    const match = trimmed.match(/BEGIN:VTODO[\s\S]*?END:VTODO/);
-    if (!match) {
+    // Extract the first VTODO by whole logical lines after unfolding, so a
+    // marker-like substring inside a value cannot end the component early.
+    const all = unfoldLines(trimmed).split(/\r?\n/);
+    const start = all.findIndex((l) => /^BEGIN:VTODO\s*$/i.test(l));
+    const end = start === -1 ? -1 : all.findIndex((l, i) => i > start && /^END:VTODO\s*$/i.test(l));
+    if (end === -1) {
       throw new Error('VCALENDAR contains no VTODO component');
     }
-    ical = match[0];
+    lines = all.slice(start, end + 1).filter((l) => l.length > 0);
+  } else {
+    lines = unfoldLines(ical).split(/\r?\n/).filter((l) => l.length > 0);
   }
 
-  const unfolded = unfoldLines(ical);
-  const lines = unfolded.split(/\r?\n/).filter((l) => l.length > 0);
-
   const todo: VTodo = { uid: '' };
+  const unknownProperties: string[] = [];
+  const unknownComponents: string[][] = [];
 
   // Lines inside a nested component (VALARM or any other) belong to that
-  // component, not to the VTODO, so they are skipped. `depth` counts open
-  // nested blocks; an unclosed block hides the rest of the VTODO.
+  // component, not to the VTODO, so they are never read as task fields.
+  // `depth` counts open nested blocks; an unclosed block hides the rest of
+  // the VTODO. Each complete top-level block is kept whole if it is valid.
   let depth = 0;
+  let block: string[] = [];
   for (const line of lines) {
     const marker = /^(BEGIN|END):/i.exec(line)?.[1]?.toUpperCase();
     if (depth > 0) {
+      block.push(line);
       if (marker === 'BEGIN') depth++;
       else if (marker === 'END') depth--;
+      if (depth === 0 && isRetainableTodoComponent(block)) unknownComponents.push(block);
       continue;
     }
     if (/^(BEGIN|END):VTODO\s*$/i.test(line)) continue;
     if (marker === 'BEGIN') {
       depth++;
+      block = [line];
       continue;
     }
 
@@ -490,8 +506,13 @@ export function parseVTodo(ical: string): VTodo {
       case 'CATEGORIES':
         todo.categories = splitCommaValues(prop.value).map((c) => c.trim()).filter((c) => c.length > 0);
         break;
+      default:
+        if (isRetainableTodoProperty(line, false)) unknownProperties.push(line);
     }
   }
+
+  if (unknownProperties.length > 0) todo.unknownProperties = unknownProperties;
+  if (unknownComponents.length > 0) todo.unknownComponents = unknownComponents;
 
   // Input validation
   if (!todo.uid) {
@@ -502,6 +523,159 @@ export function parseVTodo(ical: string): VTodo {
   }
 
   return todo;
+}
+
+// ── Retained VTODO content (WEBX-03) ──
+// Unsupported VTODO lines are kept opaque across edits. The same checks run on
+// parse and on generate, so raw arrays supplied by callers cannot inject
+// framing, parent identity or modelled fields.
+
+/** VTODO properties the model writes itself; never kept as raw lines on the VTODO. */
+const TODO_MODELLED_PROPERTIES = new Set([
+  'UID', 'SUMMARY', 'DESCRIPTION', 'DTSTART', 'DUE', 'PRIORITY', 'STATUS', 'COMPLETED',
+  'CREATED', 'LAST-MODIFIED', 'PERCENT-COMPLETE', 'LOCATION', 'URL', 'CATEGORIES',
+]);
+
+/** Component types that may never appear inside a VTODO, at any depth. */
+const TODO_FORBIDDEN_COMPONENTS = new Set(['VCALENDAR', 'VEVENT', 'VTODO', 'VJOURNAL', 'VFREEBUSY', 'VTIMEZONE']);
+
+/** TAB is the only control character allowed; CR or LF could inject lines. */
+const RETAINED_CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f]/;
+
+/** Whether a raw logical line is a safe property line to keep. `allowModelled`
+ *  is true inside a subcomponent, where names like DESCRIPTION are its own. */
+function isRetainableTodoProperty(line: unknown, allowModelled: boolean): line is string {
+  if (typeof line !== 'string' || RETAINED_CONTROL_CHARS.test(line)) return false;
+  const colonIdx = findPropertyColon(line);
+  if (colonIdx === line.length) return false;
+  const left = line.slice(0, colonIdx);
+  if ((left.match(/"/g) ?? []).length % 2 !== 0) return false;
+  const semiIdx = left.indexOf(';');
+  const rawName = semiIdx === -1 ? left : left.slice(0, semiIdx);
+  if (!/^[A-Za-z0-9-]+$/.test(rawName)) return false;
+  const name = rawName.toUpperCase();
+  if (name === 'BEGIN' || name === 'END') return false;
+  return allowModelled || !TODO_MODELLED_PROPERTIES.has(name);
+}
+
+/** Whether an array is exactly one complete, name-matched block with valid lines. */
+function isRetainableTodoComponent(block: unknown): block is string[] {
+  if (!Array.isArray(block) || block.length < 2) return false;
+  const open: string[] = [];
+  for (let i = 0; i < block.length; i++) {
+    const line: unknown = block[i];
+    if (typeof line !== 'string' || RETAINED_CONTROL_CHARS.test(line)) return false;
+    if (/^(BEGIN|END):/i.test(line)) {
+      const match = /^(BEGIN|END):([A-Za-z0-9-]+)$/i.exec(line);
+      if (!match) return false;
+      const name = match[2]!.toUpperCase();
+      if (match[1]!.toUpperCase() === 'BEGIN') {
+        if (TODO_FORBIDDEN_COMPONENTS.has(name) || (i > 0 && open.length === 0)) return false;
+        open.push(name);
+      } else {
+        if (open.pop() !== name) return false;
+        if (open.length === 0 && i !== block.length - 1) return false;
+      }
+    } else if (open.length === 0 || !isRetainableTodoProperty(line, true)) {
+      return false;
+    }
+  }
+  return open.length === 0;
+}
+
+type RetainedDateForm = { date: boolean; floating: boolean };
+
+/** DATE vs DATE-TIME, and floating (no UTC designator, no TZID) for DATE-TIME. */
+function retainedDateForm(value: string, params: Record<string, string> | undefined): RetainedDateForm {
+  const date = (params?.['VALUE'] ?? '').toUpperCase() === 'DATE' || /^\d{8}$/.test(value);
+  return { date, floating: !date && !/Z$/i.test(value) && !params?.['TZID'] };
+}
+
+/** RRULE UNTIL must have the DTSTART value type: DATE, floating local time, or UTC for UTC/TZID starts. */
+function untilMatchesStart(rrule: string, start: RetainedDateForm): boolean {
+  const until = rrule.split(';').find((part) => /^UNTIL=/i.test(part))?.slice(6);
+  if (until === undefined) return true;
+  if (start.date) return /^\d{8}$/.test(until);
+  if (start.floating) return /^\d{8}T\d{6}$/.test(until);
+  return /^\d{8}T\d{6}Z$/i.test(until);
+}
+
+/** Whether a retained VALARM still has the anchor its TRIGGER needs. Other components have no rule. */
+function alarmAnchored(block: string[], hasStart: boolean, hasDue: boolean, durationWritten: boolean): boolean {
+  if (!/^BEGIN:VALARM$/i.test(block[0]!)) return true;
+  let depth = 0;
+  for (const line of block) {
+    if (/^BEGIN:/i.test(line)) { depth++; continue; }
+    if (/^END:/i.test(line)) { depth--; continue; }
+    if (depth !== 1) continue;
+    const trigger = parseProperty(line);
+    if (trigger.name !== 'TRIGGER') continue;
+    if ((trigger.params['VALUE'] ?? '').toUpperCase() === 'DATE-TIME') return true;
+    if ((trigger.params['RELATED'] ?? '').toUpperCase() === 'END') return hasDue || (hasStart && durationWritten);
+    return hasStart;
+  }
+  return true;
+}
+
+/**
+ * Retained lines to write for a VTODO: valid properties (source order), then
+ * valid components (source order), minus temporal content whose anchor the
+ * written DTSTART/DUE no longer supports. Inputs are never changed.
+ */
+function retainedTodoLines(todo: VTodo): string[] {
+  const start = todo.dtstart ? retainedDateForm(todo.dtstart, todo.dtstartParams) : undefined;
+  const hasDue = !!todo.due;
+  const properties = (todo.unknownProperties ?? []).filter((line) => {
+    if (!isRetainableTodoProperty(line, false)) return false;
+    const { name, params, value } = parseProperty(line);
+    switch (name) {
+      case 'DURATION':
+        // RFC 5545: DURATION needs DTSTART and excludes DUE; a DATE start allows days/weeks only.
+        return !!start && !hasDue && (!start.date || !/T/i.test(value));
+      case 'RRULE':
+        return !!start && untilMatchesStart(value, start);
+      case 'RDATE':
+      case 'EXDATE':
+        return !!start;
+      case 'RECURRENCE-ID': {
+        // RFC 5545 §3.8.4.4: same value type as DTSTART, floating if and only if DTSTART is.
+        // Kept verbatim: it names the original occurrence, never compared with DTSTART.
+        if (!start) return false;
+        const id = retainedDateForm(value, params);
+        return id.date === start.date && (id.date || id.floating === start.floating);
+      }
+      default:
+        return true;
+    }
+  });
+  const durationWritten = properties.some((line) => parseProperty(line).name === 'DURATION');
+  const components = (todo.unknownComponents ?? []).filter(
+    (block) => isRetainableTodoComponent(block) && alarmAnchored(block, !!start, hasDue, durationWritten),
+  );
+  return [...properties, ...components.flat()];
+}
+
+/** Fold a retained line at code-point boundaries: at most 75 UTF-8 octets per
+ *  physical line, counting the leading space of each continuation line. */
+function foldRetainedLine(line: string): string {
+  const parts: string[] = [];
+  let current = '';
+  let octets = 0;
+  let limit = 75;
+  for (const ch of line) {
+    const cp = ch.codePointAt(0)!;
+    const size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    if (octets + size > limit) {
+      parts.push(current);
+      current = '';
+      octets = 0;
+      limit = 74;
+    }
+    current += ch;
+    octets += size;
+  }
+  parts.push(current);
+  return parts.join('\r\n ');
 }
 
 /**
@@ -549,6 +723,8 @@ export function generateVTodo(todo: VTodo): string {
   if (todo.categories && todo.categories.length > 0) {
     lines.push(foldLine(`CATEGORIES:${todo.categories.map(escapeText).join(',')}`));
   }
+
+  for (const line of retainedTodoLines(todo)) lines.push(foldRetainedLine(line));
 
   lines.push('END:VTODO');
   return lines.join('\r\n');
