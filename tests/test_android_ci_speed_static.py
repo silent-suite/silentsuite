@@ -334,21 +334,21 @@ def _without_admission(job: dict) -> dict:
 
 
 # The first approved runtime-job change since both predecessors: the focused runtime ledger grew from 172 to
-# 180 methods, seven in a new fresh-emulator API 36 launcher-recovery shard that API 29 runs with its
-# account-dashboard shard (#898), and one Notes startup sweep case in status-routes. Only the matrix row after
-# API 36 first-run-setup and these four exact lines of the runtime job's final assertion are carried forward;
-# every other byte must still match.
+# 185 methods, seven in a new fresh-emulator API 36 launcher-recovery shard that API 29 runs with its
+# account-dashboard shard (#898), one Notes startup sweep case and five Notes account-removal cases in
+# status-routes. Only the matrix row after API 36 first-run-setup and these four exact lines of the runtime job's
+# final assertion are carried forward; every other byte must still match.
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':73,'29:sibling-routes':48,'35:all':180,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':73}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':78,'29:sibling-routes':48,'35:all':185,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':78}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "if len(canonical) != 180 or len(expected) != expected_sizes[key]:\n",
+        "if len(canonical) != 185 or len(expected) != expected_sizes[key]:\n",
     ),
     (
         "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
@@ -598,7 +598,7 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
         ("'36:account-dashboard':33", "'36:account-dashboard':34"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) != 180 or", "if len(canonical) < 180 or"),
+        ("if len(canonical) != 185 or", "if len(canonical) < 185 or"),
         ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
     ):
         mutated = copy.deepcopy(current)

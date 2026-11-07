@@ -6,6 +6,10 @@
 # cleared and the package is never removed between steps; the reinstall pair reads legacy persisted
 # state across an in-place reinstall of the same debug-signed APK (an emulator existing-install
 # fixture with legacy state, not an old-version binary upgrade and not release signing).
+#
+# The same boundary first gates the Notes account-removal allowance, which lives only in the app
+# process that made it: a slot minted in one process is refused in the next. Its steps have their
+# own test class, output and exact inventory, run before the registry's, and end with a cleanup step.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,15 +22,18 @@ api_level="${1:?usage: run-registry-process-boundary.sh API_LEVEL}"
 package="io.silentsuite.android"
 test_class="io.silentsuite.sync.ui.setup.RegistryProcessBoundaryRuntimeTest"
 output="app/build/outputs/androidTest-results/registry-process-boundary"
+notes_class="io.silentsuite.sync.ui.NotesRemovalProcessBoundaryRuntimeTest"
+notes_output="app/build/outputs/androidTest-results/notes-removal-process-boundary"
 
 command -v timeout >/dev/null 2>&1
-rm -rf -- "${output}"
-mkdir -p -- "${output}"
+rm -rf -- "${output}" "${notes_output}"
+mkdir -p -- "${output}" "${notes_output}"
 
-# The inventory is written on every exit path, so an early failure is recorded, not absent.
+# The inventories are written on every exit path, so an early failure is recorded, not absent.
 write_inventory() {
   status=$?
   trap - EXIT
+  python3 "${script_dir}/check-notes-removal-process-boundary.py" "${notes_output}" "${api_level}" || status=1
   python3 "${script_dir}/check-registry-process-boundary.py" "${output}" "${api_level}" || status=1
   exit "${status}"
 }
@@ -69,9 +76,29 @@ run_step() {
   tr -d '\r' < "${output}/${step}.txt" | tail -n 5
 }
 
+# A Notes removal step: the same separate invocation in a terminated app process, recorded for its
+# own checker. A failed step, or an app process that would not stop, fails that step and never stops
+# the steps after it, so the cleanup step always runs.
+run_notes_step() {
+  local step="$1" method="$2" command_status=0
+  terminate_app_process || command_status=$?
+  timeout --signal=TERM --kill-after=10s 300s \
+    adb shell am instrument -w -r \
+      -e class "${notes_class}#${method}" \
+      "${component}" > "${notes_output}/${step}.txt" 2>&1 || command_status=$?
+  printf '%s\n' "${command_status}" > "${notes_output}/${step}.exit"
+  tr -d '\r' < "${notes_output}/${step}.txt" | tail -n 5
+}
+
 install_times() {
   adb shell dumpsys package "${package}" | tr -d '\r' | grep -E '^\s*(firstInstallTime|lastUpdateTime)=' | sed 's/^\s*//'
 }
+
+# Notes first: the registry's last pair leaves an unreadable registry behind.
+run_notes_step control controlRemovesTheRowWithASlotMintedInTheSameProcess
+run_notes_step write writerMintsAnAllowanceAndStopsBeforeTheAnswer
+run_notes_step read readerInAFreshProcessIsRefusedWithTheSameVerdictAndFingerprint
+run_notes_step cleanup cleanupGivesNotesPendingItsModeBackAndRemovesTheRows
 
 run_step empty-write writerCommitsEmptyRegistryThroughProductionStore
 run_step empty-read readerLoadsEmptyRegistryInFreshProcess
