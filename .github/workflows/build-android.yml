@@ -254,7 +254,7 @@ jobs:
             cd android &&
             ./gradlew cert4android:connectedDebugAndroidTest --no-daemon
             -PrequireConscryptR28=true
-            -Pandroid.testInstrumentationRunnerArguments.class=at.bitfire.cert4android.ConscryptProviderRuntimeTest
+            -Pandroid.testInstrumentationRunnerArguments.class=at.bitfire.cert4android.ConscryptProviderRuntimeTest,at.bitfire.cert4android.AndroidxU3BindingLifecycleTest
 
       - name: Assert Conscrypt runtime methods executed
         if: always()
