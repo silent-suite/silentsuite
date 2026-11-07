@@ -9,8 +9,8 @@
         <item quantity="other">Recent activity: %d items</item>
     </plurals>
     <plurals name="notes_sign_out_unsynced">
-        <item quantity="one">You have %d unsynced Notes change on this device. Try Sync now before signing out. Signing out without syncing will permanently delete this change from this device.</item>
-        <item quantity="other">You have %d unsynced Notes changes on this device. Try Sync now before signing out. Signing out without syncing will permanently delete these changes from this device.</item>
+        <item quantity="one">You have %d unsynced Notes change on this device. Try Sync now before signing out. It may not run on this network. Signing out without syncing will permanently delete this change from this device.</item>
+        <item quantity="other">You have %d unsynced Notes changes on this device. Try Sync now before signing out. It may not run on this network. Signing out without syncing will permanently delete these changes from this device.</item>
     </plurals>
     <plurals name="notes_discard_text">
         <item quantity="one">%d unsynced Notes change will be permanently deleted from this device. This cannot be undone.</item>
