@@ -170,6 +170,7 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
                 viewModelScope.launch(Dispatchers.IO) {
                     GuardedRecoveryRemoval.begin(
                         allows = { hold -> GuardedRecoveryRemoval.allowsOnDevice(appContext, account, hold) },
+                        exact = { GuardedRecoveryRemoval.exactOnDevice(appContext, account, creationId) },
                         remove = { done ->
                             val cleared = NotesRemovalNotice.clearAfter(appContext, done)
                             AndroidCompat.removeAccount(manager, account, cleared)
