@@ -287,7 +287,10 @@ def test_streamed_overflow_stops_receiving_and_never_decodes(prod_app, settings,
     settings.ETEBASE_MAX_REQUEST_BYTES = SELECTED_DEFAULT
     if case == "auth":
         path, limit = LOGIN_CHALLENGE, AUTH_LIMIT
-        chunks = _split(_username_body(8 * 16 * KIB), 16 * KIB)
+        # A normal username; the excess bytes sit in a field LoginChallengeIn ignores,
+        # so the unbounded baseline answers user_not_found instead of a database error.
+        body = msgpack_encode({"username": "nobody-request-limits", "padding": b"\x00" * (8 * 16 * KIB)})
+        chunks = _split(body, 16 * KIB)
     else:
         path, limit = f"{COLLECTION_PREFIX}/{owner.collection.uid}/item/batch/", SELECTED_DEFAULT
         body = msgpack_encode(
