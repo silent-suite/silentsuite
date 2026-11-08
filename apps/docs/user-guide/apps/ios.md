@@ -6,7 +6,7 @@ SilentSuite does not currently support iOS native sync. A native SilentSuite iOS
 
 ## What works today
 
-You can use the [SilentSuite web app](https://app.silentsuite.io) in a browser on iPhone or iPad. This does not sync SilentSuite data into the native iOS Calendar, Contacts, or Reminders apps.
+You can use the [SilentSuite web app](https://app.silentsuite.io) in a browser on iPhone or iPad, and [add it to your Home Screen](./web.md#install-on-iphone-or-ipad). This does not sync SilentSuite data into the native iOS Calendar, Contacts, or Reminders apps.
 
 On a Mac, the [SilentSuite DAV Bridge](./dav-bridge.md) connects supported desktop apps such as Apple Calendar and Contacts. The Bridge is a desktop option and does not run on iPhone or iPad.
 

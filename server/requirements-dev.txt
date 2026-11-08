@@ -4,7 +4,7 @@
 #
 #    pip-compile --output-file=requirements-dev.txt requirements.in/development.txt
 #
-anyio==4.14.1
+anyio==4.14.2
     # via
     #   -c requirements.txt
     #   httpx2
@@ -22,7 +22,7 @@ click==8.4.2
     #   pip-tools
 coverage==7.14.3
     # via -r requirements.in/development.txt
-django==5.2.15
+django==5.2.19
     # via
     #   -c requirements.txt
     #   django-stubs
@@ -79,7 +79,7 @@ pywatchman==4.0.0
     # via -r requirements.in/development.txt
 ruff==0.15.20
     # via -r requirements.in/development.txt
-sqlparse==0.5.5
+sqlparse==0.6.1
     # via
     #   -c requirements.txt
     #   django
