@@ -43,6 +43,20 @@ describe('formatDate', () => {
   ] as const)('formats %s', (format, expected) => {
     expect(formatDate(date, format)).toBe(expected)
   })
+
+  it('formats an offset-free local date-time string', () => {
+    expect(formatDate('2026-06-09T12:00:00', 'YYYY-MM-DD')).toBe('2026-06-09')
+  })
+
+  it('formats a numeric timestamp', () => {
+    expect(formatDate(new Date(2026, 5, 9, 12).getTime(), 'DD/MM/YYYY')).toBe('09/06/2026')
+  })
+
+  it('falls back to default format when format is omitted', () => {
+    expect(formatDate(date)).toBe(
+      date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }),
+    )
+  })
 })
 
 describe('startOfWeek', () => {
