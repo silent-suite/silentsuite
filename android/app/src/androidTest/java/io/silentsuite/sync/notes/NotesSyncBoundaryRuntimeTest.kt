@@ -2650,6 +2650,18 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("the rows that were compared", NoteMetaBindingComparison.expectedCompared(sdk), report.compared)
         assertEquals("the notebook never reached the server", emptySet<String>(), fake.collectionUids())
         assertEquals("no request names the notebook", emptyList<String>(), fake.requests.filter { notebook.uid in it })
+
+        // Issue 974, additive characterization of Collection.meta (not item metadata). Every assertion above
+        // is unchanged and runs first. The probe's collections are made from raw bytes and never uploaded.
+        CollectionMetaRoundTripProbe.selfCheck()
+        val requestsBeforeProbe = fake.requests.size
+        val probe = CollectionMetaRoundTripProbe.run(colMgr)
+        assertEquals(probe.text(), 0, probe.differences.size)
+        assertEquals("the collection cases that were compared", CollectionMetaRoundTripProbe.CASE_COUNT, probe.compared)
+        assertEquals("the collection probe sent nothing", requestsBeforeProbe, fake.requests.size)
+        assertEquals("no probe collection reached the server", emptySet<String>(), fake.collectionUids())
+        assertEquals("no request names a probe collection", emptyList<String>(),
+            fake.requests.filter { request -> probe.uids.any { it in request } })
     }
 
     // ---- helpers ----
