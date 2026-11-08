@@ -149,6 +149,7 @@ jobs:
             etebase_server/fastapi/test_collection_route_contracts.py \
             etebase_server/fastapi/test_item_list_queryset.py \
             etebase_server/fastapi/test_authentication.py \
+            etebase_server/fastapi/test_request_body_limits.py \
             -v --tb=short
 
       - name: Verify Docker secret exclusions
