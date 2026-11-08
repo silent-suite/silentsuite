@@ -66,7 +66,7 @@ def _only_step_running(job_name: str, needle: str) -> dict:
 
 
 def _pip_audit_steps() -> list[dict]:
-    return [step for step in _steps("test-server") if "pip-audit " in _run(step)]
+    return [step for step in _steps("test-server") if re.search(r"pip-audit[\"']?\s", _run(step))]
 
 
 def _trivy_steps() -> list[dict]:
