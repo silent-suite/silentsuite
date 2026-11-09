@@ -45,7 +45,7 @@ class CollectionMetaCodecTest {
         val result = NoteMetaCodec.mergeCollection(raw, "Calendar", "Work", 10L, "#abcdef")
         assertTrue(result is NoteMetaCodec.Merge.Merged)
         assertEquals(
-            "86a474797065a174a17801a46e616d65a843616c656e646172a56d74696d650aa b6465736372697074696f6ea4576f726ba5636f6c6f72a723616263646566".replace(" ", ""),
+            "86a474797065a174a17801a46e616d65a843616c656e646172a56d74696d650aab6465736372697074696f6ea4576f726ba5636f6c6f72a723616263646566",
             hex((result as NoteMetaCodec.Merge.Merged).bytes),
         )
     }
