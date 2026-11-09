@@ -593,7 +593,17 @@ class EditCollectionFragment : Fragment() {
                     activity?.finish()
                     return@launch
                 }
-                collectionModel.loadCollection(applicationContext, identity.account, identity.creationId, model.value!!, colUid)
+                // This ViewModel is already initialized for the same UID, so loadCollection() is a no-op.
+                // Read the just-uploaded cache entry and publish it explicitly; otherwise the next Edit
+                // screen reuses the pre-save CachedCollection and shows stale metadata (including the old name).
+                val refreshedCollection = withContext(Dispatchers.IO) {
+                    val holder = model.value ?: return@withContext null
+                    if (holder.account != identity.account) return@withContext null
+                    synchronized(holder.etebaseLocalCache) {
+                        holder.etebaseLocalCache.collectionGet(holder.colMgr, colUid)
+                    }
+                } ?: throw CollectionMetadataWriteException("The saved collection could not be reloaded from the local cache.")
+                collectionModel.setCollection(refreshedCollection)
                 if (isCreating) {
                     // Load the items since we just created it
                     itemsModel.loadItems(applicationContext, identity.account, identity.creationId, colUid, model.value!!, cachedCollection)
