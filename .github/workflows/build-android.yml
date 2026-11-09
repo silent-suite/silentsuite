@@ -127,8 +127,12 @@ jobs:
             while [ "$attempt" -le 3 ]; do
               echo "::group::Install $package (attempt $attempt/3)"
               # A failed sdkmanager download can leave a partial archive in the SDK temp
-              # directory. Remove only the incomplete package staging data before retrying.
-              rm -rf "$ANDROID_HOME/temp" "$ANDROID_HOME/ndk/28.2.13676358"
+              # directory. Remove staging data before retrying; never remove an already
+              # installed NDK while installing the separate CMake package.
+              rm -rf "$ANDROID_HOME/temp"
+              if [ "$package" = "ndk;28.2.13676358" ]; then
+                rm -rf "$ANDROID_HOME/ndk/28.2.13676358"
+              fi
               set +e
               yes | "$SDKMANAGER" --install "$package"
               sdk_status="${PIPESTATUS[1]}"
