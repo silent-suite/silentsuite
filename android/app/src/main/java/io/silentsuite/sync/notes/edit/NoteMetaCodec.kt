@@ -104,7 +104,8 @@ internal object NoteMetaCodec {
      */
     fun mergeCollection(raw: ByteArray?, name: String, description: String?, mtime: Long, color: String?): Merge {
         val scan = try {
-            scan(raw)
+            // A new collection may not have encoded metadata yet; there is nothing to lose.
+            scan(if (raw == null || raw.isEmpty()) EMPTY_MAP else raw)
         } catch (e: Malformed) {
             return Merge.NotAMap(e.message ?: "malformed")
         }
