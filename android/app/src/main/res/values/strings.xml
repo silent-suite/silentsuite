@@ -474,10 +474,11 @@
     <string name="settings_sync_wifi_only">Sync over WiFi only</string>
     <string name="settings_sync_wifi_only_on">Synchronization is restricted to WiFi connections</string>
     <string name="settings_sync_wifi_only_off">Connection type is not taken into consideration</string>
-    <string name="settings_sync_wifi_only_ssid">WiFi SSID restriction</string>
-    <string name="settings_sync_wifi_only_ssid_on">Will only synchronize over %s</string>
-    <string name="settings_sync_wifi_only_ssid_off">All WiFi connections may be used</string>
-    <string name="settings_sync_wifi_only_ssid_message">Enter the name of a WiFi network (SSID) to restrict synchronization to this network, or leave blank for all WiFi connections.</string>
+    <string name="settings_sync_wifi_only_ssid">Saved WiFi network</string>
+    <string name="settings_sync_wifi_only_ssid_blocked">Sync over WiFi only pauses automatic sync while %s is saved: Android hides WiFi network names from apps without location access, which SilentSuite does not ask for. Tap to remove.</string>
+    <string name="settings_sync_wifi_only_ssid_remove_title">Remove saved network?</string>
+    <string name="settings_sync_wifi_only_ssid_remove_message">Automatic sync will run on any WiFi network. A network name cannot be added again.</string>
+    <string name="settings_sync_wifi_only_ssid_remove">Remove</string>
     <string name="settings_carddav">Contacts</string>
     <string name="settings_caldav">Calendar</string>
     <string name="settings_taskdav">Tasks</string>
