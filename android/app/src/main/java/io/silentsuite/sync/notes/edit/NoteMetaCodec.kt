@@ -58,6 +58,8 @@ internal object NoteMetaCodec {
 
     private val NAME = "name".toByteArray(Charsets.UTF_8)
     private val MTIME = "mtime".toByteArray(Charsets.UTF_8)
+    private val DESCRIPTION = "description".toByteArray(Charsets.UTF_8)
+    private val COLOR = "color".toByteArray(Charsets.UTF_8)
     private val EMPTY_MAP = byteArrayOf(0x80.toByte())
 
     fun merge(raw: ByteArray?, name: String, mtime: Long): Merge {
@@ -92,6 +94,54 @@ internal object NoteMetaCodec {
             writeInt(out, mtime)
         }
         return Merge.Merged(out.toByteArray(), written)
+    }
+
+    /**
+     * Merges the shared collection editor's fields into the server-provided raw metadata.
+     * Unknown fields and values are retained byte-for-byte. A null color means that this
+     * collection type has no color editor (address books), so the stored color is preserved.
+     * Ambiguous or malformed metadata is refused; callers must not fall back to typed writes.
+     */
+    fun mergeCollection(raw: ByteArray?, name: String, description: String?, mtime: Long, color: String?): Merge {
+        val scan = try {
+            scan(raw)
+        } catch (e: Malformed) {
+            return Merge.NotAMap(e.message ?: "malformed")
+        }
+        val replacements = mutableListOf(
+            Triple(scan.name, 0, wellFormed(name) as Any?),
+            Triple(scan.mtime, 1, mtime as Any?),
+            Triple(scan.description, 2, description?.let(::wellFormed) as Any?),
+        )
+        if (color != null) replacements += Triple(scan.color, 3, wellFormed(color) as Any?)
+        for ((slot, _, _) in replacements) {
+            if (slot.aliases > 0) return Merge.Refused(slot.key, Why.ALIASED)
+            if (slot.plain > 1) return Merge.Refused(slot.key, Why.REPEATED)
+        }
+        val bytes = scan.bytes
+        val out = ByteArrayOutputStream(bytes.size + name.length * 3 + (description?.length ?: 0) * 3 + 64)
+        writeMapHeader(out, scan.count + replacements.count { it.first.plain == 0 })
+        val present = replacements.filter { it.first.plain == 1 }.sortedBy { it.first.valueStart }
+        var from = scan.bodyStart
+        for ((slot, kind, value) in present) {
+            out.write(bytes, from, slot.valueStart - from)
+            when (kind) {
+                0, 3 -> writeString(out, value as String)
+                1 -> writeInt(out, value as Long)
+                2 -> if (value == null) out.write(0xc0) else writeString(out, value as String)
+            }
+            from = slot.valueEnd
+        }
+        out.write(bytes, from, bytes.size - from)
+        for ((slot, kind, value) in replacements.filter { it.first.plain == 0 }) {
+            writeString(out, slot.key)
+            when (kind) {
+                0, 3 -> writeString(out, value as String)
+                1 -> writeInt(out, value as Long)
+                2 -> if (value == null) out.write(0xc0) else writeString(out, value as String)
+            }
+        }
+        return Merge.Merged(out.toByteArray(), wellFormed(name))
     }
 
     /**
@@ -164,9 +214,14 @@ internal object NoteMetaCodec {
     private class Scan(val bytes: ByteArray, val count: Long, val bodyStart: Int) {
         val name = Slot("name")
         val mtime = Slot("mtime")
+        val description = Slot("description")
+        val color = Slot("color")
     }
 
-    private enum class KeyKind { OTHER, NAME, MTIME, NAME_ALIAS, MTIME_ALIAS }
+    private enum class KeyKind {
+        OTHER, NAME, MTIME, DESCRIPTION, COLOR,
+        NAME_ALIAS, MTIME_ALIAS, DESCRIPTION_ALIAS, COLOR_ALIAS
+    }
 
     /** Exactly one map that uses every byte of [raw], read in one pass. */
     private fun scan(raw: ByteArray?): Scan {
@@ -185,8 +240,11 @@ internal object NoteMetaCodec {
                 KeyKind.OTHER -> continue
                 KeyKind.NAME, KeyKind.NAME_ALIAS -> scan.name
                 KeyKind.MTIME, KeyKind.MTIME_ALIAS -> scan.mtime
+                KeyKind.DESCRIPTION, KeyKind.DESCRIPTION_ALIAS -> scan.description
+                KeyKind.COLOR, KeyKind.COLOR_ALIAS -> scan.color
             }
-            if (kind == KeyKind.NAME || kind == KeyKind.MTIME) {
+            if (kind == KeyKind.NAME || kind == KeyKind.MTIME ||
+                kind == KeyKind.DESCRIPTION || kind == KeyKind.COLOR) {
                 if (slot.plain++ == 0) {
                     slot.valueStart = keyEnd
                     slot.valueEnd = reader.pos
@@ -207,8 +265,12 @@ internal object NoteMetaCodec {
                 when {
                     regionEquals(b, from, end, NAME) -> KeyKind.NAME
                     regionEquals(b, from, end, MTIME) -> KeyKind.MTIME
+                    regionEquals(b, from, end, DESCRIPTION) -> KeyKind.DESCRIPTION
+                    regionEquals(b, from, end, COLOR) -> KeyKind.COLOR
                     webMayRead(b, from, end, NAME) -> KeyKind.NAME_ALIAS
                     webMayRead(b, from, end, MTIME) -> KeyKind.MTIME_ALIAS
+                    webMayRead(b, from, end, DESCRIPTION) -> KeyKind.DESCRIPTION_ALIAS
+                    webMayRead(b, from, end, COLOR) -> KeyKind.COLOR_ALIAS
                     else -> KeyKind.OTHER
                 }
             }
@@ -217,6 +279,8 @@ internal object NoteMetaCodec {
                 when {
                     regionEquals(b, from, end, NAME) -> KeyKind.NAME_ALIAS
                     regionEquals(b, from, end, MTIME) -> KeyKind.MTIME_ALIAS
+                    regionEquals(b, from, end, DESCRIPTION) -> KeyKind.DESCRIPTION_ALIAS
+                    regionEquals(b, from, end, COLOR) -> KeyKind.COLOR_ALIAS
                     else -> KeyKind.OTHER
                 }
             }
@@ -227,6 +291,8 @@ internal object NoteMetaCodec {
                 when (field) {
                     "name" -> KeyKind.NAME_ALIAS
                     "mtime" -> KeyKind.MTIME_ALIAS
+                    "description" -> KeyKind.DESCRIPTION_ALIAS
+                    "color" -> KeyKind.COLOR_ALIAS
                     else -> KeyKind.OTHER
                 }
             }
