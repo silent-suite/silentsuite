@@ -568,6 +568,9 @@ class EditCollectionFragment : Fragment() {
                     when (val merged = NoteMetaCodec.mergeCollection(col.getMetaRaw(), name, description, mtime, color)) {
                         is NoteMetaCodec.Merge.Merged -> {
                             col.setMetaRaw(merged.bytes)
+                            if (!col.getMetaRaw().contentEquals(merged.bytes)) {
+                                throw CollectionMetadataWriteException("Raw collection metadata did not read back byte-for-byte; nothing was uploaded.")
+                            }
                             val readBack = col.meta
                             if (readBack.name != merged.name || readBack.description != description ||
                                 readBack.mtime != mtime || (color != null && readBack.color != color)) {
