@@ -66,9 +66,18 @@ class CollectionMetaCodecTest {
     }
 
     @Test
+    fun `empty metadata is accepted for a newly created collection`() {
+        val result = NoteMetaCodec.mergeCollection(null, "New", null, 1L, "#112233")
+        assertTrue(result is NoteMetaCodec.Merge.Merged)
+        assertEquals(
+            "84a46e616d65a34e6577a56d74696d6501ab6465736372697074696f6ec0a5636f6c6f72a723313132323333",
+            hex((result as NoteMetaCodec.Merge.Merged).bytes),
+        )
+    }
+
+    @Test
     fun `malformed metadata is refused without replacing it with a typed map`() {
-        assertTrue(NoteMetaCodec.mergeCollection(null, "New", null, 1L, null) is NoteMetaCodec.Merge.NotAMap)
         assertTrue(NoteMetaCodec.mergeCollection(unhex("81a178dbffffffff"), "New", null, 1L, null) is NoteMetaCodec.Merge.NotAMap)
-        assertTrue(NoteMetaCodec.mergeCollection(unhex("80\u0000"), "New", null, 1L, null) is NoteMetaCodec.Merge.NotAMap)
+        assertTrue(NoteMetaCodec.mergeCollection(unhex("8000"), "New", null, 1L, null) is NoteMetaCodec.Merge.NotAMap)
     }
 }
