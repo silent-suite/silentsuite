@@ -6,10 +6,10 @@ import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 
 /**
- * Note metadata is a msgpack map that every client writes: the web, other Etebase apps, and this
- * app. The binding's typed `ItemMetadata` drops any field it does not know (measured in the spike),
- * so a save merges only `name` and `mtime` into the raw map and copies every other entry byte for
- * byte, the way the web keeps other clients' fields.
+ * Metadata shared with other Etebase clients is a MessagePack map. The binding's typed `ItemMetadata`
+ * drops fields it does not know (measured in the spike), so Notes edits merge `name` and `mtime`,
+ * while collection edits merge `name`, `mtime`, `description`, and (where editable) `color`. Every
+ * other entry is copied byte for byte, preserving fields written by other clients.
  *
  * The input comes from collaborators in shared notebooks, so it is parsed defensively: every length
  * and container count is checked against the bytes that remain before any work, skipping is
@@ -197,7 +197,7 @@ internal object NoteMetaCodec {
 
     private class Malformed(message: String) : Exception(message)
 
-    /** Where one of the two keys this app writes was found. */
+    /** Where one of the metadata keys this app may update was found. */
     private class Slot(val key: String) {
         /** Occurrences under the plain string key. */
         var plain = 0
