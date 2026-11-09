@@ -304,7 +304,7 @@ internal object NoteMetaCodec {
     /**
      * The typed decoder's fields in order, which is how it reads an unsigned integer key (measured on a
      * device for 1 and 2). A note merge writes only name and mtime, so only those two are refused as
-     * aliases here; a notebook merge, which also writes description and color, must refuse 3 and 4 too.
+     * aliases here; a collection merge, which also writes description and color, must refuse 3 and 4 too.
      */
     private val TYPED_FIELDS = listOf("type", "name", "mtime", "description", "color")
 
