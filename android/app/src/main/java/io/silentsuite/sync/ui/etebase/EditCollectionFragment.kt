@@ -555,7 +555,16 @@ class EditCollectionFragment : Fragment() {
                     // Work on a copy: a refused merge or failed upload must not leave the screen's cached
                     // collection mutated, or let a later Save upload a partially changed object.
                     val onScreen = cachedCollection.col
-                    val col = colMgr.cacheLoad(colMgr.cacheSave(onScreen))
+                    // Fetch the latest shared revision before merging, so a stale cache cannot overwrite
+                    // metadata another client added since the last sync.
+                    val col = if (isCreating) {
+                        colMgr.cacheLoad(colMgr.cacheSave(onScreen))
+                    } else {
+                        colMgr.fetch(onScreen.uid)
+                    }
+                    if (col.uid != onScreen.uid || col.collectionType != cachedCollection.collectionType) {
+                        throw CollectionMetadataWriteException("The server returned a different collection. Refresh and try again.")
+                    }
                     when (val merged = NoteMetaCodec.mergeCollection(col.getMetaRaw(), name, description, mtime, color)) {
                         is NoteMetaCodec.Merge.Merged -> {
                             col.setMetaRaw(merged.bytes)
