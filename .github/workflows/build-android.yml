@@ -111,51 +111,12 @@ jobs:
           distribution: 'temurin'
 
       - name: Install Android NDK r28 and CMake
-        shell: bash
         run: |
-          set -euo pipefail
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$(command -v sdkmanager)"
           fi
-
-          install_sdk_package() {
-            local package="$1"
-            local attempt=1
-            local sdk_status=0
-
-            while [ "$attempt" -le 3 ]; do
-              echo "::group::Install $package (attempt $attempt/3)"
-              # A failed sdkmanager download can leave a partial archive in the SDK temp
-              # directory. Remove staging data before retrying; never remove an already
-              # installed NDK while installing the separate CMake package.
-              rm -rf "$ANDROID_HOME/temp"
-              if [ "$package" = "ndk;28.2.13676358" ]; then
-                rm -rf "$ANDROID_HOME/ndk/28.2.13676358"
-              fi
-              set +e
-              yes | "$SDKMANAGER" --install "$package"
-              sdk_status="${PIPESTATUS[1]}"
-              set -e
-              echo "::endgroup::"
-
-              if [ "$sdk_status" -eq 0 ]; then
-                return 0
-              fi
-
-              echo "::warning::sdkmanager failed to install $package (exit $sdk_status)."
-              if [ "$attempt" -eq 3 ]; then
-                echo "::error::Unable to install $package after 3 attempts."
-                return "$sdk_status"
-              fi
-              sleep "$((attempt * 15))"
-              attempt=$((attempt + 1))
-            done
-          }
-
-          install_sdk_package "ndk;28.2.13676358"
-          install_sdk_package "cmake;3.22.1"
-          test -x "$ANDROID_HOME/ndk/28.2.13676358/ndk-build"
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
 
       - name: Build Conscrypt with Android NDK r28
