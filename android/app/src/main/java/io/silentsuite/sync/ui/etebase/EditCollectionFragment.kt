@@ -20,6 +20,7 @@ import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.edit.NoteMetaCodec
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.requestSync
