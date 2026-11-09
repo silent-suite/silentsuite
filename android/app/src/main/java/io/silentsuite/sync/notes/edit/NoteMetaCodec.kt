@@ -46,7 +46,7 @@ internal object NoteMetaCodec {
 
         /**
          * Another client reads a different key as this one: the typed decoder maps unsigned integer
-         * keys 1 and 2 to name and mtime and matches binary keys by their bytes, and the web decodes
+         * keys 1 through 4 to name, mtime, description, and color and matches binary keys by their bytes; the web decodes
          * malformed UTF-8 in keys leniently. Writing the plain key next to it would give the typed
          * decoder a duplicate field and the web a different value than Android sees.
          */
