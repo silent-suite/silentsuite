@@ -18,6 +18,7 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 
 import io.silentsuite.sync.resource.LocalAddressBook
+import io.silentsuite.sync.ui.NotesRemovalAnswer
 import io.silentsuite.sync.ui.setup.LoginActivity
 import java.util.logging.Level
 
@@ -101,5 +102,15 @@ class AccountAuthenticatorService: Service(), OnAccountsUpdateListener {
         override fun getAuthToken(p0: AccountAuthenticatorResponse?, p1: Account?, p2: String?, p3: Bundle?) = null
         override fun hasFeatures(p0: AccountAuthenticatorResponse?, p1: Account?, p2: Array<out String>?) = null
 
+        /**
+         * Whether Android may remove [account]'s row, as from Android settings or the confirmation in Unsynced Notes:
+         * the guard for unsynced Notes and the confirmation's allowance decide ([NotesRemovalAnswer]), and anything
+         * that throws answers no. Always a result, never an intent and never null, which would leave the removal
+         * waiting.
+         */
+        override fun getAccountRemovalAllowed(response: AccountAuthenticatorResponse?, account: Account?): Bundle =
+            Bundle(1).apply {
+                putBoolean(AccountManager.KEY_BOOLEAN_RESULT, NotesRemovalAnswer.allowedOnDevice(context, account))
+            }
     }
 }
