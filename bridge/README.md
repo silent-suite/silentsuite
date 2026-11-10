@@ -34,6 +34,36 @@ Apple Internet Accounts may require the local bridge to use HTTPS with a trusted
 silentsuite-bridge --setup-macos-apple-accounts
 ```
 
+For an explicitly configured private Tailscale listener, add only the hostname or IP
+that clients will use in the DAV URL. Prefer the stable MagicDNS name when available:
+
+```bash
+silentsuite-bridge --setup-macos-apple-accounts \
+  --dns-san bridge-name.your-tailnet.ts.net \
+  --ip-san 100.64.0.10
+```
+
+The command normalizes and displays the requested SANs before certificate creation.
+DNS values are hostname-only (no scheme, port, path, wildcard, or URL); IP values
+must be valid IPv4 or IPv6 addresses. Values are deduplicated, and the built-in
+`localhost`, `127.0.0.1`, and optional `::1` SANs remain present. The Bridge does
+not enumerate interfaces or add other machine addresses automatically.
+
+If a certificate already exists, adding custom SANs requires an explicit
+`--replace-existing` confirmation:
+
+```bash
+silentsuite-bridge --setup-macos-apple-accounts \
+  --dns-san bridge-name.your-tailnet.ts.net \
+  --ip-san 100.64.0.10 \
+  --replace-existing
+```
+
+Replacing a certificate changes its identity. DAV clients must trust the new
+certificate again, and the hostname in each DAV client URL must exactly match
+one of its DNS/IP SANs. Keep the listener on a private network such as Tailscale;
+this certificate option does not make public Internet exposure safe.
+
 On macOS, this persists bridge SSL settings, opens the certificate for Keychain, and prints the Advanced account setup fields. Trust the certificate in Keychain with **Secure Sockets Layer (SSL)** set to **Always Trust**, restart the bridge, then use the dashboard's `https://localhost:37358/your@example.com/` DAV URL.
 
 Enabling bridge SSL switches every configured listener (loopback and remote) to HTTPS. Existing HTTP clients using the same bridge profile must switch to `https://` and trust the localhost certificate (and, for a remote listener, the remote IP/hostname must be in the certificate's SANs). The bridge does not expose simultaneous HTTP and HTTPS listeners in this mode.

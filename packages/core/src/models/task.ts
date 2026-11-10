@@ -1,5 +1,6 @@
 import { parseVTodo, generateVTodo } from '../utils/ical-parser.js';
 import type { VTodo } from '../utils/ical-parser.js';
+import { wallTimeToInstant } from '../utils/zoned-time.js';
 import type { Priority } from './types.js';
 
 export type TaskStatus = 'needs-action' | 'in-process' | 'completed' | 'cancelled';
@@ -138,38 +139,16 @@ function isDateOnly(value: string): boolean {
 
 const ICAL_DATE_VALUE = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/;
 
-/** Offset of `timeZone` from UTC at `utcMs`, in ms. Throws for zones Intl does not know. */
-function zoneOffsetMs(timeZone: string, utcMs: number): number {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-    hour12: false,
-  }).formatToParts(new Date(utcMs));
-  const p = (type: string) => parseInt(parts.find((x) => x.type === type)?.value ?? '0', 10);
-  const hour = p('hour') === 24 ? 0 : p('hour');
-  return Date.UTC(p('year'), p('month') - 1, p('day'), hour, p('minute'), p('second')) - utcMs;
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 /**
  * The instant of a wall-clock time in `timeZone`, or null when Intl does not
  * know the zone. Per RFC 5545 §3.3.5 a repeated local time means its first
  * occurrence and a skipped one uses the offset from before the gap.
+ * (Shared conversion in utils/zoned-time; a quoted TZID parameter is unquoted here.)
  */
 function zonedWallTimeToDate(tzid: string, wallAsUtcMs: number): Date | null {
   const timeZone = tzid.replace(/^"(.*)"$/, '$1');
-  try {
-    const before = zoneOffsetMs(timeZone, wallAsUtcMs - DAY_MS);
-    const after = zoneOffsetMs(timeZone, wallAsUtcMs + DAY_MS);
-    const valid = [before, after]
-      .filter((offset) => zoneOffsetMs(timeZone, wallAsUtcMs - offset) === offset)
-      .map((offset) => wallAsUtcMs - offset);
-    return new Date(valid.length > 0 ? Math.min(...valid) : wallAsUtcMs - before);
-  } catch {
-    return null;
-  }
+  const instant = wallTimeToInstant(timeZone, wallAsUtcMs);
+  return instant === null ? null : new Date(instant);
 }
 
 /**

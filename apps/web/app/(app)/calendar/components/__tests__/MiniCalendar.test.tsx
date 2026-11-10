@@ -138,3 +138,57 @@ describe('MiniCalendar event dots', () => {
     expect(dotsFor('Friday, May 8, 2026')[0]).toHaveStyle({ backgroundColor: '#10b981' })
   })
 })
+
+// #886: the mini calendar must expand a recurring event in its own zone. Dots stay on host-local
+// days (existing display policy), so the expected day is derived from the zone-correct instant.
+describe('MiniCalendar recurring dots use the event zone (#886)', () => {
+  beforeEach(() => {
+    storeMock.calendarState.currentDate = new Date(2026, 4, 25, 12)
+    storeMock.calendarListState.calendars = [
+      { id: 'green-cal', name: 'Green', color: '#10b981', visible: true },
+    ]
+    storeMock.calendarState.events = []
+  })
+
+  function hostDayLabel(instant: Date): string {
+    return instant.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  }
+
+  it('shows the Tokyo first-of-month occurrence (Jun 1 08:00 JST = May 31 23:00Z) on its host day', () => {
+    storeMock.calendarState.events = [
+      {
+        ...makeEvent({
+          id: 'tokyo-monthly',
+          calendarId: 'green-cal',
+          startDate: new Date('2025-12-31T23:00:00.000Z'), // 2026-01-01 08:00 JST
+          endDate: new Date('2026-01-01T00:00:00.000Z'),
+          recurrenceRule: 'FREQ=MONTHLY;BYMONTHDAY=1',
+        }),
+        timezone: 'Asia/Tokyo',
+      },
+    ]
+
+    render(<MiniCalendar />)
+
+    const occurrence = new Date('2026-05-31T23:00:00.000Z')
+    // Setup guard: on LA and UTC hosts this is Sunday, May 31, 2026 (inside the May grid).
+    expect(hostDayLabel(occurrence)).toMatch(/May 3[01], 2026/)
+    expect(dotsFor(hostDayLabel(occurrence))[0]).toHaveStyle({ backgroundColor: '#10b981' })
+  })
+
+  it('control: a same-zone monthly series still shows its dot', () => {
+    storeMock.calendarState.events = [
+      makeEvent({
+        id: 'host-monthly',
+        calendarId: 'green-cal',
+        startDate: new Date(2026, 0, 12, 9),
+        endDate: new Date(2026, 0, 12, 10),
+        recurrenceRule: 'FREQ=MONTHLY',
+      }),
+    ]
+
+    render(<MiniCalendar />)
+
+    expect(dotsFor('Tuesday, May 12, 2026')[0]).toHaveStyle({ backgroundColor: '#10b981' })
+  })
+})

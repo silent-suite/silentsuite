@@ -15,7 +15,7 @@ Your password is used to derive your encryption keys locally on your device. It 
 
 ## 2. Set Up Your First Device
 
-After creating your account, you can use SilentSuite immediately in the web app. Add calendar events, contacts, tasks, and notes right from your browser.
+After creating your account, you can use SilentSuite immediately in the web app. Add calendar events, contacts, tasks, and notes right from your browser. You can also [install the web app](./apps/web.md) on your computer or phone.
 
 To sync with other apps and devices, see the [Apps & Integrations](./apps/index.md) page for supported Android and desktop setup guides. iOS is [on the roadmap](./apps/ios.md), coming soon, and is not currently supported.
 

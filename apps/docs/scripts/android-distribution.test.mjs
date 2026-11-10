@@ -24,7 +24,6 @@ const themeCss = read(resolve(docsRoot, '.vitepress/theme/custom.css'))
 const bridgeAuthBrowser = read(resolve(repoRoot, 'bridge/src/silentsuite_bridge/auth_browser.py'))
 const bridgeDashboard = read(resolve(repoRoot, 'bridge/src/silentsuite_bridge/web/__init__.py'))
 const bridgePackage = read(resolve(repoRoot, 'bridge/src/silentsuite_bridge/__init__.py'))
-const dockerSuccess = read(resolve(repoRoot, 'docker/etebase/success.html'))
 const selfHostSuccess = read(resolve(repoRoot, 'self-host/success.html'))
 const docsConfig = read(resolve(docsRoot, '.vitepress/config.mts'))
 const appsIndex = read(resolve(docsRoot, 'user-guide/apps/index.md'))
@@ -324,7 +323,6 @@ test('Bridge runtime guidance is limited to supported desktop integrations', () 
     bridgeDashboard,
     bridgePackage,
     settingsDesktop,
-    dockerSuccess,
     selfHostSuccess,
   ]) {
     assert.doesNotMatch(source, /iOS|iPadOS|DAVx(?:5|&#8309;).*Android/i)
@@ -335,7 +333,6 @@ test('Bridge runtime guidance is limited to supported desktop integrations', () 
   assert.match(bridgeDashboard, /Apple \(macOS\)/)
   assert.match(bridgePackage, /supported desktop integrations/)
   assert.match(settingsDesktop, /supported desktop clients/)
-  assert.match(dockerSuccess, /supported desktop client through the local bridge/)
   assert.match(selfHostSuccess, /supported desktop client through the local bridge/)
   assert.equal(existsSync(resolve(docsRoot, 'user-guide/apps/other.md')), false)
   assert.doesNotMatch(docsConfig, /user-guide\/apps\/other/)
