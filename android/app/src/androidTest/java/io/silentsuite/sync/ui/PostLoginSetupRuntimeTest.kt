@@ -26,6 +26,8 @@ import io.silentsuite.sync.ui.setup.PostLoginSyncConfigurator
 
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry
+import io.silentsuite.sync.ui.setup.GuardedRecoveryRemoval
+import io.silentsuite.sync.ui.setup.RecoveryRemovalCoordinator
 import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import io.silentsuite.sync.ui.setup.PostLoginStartupChecks
@@ -217,6 +219,61 @@ class PostLoginSetupRuntimeTest {
             AndroidCompat.removeAccount(manager, target); AndroidCompat.removeAccount(manager, sibling); ActiveAccountManager.clearActiveAccount(context)
         }
     }
+    /**
+     * Another removal and a sign-in with the same name replace the recovering row while the guard runs, after the
+     * screen checked its ownership: the removal checks the generation again and leaves the replacement alone.
+     */
+    @Test fun recoveryRemovalLeavesSameNameReplacementMadeDuringTheGuard() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val target = Account("replaced-${System.nanoTime()}@example.invalid", App.accountType)
+        val id = "recovery-generation"
+        val replacement = "replacement-generation"
+        check(manager.addAccountExplicitly(target, null, null))
+        check(AccountSettings.writeVerified(manager, target, AccountSettings.KEY_CREATION_ID, id))
+        check(AccountSettings.writeSetupState(manager, target, PostLoginSetupState.RECOVERY_REQUIRED))
+        val registry = AccountCreationRegistry.open(context)
+        check(registry.prepare(AccountCreationRegistry.Record(target.name, id, AccountCreationRegistry.Phase.RECOVERY_REQUIRED, System.currentTimeMillis(), target.type)))
+        val replaced = java.util.concurrent.CountDownLatch(1)
+        // Runs on the removal's worker: a failed step is kept for the test thread, never thrown into the app.
+        var replacing: Result<Unit>? = null
+        GuardedRecoveryRemoval.afterGuardForTest = {
+            replacing = runCatching {
+                AndroidCompat.removeAccount(manager, target)
+                check(registry.clearOwned(target.type, target.name, id))
+                check(registry.prepare(AccountCreationRegistry.Record(target.name, replacement, AccountCreationRegistry.Phase.CREATING, System.currentTimeMillis(), target.type)))
+                check(manager.addAccountExplicitly(target, null, null))
+                check(AccountSettings.writeVerified(manager, target, AccountSettings.KEY_CREATION_ID, replacement))
+            }
+            replaced.countDown()
+        }
+        try {
+            ActivityScenario.launch<PostLoginSetupActivity>(PostLoginSetupActivity.newIntent(context, target, id)).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertTrue(activity.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).isShown)
+                    activity.findViewById<android.widget.Button>(R.id.setup_remove_incomplete).performClick()
+                }
+                assertTrue("the replacement ran", replaced.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                replacing!!.getOrThrow()
+                var removal: RecoveryRemovalCoordinator.State? = null
+                val deadline = android.os.SystemClock.uptimeMillis() + 5_000
+                while (removal != RecoveryRemovalCoordinator.State.Failed && android.os.SystemClock.uptimeMillis() < deadline) {
+                    InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+                    scenario.onActivity { removal = androidx.lifecycle.ViewModelProvider(it)[PostLoginSetupViewModel::class.java].recoveryRemoval.value }
+                    if (removal != RecoveryRemovalCoordinator.State.Failed) android.os.SystemClock.sleep(25)
+                }
+                assertEquals(RecoveryRemovalCoordinator.State.Failed, removal)
+            }
+            assertTrue("the replacement row stays", target in manager.getAccountsByType(target.type))
+            assertEquals(replacement, manager.getUserData(target, AccountSettings.KEY_CREATION_ID))
+            assertEquals(replacement, registry.get(target.type, target.name)?.creationId)
+        } finally {
+            GuardedRecoveryRemoval.afterGuardForTest = null
+            registry.clearOwned(target.type, target.name, id); registry.clearOwned(target.type, target.name, replacement)
+            AndroidCompat.removeAccount(manager, target)
+        }
+    }
+
     @Test fun noNetworkDashboardShellRoutesExactAccountAfterReadyDone() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

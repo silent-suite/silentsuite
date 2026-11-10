@@ -47,10 +47,10 @@ internal data class UnsyncedNotesListing(
  * The Settings way out for unsynced Notes, below its screen: it finds every Notes store on this device and discards
  * one store that the user confirmed. It reads only the account list, the store files, the discard permits, from
  * memory the stores whose discard stopped in this process ([PendingNotesStore.stoppedIn]), and the names of
- * notes-discard's records, the active-account preference and the creation registry, so it works offline and without
- * a session, also for a store whose account is gone (the maintainer's condition of
- * 2026-10-18 on #709). It opens every store by its folder's name ([PendingNotesStore.forDirectory]), never keeps an
- * instance, and reads no acknowledgement as authority for anything.
+ * notes-discard's records, the active-account preference, the last-active record ([NotesLastActiveRecord]) and the
+ * creation registry, so it works offline and without a session, also for a store whose account is gone (the
+ * maintainer's condition of 2026-10-18 on #709). It opens every store by its folder's name
+ * ([PendingNotesStore.forDirectory]), never keeps an instance, and reads no acknowledgement as authority for anything.
  */
 internal object UnsyncedNotesStores {
     /** The exact identity of an account row whose creation id [creationId] reads, or null when it does not. */
@@ -84,17 +84,17 @@ internal object UnsyncedNotesStores {
     /**
      * [read] for the stores in [noBackup], with [accounts] present, the folders of notes-pending listed by [folders]
      * and each store opened by [open]. The folders are those notes-pending lists, every present account's own, every
-     * folder whose path is known otherwise ([pathFound]: records in notes-discard, the active account, the creation
-     * registry), read whether or not notes-pending lists, and every folder whose clear or discard stopped in this
-     * process ([PendingNotesStore.stoppedIn]), which can be gone, or left out of a listing, while its Retry is owed. So
-     * a listing that comes back short cannot hide a store that a present account or a known path names; a folder that
-     * is not there counts nothing and is not made, though while notes-pending lists and notes-discard cannot be listed,
-     * a first count by a new instance answers that it could not be counted, which keeps a row. A store is kept while
-     * it holds anything, its read throws, or its
-     * discard stopped ([UnsyncedNotesRow.stopped]). The last is told by the store's state, never by its count, which
-     * can come back short, or find nothing once the text went while an unlink whose sync failed can come back. The
-     * counts run no recovery and write nothing in a store, though a count of a store that lists withdraws its
-     * acknowledgement ([PendingNotesStore.unsynced]).
+     * folder whose path is known otherwise ([pathFound]: records in notes-discard, the active account, the last-active
+     * record, the creation registry), read whether or not notes-pending lists, and every folder whose clear or discard
+     * stopped in this process ([PendingNotesStore.stoppedIn]), which can be gone, or left out of a listing, while its
+     * Retry is owed. So a listing that comes back short cannot hide a store that a present account or a known path
+     * names; a folder that is not there counts nothing and is not made, though while notes-pending lists and
+     * notes-discard cannot be listed, a first count by a new instance answers that it could not be counted, which keeps
+     * a row. A store is kept while it holds anything, its read throws, or its discard stopped
+     * ([UnsyncedNotesRow.stopped]). The last is told by the store's state, never by its count, which can come back
+     * short, or find nothing once the text went while an unlink whose sync failed can come back. The counts run no
+     * recovery and write nothing in a store, though a count of a store that lists withdraws its acknowledgement
+     * ([PendingNotesStore.unsynced]).
      *
      * While notes-pending lists, a folder whose path is known, or a present account's, or one whose discard stopped,
      * that the listing left out and that its [presence] check does not show absent, flags the others
