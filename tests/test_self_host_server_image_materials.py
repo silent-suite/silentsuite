@@ -31,10 +31,10 @@ REQUIREMENTS = ROOT / "server" / "requirements.txt"
 LOCK_SCRIPT = ROOT / "scripts" / "lock-server-requirements.py"
 
 BASE_IMAGE = "python:3.12-alpine"
-BASE_INDEX_DIGEST = "sha256:d09d15e60962ca365d1cd544a48773bac9d33f2fb1b00f2aa0deec78ade7dc31"
+BASE_INDEX_DIGEST = "sha256:e064671ca452259bab50e8e2c7bd896e39e9a343bb06ca25234adf6fe18d0fc7"
 BASE_CHILDREN = {
-    ("linux", "amd64", None): "sha256:285a71327884a4d50efbea30104473b0fa43ecefa499458899670ca30dae76e5",
-    ("linux", "arm64", "v8"): "sha256:c95cd47204b8f236725fc8cf94726abe3f32755a062393597efadd9a5d24fbe1",
+    ("linux", "amd64", None): "sha256:a61cbd76a882645de7f91423329fe43a67eed60d7da24f9e5331414bb3618b20",
+    ("linux", "arm64", "v8"): "sha256:218ad6ba54faeb7f1089f391c597a80c9d69ca88e561f71ebd77fb452d39249b",
 }
 OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json"
 REGISTRY = "https://registry-1.docker.io"

@@ -30,7 +30,7 @@ Your data is only useful if you can read it on the device you're carrying. Three
 
 ### Web (any device with a browser)
 
-Open [app.silentsuite.io](https://app.silentsuite.io/login) on the second device and log in with the same email and password. The web app is an offline-first PWA — you can install it to your home screen or dock from your browser's "install app" menu.
+Open [app.silentsuite.io](https://app.silentsuite.io/login) on the second device and log in with the same email and password. The web app is an offline-first PWA — you can install it to your home screen or dock. See [Install the web app](https://docs.silentsuite.io/user-guide/apps/web) for the steps in each browser.
 
 ### Android
 

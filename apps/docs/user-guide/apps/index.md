@@ -17,7 +17,7 @@ The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks th
 
 | App | Official site | Platform | Syncs |
 |---|---|---|---|
-| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite Web](https://app.silentsuite.io) | [app.silentsuite.io](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks |
+| <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite Web](./web.md) | [app.silentsuite.io](https://app.silentsuite.io) | Browser | Contacts, Calendars, Tasks |
 | <img class="app-table-logo" src="/logo.svg" alt="" width="28" height="28"> [SilentSuite for Android](./android.md) | [silentsuite.io](https://silentsuite.io/) | Android | Contacts, Calendars, Tasks |
 
 ## On the Roadmap
