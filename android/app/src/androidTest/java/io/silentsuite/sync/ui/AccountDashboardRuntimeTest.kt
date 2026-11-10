@@ -1045,9 +1045,10 @@ class AccountDashboardRuntimeTest {
             val services = SyncStatusStore.Service.values().toSet()
             AccountActivity.AccountInfoViewModel.lifecycleNowOverride = {
                 val observed = clock.get()
-                if (holdsStoreLock()) {
-                    heldPass.onCallUnderLock()
-                } else if (isCoarseObservation() && !heldPass.holdIfFirst() &&
+                // DIAGNOSTIC ONLY: the previous rule, which also injects under the store lock.
+                if (holdsStoreLock()) heldPass.onCallUnderLock()
+                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() &&
+                    (holdsStoreLock() || !heldPass.holdIfFirst()) &&
                     injectRequest.compareAndSet(true, false)) {
                     // Model a request admitted after an older clock observation, before the
                     // maintenance pass acquires its per-service store locks. Time only advances.
