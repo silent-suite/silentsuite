@@ -1024,10 +1024,12 @@ class AccountDashboardRuntimeTest {
         val maintenanceFinished = CountDownLatch(1)
         val expected = AtomicReference<Map<SyncStatusStore.Service, SyncStatusStore.Status>>()
         val writeSucceeded = AtomicBoolean(false)
+        val heldPass = HeldPass()
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
             SyncLifecycleWindows(interruptionAfterMillis = Long.MAX_VALUE)
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
             // doLoad invokes this seam only after its production maintenance pass.
+            heldPass.onLoader()
             if (injectedOnThisThread.get() == true) {
                 injectedOnThisThread.remove()
                 maintenanceFinished.countDown()
@@ -1043,7 +1045,9 @@ class AccountDashboardRuntimeTest {
             val services = SyncStatusStore.Service.values().toSet()
             AccountActivity.AccountInfoViewModel.lifecycleNowOverride = {
                 val observed = clock.get()
-                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() &&
+                if (holdsStoreLock()) {
+                    heldPass.onCallUnderLock()
+                } else if (isCoarseObservation() && !heldPass.holdIfFirst() &&
                     injectRequest.compareAndSet(true, false)) {
                     // Model a request admitted after an older clock observation, before the
                     // maintenance pass acquires its per-service store locks. Time only advances.
@@ -1054,7 +1058,8 @@ class AccountDashboardRuntimeTest {
                 }
                 observed
             }
-            injectRequest.set(true)
+            // A pass that sampled before arming must not take the injection under the store lock.
+            heldPass.runArmedAfterObservation(scenario) { injectRequest.set(true) }
             scenario.onActivity { it.refresh() }
             assertTrue("the injected production maintenance pass did not finish",
                 maintenanceFinished.await(10, TimeUnit.SECONDS))
@@ -1072,7 +1077,9 @@ class AccountDashboardRuntimeTest {
         val rollBack = AtomicBoolean(false)
         val rolledBackOnThisThread = ThreadLocal<Boolean>()
         val maintenanceFinished = CountDownLatch(1)
+        val heldPass = HeldPass()
         withDashboardAccount(loaderOverride = { loaderContext, exact, _ ->
+            heldPass.onLoader()
             if (rolledBackOnThisThread.get() == true) {
                 rolledBackOnThisThread.remove()
                 maintenanceFinished.countDown()
@@ -1089,7 +1096,9 @@ class AccountDashboardRuntimeTest {
                 "after-clock-rollback", clock.get() - 1))
             AccountActivity.AccountInfoViewModel.lifecycleNowOverride = {
                 val observed = clock.get()
-                if (android.os.Looper.myLooper() != android.os.Looper.getMainLooper() &&
+                if (holdsStoreLock()) {
+                    heldPass.onCallUnderLock()
+                } else if (isCoarseObservation() && !heldPass.holdIfFirst() &&
                     rollBack.compareAndSet(true, false)) {
                     // The wall clock moves back after the pass's first observation. Rebase
                     // must still grant its full interruption window, not expire against that old time.
@@ -1098,7 +1107,7 @@ class AccountDashboardRuntimeTest {
                 }
                 observed
             }
-            rollBack.set(true)
+            heldPass.runArmedAfterObservation(scenario) { rollBack.set(true) }
             scenario.onActivity { it.refresh() }
             assertTrue("the rollback maintenance pass did not finish",
                 maintenanceFinished.await(10, TimeUnit.SECONDS))
@@ -1108,6 +1117,65 @@ class AccountDashboardRuntimeTest {
             assertEquals(clock.get(), requireNotNull(status.requestedAt))
             assertFalse("rebasing must not consume the interruption window",
                 status.lastFailureCategory == SyncStatusStore.FailureCategory.INTERRUPTED)
+        }
+    }
+
+    /**
+     * Store mutations sample the clock under this lock. A maintenance pass calls the clock outside
+     * it only for its coarse observation, before any per-service rebase or expiry. Debug builds keep
+     * SilentSuite names, so a renamed field fails these phases instead of weakening them.
+     */
+    private val storeLock: Any by lazy {
+        requireNotNull(SyncStatusStore::class.java.getDeclaredField("STORE_LOCK").apply { isAccessible = true }.get(null))
+    }
+
+    private fun holdsStoreLock() = Thread.holdsLock(storeLock)
+
+    private fun isCoarseObservation() =
+        android.os.Looper.myLooper() != android.os.Looper.getMainLooper() && !holdsStoreLock()
+
+    /**
+     * Holds the first maintenance pass that reaches its coarse clock observation, so that pass is
+     * still running when a clock hook is armed. Its remaining clock calls are all under the store lock.
+     */
+    private class HeldPass {
+        private val holding = AtomicBoolean(true)
+        private val onThisThread = ThreadLocal<Boolean>()
+        private val reached = CountDownLatch(1)
+        private val release = CountDownLatch(1)
+        private val finished = CountDownLatch(1)
+        private val armed = AtomicBoolean(false)
+        private val armedCallsUnderLock = AtomicInteger(0)
+
+        /** Called by the clock hook at a coarse observation; true when this call was held. */
+        fun holdIfFirst(): Boolean {
+            if (!holding.compareAndSet(true, false)) return false
+            onThisThread.set(true)
+            reached.countDown()
+            check(release.await(10, TimeUnit.SECONDS)) { "the held maintenance pass was not released" }
+            return true
+        }
+
+        fun onCallUnderLock() {
+            if (armed.get() && onThisThread.get() == true) armedCallsUnderLock.incrementAndGet()
+        }
+
+        /** Called by the loader, which doLoad runs after the pass's maintenance. */
+        fun onLoader() {
+            if (onThisThread.get() == true) {
+                onThisThread.remove()
+                finished.countDown()
+            }
+        }
+
+        fun runArmedAfterObservation(scenario: ActivityScenario<AccountActivity>, arm: () -> Unit) {
+            scenario.onActivity { it.refresh() }
+            assertTrue("no maintenance pass reached its clock observation", reached.await(10, TimeUnit.SECONDS))
+            armed.set(true)
+            arm()
+            release.countDown()
+            assertTrue("the held maintenance pass did not finish", finished.await(10, TimeUnit.SECONDS))
+            assertTrue("the held pass must read the armed clock under the store lock", armedCallsUnderLock.get() > 0)
         }
     }
 
