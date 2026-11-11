@@ -15,12 +15,22 @@ Compose and container runtime settings are environment variables in the `.env` f
 | `ETEBASE_BOOTSTRAP_ADMIN_TOKEN` | No | empty | One-time token the first signup must pass as `?bootstrap_token=...` in the server URL while the server has no users. The installer generates it; leaving it empty does not protect the first signup. |
 | `ETEBASE_DISABLE_DJANGO_ADMIN` | No | `true` | Hides the Django `/admin/` panel. Set to `false` to enable it; see [Admin Dashboard](./admin-dashboard.md) before exposing it. |
 | `TRUSTED_PROXY_IPS` | No | `127.0.0.1` | Comma-separated exact reverse proxy IPs allowed to set `X-Forwarded-*` headers. CIDR ranges are not supported. |
+| `ETEBASE_MAX_AUTH_REQUEST_BYTES` | No | `65536` | Largest request body, in bytes, accepted for sign-up, login, password change and billing-link requests. Allowed range: `65536` to `1073741824`. |
+| `ETEBASE_MAX_REQUEST_BYTES` | No | `67108864` | Largest request body, in bytes, accepted for the app's other sync API requests (collections, items, members and invitations), including sync batches and attachment uploads. Allowed range: `1048576` to `1073741824`. |
 
-After changing a server runtime setting in `.env` (`ETEBASE_DISABLE_SIGNUP`, `ETEBASE_BOOTSTRAP_ADMIN_TOKEN`, `ETEBASE_DISABLE_DJANGO_ADMIN`, `TRUSTED_PROXY_IPS`, `SERVER_PORT`), recreate the server container:
+After changing a server runtime setting in `.env` (`ETEBASE_DISABLE_SIGNUP`, `ETEBASE_BOOTSTRAP_ADMIN_TOKEN`, `ETEBASE_DISABLE_DJANGO_ADMIN`, `TRUSTED_PROXY_IPS`, `ETEBASE_MAX_AUTH_REQUEST_BYTES`, `ETEBASE_MAX_REQUEST_BYTES`, `SERVER_PORT`), recreate the server container:
 
 ```bash
 docker compose up -d --force-recreate server
 ```
+
+**Request size limits.** The server refuses a request body larger than its limit with HTTP 413 and stops reading it. A limit that is not a whole number within its allowed range stops the server at startup. A 413 can come from three places:
+
+- An app request that fails with error code `request_too_large`: raise `ETEBASE_MAX_AUTH_REQUEST_BYTES` (sign-up, login, password change) or `ETEBASE_MAX_REQUEST_BYTES` (sync and uploads), then recreate the server container.
+- A billing-link request answered with `{"detail": "Request body too large"}`: raise `ETEBASE_MAX_AUTH_REQUEST_BYTES`.
+- A 413 page from your reverse proxy: raise the proxy's own limit, for example `client_max_body_size` in nginx, to at least the server limit you need.
+
+These settings apply only to the app's sync API listed above. They do not cover the installation-owner login or the Django `/admin/` panel. They limit how many bytes the server accepts per request; they do not limit the server's total memory use.
 
 `SUPER_USER` and `SUPER_PASS` are creation-only. When both are set, the container creates a Django admin login at startup only if no user with that username exists yet. Editing `SUPER_PASS` in `.env` and recreating the container does not change an existing user's password, and choosing a new `SUPER_USER` creates an additional login without renaming or retiring the existing one. To change an existing admin password, run the reset command against the existing username (replace `admin` with your actual admin username if it differs):
 
