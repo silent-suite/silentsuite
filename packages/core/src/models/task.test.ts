@@ -914,3 +914,43 @@ describe('retained RECURRENCE-ID after task date edits (WEBX-03)', () => {
     expect(out.filter((l) => l === 'X-KEEP:1')).toHaveLength(1);
   });
 });
+
+// ── RDATE/EXDATE after task date edits (WEBX-03 review follow-up, RFC 5545 §3.8.5) ──
+// A start edit that changes DTSTART between DATE and DATE-TIME must drop retained
+// recurrence dates of the old form instead of writing an inconsistent set.
+
+describe('retained RDATE/EXDATE after task date edits (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const setLines = (lines: string[]): string[] => lines.filter((l) => /^(rdate|exdate)[;:]/i.test(l));
+  const wrap = (...body: string[]): string =>
+    ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VTODO', 'UID:task-rd1', 'SUMMARY:Series', ...body, 'X-KEEP:1', 'END:VTODO', 'END:VCALENDAR'].join('\r\n');
+
+  const timed = wrap('DTSTART:20261110T090000Z', 'RRULE:FREQ=DAILY;COUNT=5', 'EXDATE:20261112T090000Z', 'RDATE:20261120T090000Z');
+  const allDay = wrap('DTSTART;VALUE=DATE:20261110', 'RRULE:FREQ=DAILY;COUNT=5', 'EXDATE;VALUE=DATE:20261112', 'RDATE;VALUE=DATE:20261120');
+
+  it('control: keeps compatible DATE-TIME lines when only the title changes', () => {
+    const out = logical(serializeTask({ ...deserializeTask(timed), title: 'Renamed' }));
+
+    expect(setLines(out)).toEqual(['EXDATE:20261112T090000Z', 'RDATE:20261120T090000Z']);
+  });
+
+  it('drops DATE-TIME lines when the start is edited to an all-day date', () => {
+    const out = logical(serializeTask({ ...deserializeTask(timed), start_date: new Date(2026, 10, 10), start_ical: undefined }));
+
+    expect(out.filter((l) => /^dtstart[;:]/i.test(l))).toEqual(['DTSTART;VALUE=DATE:20261110']);
+    expect(setLines(out)).toEqual([]);
+    expect(out.filter((l) => l === 'X-KEEP:1')).toHaveLength(1);
+  });
+
+  it('drops DATE lines when the start is edited to a timed value', () => {
+    const out = logical(serializeTask({
+      ...deserializeTask(allDay),
+      start_date: new Date(2026, 10, 10, 14, 30, 0),
+      start_ical: undefined,
+    }));
+
+    expect(out.filter((l) => /^dtstart[;:]/i.test(l))).toEqual(['DTSTART:20261110T143000']);
+    expect(setLines(out)).toEqual([]);
+    expect(out.filter((l) => l === 'X-KEEP:1')).toHaveLength(1);
+  });
+});

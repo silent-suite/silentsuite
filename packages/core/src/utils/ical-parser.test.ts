@@ -1649,3 +1649,72 @@ describe('retained RECURRENCE-ID follows DTSTART value type and local-time form 
     expect(ridLines(roundTrip('RECURRENCE-ID:20261103T090000Z'))).toEqual([]);
   });
 });
+
+// ── VCALENDAR wrapper detection (WEBX-02 review follow-up, RFC 5545 §3.1) ──
+// Names are case-insensitive and any line may be folded, so the outer wrapper
+// is found on the first logical line, not by a raw uppercase prefix.
+
+describe('parseVTodo finds the VCALENDAR wrapper by its logical line (WEBX-02)', () => {
+  const body = [
+    'VERSION:2.0',
+    'BEGIN:VTODO',
+    'UID:task-case',
+    'SUMMARY:Parent task',
+    'DESCRIPTION:Parent description',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'SUMMARY:Alarm summary',
+    'TRIGGER:-PT15M',
+    'END:VALARM',
+    'END:VTODO',
+    'END:VCALENDAR',
+  ];
+
+  it.each([
+    ['uppercase', 'BEGIN:VCALENDAR'],
+    ['lowercase value', 'BEGIN:vcalendar'],
+    ['all lowercase', 'begin:vcalendar'],
+    ['folded', 'BEGIN:VCAL\r\n ENDAR'],
+  ])('keeps the task fields for a %s opening', (_form, opening) => {
+    const todo = parseVTodo([opening, ...body].join('\r\n'));
+
+    expect(todo.uid).toBe('task-case');
+    expect(todo.summary).toBe('Parent task');
+    expect(todo.description).toBe('Parent description');
+  });
+});
+
+// ── RDATE/EXDATE form compatibility (WEBX-03 review follow-up, RFC 5545 §3.8.5) ──
+// Kept only while every value has the written DTSTART's value type and the same
+// floating/non-floating form (the RECURRENCE-ID rule). PERIOD values are judged
+// by their start. Lines are kept verbatim, never rebased.
+
+describe('retained RDATE/EXDATE follow DTSTART value type and local-time form (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const roundTrip = (...body: string[]): string[] =>
+    logical(generateVTodo(parseVTodo(['BEGIN:VTODO', 'UID:task-rd', 'SUMMARY:Series', ...body, 'END:VTODO'].join('\r\n'))));
+  const setLines = (lines: string[]): string[] => lines.filter((l) => /^(rdate|exdate)[;:]/i.test(l));
+
+  it.each([
+    ['DATE', 'DTSTART;VALUE=DATE:20261110', 'EXDATE;VALUE=DATE:20261112,20261113'],
+    ['DATE rdate', 'DTSTART;VALUE=DATE:20261110', 'RDATE;VALUE=DATE:20261120'],
+    ['UTC', 'DTSTART:20261110T090000Z', 'EXDATE:20261112T090000Z'],
+    ['TZID with a UTC start', 'DTSTART:20261110T090000Z', 'RDATE;TZID=Europe/Berlin:20261120T100000'],
+    ['floating', 'DTSTART:20261110T090000', 'EXDATE:20261112T090000,20261113T090000'],
+    ['UTC PERIOD', 'DTSTART:20261110T090000Z', 'RDATE;VALUE=PERIOD:20261120T090000Z/PT1H'],
+  ])('keeps a compatible %s line verbatim', (_form, start, line) => {
+    expect(setLines(roundTrip(start, 'RRULE:FREQ=DAILY;COUNT=5', line))).toEqual([line]);
+  });
+
+  it.each([
+    ['a DATE start with a DATE-TIME exdate', 'DTSTART;VALUE=DATE:20261110', 'EXDATE:20261112T090000Z'],
+    ['a DATE start with a DATE-TIME rdate', 'DTSTART;VALUE=DATE:20261110', 'RDATE:20261120T090000Z'],
+    ['a DATE start with a PERIOD rdate', 'DTSTART;VALUE=DATE:20261110', 'RDATE;VALUE=PERIOD:20261120T090000Z/PT1H'],
+    ['a DATE-TIME start with a DATE exdate', 'DTSTART:20261110T090000Z', 'EXDATE;VALUE=DATE:20261112'],
+    ['a UTC start with a floating rdate', 'DTSTART:20261110T090000Z', 'RDATE:20261120T090000'],
+    ['a floating start with a UTC exdate', 'DTSTART:20261110T090000', 'EXDATE:20261112T090000Z'],
+    ['a UTC start with one floating value in a list', 'DTSTART:20261110T090000Z', 'EXDATE:20261112T090000Z,20261113T090000'],
+  ])('control: suppresses the line for %s', (_case, start, line) => {
+    expect(setLines(roundTrip(start, 'RRULE:FREQ=DAILY;COUNT=5', line))).toEqual([]);
+  });
+});

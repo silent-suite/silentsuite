@@ -414,12 +414,13 @@ export function generateVEvent(event: VEvent): string {
  * Also accepts a full VCALENDAR document — the first VTODO inside will be extracted.
  */
 export function parseVTodo(ical: string): VTodo {
-  const trimmed = ical.trimStart();
+  // Find the wrapper on the first logical line: names are case-insensitive and
+  // may be folded, and a missed wrapper would hide the VTODO as a nested block.
+  const all = unfoldLines(ical.trimStart()).split(/\r?\n/);
   let lines: string[];
-  if (trimmed.startsWith('BEGIN:VCALENDAR')) {
+  if (/^BEGIN:VCALENDAR\s*$/i.test(all[0] ?? '')) {
     // Extract the first VTODO by whole logical lines after unfolding, so a
     // marker-like substring inside a value cannot end the component early.
-    const all = unfoldLines(trimmed).split(/\r?\n/);
     const start = all.findIndex((l) => /^BEGIN:VTODO\s*$/i.test(l));
     const end = start === -1 ? -1 : all.findIndex((l, i) => i > start && /^END:VTODO\s*$/i.test(l));
     if (end === -1) {
@@ -600,6 +601,15 @@ function untilMatchesStart(rrule: string, start: RetainedDateForm): boolean {
   return /^\d{8}T\d{6}Z$/i.test(until);
 }
 
+/** RDATE/EXDATE values, judged like RECURRENCE-ID; a PERIOD is judged by its start. */
+function recurrenceDatesMatchStart(value: string, params: Record<string, string>, start: RetainedDateForm): boolean {
+  const period = (params['VALUE'] ?? '').toUpperCase() === 'PERIOD';
+  return value.split(',').every((v) => {
+    const form = retainedDateForm(period ? v.split('/')[0]! : v, params);
+    return form.date === start.date && (form.date || form.floating === start.floating);
+  });
+}
+
 /** Whether a retained VALARM still has the anchor its TRIGGER needs. Other components have no rule. */
 function alarmAnchored(block: string[], hasStart: boolean, hasDue: boolean, durationWritten: boolean): boolean {
   if (!/^BEGIN:VALARM$/i.test(block[0]!)) return true;
@@ -636,7 +646,8 @@ function retainedTodoLines(todo: VTodo): string[] {
         return !!start && untilMatchesStart(value, start);
       case 'RDATE':
       case 'EXDATE':
-        return !!start;
+        // RFC 5545 §3.8.5: every value keeps DTSTART's value type and local-time form.
+        return !!start && recurrenceDatesMatchStart(value, params, start);
       case 'RECURRENCE-ID': {
         // RFC 5545 §3.8.4.4: same value type as DTSTART, floating if and only if DTSTART is.
         // Kept verbatim: it names the original occurrence, never compared with DTSTART.
