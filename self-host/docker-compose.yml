@@ -61,6 +61,12 @@ services:
       ETEBASE_DISABLE_DJANGO_ADMIN: ${ETEBASE_DISABLE_DJANGO_ADMIN:-true}
       # Only these reverse proxy IPs may set X-Forwarded-* headers.
       TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-127.0.0.1}
+      # Largest accepted request body in bytes for sign-up, login and password
+      # change (65536 to 1073741824), and for the app's other sync API requests
+      # such as sync batches and attachment uploads (1048576 to 1073741824).
+      # Neither covers the installation-owner login or the Django admin panel.
+      ETEBASE_MAX_AUTH_REQUEST_BYTES: ${ETEBASE_MAX_AUTH_REQUEST_BYTES:-65536}
+      ETEBASE_MAX_REQUEST_BYTES: ${ETEBASE_MAX_REQUEST_BYTES:-67108864}
     volumes:
       - server_data:/data
       - ./success.html:/app/etebase_server/templates/success.html:ro

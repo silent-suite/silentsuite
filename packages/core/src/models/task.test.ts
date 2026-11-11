@@ -611,3 +611,346 @@ describe('edge cases', () => {
     expect(task.title).toBe('Untitled');
   });
 });
+
+// ── VALARM properties are not task fields (WEBX-02) ──
+// Only checks that parent fields survive deserialize/serialize. It does not
+// claim the VALARM block itself is preserved (it is not; see WEBX-03).
+
+describe('VALARM properties are not promoted to task fields (WEBX-02)', () => {
+  const remoteItem = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Example//Other Client//EN',
+    'BEGIN:VTODO',
+    'UID:task-1',
+    'SUMMARY:Pay rent',
+    'DESCRIPTION:Real description',
+    'LOCATION:Home',
+    'STATUS:NEEDS-ACTION',
+    'BEGIN:VALARM',
+    'ACTION:EMAIL',
+    'UID:alarm-uid-1',
+    'SUMMARY:Alarm subject',
+    'DESCRIPTION:Reminder body',
+    'LOCATION:Alarm location',
+    'ATTENDEE:mailto:someone@example.com',
+    'TRIGGER:-PT15M',
+    'END:VALARM',
+    'END:VTODO',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  it('fromVTodo takes uid, title, description and location from the VTODO, not its VALARM', () => {
+    const task = fromVTodo(remoteItem);
+    expect(task.uid).toBe('task-1');
+    expect(task.id).toBe('task-1');
+    expect(task.title).toBe('Pay rent');
+    expect(task.description).toBe('Real description');
+    expect(task.location).toBe('Home');
+  });
+
+  it('a web save (deserialize then serialize) writes the parent fields, not the alarm values', () => {
+    const task = deserializeTask(remoteItem);
+    const saved = serializeTask({ ...task, completed: true, status: 'completed' });
+
+    expect(saved).toContain('UID:task-1');
+    expect(saved).toContain('SUMMARY:Pay rent');
+    expect(saved).toContain('DESCRIPTION:Real description');
+    expect(saved).toContain('LOCATION:Home');
+
+    const reread = deserializeTask(saved);
+    expect(reread.uid).toBe('task-1');
+    expect(reread.title).toBe('Pay rent');
+    expect(reread.description).toBe('Real description');
+    expect(reread.location).toBe('Home');
+    expect(reread.completed).toBe(true);
+  });
+});
+
+// ── Unsupported VTODO content survives a web edit (WEBX-03) ──
+// These tests only cover the local deserialize → edit → serialize transform.
+// Keeping RRULE does not add recurring-task behaviour; completing such a task
+// still completes the item as today. Isolation checks run first, retention last.
+
+describe('unsupported VTODO content survives task edits (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const count = (lines: string[], line: string): number => lines.filter((l) => l === line).length;
+
+  const alarmBlock = [
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Water reminder',
+    'TRIGGER:-PT30M',
+    'END:VALARM',
+  ];
+  const retainedProps = [
+    'RRULE:FREQ=WEEKLY;BYDAY=SA',
+    'RELATED-TO;RELTYPE=PARENT:parent-uid-1',
+    'X-EXAMPLE-ORDER:3',
+  ];
+  const remoteItem = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Example//Other Client//EN',
+    'BEGIN:VTODO',
+    'UID:task-p1',
+    'SUMMARY:Water plants',
+    // Anchor for RRULE and the start-relative alarm (2026-11-07 is a Saturday).
+    'DTSTART:20261107T090000Z',
+    'CREATED:20261101T080000Z',
+    'LAST-MODIFIED:20261102T080000Z',
+    'STATUS:NEEDS-ACTION',
+    ...retainedProps,
+    ...alarmBlock,
+    'END:VTODO',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  it('keeps unsupported properties and the VALARM block when a task is renamed and completed', () => {
+    const task = deserializeTask(remoteItem);
+    const out = logical(serializeTask({ ...task, title: 'Water all plants', completed: true, status: 'completed' }));
+
+    expect(count(out, 'SUMMARY:Water all plants')).toBe(1);
+    expect(out).not.toContain('SUMMARY:Water plants');
+    expect(count(out, 'STATUS:COMPLETED')).toBe(1);
+    expect(out).not.toContain('STATUS:NEEDS-ACTION');
+    expect(out.filter((l) => l.startsWith('UID:'))).toEqual(['UID:task-p1']);
+
+    for (const line of retainedProps) expect(count(out, line)).toBe(1);
+    const blockStart = out.indexOf('BEGIN:VALARM');
+    expect(out.slice(blockStart, blockStart + alarmBlock.length)).toEqual(alarmBlock);
+    expect(out.indexOf('SUMMARY:Water all plants')).toBeLessThan(blockStart);
+    expect(blockStart).toBeLessThan(out.indexOf('END:VTODO'));
+  });
+
+  it('does not duplicate retained content across repeated saves', () => {
+    const first = serializeTask({ ...deserializeTask(remoteItem), title: 'Edit one' });
+    const out = logical(serializeTask({ ...deserializeTask(first), title: 'Edit two' }));
+
+    expect(count(out, 'SUMMARY:Edit two')).toBe(1);
+    expect(out.filter((l) => l.startsWith('SUMMARY:'))).toEqual(['SUMMARY:Edit two']);
+
+    for (const line of [...retainedProps, ...alarmBlock]) expect(count(out, line)).toBe(1);
+  });
+
+  const durationItem = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VTODO',
+    'UID:task-d1',
+    'SUMMARY:Timed task',
+    'DTSTART:20261110T090000Z',
+    'DURATION:PT1H',
+    'END:VTODO',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  it('keeps DURATION while the saved task writes no DUE', () => {
+    const task = deserializeTask(durationItem);
+    const out = logical(serializeTask({ ...task, title: 'Timed task renamed' }));
+
+    expect(out.filter((l) => /^DUE[;:]/.test(l))).toEqual([]);
+    expect(count(out, 'DTSTART:20261110T090000Z')).toBe(1);
+
+    expect(count(out, 'DURATION:PT1H')).toBe(1);
+  });
+
+  it('control: a task that gains a DUE is saved with one DUE and no DURATION', () => {
+    const task = deserializeTask(durationItem);
+    const out = logical(serializeTask({ ...task, due_date: new Date(Date.UTC(2026, 10, 12, 17, 0, 0)), due_ical: undefined }));
+
+    expect(out.filter((l) => /^DUE[;:]/.test(l))).toHaveLength(1);
+    expect(out.filter((l) => l.startsWith('DURATION'))).toEqual([]);
+  });
+
+  it('control: a task without unsupported content serializes only modelled lines', () => {
+    const plain = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VTODO',
+      'UID:task-c1',
+      'SUMMARY:Plain task',
+      'DESCRIPTION:Nothing extra',
+      'CREATED:20261101T080000Z',
+      'LAST-MODIFIED:20261102T080000Z',
+      'STATUS:NEEDS-ACTION',
+      'PRIORITY:5',
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+    const modelled = new Set([
+      'BEGIN', 'END', 'VERSION', 'PRODID', 'UID', 'SUMMARY', 'DESCRIPTION', 'DTSTART', 'DUE', 'PRIORITY',
+      'STATUS', 'COMPLETED', 'CREATED', 'LAST-MODIFIED', 'PERCENT-COMPLETE', 'LOCATION', 'URL', 'CATEGORIES',
+    ]);
+
+    const out = logical(serializeTask({ ...deserializeTask(plain), title: 'Plain task edited' }));
+
+    for (const line of out) expect(modelled.has(line.split(/[;:]/)[0]!.toUpperCase())).toBe(true);
+    expect(out.filter((l) => /^BEGIN:/i.test(l))).toEqual(['BEGIN:VCALENDAR', 'BEGIN:VTODO']);
+  });
+});
+
+// ── Retained content after task date edits (WEBX-03 corrections) ──
+// Edits mirror the web store: a changed start_date without a new source drops
+// start_ical. Retained DURATION, alarms and recurrence are written only while
+// their anchors stay compatible. No recurrence expansion or rebasing.
+
+describe('retained VTODO content stays consistent after task date edits (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const count = (lines: string[], line: string): number => lines.filter((l) => l === line).length;
+  const hasBlock = (lines: string[], block: string[]): boolean =>
+    block.length > 0 && lines.some((_, i) => block.every((l, j) => lines[i + j] === l));
+
+  const startAlarm = ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Start reminder', 'TRIGGER:-PT15M', 'END:VALARM'];
+  const endAlarm = ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:End reminder', 'TRIGGER;RELATED=END:-PT5M', 'END:VALARM'];
+  const absAlarm = [
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'DESCRIPTION:Fixed reminder',
+    'TRIGGER;VALUE=DATE-TIME:20261110T070000Z',
+    'END:VALARM',
+  ];
+  const item = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VTODO',
+    'UID:task-e1',
+    'SUMMARY:Timed',
+    'CREATED:20261101T080000Z',
+    'LAST-MODIFIED:20261102T080000Z',
+    'DTSTART:20261110T090000Z',
+    'DURATION:PT1H',
+    'RRULE:FREQ=DAILY;UNTIL=20261120T090000Z',
+    'X-KEEP:1',
+    ...startAlarm,
+    ...endAlarm,
+    ...absAlarm,
+    'END:VTODO',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  it('keeps anchored content when only the title changes', () => {
+    const out = logical(serializeTask({ ...deserializeTask(item), title: 'Timed renamed' }));
+
+    expect(count(out, 'SUMMARY:Timed renamed')).toBe(1);
+    expect(count(out, 'DTSTART:20261110T090000Z')).toBe(1);
+
+    expect(count(out, 'DURATION:PT1H')).toBe(1);
+    expect(count(out, 'RRULE:FREQ=DAILY;UNTIL=20261120T090000Z')).toBe(1);
+    expect(count(out, 'X-KEEP:1')).toBe(1);
+    expect(hasBlock(out, startAlarm)).toBe(true);
+    expect(hasBlock(out, endAlarm)).toBe(true);
+    expect(hasBlock(out, absAlarm)).toBe(true);
+  });
+
+  it('drops start-dependent content when the start date is cleared, keeping absolute alarms and other content', () => {
+    const out = logical(serializeTask({ ...deserializeTask(item), start_date: null, start_ical: undefined }));
+
+    expect(out.filter((l) => /^dtstart/i.test(l))).toEqual([]);
+    expect(out.filter((l) => /^(duration|rrule)[;:]/i.test(l))).toEqual([]);
+    expect(out).not.toContain('DESCRIPTION:Start reminder');
+    expect(out).not.toContain('DESCRIPTION:End reminder');
+
+    expect(count(out, 'X-KEEP:1')).toBe(1);
+    expect(hasBlock(out, absAlarm)).toBe(true);
+  });
+
+  it('drops a sub-day DURATION and a date-time UNTIL when the start becomes date-only', () => {
+    const out = logical(serializeTask({ ...deserializeTask(item), start_date: new Date(2026, 10, 10), start_ical: undefined }));
+
+    expect(count(out, 'DTSTART;VALUE=DATE:20261110')).toBe(1);
+    expect(out.filter((l) => /^(duration|rrule)[;:]/i.test(l))).toEqual([]);
+    // RELATED=END needs DUE, or DTSTART with a written DURATION.
+    expect(out).not.toContain('DESCRIPTION:End reminder');
+
+    expect(count(out, 'X-KEEP:1')).toBe(1);
+    expect(hasBlock(out, startAlarm)).toBe(true);
+    expect(hasBlock(out, absAlarm)).toBe(true);
+  });
+});
+
+// ── RECURRENCE-ID after task date edits (WEBX-03, RFC 5545 §3.8.4.4) ──
+// A store edit that sets start_date without start_ical makes toVTodo write a
+// floating local DTSTART, so a UTC RECURRENCE-ID is no longer compatible.
+
+describe('retained RECURRENCE-ID after task date edits (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const ridLines = (lines: string[]): string[] => lines.filter((l) => /^recurrence-id[;:]/i.test(l));
+
+  const item = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VTODO',
+    'UID:task-rid1',
+    'SUMMARY:Moved occurrence',
+    'CREATED:20261101T080000Z',
+    'LAST-MODIFIED:20261102T080000Z',
+    'DTSTART:20261110T090000Z',
+    'RECURRENCE-ID:20261103T090000Z',
+    'X-KEEP:1',
+    'END:VTODO',
+    'END:VCALENDAR',
+  ].join('\r\n');
+
+  it('keeps a compatible UTC RECURRENCE-ID verbatim when only the title changes', () => {
+    const out = logical(serializeTask({ ...deserializeTask(item), title: 'Moved occurrence renamed' }));
+
+    expect(out.filter((l) => /^dtstart[;:]/i.test(l))).toEqual(['DTSTART:20261110T090000Z']);
+
+    expect(ridLines(out)).toEqual(['RECURRENCE-ID:20261103T090000Z']);
+  });
+
+  it('suppresses a UTC RECURRENCE-ID when the start is edited to a non-midnight local time', () => {
+    const out = logical(serializeTask({
+      ...deserializeTask(item),
+      start_date: new Date(2026, 10, 10, 14, 30, 0),
+      start_ical: undefined,
+    }));
+
+    // Current formatter: local wall time, no UTC designator, no TZID (floating).
+    expect(out.filter((l) => /^dtstart[;:]/i.test(l))).toEqual(['DTSTART:20261110T143000']);
+    expect(ridLines(out)).toEqual([]);
+
+    expect(out.filter((l) => l === 'X-KEEP:1')).toHaveLength(1);
+  });
+});
+
+// ── RDATE/EXDATE after task date edits (WEBX-03 review follow-up, RFC 5545 §3.8.5) ──
+// A start edit that changes DTSTART between DATE and DATE-TIME must drop retained
+// recurrence dates of the old form instead of writing an inconsistent set.
+
+describe('retained RDATE/EXDATE after task date edits (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const setLines = (lines: string[]): string[] => lines.filter((l) => /^(rdate|exdate)[;:]/i.test(l));
+  const wrap = (...body: string[]): string =>
+    ['BEGIN:VCALENDAR', 'VERSION:2.0', 'BEGIN:VTODO', 'UID:task-rd1', 'SUMMARY:Series', ...body, 'X-KEEP:1', 'END:VTODO', 'END:VCALENDAR'].join('\r\n');
+
+  const timed = wrap('DTSTART:20261110T090000Z', 'RRULE:FREQ=DAILY;COUNT=5', 'EXDATE:20261112T090000Z', 'RDATE:20261120T090000Z');
+  const allDay = wrap('DTSTART;VALUE=DATE:20261110', 'RRULE:FREQ=DAILY;COUNT=5', 'EXDATE;VALUE=DATE:20261112', 'RDATE;VALUE=DATE:20261120');
+
+  it('control: keeps compatible DATE-TIME lines when only the title changes', () => {
+    const out = logical(serializeTask({ ...deserializeTask(timed), title: 'Renamed' }));
+
+    expect(setLines(out)).toEqual(['EXDATE:20261112T090000Z', 'RDATE:20261120T090000Z']);
+  });
+
+  it('drops DATE-TIME lines when the start is edited to an all-day date', () => {
+    const out = logical(serializeTask({ ...deserializeTask(timed), start_date: new Date(2026, 10, 10), start_ical: undefined }));
+
+    expect(out.filter((l) => /^dtstart[;:]/i.test(l))).toEqual(['DTSTART;VALUE=DATE:20261110']);
+    expect(setLines(out)).toEqual([]);
+    expect(out.filter((l) => l === 'X-KEEP:1')).toHaveLength(1);
+  });
+
+  it('drops DATE lines when the start is edited to a timed value', () => {
+    const out = logical(serializeTask({
+      ...deserializeTask(allDay),
+      start_date: new Date(2026, 10, 10, 14, 30, 0),
+      start_ical: undefined,
+    }));
+
+    expect(out.filter((l) => /^dtstart[;:]/i.test(l))).toEqual(['DTSTART:20261110T143000']);
+    expect(setLines(out)).toEqual([]);
+    expect(out.filter((l) => l === 'X-KEEP:1')).toHaveLength(1);
+  });
+});
