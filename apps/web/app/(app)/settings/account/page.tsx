@@ -5,6 +5,8 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
 import { formatDate } from '@/app/lib/date'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
+import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
 import { isSelfHosted, isCustomServer } from '@/app/lib/self-hosted'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import type { DayBoundaryHour, DefaultReminder } from '@silentsuite/core'
@@ -55,9 +57,11 @@ export default function AccountPage() {
       setLoading(false)
       return
     }
+    // Bound to the account this page opened for; an expired access token gets one refresh and retry.
+    const billingFetch = createAuthenticatedPaymentFetch(useAuthStore.getState().user?.id ?? null, getAccountEpoch())
     async function fetchAccount() {
       try {
-        const res = await fetch(`${BILLING_API_URL}/account`, {
+        const res = await billingFetch(`${BILLING_API_URL}/account`, {
           credentials: 'include',
         })
         if (res.ok) {
