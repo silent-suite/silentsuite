@@ -93,6 +93,9 @@ on:
       # entries this replaced.
       - '.github/workflows/**'
       - '.github/trivy/**'
+  # Manual run of the full suite on an exact commit, for example a deploy
+  # candidate whose own merge touched none of the paths above.
+  workflow_dispatch:
 
 concurrency:
   group: ci-server-${{ github.ref }}
