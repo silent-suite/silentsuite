@@ -543,6 +543,8 @@ def _read_state(col_mgr, username, *, with_source=True):
             # or the run stops before writing anything.
             return None, "incomplete-calendar"
         entry["items"] = {item.uid: item for item in items if not item.deleted}
+        if any(_read_content(item) is None for item in entry["items"].values()):
+            return None, "unreadable-calendar-item"
 
     source = {"inventoryComplete": True, "books": []}
     book_tokens = {}

@@ -226,7 +226,10 @@ describe('birthday disable', () => {
     expect(result.status).toBe('done')
   })
 
-  it('turn-off also cleans generated leftovers in a shared ReadWrite retired calendar (F3)', async () => {
+  it.each([
+    ['a shared ReadWrite retired calendar', 'readWrite'],
+    ['an Admin retired calendar with an incomplete member list', 'admin'],
+  ] as const)('turn-off also cleans generated leftovers in %s (F3)', async (_label, accessLevel) => {
     const source = await birthdayEventsFromSource({
       inventoryComplete: true,
       books: [{ bookUid: 'book-1', complete: true, items: [{ itemUid: 'contact-1', content: 'BEGIN:VCARD\r\nFN:Ada Lovelace\r\nBDAY:18151210\r\nEND:VCARD' }] }],
@@ -243,7 +246,7 @@ describe('birthday disable', () => {
           complete: true,
           inventoryToken: 'inv',
           collections: [{
-            uid: 'cal-shared', kind: 'calendar', accessLevel: 'readWrite', content: birthdayMarkerContent('retired'),
+            uid: 'cal-shared', kind: 'calendar', accessLevel, content: birthdayMarkerContent('retired'),
             members: [], membersComplete: false, rootRevision: 'shared-root', root: sharedRoot,
           }],
         }

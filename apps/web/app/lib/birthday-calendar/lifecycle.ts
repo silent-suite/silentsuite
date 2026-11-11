@@ -76,7 +76,8 @@ export async function disableBirthdayCalendar(input: BirthdayRunInput): Promise<
     if (inventory.collections.some((calendar) => calendar.kind === 'calendar' && calendar.content === null)) {
       return failed('unreadable-calendar')
     }
-    const marked = inventory.collections.filter((calendar) => calendar.kind === 'calendar' && parseBirthdayMarker(calendar.content))
+    // C3 membership is checked for active calendars only; retired cleanup needs write access, not members.
+    const marked = inventory.collections.filter((calendar) => calendar.kind === 'calendar' && parseBirthdayMarker(calendar.content) === 'active')
     if (marked.some((calendar) => calendar.accessLevel === 'admin' && !calendar.membersComplete)) {
       return failed('incomplete-members')
     }

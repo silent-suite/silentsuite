@@ -582,9 +582,11 @@ def test_duplicate_active_calendar_is_retired_before_its_generated_items_are_cle
     user_event.delete.assert_not_called()
 
 
-def test_an_incomplete_listing_of_any_writable_calendar_stops_the_run_before_writing():
+@pytest.mark.parametrize("failure", ["incomplete-calendar", "unreadable-calendar-item"])
+def test_an_incomplete_or_unreadable_writable_calendar_stops_the_run_before_writing(failure):
     """cal-A is complete and canonical, but cal-B (a second active calendar) cannot be listed
-    completely. Nothing is written anywhere: cal-A gets no event and cal-B is not retired."""
+    completely or has an item that cannot be read. Nothing is written anywhere: cal-A gets no
+    event and cal-B is not retired."""
     cal_a = _sdk_collection("cal-A", "etebase.vevent", content=ACTIVE)
     cal_b = _sdk_collection("cal-B", "etebase.vevent", content=ACTIVE)
     book = _sdk_collection(BOOK, "etebase.vcard")
@@ -593,14 +595,17 @@ def test_an_incomplete_listing_of_any_writable_calendar_stops_the_run_before_wri
         [cal_a, cal_b, book],
         {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)], "cal-A": [], "cal-B": [generated]},
         {"cal-A": [USERNAME], "cal-B": [USERNAME], BOOK: [USERNAME]},
-        incomplete={"cal-B"},
     )
+    if failure == "incomplete-calendar":
+        account.incomplete.add("cal-B")
+    else:
+        type(generated).content = PropertyMock(side_effect=RuntimeError("decrypt"))
     item_commits, collection_commits = _install_server(account)
 
     result = birthdays.reconcile_birthdays(account, USERNAME)
 
     assert result["status"] == "skipped"
-    assert result["reason"] == "incomplete-calendar"
+    assert result["reason"] == failure
     assert collection_commits == []
     assert item_commits == []
     assert account.created == []
