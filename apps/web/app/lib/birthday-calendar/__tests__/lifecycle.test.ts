@@ -226,6 +226,57 @@ describe('birthday disable', () => {
     expect(result.status).toBe('done')
   })
 
+  it('turn-off also cleans generated leftovers in a shared ReadWrite retired calendar (F3)', async () => {
+    const source = await birthdayEventsFromSource({
+      inventoryComplete: true,
+      books: [{ bookUid: 'book-1', complete: true, items: [{ itemUid: 'contact-1', content: 'BEGIN:VCARD\r\nFN:Ada Lovelace\r\nBDAY:18151210\r\nEND:VCARD' }] }],
+    })
+    expect(source.ok).toBe(true)
+    if (!source.ok) return
+    const generated = birthdayEventContent(source.events[0]!)
+    const calls: string[] = []
+    const writes: Array<{ collectionUid: string; root: unknown; changes: unknown }> = []
+    const sharedRoot = { uid: 'cal-shared' }
+    const transport: BirthdayTransport = {
+      async listInventory() {
+        return {
+          complete: true,
+          inventoryToken: 'inv',
+          collections: [{
+            uid: 'cal-shared', kind: 'calendar', accessLevel: 'readWrite', content: birthdayMarkerContent('retired'),
+            members: [], membersComplete: false, rootRevision: 'shared-root', root: sharedRoot,
+          }],
+        }
+      },
+      async listItems(collectionUid) {
+        calls.push(`list:${collectionUid}`)
+        return {
+          complete: true,
+          stoken: 'items',
+          items: [
+            { itemUid: 'user-1', content: 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:user-kept\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n', revision: 'u' },
+            { itemUid: 'gen-1', content: generated, revision: 'g' },
+          ],
+        }
+      },
+      async applyChanges(input) {
+        calls.push(`apply:${input.collectionUid}`)
+        writes.push({ collectionUid: input.collectionUid, root: input.root, changes: input.changes })
+        return 'saved'
+      },
+      async retireCalendar(input) {
+        calls.push(`retire:${input.collectionUid}`)
+        return { kind: 'retired', rootRevision: 'new', root: {} }
+      },
+    }
+
+    const result = await disableBirthdayCalendar({ accountKey: 'shared', username: 'me', gates: gates(), transport })
+
+    expect(calls).toEqual(['list:cal-shared', 'apply:cal-shared'])
+    expect(writes).toEqual([{ collectionUid: 'cal-shared', root: sharedRoot, changes: [{ op: 'remove', itemUid: 'gen-1' }] }])
+    expect(result.status).toBe('done')
+  })
+
   it('does not clean generated items when retirement conflicts', async () => {
     const calls: string[] = []
     const transport: BirthdayTransport = {

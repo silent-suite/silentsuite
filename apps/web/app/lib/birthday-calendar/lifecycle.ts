@@ -81,7 +81,10 @@ export async function disableBirthdayCalendar(input: BirthdayRunInput): Promise<
       return failed('incomplete-members')
     }
     const active = inventory.collections.filter((calendar) => isQualifying(calendar, input.username, 'active'))
-    const retired = inventory.collections.filter((calendar) => isQualifying(calendar, input.username, 'retired'))
+    // F3: every retired calendar the user can write to loses its generated items, whoever else is a member.
+    const retired = inventory.collections.filter((calendar) => calendar.kind === 'calendar'
+      && (calendar.accessLevel === 'admin' || calendar.accessLevel === 'readWrite')
+      && parseBirthdayMarker(calendar.content) === 'retired')
     const reads = new Map<string, { calendar: BirthdayListedCollection; items: Array<{ itemUid: string; content: string | null }> }>()
     for (const calendar of [...active, ...retired]) {
       const before = blocked(input.gates)
