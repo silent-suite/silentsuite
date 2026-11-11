@@ -1,0 +1,93 @@
+# Reviewed exceptions for the HIGH/CRITICAL gate in ci-server.yml (self-host-image).
+# Only the gate step reads this file. The inventory scan and the step that prints
+# every finding still run with no ignore file, so these findings stay visible.
+#
+# krb5-libs 1.22.2-r1 comes from the pinned python:3.12-alpine base image. Alpine
+# fixed these in 1.22.3-r0, but no python:3.12-alpine image with the fix has been
+# published yet. The advisories concern the KDC and kadmind server daemons, which
+# are packaged in krb5-server and not installed in this image.
+#
+# Each entry matches only krb5-libs at exactly 1.22.2-r1 and expires on 2026-12-11,
+# after which the gate fails again. Remove this file when the base digest moves to
+# an image that ships krb5-libs 1.22.3-r0 or later.
+vulnerabilities:
+  - id: CVE-2026-107364
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112315
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112316
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112317
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112318
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112319
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112320
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112321
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112322
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-112323
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-118380
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-119079
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-40355
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-40356
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-71199
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.
+  - id: CVE-2026-71200
+    purls:
+      - pkg:apk/alpine/krb5-libs@1.22.2-r1
+    expired_at: 2026-12-11
+    statement: Fixed in krb5-libs 1.22.3-r0; no python:3.12-alpine image with the fix is published yet. KDC/kadmind are not installed.

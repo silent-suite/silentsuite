@@ -46,6 +46,7 @@ on:
       # subsumes the release-controller/android/bridge/server-image/readiness
       # entries this replaced.
       - '.github/workflows/**'
+      - '.github/trivy/**'
   pull_request:
     branches: [main]
     paths:
@@ -91,6 +92,7 @@ on:
       # subsumes the release-controller/android/bridge/server-image/readiness
       # entries this replaced.
       - '.github/workflows/**'
+      - '.github/trivy/**'
 
 concurrency:
   group: ci-server-${{ github.ref }}
@@ -402,7 +404,9 @@ jobs:
       # release and checked against this lane's literal digest. One scan writes a
       # full-severity inventory; every finding is printed, installed Python
       # coverage is compared with the image's own metadata, and the HIGH/CRITICAL
-      # gate reads the same report. Each step fails on the tool's own exit status.
+      # gate reads the same report. Only the gate reads the reviewed, expiring
+      # exceptions in .github/trivy/server-image-exceptions.yaml. Each step fails
+      # on the tool's own exit status.
       - name: Install Trivy v0.76.2 (digest-checked)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
@@ -443,4 +447,4 @@ jobs:
 
       - name: HIGH/CRITICAL image vulnerability gate
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-        run: trivy convert --format table --severity HIGH,CRITICAL --exit-code 1 --ignorefile "" "$RUNNER_TEMP/trivy-image.json"
+        run: trivy convert --format table --severity HIGH,CRITICAL --exit-code 1 --ignorefile .github/trivy/server-image-exceptions.yaml "$RUNNER_TEMP/trivy-image.json"

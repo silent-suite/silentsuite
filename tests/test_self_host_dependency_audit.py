@@ -31,6 +31,17 @@ AUDIT_IN = ROOT / "scripts" / "pip-audit-requirements.in"
 AUDIT_LOCK = ROOT / "scripts" / "pip-audit-requirements.txt"
 AUDIT_LOCK_REL = "scripts/pip-audit-requirements.txt"
 
+IMAGE_EXCEPTIONS_REL = ".github/trivy/server-image-exceptions.yaml"
+IMAGE_EXCEPTIONS = ROOT / IMAGE_EXCEPTIONS_REL
+# krb5-libs 1.22.2-r1 in the pinned base image; fixed in 1.22.3-r0, which no
+# python:3.12-alpine image ships yet. Remove with the base digest bump.
+KRB5_EXCEPTION_IDS = (
+    "CVE-2026-107364", "CVE-2026-112315", "CVE-2026-112316", "CVE-2026-112317",
+    "CVE-2026-112318", "CVE-2026-112319", "CVE-2026-112320", "CVE-2026-112321",
+    "CVE-2026-112322", "CVE-2026-112323", "CVE-2026-118380", "CVE-2026-119079",
+    "CVE-2026-40355", "CVE-2026-40356", "CVE-2026-71199", "CVE-2026-71200",
+)
+
 TRIVY_RELEASE = "https://github.com/aquasecurity/trivy/releases/download/v0.76.2/"
 TRIVY_ASSETS = {
     "amd64": ("trivy_0.76.2_Linux-64bit.tar.gz", "bc0fc726e017b8927a62b2d3531d7a84ee01769daf5c99ed866dced54089fdbf"),
@@ -189,9 +200,27 @@ def test_all_findings_are_printed_before_the_high_critical_gate():
     assert len(printers) == 1, "exactly one step must print every finding from the inventory"
     assert len(gates) == 1, "exactly one step must apply the HIGH/CRITICAL gate"
     assert "--exit-code 1" in _run(gates[0])
-    for step in printers + gates:
-        assert '--ignorefile ""' in _run(step)
+    assert '--ignorefile ""' in _run(printers[0]), "the printed inventory must not apply any exception"
+    assert f"--ignorefile {IMAGE_EXCEPTIONS_REL} " in _run(gates[0]), "the gate must read only the reviewed exceptions"
     assert _index("self-host-image", printers[0]) < _index("self-host-image", gates[0])
+
+
+def test_image_gate_exceptions_are_exact_scoped_and_expiring():
+    """Each exception names one reviewed ID, the exact affected package version and the shared expiry."""
+    data = yaml.load(IMAGE_EXCEPTIONS.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    assert set(data) == {"vulnerabilities"}, "only vulnerability exceptions are allowed"
+    entries = data["vulnerabilities"]
+    assert sorted(entry["id"] for entry in entries) == sorted(KRB5_EXCEPTION_IDS)
+    for entry in entries:
+        assert set(entry) == {"id", "purls", "expired_at", "statement"}, entry["id"]
+        assert entry["purls"] == ["pkg:apk/alpine/krb5-libs@1.22.2-r1"], entry["id"]
+        assert entry["expired_at"] == "2026-12-11", entry["id"]
+        assert entry["statement"].strip(), entry["id"]
+
+
+@pytest.mark.parametrize("event", ["push", "pull_request"])
+def test_image_exceptions_are_a_ci_trigger_path(event):
+    assert ".github/trivy/**" in CI["on"][event]["paths"]
 
 
 def test_installed_python_coverage_compares_python_pkg_with_image_metadata():
