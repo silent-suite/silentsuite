@@ -77,3 +77,64 @@ describe('Settings billing reads after the 15-minute access token expires', () =
     expect(screen.getByText('trialing no card')).toBeInTheDocument()
   })
 })
+
+// Captured at import, before any test replaces it, so the wired cases run the store's real refresh.
+const realRefreshSession = useAuthStore.getState().refreshSession
+
+/**
+ * Wired reproducer: only the network is simulated. Billing answers 401 to every protected read
+ * while the 15-minute access cookie is expired, and /auth/refresh renews it from the refresh
+ * cookie, as production does. The page and the store's real refreshSession run unmodified.
+ */
+function billingWithExpiredAccessToken(rememberDevice: boolean) {
+  let accessValid = false
+  const identity = { id: user.id, email: user.email, planId: user.planId, isAdmin: false, emailVerified: true, rememberDevice, onboardedAt: null }
+  vi.mocked(fetch).mockImplementation((async (input: string, init?: RequestInit) => {
+    if (input === 'https://billing.test/auth/refresh' && init?.method === 'POST') { accessValid = true; return json(200, identity) }
+    if (!accessValid) return json(401, { status: 401, title: 'Unauthorized' })
+    if (input === 'https://billing.test/subscription') return json(200, subscription)
+    if (input === 'https://billing.test/account') return json(200, account)
+    if (input === 'https://billing.test/auth/session') return json(200, identity)
+    return json(404, {})
+  }) as unknown as typeof fetch)
+}
+
+describe('wired: a 7-day no-card trial opens Settings after its access token expired', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    sessionStorage.clear()
+    vi.stubGlobal('fetch', vi.fn())
+    useAuthStore.setState({ user: { ...user, rememberDevice: true }, isAuthenticated: true, subscriptionStatus: 'trialing', hostedAccess: 'entitled', refreshSession: realRefreshSession } as unknown as Partial<ReturnType<typeof useAuthStore.getState>>)
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
+  it.each([
+    ['remembered device', true],
+    ['session-only sign-in', false],
+  ])('Subscription loads the trial instead of "Unable to load subscription details." (%s)', async (_label, rememberDevice) => {
+    if (!rememberDevice) {
+      sessionStorage.setItem('silentsuite-hosted-validation-session', JSON.stringify({ userId: user.id, rememberDevice: false, validatedAt: Date.now() }))
+    }
+    billingWithExpiredAccessToken(rememberDevice)
+    render(<SubscriptionPage />)
+    await flush()
+    await flush()
+    expect(calls('https://billing.test/auth/refresh')).toBe(1)
+    expect(screen.queryByText('Unable to load subscription details.')).not.toBeInTheDocument()
+    expect(screen.getByText('Early annual')).toBeInTheDocument()
+    expect(useAuthStore.getState().user?.id).toBe(user.id)
+  })
+
+  it('Account shows the billing account details', async () => {
+    billingWithExpiredAccessToken(true)
+    render(<AccountPage />)
+    await flush()
+    await flush()
+    expect(calls('https://billing.test/auth/refresh')).toBe(1)
+    expect(screen.getByText('trialing no card')).toBeInTheDocument()
+  })
+})
