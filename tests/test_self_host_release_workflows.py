@@ -1140,6 +1140,34 @@ def test_production_deploy_workflow_is_not_callable_and_not_called():
         )
 
 
+def test_production_deploy_pins_the_ssh_host_key_behind_a_fail_closed_preflight():
+    # appleboy/ssh-action skips host-key verification when the fingerprint is
+    # empty (scripts/ssh-host-verification-transport.test.mjs proves this for
+    # the pinned binary), so the preflight must run before the SSH step.
+    steps = DEPLOY["jobs"]["deploy"]["steps"]
+    names = [step.get("name") for step in steps]
+    preflight_name = "Require protected SSH host-key fingerprint before final authorization"
+    assert preflight_name in names
+    ssh_index = names.index("Deploy via SSH")
+    assert names.index(preflight_name) < ssh_index
+    assert steps[ssh_index]["with"]["fingerprint"] == "${{ secrets.VPS_SSH_FINGERPRINT }}"
+
+    import subprocess
+
+    run = steps[names.index(preflight_name)]["run"]
+    def preflight(value):
+        return subprocess.run(
+            ["bash", "--noprofile", "--norc", "-c", run],
+            env={"PATH": "/usr/bin:/bin", "VPS_SSH_FINGERPRINT": value},
+            capture_output=True,
+        ).returncode
+
+    valid = "SHA256:" + "A" * 42 + "E"
+    assert preflight(valid) == 0
+    for bad in ["", "SHA256:", "MD5:" + "a" * 32, valid + "\n" + valid, valid + "=", "SHA256:" + "A" * 42 + "B"]:
+        assert preflight(bad) != 0, bad
+
+
 def test_production_deploy_remains_the_only_lane_running_in_its_environment():
     owners = []
     for path in all_workflows():
