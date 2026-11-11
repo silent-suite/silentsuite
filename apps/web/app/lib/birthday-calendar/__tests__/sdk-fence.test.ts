@@ -114,7 +114,8 @@ describe('pinned etebase 0.43.1 collection-root dependency', () => {
     ])
   })
 
-  it('retires by uploading the saved root etag, then exposes a new root', async () => {
+  /** A transport that has listed one saved calendar; transactionStatus answers /item/transaction. */
+  async function listedRetireSetup(transactionStatus: number) {
     const { account, collection } = await savedCalendar()
     const captured: Array<{ url: string; body: any }> = []
     EtebaseRequest.default = (url: string, options: { method?: string; body?: Uint8Array } = {}) => {
@@ -131,7 +132,9 @@ describe('pinned etebase 0.43.1 collection-root dependency', () => {
       if (method === 'get' && url.includes('/member')) {
         return respond(200, { data: [{ username: account.user.username, accessLevel: 1 }], done: true })
       }
-      if (method === 'post' && (url.includes('/item/batch') || url.includes('/item/transaction'))) return respond(200, {})
+      if (method === 'post' && url.includes('/item/transaction')) {
+        return transactionStatus === 200 ? respond(200, {}) : respond(transactionStatus, { code: 'wrong_etag', detail: 'Wrong etag' })
+      }
       return respond(500, { detail: 'unregistered' })
     }
     const transport = createEtebaseBirthdayTransport(account, {
@@ -145,21 +148,43 @@ describe('pinned etebase 0.43.1 collection-root dependency', () => {
     const listed = inventory.collections.find((candidate) => candidate.uid === collection.uid)
     expect(listed?.rootRevision).toBeTruthy()
     const oldEtag = listed!.root.encryptedItem.lastEtag
+    return { collection, captured, transport, listed: listed!, oldEtag }
+  }
+
+  it('retires through an etag-checked transaction on the saved root, then exposes a new root', async () => {
+    const { collection, captured, transport, listed, oldEtag } = await listedRetireSetup(200)
 
     const retired = await transport.retireCalendar!({
       collectionUid: collection.uid,
-      rootRevision: listed!.rootRevision,
-      root: listed!.root,
+      rootRevision: listed.rootRevision,
+      root: listed.root,
       content: birthdayMarkerContent('retired'),
     })
 
-    const upload = captured.find((call) => call.url.includes('/item/batch'))
-    expect(upload?.body.items.map((item: { etag: string; uid: string }) => ({ uid: item.uid, etag: item.etag }))).toEqual([
+    // /item/batch/ skips the server's etag check; retirement must never use it.
+    expect(captured.some((call) => call.url.includes('/item/batch'))).toBe(false)
+    const write = captured.find((call) => call.url.includes('/item/transaction'))
+    expect(write?.body.items.map((item: { etag: string; uid: string }) => ({ uid: item.uid, etag: item.etag }))).toEqual([
       { uid: collection.uid, etag: oldEtag },
     ])
     expect(retired.kind).toBe('retired')
     if (retired.kind !== 'retired') return
     expect(retired.rootRevision).not.toBe(oldEtag)
     expect(retired.root.encryptedItem.lastEtag).toBe(retired.rootRevision)
+  })
+
+  it('reports a conflict, not a retirement, when the root changed on the server first', async () => {
+    const { collection, captured, transport, listed } = await listedRetireSetup(409)
+
+    const retired = await transport.retireCalendar!({
+      collectionUid: collection.uid,
+      rootRevision: listed.rootRevision,
+      root: listed.root,
+      content: birthdayMarkerContent('retired'),
+    })
+
+    expect(retired).toEqual({ kind: 'conflict' })
+    expect(captured.filter((call) => call.url.includes('/item/transaction'))).toHaveLength(1)
+    expect(captured.some((call) => call.url.includes('/item/batch'))).toBe(false)
   })
 })

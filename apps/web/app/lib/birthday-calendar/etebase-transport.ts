@@ -82,6 +82,7 @@ interface AccountLike {
       }>
     }
     upload?(collection: CollectionLike): Promise<void>
+    transaction?(collection: CollectionLike): Promise<void>
     create?(collectionType: string, meta: { name?: string }, content: string): Promise<CollectionLike>
   }
 }
@@ -272,9 +273,12 @@ export function createEtebaseBirthdayTransport(account: AccountLike, gates: Birt
       await collection.setContent(input.content)
       assertGate(gates)
       const manager = account.getCollectionManager()
-      if (!manager.upload) throw new BirthdayTransportClosedError('missing-root')
+      if (!manager.transaction) throw new BirthdayTransportClosedError('missing-root')
       try {
-        await manager.upload(collection)
+        // transaction, not upload: upload posts to /item/batch/, which the server
+        // accepts without checking the root etag, so a stale retirement could
+        // overwrite a concurrent root change.
+        await manager.transaction(collection)
       } catch (err) {
         const outcome = writeOutcome(err)
         if (outcome) return { kind: outcome }
