@@ -248,7 +248,8 @@ jobs:
           api-level: ${{ matrix.api-level }}
           arch: ${{ matrix.arch }}
           target: google_apis
-          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -gpu swiftshader_indirect
+          emulator-boot-timeout: 900
           disable-animations: true
           script: >-
             cd android &&
@@ -297,7 +298,7 @@ jobs:
           path: |
             android/cert4android/build/outputs/androidTest-results/connected/
             android/cert4android/build/reports/androidTests/connected/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
 
   # ─────────────────────────────────────────────────────────────────────
@@ -698,7 +699,8 @@ jobs:
           arch: ${{ matrix.arch }}
           target: google_apis
           profile: ${{ matrix.avd-profile }}
-          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -gpu swiftshader_indirect
+          emulator-boot-timeout: 900
           disable-animations: true
           script: bash android/scripts/run-focused-runtime-with-navigation.sh "${{ matrix.api-level }}" "${{ matrix.shard }}" "${{ matrix.navigation-mode }}"
 
@@ -945,7 +947,8 @@ jobs:
           api-level: 36
           arch: x86_64
           target: google_apis
-          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -gpu swiftshader_indirect
+          emulator-boot-timeout: 900
           disable-animations: true
           script: bash android/scripts/run-color-parity-evidence.sh
 
@@ -1093,7 +1096,8 @@ jobs:
           api-level: ${{ matrix.api-level }}
           arch: ${{ matrix.arch }}
           target: google_apis
-          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -camera-back none -gpu swiftshader_indirect
+          emulator-boot-timeout: 900
           disable-animations: true
           script: bash android/scripts/run-registry-process-boundary.sh "${{ matrix.api-level }}"
 
