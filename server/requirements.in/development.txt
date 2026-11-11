@@ -7,4 +7,4 @@ mypy
 django-stubs
 pytest
 pytest-django
-httpx2==2.5.0
+httpx2==2.12.0

@@ -12,6 +12,9 @@ https://docs.djangoproject.com/en/3.0/ref/settings/
 
 import configparser
 import os
+import re
+
+from django.core.exceptions import ImproperlyConfigured
 
 from .utils import get_secret_from_file
 
@@ -21,6 +24,18 @@ def env_flag(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in ("true", "1", "yes")
+
+
+def env_byte_limit(name: str, default: int, minimum: int, maximum: int) -> int:
+    """A byte count from the environment; anything malformed or out of range stops startup."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    if re.fullmatch(r"[0-9]{1,10}", value) is None or not minimum <= int(value) <= maximum:
+        raise ImproperlyConfigured(
+            f"{name} must be a whole number of bytes from {minimum} to {maximum}, got {value!r}"
+        )
+    return int(value)
 
 # Build paths inside the project like this: os.path.join(BASE_DIR, ...)
 SOURCE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +63,10 @@ ETEBASE_REGISTRATION_TOKEN = os.environ.get("ETEBASE_REGISTRATION_TOKEN", "")
 # Opt-in installation-owner login password (POST /api/v1/owner/login/). When set, it must be
 # 32-256 characters and differ from ETEBASE_REGISTRATION_TOKEN; otherwise owner login fails closed.
 ETEBASE_OWNER_PASSWORD = os.environ.get("ETEBASE_OWNER_PASSWORD", "")
+# Largest accepted request body in bytes: authentication and billing-link routes, then all other
+# MsgpackRoute (sync API) routes. The owner-login router and Django admin are not covered.
+ETEBASE_MAX_AUTH_REQUEST_BYTES = env_byte_limit("ETEBASE_MAX_AUTH_REQUEST_BYTES", 65536, 65536, 1073741824)
+ETEBASE_MAX_REQUEST_BYTES = env_byte_limit("ETEBASE_MAX_REQUEST_BYTES", 67108864, 1048576, 1073741824)
 
 # Database
 # https://docs.djangoproject.com/en/2.0/ref/settings/#databases
