@@ -1039,3 +1039,47 @@ describe('C3a import-store contract: importEvents', () => {
     }
   }, 20_000)
 })
+
+// ── WEB-05: a refused queue write is reported, not hidden as "offline" ──
+// Real fake-IndexedDB queue in production mode (plaintext refused), a stubbed
+// account, and an uncached temporary event. updateEvent reaches the real
+// enqueue and the real isOfflineError; only navigator.onLine is fixed per case.
+
+describe('WEB-05 calendar update refused by the production queue', () => {
+  // Local equivalent of the guarded-queue block's queuedEvent helper.
+  const uncachedTempEvent = () => makeRecurringEvent({ id: 'web05-temp-event', uid: 'web05-temp-event', recurrenceRule: null, calendarId: 'cal-1' })
+
+  beforeEach(async () => {
+    await resetRealOfflineQueue()
+    resetStore()
+    offlineAccount()
+    toastMock.showErrorToast.mockReset()
+  })
+
+  it.each([
+    ['online', true],
+    ['offline', false],
+  ] as const)('shows the existing failure toast and queues nothing when an uncached update is refused while %s', async (_state, online) => {
+    const originalOnLine = Object.getOwnPropertyDescriptor(globalThis.navigator, 'onLine')
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    _setEncryptedQueuePersistenceAvailableForTests(false)
+    Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, get: () => online })
+    try {
+      useCalendarStore.setState({ events: [uncachedTempEvent()] })
+      expect(etebaseMock.state.itemCache.has('web05-temp-event')).toBe(false)
+
+      await expect(useCalendarStore.getState().updateEvent('web05-temp-event', { title: 'WEB05 edited' })).resolves.toBeUndefined()
+
+      expect(etebaseMock.state.updateItem).not.toHaveBeenCalled()
+      expect(await getAll()).toEqual([])
+      expect(await getAll(queueGuard(TEST_FINGERPRINT))).toEqual([])
+
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to save event. Please try again.')
+    } finally {
+      if (originalOnLine) Object.defineProperty(globalThis.navigator, 'onLine', originalOnLine)
+      else delete (globalThis.navigator as { onLine?: boolean }).onLine
+      _setEncryptedQueuePersistenceAvailableForTests(true)
+      errorSpy.mockRestore()
+    }
+  })
+})
