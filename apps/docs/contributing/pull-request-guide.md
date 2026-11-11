@@ -23,7 +23,6 @@ Create a branch from `main` with a descriptive name:
 
 ```bash
 git checkout -b fix/login-timeout
-git checkout -b feature/task-export
 ```
 
 ### 3. Make Your Changes
@@ -46,7 +45,7 @@ pnpm build
 ### 5. Push and Open a PR
 
 ```bash
-git push origin your-branch-name
+git push -u origin fix/login-timeout
 ```
 
 Open a pull request on GitHub against the protected `main` branch.
