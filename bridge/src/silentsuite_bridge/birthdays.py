@@ -539,8 +539,9 @@ def _read_state(col_mgr, username, *, with_source=True):
         try:
             items, _ = _list_pages(item_mgr.list)
         except _Incomplete:
-            entry["complete"] = False
-            continue
+            # Same as web and Android: every calendar this run may write is read completely,
+            # or the run stops before writing anything.
+            return None, "incomplete-calendar"
         entry["items"] = {item.uid: item for item in items if not item.deleted}
 
     source = {"inventoryComplete": True, "books": []}

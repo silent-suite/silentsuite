@@ -582,6 +582,31 @@ def test_duplicate_active_calendar_is_retired_before_its_generated_items_are_cle
     user_event.delete.assert_not_called()
 
 
+def test_an_incomplete_listing_of_any_writable_calendar_stops_the_run_before_writing():
+    """cal-A is complete and canonical, but cal-B (a second active calendar) cannot be listed
+    completely. Nothing is written anywhere: cal-A gets no event and cal-B is not retired."""
+    cal_a = _sdk_collection("cal-A", "etebase.vevent", content=ACTIVE)
+    cal_b = _sdk_collection("cal-B", "etebase.vevent", content=ACTIVE)
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    generated = _sdk_item("gen-b", ALEX_GENERATED_ICS)
+    account = FakeAccount(
+        [cal_a, cal_b, book],
+        {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)], "cal-A": [], "cal-B": [generated]},
+        {"cal-A": [USERNAME], "cal-B": [USERNAME], BOOK: [USERNAME]},
+        incomplete={"cal-B"},
+    )
+    item_commits, collection_commits = _install_server(account)
+
+    result = birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "incomplete-calendar"
+    assert collection_commits == []
+    assert item_commits == []
+    assert account.created == []
+    generated.delete.assert_not_called()
+
+
 def test_interrupted_retirement_is_repaired_on_the_next_run():
     """INTENDED-RED: a calendar already retired (crash before cleanup) loses only its generated
     item on the next run; it is not retired again and the user's event stays."""
