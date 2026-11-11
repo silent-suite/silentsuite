@@ -105,7 +105,7 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
   },
   'deploy-server.yml': {
     'build-and-push': { steps: 'eaaaecf8738fd3b7d25bfb6f383709911df7c00da94dff1cca81014fdb254a62', permissions: '005c397eb9ccf2cc53aad524b4ebcad817405ec025bb937a039a8a5ef8c69bca' },
-    deploy: { steps: 'bbd0c9a9415d24b319bf53201011b78485a5a22674d36336b252fa770e19cf4c', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
+    deploy: { steps: '3388f73fc74265014da2ad5db98580d7d94c1a5d4a851b224997893825aedc3a', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
   },
   'deploy-docs.yml': {
     build: { steps: 'aaa1a984b500e400dfe37e18519e66fff62ead0c6d96bc09b731174a2ad0ce5b', permissions: 'd8d6aceb1abc41990618a503082c3badcca8897feee0976f222af5b74e30bec2' },
@@ -121,7 +121,7 @@ const jobContracts: Record<string, Record<string, { steps: string; permissions: 
 
 const workflowContracts: Record<string, string> = {
   'deploy-web.yml': 'a1507e64f4617da3f9b7a17c9ad8ef81898b01d7e2471c6aadd96f0cc7c39deb',
-  'deploy-server.yml': 'ee8015b23a29d0faa6b0ecb0371f049ae9189c37fe4c80591f82f0e844193312',
+  'deploy-server.yml': '8c8b1fbf34b763ed707cbae73fa25cd44ae704ede94cd7d8d40e5d1e1dcbae35',
   'deploy-docs.yml': 'b75623f1069fc1a4d6ede2834a85b9e90bbc190a70260bf3e3d5b9e2d65f1d3d',
   'deploy-docs-standalone.yml': 'f26f9bc78ecfe56d61086bebc1aa6d945bed216645f6f443f6de3d825469e9cd',
 }
