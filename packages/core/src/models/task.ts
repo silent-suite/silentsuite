@@ -44,6 +44,12 @@ export interface Task {
    *  Round-tripped via the ICS CATEGORIES property (comma-separated).
    *  Optional so existing callers keep compiling; deserialize paths default to []. */
   categories?: string[];
+  /** Unsupported VTODO property lines kept opaque across edits (WEBX-03).
+   *  Absent when the item has none, so older records are unchanged. */
+  unknownProperties?: string[];
+  /** Unsupported VTODO subcomponents such as VALARM, one array of logical
+   *  lines per block, kept opaque across edits (WEBX-03). Absent when none. */
+  unknownComponents?: string[][];
   listId?: string;
   created_at: Date;
   updated_at: Date;
@@ -216,6 +222,13 @@ export function toVTodo(task: Task): string {
     categories: task.categories && task.categories.length > 0 ? task.categories : undefined,
     created: formatICalUtcDateTime(task.created_at),
     lastModified: formatICalUtcDateTime(task.updated_at),
+    // Copied so generation never shares arrays with the task.
+    ...(task.unknownProperties && task.unknownProperties.length > 0
+      ? { unknownProperties: [...task.unknownProperties] }
+      : {}),
+    ...(task.unknownComponents && task.unknownComponents.length > 0
+      ? { unknownComponents: task.unknownComponents.map((block) => [...block]) }
+      : {}),
   };
 
   if (task.start_date && task.start_ical) {
@@ -282,6 +295,12 @@ export function fromVTodo(vtodoStr: string): Task {
     url: vtodo.url ?? '',
     // Preserve CATEGORIES for round-trip; default to [] for legacy records
     categories: vtodo.categories ?? [],
+    ...(vtodo.unknownProperties && vtodo.unknownProperties.length > 0
+      ? { unknownProperties: [...vtodo.unknownProperties] }
+      : {}),
+    ...(vtodo.unknownComponents && vtodo.unknownComponents.length > 0
+      ? { unknownComponents: vtodo.unknownComponents.map((block) => [...block]) }
+      : {}),
     created_at: vtodo.created ? parseICalDateValue(vtodo.created) : now,
     updated_at: vtodo.lastModified ? parseICalDateValue(vtodo.lastModified) : now,
   };

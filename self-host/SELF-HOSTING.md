@@ -326,6 +326,8 @@ server {
 }
 ```
 
+The server applies its own request size limits as well (`ETEBASE_MAX_AUTH_REQUEST_BYTES` and `ETEBASE_MAX_REQUEST_BYTES`; see the configuration reference). If you raise `ETEBASE_MAX_REQUEST_BYTES` above 50 MB, raise `client_max_body_size` too, or nginx will refuse the larger requests with its own 413 page first.
+
 ### Trusted Proxy Headers
 
 The server only accepts `X-Forwarded-*` headers from `TRUSTED_PROXY_IPS`.

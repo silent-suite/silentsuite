@@ -6,8 +6,12 @@ on:
       - main
       # Exact branch only: the annual finalized-artifact correction touches
       # .github/workflows/** and package.json and must not deploy an incidental
-      # docs preview. No other branch is excluded.
+      # docs preview.
       - fix/annual-finalized-artifact-20260905
+      # Exact branch only: the server request-limit and audit change touches
+      # .github/workflows/** and self-hosting docs and must not deploy an
+      # incidental docs preview. Only the exact branches listed here are excluded.
+      - fix/server-request-limits-audit-20261107
     paths:
       - 'apps/docs/**'
       - 'apps/web/**'
