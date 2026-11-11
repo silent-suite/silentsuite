@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
+import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import { act, render, screen, fireEvent } from '@testing-library/react'
 import { toVEvent, toVTodo, toVCard } from '@silentsuite/core'
 import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
 import JSZip from 'jszip'
@@ -192,6 +194,13 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
     { getState: () => etebaseMock.state },
   ),
 }))
+
+// Default for every test: each exported domain's loaded server snapshot has
+// reached its UI store for the current account (real store, real epoch).
+beforeEach(() => {
+  const epoch = getAccountEpoch()
+  useDomainSnapshotStore.setState({ appliedEpoch: { calendar: epoch, tasks: epoch, contacts: epoch } })
+})
 
 // Mock URL.createObjectURL and URL.revokeObjectURL
 vi.stubGlobal('URL', {
@@ -813,5 +822,91 @@ describe('ExportPage export completeness (WEB-07)', () => {
     expect(new TextDecoder().decode(entry)).toBe(
       'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//EN\r\nEND:VCALENDAR',
     )
+  })
+})
+
+// ── WEB-07 review follow-up: loaded on the server, not yet in the store ──
+// domainLoadState turns 'loaded' before the decrypted items reach the task,
+// contact and calendar stores (initial decryption, or Retry while another
+// domain is still refreshing). Until then the page must treat the domain as
+// still loading, or it would export cached or empty arrays.
+
+describe('ExportPage waits for the loaded snapshot to reach the store (WEB-07)', () => {
+  let downloads: HTMLAnchorElement[] = []
+  const button = (name: RegExp) => screen.getByText(name).closest('button')!
+  const statusText = () => screen.queryAllByRole('status').map((el) => el.textContent ?? '').join(' ')
+
+  beforeEach(() => {
+    downloads = []
+    resetMockData()
+    etebaseMock.state = etebaseMock.loadedState()
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+    ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => 'blob:mock')
+    ;(URL.revokeObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => {})
+    const originalCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag)
+      if (tag === 'a') {
+        downloads.push(el as HTMLAnchorElement)
+        vi.spyOn(el, 'click').mockImplementation(() => {})
+      }
+      return el
+    })
+  })
+
+  const unapply = (domain: 'calendar' | 'tasks' | 'contacts') => {
+    const { [domain]: _dropped, ...rest } = useDomainSnapshotStore.getState().appliedEpoch
+    useDomainSnapshotStore.setState({ appliedEpoch: rest })
+  }
+
+  it('disables a loaded domain whose snapshot has not reached its store, and says it is still loading', () => {
+    unapply('tasks')
+    render(<ExportPage />)
+
+    expect(button(/Export Tasks/)).toBeDisabled()
+    expect(button(/Export All/)).toBeDisabled()
+    expect(button(/Export Calendar/)).not.toBeDisabled()
+    expect(statusText()).toMatch(/Tasks is still loading/)
+  })
+
+  it('refuses in the click handler when the snapshot has not reached the store', () => {
+    render(<ExportPage />)
+    expect(button(/Export Contacts/)).not.toBeDisabled()
+
+    unapply('contacts')
+    fireEvent.click(button(/Export Contacts/))
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(downloads).toEqual([])
+    expect(vi.mocked(showWarningToast)).toHaveBeenCalled()
+  })
+
+  it('refuses the ZIP in the click handler when any snapshot has not reached its store', () => {
+    render(<ExportPage />)
+    unapply('calendar')
+    fireEvent.click(button(/Export All/))
+
+    expect(vi.mocked(JSZip)).not.toHaveBeenCalled()
+    expect(downloads).toEqual([])
+  })
+
+  it('enables the export once the snapshot is marked for the current account', () => {
+    unapply('tasks')
+    render(<ExportPage />)
+    expect(button(/Export Tasks/)).toBeDisabled()
+
+    act(() => useDomainSnapshotStore.getState().markApplied('tasks', getAccountEpoch()))
+
+    expect(button(/Export Tasks/)).not.toBeDisabled()
+  })
+
+  it('does not trust a mark from a previous account', () => {
+    bumpAccountEpoch()
+    render(<ExportPage />)
+
+    expect(button(/Export Calendar/)).toBeDisabled()
+    expect(button(/Export Tasks/)).toBeDisabled()
+    expect(button(/Export Contacts/)).toBeDisabled()
   })
 })

@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import { toVCard, type Contact } from '@silentsuite/core'
 import JSZip from 'jszip'
 import ExportPage from '../page'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
 import ContactImport from '@/app/components/import/ContactImport'
 import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
@@ -103,6 +105,12 @@ vi.mock('@/app/stores/use-etebase-store', () => {
     ),
   }
 })
+// Every exported domain's loaded snapshot has reached its store (WEB-07).
+beforeEach(() => {
+  const epoch = getAccountEpoch()
+  useDomainSnapshotStore.setState({ appliedEpoch: { calendar: epoch, tasks: epoch, contacts: epoch } })
+})
+
 vi.mock('@/app/stores/use-calendar-list-store', () => ({
   useCalendarListStore: (selector: (s: { calendars: unknown[] }) => unknown) =>
     selector({ calendars: [] }),

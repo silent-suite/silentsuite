@@ -10,6 +10,7 @@ import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { isSnapshotApplied, useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import {
   showErrorToast,
   showWarningToast,
@@ -38,13 +39,18 @@ const DOMAIN_LABELS: Record<ExportDomain, string> = {
 
 /**
  * Current load state, read at click time. 'loaded' means this session's last
- * full enumeration of the domain succeeded. 'unknown' or 'failed' means the
- * items on screen may be incomplete or stale, so they are not exported as if
- * they were complete. 'loaded' is not proof of every historical server item,
- * of later remote changes, or of pending offline edits.
+ * full enumeration of the domain succeeded, and that snapshot must also have
+ * reached the store this page serializes: the server read finishes before the
+ * decrypted items arrive there. 'unknown' or 'failed' means the items on screen
+ * may be incomplete or stale, so they are not exported as if they were complete.
+ * 'loaded' is not proof of every historical server item, of later remote
+ * changes, or of pending offline edits.
  */
 function isDomainLoaded(domain: ExportDomain): boolean {
-  return useEtebaseStore.getState().domainLoadState[domain] === 'loaded'
+  return (
+    useEtebaseStore.getState().domainLoadState[domain] === 'loaded' &&
+    isSnapshotApplied(useDomainSnapshotStore.getState().appliedEpoch, domain)
+  )
 }
 
 /** Refuse an export whose domains have not finished loading, without writing a file. */
@@ -186,7 +192,13 @@ export default function ExportPage() {
   }
   // Initialization still running: an 'unknown' domain may load on its own.
   const initializing = useEtebaseStore((s) => !s.isInitialized && !s.restoreBlocked)
-  const unloadedDomains = EXPORT_DOMAINS.filter((domain) => domainStatus[domain] !== 'loaded')
+  const appliedEpoch = useDomainSnapshotStore((s) => s.appliedEpoch)
+  // Loaded on the server but not yet in the store: still loading, not failed.
+  const awaitingStore = (domain: ExportDomain) =>
+    domainStatus[domain] === 'loaded' && !isSnapshotApplied(appliedEpoch, domain)
+  const unloadedDomains = EXPORT_DOMAINS.filter(
+    (domain) => domainStatus[domain] !== 'loaded' || awaitingStore(domain),
+  )
 
   const [selectedCalendarId, setSelectedCalendarId] = useState(ALL_COLLECTIONS)
   const [selectedTaskListId, setSelectedTaskListId] = useState(ALL_COLLECTIONS)
@@ -337,7 +349,7 @@ export default function ExportPage() {
         <div role="status" className="space-y-1 text-sm text-amber-600 dark:text-amber-400">
           {unloadedDomains.map((domain) => (
             <p key={domain}>
-              {domainStatus[domain] === 'unknown' && initializing
+              {(domainStatus[domain] === 'unknown' && initializing) || awaitingStore(domain)
                 ? `${DOMAIN_LABELS[domain]} is still loading, so it can't be exported yet.`
                 : `${DOMAIN_LABELS[domain]} didn't finish loading on this device, so it can't be exported. Sync again, then export.`}
             </p>
@@ -370,7 +382,7 @@ export default function ExportPage() {
           </select>
           <Button
             className="w-full sm:w-auto"
-            disabled={filteredEvents.length === 0 || isExportingAll || domainStatus.calendar !== 'loaded'}
+            disabled={filteredEvents.length === 0 || isExportingAll || unloadedDomains.includes('calendar')}
             onClick={exportCalendar}
           >
             <Download className="mr-2 h-4 w-4" />
@@ -402,7 +414,7 @@ export default function ExportPage() {
           </select>
           <Button
             className="w-full sm:w-auto"
-            disabled={filteredTasks.length === 0 || isExportingAll || domainStatus.tasks !== 'loaded'}
+            disabled={filteredTasks.length === 0 || isExportingAll || unloadedDomains.includes('tasks')}
             onClick={exportTasks}
           >
             <Download className="mr-2 h-4 w-4" />
@@ -434,7 +446,7 @@ export default function ExportPage() {
           </select>
           <Button
             className="w-full sm:w-auto"
-            disabled={filteredContacts.length === 0 || isExportingAll || domainStatus.contacts !== 'loaded'}
+            disabled={filteredContacts.length === 0 || isExportingAll || unloadedDomains.includes('contacts')}
             onClick={exportContacts}
           >
             <Download className="mr-2 h-4 w-4" />
