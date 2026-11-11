@@ -12,6 +12,7 @@ import io.silentsuite.sync.notes.edit.PendingNotesDiscardPermits
 import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.notes.edit.PendingNotesStore.Companion.StoreFolders
 import io.silentsuite.sync.notes.edit.PendingNotesStore.RemovalCheck
+import io.silentsuite.sync.notes.edit.PendingNotesStore.RemovalHold
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry
 import java.io.File
 import java.io.IOException
@@ -42,9 +43,10 @@ import java.io.IOException
  *
  * Three verdicts are [Verdict.eligible] for the one-time confirmed removal of the second reply of 2026-10-20, for
  * both folders at once by the reply of 2026-10-21: only a folder that cannot be read stands in the way. A fourth,
- * [Verdict.UNKNOWN_KIND_ONLY], is the one proposed to the maintainer for names of a kind this build does not know in
- * notes-pending. Three open points each have one named value, a refusal: [READABLE_ID_UNDER_UNLISTED_PERMITS],
- * [UNKNOWN_KIND_IN_PENDING] and [PENDING_LISTED_SHORT]. No removal is refused through it yet.
+ * [Verdict.UNKNOWN_KIND_ONLY], is for names of a kind this build does not know in notes-pending, by the maintainer's
+ * yes on #966 (2026-11-07). The refusals with no way out while their failure lasts, [PENDING_LISTED_SHORT] among them,
+ * are the lasting refusals the maintainer accepted there. The authenticator's answer to a removal (NotesRemovalAnswer)
+ * and setup recovery's removal of an incomplete account (GuardedRecoveryRemoval) ask it first.
  */
 internal object PendingNotesRemovalGuard {
     /**
@@ -71,8 +73,8 @@ internal object PendingNotesRemovalGuard {
         REFUSE_FAILED(null),
 
         /**
-         * notes-pending holds a name of a kind this build does not know, for a row without a readable creation id:
-         * while notes-discard cannot be listed, and, until the maintainer decides, in place of [UNKNOWN_KIND_ONLY].
+         * notes-pending holds a name of a kind this build does not know, for a row without a readable creation id,
+         * while notes-discard cannot be listed, where a covered or acknowledged store would rest on a read inside it.
          */
         REFUSE_UNKNOWN_KIND(null),
 
@@ -84,10 +86,10 @@ internal object PendingNotesRemovalGuard {
          * notes-pending, or notes-discard while some store could not withdraw its acknowledgement; or while
          * notes-pending holds a name of a kind this build does not know. That takes the failed list read and one of
          * those at once. Nothing is kept: every attempt reads the list again and refuses while that read throws. A
-         * failure that passes clears on the next attempt; one that lasts has no way out yet, and the case is held.
-         * Whether a lasting failure first ends the process, at the immediate update of the listener that
-         * AccountAuthenticatorService.onCreate adds, before the authenticator exists, is an inference from that code,
-         * not tested.
+         * failure that passes clears on the next attempt; one that lasts has no way out, a lasting refusal the
+         * maintainer accepted on #966 (2026-11-07). Whether a lasting failure first ends the process, at the
+         * immediate update of the listener that AccountAuthenticatorService.onCreate adds, before the authenticator
+         * exists, is an inference from that code, not tested.
          */
         REFUSE_ACCOUNTS(null),
 
@@ -111,8 +113,8 @@ internal object PendingNotesRemovalGuard {
 
         /**
          * Only names of a kind this build does not know at the top of notes-pending stand in the way: the account list
-         * reads, notes-discard lists or is shown gone, and every store found is clean, covered or acknowledged. Given
-         * only once the maintainer says yes to it ([UNKNOWN_KIND_IN_PENDING]).
+         * reads, notes-discard lists or is shown gone, and every store found is clean, covered or acknowledged. The
+         * maintainer's yes on #966 (2026-11-07); the names themselves are left as they are.
          */
         UNKNOWN_KIND_ONLY(setOf(Cause.PENDING_UNKNOWN_KIND));
 
@@ -121,30 +123,13 @@ internal object PendingNotesRemovalGuard {
     }
 
     /**
-     * An account whose creation id reads, while notes-discard cannot be listed, and its own store lists, or is shown
-     * gone as for an account that never saved a note, and holds nothing a count counts but could not withdraw its
-     * acknowledgement. Until the maintainer decides whether that removal may go through with no allowance, as for
-     * an own folder absent by lstat, refused; a yes makes this [Verdict.ALLOW]. The one-time allowance is not offered
-     * for a row whose creation id reads.
-     */
-    internal val READABLE_ID_UNDER_UNLISTED_PERMITS = Verdict.REFUSE_UNREADABLE
-
-    /**
-     * Names of a kind this build does not know at the top of notes-pending, for a row without a readable creation id,
-     * while the account list reads, notes-discard lists or is shown gone, and every store found is clean, covered or
-     * acknowledged. Until the maintainer decides on the one-time confirmed removal proposed for it, refused; a yes
-     * makes this [Verdict.UNKNOWN_KIND_ONLY].
-     */
-    internal val UNKNOWN_KIND_IN_PENDING = Verdict.REFUSE_UNKNOWN_KIND
-
-    /**
      * notes-pending lists, but leaves out a store folder whose path is known (a record in notes-discard, [Input.known],
      * one whose clear or discard stopped in this process included, one the account list names for any row) and whose
      * presence check does not show it absent, for a row without a readable creation id:
-     * the listing came back short, so a store it left out that no path names may hold text. Until the maintainer
-     * decides whether this takes a one-time confirmed removal bound to something a listing does not move, refused. It
-     * is not [Verdict.ROOT_UNLISTABLE_ONLY]: that allowance binds notes-pending's listing counter, which the guard's
-     * own listing moves, so its tap could never hold. A store folder made between the listing and its check gives this
+     * the listing came back short, so a store it left out that no path names may hold text. Refused, with no
+     * one-time confirmed removal: a lasting refusal the maintainer accepted on #966 (2026-11-07). It is not
+     * [Verdict.ROOT_UNLISTABLE_ONLY]: that allowance binds notes-pending's listing counter, which the guard's own
+     * listing moves, so its tap could never hold. A store folder made between the listing and its check gives this
      * once, and the next attempt lists again.
      */
     internal val PENDING_LISTED_SHORT = Verdict.REFUSE_UNREADABLE
@@ -186,8 +171,9 @@ internal object PendingNotesRemovalGuard {
         /** The store folders notes-discard holds a record of; null when it cannot be listed. */
         val discard: () -> Set<String>?,
         /**
-         * The store folders of the active-account preference and of the creation registry's records, and those whose
-         * clear or discard stopped in this process ([PendingNotesStore.stoppedIn]), read from memory.
+         * The store folders of the active-account preference, of the creation registry's records and of the
+         * last-active record ([NotesLastActiveRecord]), and, from memory, those whose clear or discard stopped in this
+         * process ([PendingNotesStore.stoppedIn]).
          */
         val known: () -> Set<String>,
         /**
@@ -218,12 +204,12 @@ internal object PendingNotesRemovalGuard {
      *    [Verdict.REFUSE_ACCOUNTS]. That takes the failed list read and, at once, notes-pending that cannot be listed
      *    or holds a name of an unknown kind, or notes-discard that cannot be listed while a store could not withdraw
      *    its acknowledgement. Nothing is kept: every attempt reads the list again and refuses while that read throws.
-     *    A failure that passes clears on the next attempt; one that lasts has no way out yet, and the case is held.
+     *    A failure that passes clears on the next attempt; one that lasts has no way out (#966, 2026-11-07).
      *    Whether a lasting failure first ends the process at the authenticator service's listener, before the
      *    authenticator exists, is an inference ([Verdict.REFUSE_ACCOUNTS]);
      * 7. for a row without a readable id, notes-pending holds a name of a kind this build does not know: while
      *    notes-discard lists or is shown gone and every store is clean, covered or acknowledged, which rows 3 and 4
-     *    leave, [UNKNOWN_KIND_IN_PENDING]; otherwise, as while notes-discard cannot be listed, where a covered or
+     *    leave, [Verdict.UNKNOWN_KIND_ONLY]; otherwise, as while notes-discard cannot be listed, where a covered or
      *    acknowledged store would rest on a read inside it, [Verdict.REFUSE_UNKNOWN_KIND];
      * 8. for a row with a readable id, its own folder cannot be listed and lstat answers ENOENT for it, under its
      *    store lock: [Verdict.ALLOW], for this removal only; it is not eligible, and nothing is cleared on it;
@@ -231,7 +217,7 @@ internal object PendingNotesRemovalGuard {
      *    found is clean, covered, acknowledged or absent by lstat: [Verdict.ROOT_UNLISTABLE_ONLY];
      * 10. notes-discard cannot be listed, and every store is clean, at least one with an acknowledgement it could not
      *    withdraw: for a row without a readable id, while notes-pending lists or is shown gone,
-     *    [Verdict.PERMITS_UNLISTABLE_ONLY]; for a row with one, [READABLE_ID_UNDER_UNLISTED_PERMITS];
+     *    [Verdict.PERMITS_UNLISTABLE_ONLY]; for a row with one, [Verdict.ALLOW] (#966, 2026-11-07);
      * 11. for a row without one, both folders cannot be listed and every store is clean, unwithdrawn or absent by
      *    lstat, so no permit was read: [Verdict.BOTH_UNLISTABLE_ONLY];
      * 12. every store is clean, covered or acknowledged, and, for a row without a readable id, notes-pending lists or
@@ -254,23 +240,23 @@ internal object PendingNotesRemovalGuard {
     fun decide(input: Input): Verdict = decision(input).verdict
 
     /**
-     * [decide]'s verdict for [input], with what it read for the row: its creation id, and the names of an unknown kind
-     * its own listing of notes-pending found. [unknownKind] stands for [UNKNOWN_KIND_IN_PENDING], so the tests can show
-     * what the maintainer's yes would give.
+     * [decide]'s verdict for [input], with what it read for the row: its creation id, the names of an unknown kind its
+     * own listing of notes-pending found, and whether the account list could not be read.
      */
-    internal fun decision(input: Input, unknownKind: Verdict = UNKNOWN_KIND_IN_PENDING): Decision {
+    internal fun decision(input: Input): Decision {
         var listed: StoreFolders? = null
+        var accountsUnread = false
         val verdict = try {
             val name = input.name
             if (input.type != input.mainType || name == null) Verdict.REFUSE_FAILED
             else when (val id = input.id) {
                 is CreationId.Readable -> own(input, input.folderOf(name, id.id))
-                CreationId.Unreadable -> narrowed(input, name, unknownKind) { listed = it }
+                CreationId.Unreadable -> narrowed(input, name, { listed = it }, { accountsUnread = true })
             }
         } catch (e: Exception) {
             Verdict.REFUSE_FAILED
         }
-        return Decision(verdict, (input.id as? CreationId.Readable)?.id, listed?.others.orEmpty())
+        return Decision(verdict, (input.id as? CreationId.Readable)?.id, listed?.others.orEmpty(), accountsUnread)
     }
 
     private fun own(input: Input, folder: String): Verdict = when (checked(input, folder)) {
@@ -279,12 +265,20 @@ internal object PendingNotesRemovalGuard {
         // (2026-10-21). ALLOW is not eligible, so no allowance, and nothing is cleared or deleted on it.
         RemovalCheck.UnlistedAbsent -> Verdict.ALLOW
         is RemovalCheck.Blocks, RemovalCheck.Unlisted -> Verdict.REFUSE_STORE
+        // Nothing counted, and only the withdrawal of an acknowledgement could not be shown, as notes-discard cannot
+        // be listed: allowed (#966, 2026-11-07). While it lists, the withdrawal failed.
         RemovalCheck.NothingUnwithdrawn ->
-            if (input.discard() == null) READABLE_ID_UNDER_UNLISTED_PERMITS else Verdict.REFUSE_FAILED
+            if (input.discard() == null) Verdict.ALLOW else Verdict.REFUSE_FAILED
     }
 
-    private fun narrowed(input: Input, name: String, unknownKind: Verdict, listed: (StoreFolders) -> Unit): Verdict {
+    private fun narrowed(
+        input: Input,
+        name: String,
+        listed: (StoreFolders) -> Unit,
+        accountsUnread: () -> Unit,
+    ): Verdict {
         val rows = input.accounts()
+        if (rows == null) accountsUnread()
         val pending = try {
             input.pending().also(listed)
         } catch (e: IOException) {
@@ -325,7 +319,7 @@ internal object PendingNotesRemovalGuard {
             // a read inside a folder that cannot be listed.
             unknown ->
                 if (discard != null && all(RemovalCheck.Clean, RemovalCheck.Covered, RemovalCheck.Acknowledged)) {
-                    unknownKind
+                    Verdict.UNKNOWN_KIND_ONLY
                 } else {
                     Verdict.REFUSE_UNKNOWN_KIND
                 }
@@ -350,8 +344,10 @@ internal object PendingNotesRemovalGuard {
 
     /**
      * The stores found by path other than through notes-discard: the folder of the active-account preference's name and
-     * creation id ([active]), and the folder of each creation-registry record of [mainType]. A registry that cannot be
-     * read ([records] null) gives none, and its stores then count only where a listing of notes-pending finds them.
+     * creation id ([active]), the folder of each creation-registry record of [mainType], and the folder the last-active
+     * record in [noBackup] names ([NotesLastActiveRecord]), the store a startup sweep keeps once the preference has
+     * moved on. A registry that cannot be read ([records] null) gives none, and a record that is missing, empty or
+     * cannot be read names none; their stores then count only where a listing of notes-pending finds them.
      */
     internal fun known(
         noBackup: File,
@@ -361,9 +357,11 @@ internal object PendingNotesRemovalGuard {
     ): Set<String> {
         val identities = listOfNotNull(active) +
             records.orEmpty().filter { it.accountType == mainType }.map { it.accountName to it.creationId }
-        return identities.mapTo(HashSet()) { (name, creationId) ->
+        val folders = identities.mapTo(HashSet()) { (name, creationId) ->
             PendingNotesStore.identityDir(noBackup, mainType, name, creationId).name
         }
+        (NotesLastActiveRecord.read(noBackup) as? NotesLastActiveRecord.Read.Holds)?.folder?.let(folders::add)
+        return folders
     }
 
     /**
@@ -389,7 +387,10 @@ internal object PendingNotesRemovalGuard {
         records: List<AccountCreationRegistry.Record>?,
     ): Set<String> = discardNames(noBackup, presence).orEmpty() + known(noBackup, mainType, active, records)
 
-    /** [foundByPath] on this device, from the active-account preference and the creation registry. */
+    /**
+     * [foundByPath] on this device, from the active-account preference, the last-active record
+     * ([NotesLastActiveRecord]) and the creation registry.
+     */
     @WorkerThread
     internal fun foundByPath(context: Context): Set<String> = foundByPath(context.noBackupFilesDir, App.accountType,
         PendingNotesStore::presenceOnDevice, ActiveAccountManager.savedIdentity(context),
@@ -397,7 +398,7 @@ internal object PendingNotesRemovalGuard {
 
     /**
      * [Input] over the stores in [noBackup], each opened by [open], with [presence] for the folders' own checks; the
-     * reader of notes-discard here only lists it.
+     * reader of notes-discard here only lists it. Each store check takes [hold], when given ([RemovalHold]).
      */
     internal fun input(
         noBackup: File,
@@ -410,6 +411,7 @@ internal object PendingNotesRemovalGuard {
         records: () -> List<AccountCreationRegistry.Record>?,
         presence: (File) -> PendingNotesStore.Presence,
         open: (String) -> PendingNotesStore,
+        hold: RemovalHold? = null,
     ) = Input(mainType, type, name, id, accounts,
         pending = { PendingNotesStore.storeDirectories(noBackup, presence) },
         discard = { discardNames(noBackup, presence) },
@@ -420,23 +422,32 @@ internal object PendingNotesRemovalGuard {
                 .let { PendingNotesStore.presenceForTesting?.invoke(it) ?: presence(it) }
         },
         folderOf = { rowName, rowId -> PendingNotesStore.identityDir(noBackup, mainType, rowName, rowId).name },
-        check = { open(it).removalCheck() })
+        check = { open(it).removalCheck(hold) })
 
     /**
      * A verdict, with the creation id it read for the row, when one read, and the names of a kind this build does not
      * know that its own listing of notes-pending found ([StoreFolders.others]), sorted; none when it listed none.
+     * [accountsUnread]: for a row without a readable creation id, the account list could not be read, so no store was
+     * left out as a live account's, and a [Verdict.REFUSE_STORE] then may stand for another account's store. It only
+     * picks the words for a refusal; no verdict changes with it.
      */
-    data class Decision(val verdict: Verdict, val creationId: String?, val unknown: List<String> = emptyList())
+    data class Decision(
+        val verdict: Verdict,
+        val creationId: String?,
+        val unknown: List<String> = emptyList(),
+        val accountsUnread: Boolean = false,
+    )
 
     /**
      * The guard on this device for [account]: its creation id first, then for a row without one the account list, with
-     * each row's id, then notes-pending, notes-discard, the active-account preference, the registry and the stores
-     * whose clear or discard stopped in this process, and only then the store checks, each store opened by its folder
-     * ([PendingNotesStore.forDirectory]). It never builds AccountSettings and never takes the Etebase cache's monitor.
-     * The log line holds the verdict and a count only.
+     * each row's id, then notes-pending, notes-discard, the active-account preference, the registry, the last-active
+     * record and the stores whose clear or discard stopped in this process, and only then the store checks, each store
+     * opened by its folder ([PendingNotesStore.forDirectory]). It never builds AccountSettings and never takes the
+     * Etebase cache's monitor. The log line holds the verdict and a count only. For the question that decides a
+     * removal, each store checked takes [hold] ([RemovalHold]), which the caller releases.
      */
     @WorkerThread
-    fun decision(context: Context, account: Account?): Decision {
+    fun decision(context: Context, account: Account?, hold: RemovalHold? = null): Decision {
         val manager = AccountManager.get(context)
         val id = if (account == null || account.type != App.accountType) CreationId.Unreadable
         else CreationId.of { manager.getUserData(account, AccountSettings.KEY_CREATION_ID) }
@@ -449,15 +460,17 @@ internal object PendingNotesRemovalGuard {
             open = { folder ->
                 checks++
                 PendingNotesStore.forDirectory(context, folder)
-            }))
+            },
+            hold = hold))
         val verdict = decision.verdict
         Logger.log.info("Notes removal guard: $verdict after $checks store checks")
         return decision
     }
 
-    /** Whether the guard allows removing [account] now, with nothing to confirm. */
+    /** Whether the guard allows removing [account] now, with nothing to confirm; each store checked takes [hold]. */
     @WorkerThread
-    fun allows(context: Context, account: Account?): Boolean = decision(context, account).verdict == Verdict.ALLOW
+    fun allows(context: Context, account: Account?, hold: RemovalHold? = null): Boolean =
+        decision(context, account, hold).verdict == Verdict.ALLOW
 
     /** The rows of the main type with each one's creation id, or null when the list cannot be read. */
     internal fun rows(manager: AccountManager): List<Row>? {
