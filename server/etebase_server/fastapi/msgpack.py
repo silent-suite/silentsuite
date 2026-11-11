@@ -1,11 +1,19 @@
 import typing as t
 
+from django.conf import settings
 from fastapi.routing import APIRoute, get_request_handler
 from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import Response
 
 from .db_hack import django_db_cleanup_decorator
+from .request_limits import (
+    AUTH_LIMIT_SETTING,
+    DEFAULT_LIMIT_SETTING,
+    bounded_request,
+    msgpack_invalid_length,
+    msgpack_too_large,
+)
 from .utils import msgpack_decode, msgpack_encode
 
 
@@ -39,6 +47,8 @@ class MsgpackRoute(APIRoute):
     REQUESTS_CLASSES = {MsgpackRequest.media_type: MsgpackRequest}
     # keep track of content-type -> response classes
     ROUTES_HANDLERS_CLASSES = {MsgpackResponse.media_type: MsgpackResponse}
+    # Settings name of the request body limit for routes of this class.
+    limit_setting = DEFAULT_LIMIT_SETTING
 
     def __init__(self, path: str, endpoint: t.Callable[..., t.Any], *args, **kwargs):
         endpoint = django_db_cleanup_decorator(endpoint)
@@ -65,6 +75,8 @@ class MsgpackRoute(APIRoute):
 
     def get_route_handler(self) -> t.Callable:
         async def custom_route_handler(request: Request) -> Response:
+            limit = getattr(settings, self.limit_setting)
+            request = bounded_request(request, limit, msgpack_too_large, msgpack_invalid_length)
             content_type = request.headers.get("Content-Type")
             if content_type is not None:
                 try:
@@ -79,3 +91,9 @@ class MsgpackRoute(APIRoute):
             return await route_handler(request)
 
         return custom_route_handler
+
+
+class AuthMsgpackRoute(MsgpackRoute):
+    """MsgpackRoute with the smaller authentication-tier body limit."""
+
+    limit_setting = AUTH_LIMIT_SETTING

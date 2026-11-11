@@ -15,9 +15,10 @@ from etebase_server.myauth.models import UserType
 
 from ..db_hack import django_db_cleanup_decorator
 from ..dependencies import get_authenticated_user
+from ..request_limits import BoundedBodyRoute
 from ..utils import BaseModel
 
-billing_link_router = APIRouter()
+billing_link_router = APIRouter(route_class=BoundedBodyRoute)
 PROOF_TTL_SECONDS = 120
 PROOF_ISSUE_INTERVAL_SECONDS = 1
 PROOF_OPERATION_LOCK = Lock()

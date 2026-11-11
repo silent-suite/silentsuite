@@ -3,7 +3,8 @@ import { StrictMode, type ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { deserializeNote } from '@silentsuite/core'
 import { SyncProvider } from '../sync-provider'
-import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { getAll } from '@/app/lib/offline-queue'
 import { TEST_FINGERPRINT, queueGuard, resetRealOfflineQueue } from '@/app/stores/__tests__/offline-queue-store-test-utils'
 
@@ -331,6 +332,45 @@ describe('SyncProvider timing instrumentation', () => {
     expect(contactStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
     expect(noteStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
     expect(calendarStoreMock.syncFromRemote).toHaveBeenCalledTimes(1)
+  })
+
+  // WEB-07 review follow-up: 'loaded' is published before decrypted items reach
+  // the UI store, so a domain's snapshot is marked only after that store write.
+  it('marks a domain snapshot only after its items reach the UI store', async () => {
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
+    let releaseTasks: () => void = () => {}
+    const tasksGate = new Promise<void>((resolve) => {
+      releaseTasks = resolve
+    })
+    etebaseMock.state.fetchAllItems.mockImplementation(async (type: DomainKey) => {
+      order.push(`fetchAllItems:${type}`)
+      if (type === 'tasks') await tasksGate
+      return []
+    })
+
+    renderProvider()
+
+    await waitFor(() => expect(order).toContain('fetchAllItems:tasks'))
+    expect(useDomainSnapshotStore.getState().appliedEpoch.calendar).toBe(getAccountEpoch())
+    expect(useDomainSnapshotStore.getState().appliedEpoch.tasks).toBeUndefined()
+    expect(taskStoreMock.syncFromRemote).not.toHaveBeenCalled()
+
+    releaseTasks()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    const epoch = getAccountEpoch()
+    expect(useDomainSnapshotStore.getState().appliedEpoch).toEqual({ calendar: epoch, tasks: epoch, contacts: epoch })
+  })
+
+  it('does not mark a domain that failed to load', async () => {
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
+    etebaseMock.state.domainLoadState = { tasks: 'failed', contacts: 'loaded', calendar: 'loaded', notes: 'loaded', preferences: 'unknown' }
+
+    renderProvider()
+
+    await waitFor(() => expect(syncStoreMock.setLastSynced).toHaveBeenCalledTimes(1))
+    expect(useDomainSnapshotStore.getState().appliedEpoch.tasks).toBeUndefined()
+    expect(useDomainSnapshotStore.getState().appliedEpoch.contacts).toBe(getAccountEpoch())
   })
 
   it('keeps calendar and flags partial load when tasks fail after calendar succeeds', async () => {
