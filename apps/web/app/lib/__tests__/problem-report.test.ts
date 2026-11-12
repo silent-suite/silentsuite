@@ -261,6 +261,14 @@ describe('buildProblemReport', () => {
     expect(report.ok && report.payload.description).toBe('line 1\nline 2\tend')
   })
 
+  it('rejects lone UTF-16 surrogates but accepts valid pairs', () => {
+    for (const lone of ['\uD83D', '\uDE00', 'a\uDE00\uD83D', '\uD83Dx']) {
+      expect(buildProblemReport({ ...base, description: lone })).toEqual({ ok: false, errors: { description: 'control_chars' } })
+      expect(buildProblemReport({ ...base, summary: lone })).toEqual({ ok: false, errors: { summary: 'control_chars' } })
+    }
+    expect(buildProblemReport({ ...base, summary: '\uD83D\uDE00', description: '\uD834\uDD1E' }).ok).toBe(true)
+  })
+
   it('requires summary and description', () => {
     expect(buildProblemReport({ ...base, summary: '  ', description: '' })).toEqual({
       ok: false,

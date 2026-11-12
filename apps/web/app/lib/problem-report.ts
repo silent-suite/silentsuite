@@ -11,7 +11,7 @@ import { REPORT_RELAY_URL } from '@/app/lib/config'
 export { REPORT_RELAY_URL }
 
 export const SUPPORT_EMAIL = 'support@silentsuite.io'
-export const PRIVACY_POLICY_URL = 'https://silentsuite.io/privacy'
+export const PRIVACY_POLICY_URL = 'https://silentsuite.io/privacy#problem-reports'
 /** Months a report is kept after it is closed, shown in the disclosure. Change it here only. */
 export const REPORT_RETENTION_MONTHS = 12
 /** How long Send waits for the relay before showing the unknown-outcome message. */
@@ -229,6 +229,8 @@ export function formatDiagnostics(diagnostics: WebDiagnostics): string {
 // ---------------------------------------------------------------------------
 
 const CONTROL_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/
+/** With the u flag a valid surrogate pair is one code point, so this matches lone surrogates only. */
+const LONE_SURROGATE = /[\uD800-\uDFFF]/u
 const CONTACT_PATTERN = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,189}$/
 
 export function utf8Bytes(value: string): number {
@@ -248,7 +250,7 @@ export type TextProblem = 'required' | 'too_long' | 'control_chars'
 export function checkUserText(value: string, maxChars: number, maxBytes: number): TextProblem | null {
   const text = normalizeUserText(value)
   if (text.trim().length === 0) return 'required'
-  if (CONTROL_CHARS.test(text)) return 'control_chars'
+  if (CONTROL_CHARS.test(text) || LONE_SURROGATE.test(text)) return 'control_chars'
   if (codePoints(text) > maxChars || utf8Bytes(text) > maxBytes) return 'too_long'
   return null
 }

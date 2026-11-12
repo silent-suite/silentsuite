@@ -74,7 +74,7 @@ describe('Report a problem page', () => {
     renderWithIntl(<ReportProblemPage />)
     await previewText()
     expect(screen.getByText(/Kept for 12 months after the report is closed; to have it deleted, email support@silentsuite\.io\./)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', 'https://silentsuite.io/privacy')
+    expect(screen.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', 'https://silentsuite.io/privacy#problem-reports')
   })
 
   it('makes no relay request while opening, editing, toggling diagnostics or switching kind', async () => {
