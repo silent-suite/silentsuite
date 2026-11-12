@@ -68,6 +68,21 @@ To keep the SilentSuite Bridge running automatically, see the [DAV bridge guide]
 
 ## Troubleshooting
 
+### Where to find the Bridge logs
+
+If the Bridge starts at login (installed with `--install-autostart`), launchd writes two log files in `~/Library/Logs/SilentSuiteBridge/`:
+
+- `bridge.log` only has startup output, such as the `Listening:` lines.
+- `bridge.error.log` has everything else: each DAV request and its status, local sign-in results, `TLS handshake failed` lines and sync messages. Despite the name, it is the main log. Check it first when Contacts or Calendar shows an error.
+
+To watch it while you reproduce a problem, run:
+
+```bash
+tail -f ~/Library/Logs/SilentSuiteBridge/bridge.error.log
+```
+
+If you start the Bridge from Terminal instead, both kinds of output appear in that Terminal window.
+
 ### Connection refused
 
 Make sure the SilentSuite Bridge is running. Open the dashboard URL shown by the bridge:

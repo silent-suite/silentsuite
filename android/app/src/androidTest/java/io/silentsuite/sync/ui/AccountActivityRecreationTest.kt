@@ -3,13 +3,19 @@ package io.silentsuite.sync.ui
 import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.app.ActivityManager
+import android.content.ComponentName
+import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.silentsuite.sync.App
 import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.AccountUpdateService
 import io.silentsuite.sync.utils.AndroidCompat
 import io.silentsuite.sync.ui.setup.PostLoginSetupActivity
 
@@ -17,6 +23,7 @@ import io.silentsuite.sync.ui.setup.PostLoginSetupState
 import io.silentsuite.sync.ui.setup.PostLoginSetupViewModel
 import java.net.URI
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,9 +58,13 @@ class AccountActivityRecreationTest {
             }
         }
 
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val baselineClients = accountUpdateServiceClients(context)
         try {
             ActivityScenario.launch<AccountActivity>(AccountActivity.newIntent(context, account, "test-generation")).use { scenario ->
                 scenario.onActivity { assertTrue(it is AccountActivity) }
+                assertEquals("The dashboard model holds exactly one service binding",
+                    baselineClients + 1, accountUpdateServiceClients(context))
                 scenario.recreate()
                 var delivered = false
                 for (attempt in 0 until 50) {
@@ -70,7 +81,50 @@ class AccountActivityRecreationTest {
                     assertEquals(account, ActiveAccountManager.getActiveAccount(context))
                     assertTrue("The recreated Activity must receive a model delivery and update its UI", recreated.hasDeliveredAccountInfo)
                 }
+                assertEquals("Recreation keeps the model's binding and never binds again",
+                    baselineClients + 1, accountUpdateServiceClients(context))
             }
+            assertEquals("Finishing the dashboard releases the model's service binding",
+                baselineClients, awaitAccountUpdateServiceClients(context, baselineClients))
+
+            // A model cleared before its connection arrives still releases the binding.
+            val earlyStore = ViewModelStore()
+            lateinit var earlyModel: AccountActivity.AccountInfoViewModel
+            instrumentation.runOnMainSync {
+                earlyModel = ViewModelProvider(earlyStore, ViewModelProvider.NewInstanceFactory())
+                    .get(AccountActivity.AccountInfoViewModel::class.java)
+                earlyModel.initialize(context, account, "test-generation")
+                assertFalse(earlyModel.serviceConnectedForTesting)
+                earlyStore.clear()
+            }
+            assertEquals("Clearing before the connection releases the binding",
+                baselineClients, awaitAccountUpdateServiceClients(context, baselineClients))
+            assertUnbindingAgainIsRefused(context, earlyModel)
+
+            // A connection that drops before the model is cleared still releases the binding.
+            val droppedStore = ViewModelStore()
+            lateinit var droppedModel: AccountActivity.AccountInfoViewModel
+            instrumentation.runOnMainSync {
+                droppedModel = ViewModelProvider(droppedStore, ViewModelProvider.NewInstanceFactory())
+                    .get(AccountActivity.AccountInfoViewModel::class.java)
+                droppedModel.initialize(context, account, "test-generation")
+            }
+            var connected = false
+            for (attempt in 0 until 50) {
+                instrumentation.runOnMainSync { connected = droppedModel.serviceConnectedForTesting }
+                if (connected)
+                    break
+                SystemClock.sleep(100)
+            }
+            assertTrue("The model's service connection must arrive", connected)
+            instrumentation.runOnMainSync {
+                droppedModel.onServiceDisconnected(ComponentName(context, AccountUpdateService::class.java))
+                assertFalse(droppedModel.serviceConnectedForTesting)
+                droppedStore.clear()
+            }
+            assertEquals("Clearing after a dropped connection releases the binding",
+                baselineClients, awaitAccountUpdateServiceClients(context, baselineClients))
+            assertUnbindingAgainIsRefused(context, droppedModel)
         } finally {
             App.postLoginBootstrapSucceeded = previousBootstrap
             AndroidCompat.removeAccount(accountManager, account)
@@ -124,4 +178,35 @@ class AccountActivityRecreationTest {
         }
     }
 
+    /** Bound clients of this app's AccountUpdateService; no running entry means none. */
+    @Suppress("DEPRECATION")
+    private fun accountUpdateServiceClients(context: Context): Int =
+        context.getSystemService(ActivityManager::class.java)
+            .getRunningServices(Int.MAX_VALUE)
+            .filter { it.service.packageName == context.packageName &&
+                it.service.className == AccountUpdateService::class.java.name }
+            .sumOf { it.clientCount }
+
+    /** Waits a bounded time for teardown to reach [expected], returning the last count. */
+    private fun awaitAccountUpdateServiceClients(context: Context, expected: Int): Int {
+        var clients = accountUpdateServiceClients(context)
+        for (attempt in 0 until 50) {
+            if (clients == expected)
+                break
+            SystemClock.sleep(100)
+            clients = accountUpdateServiceClients(context)
+        }
+        return clients
+    }
+
+    /** onCleared unbound exactly once: a further unbind finds no registration. */
+    private fun assertUnbindingAgainIsRefused(context: Context, model: AccountActivity.AccountInfoViewModel) {
+        var refused = false
+        try {
+            context.applicationContext.unbindService(model)
+        } catch (e: IllegalArgumentException) {
+            refused = true
+        }
+        assertTrue("The cleared model's binding must already be released", refused)
+    }
 }
