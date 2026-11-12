@@ -128,13 +128,12 @@ def source_text(sha, policy, records, verification) -> str:
         "",
         "Third-party source archives",
         "---------------------------",
-        "Each archive was downloaded over HTTPS from the address shown, and its SHA256",
-        "matched the pinned value, which was taken from the publisher's published",
-        "checksum when it was first fetched. A signature was checked only where the",
-        "publisher provides one; that is stated per archive. For the other archives",
-        "no signature was checked, so the check shows the file is the one we pinned,",
-        "not that it came from the publisher's own signing key. This is accepted for",
-        "experimental test downloads only.",
+        "Each archive was downloaded over HTTPS from the address shown, and its size",
+        "and SHA256 matched the values we pinned when we first fetched it. A",
+        "signature was checked only where the publisher provides one; that is stated",
+        "per archive. For the other archives no signature was checked, so the check",
+        "shows the file is the one we pinned, not that it came from the publisher's",
+        "own signing key. This is accepted for experimental test downloads only.",
         "Full signature checks are required before any real release.",
         "",
     ]
@@ -153,7 +152,10 @@ def source_text(sha, policy, records, verification) -> str:
         if entry is None or entry.get("sha256") != digest:
             raise InputError(f"{name}: not verified by the source-materials job with this SHA256")
         signature = _verified_signature(entry)
-        lines += [f"{archive.get('name')} {archive.get('version')}",
+        label, version = archive.get("name"), archive.get("version")
+        if version and version not in (label, name):
+            label = f"{label} {version}"
+        lines += [label,
                   f"  file    {name}",
                   f"  SHA256  {digest}",
                   f"  from    {record['url']}"]
