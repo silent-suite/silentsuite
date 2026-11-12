@@ -7,9 +7,9 @@ A pass means only that the facts, policy and files agree; it is no legal
 certification, and synthetic test fixtures certify no real vendor contents.
 
 Library use (tested in bridge/tests/test_desktop_dev_licence_gate.py):
-    check(facts, policy, archive_root, source_dir) -> list of failure strings ([] = pass)
+    check(facts, policy, archive_root, source_dir, source_receipt=None) -> failure strings ([] = pass)
 CLI:
-    python licence_gate.py --facts F --policy P --archive-root DIR --source-dir DIR
+    python licence_gate.py --facts F --policy P --archive-root DIR (--source-dir DIR | --source-receipt R)
     P is a platform policy, or notices/policy.json whose "platforms" map names one
     file per platform (relative to the directory that holds notices/); the entry for
     facts["platform"] is used. Exit 0 pass, 1 fail, 2 unreadable input.
@@ -28,7 +28,9 @@ Rules (each fails closed):
 - licence texts: every used licence's licence_text_files (else licence_texts) present;
 - required_notices, prominent_notice, required_statements (file, sha256?,
   must_contain, must_not_contain?), elections (elected alternative, platform, text);
-- source archives: present in source_dir with the listed SHA256;
+- source archives: present in source_dir with the listed SHA256, or, in the package
+  job, covered by the same run's source-materials receipt (one entry per archive with
+  the same SHA256; that job hashed the files and uploads them only with the binaries);
 - relinking: admitted, with non-empty instructions and determination texts.
 Every policy path must stay inside its root. The gate keeps no state between calls
 and never modifies its inputs, so one platform's check cannot affect another's.
@@ -85,9 +87,11 @@ def _inside(root: Path, relative) -> Path | None:
 
 
 class _Check:
-    def __init__(self, facts, policy, archive_root, source_dir):
+    def __init__(self, facts, policy, archive_root, source_dir, source_receipt=None):
         self.facts, self.policy = facts, policy
-        self.archive, self.sources = Path(archive_root), Path(source_dir)
+        self.archive = Path(archive_root)
+        self.sources = Path(source_dir) if source_dir is not None else None
+        self.receipt = source_receipt
         self.failures: list[str] = []
         self.allowed = set(policy.get("allowed_licences") or [])
         self.used_licences: set[str] = set()
@@ -331,6 +335,12 @@ class _Check:
         archives = self.policy.get("source_archives") or []
         if not archives:
             self.fail("policy lists no source archives")
+        if self.receipt is not None:
+            self.source_receipt(archives)
+            return
+        if self.sources is None:
+            self.fail("neither a source directory nor a source receipt was given")
+            return
         for entry in archives:
             name, digest = entry.get("file"), entry.get("sha256")
             path = _inside(self.sources, name)
@@ -350,6 +360,22 @@ class _Check:
                 continue
             if actual != digest:
                 self.fail(f"source archive {name}: SHA256 {actual} is not {digest}")
+
+    def source_receipt(self, archives) -> None:
+        entries = self.receipt.get("archives") if isinstance(self.receipt, dict) else None
+        if not isinstance(entries, list):
+            self.fail("the source receipt lists no archives")
+            return
+        verified = {}
+        for entry in entries:
+            if isinstance(entry, dict):
+                verified.setdefault(entry.get("file"), []).append(entry.get("sha256"))
+        for entry in archives:
+            name, digest = entry.get("file"), entry.get("sha256")
+            if not isinstance(digest, str) or not SHA256.match(digest):
+                self.fail(f"source archive {name}: the policy has no SHA256 for it")
+            elif verified.get(name) != [digest]:
+                self.fail(f"source archive {name}: not verified with SHA256 {digest} by this run's source job")
 
     def relinking(self) -> None:
         relinking = self.policy.get("relinking")
@@ -374,11 +400,11 @@ class _Check:
         return self.failures
 
 
-def check(facts, policy, archive_root, source_dir) -> list[str]:
+def check(facts, policy, archive_root, source_dir, source_receipt=None) -> list[str]:
     """Failure strings for one platform's facts and policy; an empty list is a pass."""
     if not isinstance(facts, dict) or not isinstance(policy, dict):
         return ["facts and policy must be JSON objects"]
-    return _Check(facts, policy, archive_root, source_dir).run()
+    return _Check(facts, policy, archive_root, source_dir, source_receipt).run()
 
 
 def _load_json(path: Path, what: str):
@@ -419,20 +445,23 @@ def main(argv=None) -> int:
     parser.add_argument("--facts", required=True, type=Path)
     parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--archive-root", required=True, type=Path)
-    parser.add_argument("--source-dir", required=True, type=Path)
+    sources = parser.add_mutually_exclusive_group(required=True)
+    sources.add_argument("--source-dir", type=Path)
+    sources.add_argument("--source-receipt", type=Path, help="the source-materials job's verification receipt")
     args = parser.parse_args(argv)
     try:
         facts = _load_json(args.facts, "--facts")
         if not isinstance(facts, dict):
             raise InputError("--facts is not a JSON object")
         policy, failures = select_policy(args.policy, facts.get("platform"))
-        if not args.archive_root.is_dir() or not args.source_dir.is_dir():
+        receipt = _load_json(args.source_receipt, "--source-receipt") if args.source_receipt else None
+        if not args.archive_root.is_dir() or (args.source_dir is not None and not args.source_dir.is_dir()):
             raise InputError("--archive-root and --source-dir must be directories")
     except InputError as exc:
         print(f"licence_gate: invalid input: {exc}", file=sys.stderr)
         return 2
     if policy:
-        failures += check(facts, policy, args.archive_root, args.source_dir)
+        failures += check(facts, policy, args.archive_root, args.source_dir, receipt)
     for failure in failures:
         print(f"FAIL {failure}")
     print(f"licence_gate: {len(failures)} failure(s) for platform {facts.get('platform')!r}")
