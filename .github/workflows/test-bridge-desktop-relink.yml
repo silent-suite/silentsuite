@@ -94,7 +94,8 @@ jobs:
             libxkbfile1 libasound2
           sudo apt-get install -y --no-install-recommends \
             libglib2.0-dev libicu-dev zlib1g-dev libzstd-dev libdbus-1-dev libfreetype-dev libfontconfig1-dev \
-            libegl-dev libgl-dev libvulkan-dev libdrm-dev libgbm-dev libsm-dev libice-dev \
+            libegl-dev libgl-dev libvulkan-dev libdrm-dev libgbm-dev libatspi2.0-dev \
+            libwayland-dev wayland-protocols \
             libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libx11-xcb-dev libxext-dev libxrender-dev \
             libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev libxcb-image0-dev \
             libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev libxcb-render0-dev \

@@ -280,7 +280,14 @@ def _windows_modules(pid: int) -> list[str]:
     from ctypes import wintypes
 
     psapi, kernel32 = ctypes.WinDLL("psapi", use_last_error=True), ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    psapi.EnumProcessModulesEx.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.HMODULE), wintypes.DWORD,
+                                           ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+    psapi.EnumProcessModulesEx.restype = wintypes.BOOL
+    psapi.GetModuleFileNameExW.argtypes = [wintypes.HANDLE, wintypes.HMODULE, wintypes.LPWSTR, wintypes.DWORD]
+    psapi.GetModuleFileNameExW.restype = wintypes.DWORD
     handle = kernel32.OpenProcess(0x0400 | 0x0010, False, pid)  # QUERY_INFORMATION | VM_READ
     if not handle:
         raise OSError(ctypes.get_last_error(), "OpenProcess failed")
