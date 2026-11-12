@@ -150,7 +150,7 @@ describe('useCalendarStore anchor preservation (#886)', () => {
     expect(deserializeCalendarEvent(uploaded)).toMatchObject({ floating: true })
   })
 
-  it('(c1) "this and future" update ends a UTC-anchored master on the previous UTC day', async () => {
+  it('(c1) "this and future" update ends a UTC-anchored master just before the selected occurrence', async () => {
     const master = makeRecurringEvent({
       startDate: new Date('2026-10-20T00:30:00Z'),
       endDate: new Date('2026-10-20T01:00:00Z'),
@@ -167,10 +167,10 @@ describe('useCalendarStore anchor preservation (#886)', () => {
     )
 
     const updatedMaster = useCalendarStore.getState().events.find((e) => e.id === master.id)!
-    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20261101')
+    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20261102T002959Z')
   })
 
-  it('(c2) "this and future" delete ends an Asia/Tokyo master on the previous Tokyo day', async () => {
+  it('(c2) "this and future" delete ends an Asia/Tokyo master just before the selected occurrence', async () => {
     const master = makeRecurringEvent({
       startDate: new Date('2026-03-01T23:00:00Z'), // 2026-03-02 08:00 JST
       endDate: new Date('2026-03-01T23:30:00Z'),
@@ -186,7 +186,7 @@ describe('useCalendarStore anchor preservation (#886)', () => {
     )
 
     const updatedMaster = useCalendarStore.getState().events.find((e) => e.id === master.id)!
-    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20260309')
+    expect(updatedMaster.recurrenceRule).toBe('FREQ=DAILY;UNTIL=20260309T225959Z')
   })
 
   it('(d) control: an explicit-zone "this" edit of a floating master serializes consistently', async () => {
@@ -357,12 +357,12 @@ describe('useCalendarStore gap-start DTSTART identity (#886 F1)', () => {
     expect(deserializeCalendarEvent(copy).startDate.toISOString()).toBe('2027-03-14T10:30:00.000Z')
   })
 
-  it('row 12: "this and future" at a later LA gap occurrence keeps 02:30 in the new series; master cut unchanged', async () => {
+  it('row 12: "this and future" at a later LA gap occurrence keeps 02:30 in the new series; master cut just before it', async () => {
     const master = seedRemote(F1_G2)
     await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-14T10:30:00Z'))
 
     const masterIcs = lastUpdated()
-    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=WEEKLY;UNTIL=20270313') // control: existing cutover
+    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=WEEKLY;UNTIL=20270314T102959Z') // control: cutover just before the occurrence
     expect(lineOf(masterIcs, 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20260308T023000')
     const series = lastCreated()
     expect(lineOf(series, 'DTSTART')).toBe('DTSTART;TZID=America/Los_Angeles:20270314T023000')
@@ -388,7 +388,7 @@ describe('useCalendarStore gap-start DTSTART identity (#886 F1)', () => {
     await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', selected)
 
     const masterIcs = lastUpdated()
-    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=WEEKLY;UNTIL=20270327') // control: existing cutover value
+    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=WEEKLY;UNTIL=20270328T012959Z') // control: cutover just before the occurrence
     const series = lastCreated()
     expect(lineOf(series, 'DTSTART')).toBe('DTSTART;TZID=America/Nuuk:20270327T233000')
     const range = { start: new Date('2027-03-01T00:00:00Z'), end: new Date('2027-04-30T00:00:00Z') }
@@ -404,7 +404,7 @@ describe('useCalendarStore gap-start DTSTART identity (#886 F1)', () => {
     await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-28T01:30:00Z'))
 
     const masterIcs = lastUpdated()
-    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20270327')
+    expect(lineOf(masterIcs, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20270328T012959Z')
     const range = { start: new Date('2027-03-20T00:00:00Z'), end: new Date('2027-04-05T00:00:00Z') }
     const masterStarts = isoList(expandEventsForRange([deserializeCalendarEvent(masterIcs)], range))
     expect(masterStarts).toEqual(['2027-03-26T01:30:00.000Z', '2027-03-27T01:30:00.000Z'])
@@ -684,6 +684,109 @@ describe('useCalendarStore.deleteRecurringEvent', () => {
       '2026-06-04T09:00:00.000Z',
       '2026-06-05T09:00:00.000Z',
     ])
+  })
+})
+
+// ── "this and future" must keep every occurrence before the selected one ──
+
+describe('useCalendarStore "this and future" keeps the previous occurrence', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  /** Split (edit) or cut (delete) the series at `instance`; return the master as stored and reloaded. */
+  async function cutAt(master: CalendarEvent, action: 'edit' | 'delete', instance: Date) {
+    useCalendarStore.setState({ events: [master] })
+    if (action === 'edit') {
+      await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Changed' }, 'this_and_future', instance)
+    } else {
+      await useCalendarStore.getState().deleteRecurringEvent(master.id, 'this_and_future', instance)
+    }
+    const events = useCalendarStore.getState().events
+    const stored = events.find((e) => e.id === master.id)!
+    const ics = serializeCalendarEvent(stored)
+    return { ics, reloaded: deserializeCalendarEvent(ics), series: events.find((e) => e.id !== master.id) }
+  }
+
+  const ACTIONS = ['edit', 'delete'] as const
+
+  it.each(ACTIONS)('timed UTC series (%s): the day before stays, the selected day goes', async (action) => {
+    // The reported case: daily at 08:00Z from 5 Jan, cut at 7 Jan.
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-01-05T08:00:00Z'),
+      endDate: new Date('2026-01-05T09:00:00Z'),
+    })
+    const instance = new Date('2026-01-07T08:00:00Z')
+
+    const { ics, reloaded, series } = await cutAt(master, action, instance)
+
+    const range = { start: new Date('2026-01-01T00:00:00Z'), end: new Date('2026-01-12T00:00:00Z') }
+    expect(isoList(expandEventsForRange([reloaded], range))).toEqual([
+      '2026-01-05T08:00:00.000Z',
+      '2026-01-06T08:00:00.000Z',
+    ])
+    expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260107T075959Z')
+    if (action === 'edit') {
+      expect(isoList(expandEventsForRange([series!], range))[0]).toBe(instance.toISOString())
+    }
+  })
+
+  it.each(ACTIONS)('timed America/New_York series (%s): the evening before stays', async (action) => {
+    // 20:00 New York is 01:00Z the next day, so the zone and UTC dates differ.
+    const master = makeRecurringEvent({
+      startDate: new Date('2026-01-06T01:00:00Z'), // 5 Jan 20:00 EST
+      endDate: new Date('2026-01-06T02:00:00Z'),
+      timezone: 'America/New_York',
+    })
+    const instance = new Date('2026-01-08T01:00:00Z') // 7 Jan 20:00 EST
+
+    const { ics, reloaded, series } = await cutAt(master, action, instance)
+
+    const range = { start: new Date('2026-01-01T00:00:00Z'), end: new Date('2026-01-12T00:00:00Z') }
+    expect(isoList(expandEventsForRange([reloaded], range))).toEqual([
+      '2026-01-06T01:00:00.000Z',
+      '2026-01-07T01:00:00.000Z',
+    ])
+    expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260108T005959Z')
+    if (action === 'edit') {
+      expect(isoList(expandEventsForRange([series!], range))[0]).toBe(instance.toISOString())
+    }
+  })
+
+  it.each(ACTIONS)('floating timed series (%s): the day before stays and UNTIL stays floating', async (action) => {
+    const master = makeRecurringEvent({
+      startDate: new Date(2026, 0, 5, 8, 0, 0),
+      endDate: new Date(2026, 0, 5, 9, 0, 0),
+      floating: true,
+    })
+    const instance = new Date(2026, 0, 7, 8, 0, 0)
+
+    const { ics, reloaded } = await cutAt(master, action, instance)
+
+    const range = { start: new Date(2026, 0, 1), end: new Date(2026, 0, 12) }
+    expect(expandEventsForRange([reloaded], range).map((e) => e.startDate.getTime())).toEqual([
+      new Date(2026, 0, 5, 8).getTime(),
+      new Date(2026, 0, 6, 8).getTime(),
+    ])
+    expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260107T075959')
+  })
+
+  it.each(ACTIONS)('all-day series (%s): the day before stays and UNTIL stays a date', async (action) => {
+    const master = makeRecurringEvent({
+      startDate: new Date(2026, 0, 5),
+      endDate: new Date(2026, 0, 6),
+      allDay: true,
+    })
+    const instance = new Date(2026, 0, 7)
+
+    const { ics, reloaded } = await cutAt(master, action, instance)
+
+    const range = { start: new Date(2026, 0, 1), end: new Date(2026, 0, 12) }
+    expect(expandEventsForRange([reloaded], range).map((e) => e.startDate.getTime())).toEqual([
+      new Date(2026, 0, 5).getTime(),
+      new Date(2026, 0, 6).getTime(),
+    ])
+    expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260106')
   })
 })
 

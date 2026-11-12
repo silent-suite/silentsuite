@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, untilDateBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -115,13 +115,24 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
   return copy
 }
 
-/** Add a date-only UNTIL (YYYYMMDD) to an existing RRULE, replacing any existing UNTIL or COUNT */
-function addUntilToRRule(rrule: string, untilDate: string): string {
+/** Add an UNTIL value to an existing RRULE, replacing any existing UNTIL or COUNT */
+function addUntilToRRule(rrule: string, until: string): string {
   const parts = rrule.split(';').filter(
     (p) => !p.startsWith('UNTIL=') && !p.startsWith('COUNT='),
   )
-  parts.push(`UNTIL=${untilDate}`)
+  parts.push(`UNTIL=${until}`)
   return parts.join(';')
+}
+
+/**
+ * The UNTIL that ends `master` just before the occurrence at `instanceDate`. All-day series take
+ * the previous date (a DATE UNTIL). Timed series take a date-time one second before the
+ * occurrence, because a date-only UNTIL is read as that day's midnight and would also drop the
+ * previous day's occurrence.
+ */
+function untilBeforeOccurrence(master: CalendarEvent, instanceDate: Date): string {
+  const timeZone = recurrenceTimeZone(master)
+  return master.allDay ? untilDateBefore(instanceDate, timeZone) : untilTimeBefore(instanceDate, timeZone)
 }
 
 /** Sync a single event to Etebase (used by create/update helpers) */
@@ -381,14 +392,13 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         break
       }
       case 'this_and_future': {
-        // Add UNTIL to master's RRULE (day before instanceDate)
-        // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
-        const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
+        // End the master's RRULE just before instanceDate
+        const until = untilBeforeOccurrence(master, instanceDate)
         const masterIndex = events.findIndex((e) => e.id === id)
         const updatedMaster = {
           ...master,
           recurrenceRule: master.recurrenceRule
-            ? addUntilToRRule(master.recurrenceRule, dayBefore)
+            ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           updated: now,
         }
@@ -480,14 +490,13 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         break
       }
       case 'this_and_future': {
-        // Add UNTIL to master's RRULE (day before instanceDate)
-        // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
-        const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
+        // End the master's RRULE just before instanceDate
+        const until = untilBeforeOccurrence(master, instanceDate)
         const masterIndex = events.findIndex((e) => e.id === id)
         const updatedMaster = {
           ...master,
           recurrenceRule: master.recurrenceRule
-            ? addUntilToRRule(master.recurrenceRule, dayBefore)
+            ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           updated: now,
         }
