@@ -152,7 +152,7 @@ function ManageImportedDataSection({ showToast }: { showToast: (message: string)
                         type="button"
                         onClick={() => handleClear(section.type, row, section.itemSingular, section.itemPlural)}
                         disabled={row.count === 0}
-                        className="rounded-md border border-[rgb(var(--border))] px-3 py-1.5 text-xs font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface))] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="max-md:min-h-[44px] rounded-md border border-[rgb(var(--border))] px-3 py-1.5 text-xs font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface))] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Clear {section.itemPlural}
                       </button>
@@ -160,7 +160,7 @@ function ManageImportedDataSection({ showToast }: { showToast: (message: string)
                         <button
                           type="button"
                           onClick={() => handleDelete(section.type, row, section.collectionLabel, section.itemSingular, section.itemPlural)}
-                          className="inline-flex items-center gap-1 rounded-md border border-red-500/40 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
+                          className="max-md:min-h-[44px] inline-flex items-center gap-1 rounded-md border border-red-500/40 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10"
                         >
                           <Trash2 className="h-3 w-3" />
                           Delete {section.collectionLabel}
