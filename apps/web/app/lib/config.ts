@@ -26,4 +26,4 @@ export const ETEBASE_SERVER_URL = defaultEtebaseServerUrl()
 
 /** Relay endpoint for user-initiated "Report a problem" sends. */
 export const REPORT_RELAY_URL =
-  process.env.NEXT_PUBLIC_REPORT_RELAY_URL || 'https://report.silentsuite.io/v1/reports'
+  process.env.NEXT_PUBLIC_REPORT_RELAY_URL || 'https://silentsuite.io/api/report'

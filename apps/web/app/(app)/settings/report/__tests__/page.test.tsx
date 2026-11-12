@@ -73,7 +73,12 @@ describe('Report a problem page', () => {
   it('shows the disclosure, privacy link and retention before anything is sent', async () => {
     renderWithIntl(<ReportProblemPage />)
     await previewText()
-    expect(screen.getByText(/Kept for 12 months after the report is closed; to have it deleted, email support@silentsuite\.io\./)).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We delete it 90 days after we've dealt with it; to have it deleted sooner, email support@silentsuite.io.",
+        { exact: false },
+      ),
+    ).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', 'https://silentsuite.io/privacy#problem-reports')
   })
 
@@ -161,13 +166,15 @@ describe('Report a problem page', () => {
     expect(relayCalls()).toHaveLength(1)
   })
 
-  it('treats a relay error response as unconfirmed without retrying', async () => {
-    relayResponse = () => Promise.resolve(new Response('{}', { status: 502 }))
+  it.each([502, 503])('treats a %i relay response as unconfirmed with Email and Copy, without retrying', async (status) => {
+    relayResponse = () => Promise.resolve(new Response('{}', { status }))
     renderWithIntl(<ReportProblemPage />)
     await previewText()
     fillForm()
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(await screen.findByRole('alert')).toHaveTextContent("We couldn't confirm your report was sent.")
+    expect(screen.getByRole('link', { name: 'Email instead' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled()
     expect(relayCalls()).toHaveLength(1)
   })
 

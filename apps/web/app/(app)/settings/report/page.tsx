@@ -12,7 +12,7 @@ import {
   DESCRIPTION_MAX_CHARS,
   PRIVACY_POLICY_URL,
   REPORT_RELAY_URL,
-  REPORT_RETENTION_MONTHS,
+  REPORT_RETENTION_DAYS,
   REPORT_SEND_TIMEOUT_MS,
   SUMMARY_MAX_CHARS,
   SUPPORT_EMAIL,
@@ -285,7 +285,7 @@ export default function ReportProblemPage() {
       </fieldset>
 
       <p className="text-xs text-[rgb(var(--muted))]">
-        {t('disclosure', { months: REPORT_RETENTION_MONTHS, email: SUPPORT_EMAIL })}{' '}
+        {t('disclosure', { days: REPORT_RETENTION_DAYS, email: SUPPORT_EMAIL })}{' '}
         <a href={PRIVACY_POLICY_URL} target="_blank" rel="noopener noreferrer" className="underline">
           {t('privacyLink')}
         </a>

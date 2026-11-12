@@ -130,7 +130,7 @@
     "previewLabel": "Diagnostic info that will be sent",
     "previewHint": "This is exactly what will be sent with your report. It contains no account details, server addresses or content.",
     "previewPending": "Collecting diagnostic info\u2026",
-    "disclosure": "Your report is sent through Cloudflare and stored as a private GitHub issue that only the SilentSuite team can read. It is not end-to-end encrypted and not linked to your account. Kept for {months} months after the report is closed; to have it deleted, email {email}.",
+    "disclosure": "Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We delete it {days} days after we've dealt with it; to have it deleted sooner, email {email}.",
     "privacyLink": "Privacy policy",
     "send": "Send",
     "sending": "Sending\u2026",

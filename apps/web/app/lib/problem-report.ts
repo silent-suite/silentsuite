@@ -12,8 +12,8 @@ export { REPORT_RELAY_URL }
 
 export const SUPPORT_EMAIL = 'support@silentsuite.io'
 export const PRIVACY_POLICY_URL = 'https://silentsuite.io/privacy#problem-reports'
-/** Months a report is kept after it is closed, shown in the disclosure. Change it here only. */
-export const REPORT_RETENTION_MONTHS = 12
+/** Days a report is kept after it has been dealt with, shown in the disclosure. Change it here only. */
+export const REPORT_RETENTION_DAYS = 90
 /** How long Send waits for the relay before showing the unknown-outcome message. */
 export const REPORT_SEND_TIMEOUT_MS = 15_000
 
