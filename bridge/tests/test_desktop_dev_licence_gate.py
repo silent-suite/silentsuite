@@ -1399,3 +1399,44 @@ def test_verify_refuses_unverified_sources(materials, tmp_path, case):
         (directory / "py.tar.xz.sigstore").unlink()
     with pytest.raises(materials.InputError):
         materials.verify(rows, directory, APPLICATION, ARTIFACT, lambda *args: result)
+
+
+# The package job does not hold the source archives; the source-materials job of the
+# same run hashed them. check(..., source_receipt=receipt) replaces the file check with
+# that receipt: every policy archive needs one entry with the same SHA256 (CLI:
+# --source-receipt FILE instead of --source-dir).
+def _receipt_for(policy):
+    return {"artifact": ARTIFACT, "application": APPLICATION,
+            "archives": [{"file": a["file"], "sha256": a["sha256"], "signature": None}
+                         for a in policy["source_archives"]]}
+
+
+def test_gate_accepts_a_matching_source_receipt_instead_of_files(gate, tmp_path):
+    facts, policy, archive, sources = _v9_case(tmp_path, LINUX)
+    (sources / f"{DIST}-{DIST_VERSION}-src.tar.xz").unlink()  # no files: the receipt stands in
+    assert gate.check(facts, policy, archive, None, source_receipt=_receipt_for(policy)) == []
+
+
+@pytest.mark.parametrize("case", ["entry-missing", "sha-differs", "no-archives"])
+def test_gate_refuses_a_source_receipt_that_does_not_cover_the_policy(gate, tmp_path, case):
+    facts, policy, archive, sources = _v9_case(tmp_path, LINUX)
+    receipt = _receipt_for(policy)
+    if case == "entry-missing":
+        receipt["archives"] = []
+    elif case == "sha-differs":
+        receipt["archives"][0]["sha256"] = _sha(b"other")
+    else:
+        del receipt["archives"]
+    assert gate.check(facts, policy, archive, None, source_receipt=receipt)
+
+
+def test_gate_cli_uses_a_source_receipt(gate, tmp_path):
+    facts, _, archive, sources = _v9_case(tmp_path, LINUX)
+    index = _write_policy_tree(tmp_path, {LINUX: _v9_policy(LINUX)})
+    receipt = tmp_path / "source-verification.json"
+    receipt.write_text(json.dumps(_receipt_for(_v9_policy(LINUX))), encoding="utf-8")
+    facts_path = archive.parent / "facts.json"
+    facts_path.write_text(json.dumps(facts), encoding="utf-8")
+    code = gate.main(["--facts", str(facts_path), "--policy", str(index), "--archive-root", str(archive),
+                      "--source-receipt", str(receipt)])
+    assert code == 0
