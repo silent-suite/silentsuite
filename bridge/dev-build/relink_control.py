@@ -14,7 +14,6 @@ nonce is generated per run and compiled into L.
 
 Subcommands (each exits 0 on success, 1 on a failed check, 2 on unusable input):
   extract   verify the held source archive's SHA256 and extract only qtbase/
-  copy      tar.gz round trip of the build output into a new directory
   apt-packages  print the Linux qtbase build packages
   package   extract the exact package archive twice (negative control; staged modified run)
   build     configure qtbase with the publisher's options and build only L
@@ -136,26 +135,6 @@ def extract(archive: Path, expected: str, dest: Path) -> dict:
         raise InputError(f"no {prefix} members in the archive")
     return {"archive": archive.name, "sha256": actual, "bytes": archive.stat().st_size, "members": count,
             "extracted": prefix, "refused_by_data_filter": refused}
-
-
-# --- copy --------------------------------------------------------------------
-
-
-def copy(source: Path, dest: Path) -> dict:
-    """A tar.gz round trip of ``source`` into ``dest`` (links kept, data filter on extraction)."""
-    if not source.is_dir() or dest.exists():
-        raise InputError("copy needs an existing source directory and a new destination")
-    archive = dest.parent / (dest.name + ".tgz")
-    with tarfile.open(archive, "w:gz") as tar:
-        tar.add(source, arcname=source.name)
-    dest.mkdir(parents=True)
-    with tarfile.open(archive, "r:gz") as tar:
-        for member in tar:
-            _extract_member(tar, member, dest)
-    record = {"archive_sha256": _sha(archive), "archive_bytes": archive.stat().st_size, "copy": source.name}
-    archive.unlink()
-    record["ok"] = (dest / source.name).is_dir()
-    return record
 
 
 # --- package -------------------------------------------------------------------
@@ -557,10 +536,6 @@ def main(argv=None) -> int:
     p.add_argument("--sha256", required=True)
     p.add_argument("--dest", required=True, type=Path)
     p.add_argument("--receipt", required=True, type=Path)
-    p = sub.add_parser("copy")
-    p.add_argument("--source", required=True, type=Path)
-    p.add_argument("--dest", required=True, type=Path)
-    p.add_argument("--receipt", required=True, type=Path)
     sub.add_parser("apt-packages")
     p = sub.add_parser("package")
     p.add_argument("--archive", required=True, type=Path)
@@ -606,8 +581,6 @@ def main(argv=None) -> int:
         if args.command == "extract":
             record = extract(args.archive, args.sha256, args.dest)
             record["ok"] = True
-        elif args.command == "copy":
-            record = copy(args.source, args.dest)
         elif args.command == "package":
             record = package(args.archive, args.frozen_out, args.dest)
         elif args.command == "build":

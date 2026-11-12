@@ -5,10 +5,12 @@ name: Test Bridge desktop relinking control (receipts only)
 # Qt library L from the held, SHA256-verified qt-everywhere-src-6.12.0 with the
 # publisher's recorded qtbase configure options and one source change (a
 # load-time constructor writing this run's nonce to SILENTSUITE_RELINK_WITNESS);
-# swap L into a tar round-trip copy of the build; run the unchanged frozen
-# startup tests against that copy; then require the witness line and the OS
-# loaded-module record (L at its bundle path with the modified SHA256), with
-# the unmodified bundle as the negative control.
+# pack the bundle into a package-shaped archive and extract it twice; swap L
+# into one extraction; run the unchanged frozen startup tests against it; then
+# require the witness line and the OS loaded-module record (L at its bundle path
+# with the modified SHA256), with the unmodified extraction as the negative
+# control. This is the pre-admission compatibility evidence; the caller's package
+# job runs the same control on its exact archive before any upload.
 # L: libQt6XcbQpa.so.6 (linux-x86_64), qwindows.dll (windows-x86_64).
 # Only text receipts are uploaded. No bundle, library, binary or source archive
 # leaves the job; nothing is signed, released or published. No secrets.
@@ -171,21 +173,37 @@ jobs:
           python bridge/dev-build/relink_control.py configdiff --sdk-include "$(dirname "$(dirname "$header")")" \
             --build-include "$RUNNER_TEMP/qb/include" --receipt "$q7/configdiff.json"
 
-      - name: Swap L into a tar round-trip copy of the build
+      # A package-shaped archive (program folder beside a NOTICES folder, tar.gz on Linux,
+      # zip on Windows, as the caller's archive step writes) goes through the same
+      # extraction the caller's package job uses on its exact archive.
+      - name: Swap L into an extraction of a package-shaped archive
         shell: bash
         run: |
           set -euo pipefail
           q7="$RUNNER_TEMP/q7"
-          rm -rf "$RUNNER_TEMP/relink"
-          python bridge/dev-build/relink_control.py copy --source "$RUNNER_TEMP/frozen" \
-            --dest "$RUNNER_TEMP/relink" --receipt "$q7/copy.json"
+          bundle="${{ steps.build.outputs.bundle }}"
+          root="$RUNNER_TEMP/pkg-root"
+          rm -rf "$RUNNER_TEMP/relink" "$root" "$RUNNER_TEMP/pkg-out"
+          mkdir -p "$root/NOTICES" "$RUNNER_TEMP/pkg-out"
+          echo "package-shaped archive for the standalone Q7 control" > "$root/NOTICES/README.txt"
+          cp -R "$RUNNER_TEMP/frozen/dist/$bundle" "$root/$bundle"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            archive="$RUNNER_TEMP/pkg-out/q7-package.tar.gz"
+            tar -czf "$archive" -C "$root" .
+          else
+            python -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2])" \
+              "$RUNNER_TEMP/pkg-out/q7-package" "$root"
+            archive="$RUNNER_TEMP/pkg-out/q7-package.zip"
+          fi
+          python bridge/dev-build/relink_control.py package --archive "$archive" --frozen-out "$RUNNER_TEMP/frozen" \
+            --dest "$RUNNER_TEMP/relink" --receipt "$q7/package.json"
           if [ "$RUNNER_OS" = "Linux" ]; then
             member="${{ steps.build.outputs.pyside }}/Qt/lib/libQt6XcbQpa.so.6"
           else
             member="${{ steps.build.outputs.pyside }}/plugins/platforms/qwindows.dll"
           fi
           python bridge/dev-build/relink_control.py swap \
-            --bundle "$RUNNER_TEMP/relink/frozen/dist/${{ steps.build.outputs.bundle }}" \
+            --bundle "$RUNNER_TEMP/relink/modified/frozen/dist/$bundle" \
             --platform "${{ matrix.label }}" \
             --modified "$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['output_path'])" "$q7/build.json")" \
             --wheel-member "$member" --receipt "$q7/swap.json"
@@ -195,7 +213,7 @@ jobs:
         working-directory: bridge
         shell: bash
         env:
-          SILENTSUITE_FROZEN_OUT: ${{ runner.temp }}/relink/frozen
+          SILENTSUITE_FROZEN_OUT: ${{ runner.temp }}/relink/modified/frozen
         run: |
           set -uo pipefail
           q7="$RUNNER_TEMP/q7"
@@ -222,10 +240,10 @@ jobs:
           modified_sha=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['modified_sha256'])" "$q7/swap.json")
           original_sha=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['original_sha256'])" "$q7/swap.json")
           status=0
-          "${wrap[@]}" python bridge/dev-build/relink_control.py witness --bundle "$RUNNER_TEMP/relink/frozen/dist/$bundle" \
+          "${wrap[@]}" python bridge/dev-build/relink_control.py witness --bundle "$RUNNER_TEMP/relink/modified/frozen/dist/$bundle" \
             --platform "${{ matrix.label }}" --root "$RUNNER_TEMP/w-modified" --expect-sha256 "$modified_sha" \
             --nonce "${{ steps.build.outputs.nonce }}" --receipt "$q7/witness-modified.json" || status=1
-          "${wrap[@]}" python bridge/dev-build/relink_control.py witness --bundle "$RUNNER_TEMP/frozen/dist/$bundle" \
+          "${wrap[@]}" python bridge/dev-build/relink_control.py witness --bundle "$RUNNER_TEMP/relink/original/$bundle" \
             --platform "${{ matrix.label }}" --root "$RUNNER_TEMP/w-original" --expect-sha256 "$original_sha" \
             --negative-control --receipt "$q7/witness-negative.json" || status=1
           echo "nonce ${{ steps.build.outputs.nonce }}" >> "$q7/recipe.txt"
