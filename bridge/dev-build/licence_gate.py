@@ -26,7 +26,9 @@ Rules (each fails closed):
   licence; a rule with typecode/toc_sources_exactly needs facts["module_sources"] to
   be exactly those sources, each with exactly that typecode;
 - Qt libraries: each basename listed with an allowed licence;
-- licence texts: every used licence's licence_text_files (else licence_texts) present;
+- licence texts: every used licence's licence_text_files (else licence_texts) present; an
+  explicit empty list (no notice needed) is accepted only for a licence whose every use is
+  a runtime rule pinned to one exact file by SHA256;
 - required_notices, prominent_notice, required_statements (file, sha256?,
   must_contain, must_not_contain?), elections (elected alternative, platform, text);
 - source archives: present in source_dir with the listed SHA256, or, in the package
@@ -96,6 +98,7 @@ class _Check:
         self.failures: list[str] = []
         self.allowed = set(policy.get("allowed_licences") or [])
         self.used_licences: set[str] = set()
+        self.unpinned_uses: set[str] = set()  # licences used anywhere except a hash-pinned runtime file
         self._notice_hashes = None
 
     def fail(self, message: str) -> None:
@@ -145,11 +148,13 @@ class _Check:
                             self.fail(f"NOTICES file {path.relative_to(self.archive).as_posix()} is unreadable")
         return self._notice_hashes
 
-    def licence(self, licence, what) -> None:
+    def licence(self, licence, what, pinned=False) -> None:
         if not isinstance(licence, str) or licence not in self.allowed:
             self.fail(f"{what}: licence {licence!r} is not an allowed licence")
             return
         self.used_licences.add(licence)
+        if not pinned:
+            self.unpinned_uses.add(licence)
 
     # -- rules ----------------------------------------------------------------
     def identity(self) -> None:
@@ -208,7 +213,8 @@ class _Check:
             for rule in matches:
                 if not rule.get("owner"):
                     self.fail(f"unmapped file {path}: runtime rule {rule['pattern']!r} names no owner")
-                self.licence(rule.get("licence"), f"unmapped file {path}")
+                exact = isinstance(rule.get("sha256"), str) and SHA256.match(rule["sha256"]) is not None
+                self.licence(rule.get("licence"), f"unmapped file {path}", pinned=exact)
                 self.pinned(path, rule, observed.get(path))
 
     def pinned(self, path, rule, entry) -> None:
@@ -281,6 +287,8 @@ class _Check:
         files = self.policy.get("licence_text_files") or {}
         for licence in sorted(self.used_licences):
             needed = files.get(licence)
+            if needed == [] and licence not in self.unpinned_uses:
+                continue  # explicitly no notice, and only for hash-pinned runtime files
             if needed is None:
                 needed = [texts[licence]] if licence in texts else None
             if not isinstance(needed, list) or not needed:
