@@ -1,0 +1,1 @@
+Aggiorna SilentSuite Android per la release 0.4.0-beta mantenendo la compatibilità di Google Play con le librerie native a 16 KB. Questa release migliora principalmente l'esperienza generale di SilentSuite per web, sincronizzazione, pagamenti e Bridge.

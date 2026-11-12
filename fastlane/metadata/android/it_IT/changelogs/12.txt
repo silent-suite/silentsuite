@@ -1,0 +1,1 @@
+Migliora l'isolamento dell'account e la compatibilità di rilevamento del DAV Bridge su macOS, preservando la crittografia zero-knowledge e le chiavi sul dispositivo.

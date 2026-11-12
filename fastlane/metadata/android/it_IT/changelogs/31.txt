@@ -1,0 +1,1 @@
+Risolto il problema per cui l'app chiedeva di aggiungere nuovamente un account dopo che l'account attivo era stato rimosso all'esterno dell'app. Ora ripristina l'unico account idoneo rimanente.
