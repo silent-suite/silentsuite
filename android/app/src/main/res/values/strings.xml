@@ -884,7 +884,7 @@
     <string name="notes_network_notes_setting">Automatic Notes sync is set to Wi-Fi only (Settings, Account).</string>
     <string name="notes_network_account_wifi_only">Sync over WiFi only is on for this account (Settings, Sync).</string>
     <string name="notes_network_no_wifi_reported">Android does not report Wi-Fi as the active connection.</string>
-    <string name="notes_network_account_network_name">WiFi SSID restriction (Settings, Sync) names one Wi-Fi network for this account. Android reports another one, or gives this app no name.</string>
+    <string name="notes_network_account_network_name">Sync over WiFi only is on for this account and a Wi-Fi network name is saved with it (Settings, Sync). Android does not give this app network names, so the name cannot be checked. Remove it there to let Notes sync on any Wi-Fi network.</string>
     <string name="notes_network_try_now">Pull down the list to try now.</string>
     <string name="notes_network_sync_now_needs_wifi">Sync now for Notes is set to Wi-Fi only too (Settings, Account). When Wi-Fi is the active connection, pull down the list to try.</string>
 </resources>

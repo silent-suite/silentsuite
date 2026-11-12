@@ -492,13 +492,9 @@ class NotesRuntimeTest {
         }
         // The run is a stand-in, so the gate never runs here: the list is the only reader of the network.
         NotesSyncCoordinator.runnerOverride = { _, _, _, _ -> }
-        // The pinned reading gives the Wi-Fi name only when the list asks for it, and keeps each ask.
-        val asked = java.util.concurrent.CopyOnWriteArrayList<Boolean>()
-        fun pin(connection: NotesNetworkPolicy.Connection, name: String? = null) {
-            NotesNetwork.readingOverride = { withWifiName ->
-                asked += withWifiName
-                NotesNetworkPolicy.Reading(connection, name.takeIf { withWifiName })
-            }
+        // The pinned reading is the connection alone: the list never reads a Wi-Fi name (#971).
+        fun pin(connection: NotesNetworkPolicy.Connection) {
+            NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(connection) }
         }
         val wifi = NotesNetworkPolicy.Connection.WIFI
         val other = NotesNetworkPolicy.Connection.OTHER
@@ -574,27 +570,27 @@ class NotesRuntimeTest {
                 reload()
                 awaitLine(scenario, "step 5: no active network reported, the account switch on",
                     NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
-                // Up to here the account never had a network name.
-                assertTrue("with no network name on the account the list never asked for the Wi-Fi name: $asked",
-                    asked.isNotEmpty() && asked.none { it })
 
-                // 6. A network name on the account, and Wi-Fi under another name: the name sentence, and
-                // nothing says that Wi-Fi is missing.
+                // 6. A network name saved with the switch, on Wi-Fi: the name sentence alone, since the
+                // name refuses on every network, and nothing says that Wi-Fi is missing (#971).
                 settings.syncWifiOnlySSID = "home"
-                pin(wifi, "\"cafe\"")
+                pin(wifi)
                 reload()
-                awaitLine(scenario, "step 6: Wi-Fi under another name than the account's",
+                awaitLine(scenario, "step 6: a saved network name, on Wi-Fi",
                     NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_NETWORK_NAME, NoticePart.TRY_NOW)
 
-                // 7. Wi-Fi under the account's own name: no line. The pinned reading gives the name only
-                // when it is asked for, so this also shows that the list asks for it.
-                pin(wifi, "\"home\"")
-                reload()
-                awaitLine(scenario, "step 7: Wi-Fi under the account's own name")
-
-                // 8. Off Wi-Fi on a network that is not Wi-Fi: the same words as for no active network
-                // in step 5.
+                // 7. The name still saved, off Wi-Fi, with Sync now on Wi-Fi only: the same name sentence,
+                // and the pull down offered for Wi-Fi only.
+                check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
                 pin(other)
+                reload()
+                awaitLine(scenario, "step 7: a saved network name, off Wi-Fi, Sync now on Wi-Fi only",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_NETWORK_NAME, NoticePart.SYNC_NOW_NEEDS_WIFI)
+
+                // 8. The name removed and Sync now on any network again, still off Wi-Fi: the same words
+                // as for no active network in step 5.
+                settings.syncWifiOnlySSID = null
+                check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
                 reload()
                 awaitLine(scenario, "step 8: off Wi-Fi, the account switch on",
                     NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
@@ -621,8 +617,8 @@ class NotesRuntimeTest {
                     assertEquals(View.GONE, activity.findViewById<View>(R.id.notebooks_hint).visibility)
                 }
 
-                // 11. Back on Wi-Fi under the account's name: the line goes at the next reload.
-                pin(wifi, "\"home\"")
+                // 11. Back on Wi-Fi: the line goes at the next reload.
+                pin(wifi)
                 reload()
                 awaitLine(scenario, "step 11: back on Wi-Fi")
 

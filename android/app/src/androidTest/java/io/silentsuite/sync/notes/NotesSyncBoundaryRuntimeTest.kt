@@ -2007,7 +2007,7 @@ class NotesSyncBoundaryRuntimeTest {
         assertSucceeded(status(account, "gen-net"))
     }
 
-    @Test fun anAutomaticRunAlsoNeedsTheAccountsOwnWifiSwitchAndNetworkNameAndARunTheUserStartsDoesNot() {
+    @Test fun anAutomaticRunAlsoNeedsTheAccountsOwnWifiSwitchAndNoSavedNetworkNameAndARunTheUserStartsDoesNot() {
         val account = newAccount("gen-acct")
         val notebook = uploadNotebook("Work")
         val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
@@ -2021,69 +2021,59 @@ class NotesSyncBoundaryRuntimeTest {
         fun open() {
             NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN_OPEN)
         }
-        // The pinned reading gives the Wi-Fi name only when the production code asks for it, and keeps each ask.
-        val asked = CopyOnWriteArrayList<Boolean>()
-        fun pin(connection: NotesNetworkPolicy.Connection, name: String? = null) {
-            NotesNetwork.readingOverride = { withWifiName ->
-                asked += withWifiName
-                NotesNetworkPolicy.Reading(connection, name.takeIf { withWifiName })
-            }
+        // The pinned reading is the connection alone: nothing in Notes reads a Wi-Fi name (#971).
+        fun pin(connection: NotesNetworkPolicy.Connection) {
+            NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(connection) }
         }
         val wifi = NotesNetworkPolicy.Connection.WIFI
         val other = NotesNetworkPolicy.Connection.OTHER
+        val none = NotesNetworkPolicy.Connection.NONE
 
         // 1. The switch on, no network name: refused off Wi-Fi and with no active network, sent on Wi-Fi
-        // (rows A13, A14, A12). The Wi-Fi name is never asked for.
+        // (rows A13, A14, A12).
         edit("edit 1")
         pin(other)
         assertRefused(account, "gen-acct", note.uid, "an automatic run off Wi-Fi with the account switch on") { open() }
-        pin(NotesNetworkPolicy.Connection.NONE)
+        pin(none)
         assertRefused(account, "gen-acct", note.uid, "an automatic run with no active network and the account switch on") { open() }
         pin(wifi)
         assertSent(account, "gen-acct", notebook, "an automatic run on Wi-Fi with the account switch on") { open() }
-        assertTrue("with no network name on the account the Wi-Fi name is never asked for: $asked", asked.isNotEmpty() && asked.none { it })
-        asked.clear()
 
-        // 2. A network name on the account: another name, no name from the platform, and the platform's
-        // unknown-name value are all refusals (row A16). The Wi-Fi name is asked for each time.
+        // 2. A network name saved with the switch refuses on every network, Wi-Fi included (rows A15,
+        // A16, and A13 and A14 with a name): Android gives this app no Wi-Fi names, so the name cannot
+        // be checked (#971).
         settings.syncWifiOnlySSID = "home"
         edit("edit 2")
-        listOf("\"cafe\"", null, "<unknown ssid>").forEachIndexed { index, name ->
-            pin(wifi, name)
-            assertRefused(account, "gen-acct", note.uid, "an automatic run on Wi-Fi without the account's network name (case $index)") { open() }
+        for (connection in listOf(wifi, other, none)) {
+            pin(connection)
+            assertRefused(account, "gen-acct", note.uid, "an automatic run with a saved network name, connection $connection") { open() }
         }
-        assertTrue("with a network name on the account the Wi-Fi name is asked for: $asked", asked.isNotEmpty() && asked.all { it })
-        asked.clear()
 
         // 3. A run the user starts does not look at the account's rule: not at the switch off Wi-Fi
-        // (row E2 with the switch on), not at the name on Wi-Fi (row E7). So it never asks for the
-        // Wi-Fi name either.
+        // (row E2 with the switch on), not at the saved name on Wi-Fi (row E7).
         pin(other)
-        assertSent(account, "gen-acct", notebook, "pull to refresh off Wi-Fi with the account switch on") {
+        assertSent(account, "gen-acct", notebook, "pull to refresh off Wi-Fi with the account switch on and a saved name") {
             NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN)
         }
         edit("edit 2, second")
-        pin(wifi, "\"cafe\"")
-        assertSent(account, "gen-acct", notebook, "pull to refresh on a Wi-Fi network with another name") {
+        pin(wifi)
+        assertSent(account, "gen-acct", notebook, "pull to refresh on Wi-Fi with a saved network name") {
             NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN)
         }
-        assertTrue("a run the user starts never asks for the Wi-Fi name: $asked", asked.size == 2 && asked.none { it })
-        asked.clear()
 
-        // 4. On the named network an automatic run is sent (row A15). It is not when the production
-        // code does not ask for the name, since the pinned reading then gives none.
+        // 4. With the name removed, the switch alone decides again: an automatic run on Wi-Fi is sent
+        // (row A12). Removing it is the way out the notice names.
+        settings.syncWifiOnlySSID = null
         edit("edit 3")
-        pin(wifi, "\"home\"")
-        assertSent(account, "gen-acct", notebook, "an automatic run on the named Wi-Fi network") { open() }
-        assertTrue("the Wi-Fi name was asked for: $asked", asked.isNotEmpty() && asked.all { it })
+        pin(wifi)
+        assertSent(account, "gen-acct", notebook, "an automatic run on Wi-Fi once the saved network name is removed") { open() }
 
-        // 5. The switch off with the name left over: the name means nothing and is not asked for (row A17).
+        // 5. The switch off with a name left over: the name means nothing (row A17).
         settings.setSyncWiFiOnly(false)
+        settings.syncWifiOnlySSID = "home"
         edit("edit 4")
-        asked.clear()
         pin(other)
         assertSent(account, "gen-acct", notebook, "an automatic run off Wi-Fi with the switch off and a name left over") { open() }
-        assertTrue("a name left over from a switch that is off is not asked for: $asked", asked.isNotEmpty() && asked.none { it })
 
         // 6. Both rules on (row A5).
         check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
@@ -2094,22 +2084,13 @@ class NotesSyncBoundaryRuntimeTest {
         assertRefused(account, "gen-acct", note.uid, "an automatic run off Wi-Fi with both rules on") { open() }
 
         // 7. No pin: the production reading, on whatever network this device has, against the adapters'
-        // own function. It passes on any network and records which one it was.
+        // own function. It passes on any network and records which one it was. A name no network has
+        // is refused by both, whichever network this is.
         NotesNetwork.readingOverride = null
         check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
-        val real = NotesNetwork.read(context, withWifiName = true)
-        val realName = real.wifiName
-        assertNull("the Wi-Fi name is not read when it was not asked for", NotesNetwork.read(context, withWifiName = false).wifiName)
-        val readable = realName != null && realName.length >= 2 && realName.startsWith("\"") && realName.endsWith("\"")
-        val nameState = when {
-            realName == null -> "none"
-            realName == "<unknown ssid>" -> "unknown"
-            readable -> "quoted"
-            else -> "hex"
-        }
+        val real = NotesNetwork.read(context)
         val compared = mutableListOf<String>()
-        for ((wifiOnly, name) in listOf(false to null, true to null, true to "notes-test-no-such-network",
-                true to realName?.takeIf { readable }?.removeSurrounding("\""))) {
+        for ((wifiOnly, name) in listOf(false to null, true to null, true to "notes-test-no-such-network")) {
             settings.setSyncWiFiOnly(wifiOnly)
             settings.syncWifiOnlySSID = name
             val adapters = runCatching { syncConditionsAllow(context, settings) }.getOrDefault(false)
@@ -2117,11 +2098,9 @@ class NotesSyncBoundaryRuntimeTest {
             assertEquals("Notes and the adapters agree on the account's rule (switch $wifiOnly, name set ${name != null})", adapters, notes)
             compared += "switch=$wifiOnly nameSet=${name != null} allowed=$adapters"
         }
-        // No network name in this line: fixed words, flags and the API level only. The adapters'
-        // function called above writes a log line of its own, which carries the Wi-Fi name as the
-        // platform reports it.
+        // No network name in this line: fixed words, flags and the API level only.
         android.util.Log.i("NotesNetworkReading", "sdk=${Build.VERSION.SDK_INT} connection=${real.connection} " +
-            "wifiName=$nameState compared: ${compared.joinToString("; ")}")
+            "compared: ${compared.joinToString("; ")}")
 
         // 8. Still no pin: a real run through the gate on the Notes worker, with nothing restricting
         // it. It reads this device's own network there and is admitted on any network.

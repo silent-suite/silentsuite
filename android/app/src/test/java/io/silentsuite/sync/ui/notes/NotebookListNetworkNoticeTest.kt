@@ -22,7 +22,7 @@ class NotebookListNetworkNoticeTest {
             "val accountSettings = AccountSettings(appContext, account)",
             "NotesNetworkPolicy.AccountRule(accountSettings.syncWifiOnly, accountSettings.syncWifiOnlySSID)",
             "AccountSettings.notesNetworkSettings(AccountManager.get(appContext), account)",
-            "NotesNetwork.read(appContext, withWifiName = rule.wifiOnly && rule.networkName != null)",
+            "NotesNetwork.read(appContext))",
             "} catch (_: InvalidAccountException) {",
             "} catch (e: RuntimeException) {",
             logLine,

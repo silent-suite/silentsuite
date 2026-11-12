@@ -25,12 +25,7 @@ class NotesNetworkPolicyTest {
     private val none = Reading(Connection.NONE)
     private val other = Reading(Connection.OTHER)
     private val wifi = Reading(Connection.WIFI)
-    private val wifiHome = Reading(Connection.WIFI, "\"home\"")
-    private val wifiCafe = Reading(Connection.WIFI, "\"cafe\"")
-
-    /** The platform's unknown-name value (WifiManager.UNKNOWN_SSID): what it reports when it does not give the name. */
-    private val wifiUnknown = Reading(Connection.WIFI, "<unknown ssid>")
-    private val readings = listOf(none, other, wifi, wifiHome, wifiCafe, wifiUnknown)
+    private val readings = listOf(none, other, wifi)
 
     private class Row(val id: String, val allowed: Allowed, val account: AccountRule, val reading: Reading, vararg blockers: Blocker) {
         val blockers = blockers.toSet()
@@ -49,14 +44,19 @@ class NotesNetworkPolicyTest {
     private val anyNetwork = listOf(Allowed.ANY_NETWORK)
     private val notWifi = listOf(other, none)
     private val switchOff = listOf(off, offHome)
-    private val switchOn = listOf(on, onHome)
+    private val switchOn = listOf(on)
 
     private val noticeRows = listOf(
-        // 1. On Wi-Fi with nothing against it: the switch off, on without a name, or on with the name that matches.
-        NoticeRow("1", either, either, cells(listOf(off, offHome, on), listOf(wifi, wifiHome, wifiCafe, wifiUnknown)) + (onHome to wifiHome)),
-        // 2. On Wi-Fi, but not the account's network: another name, no name, or the platform's unknown-name value.
-        NoticeRow("2", either, either, cells(listOf(onHome), listOf(wifiCafe, wifi, wifiUnknown)),
+        // 1. On Wi-Fi with nothing against it: the switch off, or on without a network name.
+        NoticeRow("1", either, either, cells(listOf(off, offHome, on), listOf(wifi))),
+        // 2. The switch on with a network name saved: the name is the only reason, on every network
+        // (#971). The last sentence is what a run the user starts would get there.
+        NoticeRow("2", either, either, cells(listOf(onHome), listOf(wifi)),
             NoticePart.ACCOUNT_NETWORK_NAME, NoticePart.TRY_NOW),
+        NoticeRow("2, off Wi-Fi", either, anyNetwork, cells(listOf(onHome), notWifi),
+            NoticePart.ACCOUNT_NETWORK_NAME, NoticePart.TRY_NOW),
+        NoticeRow("2, off Wi-Fi, Sync now on Wi-Fi only", either, wifiOnly, cells(listOf(onHome), notWifi),
+            NoticePart.ACCOUNT_NETWORK_NAME, NoticePart.SYNC_NOW_NEEDS_WIFI),
         // 3 is the defaults off Wi-Fi.
         NoticeRow("3", wifiOnly, anyNetwork, cells(switchOff, notWifi),
             NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW),
@@ -122,10 +122,10 @@ class NotesNetworkPolicyTest {
             assertEquals(what, Verdict(row.blockers, row.reading.connection), verdict)
             assertEquals(what, row.blockers.isEmpty(), verdict.run)
         }
-        // E7: on Wi-Fi while the account's switch is on with a name that does not match.
+        // E7: on Wi-Fi while the account's switch is on with a network name saved.
         for (syncNow in Allowed.values()) for (automatic in Allowed.values()) {
             assertEquals("E7, Sync now $syncNow, automatic $automatic", Verdict(emptySet(), Connection.WIFI),
-                NotesNetworkPolicy.decide(explicit = true, Settings(automatic, syncNow), onHome, wifiCafe))
+                NotesNetworkPolicy.decide(explicit = true, Settings(automatic, syncNow), onHome, wifi))
         }
     }
 
@@ -137,14 +137,12 @@ class NotesNetworkPolicyTest {
             Row("A3", Allowed.WIFI_ONLY, off, none, Blocker.NOTES_SETTING),
             Row("A4", Allowed.WIFI_ONLY, on, wifi),
             Row("A5", Allowed.WIFI_ONLY, on, other, Blocker.NOTES_SETTING, Blocker.ACCOUNT_WIFI_ONLY),
-            Row("A5, a name set", Allowed.WIFI_ONLY, onHome, other, Blocker.NOTES_SETTING, Blocker.ACCOUNT_WIFI_ONLY),
+            // A name saved refuses on every network (#971), so it is the account's reason off Wi-Fi too.
+            Row("A5, a name saved", Allowed.WIFI_ONLY, onHome, other, Blocker.NOTES_SETTING, Blocker.ACCOUNT_NETWORK_NAME),
             Row("A6", Allowed.WIFI_ONLY, on, none, Blocker.NOTES_SETTING, Blocker.ACCOUNT_WIFI_ONLY),
-            Row("A6, a name set", Allowed.WIFI_ONLY, onHome, none, Blocker.NOTES_SETTING, Blocker.ACCOUNT_WIFI_ONLY),
-            Row("A7", Allowed.WIFI_ONLY, onHome, wifiHome),
-            Row("A8, another name", Allowed.WIFI_ONLY, onHome, wifiCafe, Blocker.ACCOUNT_NETWORK_NAME),
-            // No Wi-Fi info object. The adapters' log line throws here; refused here on purpose.
-            Row("A8, no name", Allowed.WIFI_ONLY, onHome, wifi, Blocker.ACCOUNT_NETWORK_NAME),
-            Row("A8, the unknown name", Allowed.WIFI_ONLY, onHome, wifiUnknown, Blocker.ACCOUNT_NETWORK_NAME),
+            Row("A6, a name saved", Allowed.WIFI_ONLY, onHome, none, Blocker.NOTES_SETTING, Blocker.ACCOUNT_NETWORK_NAME),
+            // A7 and A8 were the named network and any other: no Wi-Fi name is read, so both are a refusal.
+            Row("A7, A8", Allowed.WIFI_ONLY, onHome, wifi, Blocker.ACCOUNT_NETWORK_NAME),
             Row("A9", Allowed.ANY_NETWORK, off, wifi),
             Row("A10", Allowed.ANY_NETWORK, off, other),
             // As E3: not refused, so the run is attempted. If there really is no connection it fails by
@@ -152,19 +150,16 @@ class NotesNetworkPolicyTest {
             Row("A11", Allowed.ANY_NETWORK, off, none),
             Row("A12", Allowed.ANY_NETWORK, on, wifi),
             Row("A13", Allowed.ANY_NETWORK, on, other, Blocker.ACCOUNT_WIFI_ONLY),
-            Row("A13, a name set", Allowed.ANY_NETWORK, onHome, other, Blocker.ACCOUNT_WIFI_ONLY),
+            Row("A13, a name saved", Allowed.ANY_NETWORK, onHome, other, Blocker.ACCOUNT_NETWORK_NAME),
             Row("A14", Allowed.ANY_NETWORK, on, none, Blocker.ACCOUNT_WIFI_ONLY),
-            Row("A14, a name set", Allowed.ANY_NETWORK, onHome, none, Blocker.ACCOUNT_WIFI_ONLY),
-            Row("A15", Allowed.ANY_NETWORK, onHome, wifiHome),
-            Row("A16, another name", Allowed.ANY_NETWORK, onHome, wifiCafe, Blocker.ACCOUNT_NETWORK_NAME),
-            // No Wi-Fi info object. The adapters' log line throws here; refused here on purpose.
-            Row("A16, no name", Allowed.ANY_NETWORK, onHome, wifi, Blocker.ACCOUNT_NETWORK_NAME),
-            Row("A16, the unknown name", Allowed.ANY_NETWORK, onHome, wifiUnknown, Blocker.ACCOUNT_NETWORK_NAME),
+            Row("A14, a name saved", Allowed.ANY_NETWORK, onHome, none, Blocker.ACCOUNT_NETWORK_NAME),
+            // A15 and A16, as A7 and A8.
+            Row("A15, A16", Allowed.ANY_NETWORK, onHome, wifi, Blocker.ACCOUNT_NETWORK_NAME),
             // A17: a name left over from when the switch was on is ignored.
-            Row("A17, Wi-Fi", Allowed.WIFI_ONLY, offHome, wifiCafe),
+            Row("A17, Wi-Fi", Allowed.WIFI_ONLY, offHome, wifi),
             Row("A17, other", Allowed.WIFI_ONLY, offHome, other, Blocker.NOTES_SETTING),
             Row("A17, none", Allowed.WIFI_ONLY, offHome, none, Blocker.NOTES_SETTING),
-            Row("A17, any network, Wi-Fi", Allowed.ANY_NETWORK, offHome, wifiCafe),
+            Row("A17, any network, Wi-Fi", Allowed.ANY_NETWORK, offHome, wifi),
             Row("A17, any network, other", Allowed.ANY_NETWORK, offHome, other),
             Row("A17, any network, none", Allowed.ANY_NETWORK, offHome, none),
         )
@@ -208,24 +203,19 @@ class NotesNetworkPolicyTest {
             assertEquals(what, setOfNotNull(blocker), automatic.blockers)
             if (blocker != null) refused++
         }
-        // Switch on: two readings that are not Wi-Fi, for both rules; with a name, three more that do not match.
-        assertEquals("the account's own rule refuses some of these, so the comparison is not empty", 7, refused)
+        // Switch on: two readings that are not Wi-Fi without a name; with a name saved, all three.
+        assertEquals("the account's own rule refuses some of these, so the comparison is not empty", 5, refused)
     }
 
-    @Test fun `the account's network name is compared in quotes as the platform reports it, and a name that cannot be read never matches`() {
-        assertNull(NotesNetworkPolicy.accountBlocker(onHome, wifiHome))
-        // The bare name, another network, no name at all, and the platform's unknown-name value.
-        // No name at all is no Wi-Fi info object. The adapters' log line throws here; refused here on purpose.
-        for (reading in listOf(Reading(Connection.WIFI, "home"), wifiCafe, wifi, wifiUnknown)) {
-            assertEquals("$reading", Blocker.ACCOUNT_NETWORK_NAME, NotesNetworkPolicy.accountBlocker(onHome, reading))
+    @Test fun `with the switch on, any saved network name refuses on every network, and no saved name is the switch alone`() {
+        // Any value counts as saved, also an empty one or one that spells the platform's unknown-name value (#971).
+        for (name in listOf("home", "", "<unknown ssid>")) for (reading in readings) {
+            assertEquals("<$name>, $reading", Blocker.ACCOUNT_NETWORK_NAME,
+                NotesNetworkPolicy.accountBlocker(AccountRule(wifiOnly = true, networkName = name), reading))
         }
-        // The comparison is exact about letter case.
-        assertEquals(Blocker.ACCOUNT_NETWORK_NAME,
-            NotesNetworkPolicy.accountBlocker(onHome, Reading(Connection.WIFI, "\"Home\"")))
-        // The stored name is put in quotes before it is compared, so not even a stored name that
-        // spells the unknown-name value matches it.
-        assertEquals(Blocker.ACCOUNT_NETWORK_NAME,
-            NotesNetworkPolicy.accountBlocker(AccountRule(wifiOnly = true, networkName = "<unknown ssid>"), wifiUnknown))
+        assertNull(NotesNetworkPolicy.accountBlocker(on, wifi))
+        assertEquals(Blocker.ACCOUNT_WIFI_ONLY, NotesNetworkPolicy.accountBlocker(on, other))
+        assertEquals(Blocker.ACCOUNT_WIFI_ONLY, NotesNetworkPolicy.accountBlocker(on, none))
     }
 
     @Test fun `a stored network name means nothing while the account switch is off`() {
@@ -240,43 +230,19 @@ class NotesNetworkPolicyTest {
         }
     }
 
-    @Test fun `the adapters' own rule still has the text the account rule here repeats`() {
-        // accountBlocker and connectionOf repeat syncConditionsAllow instead of calling it, so that the
-        // rule can be decided for any reading. The body of the original, between its signature and its
-        // closing brace, is compared here with the list below: each line trimmed, in order, none more
-        // and none less. Left free: its log lines (Logger.log.), comment lines and blank lines. The
-        // signature has to occur exactly once in the file.
-        val message = "the account rule changed, so NotesNetworkPolicy.accountBlocker and connectionOf must follow"
+    @Test fun `the account switch's connection check still has the text connectionOf repeats`() {
+        // connectionOf repeats the connection check of the account switch (syncadapter/SyncAdapterService.kt)
+        // instead of calling it, so that the rule can be decided for any reading: its two refusals, each
+        // exactly once and in this order. The saved network name is not compared: a saved name refuses
+        // here without any reading (#971).
+        val message = "the account switch's connection check changed, so NotesNetworkPolicy.connectionOf must follow"
         val source = File("src/main/java/io/silentsuite/sync/syncadapter/SyncAdapterService.kt").readText()
-        val start = "internal fun syncConditionsAllow(context: Context, settings: AccountSettings): Boolean {"
-        assertEquals(message, 1, source.split(start).size - 1)
-        val expected = listOf(
-            "if (settings.syncWifiOnly) {",
-            "val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager",
-            "val network = cm.activeNetworkInfo",
+        val checks = listOf(
             "if (network == null) {",
-            "return false",
-            "}",
             "if (network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected) {",
-            "return false",
-            "}",
-            "var onlySSID = settings.syncWifiOnlySSID",
-            "if (onlySSID != null) {",
-            """onlySSID = "\"" + onlySSID + "\""""",
-            "val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager",
-            "val info = wifi.connectionInfo",
-            "if (info == null || onlySSID != info.ssid) {",
-            "return false",
-            "}",
-            "}",
-            "}",
-            "return true",
         )
-        val lines = source.substringAfter(start).substringBefore("\n}").lines().map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("Logger.log.") && !it.startsWith("//") }
-        val at = (0 until maxOf(expected.size, lines.size)).firstOrNull { expected.getOrNull(it) != lines.getOrNull(it) } ?: -1
-        assertEquals("$message; first difference at compared line ${at + 1}: " +
-            "the test has <${expected.getOrNull(at)}>, the source has <${lines.getOrNull(at)}>", expected, lines)
+        for (text in checks) assertEquals("$message: $text", 1, source.split(text).size - 1)
+        assertTrue(message, source.indexOf(checks[0]) < source.indexOf(checks[1]))
     }
 
     @Test fun `every row of the notebook list's network line`() {
@@ -302,9 +268,14 @@ class NotesNetworkPolicyTest {
             if (parts.isEmpty()) continue
             assertEquals(what, NoticePart.MAY_BE_OUT_OF_DATE, parts.first())
             assertEquals(what, if (byTheUser.run) NoticePart.TRY_NOW else NoticePart.SYNC_NOW_NEEDS_WIFI, parts.last())
+            if (Blocker.ACCOUNT_NETWORK_NAME in byItself.blockers) {
+                assertEquals("a saved network name is the only reason given, since it refuses on every network: $what",
+                    listOf(NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_NETWORK_NAME, parts.last()), parts)
+                continue
+            }
             assertEquals(what, Blocker.NOTES_SETTING in byItself.blockers, NoticePart.NOTES_SETTING in parts)
             assertEquals(what, Blocker.ACCOUNT_WIFI_ONLY in byItself.blockers, NoticePart.ACCOUNT_WIFI_ONLY in parts)
-            assertEquals(what, Blocker.ACCOUNT_NETWORK_NAME in byItself.blockers, NoticePart.ACCOUNT_NETWORK_NAME in parts)
+            assertTrue(what, NoticePart.ACCOUNT_NETWORK_NAME !in parts)
             assertEquals("Wi-Fi is said to be missing only when the reading is not Wi-Fi: $what",
                 reading.connection != Connection.WIFI, NoticePart.NO_WIFI_REPORTED in parts)
             assertEquals("no sentence twice: $what", parts.size, parts.toSet().size)

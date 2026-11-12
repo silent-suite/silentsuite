@@ -46,7 +46,7 @@ sealed class NotesLoad<out T> {
 /**
  * What the notebook list's network line is decided on: the account's two Notes network settings,
  * the account's own Wi-Fi rule, and one reading of the network the device reports. Not a data class
- * on purpose: the reading can hold a Wi-Fi name, and nothing should print it.
+ * on purpose: the account rule holds the saved network name, and nothing should print it.
  */
 internal class NotesNetworkState(
     val settings: NotesNetworkPolicy.Settings,
@@ -123,16 +123,15 @@ internal object NotesLoader {
      * the account row is gone or the platform's answer could not be read; the list then shows no
      * line. Reads account data and asks the platform which network it reports: call off the main
      * thread. It sends nothing. The account data is read by account name, so the caller keeps the
-     * result only for the exact account generation it has checked itself. The Wi-Fi name is asked
-     * for where an automatic run asks for it: with the account's Wi-Fi-only switch on and a network
-     * named.
+     * result only for the exact account generation it has checked itself. The Wi-Fi name is never
+     * read, as in a run (NotesNetwork.read).
      */
     fun network(context: Context, account: Account): NotesNetworkState? = try {
         val appContext = context.applicationContext
         val accountSettings = AccountSettings(appContext, account)
         val rule = NotesNetworkPolicy.AccountRule(accountSettings.syncWifiOnly, accountSettings.syncWifiOnlySSID)
         NotesNetworkState(AccountSettings.notesNetworkSettings(AccountManager.get(appContext), account), rule,
-            NotesNetwork.read(appContext, withWifiName = rule.wifiOnly && rule.networkName != null))
+            NotesNetwork.read(appContext))
     } catch (_: InvalidAccountException) {
         // The account row is gone. The load made with this reading ends as stale.
         null

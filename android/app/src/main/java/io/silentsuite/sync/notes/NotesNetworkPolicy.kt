@@ -4,8 +4,9 @@ package io.silentsuite.sync.notes
  * Whether a Notes run may use the network it would run on (design 3.6; answers 4 and 5 of 2026-10-12
  * on #709). Two settings per account: one for runs nobody asked for (opening Notes, the run after an
  * adapter sync), one for runs the user starts (Sync now, pull to refresh, turning Notes on, the syncs
- * the app starts after its own actions). An automatic run also needs the account's own Wi-Fi switch
- * and its network name. No Android types, so every row is unit-testable.
+ * the app starts after its own actions). An automatic run also follows the account's own Wi-Fi
+ * switch, and a network name saved with it refuses every automatic run (#971). No Android types, so
+ * every row is unit-testable.
  */
 object NotesNetworkPolicy {
     /**
@@ -14,12 +15,8 @@ object NotesNetworkPolicy {
      */
     enum class Connection { NONE, WIFI, OTHER }
 
-    /**
-     * [wifiName] as the platform reports it, quotes included; null when not on Wi-Fi, not asked for, or
-     * the platform gave none; a name the platform withholds arrives as its unknown-name value, which is
-     * not null.
-     */
-    data class Reading(val connection: Connection, val wifiName: String? = null)
+    /** The network as the platform reports it. The Wi-Fi name is not part of it: nothing reads it (#971). */
+    data class Reading(val connection: Connection)
 
     enum class Allowed {
         WIFI_ONLY, ANY_NETWORK;
@@ -38,7 +35,7 @@ object NotesNetworkPolicy {
         }
     }
 
-    /** The account's own rule as the adapters apply it: the switch, and the one network name it may carry. */
+    /** The account's own rule: the switch, and the one network name it may carry. */
     data class AccountRule(val wifiOnly: Boolean, val networkName: String?)
 
     enum class Blocker { NOTES_SETTING, ACCOUNT_WIFI_ONLY, ACCOUNT_NETWORK_NAME }
@@ -56,15 +53,14 @@ object NotesNetworkPolicy {
 
     /**
      * What the account's own rule holds against [reading], or null. A stored name means nothing while
-     * the switch is off. With a name set, a name that does not match is a refusal, and so is the
-     * platform's unknown-name value, in the adapters' rule (syncConditionsAllow in
-     * syncadapter/SyncAdapterService.kt) and here alike. One difference: with no Wi-Fi info object the
-     * adapters' log line throws; here that is a refusal.
+     * the switch is off. With the switch on, a saved name refuses on every network, before the
+     * connection is looked at: Android gives this app no Wi-Fi names, so the name cannot be checked
+     * (#971). Without a name the switch needs a connected Wi-Fi network.
      */
     fun accountBlocker(rule: AccountRule, reading: Reading): Blocker? = when {
         !rule.wifiOnly -> null
+        rule.networkName != null -> Blocker.ACCOUNT_NETWORK_NAME
         reading.connection != Connection.WIFI -> Blocker.ACCOUNT_WIFI_ONLY
-        rule.networkName != null && reading.wifiName != "\"" + rule.networkName + "\"" -> Blocker.ACCOUNT_NETWORK_NAME
         else -> null
     }
 
@@ -98,7 +94,7 @@ object NotesNetworkPolicy {
          */
         NO_WIFI_REPORTED,
 
-        /** The reading is Wi-Fi, but not the network the account names, or the platform gave no name. */
+        /** The account's switch is on with a network name saved, which refuses on every network. */
         ACCOUNT_NETWORK_NAME,
 
         /** A run the user starts would not be refused. It is an attempt; it can still fail. */
@@ -112,7 +108,8 @@ object NotesNetworkPolicy {
      * What the notebook list says about the network, sentence by sentence, or nothing when an
      * automatic run would not be refused now (answer 5 of 2026-10-12 on #709). First that Notes may
      * be out of date, then every rule that refuses the automatic run with what the platform reports,
-     * then what a run the user starts would get. Network reasons only: a run that is not refused can
+     * then what a run the user starts would get. A saved network name is the only reason given when it
+     * refuses, since it refuses on every network. Network reasons only: a run that is not refused can
      * still fail.
      */
     fun notice(settings: Settings, account: AccountRule, reading: Reading): List<NoticePart> {
