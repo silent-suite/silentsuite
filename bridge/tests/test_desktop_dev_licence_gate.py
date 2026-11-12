@@ -1469,3 +1469,31 @@ def test_source_text_names_an_archive_once_when_its_version_repeats_the_file(tex
     text = texts.source_text(GIT_SHA, policy, records, verification)
     name = policy["source_archives"][0]["file"]
     assert f"{policy['source_archives'][0]['name']} {name}" not in text
+
+
+# runtime_files rules may pin the exact file: "sha256" and "size" must then match the
+# facts' bundle_files entry for that path (qt.conf dispositions: any other size or hash fails).
+def _pinned_runtime_case(tmp_path):
+    facts, policy, archive, sources = _v9_case(tmp_path, LINUX)
+    policy["runtime_files"] = [{"pattern": "_internal/python3*.dll", "owner": "CPython", "licence": "PSF-2.0",
+                                "sha256": _sha(b"synthetic-runtime"), "size": 17}]
+    return facts, policy, archive, sources
+
+
+def test_gate_accepts_a_runtime_file_matching_its_pinned_hash_and_size(gate, tmp_path):
+    assert gate.check(*_pinned_runtime_case(tmp_path)) == []
+
+
+@pytest.mark.parametrize("case", ["hash", "size", "not-in-bundle-files", "bad-pin"])
+def test_gate_refuses_a_runtime_file_that_differs_from_its_pin(gate, tmp_path, case):
+    facts, policy, archive, sources = _pinned_runtime_case(tmp_path)
+    entry = next(e for e in facts["bundle_files"] if e["path"] == "_internal/python310.dll")
+    if case == "hash":
+        entry["sha256"] = _sha(b"other")
+    elif case == "size":
+        entry["size"] = 18
+    elif case == "not-in-bundle-files":
+        facts["bundle_files"].remove(entry)
+    else:
+        policy["runtime_files"][0]["sha256"] = "not-a-digest"
+    assert gate.check(facts, policy, archive, sources), f"{case} was accepted"
