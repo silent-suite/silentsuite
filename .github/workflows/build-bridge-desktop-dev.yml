@@ -10,6 +10,12 @@ name: Build Bridge desktop dev archives (experimental, owner-gated uploads)
 # the owner has approved publishing this exact commit by setting the repository
 # variable BRIDGE_DESKTOP_DEV_PUBLISH_SHA to it (then re-running this workflow).
 # Binaries upload only after this run's sources uploaded.
+#
+# Before any upload, the package job qualifies its exact archive with the Q7
+# relinking control: one Qt library rebuilt from the held source with a witness
+# constructor, swapped into an extraction of that archive, the unchanged frozen
+# tests, the load witness and the unmodified negative control. The modified
+# library never leaves the job.
 
 on:
   push:
@@ -39,6 +45,10 @@ permissions:
 concurrency:
   group: bridge-desktop-dev-build-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  QT_SOURCE_URL: https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz
+  QT_SOURCE_SHA256: 98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165
 
 jobs:
   linux:
@@ -140,7 +150,7 @@ jobs:
     name: Package (${{ matrix.label }})
     needs: [source-materials]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 120
+    timeout-minutes: 300
     permissions:
       contents: read
     strategy:
@@ -301,6 +311,58 @@ jobs:
           python bridge/dev-build/archive_texts.py verify --build-info "$RUNNER_TEMP/pkg/check/BUILD-INFO.json" \
             --bundle "$RUNNER_TEMP/pkg/check/$bundle_name"
           (cd "$RUNNER_TEMP/pkg/out" && sha256sum "$base".* | tee SHA256SUMS)
+
+      # Q7 on the exact archive written above (assessment.r2.md section 4). The qtbase
+      # build inputs are installed only now, after the archive exists.
+      - name: Relinking control on the exact package archive
+        id: relink
+        timeout-minutes: 180
+        shell: bash
+        run: |
+          set -euo pipefail
+          q7="$RUNNER_TEMP/pkg/out/q7"
+          logs="$RUNNER_TEMP/q7-logs"
+          mkdir -p "$q7" "$logs"
+          label="${{ matrix.label }}"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get install -y --no-install-recommends $(python bridge/dev-build/relink_control.py apt-packages)
+          fi
+          archive=$(python -c "import glob, sys; m = [p for p in glob.glob(sys.argv[1] + '/silentsuite-bridge-desktop-dev-*') if p.endswith(('.tar.gz', '.zip'))]; assert len(m) == 1, m; print(m[0])" "$RUNNER_TEMP/pkg/out")
+          python bridge/dev-build/relink_control.py package --archive "$archive" --frozen-out "$RUNNER_TEMP/frozen" --dest "$RUNNER_TEMP/relink" \
+            --receipt "$q7/package.json"
+          bundle=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['bundle'])" "$q7/package.json")
+          nonce=$(python -c "import secrets; print(secrets.token_hex(16))")
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/qt-src.tar.xz" "$QT_SOURCE_URL"
+          python bridge/dev-build/relink_control.py extract --archive "$RUNNER_TEMP/qt-src.tar.xz" --sha256 "$QT_SOURCE_SHA256" \
+            --dest "$RUNNER_TEMP/qs" --receipt "$q7/extract.json"
+          rm -f "$RUNNER_TEMP/qt-src.tar.xz"
+          qtbase="$RUNNER_TEMP/qs/qt-everywhere-src-6.12.0/qtbase"
+          python bridge/dev-build/relink_control.py patch --qtbase "$qtbase" --platform "$label" --nonce "$nonce" --receipt "$q7/patch.json"
+          python bridge/dev-build/relink_control.py build --qtbase "$qtbase" --build-dir "$RUNNER_TEMP/qb" --platform "$label" \
+            --prefix "$RUNNER_TEMP/qt-prefix" --log "$logs/build.log" --receipt "$q7/build.json" \
+            || { tail -80 "$logs/build.log"; exit 1; }
+          modified=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['output_path'])" "$q7/build.json")
+          site=$(python -c "import os, PySide6; print(os.path.dirname(PySide6.__file__))")
+          if [ "$RUNNER_OS" = "Linux" ]; then member="$site/Qt/lib/libQt6XcbQpa.so.6"; else member="$site/plugins/platforms/qwindows.dll"; fi
+          python bridge/dev-build/relink_control.py swap --bundle "$RUNNER_TEMP/relink/modified/frozen/dist/$bundle" --platform "$label" \
+            --modified "$modified" --wheel-member "$member" --receipt "$q7/swap.json"
+          wrap=()
+          if [ "$RUNNER_OS" = "Linux" ]; then wrap=(xvfb-run -a -s "-screen 0 1280x800x24"); fi
+          set +e
+          (cd bridge && SILENTSUITE_FROZEN_OUT="$RUNNER_TEMP/relink/modified/frozen" "${wrap[@]}" \
+            python -m pytest tests/test_desktop_frozen.py -v --tb=short -p no:cacheprovider) 2>&1 \
+            | tee "$q7/frozen-modified-pytest.txt"
+          status=${PIPESTATUS[0]}
+          set -e
+          [ "$status" = "0" ] || { echo "frozen tests failed on the modified package"; exit 1; }
+          modified_sha=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['modified_sha256'])" "$q7/swap.json")
+          original_sha=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['original_sha256'])" "$q7/swap.json")
+          "${wrap[@]}" python bridge/dev-build/relink_control.py witness --bundle "$RUNNER_TEMP/relink/modified/frozen/dist/$bundle" --platform "$label" \
+            --root "$RUNNER_TEMP/w-modified" --expect-sha256 "$modified_sha" --nonce "$nonce" \
+            --receipt "$q7/witness-modified.json"
+          "${wrap[@]}" python bridge/dev-build/relink_control.py witness --bundle "$RUNNER_TEMP/relink/original/$bundle" --platform "$label" \
+            --root "$RUNNER_TEMP/w-original" --expect-sha256 "$original_sha" --negative-control \
+            --receipt "$q7/witness-negative.json"
 
       - name: Upload the archive (only with the owner's approval of this commit)
         id: upload

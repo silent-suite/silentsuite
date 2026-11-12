@@ -15,6 +15,9 @@ nonce is generated per run and compiled into L.
 Subcommands (each exits 0 on success, 1 on a failed check, 2 on unusable input):
   extract   verify the held source archive's SHA256 and extract only qtbase/
   copy      tar.gz round trip of the build output into a new directory
+  apt-packages  print the Linux qtbase build packages
+  package   extract the exact package archive twice (negative control; staged modified run)
+  build     configure qtbase with the publisher's options and build only L
   patch     append the witness constructor to L's source file
   configdiff compare the build's generated Qt config headers with the publisher SDK's
   swap      replace L in a copied bundle; record original, modified and wheel hashes
@@ -153,6 +156,120 @@ def copy(source: Path, dest: Path) -> dict:
     archive.unlink()
     record["ok"] = (dest / source.name).is_dir()
     return record
+
+
+# --- package -------------------------------------------------------------------
+
+
+def _extract_archive(archive: Path, dest: Path) -> None:
+    dest.mkdir(parents=True)
+    if archive.name.endswith(".tar.gz"):
+        with tarfile.open(archive, "r:gz") as tar:
+            for member in tar:
+                _extract_member(tar, member, dest)
+    elif archive.name.endswith(".zip"):
+        import zipfile
+
+        with zipfile.ZipFile(archive) as bundle:
+            for name in bundle.namelist():
+                if os.path.isabs(name) or ".." in Path(name).parts or ":" in name or not _inside(dest, name):
+                    raise InputError(f"unsafe zip member {name!r}")
+            bundle.extractall(dest)
+    else:
+        raise InputError("the package archive must be .tar.gz or .zip")
+
+
+def package(archive: Path, frozen_out: Path, dest: Path) -> dict:
+    """Two extractions of the exact package archive: 'original' (the negative control) and,
+    for the modified run, a frozen-test output tree whose dist/ holds the archive's program
+    folder beside this job's build evidence (t0 control, logs, Analysis TOC)."""
+    if not archive.is_file() or not (frozen_out / "dist").is_dir() or dest.exists():
+        raise InputError("package needs the archive file, the frozen output and a new destination")
+    original, staged = dest / "original", dest / "staged"
+    _extract_archive(archive, original)
+    _extract_archive(archive, staged)
+    folders = [d for d in sorted(original.iterdir()) if d.is_dir() and d.name != "NOTICES"]
+    if len(folders) != 1:
+        raise InputError(f"the archive must hold exactly one program folder; found {len(folders)}")
+    bundle = folders[0].name
+    modified_out = dest / "modified" / "frozen"
+    shutil.copytree(frozen_out, modified_out, symlinks=True, ignore=lambda d, names: (
+        ["dist"] if Path(d) == frozen_out else []))
+    (modified_out / "dist").mkdir()
+    shutil.move(str(staged / bundle), str(modified_out / "dist" / bundle))
+    return {"archive": archive.name, "archive_sha256": _sha(archive), "archive_bytes": archive.stat().st_size,
+            "bundle": bundle, "original_bundle": f"original/{bundle}", "modified_frozen_out": "modified/frozen",
+            "ok": True}
+
+
+# --- build ---------------------------------------------------------------------
+# The publisher's qtbase options (SDK config_qtbase.opt) minus build infrastructure only
+# (sccache, SBOM generation, install prefix, debug info, headersclean). Linux adds
+# -no-feature-xcb-sm: the publisher had no libSM (config_qtbase.summary: xcb-sm no).
+# Windows runners have no Vulkan headers, so QT_FEATURE_vulkan differs (configdiff records it).
+CONFIGURE = {
+    "linux-x86_64": ["-release", "-nomake", "examples", "-nomake", "tests", "-qt-libjpeg", "-qt-libpng",
+                     "-qt-pcre", "-qt-harfbuzz", "-qt-doubleconversion", "-no-libudev", "-no-feature-liburing",
+                     "-bundled-xcb-xinput", "-no-feature-xcb-sm", "--", "-DOpenGL_GL_PREFERENCE=LEGACY",
+                     "-DCMAKE_C_COMPILER=gcc", "-DCMAKE_CXX_COMPILER=g++", "-DQT_BUILD_TESTS=OFF"],
+    "windows-x86_64": ["-release", "-nomake", "examples", "-nomake", "tests", "-qt-zlib", "--",
+                       "-DQT_BUILD_TESTS=OFF"],
+}
+# Ubuntu 22.04 build inputs for the publisher's Linux feature set. Installed only after the
+# package archive exists, so they can never change what PyInstaller bundles.
+LINUX_BUILD_PACKAGES = (
+    "libglib2.0-dev libicu-dev zlib1g-dev libzstd-dev libdbus-1-dev libfreetype-dev libfontconfig1-dev "
+    "libegl-dev libgl-dev libvulkan-dev libdrm-dev libgbm-dev libatspi2.0-dev libwayland-dev wayland-protocols "
+    "libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libx11-xcb-dev libxext-dev libxrender-dev "
+    "libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev libxcb-image0-dev "
+    "libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev libxcb-render0-dev "
+    "libxcb-shape0-dev libxcb-shm0-dev libxcb-sync-dev libxcb-util-dev libxcb-xfixes0-dev libxcb-xkb-dev").split()
+OUTPUT = {"linux-x86_64": "lib/libQt6XcbQpa.so.6.12.0", "windows-x86_64": "plugins/platforms/qwindows.dll"}
+
+
+def _msvc_environment() -> dict:
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / \
+        "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    root = subprocess.run([str(vswhere), "-latest", "-property", "installationPath"], capture_output=True,
+                          text=True, check=True).stdout.strip()
+    vcvars = Path(root) / "VC" / "Auxiliary" / "Build" / "vcvars64.bat"
+    done = subprocess.run(f'call "{vcvars}" >nul && set', capture_output=True, text=True, shell=True)
+    if done.returncode != 0:
+        raise InputError("vcvars64.bat failed")
+    env = {}
+    for line in done.stdout.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key:
+            env[key] = value
+    return env
+
+
+def build(qtbase: Path, build_dir: Path, platform: str, prefix: Path, log: Path) -> dict:
+    _, _, target = _platform(platform)
+    build_dir.mkdir(parents=True, exist_ok=True)
+    env = _msvc_environment() if sys.platform == "win32" else dict(os.environ)
+    configure = qtbase / ("configure.bat" if sys.platform == "win32" else "configure")
+    commands = [[str(configure), "-prefix", str(prefix), *CONFIGURE[platform]],
+                ["cmake", "--build", ".", "--target", target, "--parallel"]]
+    versions = {}
+    for name, argv in (("cmake", ["cmake", "--version"]), ("ninja", ["ninja", "--version"]),
+                       ("compiler", ["cl"] if sys.platform == "win32" else ["gcc", "--version"])):
+        done = subprocess.run(argv, capture_output=True, text=True, env=env, shell=sys.platform == "win32")
+        versions[name] = ((done.stdout or "") + (done.stderr or "")).strip().splitlines()[:1]
+    with open(log, "w", encoding="utf-8") as handle:
+        for argv in commands:
+            handle.write("$ " + " ".join(argv) + "\n")
+            handle.flush()
+            done = subprocess.run(argv, cwd=build_dir, env=env, stdout=handle, stderr=subprocess.STDOUT,
+                                  shell=sys.platform == "win32")
+            if done.returncode != 0:
+                raise InputError(f"{Path(argv[0]).name} exited {done.returncode}; see {log.name}")
+    output = build_dir / OUTPUT[platform]
+    if not output.is_file():
+        raise InputError(f"the build did not produce {OUTPUT[platform]}")
+    return {"configure": ["configure", "-prefix", "<prefix>", *CONFIGURE[platform]],
+            "build": ["cmake", "--build", ".", "--target", target, "--parallel"], "versions": versions,
+            "output": OUTPUT[platform], "output_path": str(output), "output_sha256": _sha(output), "ok": True}
 
 
 # --- patch -------------------------------------------------------------------
@@ -444,6 +561,19 @@ def main(argv=None) -> int:
     p.add_argument("--source", required=True, type=Path)
     p.add_argument("--dest", required=True, type=Path)
     p.add_argument("--receipt", required=True, type=Path)
+    sub.add_parser("apt-packages")
+    p = sub.add_parser("package")
+    p.add_argument("--archive", required=True, type=Path)
+    p.add_argument("--frozen-out", required=True, type=Path)
+    p.add_argument("--dest", required=True, type=Path)
+    p.add_argument("--receipt", required=True, type=Path)
+    p = sub.add_parser("build")
+    p.add_argument("--qtbase", required=True, type=Path)
+    p.add_argument("--build-dir", required=True, type=Path)
+    p.add_argument("--platform", required=True)
+    p.add_argument("--prefix", required=True, type=Path)
+    p.add_argument("--log", required=True, type=Path)
+    p.add_argument("--receipt", required=True, type=Path)
     p = sub.add_parser("patch")
     p.add_argument("--qtbase", required=True, type=Path)
     p.add_argument("--platform", required=True)
@@ -469,12 +599,19 @@ def main(argv=None) -> int:
     group.add_argument("--negative-control", action="store_true")
     p.add_argument("--receipt", required=True, type=Path)
     args = parser.parse_args(argv)
+    if args.command == "apt-packages":
+        print(" ".join(LINUX_BUILD_PACKAGES))
+        return 0
     try:
         if args.command == "extract":
             record = extract(args.archive, args.sha256, args.dest)
             record["ok"] = True
         elif args.command == "copy":
             record = copy(args.source, args.dest)
+        elif args.command == "package":
+            record = package(args.archive, args.frozen_out, args.dest)
+        elif args.command == "build":
+            record = build(args.qtbase, args.build_dir, args.platform, args.prefix, args.log)
         elif args.command == "patch":
             record = patch(args.qtbase, args.platform, args.nonce)
             record["ok"] = True

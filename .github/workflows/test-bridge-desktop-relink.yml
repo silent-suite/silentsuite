@@ -79,28 +79,18 @@ jobs:
         with:
           toolchain: "1.63.0"
 
-      # Runtime list as in the frozen workflow, plus the qtbase build inputs for
-      # the publisher's Linux feature set (config_qtbase.summary).
-      - name: Install Linux runtime and qtbase build libraries (runner only)
+      - name: Install Linux display and Qt runtime libraries (runner only)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
+          # Same list as the frozen workflow; the qtbase build inputs come after the bundle build.
           sudo apt-get install -y --no-install-recommends \
             xvfb xauth libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
             libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
             libxcb-xkb1 libegl1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
             libxkbfile1 libasound2
-          sudo apt-get install -y --no-install-recommends \
-            libglib2.0-dev libicu-dev zlib1g-dev libzstd-dev libdbus-1-dev libfreetype-dev libfontconfig1-dev \
-            libegl-dev libgl-dev libvulkan-dev libdrm-dev libgbm-dev libatspi2.0-dev \
-            libwayland-dev wayland-protocols \
-            libxkbcommon-dev libxkbcommon-x11-dev libx11-dev libx11-xcb-dev libxext-dev libxrender-dev \
-            libxcb1-dev libxcb-cursor-dev libxcb-glx0-dev libxcb-icccm4-dev libxcb-image0-dev \
-            libxcb-keysyms1-dev libxcb-randr0-dev libxcb-render-util0-dev libxcb-render0-dev \
-            libxcb-shape0-dev libxcb-shm0-dev libxcb-sync-dev libxcb-util-dev libxcb-xfixes0-dev \
-            libxcb-xkb-dev
 
       - name: Install dependencies
         working-directory: bridge
@@ -151,54 +141,20 @@ jobs:
           python bridge/dev-build/relink_control.py patch --qtbase "$RUNNER_TEMP/qs/qt-everywhere-src-6.12.0/qtbase" \
             --platform "${{ matrix.label }}" --nonce "${{ steps.build.outputs.nonce }}" --receipt "$q7/patch.json"
 
-      # Publisher options from the SDK's config_qtbase.opt; omitted only build
-      # infrastructure (sccache, SBOM generation, install prefix, debug info,
-      # headersclean checks); build only L and what it needs. Linux adds
-      # -no-feature-xcb-sm because the publisher's build had no libSM (its
-      # config_qtbase.summary: xcb-sm no) while this runner gets it as a dependency.
-      # Windows: no Vulkan headers on the runner, so QT_FEATURE_vulkan differs from
-      # the publisher's (recorded by the config-header comparison below).
-      - name: Configure qtbase and build L (Linux)
-        if: runner.os == 'Linux'
-        timeout-minutes: 90
+      # The publisher's qtbase options and the build of L live in relink_control.py
+      # (CONFIGURE, LINUX_BUILD_PACKAGES), shared with the caller's package job.
+      - name: Configure qtbase and build L
+        timeout-minutes: 120
         shell: bash
         run: |
           set -euo pipefail
           q7="$RUNNER_TEMP/q7"
-          mkdir -p "$RUNNER_TEMP/qb"
-          cd "$RUNNER_TEMP/qb"
-          options=(-prefix "$RUNNER_TEMP/qt-prefix" -release -nomake examples -nomake tests
-                   -qt-libjpeg -qt-libpng -qt-pcre -qt-harfbuzz -qt-doubleconversion -no-libudev
-                   -no-feature-liburing -bundled-xcb-xinput -no-feature-xcb-sm
-                   -- -DOpenGL_GL_PREFERENCE=LEGACY -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-                   -DQT_BUILD_TESTS=OFF)
-          printf '%s\n' "configure ${options[*]}" "cmake --build . --target XcbQpaPrivate --parallel" > "$q7/recipe.txt"
-          { gcc --version | head -1; cmake --version | head -1; echo "ninja $(ninja --version)"; } >> "$q7/recipe.txt"
-          "$RUNNER_TEMP/qs/qt-everywhere-src-6.12.0/qtbase/configure" "${options[@]}" > "$q7/configure.log" 2>&1 \
-            || { tail -50 "$q7/configure.log"; exit 1; }
-          cp config.summary "$q7/config.summary.txt" 2>/dev/null || true
-          cmake --build . --target XcbQpaPrivate --parallel > "$q7/build.log" 2>&1 || { tail -80 "$q7/build.log"; exit 1; }
-          ls -l lib/libQt6XcbQpa.so* | tee -a "$q7/recipe.txt"
-          echo "$RUNNER_TEMP/qb/lib/libQt6XcbQpa.so.6.12.0" > "$q7/modified-path.txt"
-
-      - name: Configure qtbase and build L (Windows)
-        if: runner.os == 'Windows'
-        timeout-minutes: 120
-        shell: cmd
-        run: |
-          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set "VSPATH=%%i"
-          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
-          mkdir "%RUNNER_TEMP%\qb"
-          cd /d "%RUNNER_TEMP%\qb" || exit /b 1
-          echo configure -prefix %RUNNER_TEMP%\qt-prefix -release -nomake examples -nomake tests -qt-zlib -- -DQT_BUILD_TESTS=OFF> "%RUNNER_TEMP%\q7\recipe.txt"
-          echo cmake --build . --target QWindowsIntegrationPlugin --parallel>> "%RUNNER_TEMP%\q7\recipe.txt"
-          cl 2>> "%RUNNER_TEMP%\q7\recipe.txt"
-          cmake --version >> "%RUNNER_TEMP%\q7\recipe.txt"
-          call "%RUNNER_TEMP%\qs\qt-everywhere-src-6.12.0\qtbase\configure.bat" -prefix "%RUNNER_TEMP%\qt-prefix" -release -nomake examples -nomake tests -qt-zlib -- -DQT_BUILD_TESTS=OFF > "%RUNNER_TEMP%\q7\configure.log" 2>&1 || (powershell -Command "Get-Content -Tail 50 $env:RUNNER_TEMP\q7\configure.log" & exit /b 1)
-          copy config.summary "%RUNNER_TEMP%\q7\config.summary.txt"
-          cmake --build . --target QWindowsIntegrationPlugin --parallel > "%RUNNER_TEMP%\q7\build.log" 2>&1 || (powershell -Command "Get-Content -Tail 80 $env:RUNNER_TEMP\q7\build.log" & exit /b 1)
-          dir plugins\platforms >> "%RUNNER_TEMP%\q7\recipe.txt"
-          echo %RUNNER_TEMP%\qb\plugins\platforms\qwindows.dll> "%RUNNER_TEMP%\q7\modified-path.txt"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get install -y --no-install-recommends $(python bridge/dev-build/relink_control.py apt-packages)
+          fi
+          python bridge/dev-build/relink_control.py build --qtbase "$RUNNER_TEMP/qs/qt-everywhere-src-6.12.0/qtbase" \
+            --build-dir "$RUNNER_TEMP/qb" --platform "${{ matrix.label }}" --prefix "$RUNNER_TEMP/qt-prefix" \
+            --log "$q7/build.log" --receipt "$q7/build.json" || { tail -80 "$q7/build.log"; exit 1; }
 
       # Evidence only: the generated Qt config headers against the publisher SDK's.
       - name: Compare generated config headers with the publisher SDK
@@ -230,7 +186,8 @@ jobs:
           fi
           python bridge/dev-build/relink_control.py swap \
             --bundle "$RUNNER_TEMP/relink/frozen/dist/${{ steps.build.outputs.bundle }}" \
-            --platform "${{ matrix.label }}" --modified "$(cat "$q7/modified-path.txt" | tr -d '\r')" \
+            --platform "${{ matrix.label }}" \
+            --modified "$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['output_path'])" "$q7/build.json")" \
             --wheel-member "$member" --receipt "$q7/swap.json"
 
       - name: Run the unchanged frozen startup tests against the modified bundle
