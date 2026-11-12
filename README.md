@@ -12,7 +12,7 @@ Open-source, zero-knowledge sync. Plaintext stays off the server; encryption key
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-0A1018.svg)](./LICENSE)
 [![Stars](https://img.shields.io/github/stars/silent-suite/silentsuite?style=flat&logo=github)](https://github.com/silent-suite/silentsuite/stargazers)
 
-[Website](https://silentsuite.io) · [Web app](https://app.silentsuite.io) · [Documentation](https://docs.silentsuite.io) · [Latest release](https://github.com/silent-suite/silentsuite/releases/latest)
+[Website](https://silentsuite.io) · [Web app](https://app.silentsuite.io) · [Documentation](https://docs.silentsuite.io) · [Latest release](https://github.com/silent-suite/silentsuite/releases/latest) · [Roadmap](./ROADMAP.md)
 
 <br />
 
@@ -136,26 +136,9 @@ Do not include passwords, recovery material, private calendar/contact data, or o
 
 Thanks to everyone helping build SilentSuite, from code and translations to testing and documentation.
 
-<p>
-  <a href="https://github.com/silent-suite"><img src="https://avatars.githubusercontent.com/u/265568982?s=128" alt="@silent-suite" title="@silent-suite" width="64" height="64" /></a>
-  <a href="https://github.com/intigenesis"><img src="https://avatars.githubusercontent.com/u/313311150?s=128" alt="@intigenesis" title="@intigenesis" width="64" height="64" /></a>
-  <a href="https://github.com/CodeByArnob"><img src="https://avatars.githubusercontent.com/u/68462590?s=128" alt="@CodeByArnob" title="@CodeByArnob" width="64" height="64" /></a>
-  <a href="https://github.com/deepakthecoder1982"><img src="https://avatars.githubusercontent.com/u/108220666?s=128" alt="@deepakthecoder1982" title="@deepakthecoder1982" width="64" height="64" /></a>
-  <a href="https://github.com/mpereira"><img src="https://avatars.githubusercontent.com/u/112426?s=128" alt="@mpereira" title="@mpereira" width="64" height="64" /></a>
-  <a href="https://github.com/ded-furby"><img src="https://avatars.githubusercontent.com/u/190979964?s=128" alt="@ded-furby" title="@ded-furby" width="64" height="64" /></a>
-  <a href="https://github.com/Doomguy-BFG9000"><img src="https://avatars.githubusercontent.com/u/307901355?s=128" alt="@Doomguy-BFG9000" title="@Doomguy-BFG9000" width="64" height="64" /></a>
-  <a href="https://github.com/floze-the-genius"><img src="https://avatars.githubusercontent.com/u/88098863?s=128" alt="@floze-the-genius" title="@floze-the-genius" width="64" height="64" /></a>
-  <a href="https://github.com/Lovlace777"><img src="https://avatars.githubusercontent.com/u/61972457?s=128" alt="@Lovlace777" title="@Lovlace777" width="64" height="64" /></a>
-  <a href="https://github.com/PrivateBasicsApp"><img src="https://avatars.githubusercontent.com/u/276105921?s=128" alt="@PrivateBasicsApp" title="@PrivateBasicsApp" width="64" height="64" /></a>
-  <a href="https://github.com/schnuartz-ai"><img src="https://avatars.githubusercontent.com/u/258758258?s=128" alt="@schnuartz-ai" title="@schnuartz-ai" width="64" height="64" /></a>
-  <a href="https://github.com/imshah-id"><img src="https://avatars.githubusercontent.com/u/121153200?s=128" alt="@imshah-id" title="@imshah-id" width="64" height="64" /></a>
-  <a href="https://github.com/albanobattistella"><img src="https://avatars.githubusercontent.com/u/34811668?s=128" alt="@albanobattistella" title="@albanobattistella" width="64" height="64" /></a>
-  <a href="https://github.com/d66b2brocket-sys"><img src="https://avatars.githubusercontent.com/u/273214375?s=128" alt="@d66b2brocket-sys" title="@d66b2brocket-sys" width="64" height="64" /></a>
-  <a href="https://github.com/HassanMallah"><img src="https://avatars.githubusercontent.com/u/74485169?s=128" alt="@HassanMallah" title="@HassanMallah" width="64" height="64" /></a>
-  <a href="https://github.com/wyf027"><img src="https://avatars.githubusercontent.com/u/39647285?s=128" alt="@wyf027" title="@wyf027" width="64" height="64" /></a>
-</p>
-
-Thanks also to Rupayon Haldar for code contributions.
+<a href="https://github.com/silent-suite/silentsuite/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=silent-suite/silentsuite" alt="GitHub contributors to SilentSuite" />
+</a>
 
 [Meet the code contributors](https://github.com/silent-suite/silentsuite/graphs/contributors) · [Find a way to contribute](./docs/contributing/)
 
@@ -177,6 +160,7 @@ If SilentSuite is useful to you, a star helps others discover the project.
 
 - [User guide](./docs/user-guide/)
 - [Self-hosting](./docs/self-hosting/)
+- [Roadmap](./ROADMAP.md)
 - [Contributing](./docs/contributing/)
 - [Translating SilentSuite](./TRANSLATING.md)
 - [Security model](https://silentsuite.io/security)

@@ -8,6 +8,7 @@ import { formatDate as formatDateUtil } from '@/app/lib/date'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
 import { fetchAuthenticatedAccountOffer } from '@/app/lib/billing-v2'
+import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
 import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
 import { formatDaysLeft, isHostedBillingAccount, useEligibleAccountNotice, useTrialCountdown } from '@/app/hooks/use-trial-countdown'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -188,7 +189,7 @@ function CancelDialog({
         <div className="flex gap-3 pt-2">
           <Button
             variant="outline"
-            size="sm"
+            size="sm" className="max-md:min-h-[44px]"
             onClick={onClose}
             disabled={cancelling}
           >
@@ -196,7 +197,7 @@ function CancelDialog({
           </Button>
           <Button
             size="sm"
-            className="border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+            className="max-md:min-h-[44px] border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
             onClick={onConfirm}
             disabled={cancelling}
           >
@@ -312,7 +313,8 @@ export default function SubscriptionPage() {
 
   const requestSubscription = useCallback(async (): Promise<SubscriptionData | null> => {
     try {
-      const res = await fetch(`${BILLING_API_URL}/subscription`, {
+      // An expired 15-minute access token gets one refresh and one retry for this page's account.
+      const res = await createAuthenticatedPaymentFetch(principal.id, principal.epoch)(`${BILLING_API_URL}/subscription`, {
         credentials: 'include',
       })
       if (res.ok) {
@@ -323,7 +325,7 @@ export default function SubscriptionPage() {
       // API may not be running in dev
     }
     return null
-  }, [])
+  }, [principal])
 
   const fetchSubscription = useCallback(async (initialOwner: OperationOwner | null = captureOwner()) => {
     let owner = initialOwner
@@ -586,8 +588,8 @@ export default function SubscriptionPage() {
                 <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
-                <Button size="sm" variant="outline" onClick={openPaymentRecovery}>Review payment options</Button>
+                <Button size="sm" className="max-md:min-h-[44px]" onClick={startPaymentConfirmation}>Retry payment status</Button>
+                <Button size="sm" className="max-md:min-h-[44px]" variant="outline" onClick={openPaymentRecovery}>Review payment options</Button>
               </div>
             </div>
           ) : !paymentConfirmationPending && (
@@ -790,10 +792,10 @@ export default function SubscriptionPage() {
           <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Payment needs attention</p>
           <p className="mt-1 text-sm text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" onClick={startPaymentConfirmation}>
+            <Button size="sm" className="max-md:min-h-[44px]" onClick={startPaymentConfirmation}>
               Retry payment status
             </Button>
-            <Button size="sm" variant="outline" onClick={openPaymentRecovery}>
+            <Button size="sm" className="max-md:min-h-[44px]" variant="outline" onClick={openPaymentRecovery}>
               Review payment options
             </Button>
           </div>

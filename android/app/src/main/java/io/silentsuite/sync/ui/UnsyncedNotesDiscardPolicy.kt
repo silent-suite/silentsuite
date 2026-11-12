@@ -55,8 +55,9 @@ internal object UnsyncedNotesDiscardPolicy {
     fun rowText(answer: UnsyncedNotes?): Text = answer?.let(UnsyncedNotesSignOutPolicy::text) ?: Text.Unlisted
 
     /**
-     * What the Settings hub row says of [listing]: null, which hides the row, while nothing was found; the sum while
-     * every store was counted and no other file was left unread; otherwise that not all of them could be counted.
+     * What the Settings hub row says of [listing]: null while nothing was found, which hides the row unless an account
+     * can't be removed or the accounts can't be read ([hubRemoval]); the sum while every store was counted and no other
+     * file was left unread; otherwise that not all of them could be counted.
      */
     fun hubSummary(listing: UnsyncedNotesListing): Text? {
         val flagged = listing.othersUnlisted || listing.unknownOthers
@@ -64,6 +65,29 @@ internal object UnsyncedNotesDiscardPolicy {
         val counts = listing.rows.map { rowText(it.answer) }
         if (flagged || counts.any { it !is Text.Counted }) return Text.Uncounted
         return Text.Counted(counts.sumOf { (it as Text.Counted).count })
+    }
+
+    /** Why the Settings hub row shows with no store to show ([hubRemoval]). */
+    enum class HubRemoval {
+        /** Android settings can't remove an account now: the removal section has a row. */
+        REFUSED,
+
+        /** The removal section could not read the accounts, so removing one may be refused. */
+        ACCOUNTS_UNREAD,
+    }
+
+    /**
+     * Whether the Settings hub row, with no store to show ([summary] null), still shows, and why: while the removal
+     * section [removal] has a row ([HubRemoval.REFUSED]) or could not read the accounts ([HubRemoval.ACCOUNTS_UNREAD]).
+     * The reason and the way to try again are behind the row (the maintainer's reply of 2026-10-23 on #709). A refusal
+     * can stand while the stores show nothing: while the accounts can't be read, when the guard's own check couldn't
+     * finish where the count for this row did, or after a change between the two reads.
+     */
+    fun hubRemoval(summary: Text?, removal: NotesRemovalSection.Section): HubRemoval? = when {
+        summary != null -> null
+        removal.rows.isNotEmpty() -> HubRemoval.REFUSED
+        removal.accountsUnread -> HubRemoval.ACCOUNTS_UNREAD
+        else -> null
     }
 
     /**

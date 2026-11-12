@@ -4218,6 +4218,48 @@ class PendingNotesStoreTest {
 
     // ---- what a removal of the account would lose, in one step, for a removal guard ----
 
+    @Test fun `a removal hold a check took refuses every save into the store and writes nothing until each hold is released`() {
+        val noBackup = tmp.newFolder("no_backup")
+        val s = identityStore(noBackup)
+        saved(s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false))
+        val editor = s.editorOpened("n1")
+        val first = PendingNotesStore.RemovalHold()
+        val second = PendingNotesStore.RemovalHold()
+        // Taken whatever the check answers, in the same hold of the lock.
+        assertTrue(s.removalCheck(first) is RemovalCheck.Blocks)
+        assertTrue(s.removalCheck(second) is RemovalCheck.Blocks)
+        val before = filesOf(s.dir)
+        assertEquals(SaveOutcome.RemovalPending, s.saveLocal("n2", "b1", "r1", blob("b"), isCreate = true))
+        assertEquals(SaveOutcome.RemovalPending, s.saveLocal(editor, "n1", "b1", "r2", blob("c"), isCreate = false))
+        assertEquals("nothing was written", before, filesOf(s.dir))
+        first.release()
+        assertEquals("the other hold stands", SaveOutcome.RemovalPending,
+            s.saveLocal("n2", "b1", "r1", blob("b"), isCreate = true))
+        // Another store, checked without a hold, takes saves all along.
+        val other = identityStore(noBackup, creationId = "gen-2")
+        assertEquals(RemovalCheck.Clean, other.removalCheck())
+        assertTrue(other.saveLocal("n9", "b1", "r1", blob("z"), isCreate = true) is SaveOutcome.Saved)
+        second.release()
+        assertTrue(s.saveLocal("n2", "b1", "r1", blob("b"), isCreate = true) is SaveOutcome.Saved)
+        assertTrue(s.saveLocal(editor, "n1", "b1", "r2", blob("c"), isCreate = false) is SaveOutcome.Saved)
+    }
+
+    @Test fun `a removal hold stands on the folder, for an instance opened after a discard dropped the one checked, and not in a new process`() {
+        val noBackup = tmp.newFolder("no_backup")
+        val s = identityStore(noBackup)
+        saved(s.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false))
+        val hold = PendingNotesStore.RemovalHold()
+        assertTrue(s.removalCheck(hold) is RemovalCheck.Blocks)
+        assertEquals(DiscardOutcome.Done, s.discardStore(s.unsynced()))
+        s.unregister()
+        val next = identityStore(noBackup)
+        assertFalse("a new instance", next === s)
+        assertEquals(SaveOutcome.RemovalPending, next.saveLocal("n2", "b1", "r1", blob("b"), isCreate = true))
+        PendingNotesStore.resetForTesting()
+        assertTrue("held in memory only", identityStore(noBackup).saveLocal("n2", "b1", "r1", blob("b"),
+            isCreate = true) is SaveOutcome.Saved)
+    }
+
     @Test fun `a removal check of a store that lists is clean, covered by its permit, or blocked by what it holds`() {
         val noBackup = tmp.newFolder("no_backup")
         val s = identityStore(noBackup)

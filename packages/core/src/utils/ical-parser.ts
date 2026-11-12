@@ -26,6 +26,12 @@ export interface VEvent {
   dtstartParams?: Record<string, string>;
   /** Raw DTEND parameters */
   dtendParams?: Record<string, string>;
+  /** Unsupported VEVENT property lines (logical, unfolded), kept for round trip.
+   *  Absent when there are none. Revalidated when generating. */
+  unknownProperties?: string[];
+  /** Unsupported VEVENT subcomponents other than VALARM (which is modelled):
+   *  one array of logical lines per complete BEGIN..END block. Absent when there are none. */
+  unknownComponents?: string[][];
 }
 
 export interface VTodo {
@@ -46,6 +52,12 @@ export interface VTodo {
   url?: string;
   /** CATEGORIES (RFC 5545) — comma-separated user labels */
   categories?: string[];
+  /** Unsupported VTODO property lines (logical, unfolded), kept for round trip.
+   *  Absent when there are none. Revalidated when generating. */
+  unknownProperties?: string[];
+  /** Unsupported VTODO subcomponents such as VALARM: one array of logical
+   *  lines per complete BEGIN..END block. Absent when there are none. */
+  unknownComponents?: string[][];
 }
 
 export interface VAlarm {
@@ -193,14 +205,14 @@ function splitParams(paramStr: string): string[] {
   return parts;
 }
 
-function parseVAlarm(lines: string[], startIdx: number): { alarm: VAlarm; endIdx: number } {
+/** Read ACTION, TRIGGER and DESCRIPTION from one complete VALARM block's own lines. */
+function parseVAlarmBlock(block: string[]): VAlarm {
   const alarm: VAlarm = { action: '', trigger: '' };
-  let i = startIdx;
-  while (i < lines.length) {
-    const line = lines[i]!;
-    if (line === 'END:VALARM') {
-      return { alarm, endIdx: i };
-    }
+  let depth = 0;
+  for (const line of block) {
+    if (/^BEGIN:/i.test(line)) { depth++; continue; }
+    if (/^END:/i.test(line)) { depth--; continue; }
+    if (depth !== 1) continue;
     const prop = parseProperty(line);
     switch (prop.name) {
       case 'ACTION':
@@ -213,9 +225,8 @@ function parseVAlarm(lines: string[], startIdx: number): { alarm: VAlarm; endIdx
         alarm.description = unescapeText(prop.value);
         break;
     }
-    i++;
   }
-  return { alarm, endIdx: i };
+  return alarm;
 }
 
 /**
@@ -223,36 +234,49 @@ function parseVAlarm(lines: string[], startIdx: number): { alarm: VAlarm; endIdx
  * Also accepts a full VCALENDAR document — the first VEVENT inside will be extracted.
  */
 export function parseVEvent(ical: string): VEvent {
-  const trimmed = ical.trimStart();
-  if (trimmed.startsWith('BEGIN:VCALENDAR')) {
-    // Extract the first VEVENT block from the VCALENDAR wrapper
-    const match = trimmed.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/);
-    if (!match) {
+  // Same extraction as parseVTodo: the wrapper is found on the first logical
+  // line, and the first VEVENT by whole logical lines after unfolding, so a
+  // marker-like substring inside a value cannot end the component early.
+  const all = unfoldLines(ical.trimStart()).split(/\r?\n/);
+  let lines: string[];
+  if (/^BEGIN:VCALENDAR\s*$/i.test(all[0] ?? '')) {
+    const start = all.findIndex((l) => /^BEGIN:VEVENT\s*$/i.test(l));
+    const end = start === -1 ? -1 : all.findIndex((l, i) => i > start && /^END:VEVENT\s*$/i.test(l));
+    if (end === -1) {
       throw new Error('VCALENDAR contains no VEVENT component');
     }
-    ical = match[0];
+    lines = all.slice(start, end + 1).filter((l) => l.length > 0);
+  } else {
+    lines = unfoldLines(ical).split(/\r?\n/).filter((l) => l.length > 0);
   }
-
-  const unfolded = unfoldLines(ical);
-  const lines = unfolded.split(/\r?\n/).filter((l) => l.length > 0);
 
   const event: VEvent = { uid: '', dtstart: '' };
   const valarms: VAlarm[] = [];
+  const unknownProperties: string[] = [];
+  const unknownComponents: string[][] = [];
 
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i]!;
-
-    if (line === 'BEGIN:VALARM') {
-      i++;
-      const { alarm, endIdx } = parseVAlarm(lines, i);
-      valarms.push(alarm);
-      i = endIdx + 1;
+  // Lines inside a nested component belong to that component, never to the
+  // VEVENT. A complete top-level VALARM is read into the alarm model; any
+  // other complete top-level block is kept whole if it is valid. An unclosed
+  // VALARM is still read, as before; other unclosed blocks hide the rest.
+  let depth = 0;
+  let block: string[] = [];
+  for (const line of lines) {
+    const marker = /^(BEGIN|END):/i.exec(line)?.[1]?.toUpperCase();
+    if (depth > 0) {
+      block.push(line);
+      if (marker === 'BEGIN') depth++;
+      else if (marker === 'END') depth--;
+      if (depth === 0) {
+        if (/^BEGIN:VALARM\s*$/i.test(block[0]!)) valarms.push(parseVAlarmBlock(block));
+        else if (isRetainableComponent(block, EVENT_FORBIDDEN_COMPONENTS)) unknownComponents.push(block);
+      }
       continue;
     }
-
-    if (line === 'BEGIN:VEVENT' || line === 'END:VEVENT') {
-      i++;
+    if (/^(BEGIN|END):VEVENT\s*$/i.test(line)) continue;
+    if (marker === 'BEGIN') {
+      depth++;
+      block = [line];
       continue;
     }
 
@@ -314,13 +338,17 @@ export function parseVEvent(ical: string): VEvent {
       case 'CATEGORIES':
         event.categories = splitCommaValues(prop.value).map((c) => c.trim()).filter((c) => c.length > 0);
         break;
+      default:
+        if (isRetainableProperty(line, EVENT_MODELLED_PROPERTIES)) unknownProperties.push(line);
     }
-    i++;
   }
+  if (depth > 0 && /^BEGIN:VALARM\s*$/i.test(block[0]!)) valarms.push(parseVAlarmBlock(block));
 
   if (valarms.length > 0) {
     event.valarms = valarms;
   }
+  if (unknownProperties.length > 0) event.unknownProperties = unknownProperties;
+  if (unknownComponents.length > 0) event.unknownComponents = unknownComponents;
 
   // Input validation
   if (!event.uid) {
@@ -389,6 +417,10 @@ export function generateVEvent(event: VEvent): string {
     lines.push(foldLine(`CATEGORIES:${event.categories.map(escapeText).join(',')}`));
   }
 
+  // RFC 5545 orders a VEVENT's properties before its subcomponents.
+  const retained = retainedEventContent(event);
+  for (const line of retained.properties) lines.push(foldRetainedLine(line));
+
   if (event.valarms) {
     for (const alarm of event.valarms) {
       lines.push('BEGIN:VALARM');
@@ -399,6 +431,8 @@ export function generateVEvent(event: VEvent): string {
     }
   }
 
+  for (const line of retained.components) lines.push(foldRetainedLine(line));
+
   lines.push('END:VEVENT');
   return lines.join('\r\n');
 }
@@ -408,23 +442,48 @@ export function generateVEvent(event: VEvent): string {
  * Also accepts a full VCALENDAR document — the first VTODO inside will be extracted.
  */
 export function parseVTodo(ical: string): VTodo {
-  const trimmed = ical.trimStart();
-  if (trimmed.startsWith('BEGIN:VCALENDAR')) {
-    // Extract the first VTODO block from the VCALENDAR wrapper
-    const match = trimmed.match(/BEGIN:VTODO[\s\S]*?END:VTODO/);
-    if (!match) {
+  // Find the wrapper on the first logical line: names are case-insensitive and
+  // may be folded, and a missed wrapper would hide the VTODO as a nested block.
+  const all = unfoldLines(ical.trimStart()).split(/\r?\n/);
+  let lines: string[];
+  if (/^BEGIN:VCALENDAR\s*$/i.test(all[0] ?? '')) {
+    // Extract the first VTODO by whole logical lines after unfolding, so a
+    // marker-like substring inside a value cannot end the component early.
+    const start = all.findIndex((l) => /^BEGIN:VTODO\s*$/i.test(l));
+    const end = start === -1 ? -1 : all.findIndex((l, i) => i > start && /^END:VTODO\s*$/i.test(l));
+    if (end === -1) {
       throw new Error('VCALENDAR contains no VTODO component');
     }
-    ical = match[0];
+    lines = all.slice(start, end + 1).filter((l) => l.length > 0);
+  } else {
+    lines = unfoldLines(ical).split(/\r?\n/).filter((l) => l.length > 0);
   }
 
-  const unfolded = unfoldLines(ical);
-  const lines = unfolded.split(/\r?\n/).filter((l) => l.length > 0);
-
   const todo: VTodo = { uid: '' };
+  const unknownProperties: string[] = [];
+  const unknownComponents: string[][] = [];
 
+  // Lines inside a nested component (VALARM or any other) belong to that
+  // component, not to the VTODO, so they are never read as task fields.
+  // `depth` counts open nested blocks; an unclosed block hides the rest of
+  // the VTODO. Each complete top-level block is kept whole if it is valid.
+  let depth = 0;
+  let block: string[] = [];
   for (const line of lines) {
-    if (line === 'BEGIN:VTODO' || line === 'END:VTODO') continue;
+    const marker = /^(BEGIN|END):/i.exec(line)?.[1]?.toUpperCase();
+    if (depth > 0) {
+      block.push(line);
+      if (marker === 'BEGIN') depth++;
+      else if (marker === 'END') depth--;
+      if (depth === 0 && isRetainableComponent(block, TODO_FORBIDDEN_COMPONENTS)) unknownComponents.push(block);
+      continue;
+    }
+    if (/^(BEGIN|END):VTODO\s*$/i.test(line)) continue;
+    if (marker === 'BEGIN') {
+      depth++;
+      block = [line];
+      continue;
+    }
 
     const prop = parseProperty(line);
     switch (prop.name) {
@@ -476,8 +535,13 @@ export function parseVTodo(ical: string): VTodo {
       case 'CATEGORIES':
         todo.categories = splitCommaValues(prop.value).map((c) => c.trim()).filter((c) => c.length > 0);
         break;
+      default:
+        if (isRetainableProperty(line, TODO_MODELLED_PROPERTIES)) unknownProperties.push(line);
     }
   }
+
+  if (unknownProperties.length > 0) todo.unknownProperties = unknownProperties;
+  if (unknownComponents.length > 0) todo.unknownComponents = unknownComponents;
 
   // Input validation
   if (!todo.uid) {
@@ -488,6 +552,236 @@ export function parseVTodo(ical: string): VTodo {
   }
 
   return todo;
+}
+
+// ── Retained VTODO and VEVENT content (WEBX-03, WEB-03) ──
+// Unsupported lines are kept opaque across edits. The same checks run on
+// parse and on generate, so raw arrays supplied by callers cannot inject
+// framing, parent identity or modelled fields.
+
+/** VTODO properties the model writes itself; never kept as raw lines on the VTODO. */
+const TODO_MODELLED_PROPERTIES = new Set([
+  'UID', 'SUMMARY', 'DESCRIPTION', 'DTSTART', 'DUE', 'PRIORITY', 'STATUS', 'COMPLETED',
+  'CREATED', 'LAST-MODIFIED', 'PERCENT-COMPLETE', 'LOCATION', 'URL', 'CATEGORIES',
+]);
+
+/** Component types that may never appear inside a VTODO, at any depth. */
+const TODO_FORBIDDEN_COMPONENTS = new Set(['VCALENDAR', 'VEVENT', 'VTODO', 'VJOURNAL', 'VFREEBUSY', 'VTIMEZONE']);
+
+/** VEVENT properties the model writes itself; never kept as raw lines on the VEVENT. */
+const EVENT_MODELLED_PROPERTIES = new Set([
+  'UID', 'DTSTART', 'DTEND', 'DURATION', 'SUMMARY', 'DESCRIPTION', 'LOCATION', 'RRULE', 'EXDATE',
+  'CREATED', 'LAST-MODIFIED', 'TRANSP', 'STATUS', 'CATEGORIES',
+]);
+
+/** Never kept inside a VEVENT. VALARM is modelled, so a raw one would be written twice. */
+const EVENT_FORBIDDEN_COMPONENTS = new Set([...TODO_FORBIDDEN_COMPONENTS, 'VALARM']);
+
+/** TAB is the only control character allowed; CR or LF could inject lines. */
+const RETAINED_CONTROL_CHARS = /[\u0000-\u0008\u000a-\u001f\u007f]/;
+
+/** Whether a raw logical line is a safe property line to keep. `modelled` is the
+ *  parent's own property set, or null inside a subcomponent, where names like
+ *  DESCRIPTION are the subcomponent's own. */
+function isRetainableProperty(line: unknown, modelled: ReadonlySet<string> | null): line is string {
+  if (typeof line !== 'string' || RETAINED_CONTROL_CHARS.test(line)) return false;
+  const colonIdx = findPropertyColon(line);
+  if (colonIdx === line.length) return false;
+  const left = line.slice(0, colonIdx);
+  if ((left.match(/"/g) ?? []).length % 2 !== 0) return false;
+  const semiIdx = left.indexOf(';');
+  const rawName = semiIdx === -1 ? left : left.slice(0, semiIdx);
+  if (!/^[A-Za-z0-9-]+$/.test(rawName)) return false;
+  const name = rawName.toUpperCase();
+  if (name === 'BEGIN' || name === 'END') return false;
+  return modelled === null || !modelled.has(name);
+}
+
+/** Whether an array is exactly one complete, name-matched block with valid lines. */
+function isRetainableComponent(block: unknown, forbidden: ReadonlySet<string>): block is string[] {
+  if (!Array.isArray(block) || block.length < 2) return false;
+  const open: string[] = [];
+  for (let i = 0; i < block.length; i++) {
+    const line: unknown = block[i];
+    if (typeof line !== 'string' || RETAINED_CONTROL_CHARS.test(line)) return false;
+    if (/^(BEGIN|END):/i.test(line)) {
+      const match = /^(BEGIN|END):([A-Za-z0-9-]+)$/i.exec(line);
+      if (!match) return false;
+      const name = match[2]!.toUpperCase();
+      if (match[1]!.toUpperCase() === 'BEGIN') {
+        if (forbidden.has(name) || (i > 0 && open.length === 0)) return false;
+        open.push(name);
+      } else {
+        if (open.pop() !== name) return false;
+        if (open.length === 0 && i !== block.length - 1) return false;
+      }
+    } else if (open.length === 0 || !isRetainableProperty(line, null)) {
+      return false;
+    }
+  }
+  return open.length === 0;
+}
+
+type RetainedDateForm = { date: boolean; floating: boolean };
+
+/** DATE vs DATE-TIME, and floating (no UTC designator, no TZID) for DATE-TIME. */
+function retainedDateForm(value: string, params: Record<string, string> | undefined): RetainedDateForm {
+  const date = (params?.['VALUE'] ?? '').toUpperCase() === 'DATE' || /^\d{8}$/.test(value);
+  return { date, floating: !date && !/Z$/i.test(value) && !params?.['TZID'] };
+}
+
+/** RRULE UNTIL must have the DTSTART value type: DATE, floating local time, or UTC for UTC/TZID starts. */
+function untilMatchesStart(rrule: string, start: RetainedDateForm): boolean {
+  const until = rrule.split(';').find((part) => /^UNTIL=/i.test(part))?.slice(6);
+  if (until === undefined) return true;
+  if (start.date) return /^\d{8}$/.test(until);
+  if (start.floating) return /^\d{8}T\d{6}$/.test(until);
+  return /^\d{8}T\d{6}Z$/i.test(until);
+}
+
+/** RDATE/EXDATE values, judged like RECURRENCE-ID; a PERIOD is judged by its start. */
+function recurrenceDatesMatchStart(value: string, params: Record<string, string>, start: RetainedDateForm): boolean {
+  const period = (params['VALUE'] ?? '').toUpperCase() === 'PERIOD';
+  return value.split(',').every((v) => {
+    const form = retainedDateForm(period ? v.split('/')[0]! : v, params);
+    return form.date === start.date && (form.date || form.floating === start.floating);
+  });
+}
+
+/** RFC 5545 §3.8.4.4: same value type as DTSTART, floating if and only if DTSTART is.
+ *  Kept verbatim: it names the original occurrence, never compared with DTSTART. */
+function recurrenceIdMatchesStart(value: string, params: Record<string, string>, start: RetainedDateForm): boolean {
+  const id = retainedDateForm(value, params);
+  return id.date === start.date && (id.date || id.floating === start.floating);
+}
+
+/**
+ * Split retained property lines at a point in an event's recurrence set: each RDATE value goes
+ * to `from` when `isFrom(value, params)` is true, otherwise it stays in `rest` (a PERIOD is
+ * judged by its start). Other lines stay in `rest`. Lines keep their own name and parameters;
+ * an RDATE line left without values is omitted. Inputs are never changed.
+ */
+export function partitionRetainedRDates(
+  lines: readonly string[],
+  isFrom: (value: string, params: Record<string, string>) => boolean,
+): { rest: string[]; from: string[] } {
+  const rest: string[] = [];
+  const from: string[] = [];
+  for (const line of lines) {
+    const { name, params, value } = parseProperty(line);
+    if (name !== 'RDATE') {
+      rest.push(line);
+      continue;
+    }
+    const head = line.slice(0, findPropertyColon(line));
+    const period = (params['VALUE'] ?? '').toUpperCase() === 'PERIOD';
+    const values = value.split(',');
+    const later = values.filter((v) => isFrom(period ? v.split('/')[0]! : v, params));
+    const earlier = values.filter((v) => !later.includes(v));
+    if (earlier.length > 0) rest.push(`${head}:${earlier.join(',')}`);
+    if (later.length > 0) from.push(`${head}:${later.join(',')}`);
+  }
+  return { rest, from };
+}
+
+/** Whether a retained VALARM still has the anchor its TRIGGER needs. Other components have no rule. */
+function alarmAnchored(block: string[], hasStart: boolean, hasDue: boolean, durationWritten: boolean): boolean {
+  if (!/^BEGIN:VALARM$/i.test(block[0]!)) return true;
+  let depth = 0;
+  for (const line of block) {
+    if (/^BEGIN:/i.test(line)) { depth++; continue; }
+    if (/^END:/i.test(line)) { depth--; continue; }
+    if (depth !== 1) continue;
+    const trigger = parseProperty(line);
+    if (trigger.name !== 'TRIGGER') continue;
+    if ((trigger.params['VALUE'] ?? '').toUpperCase() === 'DATE-TIME') return true;
+    if ((trigger.params['RELATED'] ?? '').toUpperCase() === 'END') return hasDue || (hasStart && durationWritten);
+    return hasStart;
+  }
+  return true;
+}
+
+/**
+ * Retained lines to write for a VTODO: valid properties (source order), then
+ * valid components (source order), minus temporal content whose anchor the
+ * written DTSTART/DUE no longer supports. Inputs are never changed.
+ */
+function retainedTodoLines(todo: VTodo): string[] {
+  const start = todo.dtstart ? retainedDateForm(todo.dtstart, todo.dtstartParams) : undefined;
+  const hasDue = !!todo.due;
+  const properties = (todo.unknownProperties ?? []).filter((line) => {
+    if (!isRetainableProperty(line, TODO_MODELLED_PROPERTIES)) return false;
+    const { name, params, value } = parseProperty(line);
+    switch (name) {
+      case 'DURATION':
+        // RFC 5545: DURATION needs DTSTART and excludes DUE; a DATE start allows days/weeks only.
+        return !!start && !hasDue && (!start.date || !/T/i.test(value));
+      case 'RRULE':
+        return !!start && untilMatchesStart(value, start);
+      case 'RDATE':
+      case 'EXDATE':
+        // RFC 5545 §3.8.5: every value keeps DTSTART's value type and local-time form.
+        return !!start && recurrenceDatesMatchStart(value, params, start);
+      case 'RECURRENCE-ID':
+        return !!start && recurrenceIdMatchesStart(value, params, start);
+      default:
+        return true;
+    }
+  });
+  const durationWritten = properties.some((line) => parseProperty(line).name === 'DURATION');
+  const components = (todo.unknownComponents ?? []).filter(
+    (block) => isRetainableComponent(block, TODO_FORBIDDEN_COMPONENTS) && alarmAnchored(block, !!start, hasDue, durationWritten),
+  );
+  return [...properties, ...components.flat()];
+}
+
+/**
+ * Retained content to write for a VEVENT, split because properties precede
+ * subcomponents: valid properties and valid non-alarm components, each in
+ * source order, minus recurrence lines whose form the written DTSTART no
+ * longer supports. Inputs are never changed.
+ */
+function retainedEventContent(event: VEvent): { properties: string[]; components: string[] } {
+  const start = retainedDateForm(event.dtstart, event.dtstartParams);
+  const properties = (event.unknownProperties ?? []).filter((line) => {
+    if (!isRetainableProperty(line, EVENT_MODELLED_PROPERTIES)) return false;
+    const { name, params, value } = parseProperty(line);
+    switch (name) {
+      case 'RDATE':
+        return recurrenceDatesMatchStart(value, params, start);
+      case 'RECURRENCE-ID':
+        return recurrenceIdMatchesStart(value, params, start);
+      default:
+        return true;
+    }
+  });
+  const components = (event.unknownComponents ?? []).filter((block) =>
+    isRetainableComponent(block, EVENT_FORBIDDEN_COMPONENTS),
+  );
+  return { properties, components: components.flat() };
+}
+
+/** Fold a retained line at code-point boundaries: at most 75 UTF-8 octets per
+ *  physical line, counting the leading space of each continuation line. */
+function foldRetainedLine(line: string): string {
+  const parts: string[] = [];
+  let current = '';
+  let octets = 0;
+  let limit = 75;
+  for (const ch of line) {
+    const cp = ch.codePointAt(0)!;
+    const size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    if (octets + size > limit) {
+      parts.push(current);
+      current = '';
+      octets = 0;
+      limit = 74;
+    }
+    current += ch;
+    octets += size;
+  }
+  parts.push(current);
+  return parts.join('\r\n ');
 }
 
 /**
@@ -535,6 +829,8 @@ export function generateVTodo(todo: VTodo): string {
   if (todo.categories && todo.categories.length > 0) {
     lines.push(foldLine(`CATEGORIES:${todo.categories.map(escapeText).join(',')}`));
   }
+
+  for (const line of retainedTodoLines(todo)) lines.push(foldRetainedLine(line));
 
   lines.push('END:VTODO');
   return lines.join('\r\n');

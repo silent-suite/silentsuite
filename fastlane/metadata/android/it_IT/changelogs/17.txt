@@ -1,0 +1,1 @@
+Risolve il problema delle schermate di accesso e configurazione di Android nascoste dietro le barre di sistema o la tastiera.

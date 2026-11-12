@@ -22,6 +22,7 @@ import java.nio.file.Path
 import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Unpushed Notes changes for one exact account identity, kept apart from the Etebase cache so a
@@ -252,6 +253,13 @@ internal class PendingNotesStore private constructor(
         object Blocked : SaveOutcome()
         /** The note is larger than the store keeps ([PendingCodec.MAX_BLOB]); nothing was written. */
         object TooLarge : SaveOutcome()
+        /**
+         * A removal guard is checking this store for a removal of the account it may be for, or allowed that removal,
+         * which may be under way ([RemovalHold]); nothing was written, and the text is still the caller's to keep. A
+         * save once the hold is released, at once after a no, and after a yes once the removal is done or can't come
+         * any more, writes as before.
+         */
+        object RemovalPending : SaveOutcome()
     }
 
     sealed class SendOutcome {
@@ -394,6 +402,13 @@ internal class PendingNotesStore private constructor(
         saveLocal(noteUid, notebookUid, revision, blob, isCreate, notebookCopy)
     }
 
+    /** Whether a removal hold that is not released stands on this store's folder ([RemovalHold]). */
+    private fun heldForRemoval(): Boolean {
+        val holds = removalHolds[dir.path] ?: return false
+        holds.removeIf { it.released }
+        return holds.isNotEmpty()
+    }
+
     /** The note [editor]'s text belongs to now, when that is no longer [noteUid]. */
     private fun movedTo(editor: EditorHandle, noteUid: String): String? {
         require(editor.store === this) { "an editor of another store" }
@@ -404,6 +419,7 @@ internal class PendingNotesStore private constructor(
      * A save by note uid. An open editor saves through its handle instead (above), which is what keeps
      * a late save away from a note that a conflict copy replaced. Resets the failure backoff, since new
      * content may push where the old did not. [notebookCopy], when given, is written in the same step.
+     * While a removal hold stands on the store, nothing is written ([SaveOutcome.RemovalPending]).
      */
     fun saveLocal(
         noteUid: String,
@@ -413,6 +429,7 @@ internal class PendingNotesStore private constructor(
         isCreate: Boolean,
         notebookCopy: ByteArray? = null,
     ): SaveOutcome = locked {
+        if (heldForRemoval()) return@locked SaveOutcome.RemovalPending
         if (blob.size > PendingCodec.MAX_BLOB) return@locked SaveOutcome.TooLarge
         var outcome: SaveOutcome = SaveOutcome.Blocked
         update(noteUid) { read ->
@@ -996,9 +1013,28 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
+     * A hold on new text for the stores a removal guard checks for one question about an account's removal: each
+     * [removalCheck] given it takes it in the same hold of the store lock as its answer, and until it is [released], a
+     * save into any of those stores writes nothing and answers [SaveOutcome.RemovalPending], whatever instance of the
+     * folder it reaches. So a save cannot land between an answer that let the removal go ahead and Android's removal
+     * of the account. Whoever asked the guard releases it once the removal cannot follow that answer any more: at once
+     * for a no, and once the removal is done or did not happen for a yes. Held in memory only, so a new process has
+     * none.
+     */
+    class RemovalHold {
+        @Volatile var released = false
+            private set
+
+        fun release() {
+            released = true
+        }
+    }
+
+    /**
      * What a removal of this identity's account would lose, decided in one hold of the store lock, for a guard of
      * account removals. Like [unsynced], it runs no recovery, writes nothing in the store, and answers on a cleared
-     * instance too; it calls no function of the caller's.
+     * instance too; it calls no function of the caller's. Given a [hold], it takes it first, in that same hold of the
+     * lock, whatever it answers ([RemovalHold]).
      *
      * 1. When the folder is a link, or lstat cannot tell ([followable]), it is not listed and nothing in it is read:
      *    [RemovalCheck.Acknowledged] when an acknowledgement holds for the link's own identity, else
@@ -1034,8 +1070,9 @@ internal class PendingNotesStore private constructor(
      *    then [RemovalCheck.Covered], whatever that listing left out, also for a permit recorded so in place of another
      *    while the user confirmed a counted answer.
      */
-    fun removalCheck(): RemovalCheck = synchronized(lock) {
+    fun removalCheck(hold: RemovalHold? = null): RemovalCheck = synchronized(lock) {
         checkNotDropped()
+        if (hold != null) removalHolds.computeIfAbsent(dir.path) { CopyOnWriteArrayList() }.add(hold)
         if (!followable()) {
             return@synchronized if (holdsAcknowledgement()) RemovalCheck.Acknowledged else RemovalCheck.Unlisted
         }
@@ -2484,6 +2521,12 @@ internal class PendingNotesStore private constructor(
          */
         private val floors = ConcurrentHashMap<String, Long>()
 
+        /**
+         * The removal holds ([RemovalHold]) on each store folder in this process, by its path, so an instance opened
+         * after the one a guard checked was dropped is held too. Released ones go at the next save into that folder.
+         */
+        private val removalHolds = ConcurrentHashMap<String, CopyOnWriteArrayList<RemovalHold>>()
+
         /** The folder in noBackupFilesDir that holds one store folder per exact identity ([identityDir]). */
         internal const val PENDING = "notes-pending"
 
@@ -2761,6 +2804,7 @@ internal class PendingNotesStore private constructor(
         internal fun resetForTesting() {
             registry.clear()
             floors.clear()
+            removalHolds.clear()
         }
 
         /** Uids come from the server and from collaborators, so they never reach a file name unchecked. */

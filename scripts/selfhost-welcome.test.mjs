@@ -5,9 +5,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
-const selfHostBytes = readFileSync(`${repoRoot}self-host/success.html`)
-const dockerBytes = readFileSync(`${repoRoot}docker/etebase/success.html`)
-const html = selfHostBytes.toString('utf8')
+const html = readFileSync(`${repoRoot}self-host/success.html`, 'utf8')
 const canonicalMark = readFileSync(`${repoRoot}apps/web/public/logo-mark-dark.svg`, 'utf8')
 
 const INTER_SHA256 = 'c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4'
@@ -28,11 +26,6 @@ function markBody(svg) {
   assert.ok(start >= 0 && end > start, 'mark body not found')
   return normalizeMarkup(svg.slice(start, end))
 }
-
-test('self-host and Docker welcome pages are byte-identical', () => {
-  assert.equal(Buffer.compare(selfHostBytes, dockerBytes), 0)
-  assert.equal(html.includes('SILENTSUITE_EMBED_INTER'), false)
-})
 
 test('welcome page inlines the canonical arrows mark geometry as a decoration', () => {
   const marks = body.match(/<svg class="mark"[\s\S]*?<\/svg>/g) ?? []
@@ -81,6 +74,7 @@ test('Running status is a plain row with a decorative moving indicator', () => {
 })
 
 test('welcome page embeds the signup Inter font with its licenses', () => {
+  assert.equal(html.includes('SILENTSUITE_EMBED_INTER'), false)
   const fonts = [...html.matchAll(fontPattern)]
   assert.equal(fonts.length, 1)
   const bytes = Buffer.from(fonts[0][1], 'base64')

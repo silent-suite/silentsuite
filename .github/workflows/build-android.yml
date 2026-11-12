@@ -444,14 +444,15 @@ jobs:
             -PrequireReproducibleJdk=true
 
       # The merged release R8 configuration, seeds and usage reports, kept as
-      # privacy evidence; no merged source may switch optimisation off globally.
+      # privacy evidence. Optimisation must stay off: in 0.5.18 it removed
+      # constructors that ez-vcard creates by reflection and crashed contact sync.
       - name: Inspect effective release R8 configuration
         run: |
           set -euo pipefail
           out=app/build/outputs/mapping/release
           for f in configuration.txt seeds.txt usage.txt; do test -s "$out/$f"; done
-          if sed 's/#.*//' "$out/configuration.txt" | grep -nE '(^|[[:space:]])-dontoptimize([[:space:]]|$)'; then
-            echo "::error::merged release R8 configuration contains -dontoptimize" >&2
+          if ! sed 's/#.*//' "$out/configuration.txt" | grep -nE '(^|[[:space:]])-dontoptimize([[:space:]]|$)'; then
+            echo "::error::merged release R8 configuration does not contain -dontoptimize" >&2
             exit 1
           fi
           mkdir -p build/privacy-evidence/r8-release
@@ -797,8 +798,8 @@ jobs:
             expected={pair for pair in canonical if pair[0] in owners}
           else:
             raise SystemExit(f'unsupported API/shard {key}')
-          expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':19,'29:status-routes':76,'29:sibling-routes':48,'35:all':183,'36:account-dashboard':33,'36:first-run-setup':19,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':76}
-          if len(canonical) != 183 or len(expected) != expected_sizes[key]:
+          expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':81,'29:sibling-routes':48,'35:all':189,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':81}
+          if len(canonical) != 189 or len(expected) != expected_sizes[key]:
             raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):
