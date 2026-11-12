@@ -1083,3 +1083,58 @@ describe('WEB-05 calendar update refused by the production queue', () => {
     }
   })
 })
+
+describe('useCalendarStore keeps unsupported event content (WEB-03)', () => {
+  const SERIES = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Other Client//EN',
+    'BEGIN:VEVENT',
+    'UID:web03-series',
+    'DTSTART:20270301T100000Z',
+    'DTEND:20270301T110000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=6',
+    'RDATE:20270420T100000Z',
+    'SUMMARY:Weekly',
+    'TRANSP:TRANSPARENT',
+    'ATTENDEE;CN=Guest:mailto:guest@example.invalid',
+    'X-EXAMPLE-PROP:keep-me',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n')
+
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('a title edit uploads the attendee, transparency and extra properties unchanged', async () => {
+    const event = seedRemote(SERIES)
+    await useCalendarStore.getState().updateEvent(event.id, { title: 'Weekly v2' })
+
+    const uploaded = lastUpdated()
+    expect(uploaded).toMatch(/^SUMMARY:Weekly v2$/m)
+    expect(uploaded).toMatch(/^ATTENDEE;CN=Guest:mailto:guest@example\.invalid$/m)
+    expect(uploaded).toMatch(/^TRANSP:TRANSPARENT$/m)
+    expect(uploaded).toMatch(/^X-EXAMPLE-PROP:keep-me$/m)
+    expect(uploaded).toMatch(/^RDATE:20270420T100000Z$/m)
+  })
+
+  it('a "this" copy gets a new item without the series\' retained lines; the master keeps them', async () => {
+    const master = seedRemote(SERIES)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2027-03-08T10:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^SUMMARY:Copy$/m)
+    expect(copy).not.toMatch(/^(RDATE|ATTENDEE|X-EXAMPLE-PROP)[;:]/m)
+    const masterIcs = lastUpdated()
+    expect(masterIcs).toMatch(/^RDATE:20270420T100000Z$/m)
+    expect(masterIcs).toMatch(/^X-EXAMPLE-PROP:keep-me$/m)
+  })
+
+  it('a "this and future" series gets a new item without the series\' retained lines', async () => {
+    const master = seedRemote(SERIES)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-15T10:00:00Z'))
+
+    expect(lastCreated()).not.toMatch(/^(RDATE|ATTENDEE|X-EXAMPLE-PROP)[;:]/m)
+  })
+})
