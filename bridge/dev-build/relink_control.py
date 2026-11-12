@@ -79,6 +79,37 @@ def _platform(value: str) -> tuple[str, str, str]:
     return LIBRARIES[value]
 
 
+# --- safe tar extraction ---------------------------------------------------------
+
+
+def _inside(dest: Path, name: str) -> bool:
+    target = os.path.realpath(os.path.join(dest, name))
+    base = os.path.realpath(dest)
+    return target == base or target.startswith(base + os.sep)
+
+
+def _extract_member(tar: tarfile.TarFile, member: tarfile.TarInfo, dest: Path) -> None:
+    """The tarfile 'data' filter where this Python has it; else the same checks done here
+    (Windows runners ship CPython 3.10.11, which predates the filter backport)."""
+    if hasattr(tarfile, "data_filter"):
+        tar.extract(member, dest, filter="data")
+        return
+    name = member.name
+    if os.path.isabs(name) or name.startswith(("/", "\\")) or ".." in Path(name).parts or ":" in name:
+        raise InputError(f"unsafe member path {name!r}")
+    if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
+        raise InputError(f"special member {name!r}")
+    if not _inside(dest, name):
+        raise InputError(f"member {name!r} leaves the destination")
+    if member.issym() and (os.path.isabs(member.linkname)
+                           or not _inside(dest, os.path.join(os.path.dirname(name), member.linkname))):
+        raise InputError(f"link {name!r} points outside the destination")
+    if member.islnk() and not _inside(dest, member.linkname):
+        raise InputError(f"hard link {name!r} points outside the destination")
+    member.mode = (member.mode or 0o644) & 0o755
+    tar.extract(member, dest, set_attrs=not member.issym())
+
+
 # --- extract -----------------------------------------------------------------
 
 
@@ -88,17 +119,16 @@ def extract(archive: Path, expected: str, dest: Path) -> dict:
         raise InputError(f"source archive SHA256 {actual} is not the held {expected}")
     prefix = f"{SOURCE_ROOT}/qtbase/"
     count, refused = 0, []
-    if not hasattr(tarfile, "data_filter"):
-        raise InputError("this Python has no tarfile data filter; refusing an unfiltered extraction")
+    filter_errors = (tarfile.FilterError, InputError) if hasattr(tarfile, "FilterError") else (InputError,)
     with tarfile.open(archive, "r:xz") as tar:
         for member in tar:
             if not member.name.startswith(prefix):
                 continue
             try:
-                tar.extract(member, dest, filter="data")
+                _extract_member(tar, member, dest)
                 count += 1
-            except tarfile.FilterError as exc:  # recorded; a needed member makes the build fail
-                refused.append({"member": member.name, "reason": type(exc).__name__})
+            except filter_errors as exc:  # recorded; a needed member makes the build fail
+                refused.append({"member": member.name, "reason": str(exc)[:200]})
     if count == 0:
         raise InputError(f"no {prefix} members in the archive")
     return {"archive": archive.name, "sha256": actual, "bytes": archive.stat().st_size, "members": count,
@@ -117,7 +147,8 @@ def copy(source: Path, dest: Path) -> dict:
         tar.add(source, arcname=source.name)
     dest.mkdir(parents=True)
     with tarfile.open(archive, "r:gz") as tar:
-        tar.extractall(dest, filter="data")
+        for member in tar:
+            _extract_member(tar, member, dest)
     record = {"archive_sha256": _sha(archive), "archive_bytes": archive.stat().st_size, "copy": source.name}
     archive.unlink()
     record["ok"] = (dest / source.name).is_dir()
