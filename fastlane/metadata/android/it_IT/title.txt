@@ -1,1 +1,1 @@
-SilentSuite - Sincronizzazione dati sicura
+SilentSuite - Sync cifrata
