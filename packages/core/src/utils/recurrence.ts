@@ -134,45 +134,46 @@ export function untilDateBefore(instance: Date, timeZone?: string): string {
 }
 
 /**
- * A date-time UNTIL that ends a timed series one second before `instance`, so every earlier
- * occurrence (including one later in the previous day) stays in the series. With a zone (an IANA
- * zone or 'UTC') the value is UTC (`…Z`), as RFC 5545 requires for a zoned DTSTART; without one
- * (floating) it is a wall clock with no `Z`. For a floating series pass the occurrence's own
- * `wallClock` (YYYYMMDDTHHMMSS, see occurrenceWallClock): in a host DST gap the instant resolves
- * to a later wall clock, and an UNTIL taken from it would bring the occurrence back in other zones.
+ * A date-time UNTIL that ends a timed series before the occurrence at `instance`, so the
+ * occurrence on the previous day stays in the series. With a zone (an IANA zone or 'UTC') it is
+ * the UTC instant one second before the occurrence (`…Z`), as RFC 5545 requires for a zoned
+ * DTSTART. Without one (floating) it is 23:59:59 on the previous day as a floating wall clock;
+ * pass the occurrence's own `wallClock` (YYYYMMDDTHHMMSS, see occurrenceWallClock) so a host DST
+ * gap cannot move it to another date. A floating series with several occurrences a day also
+ * loses the earlier ones on the selected day.
  */
 export function untilTimeBefore(instance: Date, timeZone?: string, wallClock?: string): string {
-  const floor = (ms: number) => Math.floor(ms / 1000) * 1000;
-  const civil = new Date(
-    timeZone === undefined
-      ? (parseWallClock(wallClock) ?? floor(HOST_ZONE.toCivil(instance.getTime()))) - 1000
-      : floor(instance.getTime()) - 1000,
-  );
   const pad = (n: number) => String(n).padStart(2, '0');
-  const value =
-    `${civil.getUTCFullYear()}${pad(civil.getUTCMonth() + 1)}${pad(civil.getUTCDate())}` +
-    `T${pad(civil.getUTCHours())}${pad(civil.getUTCMinutes())}${pad(civil.getUTCSeconds())}`;
-  return timeZone === undefined ? value : `${value}Z`;
+  const date = (c: Date) => `${c.getUTCFullYear()}${pad(c.getUTCMonth() + 1)}${pad(c.getUTCDate())}`;
+  if (timeZone !== undefined) {
+    const c = new Date(Math.floor(instance.getTime() / 1000) * 1000 - 1000);
+    return `${date(c)}T${pad(c.getUTCHours())}${pad(c.getUTCMinutes())}${pad(c.getUTCSeconds())}Z`;
+  }
+  const c = new Date(parseWallClock(wallClock) ?? HOST_ZONE.toCivil(instance.getTime()));
+  c.setUTCDate(c.getUTCDate() - 1);
+  return `${date(c)}T235959`;
 }
 
-/** UNTIL as civil ms (its digits read as a UTC wall clock), and whether it ends in `Z`. */
-function untilParts(value: string): { civil: number; utc: boolean } {
+/** UNTIL as an instant: `…Z` is absolute; a date or floating value is a wall clock in the zone. */
+function parseUntil(value: string, zone: Zone): number {
   // Formats: 20260313, 20260313T120000, 20260313T120000Z
   const clean = value.replace(/[^0-9TZ]/g, '');
   const year = parseInt(clean.slice(0, 4), 10);
   const month = parseInt(clean.slice(4, 6), 10) - 1;
   const day = parseInt(clean.slice(6, 8), 10);
-  if (clean.length <= 8) return { civil: Date.UTC(year, month, day), utc: false };
+
+  if (clean.length <= 8) {
+    return zone.fromCivil(Date.UTC(year, month, day));
+  }
+
   const hour = parseInt(clean.slice(9, 11), 10);
   const minute = parseInt(clean.slice(11, 13), 10);
   const second = parseInt(clean.slice(13, 15), 10);
-  return { civil: Date.UTC(year, month, day, hour, minute, second), utc: clean.endsWith('Z') };
-}
 
-/** UNTIL as an instant: `…Z` is absolute; a date or floating value is a wall clock in the zone. */
-function parseUntil(value: string, zone: Zone): number {
-  const { civil, utc } = untilParts(value);
-  return utc ? civil : zone.fromCivil(civil);
+  if (clean.endsWith('Z')) {
+    return Date.UTC(year, month, day, hour, minute, second);
+  }
+  return zone.fromCivil(Date.UTC(year, month, day, hour, minute, second));
 }
 
 const DAY_MAP: Record<string, number> = {
@@ -311,11 +312,6 @@ function expandWithCivil(
 
   const untilMs = rule.until !== undefined ? parseUntil(rule.until, zone) : undefined;
   const untilCivil = untilMs !== undefined ? zone.toCivil(untilMs) : undefined;
-  // Host-local (floating or all-day): a date or floating UNTIL is compared as a wall clock, as
-  // RFC 5545 defines floating time, so a host DST gap or repeated hour cannot move it across an
-  // occurrence. Zoned and UTC series and a `…Z` UNTIL keep the instant comparison below.
-  const untilParsed = zone === HOST_ZONE && rule.until !== undefined ? untilParts(rule.until) : undefined;
-  const untilWall = untilParsed !== undefined && !untilParsed.utc ? untilParsed.civil : undefined;
   const rangeStartMs = range.start.getTime();
   const rangeEndMs = range.end.getTime();
   const rangeStartCivil = zone.toCivil(rangeStartMs);
@@ -352,9 +348,7 @@ function expandWithCivil(
     const instantOf = (): number => (instant ??= zone.fromCivil(civil));
 
     // Stop conditions (instant semantics; civil prefilter avoids conversion far from bounds)
-    if (untilWall !== undefined) {
-      if (civil > untilWall) break;
-    } else if (untilMs !== undefined && untilCivil !== undefined) {
+    if (untilMs !== undefined && untilCivil !== undefined) {
       if (civil > untilCivil + CIVIL_MARGIN_MS) break;
       if (civil >= untilCivil - CIVIL_MARGIN_MS && instantOf() > untilMs) break;
     }

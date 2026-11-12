@@ -125,15 +125,15 @@ function addUntilToRRule(rrule: string, until: string): string {
 }
 
 /**
- * The UNTIL that ends `master` just before the occurrence at `instanceDate`. All-day series take
- * the previous date (a DATE UNTIL). Timed series take a date-time one second before the
- * occurrence, because a date-only UNTIL is read as that day's midnight and would also drop the
- * previous day's occurrence.
+ * The UNTIL that ends `master` before the occurrence at `instanceDate`. All-day series take the
+ * previous date (a DATE UNTIL). Zoned and UTC series take the UTC instant one second before the
+ * occurrence; floating series take 23:59:59 on the previous day. A date-only UNTIL on a timed
+ * series is read as that day's midnight and would also drop the previous day's occurrence.
  */
 function untilBeforeOccurrence(master: CalendarEvent, instanceDate: Date): string {
   const timeZone = recurrenceTimeZone(master)
   if (master.allDay) return untilDateBefore(instanceDate, timeZone)
-  // A floating series ends before the occurrence's own wall clock, which a host DST gap can move.
+  // A floating series uses the occurrence's own wall-clock date, which a host DST gap can move.
   const wallClock = timeZone === undefined && master.recurrenceRule
     ? occurrenceWallClock(master.recurrenceRule, master.startDate, instanceDate)
     : undefined
