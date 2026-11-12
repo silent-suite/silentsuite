@@ -267,6 +267,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       const { useContactStore } = await import('@/app/stores/use-contact-store')
       const { useCalendarStore } = await import('@/app/stores/use-calendar-store')
       const { useNoteStore } = await import('@/app/stores/use-note-store')
+      const { useDomainSnapshotStore } = await import('@/app/stores/use-domain-snapshot-store')
       const { usePreferencesSyncStore } = await import('@/app/stores/use-preferences-sync-store')
       assertCurrentAccountEpoch(accountEpoch)
 
@@ -281,6 +282,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       if (domainLoadState.tasks === 'loaded') {
         assertCurrentAccountEpoch(accountEpoch)
         useTaskStore.getState().syncFromRemote(tasks)
+        useDomainSnapshotStore.getState().markApplied('tasks', accountEpoch)
       } else {
         partialDomainCount += 1
       }
@@ -293,6 +295,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       if (domainLoadState.contacts === 'loaded') {
         assertCurrentAccountEpoch(accountEpoch)
         useContactStore.getState().syncFromRemote(contacts)
+        useDomainSnapshotStore.getState().markApplied('contacts', accountEpoch)
       } else {
         partialDomainCount += 1
       }
@@ -304,6 +307,7 @@ export const useSyncStore = create<SyncState & SyncActions>((set, get) => ({
       if (domainLoadState.calendar === 'loaded') {
         assertCurrentAccountEpoch(accountEpoch)
         useCalendarStore.getState().syncFromRemote(events)
+        useDomainSnapshotStore.getState().markApplied('calendar', accountEpoch)
       } else {
         partialDomainCount += 1
       }

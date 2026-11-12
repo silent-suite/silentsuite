@@ -25,12 +25,12 @@ from etebase_server.myauth.models import UserType, get_typed_user_model
 
 from ..dependencies import AuthData, get_auth_data, get_authenticated_user
 from ..exceptions import AuthenticationFailed, HttpError, transform_validation_error
-from ..msgpack import MsgpackResponse, MsgpackRoute
+from ..msgpack import AuthMsgpackRoute, MsgpackResponse
 from ..utils import BaseModel, get_user_username_email_kwargs, msgpack_decode, msgpack_encode, permission_responses
 from .owner import owner_mode_enabled, signup_grant_valid
 
 User = get_typed_user_model()
-authentication_router = APIRouter(route_class=MsgpackRoute)
+authentication_router = APIRouter(route_class=AuthMsgpackRoute)
 logger = logging.getLogger("etebase_server.fastapi.authentication")
 
 

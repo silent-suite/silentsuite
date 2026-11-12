@@ -22,6 +22,7 @@ object Constants {
     const val NOTIFICATION_ACCOUNT_UPDATE = 13
     const val NOTIFICATION_NOTES_SYNC = 14
     const val NOTIFICATION_PERMISSIONS = 20
+    const val NOTIFICATION_NOTES_REMOVAL_REFUSED = 30
 
     val webUri: Uri = Uri.parse("https://silentsuite.io/")
     val webAppUri: Uri = Uri.parse("https://app.silentsuite.io/")

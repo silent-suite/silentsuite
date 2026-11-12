@@ -235,5 +235,6 @@ test('Stage B signs before upload, uses the exact pinned official artifact actio
 })
 test('the correction branch is excluded only from the Docs preview push trigger', () => {
   const text = source('.github/workflows/preview-docs.yml'); const branches = text.match(/branches-ignore:\n([\s\S]*?)\n\s*paths:/)?.[1] ?? ''
-  assert.match(branches, /- main/); assert.match(branches, /- fix\/annual-finalized-artifact-20260905/); assert.equal((branches.match(/^\s+- /gm) ?? []).length, 2); assert.match(text, /push:/); assert.match(text, /paths:/)
+  const entries = (branches.match(/^\s+- .+$/gm) ?? []).map(line => line.replace(/^\s+- /, '').trim())
+  assert.deepEqual(entries, ['main', 'fix/annual-finalized-artifact-20260905', 'fix/server-request-limits-audit-20261107']); assert.match(text, /push:/); assert.match(text, /paths:/)
 })
