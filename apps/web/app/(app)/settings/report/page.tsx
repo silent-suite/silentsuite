@@ -22,12 +22,9 @@ import {
   formatDiagnostics,
   formatReportText,
   reportMailtoHref,
-  shortBuildSha,
   type ReportKind,
   type WebDiagnostics,
 } from '@/app/lib/problem-report'
-
-const IDENTITY_TIMEOUT_MS = 3_000
 
 function storedServerIsCustom(): boolean {
   if (isSelfHosted) return true
@@ -39,7 +36,7 @@ function storedServerIsCustom(): boolean {
 }
 
 /** Reads the current store values once; the result is frozen for the preview and the send. */
-function collectDiagnostics(buildSha: string | undefined): WebDiagnostics {
+function collectDiagnostics(): WebDiagnostics {
   const sync = useSyncStore.getState()
   return buildWebDiagnostics({
     appVersion: DISPLAY_VERSION,
@@ -51,7 +48,6 @@ function collectDiagnostics(buildSha: string | undefined): WebDiagnostics {
     lastSyncedAt: sync.lastSyncedAt,
     domainLoadState: useEtebaseStore.getState().domainLoadState,
     restoreSnapshot: readRestoreDiagnostics(),
-    buildSha,
     nowMs: Date.now(),
   })
 }
@@ -68,60 +64,37 @@ export default function ReportProblemPage() {
   const [description, setDescription] = useState('')
   const [contactEmail, setContactEmail] = useState('')
   const [includeDiagnostics, setIncludeDiagnostics] = useState(true)
-  // undefined while the same-origin build identity is pending, null when unavailable.
-  const [buildSha, setBuildSha] = useState<string | null | undefined>(undefined)
   const [diagnostics, setDiagnostics] = useState<WebDiagnostics | null>(null)
   const [sendState, setSendState] = useState<SendState>('editing')
   const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
   const sendStarted = useRef(false)
 
-  // Build identity is only needed for diagnostics, so nothing is fetched while they are off.
+  // Built from local state only (no network). Frozen when the preview is shown; Send uses it unchanged.
+  // Collected after mount because the stores and storage exist only in the browser.
   useEffect(() => {
-    if (!includeDiagnostics || buildSha !== undefined) return
-    let cancelled = false
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => controller.abort(), IDENTITY_TIMEOUT_MS)
-    fetch('/api/deployment-identity', { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body: { publicSha?: unknown } | null) => {
-        if (!cancelled) setBuildSha(shortBuildSha(body?.publicSha) ?? null)
-      })
-      .catch(() => {
-        if (!cancelled) setBuildSha(null)
-      })
-      .finally(() => window.clearTimeout(timer))
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-      controller.abort()
-    }
-  }, [includeDiagnostics, buildSha])
+    setDiagnostics(collectDiagnostics())
+  }, [])
 
-  // Freeze one snapshot when the preview is shown; Send uses that snapshot unchanged.
-  useEffect(() => {
-    if (!includeDiagnostics) {
-      setDiagnostics(null)
-      return
-    }
-    if (diagnostics || buildSha === undefined) return
-    setDiagnostics(collectDiagnostics(buildSha ?? undefined))
-  }, [includeDiagnostics, buildSha, diagnostics])
+  const setInclude = (on: boolean) => {
+    setIncludeDiagnostics(on)
+    setDiagnostics(on ? collectDiagnostics() : null)
+  }
 
   const report = useMemo(
     () => buildProblemReport({ kind, summary, description, contactEmail, diagnostics: includeDiagnostics ? diagnostics : null }),
     [kind, summary, description, contactEmail, includeDiagnostics, diagnostics],
   )
-  const diagnosticsPending = includeDiagnostics && !diagnostics
-  const ready = report.ok && !diagnosticsPending
+  // Before the mount effect runs, nothing can be sent, emailed or copied.
+  const ready = report.ok && (!includeDiagnostics || diagnostics !== null)
   const locked = sendState !== 'editing'
 
   const chooseKind = (next: ReportKind) => {
     setKind(next)
-    setIncludeDiagnostics(next === 'problem')
+    setInclude(next === 'problem')
   }
 
   const send = async () => {
-    if (!report.ok || diagnosticsPending || sendStarted.current) return
+    if (!ready || sendStarted.current) return
     // One request per report: no automatic retries, and no second Send after an unknown outcome.
     sendStarted.current = true
     setSendState('sending')
@@ -146,7 +119,7 @@ export default function ReportProblemPage() {
   }
 
   const copy = async () => {
-    if (!report.ok) return
+    if (!ready || !report.ok) return
     try {
       if (!navigator.clipboard) throw new Error('Clipboard API unavailable')
       await navigator.clipboard.writeText(formatReportText(report.payload))
@@ -175,16 +148,16 @@ export default function ReportProblemPage() {
   const emailAndCopy = (
     <>
       <a
-        href={report.ok ? reportMailtoHref(report.payload) : undefined}
-        aria-disabled={!report.ok}
+        href={ready && report.ok ? reportMailtoHref(report.payload) : undefined}
+        aria-disabled={!ready}
         onClick={(event) => {
-          if (!report.ok) event.preventDefault()
+          if (!ready) event.preventDefault()
         }}
-        className={`${buttonVariants({ variant: 'secondary', size: 'sm' })} max-md:min-h-[44px] ${report.ok ? '' : 'pointer-events-none opacity-50'}`}
+        className={`${buttonVariants({ variant: 'secondary', size: 'sm' })} max-md:min-h-[44px] ${ready ? '' : 'pointer-events-none opacity-50'}`}
       >
         {t('emailInstead')}
       </a>
-      <Button type="button" variant="secondary" size="sm" className="max-md:min-h-[44px]" disabled={!report.ok} onClick={copy}>
+      <Button type="button" variant="secondary" size="sm" className="max-md:min-h-[44px]" disabled={!ready} onClick={copy}>
         {copyStatus === 'copied' ? t('copied') : copyStatus === 'failed' ? t('copyFailed') : t('copy')}
       </Button>
     </>
@@ -264,12 +237,12 @@ export default function ReportProblemPage() {
             <input
               type="checkbox"
               checked={includeDiagnostics}
-              onChange={(event) => setIncludeDiagnostics(event.target.checked)}
+              onChange={(event) => setInclude(event.target.checked)}
               className="h-4 w-4 rounded border-[rgb(var(--border))] accent-emerald-500"
             />
             {t('includeDiagnostics')}
           </label>
-          {includeDiagnostics && (
+          {includeDiagnostics && diagnostics && (
             <div className="space-y-1">
               <p className="text-xs text-[rgb(var(--muted))]">{t('previewHint')}</p>
               <pre
@@ -277,7 +250,7 @@ export default function ReportProblemPage() {
                 data-testid="report-diagnostics-preview"
                 className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3 font-mono text-xs text-[rgb(var(--foreground))]"
               >
-                {diagnostics ? formatDiagnostics(diagnostics) : t('previewPending')}
+                {formatDiagnostics(diagnostics)}
               </pre>
             </div>
           )}

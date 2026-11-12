@@ -5,7 +5,6 @@ import ReportProblemPage from '../page'
 import { formatDiagnostics } from '@/app/lib/problem-report'
 
 const RELAY = 'https://relay.test/v1/reports'
-const FULL_SHA = '0123456789abcdef0123456789abcdef01234567'
 
 const state = vi.hoisted(() => ({
   sync: {
@@ -36,10 +35,6 @@ type FetchCall = [string, RequestInit | undefined]
 let fetchMock: ReturnType<typeof vi.fn>
 let relayResponse: (init: RequestInit | undefined) => Promise<Response>
 
-function identityResponse() {
-  return Promise.resolve(new Response(JSON.stringify({ publicSha: FULL_SHA }), { status: 200 }))
-}
-
 function relayCalls() {
   return (fetchMock.mock.calls as FetchCall[]).filter(([url]) => url === RELAY)
 }
@@ -62,7 +57,9 @@ describe('Report a problem page', () => {
     localStorage.clear()
     sessionStorage.clear()
     relayResponse = () => Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 201 }))
-    fetchMock = vi.fn((url: string, init?: RequestInit) => (url === RELAY ? relayResponse(init) : identityResponse()))
+    fetchMock = vi.fn((url: string, init?: RequestInit) =>
+      url === RELAY ? relayResponse(init) : Promise.reject(new Error(`unexpected request to ${url}`)),
+    )
     vi.stubGlobal('fetch', fetchMock)
   })
 
@@ -82,7 +79,7 @@ describe('Report a problem page', () => {
     expect(screen.getByRole('link', { name: 'Privacy policy' })).toHaveAttribute('href', 'https://silentsuite.io/privacy#problem-reports')
   })
 
-  it('makes no relay request while opening, editing, toggling diagnostics or switching kind', async () => {
+  it('makes no request of any kind before Send, with diagnostics on, while editing, toggling or switching kind', async () => {
     renderWithIntl(<ReportProblemPage />)
     await previewText()
     fillForm()
@@ -94,18 +91,18 @@ describe('Report a problem page', () => {
     expect(screen.getByLabelText('Include diagnostic info')).toBeChecked()
     await previewText()
 
-    expect(relayCalls()).toHaveLength(0)
-    // The only request before Send is the same-origin build identity, with no user text.
-    for (const [url, init] of fetchMock.mock.calls as FetchCall[]) {
-      expect(url).toBe('/api/deployment-identity')
-      expect(init?.body).toBeUndefined()
-    }
+    expect(screen.getByLabelText('Include diagnostic info')).toBeChecked()
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(await screen.findByText('Thanks, your report was sent.')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(relayCalls()).toHaveLength(1)
   })
 
   it('sends no request at all for a feature request without diagnostics until Send', async () => {
     renderWithIntl(<ReportProblemPage />)
     fireEvent.click(screen.getByLabelText('Feature request'))
-    fetchMock.mockClear()
     fillForm()
     expect(fetchMock).not.toHaveBeenCalled()
 
@@ -125,7 +122,7 @@ describe('Report a problem page', () => {
   it('sends the frozen diagnostics shown in the preview, byte for byte', async () => {
     renderWithIntl(<ReportProblemPage />)
     const shown = await previewText()
-    expect(shown).toContain('"build_sha": "0123456789ab"')
+    expect(shown).not.toContain('build_sha')
 
     // Store changes after the preview is shown must not change what is sent.
     act(() => {
@@ -176,13 +173,5 @@ describe('Report a problem page', () => {
     expect(screen.getByRole('link', { name: 'Email instead' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Copy' })).toBeEnabled()
     expect(relayCalls()).toHaveLength(1)
-  })
-
-  it('omits build_sha when the identity endpoint is unavailable', async () => {
-    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
-      url === RELAY ? relayResponse(init) : Promise.resolve(new Response('{}', { status: 503 })),
-    )
-    renderWithIntl(<ReportProblemPage />)
-    expect(await previewText()).not.toContain('build_sha')
   })
 })

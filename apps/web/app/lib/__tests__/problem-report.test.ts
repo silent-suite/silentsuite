@@ -11,7 +11,6 @@ import {
   platformLabel,
   reportMailtoHref,
   restoreStatus,
-  shortBuildSha,
   utf8Bytes,
   type DiagnosticsInput,
   type ProblemReportPayload,
@@ -35,7 +34,6 @@ function diagnosticsInput(overrides: Partial<DiagnosticsInput> = {}): Diagnostic
     lastSyncedAt: new Date(NOW - 5 * 60 * 1000),
     domainLoadState: { calendar: 'loaded', contacts: 'loaded', tasks: 'loaded', notes: 'unknown', preferences: 'loaded' },
     restoreSnapshot: null,
-    buildSha: undefined,
     nowMs: NOW,
     ...overrides,
   }
@@ -85,7 +83,7 @@ function expectMatchesSchema(payload: ProblemReportPayload) {
 
 describe('buildWebDiagnostics', () => {
   it('returns only allowlisted keys and coarse values', () => {
-    const d = buildWebDiagnostics(diagnosticsInput({ buildSha: 'abcdef012345' }))
+    const d = buildWebDiagnostics(diagnosticsInput())
     expect(d).toEqual({
       app_version: '0.5.18-beta',
       platform: 'firefox-linux',
@@ -94,7 +92,6 @@ describe('buildWebDiagnostics', () => {
       last_success: 'under_1h',
       error_codes: [],
       fields: {
-        build_sha: 'abcdef012345',
         domain_calendar: 'loaded',
         domain_contacts: 'loaded',
         domain_tasks: 'loaded',
@@ -188,15 +185,11 @@ describe('buildWebDiagnostics', () => {
     expect(platformLabel('Private_Meeting_Title')).toBe('other-other')
   })
 
-  it('derives restore status and the build sha from validated values only', () => {
+  it('derives restore status from status values only', () => {
     expect(restoreStatus(null)).toBe('none')
     expect(restoreStatus({ failedPhase: null, entries: [{ status: 'ok' }] })).toBe('ok')
     expect(restoreStatus({ failedPhase: null, entries: [{ status: 'skipped' }] })).toBe('skipped')
     expect(restoreStatus({ failedPhase: 'unknown', entries: [] })).toBe('failed')
-    expect(shortBuildSha('0123456789abcdef0123456789abcdef01234567')).toBe('0123456789ab')
-    expect(shortBuildSha('not-a-sha')).toBeUndefined()
-    expect(shortBuildSha('https://example.org/0123456789abcdef0123456789abcdef01234567')).toBeUndefined()
-    expect(buildWebDiagnostics(diagnosticsInput({ buildSha: 'XYZ' })).fields).not.toHaveProperty('build_sha')
   })
 })
 
@@ -219,7 +212,6 @@ describe('buildProblemReport', () => {
     expect(contactEmail).toHaveLength(254)
     const diagnostics = buildWebDiagnostics(
       diagnosticsInput({
-        buildSha: '0123456789ab',
         syncError: 'x',
         domainLoadState: { calendar: 'failed', contacts: 'failed', tasks: 'failed', notes: 'failed' },
         restoreSnapshot: { failedPhase: 'unknown', entries: [] },

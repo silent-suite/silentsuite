@@ -40,7 +40,6 @@ export type SyncStatusBucket = 'synced' | 'syncing' | 'offline' | 'error' | 'unk
 export type LastSuccessBucket = 'under_1h' | 'under_1d' | 'under_7d' | 'over_7d' | 'never' | 'unknown'
 
 export interface WebDiagnosticsFields {
-  build_sha?: string
   domain_calendar: DomainLoad
   domain_contacts: DomainLoad
   domain_tasks: DomainLoad
@@ -161,11 +160,6 @@ export function restoreStatus(
   return 'ok'
 }
 
-/** 7–12 lowercase hex characters from a full deployment SHA, or undefined. */
-export function shortBuildSha(publicSha: unknown): string | undefined {
-  return typeof publicSha === 'string' && /^[0-9a-f]{40}$/.test(publicSha) ? publicSha.slice(0, 12) : undefined
-}
-
 export interface DiagnosticsInput {
   appVersion: string
   userAgent: string | undefined
@@ -176,7 +170,6 @@ export interface DiagnosticsInput {
   lastSyncedAt: Date | null | undefined
   domainLoadState: Partial<Record<string, unknown>> | null | undefined
   restoreSnapshot: Parameters<typeof restoreStatus>[0]
-  buildSha?: string
   nowMs: number
 }
 
@@ -199,7 +192,6 @@ export function buildWebDiagnostics(input: DiagnosticsInput): WebDiagnostics {
   if (restore === 'failed') addCode('restore_failed')
 
   const appVersion = /^[A-Za-z0-9._+-]{1,32}$/.test(input.appVersion) ? input.appVersion : 'unknown'
-  const buildSha = typeof input.buildSha === 'string' && /^[0-9a-f]{7,12}$/.test(input.buildSha) ? input.buildSha : undefined
 
   return {
     app_version: appVersion,
@@ -209,7 +201,6 @@ export function buildWebDiagnostics(input: DiagnosticsInput): WebDiagnostics {
     last_success: lastSuccessBucket(input.lastSyncedAt, input.nowMs),
     error_codes: codes,
     fields: {
-      ...(buildSha ? { build_sha: buildSha } : {}),
       domain_calendar: domainStates.calendar,
       domain_contacts: domainStates.contacts,
       domain_tasks: domainStates.tasks,
