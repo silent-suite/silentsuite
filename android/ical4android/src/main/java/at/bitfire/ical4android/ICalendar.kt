@@ -8,12 +8,14 @@
 
 package at.bitfire.ical4android
 
+import io.silentsuite.ical4j.SystemVTimeZones
 import net.fortuna.ical4j.data.CalendarBuilder
 import net.fortuna.ical4j.data.ParserException
 import net.fortuna.ical4j.model.Calendar
 import net.fortuna.ical4j.model.Date
 import net.fortuna.ical4j.model.Parameter
 import net.fortuna.ical4j.model.Property
+import net.fortuna.ical4j.model.TimeZone
 import net.fortuna.ical4j.model.component.*
 import net.fortuna.ical4j.model.parameter.Related
 import net.fortuna.ical4j.model.property.*
@@ -105,6 +107,19 @@ open class ICalendar {
 
 
         // time zone helpers
+
+        /**
+         * The VTIMEZONE to write for [tz]. For a tz database ID it's generated from the platform's
+         * current rules, which the (patched) ical4j also uses to compute the written times, so
+         * clients that read the definition get the same instants; the bundled 2020b definition
+         * would contradict them (for instance America/Vancouver since November 2026). Other IDs
+         * keep their own definition, minified.
+         *
+         * @param tz    time zone of written date-times
+         * @param start earliest written date (usually DTSTART); *null* if unknown
+         */
+        fun vTimeZoneFor(tz: TimeZone, start: Date?): VTimeZone =
+            SystemVTimeZones.forId(tz.id, start?.time) ?: minifyVTimeZone(tz.vTimeZone, start)
 
         /**
          * Minifies a VTIMEZONE so that only these observances are kept:
