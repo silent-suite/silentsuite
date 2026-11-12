@@ -247,7 +247,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("source")
     p.add_argument("--sha", required=True)
     p.add_argument("--policy", required=True, type=Path, help="the platform policy")
-    p.add_argument("--records", required=True, type=Path, help="JSON list of source records (file, sha256, url)")
+    p.add_argument("--records", required=True, type=Path, help="source records (file, sha256, url): a list, or the grouped source-archives.json")
     p.add_argument("--verification", required=True, type=Path, help="the source-materials job's receipt")
     p.add_argument("--out", required=True, type=Path)
     p = sub.add_parser("build-info")
@@ -265,7 +265,10 @@ def main(argv=None) -> int:
             for name in fill(args.root, args.sha):
                 print(f"filled {name}")
         elif args.command == "source":
-            text = source_text(args.sha, _load(args.policy), _load(args.records), _load(args.verification))
+            policy, records = _load(args.policy), _load(args.records)
+            if isinstance(records, dict):  # grouped source-archives.json: shared plus this platform
+                records = list(records.get("shared") or []) + list(records.get(policy.get("platform")) or [])
+            text = source_text(args.sha, policy, records, _load(args.verification))
             args.out.write_text(text, encoding="utf-8", newline="\n")
         elif args.command == "build-info":
             info = build_info(args.sha, args.platform, args.bundle, _load(args.extra) if args.extra else {})

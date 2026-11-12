@@ -1,0 +1,313 @@
+name: Build Bridge desktop dev archives (experimental, owner-gated uploads)
+
+# S2b-2 caller for #171 (s2-delivery-plan-v9 section 2). One push to the feature
+# branch runs every required check at this SHA, then the source job, then the
+# package job per platform: build, frozen tests, facts, licence gate, archive.
+# Experimental, unsigned development archives: no release, tag, signing,
+# deployment or secret.
+#
+# Upload safeguard: every gate runs on every push, but nothing is uploaded unless
+# the owner has approved publishing this exact commit by setting the repository
+# variable BRIDGE_DESKTOP_DEV_PUBLISH_SHA to it (then re-running this workflow).
+# Binaries upload only after this run's sources uploaded.
+
+on:
+  push:
+    branches: [feat/bridge-gui-171]
+    paths:
+      - '.github/workflows/build-bridge-desktop-dev.yml'
+      - '.github/workflows/test-bridge-desktop-dev.yml'
+      - '.github/workflows/test-bridge-linux.yml'
+      - '.github/workflows/test-bridge-windows.yml'
+      - '.github/workflows/test-bridge-macos.yml'
+      - '.github/workflows/test-bridge-desktop.yml'
+      - '.github/workflows/test-bridge-desktop-frozen.yml'
+      - 'bridge/tests/test_desktop_dev_build_workflow.py'
+      - 'bridge/tests/test_desktop_dev_licence_gate.py'
+      - 'bridge/tests/test_desktop_frozen.py'
+      - 'bridge/dev-build/**'
+      - 'bridge/entrypoint_desktop.py'
+      - 'bridge/silentsuite-bridge-desktop.spec'
+      - 'bridge/pyproject.toml'
+      - 'bridge/tests/desktop_smoke/requirements.txt'
+      - 'bridge/src/silentsuite_bridge/**'
+      - 'tests/test_reusable_workflow_caller_permissions.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-desktop-dev-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-bridge-linux.yml
+    with:
+      suppress_cli_artifact_upload: true
+
+  windows:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-bridge-windows.yml
+
+  macos:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-bridge-macos.yml
+
+  desktop:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-bridge-desktop.yml
+    with:
+      caller: build-bridge-desktop-dev
+
+  frozen:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-bridge-desktop-frozen.yml
+    with:
+      caller: build-bridge-desktop-dev
+
+  dev:
+    permissions:
+      contents: read
+    uses: ./.github/workflows/test-bridge-desktop-dev.yml
+    with:
+      caller: build-bridge-desktop-dev
+
+  source-materials:
+    name: Source materials
+    needs: [linux, windows, macos, desktop, frozen, dev]
+    if: success()
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      receipt: ${{ steps.verify-sources.outputs.receipt }}
+      sources_uploaded: ${{ steps.upload-sources.conclusion == 'success' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Fetch the source archives and the git archive of this commit
+        id: fetch-sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/sources"
+          mkdir -p "$dir"
+          git archive --format=tar.gz --prefix="silentsuite-bridge-$GITHUB_SHA/" \
+            -o "$dir/silentsuite-bridge-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
+          python bridge/dev-build/source_materials.py fetch --records bridge/dev-build/notices/source-archives.json \
+            --platforms linux-x86_64,windows-x86_64 --dir "$dir"
+
+      - name: Verify sizes, SHA256 and publisher signatures
+        id: verify-sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/sources"
+          python -m pip install --disable-pip-version-check sigstore==3.6.1
+          python bridge/dev-build/source_materials.py verify --records bridge/dev-build/notices/source-archives.json \
+            --platforms linux-x86_64,windows-x86_64 --dir "$dir" \
+            --application "$dir/silentsuite-bridge-$GITHUB_SHA.tar.gz" --git-sha "$GITHUB_SHA" \
+            --artifact "bridge-desktop-dev-sources-$GITHUB_SHA" --out "$dir/source-verification.json"
+          echo "receipt=$(base64 -w0 "$dir/source-verification.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload source materials (only with the owner's approval of this commit)
+        id: upload-sources
+        if: ${{ vars.BRIDGE_DESKTOP_DEV_PUBLISH_SHA == github.sha }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bridge-desktop-dev-sources-${{ github.sha }}
+          path: ${{ runner.temp }}/sources/
+          if-no-files-found: error
+          retention-days: 14
+
+  package:
+    name: Package (${{ matrix.label }})
+    needs: [source-materials]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            label: linux-x86_64
+          - runner: windows-latest
+            label: windows-x86_64
+    env:
+      QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu
+      PYTHONDONTWRITEBYTECODE: '1'
+      SILENTSUITE_REQUIRE_DESKTOP_FROZEN: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: "1.63.0"
+
+      - name: Install Linux display and Qt runtime libraries (runner only)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            xvfb xauth libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 \
+            libxcb-xkb1 libegl1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
+            libxkbfile1 libasound2
+
+      - name: Install dependencies
+        working-directory: bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" || pip install -e .
+          pip install pytest
+          pip install -r tests/desktop_smoke/requirements.txt
+          pip install pyinstaller
+
+      - name: Build the bundler control and the canonical desktop app
+        id: build
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/frozen"
+          mkdir -p "$out" "$RUNNER_TEMP/pkg"
+          python -m PyInstaller --version > "$out/pyinstaller-version.txt"
+          python -m PyInstaller --noconfirm --onedir --name t0-probe \
+            --distpath "$out/t0-dist" --workpath "$out/t0-build" --specpath "$out/t0-spec" \
+            bridge/tests/desktop_smoke/probe.py > "$out/t0-build.log" 2>&1
+          echo 0 > "$out/t0-build.rc"
+          (cd bridge && python -m PyInstaller silentsuite-bridge-desktop.spec --noconfirm --clean \
+            --distpath "$out/dist" --workpath "$out/build") > "$out/canonical-build.log" 2>&1
+          echo 0 > "$out/canonical-build.rc"
+
+      - name: Run the frozen startup tests on this build
+        id: frozen-tests
+        timeout-minutes: 20
+        working-directory: bridge
+        shell: bash
+        env:
+          SILENTSUITE_FROZEN_OUT: ${{ runner.temp }}/frozen
+        run: |
+          set -uo pipefail
+          cmd=(python -m pytest tests/test_desktop_frozen.py -v --tb=short -p no:cacheprovider)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a -s "-screen 0 1280x800x24" "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/pkg/frozen-pytest.txt"
+          else
+            "${cmd[@]}" 2>&1 | tee "$RUNNER_TEMP/pkg/frozen-pytest.txt"
+          fi
+          exit "${PIPESTATUS[0]}"
+
+      - name: Collect bundle facts
+        id: facts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python bridge/dev-build/collect_bundle_facts.py --dist "$RUNNER_TEMP/frozen/dist" \
+            --workpath "$RUNNER_TEMP/frozen/build" --out "$RUNNER_TEMP/pkg/facts.json"
+
+      # Assemble the texts beside the bundle, then gate them against the facts.
+      - name: Assemble the archive texts and run the licence gate
+        id: licence-gate
+        shell: bash
+        env:
+          SOURCE_RECEIPT: ${{ needs.source-materials.outputs.receipt }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pkg/root"
+          mkdir -p "$root"
+          cp -R bridge/dev-build/notices/NOTICES "$root/NOTICES"
+          for other in linux-x86_64 windows-x86_64; do
+            if [ "$other" != "${{ matrix.label }}" ]; then rm -rf "$root/NOTICES/$other"; fi
+          done
+          cp bridge/dev-build/README-dev-build.txt "$root/README-dev-build.txt"
+          python bridge/dev-build/archive_texts.py fill --root "$root" --sha "$GITHUB_SHA"
+          python -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['SOURCE_RECEIPT']))" \
+            > "$RUNNER_TEMP/pkg/source-verification.json"
+          python bridge/dev-build/archive_texts.py source --sha "$GITHUB_SHA" \
+            --policy "bridge/dev-build/notices/policy-${{ matrix.label }}.json" \
+            --records bridge/dev-build/notices/source-archives.json \
+            --verification "$RUNNER_TEMP/pkg/source-verification.json" --out "$root/SOURCE.txt"
+          python bridge/dev-build/licence_gate.py --facts "$RUNNER_TEMP/pkg/facts.json" \
+            --policy bridge/dev-build/notices/policy.json --archive-root "$root" \
+            --source-receipt "$RUNNER_TEMP/pkg/source-verification.json"
+
+      # The program folder goes in unchanged beside the texts; the archive is
+      # extracted again and every program file re-verified against BUILD-INFO.json.
+      - name: Write BUILD-INFO.json, archive and re-verify
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/pkg/root"
+          bundle_name=$(cd "$RUNNER_TEMP/frozen/dist" && ls)
+          python - "$RUNNER_TEMP/pkg/extra.json" <<'PY'
+          import hashlib, importlib.metadata as md, json, os, platform, subprocess, sys
+          freeze = subprocess.run([sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True, check=True).stdout
+          extra = {
+              "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "workflow": os.environ["GITHUB_WORKFLOW_REF"], "runner_image": os.environ.get("ImageOS"),
+              "runner_image_version": os.environ.get("ImageVersion"), "python": platform.python_version(),
+              "packages": {name: md.version(name) for name in ("PySide6", "shiboken6", "pyinstaller")},
+              "pip_freeze_sha256": hashlib.sha256(freeze.encode("utf-8")).hexdigest(),
+          }
+          json.dump(extra, open(sys.argv[1], "w", encoding="utf-8"), indent=2, sort_keys=True)
+          PY
+          python bridge/dev-build/archive_texts.py build-info --sha "$GITHUB_SHA" --platform "${{ matrix.label }}" \
+            --bundle "$RUNNER_TEMP/frozen/dist/$bundle_name" --extra "$RUNNER_TEMP/pkg/extra.json" \
+            --out "$root/BUILD-INFO.json"
+          cp -R "$RUNNER_TEMP/frozen/dist/$bundle_name" "$root/$bundle_name"
+          mkdir -p "$RUNNER_TEMP/pkg/out" "$RUNNER_TEMP/pkg/check"
+          base="silentsuite-bridge-desktop-dev-${{ matrix.label }}-$GITHUB_SHA"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            tar -czf "$RUNNER_TEMP/pkg/out/$base.tar.gz" -C "$root" .
+            tar -xzf "$RUNNER_TEMP/pkg/out/$base.tar.gz" -C "$RUNNER_TEMP/pkg/check"
+          else
+            python -c "import shutil, sys; shutil.make_archive(sys.argv[1], 'zip', sys.argv[2])" \
+              "$RUNNER_TEMP/pkg/out/$base" "$root"
+            python -c "import shutil, sys; shutil.unpack_archive(sys.argv[1], sys.argv[2])" \
+              "$RUNNER_TEMP/pkg/out/$base.zip" "$RUNNER_TEMP/pkg/check"
+          fi
+          python bridge/dev-build/archive_texts.py verify --build-info "$RUNNER_TEMP/pkg/check/BUILD-INFO.json" \
+            --bundle "$RUNNER_TEMP/pkg/check/$bundle_name"
+          (cd "$RUNNER_TEMP/pkg/out" && sha256sum "$base".* | tee SHA256SUMS)
+
+      - name: Upload the archive (only with the owner's approval of this commit)
+        id: upload
+        if: ${{ needs.source-materials.outputs.sources_uploaded == 'true' && vars.BRIDGE_DESKTOP_DEV_PUBLISH_SHA == github.sha }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bridge-desktop-dev-${{ matrix.label }}-${{ github.sha }}
+          path: ${{ runner.temp }}/pkg/out/
+          if-no-files-found: error
+          retention-days: 14
