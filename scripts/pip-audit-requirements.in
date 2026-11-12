@@ -1,0 +1,4 @@
+# Audit tool for the CI dependency audit. Kept outside server/ so it is never
+# copied into the server image. scripts/pip-audit-requirements.txt is the
+# hash-locked resolution of this file.
+pip-audit==2.10.1

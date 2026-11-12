@@ -1,0 +1,1 @@
+Migliora gli strumenti di build di Android (build tooling) in modo che il rilascio possa essere ricompilato e verificato su un numero maggiore di toolchain Java 17.

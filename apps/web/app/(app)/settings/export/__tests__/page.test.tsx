@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
+import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import { act, render, screen, fireEvent } from '@testing-library/react'
 import { toVEvent, toVTodo, toVCard } from '@silentsuite/core'
 import { showErrorToast, showWarningToast } from '@/app/stores/use-toast-store'
 import JSZip from 'jszip'
@@ -163,6 +165,41 @@ vi.mock('jszip', () => {
       }
     }),
   }
+})
+
+// ── WEB-07 fixture addition: per-domain load state ──
+// Mirrors the real zustand hook: callable with a selector and exposing
+// getState(). State keys and values are the real DomainLoadState ones from
+// use-etebase-store. Default: every exported domain loaded, so the existing
+// tests above see a complete view. Only the WEB-07 block below changes it.
+const etebaseMock = vi.hoisted(() => {
+  type DomainStatus = 'unknown' | 'loaded' | 'failed'
+  const loadedState = () => ({
+    isInitialized: true,
+    restoreBlocked: false,
+    domainLoadState: {
+      calendar: 'loaded',
+      tasks: 'loaded',
+      contacts: 'loaded',
+      notes: 'loaded',
+      preferences: 'unknown',
+    } as Record<'calendar' | 'tasks' | 'contacts' | 'notes' | 'preferences', DomainStatus>,
+  })
+  return { loadedState, state: loadedState() }
+})
+
+vi.mock('@/app/stores/use-etebase-store', () => ({
+  useEtebaseStore: Object.assign(
+    (selector: (s: typeof etebaseMock.state) => unknown) => selector(etebaseMock.state),
+    { getState: () => etebaseMock.state },
+  ),
+}))
+
+// Default for every test: each exported domain's loaded server snapshot has
+// reached its UI store for the current account (real store, real epoch).
+beforeEach(() => {
+  const epoch = getAccountEpoch()
+  useDomainSnapshotStore.setState({ appliedEpoch: { calendar: epoch, tasks: epoch, contacts: epoch } })
 })
 
 // Mock URL.createObjectURL and URL.revokeObjectURL
@@ -627,5 +664,249 @@ describe('ExportPage', () => {
     expect(vi.mocked(toVEvent)).toHaveBeenCalledTimes(2)
     expect(clickedLink).not.toBeNull()
     expect(clickedLink!.download).toBe('silentsuite-export.zip')
+  })
+})
+
+// ── Export completeness (WEB-07) ──
+// An export may only include a domain whose server view has fully loaded
+// (domainLoadState === 'loaded'). 'failed' and 'unknown' domains are refused
+// both by the disabled button and inside the click handler, with a visible
+// reason. Notes and preferences are not exported and do not gate anything.
+// 'loaded' means the last full enumeration in this session succeeded; it is
+// not proof of every historical server item.
+
+describe('ExportPage export completeness (WEB-07)', () => {
+  let downloads: HTMLAnchorElement[] = []
+
+  const button = (name: RegExp) => screen.getByText(name).closest('button')!
+  const downloaded = () => downloads.map((a) => a.download)
+  const statusText = () =>
+    screen.queryAllByRole('status').map((el) => el.textContent ?? '').join(' ')
+  const refusalToasts = () =>
+    vi.mocked(showWarningToast).mock.calls.length + vi.mocked(showErrorToast).mock.calls.length
+
+  beforeEach(() => {
+    downloads = []
+    resetMockData()
+    etebaseMock.state = etebaseMock.loadedState()
+    // Same per-test reset as the ExportPage block above.
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+    ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => 'blob:mock')
+    ;(URL.revokeObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => {})
+    const originalCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag)
+      if (tag === 'a') {
+        downloads.push(el as HTMLAnchorElement)
+        vi.spyOn(el, 'click').mockImplementation(() => {})
+      }
+      return el
+    })
+  })
+
+  it('disables and refuses the calendar export while the calendar domain failed to load', () => {
+    etebaseMock.state.domainLoadState.calendar = 'failed'
+    render(<ExportPage />)
+
+    expect(button(/Export Calendar/)).toBeDisabled()
+    fireEvent.click(button(/Export Calendar/))
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(statusText()).toMatch(/calendar/i)
+  })
+
+  it('refuses a per-type export in the click handler when the domain is no longer loaded', () => {
+    render(<ExportPage />)
+    expect(button(/Export Tasks/)).not.toBeDisabled()
+
+    // The load state changes after render and before the click.
+    etebaseMock.state.domainLoadState.tasks = 'failed'
+    fireEvent.click(button(/Export Tasks/))
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(downloaded()).toEqual([])
+    expect(refusalToasts()).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['calendar', /calendar/i],
+    ['tasks', /task/i],
+    ['contacts', /contact/i],
+  ] as const)('disables and refuses the all-data ZIP while %s failed to load', (domain, label) => {
+    etebaseMock.state.domainLoadState[domain] = 'failed'
+    render(<ExportPage />)
+
+    expect(button(/Export All Data/)).toBeDisabled()
+    fireEvent.click(button(/Export All Data/))
+    expect(vi.mocked(JSZip)).not.toHaveBeenCalled()
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(statusText()).toMatch(label)
+  })
+
+  it('refuses the all-data ZIP in the click handler when a domain is no longer loaded', async () => {
+    render(<ExportPage />)
+    expect(button(/Export All Data/)).not.toBeDisabled()
+
+    etebaseMock.state.domainLoadState.contacts = 'failed'
+    fireEvent.click(button(/Export All Data/))
+
+    // The current handler builds the archive synchronously before its first await.
+    expect(vi.mocked(JSZip)).not.toHaveBeenCalled()
+    await Promise.resolve()
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(refusalToasts()).toBeGreaterThan(0)
+  })
+
+  it.each([
+    ['while initialization is running', false],
+    ['after initialization ended without loading it', true],
+  ])('treats an unknown calendar domain as not exportable %s', (_when, isInitialized) => {
+    etebaseMock.state.isInitialized = isInitialized
+    etebaseMock.state.domainLoadState.calendar = 'unknown'
+    render(<ExportPage />)
+
+    expect(button(/Export Calendar/)).toBeDisabled()
+    expect(button(/Export All Data/)).toBeDisabled()
+    expect(statusText()).toMatch(/calendar/i)
+  })
+
+  it('re-enables export once a failed domain loads, without a reload', () => {
+    etebaseMock.state.domainLoadState.calendar = 'failed'
+    const { rerender } = render(<ExportPage />)
+    expect(button(/Export Calendar/)).toBeDisabled()
+
+    etebaseMock.state.domainLoadState.calendar = 'loaded'
+    rerender(<ExportPage />)
+
+    expect(button(/Export Calendar/)).not.toBeDisabled()
+    fireEvent.click(button(/Export Calendar/))
+    expect(downloaded()).toEqual(['silentsuite-calendar.ics'])
+    expect(statusText()).not.toMatch(/calendar/i)
+  })
+
+  it('control: keeps exports of loaded domains available when another domain failed', () => {
+    etebaseMock.state.domainLoadState.calendar = 'failed'
+    render(<ExportPage />)
+
+    expect(button(/Export Tasks/)).not.toBeDisabled()
+    expect(button(/Export Contacts/)).not.toBeDisabled()
+    fireEvent.click(button(/Export Tasks/))
+    fireEvent.click(button(/Export Contacts/))
+    expect(downloaded()).toEqual(['silentsuite-tasks.ics', 'silentsuite-contacts.vcf'])
+  })
+
+  it('control: Notes and preferences load state does not affect calendar, task or contact exports', async () => {
+    etebaseMock.state.domainLoadState.notes = 'failed'
+    etebaseMock.state.domainLoadState.preferences = 'unknown'
+    render(<ExportPage />)
+
+    for (const name of [/Export Calendar/, /Export Tasks/, /Export Contacts/, /Export All Data/]) {
+      expect(button(name)).not.toBeDisabled()
+    }
+    expect(statusText()).toBe('')
+    fireEvent.click(button(/Export All Data/))
+    await vi.waitFor(() => expect(downloaded()).toContain('silentsuite-export.zip'))
+  })
+
+  it('control: a loaded domain with no items is exported as an empty calendar in the all-data ZIP', async () => {
+    mockData.events = []
+    render(<ExportPage />)
+
+    expect(button(/Export Calendar/)).toBeDisabled()
+    expect(button(/Export All Data/)).not.toBeDisabled()
+    fireEvent.click(button(/Export All Data/))
+    await vi.waitFor(() => expect(downloaded()).toContain('silentsuite-export.zip'))
+
+    const zip = vi.mocked(JSZip).mock.results.at(-1)!.value as { file: ReturnType<typeof vi.fn> }
+    const entry = zip.file.mock.calls.find((call) => call[0] === 'silentsuite-calendar.ics')![1] as Uint8Array
+    expect(new TextDecoder().decode(entry)).toBe(
+      'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//SilentSuite//EN\r\nEND:VCALENDAR',
+    )
+  })
+})
+
+// ── WEB-07 review follow-up: loaded on the server, not yet in the store ──
+// domainLoadState turns 'loaded' before the decrypted items reach the task,
+// contact and calendar stores (initial decryption, or Retry while another
+// domain is still refreshing). Until then the page must treat the domain as
+// still loading, or it would export cached or empty arrays.
+
+describe('ExportPage waits for the loaded snapshot to reach the store (WEB-07)', () => {
+  let downloads: HTMLAnchorElement[] = []
+  const button = (name: RegExp) => screen.getByText(name).closest('button')!
+  const statusText = () => screen.queryAllByRole('status').map((el) => el.textContent ?? '').join(' ')
+
+  beforeEach(() => {
+    downloads = []
+    resetMockData()
+    etebaseMock.state = etebaseMock.loadedState()
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+    ;(URL.createObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => 'blob:mock')
+    ;(URL.revokeObjectURL as ReturnType<typeof vi.fn>).mockImplementation(() => {})
+    const originalCreateElement = document.createElement.bind(document)
+    vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreateElement(tag)
+      if (tag === 'a') {
+        downloads.push(el as HTMLAnchorElement)
+        vi.spyOn(el, 'click').mockImplementation(() => {})
+      }
+      return el
+    })
+  })
+
+  const unapply = (domain: 'calendar' | 'tasks' | 'contacts') => {
+    const { [domain]: _dropped, ...rest } = useDomainSnapshotStore.getState().appliedEpoch
+    useDomainSnapshotStore.setState({ appliedEpoch: rest })
+  }
+
+  it('disables a loaded domain whose snapshot has not reached its store, and says it is still loading', () => {
+    unapply('tasks')
+    render(<ExportPage />)
+
+    expect(button(/Export Tasks/)).toBeDisabled()
+    expect(button(/Export All/)).toBeDisabled()
+    expect(button(/Export Calendar/)).not.toBeDisabled()
+    expect(statusText()).toMatch(/Tasks is still loading/)
+  })
+
+  it('refuses in the click handler when the snapshot has not reached the store', () => {
+    render(<ExportPage />)
+    expect(button(/Export Contacts/)).not.toBeDisabled()
+
+    unapply('contacts')
+    fireEvent.click(button(/Export Contacts/))
+
+    expect(URL.createObjectURL).not.toHaveBeenCalled()
+    expect(downloads).toEqual([])
+    expect(vi.mocked(showWarningToast)).toHaveBeenCalled()
+  })
+
+  it('refuses the ZIP in the click handler when any snapshot has not reached its store', () => {
+    render(<ExportPage />)
+    unapply('calendar')
+    fireEvent.click(button(/Export All/))
+
+    expect(vi.mocked(JSZip)).not.toHaveBeenCalled()
+    expect(downloads).toEqual([])
+  })
+
+  it('enables the export once the snapshot is marked for the current account', () => {
+    unapply('tasks')
+    render(<ExportPage />)
+    expect(button(/Export Tasks/)).toBeDisabled()
+
+    act(() => useDomainSnapshotStore.getState().markApplied('tasks', getAccountEpoch()))
+
+    expect(button(/Export Tasks/)).not.toBeDisabled()
+  })
+
+  it('does not trust a mark from a previous account', () => {
+    bumpAccountEpoch()
+    render(<ExportPage />)
+
+    expect(button(/Export Calendar/)).toBeDisabled()
+    expect(button(/Export Tasks/)).toBeDisabled()
+    expect(button(/Export Contacts/)).toBeDisabled()
   })
 })

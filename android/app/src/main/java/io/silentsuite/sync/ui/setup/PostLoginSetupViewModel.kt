@@ -5,6 +5,8 @@ import android.accounts.AccountManager
 import android.app.Application
 import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.viewModelScope
@@ -17,6 +19,7 @@ import io.silentsuite.sync.Constants
 import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.ui.ActiveAccountManager
+import io.silentsuite.sync.ui.NotesRemovalNotice
 import io.silentsuite.sync.utils.AndroidCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -161,7 +164,21 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
         val registry = AccountCreationRegistry.open(appContext)
         val defaults = object : RecoveryRemovalCoordinator.Seams {
             override fun ownsExact() = AccountCreationRegistry.owns(registry.get(account.type, account.name), creationId)
-            override fun begin(callback: (Boolean) -> Unit) = AndroidCompat.removeAccount(manager, account, callback)
+            // The guard for unsynced Notes first, off the main thread: removeAccountExplicitly never asks the
+            // authenticator.
+            override fun begin(callback: (Boolean) -> Unit) {
+                viewModelScope.launch(Dispatchers.IO) {
+                    GuardedRecoveryRemoval.begin(
+                        allows = { hold -> GuardedRecoveryRemoval.allowsOnDevice(appContext, account, hold) },
+                        exact = { GuardedRecoveryRemoval.exactOnDevice(appContext, account, creationId) },
+                        remove = { done ->
+                            val cleared = NotesRemovalNotice.clearAfter(appContext, done)
+                            AndroidCompat.removeAccount(manager, account, cleared)
+                        },
+                        onMain = { Handler(Looper.getMainLooper()).post(it) },
+                        callback = callback)
+                }
+            }
             override fun rowAbsent() = account !in manager.getAccountsByType(account.type)
             override fun clearOwned() = registry.clearOwned(account.type, account.name, creationId)
             override fun clearActive() = ActiveAccountManager.clearIfActive(appContext, account.name, creationId)

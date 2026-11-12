@@ -914,3 +914,807 @@ describe('CATEGORIES (VTodo)', () => {
     expect(generateVTodo(empty)).not.toContain('CATEGORIES');
   });
 });
+
+// ── VTODO nested components (WEBX-02) ──
+// Properties inside a subcomponent (VALARM or any other nested block) belong to
+// that subcomponent, never to the task. These tests only cover which values the
+// parser assigns to the VTODO; they make no claim that subcomponents are kept.
+
+describe('parseVTodo nested components (WEBX-02)', () => {
+  const emailAlarm = [
+    'BEGIN:VALARM',
+    'ACTION:EMAIL',
+    'UID:alarm-uid-1',
+    'SUMMARY:Alarm subject',
+    'DESCRIPTION:Reminder body',
+    'ATTENDEE:mailto:someone@example.com',
+    'TRIGGER:-PT15M',
+    'END:VALARM',
+  ];
+
+  it('keeps parent UID, SUMMARY and DESCRIPTION when a bare VTODO has a conflicting VALARM', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-1',
+      'SUMMARY:Pay rent',
+      'DESCRIPTION:Real description',
+      ...emailAlarm,
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-1');
+    expect(todo.summary).toBe('Pay rent');
+    expect(todo.description).toBe('Real description');
+  });
+
+  it('keeps parent UID, SUMMARY and DESCRIPTION inside a full VCALENDAR with a conflicting VALARM', () => {
+    const ical = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Example//Other Client//EN',
+      'BEGIN:VTODO',
+      'UID:task-1',
+      'SUMMARY:Pay rent',
+      'DESCRIPTION:Real description',
+      ...emailAlarm,
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-1');
+    expect(todo.summary).toBe('Pay rent');
+    expect(todo.description).toBe('Real description');
+  });
+
+  it('ignores properties in multiple and nested subcomponents and resumes top-level parsing after them', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-2',
+      'SUMMARY:Parent summary',
+      'DESCRIPTION:Parent description',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:First alarm',
+      'BEGIN:X-INNER',
+      'SUMMARY:Inner summary',
+      'CATEGORIES:InnerOnly',
+      'END:X-INNER',
+      // Still inside the first VALARM after the inner block ends.
+      'UID:alarm-after-inner',
+      'URL:https://alarm.example.com',
+      'TRIGGER:-PT5M',
+      'END:VALARM',
+      'BEGIN:VALARM',
+      'ACTION:EMAIL',
+      'SUMMARY:Second alarm subject',
+      'DESCRIPTION:Second alarm body',
+      'PRIORITY:9',
+      'TRIGGER:-P1D',
+      'END:VALARM',
+      // Top-level VTODO properties after the subcomponents must still be read.
+      'LOCATION:Office',
+      'PRIORITY:1',
+      'STATUS:IN-PROCESS',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-2');
+    expect(todo.summary).toBe('Parent summary');
+    expect(todo.description).toBe('Parent description');
+    expect(todo.url).toBeUndefined();
+    expect(todo.categories).toBeUndefined();
+    expect(todo.location).toBe('Office');
+    expect(todo.priority).toBe(1);
+    expect(todo.status).toBe('IN-PROCESS');
+  });
+
+  it('control: a bare VTODO without subcomponents parses as before', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-3',
+      'SUMMARY:Plain task',
+      'DESCRIPTION:Plain description',
+      'LOCATION:Home',
+      'PRIORITY:5',
+      'STATUS:NEEDS-ACTION',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-3');
+    expect(todo.summary).toBe('Plain task');
+    expect(todo.description).toBe('Plain description');
+    expect(todo.location).toBe('Home');
+    expect(todo.priority).toBe(5);
+    expect(todo.status).toBe('NEEDS-ACTION');
+  });
+
+  it('control: a VCALENDAR wrapper still yields its first VTODO and ignores components outside it', () => {
+    const ical = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VTIMEZONE',
+      'TZID:Europe/Berlin',
+      'BEGIN:STANDARD',
+      'DTSTART:19701025T030000',
+      'TZOFFSETFROM:+0200',
+      'TZOFFSETTO:+0100',
+      'END:STANDARD',
+      'END:VTIMEZONE',
+      'BEGIN:VTODO',
+      'UID:task-4',
+      'SUMMARY:Wrapped task',
+      'DUE;TZID=Europe/Berlin:20261110T090000',
+      'END:VTODO',
+      'BEGIN:VTODO',
+      'UID:task-5',
+      'SUMMARY:Second task',
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-4');
+    expect(todo.summary).toBe('Wrapped task');
+    expect(todo.due).toBe('20261110T090000');
+    expect(todo.dueParams).toEqual({ TZID: 'Europe/Berlin' });
+  });
+});
+
+// ── VTODO nested components: final regression edges (WEBX-02) ──
+// Malformed-input policy only: nested content is skipped while a nested block is
+// open. These tests do not require component-name validation (for example, that
+// an END matches the BEGIN it closes). Outer VTODO markers stay uppercase here
+// because their handling is unchanged by WEBX-02.
+
+describe('parseVTodo nested component edges (WEBX-02)', () => {
+  it('treats mixed-case nested BEGIN/END markers as a subcomponent and resumes top-level parsing', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-ci',
+      'SUMMARY:Parent summary',
+      'begin:valarm',
+      'ACTION:DISPLAY',
+      'UID:alarm-uid-ci',
+      'SUMMARY:Alarm subject',
+      'TRIGGER:-PT15M',
+      'End:VAlarm',
+      'LOCATION:Office',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-ci');
+    expect(todo.summary).toBe('Parent summary');
+    expect(todo.location).toBe('Office');
+  });
+
+  it('keeps parent values before an unclosed nested block and ignores the values inside it', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-unclosed',
+      'SUMMARY:Parent summary',
+      'DESCRIPTION:Parent description',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'UID:alarm-uid-unclosed',
+      'SUMMARY:Alarm subject',
+      'DESCRIPTION:Alarm description',
+      'LOCATION:Alarm location',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.uid).toBe('task-unclosed');
+    expect(todo.summary).toBe('Parent summary');
+    expect(todo.description).toBe('Parent description');
+    expect(todo.location).toBeUndefined();
+  });
+
+  it('uses the existing UID and summary fallbacks when those properties exist only inside a nested block', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'DESCRIPTION:Parent only',
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'UID:alarm-only-uid',
+      'SUMMARY:Alarm-only summary',
+      'TRIGGER:-PT15M',
+      'END:VALARM',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    // Existing fallbacks: a generated crypto.randomUUID() and 'Untitled'.
+    expect(todo.uid).not.toBe('alarm-only-uid');
+    expect(todo.uid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(todo.summary).toBe('Untitled');
+    expect(todo.description).toBe('Parent only');
+  });
+});
+
+// ── VTODO unsupported content retention (WEBX-03) ──
+// Parse then generate must keep unsupported VTODO property lines and whole
+// nested components. Modelled fields stay authoritative. In each test the
+// isolation/compatibility checks run first and the retention check runs last,
+// so a failure on unchanged code is the missing retained content.
+
+describe('generateVTodo(parseVTodo()) retains unsupported VTODO content (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const count = (lines: string[], line: string): number => lines.filter((l) => l === line).length;
+
+  it('retains unsupported properties and whole nested components, properties before components', () => {
+    const alarmBlock = [
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'UID:alarm-r1',
+      'DESCRIPTION:Reminder',
+      'TRIGGER:-PT15M',
+      'BEGIN:X-INNER',
+      'X-INNER-PROP:1',
+      'END:X-INNER',
+      'END:VALARM',
+    ];
+    const retainedProps = [
+      'DTSTAMP:20261101T090000Z',
+      'RRULE:FREQ=WEEKLY;BYDAY=MO',
+      'RELATED-TO;RELTYPE=PARENT:parent-uid-1',
+      'CLASS:PRIVATE',
+      'X-EXAMPLE-FLAG;X-PARAM="a:b":value',
+      'SEQUENCE:2',
+    ];
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-r1',
+      'SUMMARY:Parent',
+      // Anchor for RRULE and the start-relative alarm (2026-11-02 is a Monday).
+      'DTSTART:20261102T090000Z',
+      ...retainedProps.slice(0, 5),
+      ...alarmBlock,
+      // A property after a component is still a VTODO property.
+      retainedProps[5]!,
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    const out = logical(generateVTodo(todo));
+
+    expect(todo.uid).toBe('task-r1');
+    expect(todo.summary).toBe('Parent');
+    expect(out[0]).toBe('BEGIN:VTODO');
+    expect(out[out.length - 1]).toBe('END:VTODO');
+    expect(count(out, 'UID:task-r1')).toBe(1);
+    expect(count(out, 'SUMMARY:Parent')).toBe(1);
+    expect(out.filter((l) => l.startsWith('UID:'))).toEqual(
+      out.includes('UID:alarm-r1') ? ['UID:task-r1', 'UID:alarm-r1'] : ['UID:task-r1'],
+    );
+
+    for (const line of retainedProps) expect(count(out, line)).toBe(1);
+    const blockStart = out.indexOf('BEGIN:VALARM');
+    expect(out.slice(blockStart, blockStart + alarmBlock.length)).toEqual(alarmBlock);
+    expect(out.indexOf('SUMMARY:Parent')).toBeLessThan(out.indexOf(retainedProps[0]!));
+    for (let i = 1; i < retainedProps.length; i++) {
+      expect(out.indexOf(retainedProps[i - 1]!)).toBeLessThan(out.indexOf(retainedProps[i]!));
+    }
+    expect(out.indexOf('SEQUENCE:2')).toBeLessThan(blockStart);
+  });
+
+  it('refolds a long retained line at 75 octets and it unfolds to the same logical line', () => {
+    const longLine = `X-EXAMPLE-NOTE:${'abcdefghij'.repeat(12)}`;
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-r2',
+      'SUMMARY:Fold',
+      `${longLine.slice(0, 75)}\r\n ${longLine.slice(75)}`,
+      'END:VTODO',
+    ].join('\r\n');
+
+    const generated = generateVTodo(parseVTodo(ical));
+    const encoder = new TextEncoder();
+    for (const physical of generated.split('\r\n')) {
+      expect(encoder.encode(physical).length).toBeLessThanOrEqual(75);
+    }
+
+    expect(logical(generated)).toContain(longLine);
+  });
+
+  it('drops malformed or misplaced nested content and unsafe lines, keeping well-formed siblings', () => {
+    const goodAlarm = ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Kept', 'TRIGGER:-PT5M', 'END:VALARM'];
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-r3',
+      'SUMMARY:Malformed',
+      // Anchor for the start-relative alarm that should be kept.
+      'DTSTART:20261102T090000Z',
+      // END name does not match its BEGIN: the whole block is not retained.
+      'BEGIN:VALARM',
+      'X-MISMATCH-PROP:1',
+      'END:X-OTHER',
+      // A top-level component type cannot be a VTODO subcomponent.
+      'BEGIN:VEVENT',
+      'UID:event-inside-todo',
+      'END:VEVENT',
+      'X-NOCOLON',
+      'X BAD:1',
+      'X-GOOD:1',
+      ...goodAlarm,
+      // Never closed before END:VTODO.
+      'BEGIN:X-OPEN',
+      'X-OPEN-PROP:1',
+      'END:VTODO',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    const out = logical(generateVTodo(todo));
+
+    expect(todo.uid).toBe('task-r3');
+    expect(out.filter((l) => l.startsWith('UID:'))).toEqual(['UID:task-r3']);
+    for (const absent of [
+      'X-MISMATCH-PROP:1',
+      'END:X-OTHER',
+      'BEGIN:VEVENT',
+      'END:VEVENT',
+      'X-NOCOLON',
+      'X BAD:1',
+      'BEGIN:X-OPEN',
+      'X-OPEN-PROP:1',
+    ]) {
+      expect(out).not.toContain(absent);
+    }
+    expect(out.filter((l) => /^BEGIN:/i.test(l))).toEqual(
+      out.includes('BEGIN:VALARM') ? ['BEGIN:VTODO', 'BEGIN:VALARM'] : ['BEGIN:VTODO'],
+    );
+
+    expect(count(out, 'X-GOOD:1')).toBe(1);
+    const blockStart = out.indexOf('BEGIN:VALARM');
+    expect(out.slice(blockStart, blockStart + goodAlarm.length)).toEqual(goodAlarm);
+  });
+
+  it('retains only the first VTODO content from a VCALENDAR, not wrapper or sibling components', () => {
+    const ical = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Example//Other Client//EN',
+      'X-WR-CALNAME:Example list',
+      'BEGIN:VTIMEZONE',
+      'TZID:Europe/Berlin',
+      'X-TZ-PROP:1',
+      'END:VTIMEZONE',
+      'BEGIN:VTODO',
+      'UID:task-first',
+      'SUMMARY:First',
+      'X-FIRST:1',
+      'END:VTODO',
+      'BEGIN:VTODO',
+      'UID:task-second',
+      'X-SECOND:1',
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const out = logical(generateVTodo(parseVTodo(ical)));
+
+    for (const absent of [
+      'VERSION:2.0',
+      'PRODID:-//Example//Other Client//EN',
+      'X-WR-CALNAME:Example list',
+      'BEGIN:VTIMEZONE',
+      'TZID:Europe/Berlin',
+      'X-TZ-PROP:1',
+      'UID:task-second',
+      'X-SECOND:1',
+    ]) {
+      expect(out).not.toContain(absent);
+    }
+    expect(count(out, 'UID:task-first')).toBe(1);
+
+    expect(count(out, 'X-FIRST:1')).toBe(1);
+  });
+
+  it('control: a VTODO with only modelled properties generates byte-identical output', () => {
+    const ical = [
+      'BEGIN:VTODO',
+      'UID:task-r5',
+      'SUMMARY:Modelled only',
+      'DESCRIPTION:Plain text',
+      'DTSTART;VALUE=DATE:20261109',
+      'DUE;TZID=Europe/Berlin:20261110T090000',
+      'PRIORITY:5',
+      'STATUS:IN-PROCESS',
+      'CREATED:20261101T080000Z',
+      'LAST-MODIFIED:20261102T080000Z',
+      'PERCENT-COMPLETE:40',
+      'LOCATION:Office',
+      'URL:https://example.com/task',
+      'CATEGORIES:Work,Home',
+      'END:VTODO',
+    ].join('\r\n');
+
+    expect(generateVTodo(parseVTodo(ical))).toBe(ical);
+  });
+});
+
+// ── S6 safety corrections (WEBX-03) ──
+// Extraction by logical line, write-side revalidation of retained arrays,
+// UTF-8-safe folding of retained lines, and temporal anchors for retained
+// DURATION, alarms and recurrence. Direct generator cases pass the two planned
+// optional VTodo arrays (unknownProperties, unknownComponents) by cast.
+// Isolation checks run first; the retention check runs last.
+
+describe('VTODO retention safety corrections (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const count = (lines: string[], line: string): number => lines.filter((l) => l === line).length;
+  const hasBlock = (lines: string[], block: string[]): boolean =>
+    block.length > 0 && lines.some((_, i) => block.every((l, j) => lines[i + j] === l));
+  const octets = (s: string): number => new TextEncoder().encode(s).length;
+  /** Encode to UTF-8 and decode again, as stored item content would be. */
+  const viaUtf8 = (s: string): string => new TextDecoder().decode(new TextEncoder().encode(s));
+  const vtodo = (...body: string[]): string => ['BEGIN:VTODO', ...body, 'END:VTODO'].join('\r\n');
+  const roundTrip = (...body: string[]): string[] => logical(generateVTodo(parseVTodo(vtodo(...body))));
+
+  // ── VCALENDAR extraction boundary ──
+
+  it('extracts the VTODO by whole logical lines, not a marker substring inside a value', () => {
+    const ical = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VTODO',
+      'UID:task-x1',
+      'X-NOTE:literal END:VTODO text',
+      'SUMMARY:After marker',
+      'X-AFTER:1',
+      'END:VTODO',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const todo = parseVTodo(ical);
+    expect(todo.summary).toBe('After marker');
+
+    const out = logical(generateVTodo(todo));
+    expect(count(out, 'X-NOTE:literal END:VTODO text')).toBe(1);
+    expect(count(out, 'X-AFTER:1')).toBe(1);
+    expect(logical(generateVTodo(parseVTodo(generateVTodo(todo))))).toEqual(out);
+  });
+
+  it('control: a VCALENDAR whose VTODO never ends still has no VTODO component', () => {
+    const ical = ['BEGIN:VCALENDAR', 'BEGIN:VTODO', 'UID:task-x2', 'END:VCALENDAR'].join('\r\n');
+    expect(() => parseVTodo(ical)).toThrow('VCALENDAR contains no VTODO component');
+  });
+
+  // ── Write-side revalidation of retained arrays ──
+
+  it('revalidates retained property lines when generating', () => {
+    const unknownProperties = [
+      'X-SAFE;X-P="a;b:c":ok',
+      'X-TAB:a\tb',
+      'X-INJECT:a\r\nUID:evil-1',
+      'X-INJECT-LF:a\nSTATUS:COMPLETED',
+      'X-CTRL:a\u0001b',
+      'Status;X-A=1:COMPLETED',
+      'uid:evil-2',
+      'Dtstart;VALUE=DATE:20000101',
+      'BEGIN:VALARM',
+      'END:VTODO',
+      'X-NOCOLON',
+      'X BAD:1',
+      'X-UNBALANCED;X-P="a:b',
+    ];
+    const before = [...unknownProperties];
+    const todo = { uid: 'task-g1', summary: 'Generated', status: 'NEEDS-ACTION', unknownProperties } as VTodo;
+
+    const generated = generateVTodo(todo);
+    const out = logical(generated);
+
+    expect(generated.split('\r\n').every((l) => !/[\r\n]/.test(l))).toBe(true);
+    expect(out.filter((l) => /^uid/i.test(l))).toEqual(['UID:task-g1']);
+    expect(out.filter((l) => /^status/i.test(l))).toEqual(['STATUS:NEEDS-ACTION']);
+    expect(out.filter((l) => /^dtstart/i.test(l))).toEqual([]);
+    expect(out.filter((l) => /^(begin|end)[:;]/i.test(l))).toEqual(['BEGIN:VTODO', 'END:VTODO']);
+    expect(out.some((l) => l.includes('evil') || l.includes('\u0001'))).toBe(false);
+    for (const absent of ['X-NOCOLON', 'X BAD:1', 'X-UNBALANCED;X-P="a:b']) expect(out).not.toContain(absent);
+    expect(unknownProperties).toEqual(before);
+
+    expect(count(out, 'X-SAFE;X-P="a;b:c":ok')).toBe(1);
+    expect(count(out, 'X-TAB:a\tb')).toBe(1);
+  });
+
+  it('revalidates retained components when generating and drops invalid blocks whole', () => {
+    const absolute = [
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'UID:alarm-g2',
+      'DESCRIPTION:Absolute',
+      'TRIGGER;VALUE=DATE-TIME:20261110T080000Z',
+      'END:VALARM',
+    ];
+    const mixedCase = ['Begin:X-Outer', 'BEGIN:x-inner', 'X-P:1', 'END:X-INNER', 'end:x-outer'];
+    const unknownComponents = [
+      absolute,
+      mixedCase,
+      ['BEGIN:X-A', 'X-P:evil-two-blocks', 'END:X-A', 'BEGIN:X-B', 'END:X-B'],
+      ['BEGIN:X-A', 'BEGIN:X-B', 'X-P:evil-crossed', 'END:X-A', 'END:X-B'],
+      ['BEGIN:X-WRAP', 'BEGIN:VEVENT', 'UID:evil-event', 'END:VEVENT', 'END:X-WRAP'],
+      ['BEGIN:X-WRAP', 'BEGIN:vtimezone', 'X-P:evil-tz', 'END:vtimezone', 'END:X-WRAP'],
+      ['BEGIN:X-C', 'X-P:a\r\nUID:evil-c', 'END:X-C'],
+      ['BEGIN:X-D', 'BEGIN;X=1:X-E', 'X-P:evil-d', 'END:X-D'],
+      ['BEGIN:X-OPEN', 'X-P:evil-open'],
+      [],
+    ];
+    const before = unknownComponents.map((c) => [...c]);
+    const todo = { uid: 'task-g2', summary: 'Components', unknownComponents } as VTodo;
+
+    const out = logical(generateVTodo(todo));
+
+    expect(out.some((l) => l.includes('evil'))).toBe(false);
+    expect(out.filter((l) => /^uid/i.test(l) && l !== 'UID:alarm-g2')).toEqual(['UID:task-g2']);
+    const allowedBegins = new Set(['BEGIN:VTODO', 'BEGIN:VALARM', 'Begin:X-Outer', 'BEGIN:x-inner']);
+    expect(out.filter((l) => /^begin/i.test(l)).every((l) => allowedBegins.has(l))).toBe(true);
+    expect(out[out.length - 1]).toBe('END:VTODO');
+    expect(unknownComponents).toEqual(before);
+
+    expect(hasBlock(out, absolute)).toBe(true);
+    expect(hasBlock(out, mixedCase)).toBe(true);
+  });
+
+  it('keeps retained content per item when two items are generated in turn', () => {
+    const a = {
+      uid: 'task-a',
+      summary: 'A',
+      unknownProperties: ['X-ONLY-A:1'],
+      unknownComponents: [['BEGIN:X-CA', 'X-P:a', 'END:X-CA']],
+    } as VTodo;
+    const b = { uid: 'task-b', summary: 'B', unknownProperties: ['X-ONLY-B:1'] } as VTodo;
+    const snapshot = JSON.stringify([a, b]);
+
+    const a1 = logical(generateVTodo(a));
+    const b1 = logical(generateVTodo(b));
+    const a2 = logical(generateVTodo(a));
+
+    expect(a2).toEqual(a1);
+    expect(b1.some((l) => l.includes('ONLY-A') || l.includes('X-CA'))).toBe(false);
+    expect(a1.some((l) => l.includes('ONLY-B'))).toBe(false);
+    expect(JSON.stringify([a, b])).toBe(snapshot);
+
+    expect(count(a1, 'X-ONLY-A:1')).toBe(1);
+    expect(hasBlock(a1, ['BEGIN:X-CA', 'X-P:a', 'END:X-CA'])).toBe(true);
+    expect(count(b1, 'X-ONLY-B:1')).toBe(1);
+  });
+
+  // ── Folding of retained lines ──
+
+  it('folds a retained line whose remainder is exactly 75 octets within 75 octets per physical line', () => {
+    const line = `X-EXAMPLE-BOUNDARY:${'b'.repeat(131)}`;
+    const generated = generateVTodo(parseVTodo(vtodo('UID:task-f1', 'SUMMARY:Fold', line)));
+
+    for (const physical of generated.split('\r\n')) expect(octets(physical)).toBeLessThanOrEqual(75);
+
+    expect(count(logical(viaUtf8(generated)), line)).toBe(1);
+  });
+
+  it('folds retained BMP multi-byte text without splitting characters', () => {
+    const line = `X-EXAMPLE-BMP:${'é€'.repeat(40)}`;
+    const generated = generateVTodo(parseVTodo(vtodo('UID:task-f2', 'SUMMARY:BMP', line)));
+
+    for (const physical of generated.split('\r\n')) expect(octets(physical)).toBeLessThanOrEqual(75);
+
+    expect(count(logical(viaUtf8(generated)), line)).toBe(1);
+  });
+
+  it('folds supplementary characters at code-point boundaries in properties and components', () => {
+    // 72 ASCII octets, then 4-octet characters: a code-unit cut would split a surrogate pair.
+    const prop = `X-EXAMPLE-EMOJI:${'a'.repeat(56)}${'\u{1F600}'.repeat(20)}`;
+    const alarm = [
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:${'a'.repeat(60)}${'\u{1F600}'.repeat(20)}`,
+      'TRIGGER;VALUE=DATE-TIME:20261110T080000Z',
+      'END:VALARM',
+    ];
+    const generated = generateVTodo(parseVTodo(vtodo('UID:task-f3', 'SUMMARY:Emoji', prop, ...alarm)));
+
+    for (const physical of generated.split('\r\n')) expect(octets(physical)).toBeLessThanOrEqual(75);
+
+    const out = logical(viaUtf8(generated));
+    expect(count(out, prop)).toBe(1);
+    expect(hasBlock(out, alarm)).toBe(true);
+  });
+
+  it('control: long modelled properties keep the existing fold', () => {
+    const summaryLine = `SUMMARY:${'s'.repeat(100)}`;
+    const generated = generateVTodo({ uid: 'task-f4', summary: 's'.repeat(100) });
+    expect(generated).toContain(`${summaryLine.slice(0, 75)}\r\n ${summaryLine.slice(75)}`);
+  });
+
+  // ── Temporal anchors for retained content ──
+
+  it('keeps a day-based DURATION with a date-only DTSTART and suppresses a sub-day one', () => {
+    const subDay = roundTrip('UID:task-t1', 'SUMMARY:Day', 'DTSTART;VALUE=DATE:20261110', 'DURATION:PT1H');
+    const wholeDay = roundTrip('UID:task-t2', 'SUMMARY:Day', 'DTSTART;VALUE=DATE:20261110', 'DURATION:P1D');
+
+    expect(subDay.filter((l) => /^duration/i.test(l))).toEqual([]);
+    expect(count(wholeDay, 'DTSTART;VALUE=DATE:20261110')).toBe(1);
+
+    expect(count(wholeDay, 'DURATION:P1D')).toBe(1);
+  });
+
+  it('control: DURATION without DTSTART, or alongside DUE, is not written', () => {
+    const noStart = roundTrip('UID:task-t3', 'SUMMARY:No start', 'DURATION:PT1H');
+    const withDue = roundTrip(
+      'UID:task-t4', 'SUMMARY:Due', 'DTSTART:20261110T090000Z', 'DUE:20261110T100000Z', 'DURATION:PT1H',
+    );
+
+    expect(noStart.filter((l) => /^duration/i.test(l))).toEqual([]);
+    expect(withDue.filter((l) => /^duration/i.test(l))).toEqual([]);
+    expect(withDue.filter((l) => /^due[;:]/i.test(l))).toEqual(['DUE:20261110T100000Z']);
+  });
+
+  it('keeps alarms whose trigger anchor is written and drops start-relative alarms without DTSTART', () => {
+    const startAlarm = ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Start', 'TRIGGER:-PT10M', 'END:VALARM'];
+    const endAlarm = ['BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:End', 'TRIGGER;RELATED=END:-PT10M', 'END:VALARM'];
+    const absAlarm = [
+      'BEGIN:VALARM',
+      'ACTION:DISPLAY',
+      'DESCRIPTION:Absolute',
+      'TRIGGER;VALUE=DATE-TIME:20261110T080000Z',
+      'END:VALARM',
+    ];
+    const dueOnly = roundTrip('UID:task-t5', 'SUMMARY:Due only', 'DUE:20261110T100000Z', ...startAlarm, ...endAlarm, ...absAlarm);
+    const startAndDuration = roundTrip(
+      'UID:task-t6', 'SUMMARY:Start and duration', 'DTSTART:20261110T090000Z', 'DURATION:PT1H', ...endAlarm,
+    );
+
+    expect(dueOnly).not.toContain('DESCRIPTION:Start');
+    expect(dueOnly.filter((l) => /^due[;:]/i.test(l))).toEqual(['DUE:20261110T100000Z']);
+
+    expect(hasBlock(dueOnly, endAlarm)).toBe(true);
+    expect(hasBlock(dueOnly, absAlarm)).toBe(true);
+    expect(hasBlock(startAndDuration, endAlarm)).toBe(true);
+  });
+
+  it('keeps recurrence whose UNTIL matches the DTSTART value type', () => {
+    const dateStart = roundTrip(
+      'UID:task-t7', 'SUMMARY:Daily', 'DTSTART;VALUE=DATE:20261110', 'RRULE:FREQ=DAILY;UNTIL=20261120', 'EXDATE;VALUE=DATE:20261112',
+    );
+    const utcStart = roundTrip('UID:task-t8', 'SUMMARY:Daily', 'DTSTART:20261110T090000Z', 'RRULE:FREQ=DAILY;UNTIL=20261120T090000Z');
+
+    expect(count(dateStart, 'DTSTART;VALUE=DATE:20261110')).toBe(1);
+
+    expect(count(dateStart, 'RRULE:FREQ=DAILY;UNTIL=20261120')).toBe(1);
+    expect(count(dateStart, 'EXDATE;VALUE=DATE:20261112')).toBe(1);
+    expect(count(utcStart, 'RRULE:FREQ=DAILY;UNTIL=20261120T090000Z')).toBe(1);
+  });
+
+  it('control: recurrence without DTSTART, or with an UNTIL of another value type, is not written', () => {
+    const recurrence = (lines: string[]) => lines.filter((l) => /^(rrule|rdate|exdate|recurrence-id)[;:]/i.test(l));
+    const noStart = roundTrip(
+      'UID:task-t9', 'SUMMARY:No start', 'RRULE:FREQ=WEEKLY', 'RDATE:20261115T090000Z', 'EXDATE:20261112T090000Z',
+    );
+    const dateUntilUtcStart = roundTrip('UID:task-t10', 'SUMMARY:Mismatch', 'DTSTART:20261110T090000Z', 'RRULE:FREQ=DAILY;UNTIL=20261120');
+    const utcUntilFloatingStart = roundTrip(
+      'UID:task-t11', 'SUMMARY:Mismatch', 'DTSTART:20261110T090000', 'RRULE:FREQ=DAILY;UNTIL=20261120T090000Z',
+    );
+
+    expect(recurrence(noStart)).toEqual([]);
+    expect(recurrence(dateUntilUtcStart)).toEqual([]);
+    expect(recurrence(utcUntilFloatingStart)).toEqual([]);
+  });
+});
+
+// ── RECURRENCE-ID form compatibility (WEBX-03, RFC 5545 §3.8.4.4) ──
+// Kept only with a written DTSTART of the same value type (DATE vs DATE-TIME),
+// and floating ("date with local time", §3.3.5 FORM #1) if and only if DTSTART
+// is floating. UTC and TZID forms are both non-floating: this is not UNTIL's
+// UTC rule. The line is kept verbatim; its value is the original occurrence
+// and is never compared with or rebased onto DTSTART.
+
+describe('retained RECURRENCE-ID follows DTSTART value type and local-time form (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const roundTrip = (...body: string[]): string[] =>
+    logical(generateVTodo(parseVTodo(['BEGIN:VTODO', 'UID:task-rid', 'SUMMARY:Occurrence', ...body, 'END:VTODO'].join('\r\n'))));
+  const ridLines = (lines: string[]): string[] => lines.filter((l) => /^recurrence-id[;:]/i.test(l));
+
+  it.each([
+    ['DATE', 'DTSTART;VALUE=DATE:20261110', 'RECURRENCE-ID;VALUE=DATE:20261103'],
+    ['floating', 'DTSTART:20261110T090000', 'RECURRENCE-ID:20261103T090000'],
+    ['UTC', 'DTSTART:20261110T090000Z', 'RECURRENCE-ID:20261103T090000Z'],
+    ['TZID-local', 'DTSTART;TZID=Europe/Berlin:20261110T090000', 'RECURRENCE-ID;TZID=Europe/Berlin:20261103T090000'],
+    [
+      'TZID id with a UTC start',
+      'DTSTART:20261110T090000Z',
+      'RECURRENCE-ID;TZID=Europe/Berlin;RANGE=THISANDFUTURE:20261103T100000',
+    ],
+  ])('keeps a compatible %s RECURRENCE-ID verbatim even though it differs from DTSTART', (_form, start, rid) => {
+    const out = roundTrip(start, rid);
+
+    expect(out.filter((l) => /^dtstart[;:]/i.test(l))).toEqual([start]);
+
+    expect(ridLines(out)).toEqual([rid]);
+  });
+
+  it.each([
+    ['a DATE start with a DATE-TIME id', 'DTSTART;VALUE=DATE:20261110', 'RECURRENCE-ID:20261103T090000Z'],
+    ['a DATE-TIME start with a DATE id', 'DTSTART:20261110T090000Z', 'RECURRENCE-ID;VALUE=DATE:20261103'],
+    ['a UTC start with a floating id', 'DTSTART:20261110T090000Z', 'RECURRENCE-ID:20261103T090000'],
+    ['a TZID start with a floating id', 'DTSTART;TZID=Europe/Berlin:20261110T090000', 'RECURRENCE-ID:20261103T090000'],
+    ['a floating start with a UTC id', 'DTSTART:20261110T090000', 'RECURRENCE-ID:20261103T090000Z'],
+    ['a floating start with a TZID id', 'DTSTART:20261110T090000', 'RECURRENCE-ID;TZID=Europe/Berlin:20261103T090000'],
+  ])('control: suppresses RECURRENCE-ID for %s', (_case, start, rid) => {
+    expect(ridLines(roundTrip(start, rid))).toEqual([]);
+  });
+
+  it('control: suppresses RECURRENCE-ID when no DTSTART is written', () => {
+    expect(ridLines(roundTrip('RECURRENCE-ID:20261103T090000Z'))).toEqual([]);
+  });
+});
+
+// ── VCALENDAR wrapper detection (WEBX-02 review follow-up, RFC 5545 §3.1) ──
+// Names are case-insensitive and any line may be folded, so the outer wrapper
+// is found on the first logical line, not by a raw uppercase prefix.
+
+describe('parseVTodo finds the VCALENDAR wrapper by its logical line (WEBX-02)', () => {
+  const body = [
+    'VERSION:2.0',
+    'BEGIN:VTODO',
+    'UID:task-case',
+    'SUMMARY:Parent task',
+    'DESCRIPTION:Parent description',
+    'BEGIN:VALARM',
+    'ACTION:DISPLAY',
+    'SUMMARY:Alarm summary',
+    'TRIGGER:-PT15M',
+    'END:VALARM',
+    'END:VTODO',
+    'END:VCALENDAR',
+  ];
+
+  it.each([
+    ['uppercase', 'BEGIN:VCALENDAR'],
+    ['lowercase value', 'BEGIN:vcalendar'],
+    ['all lowercase', 'begin:vcalendar'],
+    ['folded', 'BEGIN:VCAL\r\n ENDAR'],
+  ])('keeps the task fields for a %s opening', (_form, opening) => {
+    const todo = parseVTodo([opening, ...body].join('\r\n'));
+
+    expect(todo.uid).toBe('task-case');
+    expect(todo.summary).toBe('Parent task');
+    expect(todo.description).toBe('Parent description');
+  });
+});
+
+// ── RDATE/EXDATE form compatibility (WEBX-03 review follow-up, RFC 5545 §3.8.5) ──
+// Kept only while every value has the written DTSTART's value type and the same
+// floating/non-floating form (the RECURRENCE-ID rule). PERIOD values are judged
+// by their start. Lines are kept verbatim, never rebased.
+
+describe('retained RDATE/EXDATE follow DTSTART value type and local-time form (WEBX-03)', () => {
+  const logical = (text: string): string[] => text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+  const roundTrip = (...body: string[]): string[] =>
+    logical(generateVTodo(parseVTodo(['BEGIN:VTODO', 'UID:task-rd', 'SUMMARY:Series', ...body, 'END:VTODO'].join('\r\n'))));
+  const setLines = (lines: string[]): string[] => lines.filter((l) => /^(rdate|exdate)[;:]/i.test(l));
+
+  it.each([
+    ['DATE', 'DTSTART;VALUE=DATE:20261110', 'EXDATE;VALUE=DATE:20261112,20261113'],
+    ['DATE rdate', 'DTSTART;VALUE=DATE:20261110', 'RDATE;VALUE=DATE:20261120'],
+    ['UTC', 'DTSTART:20261110T090000Z', 'EXDATE:20261112T090000Z'],
+    ['TZID with a UTC start', 'DTSTART:20261110T090000Z', 'RDATE;TZID=Europe/Berlin:20261120T100000'],
+    ['floating', 'DTSTART:20261110T090000', 'EXDATE:20261112T090000,20261113T090000'],
+    ['UTC PERIOD', 'DTSTART:20261110T090000Z', 'RDATE;VALUE=PERIOD:20261120T090000Z/PT1H'],
+  ])('keeps a compatible %s line verbatim', (_form, start, line) => {
+    expect(setLines(roundTrip(start, 'RRULE:FREQ=DAILY;COUNT=5', line))).toEqual([line]);
+  });
+
+  it.each([
+    ['a DATE start with a DATE-TIME exdate', 'DTSTART;VALUE=DATE:20261110', 'EXDATE:20261112T090000Z'],
+    ['a DATE start with a DATE-TIME rdate', 'DTSTART;VALUE=DATE:20261110', 'RDATE:20261120T090000Z'],
+    ['a DATE start with a PERIOD rdate', 'DTSTART;VALUE=DATE:20261110', 'RDATE;VALUE=PERIOD:20261120T090000Z/PT1H'],
+    ['a DATE-TIME start with a DATE exdate', 'DTSTART:20261110T090000Z', 'EXDATE;VALUE=DATE:20261112'],
+    ['a UTC start with a floating rdate', 'DTSTART:20261110T090000Z', 'RDATE:20261120T090000'],
+    ['a floating start with a UTC exdate', 'DTSTART:20261110T090000', 'EXDATE:20261112T090000Z'],
+    ['a UTC start with one floating value in a list', 'DTSTART:20261110T090000Z', 'EXDATE:20261112T090000Z,20261113T090000'],
+  ])('control: suppresses the line for %s', (_case, start, line) => {
+    expect(setLines(roundTrip(start, 'RRULE:FREQ=DAILY;COUNT=5', line))).toEqual([]);
+  });
+});

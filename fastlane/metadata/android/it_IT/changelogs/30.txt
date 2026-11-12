@@ -1,0 +1,1 @@
+Richiede Android 10 o versioni successive. Preserva i compleanni senza anno e i campi di testo extra dei contatti sicuri. Aggiunge il recupero offline delle Note Non Sincronizzate e tutele per la disconnessione. Il promemoria dell'app per le attività può essere rimosso. Il salvataggio di una raccolta dopo un'eliminazione non riuscita non la elimina più.

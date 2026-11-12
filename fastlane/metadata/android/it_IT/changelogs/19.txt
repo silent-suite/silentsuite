@@ -1,0 +1,1 @@
+Rende riproducibili le build di rilascio di Android, in modo che i download pubblicati corrispondano a quelli compilati in modo indipendente.

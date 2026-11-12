@@ -1,0 +1,3 @@
+- Ripristina i contatti che apparivano in SilentSuite ma che mancavano nell'app Contatti del telefono, anche dopo la ricreazione di una rubrica. Le modifiche ai gruppi locali e le eliminazioni vengono mantenute.
+- Spiega quando è necessario installare un'app per le attività compatibile affinché le Attività vengano sincronizzate.
+- Rende più sicura l'archiviazione delle Note, in modo che una scrittura non completata non possa sostituire una nota salvata.

@@ -96,7 +96,7 @@ internal class AndroidCurrentAccountSignOut(
             callback(false)
             return
         }
-        AndroidCompat.removeAccount(manager, row, callback)
+        AndroidCompat.removeAccount(manager, row, NotesRemovalNotice.clearAfter(context, callback))
     }
 
     override fun mainGenerationAbsent(main: ExactAccountIdentity): Boolean {

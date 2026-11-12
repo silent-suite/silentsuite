@@ -8,6 +8,7 @@ import { formatDate as formatDateUtil } from '@/app/lib/date'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { parseAccountNotice, parseBillingDate, type BillingDate } from '@/app/lib/account-notice'
 import { fetchAuthenticatedAccountOffer } from '@/app/lib/billing-v2'
+import { createAuthenticatedPaymentFetch } from '@/app/lib/authenticated-payment-fetch'
 import { formatAnnualOfferAmount } from '@/app/lib/annual-offer-presentation'
 import { formatDaysLeft, isHostedBillingAccount, useEligibleAccountNotice, useTrialCountdown } from '@/app/hooks/use-trial-countdown'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -312,7 +313,8 @@ export default function SubscriptionPage() {
 
   const requestSubscription = useCallback(async (): Promise<SubscriptionData | null> => {
     try {
-      const res = await fetch(`${BILLING_API_URL}/subscription`, {
+      // An expired 15-minute access token gets one refresh and one retry for this page's account.
+      const res = await createAuthenticatedPaymentFetch(principal.id, principal.epoch)(`${BILLING_API_URL}/subscription`, {
         credentials: 'include',
       })
       if (res.ok) {
@@ -323,7 +325,7 @@ export default function SubscriptionPage() {
       // API may not be running in dev
     }
     return null
-  }, [])
+  }, [principal])
 
   const fetchSubscription = useCallback(async (initialOwner: OperationOwner | null = captureOwner()) => {
     let owner = initialOwner
