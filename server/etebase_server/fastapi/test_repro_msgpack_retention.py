@@ -33,6 +33,15 @@ has run twice. Retention is attributed only to allocations whose innermost
 traced frame is the actual ``unpackb`` call line in ``utils.msgpack_decode``.
 Total traced growth is logged as context, never used as attribution.
 
+Authentication body limit
+-------------------------
+Main caps authentication request bodies (``ETEBASE_MAX_AUTH_REQUEST_BYTES``,
+64 KiB by default), so the 256 KiB bodies below would be refused with 413
+before the decoder runs. The measurement run raises that limit to
+``PROBE_AUTH_LIMIT_BYTES`` so it exercises the decoder itself. Results describe
+the decoder, not a default deployment, where each unauthenticated body is
+capped at the default limit.
+
 Expected-correct assertions (retention tests) are independent of the status
 receipts (status tests), so neither can mask the other.
 """
@@ -51,6 +60,7 @@ import tracemalloc
 
 import msgpack
 import pytest
+from django.test import override_settings
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
@@ -75,6 +85,8 @@ WALL_CLOCK_BUDGET_S = 60.0
 RETENTION_BUDGET_BYTES = 64 * MIB
 PEAK_BUDGET_BYTES = 256 * MIB
 ATTRIBUTED_RETENTION_LIMIT = 1 * MIB
+# Above the largest probe body; see "Authentication body limit" above.
+PROBE_AUTH_LIMIT_BYTES = 1 * MIB
 UNKNOWN_USERNAME = "deps01-unknown-user-does-not-exist"
 # server/requirements.txt of the actual checkout (this file lives in
 # server/etebase_server/fastapi/).
@@ -223,7 +235,7 @@ def deps01_run(django_db_setup, django_db_blocker) -> _Run:
         del before, after
 
     started = time.monotonic()
-    with django_db_blocker.unblock():
+    with django_db_blocker.unblock(), override_settings(ETEBASE_MAX_AUTH_REQUEST_BYTES=PROBE_AUTH_LIMIT_BYTES):
         tracemalloc.start(1)
         try:
             _settle()
