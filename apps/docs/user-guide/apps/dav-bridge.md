@@ -508,6 +508,7 @@ silentsuite-bridge --login
 2. Check the tray icon color (green = OK, red = error)
 3. Check the dashboard sync log for errors
 4. If you installed on Windows, also check `%LOCALAPPDATA%\SilentSuite\install.log` and `%LOCALAPPDATA%\SilentSuite\bridge.log`
+5. On macOS with auto-start, check `~/Library/Logs/SilentSuiteBridge/bridge.error.log`. DAV requests, sign-in results and TLS errors are logged there, not in `bridge.log` (see [macOS Calendar & Contacts](./macos.md#where-to-find-the-bridge-logs))
 
 ### `SSL: WRONG_VERSION_NUMBER`
 
