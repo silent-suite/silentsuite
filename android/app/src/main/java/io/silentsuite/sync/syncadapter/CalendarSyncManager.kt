@@ -59,6 +59,20 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         return true
     }
 
+    /** Lists the calendar from the start once, so events stored with ical4j's old time zone rules are rewritten (#887). */
+    @Throws(CalendarStorageException::class)
+    override fun replayFromStart(): Boolean {
+        if (localCalendar().timeZoneRulesCurrent())
+            return false
+        Logger.log.info("Listing this calendar from the start once, to read its events with the device's time zone rules")
+        return true
+    }
+
+    @Throws(CalendarStorageException::class)
+    override fun onReplayCompleted() {
+        localCalendar().markTimeZoneRulesCurrent()
+    }
+
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     override fun prepareDirty() {
         super.prepareDirty()
@@ -133,6 +147,12 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
 
     private fun processEvent(item: Item, newData: Event, _localEvent: LocalEvent?): LocalEvent {
         var localEvent = _localEvent
+        // A replay lists events whose server copy hasn't changed. Leave those alone while a local change of the
+        // event or one of its exceptions still waits for upload; that upload carries the device's rules anyway.
+        if (localEvent != null && replaying && localEvent.eTag == item.etag && localCalendar().hasPendingLocalChange(localEvent)) {
+            Logger.log.info("Not rewriting an unchanged event with a pending local change during the time zone replay")
+            return localEvent
+        }
         // delete local event, if it exists
         if (localEvent != null) {
             Logger.log.info("Updating local event resource")

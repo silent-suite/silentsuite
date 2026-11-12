@@ -31,6 +31,9 @@
 # ical4j: ignore unused dynamic libraries
 -keep class net.fortuna.ical4j.** { *; }  # keep all model classes (properties/factories, created at runtime)
 -dontwarn javax.cache.**
+# ical4j creates the time zone registry factory named in ical4android's ical4j.properties by reflection,
+# and silently falls back to its bundled 2020 time zone data if the class is missing (internal #887).
+-keep class at.bitfire.ical4android.SystemTimeZoneRegistryFactory { public <init>(); }
 
 # okhttp
 # JSR 305 annotations are for embedding nullability information.

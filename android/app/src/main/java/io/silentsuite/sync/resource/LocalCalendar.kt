@@ -64,6 +64,14 @@ class LocalCalendar private constructor(
 
         val COLUMN_CTAG = Calendars.CAL_SYNC1
 
+        /**
+         * Set once every event of the calendar has been read again with the device's time zone rules
+         * rather than the rules bundled with ical4j (internal #887). Calendars without it are listed
+         * from the start once, so rows stored with the old rules are rewritten.
+         */
+        val COLUMN_TIME_ZONE_RULES = Calendars.CAL_SYNC2
+        const val TIME_ZONE_RULES_CURRENT = "tz-rules:system-1"
+
         fun create(account: Account, provider: ContentProviderClient, cachedCollection: CachedCollection): Uri {
             val values = valuesFromCachedCollection(cachedCollection, true)
 
@@ -234,6 +242,45 @@ class LocalCalendar private constructor(
 
     }
 
+
+    /** Whether every event of this calendar has been read with the device's time zone rules. */
+    @Throws(CalendarStorageException::class)
+    fun timeZoneRulesCurrent(): Boolean = try {
+        provider.query(calendarSyncURI(), arrayOf(COLUMN_TIME_ZONE_RULES), null, null, null)?.use { cursor ->
+            cursor.moveToFirst() && cursor.getString(0) == TIME_ZONE_RULES_CURRENT
+        } ?: throw CalendarStorageException("Couldn't read the calendar's time zone rules marker")
+    } catch (e: RemoteException) {
+        throw CalendarStorageException("Couldn't read the calendar's time zone rules marker", e)
+    }
+
+    @Throws(CalendarStorageException::class)
+    fun markTimeZoneRulesCurrent() {
+        try {
+            update(ContentValues(1).apply { put(COLUMN_TIME_ZONE_RULES, TIME_ZONE_RULES_CURRENT) })
+        } catch (e: RemoteException) {
+            throw CalendarStorageException("Couldn't write the calendar's time zone rules marker", e)
+        }
+        if (!timeZoneRulesCurrent())
+            throw CalendarStorageException("The calendar's time zone rules marker did not read back as written")
+    }
+
+    /**
+     * Whether [event] or one of its exceptions has a local change or deletion that hasn't been
+     * uploaded yet. Rewriting the event would delete and recreate its exceptions and lose that change.
+     */
+    @Throws(CalendarStorageException::class)
+    fun hasPendingLocalChange(event: LocalEvent): Boolean {
+        val id = event.id ?: return false
+        return try {
+            provider.query(syncAdapterURI(Events.CONTENT_URI), arrayOf(Events._ID),
+                    "(" + Events._ID + "=? OR " + Events.ORIGINAL_ID + "=?) AND (" + Events.DIRTY + "!=0 OR " + Events.DELETED + "!=0)",
+                    arrayOf(id.toString(), id.toString()), null)?.use { cursor ->
+                cursor.count > 0
+            } ?: throw CalendarStorageException("Couldn't query pending changes of event $id")
+        } catch (e: RemoteException) {
+            throw CalendarStorageException("Couldn't query pending changes of event $id", e)
+        }
+    }
 
     /** Fix all of the etags of all of the non-dirty events to be non-null.
      * Currently set to all ones..  */
