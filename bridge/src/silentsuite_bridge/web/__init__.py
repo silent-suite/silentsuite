@@ -24,6 +24,7 @@ from radicale.web import BaseWeb
 from .. import config
 from ..privacy_logging import bounded_exception_class
 from ..radicale.creds import Credentials
+from . import report as _report
 
 logger = logging.getLogger("silentsuite-bridge.web")
 
@@ -624,6 +625,11 @@ def update_status(state, error=None, collections=None, account=None, scope=None)
             account_state = account_states.setdefault(account, {})
             account_state["state"] = state
             account_state["error"] = str(error) if error else None
+            # Report diagnostics read only this enum value, set by exact table
+            # lookup of the recorded status code; never the free-text error.
+            account_state["report_code"] = (
+                _report.error_code_for(error) if state == "error" else None
+            )
             if state == "connected":
                 account_state["last_sync"] = now
             states = list(account_states.values())
@@ -1333,6 +1339,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div style="margin-top:12px;font-size:13px;">
                 <a href="https://docs.silentsuite.io/user-guide/apps/dav-bridge" target="_blank" rel="noopener" style="color:#4ade80;text-decoration:none;">Full documentation at docs.silentsuite.io &rarr;</a>
             </div>
+            <div style="margin-top:12px;font-size:13px;">
+                <a href="/.web/report" style="color:#4ade80;text-decoration:none;">Report a problem or request a feature</a>
+            </div>
         </div>
     </div>
     <script>
@@ -1742,6 +1751,360 @@ def _network_card() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Report a problem
+# ---------------------------------------------------------------------------
+
+# Local request body cap for the report POST (the relay body limit is 32 KiB;
+# the page's JSON adds escaping and the diagnostics object).
+_REPORT_REQUEST_MAX_BYTES = 64 * 1024
+
+
+def _report_diagnostics():
+    """Build the report diagnostics in-process from ``_bridge_status``.
+
+    Account names, server URLs and free-text error fields are reduced here
+    (counted, compared to the hosted URL, or ignored) and never reach the
+    page or the payload.
+    """
+    from .. import __version__
+    from ..update import _is_frozen
+
+    with _bridge_status_lock:
+        state = _bridge_status.get("state")
+        last_sync = _bridge_status.get("last_sync")
+        account_entries = [
+            {
+                "state": entry.get("state"),
+                "report_code": entry.get("report_code"),
+                "last_sync": entry.get("last_sync"),
+            }
+            for entry in _bridge_status.get("account_states", {}).values()
+        ]
+
+    account_count = len(account_entries)
+    server_urls = [config.ETEBASE_SERVER_URL]
+    try:
+        creds = Credentials()
+        users = creds.list_users()
+        account_count = len(users)
+        if users:
+            server_urls = [creds.get_server_url(user) for user in users]
+    except Exception:
+        pass
+
+    return _report.build_diagnostics(
+        state=state,
+        last_sync=last_sync,
+        account_entries=account_entries,
+        account_count=account_count,
+        server_urls=server_urls,
+        app_version=__version__,
+        platform=_report.platform_label(),
+        frozen=_is_frozen(),
+        tray=_report._tray_active,
+        ssl=config.SSL_ENABLED,
+        now=time.time(),
+    )
+
+
+def _script_json(value):
+    """JSON for an inline <script>, safe against tag and line-separator breakouts."""
+    return (
+        json.dumps(value, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+    )
+
+
+def _render_report_page():
+    """Render the report form with the diagnostics snapshot frozen at render time."""
+    from .. import __version__
+
+    diagnostics = _report_diagnostics()
+    text = _report.preview_text(diagnostics)
+    page = REPORT_HTML
+    page = page.replace("{{VERSION}}", html.escape(str(__version__)))
+    page = page.replace("{{DISCLOSURE}}", html.escape(_report.DISCLOSURE_TEXT))
+    page = page.replace("{{PRIVACY_URL}}", html.escape(_report.PRIVACY_URL))
+    page = page.replace("{{PREVIEW}}", html.escape(text))
+    page = page.replace("{{CSRF_TOKEN}}", _script_json(_dashboard_csrf_token))
+    page = page.replace("{{SUPPORT_EMAIL_JSON}}", _script_json(_report.SUPPORT_EMAIL))
+    page = page.replace("{{DIAGNOSTICS_JSON}}", _script_json(diagnostics))
+    page = page.replace("{{DIAGNOSTICS_TEXT_JSON}}", _script_json(text))
+    return page
+
+
+def _handle_report_send(environ):
+    """Validate the page's report and POST it to the relay exactly once.
+
+    Nothing about the report is logged or printed. Validation errors return
+    before any network access.
+    """
+    try:
+        content_length = int(environ.get("CONTENT_LENGTH", 0) or 0)
+    except (TypeError, ValueError):
+        content_length = -1
+    if content_length < 0:
+        return _json_response(400, {"ok": False, "outcome": "invalid", "error": "Invalid JSON"})
+    if content_length > _REPORT_REQUEST_MAX_BYTES:
+        return _json_response(413, {"ok": False, "outcome": "invalid", "error": "The report is too large to send."})
+    raw = environ["wsgi.input"].read(content_length) if content_length else b""
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return _json_response(400, {"ok": False, "outcome": "invalid", "error": "Invalid JSON"})
+    try:
+        body = _report.serialize_payload(_report.build_payload(data))
+    except _report.ReportError as exc:
+        return _json_response(400, {"ok": False, "outcome": "invalid", "error": str(exc)})
+
+    outcome = _report.send_report(body, transport=_report_transport)
+    if outcome == _report.OUTCOME_SENT:
+        return _json_response(200, {"ok": True, "outcome": outcome})
+    return _json_response(502, {"ok": False, "outcome": outcome})
+
+
+# Injectable relay transport for tests; None uses urllib.
+_report_transport = None
+
+
+REPORT_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report a problem - SilentSuite Bridge</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0a0a0a;
+            color: #e0e0e0;
+            padding: 40px 20px;
+        }
+        .container { max-width: 680px; margin: 0 auto; }
+        h1 { font-size: 28px; color: #fff; margin-bottom: 4px; }
+        .version { color: #666; font-size: 13px; margin-bottom: 24px; }
+        .card {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        a { color: #4ade80; text-decoration: none; }
+        label { display: block; font-size: 13px; color: #aaa; margin: 14px 0 6px; }
+        .kind label { display: inline; margin-right: 16px; color: #ccc; font-size: 14px; }
+        .check label { display: inline; color: #ccc; font-size: 14px; }
+        input[type=text], input[type=email], textarea {
+            width: 100%;
+            background: #111;
+            color: #fff;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        textarea { min-height: 160px; resize: vertical; }
+        .note { color: #777; font-size: 12px; margin-top: 4px; }
+        pre {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 12px;
+            color: #ccc;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            margin-top: 8px;
+        }
+        .disclosure { font-size: 13px; color: #bbb; line-height: 1.5; margin: 18px 0; }
+        .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        button {
+            background: #333;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 10px 16px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button.primary { background: #059669; }
+        button:disabled { opacity: 0.5; cursor: default; }
+        .message { margin-top: 14px; font-size: 14px; }
+        .message.error { color: #ff6b6b; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Report a problem</h1>
+        <div class="version">SilentSuite Bridge v{{VERSION}} &middot; <a href="/.web/">Back to dashboard</a></div>
+
+        <div class="card hidden" id="reportThanks">Thanks, your report was sent.</div>
+
+        <div class="card" id="reportForm">
+            <div class="kind">
+                <input type="radio" name="kind" id="kindProblem" value="problem" checked>
+                <label for="kindProblem">Problem</label>
+                <input type="radio" name="kind" id="kindFeature" value="feature">
+                <label for="kindFeature">Feature request</label>
+            </div>
+
+            <label for="reportSummary">Summary (required, up to 120 characters)</label>
+            <input type="text" id="reportSummary" autocomplete="off">
+
+            <label for="reportDescription">Description (required, up to 4000 characters)</label>
+            <textarea id="reportDescription"></textarea>
+
+            <label for="reportContact">Reply email (optional)</label>
+            <input type="email" id="reportContact" autocomplete="email">
+            <div class="note">Only if you want an answer.</div>
+
+            <div class="check" style="margin-top:16px;">
+                <input type="checkbox" id="includeDiagnostics" checked>
+                <label for="includeDiagnostics">Include diagnostic info</label>
+            </div>
+            <div id="diagnosticsPreview">
+                <div class="note">This exact text will be sent with your report:</div>
+                <pre id="diagnosticsText">{{PREVIEW}}</pre>
+            </div>
+
+            <p class="disclosure">{{DISCLOSURE}} <a href="{{PRIVACY_URL}}" target="_blank" rel="noopener">Privacy policy</a></p>
+
+            <div class="actions">
+                <button type="button" class="primary" id="reportSend">Send</button>
+                <button type="button" id="reportEmail">Email instead</button>
+                <button type="button" id="reportCopy">Copy</button>
+            </div>
+            <div class="message" id="reportMessage"></div>
+        </div>
+    </div>
+    <script>
+        (function() {
+            var CSRF = {{CSRF_TOKEN}};
+            var SUPPORT_EMAIL = {{SUPPORT_EMAIL_JSON}};
+            // Frozen when the page was rendered; sent unchanged and shown above.
+            var DIAGNOSTICS = {{DIAGNOSTICS_JSON}};
+            var DIAGNOSTICS_TEXT = {{DIAGNOSTICS_TEXT_JSON}};
+
+            var include = document.getElementById('includeDiagnostics');
+            var preview = document.getElementById('diagnosticsPreview');
+            var sendBtn = document.getElementById('reportSend');
+            var message = document.getElementById('reportMessage');
+            var diagnosticsTouched = false;
+
+            function kind() {
+                return document.getElementById('kindFeature').checked ? 'feature' : 'problem';
+            }
+            function field(id) { return document.getElementById(id).value; }
+            function syncPreview() {
+                preview.classList.toggle('hidden', !include.checked);
+            }
+            function showMessage(text, isError) {
+                message.textContent = text;
+                message.className = isError ? 'message error' : 'message';
+            }
+            function reportText() {
+                var lines = [
+                    'Kind: ' + (kind() === 'feature' ? 'Feature request' : 'Problem'),
+                    'Surface: bridge',
+                    'Summary: ' + field('reportSummary'),
+                    '',
+                    'Description:',
+                    field('reportDescription')
+                ];
+                var contact = field('reportContact').trim();
+                if (contact) lines.push('', 'Reply email: ' + contact);
+                if (include.checked) lines.push('', 'Diagnostics:', DIAGNOSTICS_TEXT);
+                return lines.join('\n');
+            }
+
+            document.getElementById('kindProblem').addEventListener('change', function() {
+                if (!diagnosticsTouched) { include.checked = true; syncPreview(); }
+            });
+            document.getElementById('kindFeature').addEventListener('change', function() {
+                if (!diagnosticsTouched) { include.checked = false; syncPreview(); }
+            });
+            include.addEventListener('change', function() {
+                diagnosticsTouched = true;
+                syncPreview();
+            });
+
+            document.getElementById('reportEmail').addEventListener('click', function() {
+                var subject = '[Bridge ' + (kind() === 'feature' ? 'feature request' : 'problem') + '] ' + field('reportSummary');
+                window.location.href = 'mailto:' + SUPPORT_EMAIL +
+                    '?subject=' + encodeURIComponent(subject) +
+                    '&body=' + encodeURIComponent(reportText());
+            });
+
+            document.getElementById('reportCopy').addEventListener('click', function() {
+                var text = reportText();
+                function fallback() {
+                    var area = document.createElement('textarea');
+                    area.value = text;
+                    document.body.appendChild(area);
+                    area.select();
+                    var ok = false;
+                    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+                    document.body.removeChild(area);
+                    showMessage(ok ? 'Copied.' : 'Copy failed; select the text and copy it manually.', !ok);
+                }
+                if (navigator.clipboard && window.isSecureContext) {
+                    navigator.clipboard.writeText(text).then(function() {
+                        showMessage('Copied.', false);
+                    }, fallback);
+                } else {
+                    fallback();
+                }
+            });
+
+            sendBtn.addEventListener('click', function() {
+                sendBtn.disabled = true;
+                showMessage('Sending...', false);
+                var request = {
+                    kind: kind(),
+                    summary: field('reportSummary'),
+                    description: field('reportDescription'),
+                    contact_email: field('reportContact'),
+                    diagnostics: include.checked ? DIAGNOSTICS : null
+                };
+                fetch('/.web/api/report', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-SilentSuite-CSRF': CSRF},
+                    body: JSON.stringify(request)
+                }).then(function(response) {
+                    return response.json().catch(function() { return {}; });
+                }).then(function(data) {
+                    if (data && data.outcome === 'sent') {
+                        document.getElementById('reportForm').classList.add('hidden');
+                        document.getElementById('reportThanks').classList.remove('hidden');
+                    } else if (data && data.outcome === 'invalid') {
+                        // Rejected locally before anything was sent.
+                        showMessage(data.error || 'Please check the form.', true);
+                        sendBtn.disabled = false;
+                    } else {
+                        // No automatic retry: the relay may already have the report.
+                        showMessage("We couldn't confirm your report was sent. Use Email instead or Copy to send it another way.", true);
+                    }
+                }, function() {
+                    showMessage("We couldn't confirm your report was sent. Use Email instead or Copy to send it another way.", true);
+                });
+            });
+
+            syncPreview();
+        })();
+    </script>
+</body>
+</html>
+"""
+
+
 class Web(BaseWeb):
     """SilentSuite Bridge dashboard web module for Radicale."""
 
@@ -1761,6 +2124,13 @@ class Web(BaseWeb):
                 200,
                 {"Content-Type": "text/html; charset=utf-8"},
                 html.encode(),
+            )
+
+        if path == "/.web/report":
+            return (
+                200,
+                {"Content-Type": "text/html; charset=utf-8"},
+                _render_report_page().encode("utf-8"),
             )
 
         # API endpoint for JSON status
@@ -1920,6 +2290,12 @@ class Web(BaseWeb):
             if not _has_valid_csrf(environ):
                 return _csrf_error()
             return _handle_account_mutation(environ, "remove")
+
+        # Report a problem: the only route that contacts the report relay.
+        if path == "/.web/api/report":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            return _handle_report_send(environ)
 
         # Update settings
         if path == "/.web/api/settings":
