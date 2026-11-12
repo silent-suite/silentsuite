@@ -164,8 +164,13 @@ def test_error_code_table_matches_bounded_codes_and_schema_enum():
 
 
 def test_disclosure_states_retention_once_from_the_constant():
-    assert report.REPORT_RETENTION == "12 months after the report is closed"
-    assert report.DISCLOSURE_TEXT.count(report.REPORT_RETENTION) == 1
+    assert report.REPORT_RETENTION_DAYS == 90
+    assert report.DISCLOSURE_TEXT == (
+        "Your report is sent through Cloudflare and delivered by email (via Resend) "
+        "to the SilentSuite support inbox. It is not end-to-end encrypted and not "
+        "linked to your account. We delete it 90 days after we've dealt with it; "
+        "to have it deleted sooner, email support@silentsuite.io."
+    )
     assert "support@silentsuite.io" in report.DISCLOSURE_TEXT
 
 
@@ -367,13 +372,14 @@ def test_diagnostics_snapshot_is_revalidated_strictly(mutate):
 
 
 @pytest.mark.parametrize("url", [
-    "http://report.silentsuite.io/v1/reports",
-    "https://evil.example/v1/reports",
-    "https://report.silentsuite.io.evil.example/v1/reports",
-    "https://api.report.silentsuite.io/v1/reports",
-    "https://report.silentsuite.io:8443/v1/reports",
-    "https://user@report.silentsuite.io/v1/reports",
-    "ftp://report.silentsuite.io/v1/reports",
+    "http://silentsuite.io/api/report",
+    "https://evil.example/api/report",
+    "https://silentsuite.io.evil.example/api/report",
+    "https://www.silentsuite.io/api/report",
+    "https://report.silentsuite.io/v1/reports",
+    "https://silentsuite.io:8443/api/report",
+    "https://user@silentsuite.io/api/report",
+    "ftp://silentsuite.io/api/report",
 ])
 def test_post_helper_refuses_other_hosts_and_schemes_before_network(url):
     spy = SpyTransport()
@@ -387,7 +393,7 @@ def test_post_helper_sends_once_with_fixed_headers_and_no_origin():
     assert report.send_report(b'{"schema":1}', transport=spy) == report.OUTCOME_SENT
     assert len(spy.calls) == 1
     call = spy.calls[0]
-    assert call["url"] == "https://report.silentsuite.io/v1/reports"
+    assert call["url"] == "https://silentsuite.io/api/report"
     assert call["data"] == b'{"schema":1}'
     assert call["headers"] == {
         "Content-Type": "application/json",

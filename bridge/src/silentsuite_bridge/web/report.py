@@ -17,19 +17,20 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-REPORT_URL = "https://report.silentsuite.io/v1/reports"
-_ALLOWED_HOSTS = frozenset({"report.silentsuite.io"})
+REPORT_URL = "https://silentsuite.io/api/report"
+_ALLOWED_HOSTS = frozenset({"silentsuite.io"})
 _USER_AGENT = "SilentSuite-Bridge-Report"
 
 SUPPORT_EMAIL = "support@silentsuite.io"
 PRIVACY_URL = "https://silentsuite.io/privacy#problem-reports"
 # One constant for the retention period shown in the disclosure.
-REPORT_RETENTION = "12 months after the report is closed"
+REPORT_RETENTION_DAYS = 90
 DISCLOSURE_TEXT = (
-    "Your report is sent through Cloudflare and stored as a private GitHub issue "
-    "that only the SilentSuite team can read. It is not end-to-end encrypted and "
-    f"not linked to your account. Kept for {REPORT_RETENTION}; to have it "
-    f"deleted, email {SUPPORT_EMAIL}."
+    "Your report is sent through Cloudflare and delivered by email (via Resend) "
+    "to the SilentSuite support inbox. It is not end-to-end encrypted and not "
+    f"linked to your account. We delete it {REPORT_RETENTION_DAYS} days after "
+    "we've dealt with it; to have it deleted sooner, email "
+    f"{SUPPORT_EMAIL}."
 )
 
 HOSTED_SERVER_URL = "https://server.silentsuite.io"
@@ -411,8 +412,8 @@ def send_report(body, *, url=REPORT_URL, transport=None, timeout=SEND_TIMEOUT):
 
     ``failed`` means the relay answered with a definite non-success status;
     ``unknown`` means the outcome cannot be confirmed (timeout, dropped
-    connection, unexpected response), so the relay may already have created
-    the issue. There are no retries. Disallowed URLs and oversized bodies
+    connection, unexpected response), so the relay may already have accepted
+    the report. There are no retries. Disallowed URLs and oversized bodies
     raise ReportSendError before any network access.
     """
     _check_url(url)
