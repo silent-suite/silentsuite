@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -354,7 +354,6 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           exceptions: [...master.exceptions, instanceDate],
           updated: now,
         }
-        const duration = master.endDate.getTime() - master.startDate.getTime()
         const newTempId = crypto.randomUUID()
         const standaloneBase = withOccurrenceWallClock({
           ...master,
@@ -364,7 +363,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           recurrenceRule: null,
           exceptions: [],
           startDate: instanceDate,
-          endDate: new Date(instanceDate.getTime() + duration),
+          // A day or week DURATION keeps its wall-clock length at this occurrence.
+          endDate: occurrenceEnd(master, instanceDate),
         }, master, instanceDate)
         const standaloneEvent: CalendarEvent = {
           ...mergeEventPatch(standaloneBase, patch),
@@ -405,7 +405,6 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         }
 
         // Create new recurring event from instanceDate with the patch applied
-        const duration = master.endDate.getTime() - master.startDate.getTime()
         const newTempId = crypto.randomUUID()
         const newRecurringBase = withOccurrenceWallClock({
           ...master,
@@ -415,7 +414,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           // The new series takes over the original's later retained RDATEs.
           unknownProperties: retainedDates.from,
           startDate: instanceDate,
-          endDate: new Date(instanceDate.getTime() + duration),
+          // A day or week DURATION keeps its wall-clock length at this occurrence.
+          endDate: occurrenceEnd(master, instanceDate),
           exceptions: [],
         }, master, instanceDate)
         const newRecurring: CalendarEvent = {

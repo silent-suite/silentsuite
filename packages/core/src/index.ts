@@ -92,6 +92,7 @@ export {
   parseAlarmTriggerMinutes,
   parseICalDateValue,
   splitRetainedRecurrenceDates,
+  occurrenceEnd,
 } from './models/calendar-event.js';
 export type { CalendarEvent } from './models/calendar-event.js';
 

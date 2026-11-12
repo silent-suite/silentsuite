@@ -391,6 +391,20 @@ export function fromVEvent(veventStr: string): CalendarEvent {
 }
 
 /**
+ * End of the occurrence of `event` that starts at `start`: its source DURATION applied with
+ * nominal days and weeks in the event's own zone when it has one, otherwise its fixed length.
+ */
+export function occurrenceEnd(
+  event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating' | 'duration' | 'startDate' | 'endDate'>,
+  start: Date,
+): Date {
+  const nominal = event.duration !== undefined
+    ? addICalDuration(start, event.duration, event.allDay, recurrenceTimeZone(event))
+    : null;
+  return nominal ?? new Date(start.getTime() + (event.endDate.getTime() - event.startDate.getTime()));
+}
+
+/**
  * Split an event's retained RDATE values at `cutoff`, for ending a series there. `before` is the
  * event's retained property lines without RDATE values at or after `cutoff`; `from` holds those
  * later RDATE lines. A value is compared as an instant, read with its own TZID, else the event's
