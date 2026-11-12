@@ -189,7 +189,7 @@ function CancelDialog({
         <div className="flex gap-3 pt-2">
           <Button
             variant="outline"
-            size="sm"
+            size="sm" className="max-md:min-h-[44px]"
             onClick={onClose}
             disabled={cancelling}
           >
@@ -197,7 +197,7 @@ function CancelDialog({
           </Button>
           <Button
             size="sm"
-            className="border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
+            className="max-md:min-h-[44px] border-red-500 bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20"
             onClick={onConfirm}
             disabled={cancelling}
           >
@@ -588,8 +588,8 @@ export default function SubscriptionPage() {
                 <p className="mt-1 text-xs text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={startPaymentConfirmation}>Retry payment status</Button>
-                <Button size="sm" variant="outline" onClick={openPaymentRecovery}>Review payment options</Button>
+                <Button size="sm" className="max-md:min-h-[44px]" onClick={startPaymentConfirmation}>Retry payment status</Button>
+                <Button size="sm" className="max-md:min-h-[44px]" variant="outline" onClick={openPaymentRecovery}>Review payment options</Button>
               </div>
             </div>
           ) : !paymentConfirmationPending && (
@@ -792,10 +792,10 @@ export default function SubscriptionPage() {
           <p className="text-sm font-medium text-amber-700 dark:text-amber-300">Payment needs attention</p>
           <p className="mt-1 text-sm text-[rgb(var(--muted))]">{paymentReturnFailure}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button size="sm" onClick={startPaymentConfirmation}>
+            <Button size="sm" className="max-md:min-h-[44px]" onClick={startPaymentConfirmation}>
               Retry payment status
             </Button>
-            <Button size="sm" variant="outline" onClick={openPaymentRecovery}>
+            <Button size="sm" className="max-md:min-h-[44px]" variant="outline" onClick={openPaymentRecovery}>
               Review payment options
             </Button>
           </div>

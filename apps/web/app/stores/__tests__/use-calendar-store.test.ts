@@ -1244,3 +1244,144 @@ describe('WEB-05 calendar update refused by the production queue', () => {
     }
   })
 })
+
+describe('useCalendarStore keeps unsupported event content (WEB-03)', () => {
+  const SERIES = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Other Client//EN',
+    'BEGIN:VEVENT',
+    'UID:web03-series',
+    'DTSTART:20270301T100000Z',
+    'DTEND:20270301T110000Z',
+    'RRULE:FREQ=WEEKLY;COUNT=6',
+    'RDATE:20270420T100000Z',
+    'SUMMARY:Weekly',
+    'TRANSP:TRANSPARENT',
+    'ATTENDEE;CN=Guest:mailto:guest@example.invalid',
+    'X-EXAMPLE-PROP:keep-me',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n')
+
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('a title edit uploads the attendee, transparency and extra properties unchanged', async () => {
+    const event = seedRemote(SERIES)
+    await useCalendarStore.getState().updateEvent(event.id, { title: 'Weekly v2' })
+
+    const uploaded = lastUpdated()
+    expect(uploaded).toMatch(/^SUMMARY:Weekly v2$/m)
+    expect(uploaded).toMatch(/^ATTENDEE;CN=Guest:mailto:guest@example\.invalid$/m)
+    expect(uploaded).toMatch(/^TRANSP:TRANSPARENT$/m)
+    expect(uploaded).toMatch(/^X-EXAMPLE-PROP:keep-me$/m)
+    expect(uploaded).toMatch(/^RDATE:20270420T100000Z$/m)
+  })
+
+  it('a "this" copy gets a new item without the series\' retained lines; the master keeps them', async () => {
+    const master = seedRemote(SERIES)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2027-03-08T10:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^SUMMARY:Copy$/m)
+    expect(copy).not.toMatch(/^(RDATE|ATTENDEE|X-EXAMPLE-PROP)[;:]/m)
+    const masterIcs = lastUpdated()
+    expect(masterIcs).toMatch(/^RDATE:20270420T100000Z$/m)
+    expect(masterIcs).toMatch(/^X-EXAMPLE-PROP:keep-me$/m)
+  })
+
+  it('a "this and future" edit moves later RDATEs to the new series and keeps the rest on the original', async () => {
+    const master = seedRemote(SERIES)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-15T10:00:00Z'))
+
+    const series = lastCreated()
+    expect(series).toMatch(/^RDATE:20270420T100000Z$/m)
+    expect(series).not.toMatch(/^(ATTENDEE|X-EXAMPLE-PROP)[;:]/m)
+    const masterIcs = lastUpdated()
+    expect(masterIcs).toMatch(/^RRULE:FREQ=WEEKLY;UNTIL=20270315T095959Z$/m)
+    expect(masterIcs).not.toMatch(/^RDATE/m)
+    expect(masterIcs).toMatch(/^X-EXAMPLE-PROP:keep-me$/m)
+  })
+
+  it('a "this and future" edit keeps earlier RDATEs on the original only', async () => {
+    const master = seedRemote(SERIES.replace('RDATE:20270420T100000Z', 'RDATE:20270310T100000Z,20270420T100000Z'))
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-15T10:00:00Z'))
+
+    expect(lastUpdated()).toMatch(/^RDATE:20270310T100000Z$/m)
+    expect(lastCreated()).toMatch(/^RDATE:20270420T100000Z$/m)
+  })
+
+  const WEEK_SERIES = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'BEGIN:VEVENT',
+    'UID:web03-week',
+    'DTSTART;TZID=America/New_York:20260226T100000',
+    'DURATION:P1W',
+    'RRULE:FREQ=WEEKLY;COUNT=6',
+    'SUMMARY:Week',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n')
+
+  it('a "this" copy of a P1W occurrence across DST keeps the nominal week', async () => {
+    const master = seedRemote(WEEK_SERIES)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2026-03-05T15:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTSTART;TZID=America\/New_York:20260305T100000$/m)
+    expect(copy).toMatch(/^DURATION:P1W$/m)
+    expect(copy).not.toMatch(/^DTEND/m)
+    expect(deserializeCalendarEvent(copy).endDate.toISOString()).toBe('2026-03-12T14:00:00.000Z')
+  })
+
+  it('a "this and future" series from a P1W occurrence across DST keeps the nominal week', async () => {
+    const master = seedRemote(WEEK_SERIES)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2026-03-05T15:00:00Z'))
+
+    const series = lastCreated()
+    expect(series).toMatch(/^DTSTART;TZID=America\/New_York:20260305T100000$/m)
+    expect(series).toMatch(/^DURATION:P1W$/m)
+    expect(series).not.toMatch(/^DTEND/m)
+    expect(lastUpdated()).toMatch(/^DURATION:P1W$/m)
+  })
+
+  it('after the series length is edited, a later "this" copy uses the edited length, not the old DURATION', async () => {
+    const master = seedRemote(WEEK_SERIES)
+    await useCalendarStore.getState().updateEvent(master.id, { endDate: new Date('2026-02-26T17:00:00Z') })
+    expect(lastUpdated()).toMatch(/^DTEND;TZID=America\/New_York:20260226T120000$/m)
+
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2026-03-05T15:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTEND;TZID=America\/New_York:20260305T120000$/m)
+    expect(copy).not.toMatch(/^DURATION/m)
+  })
+
+  it('control: a copy whose length is edited writes DTEND', async () => {
+    const master = seedRemote(WEEK_SERIES)
+    await useCalendarStore.getState().updateRecurringEvent(
+      master.id,
+      { endDate: new Date('2026-03-05T17:00:00Z') },
+      'this',
+      new Date('2026-03-05T15:00:00Z'),
+    )
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTEND;TZID=America\/New_York:20260305T120000$/m)
+    expect(copy).not.toMatch(/^DURATION/m)
+  })
+
+  it('a "this and future" delete drops later RDATEs from the original', async () => {
+    const master = seedRemote(SERIES.replace('RDATE:20270420T100000Z', 'RDATE:20270310T100000Z,20270420T100000Z'))
+    await useCalendarStore.getState().deleteRecurringEvent(master.id, 'this_and_future', new Date('2027-03-15T10:00:00Z'))
+
+    const masterIcs = lastUpdated()
+    expect(masterIcs).toMatch(/^RRULE:FREQ=WEEKLY;UNTIL=20270315T095959Z$/m)
+    expect(masterIcs).toMatch(/^RDATE:20270310T100000Z$/m)
+    expect(masterIcs).not.toMatch(/20270420/)
+    expect(etebaseMock.state.createItem).not.toHaveBeenCalled()
+  })
+})
