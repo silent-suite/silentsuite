@@ -1,0 +1,1 @@
+v0.2.2-beta: migliora l'importazione dei contatti locali Android per i numeri di telefono vCard 4, segnala le importazioni fallite/parziali in modo più chiaro senza esporre i dettagli dei contatti privati, rafforza i segreti di configurazione Android e il debug logging, e include le ultime correzioni di compatibilità e privacy per l'importazione.

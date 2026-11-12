@@ -1,0 +1,1 @@
+Migliorata la compatibilità di Android sui dispositivi con dimensione di pagina a 16 KB, semplificati gli abbonamenti annuali, chiarita la configurazione remota di Bridge e aggiornata la guida alla risoluzione dei problemi.

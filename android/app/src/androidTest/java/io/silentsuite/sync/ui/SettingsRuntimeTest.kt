@@ -1,24 +1,33 @@
 package io.silentsuite.sync.ui
 
+import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
+import android.app.Notification
+import android.app.NotificationManager
 import android.content.ContentResolver
 import android.content.Context
 import android.content.DialogInterface
 import android.content.Intent
 import android.content.SharedPreferences
+import android.os.Build
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.provider.CalendarContract
+import android.service.notification.StatusBarNotification
 import android.system.Os
 import android.system.OsConstants
 import android.widget.TextView
+import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.view.menu.MenuBuilder
+import androidx.core.app.NotificationManagerCompat
 import androidx.fragment.app.DialogFragment
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.preference.Preference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
 import androidx.test.core.app.ActivityScenario
@@ -36,6 +45,7 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.notes.MainThreadStoreProbe
 import io.silentsuite.sync.notes.NotesSyncCoordinator
+import io.silentsuite.sync.notes.edit.NotesFolderListings.Folder
 import io.silentsuite.sync.notes.edit.PendingNotesDiscardPermits
 import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
@@ -45,22 +55,27 @@ import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.ui.settings.MigrationCommitStage
 import io.silentsuite.sync.ui.settings.SettingsCategory
 import io.silentsuite.sync.ui.setup.AuthenticatorResponseController
+import io.silentsuite.sync.ui.setup.GuardedRecoveryRemoval
 import io.silentsuite.sync.ui.setup.LoginActivity
 import io.silentsuite.sync.ui.setup.LoginFlowOwnerRegistry
 import io.silentsuite.sync.ui.setup.SetupSecretHolder
 import io.silentsuite.sync.ui.setup.SignupContinuationRegistry
+import io.silentsuite.sync.utils.AccountRowChanges
 import io.silentsuite.sync.utils.AndroidCompat
+import io.silentsuite.sync.utils.NotificationUtils
 import java.io.File
 import java.io.IOException
 import java.net.URI
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -71,6 +86,9 @@ import org.junit.runner.RunWith
 
 /** Preference key of the approved Settings → Recover deleted contacts entry. */
 private const val RECOVER_DELETED_CONTACTS_KEY = "recover_deleted_contacts"
+
+/** The token of an app process that is not this one, for a removal confirmation restored as in a new process. */
+private const val ANOTHER_PROCESS = "another-process"
 
 @RunWith(AndroidJUnit4::class)
 class SettingsRuntimeTest {
@@ -1004,7 +1022,8 @@ class SettingsRuntimeTest {
     /**
      * The Settings hub row and the screen for a present account's store, with no session, while notes-pending cannot
      * be listed: the store is still found by its path. Its discard deletes the files but cannot show the folder gone,
-     * so it is not finished: Retry is offered and stays not finished, and the store's row opens nothing meanwhile.
+     * so it is not finished: Retry is offered and stays not finished, and the store's row opens nothing meanwhile; a
+     * check of the removal section shows its own Snackbar, after which the Retry shows again.
      * Once the screen is left, the row still says the discard did not finish, from the store's state, and is the
      * Retry; once the folder above lists, the store counts nothing, the row and the hub row stay, and the row's Retry
      * finishes under the same permit, and the account's store takes saves again in a new instance.
@@ -1080,8 +1099,19 @@ class SettingsRuntimeTest {
 
                 // 5. Retry while notes-pending still cannot be listed: not finished again, and nothing else changes.
                 notes.tapRetry(settings)
-                notes.awaitRetryBar(settings, first)
+                val second = notes.awaitRetryBar(settings, first)
                 assertTrue("$folder.permit" in notes.permits())
+                notes.awaitRows(settings, listOf(stopped, others))
+
+                // 5b. A check of the removal section shows its own Snackbar in the Retry's place; once that goes, the
+                // Retry shows again, as it is the discard's only one on this screen. The check runs through the
+                // screen's model, as a row's tap does: the guard allows this account now that its files went, so the
+                // section has no row for it.
+                notes.checkRemoval(settings, account.type, account.name)
+                notes.awaitSnackbar(settings, context.getString(R.string.notes_removal_allowed, account.name))
+                notes.awaitRetryBar(settings, second)
+                assertTrue("still not finished: ${notes.confirmationOf(settings)}",
+                    notes.confirmationOf(settings).second is UnsyncedNotesDiscardPolicy.Result.NotFinished)
                 notes.awaitRows(settings, listOf(stopped, others))
 
                 // 6. Leaving the screen takes its result and the bar away, yet the store's state keeps the row: it says
@@ -1126,6 +1156,438 @@ class SettingsRuntimeTest {
             if (added) removeAccountAndWait(manager, account)
             ActiveAccountManager.clearActiveAccount(context)
         }
+    }
+
+    /**
+     * Removals through Android's asking path, as Android settings makes them, so the authenticator answers. A clean
+     * account goes. One whose own store holds a draft stays, with its files and the row count, setup recovery would not
+     * remove it either, Unsynced Notes lists it, and the refusal notification names nothing of it. Once the draft is
+     * discarded as Unsynced Notes does, it goes, and so does the notification.
+     */
+    @Test
+    fun removingAnAccountThroughAndroidIsRefusedWhileItsStoreHoldsADraftAndAllowedOnceTheDraftIsDiscarded() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val notes = UnsyncedNotesOnDevice(context)
+        val clean = Account("settings-removal-clean-${System.nanoTime()}@example.invalid", App.accountType)
+        val account = Account("settings-removal-${System.nanoTime()}@example.invalid", App.accountType)
+        val generation = "removal-${UUID.randomUUID()}"
+        val folder =
+            PendingNotesStore.identityDir(context.noBackupFilesDir, account.type, account.name, generation).name
+        notes.assertClean(folder)
+        val added = ArrayList<Account>()
+        try {
+            notes.isolate()
+            allowRefusalNotices(context)
+            // 1. A clean account, with a readable id and no store, goes, and nothing is posted.
+            added += clean
+            addWithId(notes, manager, clean, "removal-clean-${UUID.randomUUID()}")
+            val before = AccountRowChanges.mainType.count()
+            assertTrue(removeThroughAndroid(manager, clean))
+            assertFalse(clean in manager.getAccountsByType(App.accountType))
+            assertTrue("the answer moved the row count", AccountRowChanges.mainType.count() > before)
+            assertNull(refusalNotice(context))
+
+            // 2. A draft in the account's own store: refused, and nothing changes.
+            added += account
+            addWithId(notes, manager, account, generation)
+            notes.save(PendingNotesStore.forIdentity(context, account.type, account.name, generation), "n1")
+            PendingNotesStore.resetForTesting()
+            val files = notes.filesOf(folder)
+            val rows = AccountRowChanges.mainType.count()
+            assertFalse("setup recovery would not remove it", recoveryAllows(context, account))
+            assertFalse(removeThroughAndroid(manager, account))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertEquals("a refusal moves no row count", rows, AccountRowChanges.mainType.count())
+            notes.assertFiles("after the refusal", folder, files)
+            assertRefusalNotice(context, R.string.notes_removal_refused_store, account)
+            assertEquals(listOf(NotesRemovalSection.Row(account.type, account.name, NotesRemovalNotice.Kind.STORE)),
+                NotesRemovalSection.read(context).rows)
+
+            // 3. Discarded as Unsynced Notes does, it goes, and the notification with it.
+            val shown = PendingNotesStore.forIdentity(context, account.type, account.name, generation).unsynced()
+            assertSame(UnsyncedNotesDiscardPolicy.Result.Done,
+                UnsyncedNotesStores.discard(context, folder, account.name, shown, retry = false))
+            // Setup recovery's yes holds the store's saves back until its removal reports; nothing is written.
+            val recovery = PendingNotesStore.RemovalHold()
+            try {
+                assertTrue(GuardedRecoveryRemoval.allowsOnDevice(context, account, recovery))
+                assertSame(PendingNotesStore.SaveOutcome.RemovalPending, PendingNotesStore.forIdentity(context,
+                    account.type, account.name, generation).saveLocal("n3", "b1", "r1", "early".toByteArray(),
+                    isCreate = true))
+            } finally {
+                recovery.release()
+            }
+            assertTrue(removeThroughAndroid(manager, account))
+            assertFalse(account in manager.getAccountsByType(App.accountType))
+            // The yes held the store's saves back, in this process, so none could land before the row went.
+            assertSame(PendingNotesStore.SaveOutcome.RemovalPending, PendingNotesStore.forIdentity(context,
+                account.type, account.name, generation).saveLocal("n2", "b1", "r1", "late".toByteArray(),
+                isCreate = true))
+            awaitNoRefusalNotice(context)
+            assertEquals(NotesRemovalSection.Section(emptyList(), accountsUnread = false),
+                NotesRemovalSection.read(context))
+            assertEquals("no request", 0, notes.requests.get())
+            assertEquals("no Notes run", 0, notes.runs.get())
+            notes.probe.assertNoneOnMain()
+        } finally {
+            notes.restore(folder)
+            for (left in added) {
+                if (left in manager.getAccountsByType(App.accountType)) removeAccountAndWait(manager, left)
+            }
+            NotesRemovalNotice.clear(context)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    /**
+     * A store that cannot be listed: a removal through Android is refused while nothing acknowledges it, and once the
+     * user acknowledges the store as Unsynced Notes does, the account goes. The acknowledgement deletes nothing: the
+     * store's files stay as they were.
+     */
+    @Test
+    fun removingAnAccountThroughAndroidWhoseStoreCannotBeListedIsRefusedUntilTheStoreIsAcknowledged() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val notes = UnsyncedNotesOnDevice(context)
+        val account = Account("settings-removal-unlisted-${System.nanoTime()}@example.invalid", App.accountType)
+        val generation = "removal-${UUID.randomUUID()}"
+        val folder =
+            PendingNotesStore.identityDir(context.noBackupFilesDir, account.type, account.name, generation).name
+        notes.assertClean(folder)
+        var added = false
+        try {
+            notes.isolate()
+            allowRefusalNotices(context)
+            added = true
+            addWithId(notes, manager, account, generation)
+            notes.save(PendingNotesStore.forIdentity(context, account.type, account.name, generation), "n1")
+            PendingNotesStore.resetForTesting()
+            val files = notes.filesOf(folder)
+            notes.probe.listing = { d -> if (d.name == folder) null else d.listFiles() }
+
+            // 1. Refused, and Unsynced Notes lists it.
+            assertFalse(removeThroughAndroid(manager, account))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertRefusalNotice(context, R.string.notes_removal_refused_store, account)
+            assertEquals(listOf(NotesRemovalSection.Row(account.type, account.name, NotesRemovalNotice.Kind.STORE)),
+                NotesRemovalSection.read(context).rows)
+
+            // 2. Acknowledged as Unsynced Notes does, it goes, and the store's files stay.
+            val shown = PendingNotesStore.forIdentity(context, account.type, account.name, generation).unsynced()
+            assertEquals(Step.ACKNOWLEDGE, UnsyncedNotesDiscardPolicy.step(shown))
+            assertSame(UnsyncedNotesDiscardPolicy.Result.Acknowledged,
+                UnsyncedNotesStores.discard(context, folder, account.name, shown, retry = false))
+            assertTrue(removeThroughAndroid(manager, account))
+            assertFalse(account in manager.getAccountsByType(App.accountType))
+            awaitNoRefusalNotice(context)
+            notes.assertFiles("the acknowledgement deleted nothing", folder, files)
+            assertEquals("no request", 0, notes.requests.get())
+            assertEquals("no Notes run", 0, notes.runs.get())
+            notes.probe.assertNoneOnMain()
+        } finally {
+            notes.restore(folder)
+            if (added && account in manager.getAccountsByType(App.accountType)) removeAccountAndWait(manager, account)
+            NotesRemovalNotice.clear(context)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    /**
+     * A row with no creation id while notes-pending cannot be listed: Android's removal is refused until the
+     * confirmation's tap, which removes it through the same answer, once. The same name added again is refused, and a
+     * row replaced between the tap and Android's answer stays.
+     */
+    @Test
+    fun theConfirmationRemovesAnIdLessRowUnderAnUnreadableNotesPendingOnceAndASameNameReAddIsRefused() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val notes = UnsyncedNotesOnDevice(context)
+        val account = Account("settings-removal-idless-${System.nanoTime()}@example.invalid", App.accountType)
+        notes.assertClean()
+        try {
+            notes.isolate()
+            allowRefusalNotices(context)
+            addIdLess(context, notes, manager, account)
+
+            // 1. Without a confirmation, refused: the notification says only the confirmation lets it through.
+            assertFalse(removeThroughAndroid(manager, account))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertRefusalNotice(context, R.string.notes_removal_refused_confirm, account)
+            assertEquals(listOf(NotesRemovalSection.Row(account.type, account.name, NotesRemovalNotice.Kind.CONFIRM)),
+                NotesRemovalSection.read(context).rows)
+
+            // 2. The confirmation's tap removes it, through the authenticator's answer.
+            val offer = NotesRemovalOffer.onDevice(context)
+            val shown = checkNotNull(offer.show(account.type, account.name)) { "no confirmation was offered" }
+            assertEquals(setOf(PendingNotesRemovalGuard.Cause.PENDING_UNLISTED), shown.reason)
+            assertEquals(NotesRemovalOffer.Outcome.REMOVED, confirmed(offer, account, shown.id))
+            assertFalse(account in manager.getAccountsByType(App.accountType))
+            awaitNoRefusalNotice(context)
+
+            // 3. Once: the same name added again is refused.
+            check(manager.addAccountExplicitly(account, null, null))
+            notes.silence(account)
+            assertFalse(removeThroughAndroid(manager, account))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+
+            // 4. A row replaced between the tap and Android's answer stays: the row count moved in between. Asked
+            // without the confirmation's screen, the refusal posts the notification.
+            NotesRemovalNotice.clear(context)
+            awaitNoRefusalNotice(context)
+            val again = checkNotNull(offer.show(account.type, account.name)) { "no second confirmation" }
+            NotesRemovalOffer.afterMintForTesting = {
+                removeAccountAndWait(manager, account)
+                check(manager.addAccountExplicitly(account, null, null))
+            }
+            assertEquals(NotesRemovalOffer.Outcome.RETRY, confirmed(offer, account, again.id))
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertRefusalNotice(context, R.string.notes_removal_refused_confirm, account)
+
+            // 5. While a removal the confirmation asked for is under way, a refusal of that row, here one through
+            // Android settings, waits for its outcome: no notification, and the mark has the refusal's words to post
+            // if the user has left the screen when the outcome comes, if the outcome can't say whether the account
+            // was removed, or if the screen goes first.
+            NotesRemovalNotice.clear(context)
+            awaitNoRefusalNotice(context)
+            val marked = NotesRemovalAnswer.askInApp(account.type, account.name)
+            var withheld: NotesRemovalNotice.Kind? = null
+            try {
+                assertFalse(removeThroughAndroid(manager, account))
+                assertNull(refusalNotice(context))
+            } finally {
+                withheld = marked.left()
+            }
+            assertEquals(NotesRemovalNotice.Kind.CONFIRM, withheld)
+            assertTrue(account in manager.getAccountsByType(App.accountType))
+            assertEquals("no request", 0, notes.requests.get())
+            notes.probe.assertNoneOnMain()
+        } finally {
+            NotesRemovalOffer.afterMintForTesting = null
+            NotesRemovalAllowance.process.resetForTesting()
+            notes.restore()
+            if (account in manager.getAccountsByType(App.accountType)) removeAccountAndWait(manager, account)
+            NotesRemovalNotice.clear(context)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    /**
+     * Unsynced Notes lists an account Android settings cannot remove now, and the row's tap checks again and opens the
+     * confirmation. Restored as in a new app process, the confirmation says the same, and its "Remove account" checks
+     * again and offers a new confirmation, never a removal. That one's tap removes the account, and the section goes.
+     */
+    @Test
+    fun unsyncedNotesListsAnAccountAndroidCannotRemoveAndAConfirmationRestoredInAnotherProcessAsksAgain() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val notes = UnsyncedNotesOnDevice(context)
+        val account = Account("settings-removal-section-${System.nanoTime()}@example.invalid", App.accountType)
+        val row = UnsyncedNotesOnDevice.Row(UnsyncedNotesFragment.removalKey(account.name), account.name,
+            context.getString(R.string.notes_removal_section_confirm))
+        val title = context.getString(R.string.notes_remove_uncheckable_title, account.name)
+        notes.assertClean()
+        try {
+            notes.isolate()
+            addIdLess(context, notes, manager, account)
+            ActivityScenario.launch<AppSettingsActivity>(AppSettingsActivity.newUnsyncedNotesIntent(context)).use {
+                // 1. The section lists the account, and its tap opens the confirmation.
+                val settings = notes.resumedSettings(null)
+                notes.awaitSection(settings, listOf(row))
+                notes.tapSectionRow(settings, account.name)
+                notes.awaitRemovalDialog(settings, title) { ProcessIncarnation.isCurrent(it) }
+
+                // 2. Restored as in another process: the same words, and its button offers a new confirmation.
+                val restored = notes.removalRestoredFromAnotherProcess(settings)
+                val old = notes.awaitRemovalDialog(restored, title) { it == ANOTHER_PROCESS }
+                notes.tapRemovalDialog(old)
+                val next = notes.awaitRemovalDialog(restored, title) { ProcessIncarnation.isCurrent(it) }
+                assertNotSame(old, next)
+                assertTrue("no removal yet", account in manager.getAccountsByType(App.accountType))
+
+                // 3. Its tap removes the account, and the section goes.
+                notes.tapRemovalDialog(next)
+                notes.awaitSnackbar(restored, context.getString(
+                    NotesRemovalOffer.message(NotesRemovalOffer.Outcome.REMOVED), account.name))
+                notes.await("the account removed") { account !in manager.getAccountsByType(App.accountType) }
+                notes.awaitSection(restored, null)
+            }
+            assertEquals("no request", 0, notes.requests.get())
+            assertEquals("no Notes run", 0, notes.runs.get())
+            notes.probe.assertNoneOnMain()
+        } finally {
+            notes.finishSettings()
+            NotesRemovalAllowance.process.resetForTesting()
+            notes.restore()
+            if (account in manager.getAccountsByType(App.accountType)) removeAccountAndWait(manager, account)
+            NotesRemovalNotice.clear(context)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    /**
+     * The confirmation's fingerprint on this device: Os.stat of notes-pending follows a link, and Os.lstat of each name
+     * of an unknown kind does not, works on a dangling link, and gives the errno for a name that is gone. A link of the
+     * same name to another folder gives another fingerprint.
+     */
+    @Test
+    fun theRemovalFingerprintStatsTheFolderThroughALinkAndLstatsEachNameOfAnUnknownKindItself() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val root = File(context.cacheDir, "fingerprint-${UUID.randomUUID()}")
+        val links = ArrayList<File>()
+        try {
+            val noBackup = File(root, "no_backup")
+            val pending = File(noBackup, PendingNotesStore.PENDING)
+            val target = File(root, "target")
+            val other = File(root, "other")
+            check(pending.mkdirs() && target.mkdirs() && other.mkdirs())
+            check(File(pending, "zz-folder").mkdir())
+            val link = File(pending, "zz-link").also { links += it }
+            Os.symlink(target.path, link.path)
+            val dangling = File(pending, "zz-dangling").also { links += it }
+            Os.symlink(File(root, "missing").path, dangling.path)
+            val names = listOf("zz-dangling", "zz-folder", "zz-gone", "zz-link")
+            val decision = PendingNotesRemovalGuard.Decision(PendingNotesRemovalGuard.Verdict.UNKNOWN_KIND_ONLY, null,
+                names)
+
+            val first = NotesRemovalOffer.fingerprintIn(noBackup, decision)
+            val folder = first.stats[Folder.PENDING] as NotesRemovalAllowance.FolderStat.Stat
+            assertTrue(OsConstants.S_ISDIR(folder.mode))
+            assertEquals(Os.stat(pending.path).st_ino, folder.inode)
+            assertEquals(names, first.names)
+            fun entry(fingerprint: NotesRemovalAllowance.Fingerprint, name: String) =
+                fingerprint.entries[name] as? NotesRemovalAllowance.FolderStat.Stat
+                    ?: throw AssertionError("$name: ${fingerprint.entries[name]}")
+            assertTrue(OsConstants.S_ISLNK(entry(first, "zz-link").mode))
+            assertEquals(Os.lstat(link.path).st_ino, entry(first, "zz-link").inode)
+            assertNotEquals(Os.stat(target.path).st_ino, entry(first, "zz-link").inode)
+            assertTrue(OsConstants.S_ISLNK(entry(first, "zz-dangling").mode))
+            assertTrue(OsConstants.S_ISDIR(entry(first, "zz-folder").mode))
+            assertEquals(NotesRemovalAllowance.FolderStat.Failed(OsConstants.ENOENT), first.entries["zz-gone"])
+
+            // A link of the same name to another folder, made before the old one goes, so it has another inode.
+            val swap = File(pending, "zz-swap").also { links += it }
+            Os.symlink(other.path, swap.path)
+            Os.rename(swap.path, link.path)
+            val second = NotesRemovalOffer.fingerprintIn(noBackup, decision)
+            assertNotEquals(entry(first, "zz-link").inode, entry(second, "zz-link").inode)
+            assertNotEquals(first, second)
+
+            // notes-pending itself a link: stat follows it to the folder.
+            val linkedNoBackup = File(root, "linked")
+            val real = File(root, "real")
+            check(linkedNoBackup.mkdirs() && real.mkdirs())
+            val pendingLink = File(linkedNoBackup, PendingNotesStore.PENDING).also { links += it }
+            Os.symlink(real.path, pendingLink.path)
+            val linked = NotesRemovalOffer.fingerprintIn(linkedNoBackup,
+                PendingNotesRemovalGuard.Decision(PendingNotesRemovalGuard.Verdict.ROOT_UNLISTABLE_ONLY, null))
+            val followed = linked.stats[Folder.PENDING] as NotesRemovalAllowance.FolderStat.Stat
+            assertTrue(OsConstants.S_ISDIR(followed.mode))
+            assertEquals(Os.stat(real.path).st_ino, followed.inode)
+        } finally {
+            // Links first: deleteRecursively follows them.
+            for (link in links) runCatching { Os.remove(link.path) }
+            root.deleteRecursively()
+        }
+    }
+
+    /** A row with a readable creation id and no adapter sync, as the Unsynced Notes cases add one. */
+    private fun addWithId(notes: UnsyncedNotesOnDevice, manager: AccountManager, account: Account, generation: String) {
+        check(manager.addAccountExplicitly(account, null, null))
+        notes.silence(account)
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+    }
+
+    /**
+     * A row with no creation id while notes-pending is there and cannot be listed: the guard's one eligible case for a
+     * row that nothing else names. notes-pending is made before anything is shown, since that changes no_backup.
+     */
+    private fun addIdLess(context: Context, notes: UnsyncedNotesOnDevice, manager: AccountManager, account: Account) {
+        ActiveAccountManager.clearActiveAccount(context)
+        File(context.noBackupFilesDir, PendingNotesStore.PENDING).mkdirs()
+        check(manager.addAccountExplicitly(account, null, null))
+        notes.silence(account)
+        notes.probe.listing = { d -> if (d.name == PendingNotesStore.PENDING) null else d.listFiles() }
+        PendingNotesStore.resetForTesting()
+    }
+
+    /** Setup recovery's question, with its hold released at once, since the removal here goes through Android. */
+    private fun recoveryAllows(context: Context, account: Account): Boolean {
+        val hold = PendingNotesStore.RemovalHold()
+        return try {
+            GuardedRecoveryRemoval.allowsOnDevice(context, account, hold)
+        } finally {
+            hold.release()
+        }
+    }
+
+    /**
+     * A removal through Android's asking path, so the authenticator answers, as for Android settings; cleanups go
+     * through AndroidCompat, which the authenticator never sees. Off the main thread only.
+     */
+    private fun removeThroughAndroid(manager: AccountManager, account: Account): Boolean =
+        manager.removeAccount(account, null, null, null).getResult(20, TimeUnit.SECONDS)
+            .getBoolean(AccountManager.KEY_BOOLEAN_RESULT)
+
+    /** The confirmation [id]'s tap, and what it came to. */
+    private fun confirmed(offer: NotesRemovalOffer, account: Account, id: String): NotesRemovalOffer.Outcome {
+        val outcomes = LinkedBlockingQueue<NotesRemovalOffer.Outcome>()
+        offer.confirm(account.type, account.name, id) { outcomes.put(it) }
+        return outcomes.poll(20, TimeUnit.SECONDS) ?: throw AssertionError("the confirmation came to nothing")
+    }
+
+    /** The notification permission granted where it is a runtime one, and no refusal notification left. */
+    private fun allowRefusalNotices(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = InstrumentationRegistry.getInstrumentation().uiAutomation
+                .executeShellCommand("pm grant ${context.packageName} ${Manifest.permission.POST_NOTIFICATIONS}")
+            ParcelFileDescriptor.AutoCloseInputStream(granted).use { it.readBytes() }
+        }
+        assertTrue("notifications are allowed", NotificationManagerCompat.from(context).areNotificationsEnabled())
+        NotesRemovalNotice.clear(context)
+        awaitNoRefusalNotice(context)
+    }
+
+    private fun refusalNotice(context: Context): StatusBarNotification? =
+        context.getSystemService(NotificationManager::class.java).activeNotifications
+            .singleOrNull { it.id == Constants.NOTIFICATION_NOTES_REMOVAL_REFUSED }
+
+    /** The refusal notification, once it is posted, for at most 5 s. */
+    private fun awaitRefusalNotice(context: Context): StatusBarNotification {
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (true) {
+            refusalNotice(context)?.let { return it }
+            if (SystemClock.uptimeMillis() > deadline) throw AssertionError("no refusal notification")
+            SystemClock.sleep(50)
+        }
+    }
+
+    private fun awaitNoRefusalNotice(context: Context) {
+        val deadline = SystemClock.uptimeMillis() + 5_000
+        while (refusalNotice(context) != null) {
+            if (SystemClock.uptimeMillis() > deadline) throw AssertionError("the refusal notification stayed")
+            SystemClock.sleep(50)
+        }
+    }
+
+    /**
+     * The refusal notification says [text] and nothing of [account], with one text for the lock screen too, and its tap
+     * opens the app.
+     */
+    private fun assertRefusalNotice(context: Context, @StringRes text: Int, account: Account) {
+        val posted = awaitRefusalNotice(context).notification
+        assertEquals(NotificationUtils.CHANNEL_GENERAL, posted.channelId)
+        assertEquals(Notification.VISIBILITY_PUBLIC, posted.visibility)
+        assertNull("no other text for the lock screen", posted.publicVersion)
+        assertTrue("it goes once tapped", posted.flags and Notification.FLAG_AUTO_CANCEL != 0)
+        assertEquals(context.packageName, posted.contentIntent?.creatorPackage)
+        assertEquals(context.getString(R.string.notes_removal_refused_title),
+            posted.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString())
+        assertEquals(context.getString(text), posted.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString())
+        @Suppress("DEPRECATION")
+        val said = posted.extras.keySet().mapNotNull { posted.extras.get(it)?.toString() }
+        assertTrue("$said", said.none { it.contains(account.name) })
     }
 
     private fun schedulingEvidence(
@@ -1392,6 +1854,7 @@ private class UnsyncedNotesOnDevice(private val context: Context) {
     private fun rowsOf(settings: AppSettingsActivity): List<Row>? {
         val screen = screenOf(settings)?.preferenceScreen ?: return null
         return (0 until screen.preferenceCount).map { screen.getPreference(it) }
+            .filter { it.key != UnsyncedNotesFragment.KEY_REMOVAL }
             .map { Row(it.key, it.title?.toString(), it.summary?.toString(), it.isEnabled) }
     }
 
@@ -1563,6 +2026,85 @@ private class UnsyncedNotesOnDevice(private val context: Context) {
             settings.findViewById<TextView>(com.google.android.material.R.id.snackbar_action)!!.performClick()
         }
         instrumentation.waitForIdleSync()
+    }
+
+    /** The rows of the removal section, or null while it does not show. */
+    private fun sectionOf(settings: AppSettingsActivity): List<Row>? {
+        val section = screenOf(settings)?.findPreference<PreferenceCategory>(UnsyncedNotesFragment.KEY_REMOVAL)
+            ?: return null
+        return (0 until section.preferenceCount).map { section.getPreference(it) }
+            .map { Row(it.key, it.title?.toString(), it.summary?.toString(), it.isEnabled) }
+    }
+
+    /** The removal section shows exactly [expected], in order; null: it does not show. */
+    fun awaitSection(settings: AppSettingsActivity, expected: List<Row>?) {
+        var shown: List<Row>? = null
+        try {
+            await("the removal section") { sectionOf(settings).also { shown = it } == expected }
+        } catch (e: AssertionError) {
+            throw AssertionError("expected the removal section $expected, shown $shown")
+        }
+    }
+
+    /**
+     * The removal section's check of [name], through the screen's model, as a tap on its row or on the button of a
+     * confirmation restored in another process runs it ([NotesRemovalViewModel.open]).
+     */
+    fun checkRemoval(settings: AppSettingsActivity, type: String, name: String) {
+        instrumentation.runOnMainSync {
+            ViewModelProvider(screenOf(settings)!!)[NotesRemovalViewModel::class.java].open(type, name)
+        }
+        instrumentation.waitForIdleSync()
+    }
+
+    fun tapSectionRow(settings: AppSettingsActivity, name: String) {
+        instrumentation.runOnMainSync {
+            screenOf(settings)!!.findPreference<Preference>(UnsyncedNotesFragment.removalKey(name))!!.performClick()
+        }
+        instrumentation.waitForIdleSync()
+    }
+
+    /**
+     * The one removal confirmation that shows, once it has [title] and the token of the process that made it passes
+     * [process].
+     */
+    fun awaitRemovalDialog(settings: AppSettingsActivity, title: String, process: (String?) -> Boolean):
+        NotesRemovalDialogFragment = awaitValue("the removal confirmation \"$title\"") {
+        val screen = screenOf(settings)
+        screen?.childFragmentManager?.executePendingTransactions()
+        screen?.childFragmentManager?.fragments?.filterIsInstance<NotesRemovalDialogFragment>()
+            ?.filter { (it.dialog as? AlertDialog)?.isShowing == true }?.singleOrNull()
+            ?.takeIf {
+                process(it.arguments?.getString(NotesRemovalDialogFragment.ARG_PROCESS)) &&
+                    (it.dialog as AlertDialog).findViewById<TextView>(androidx.appcompat.R.id.alertTitle)?.text
+                        ?.toString() == title
+            }
+    }
+
+    /** "Remove account" on [dialog]. The dialog posts its listener, so this waits for idle. */
+    fun tapRemovalDialog(dialog: NotesRemovalDialogFragment) {
+        instrumentation.runOnMainSync {
+            (dialog.dialog as AlertDialog).getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+        }
+        instrumentation.waitForIdleSync()
+    }
+
+    /**
+     * The open removal confirmation as Android restores it in a new app process: its token is another process's, set
+     * in its arguments before the screen is created again. Gives the new screen.
+     */
+    fun removalRestoredFromAnotherProcess(settings: AppSettingsActivity): AppSettingsActivity {
+        var open = 0
+        instrumentation.runOnMainSync {
+            val dialogs = screenOf(settings)!!.childFragmentManager.fragments
+                .filterIsInstance<NotesRemovalDialogFragment>()
+            open = dialogs.size
+            dialogs.singleOrNull()?.requireArguments()?.putString(NotesRemovalDialogFragment.ARG_PROCESS,
+                ANOTHER_PROCESS)
+        }
+        assertEquals("one removal confirmation", 1, open)
+        instrumentation.runOnMainSync { settings.recreate() }
+        return resumedSettings(settings)
     }
 
     /** Finishes every Settings screen still open, and waits until each is destroyed, at most 5 s. */

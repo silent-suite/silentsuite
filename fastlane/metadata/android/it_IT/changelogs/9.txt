@@ -1,0 +1,1 @@
+Risolve la compatibilità del pacchetto Android App Bundle per i dispositivi e gli store che richiedono l'allineamento delle librerie native a 16 KB.

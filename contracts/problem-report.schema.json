@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://silentsuite.io/contracts/problem-report.schema.json",
+  "title": "SilentSuite problem report v1",
+  "description": "Payload a client sends to the report relay after the user presses Send. Diagnostics are optional, allowlisted and never contain user content, identifiers, URLs, messages or stack traces. Character limits count Unicode code points; UTF-8 byte limits (summary 480, description 16000, body 32768) are enforced in code by clients and the relay.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "kind", "surface", "summary", "description"],
+  "properties": {
+    "schema": { "const": 1 },
+    "kind": { "enum": ["problem", "feature"] },
+    "surface": { "enum": ["web", "android", "bridge"] },
+    "summary": { "$ref": "#/$defs/userText", "minLength": 1, "maxLength": 120 },
+    "description": { "$ref": "#/$defs/userText", "minLength": 1, "maxLength": 4000 },
+    "contact_email": {
+      "type": "string",
+      "maxLength": 254,
+      "pattern": "^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,189}$"
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app_version", "platform", "server", "sync_status", "last_success", "error_codes", "fields"],
+      "properties": {
+        "app_version": { "type": "string", "pattern": "^[A-Za-z0-9._+-]{1,32}$" },
+        "platform": { "type": "string", "pattern": "^[a-z0-9._-]{1,32}$" },
+        "server": { "enum": ["hosted", "custom"] },
+        "sync_status": { "enum": ["synced", "syncing", "offline", "error", "unknown"] },
+        "last_success": { "enum": ["under_1h", "under_1d", "under_7d", "over_7d", "never", "unknown"] },
+        "error_codes": { "type": "array", "maxItems": 10, "uniqueItems": true, "items": { "type": "string" } },
+        "fields": { "type": "object" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "surface": { "const": "web" } }, "required": ["diagnostics"] },
+      "then": { "properties": { "diagnostics": { "properties": {
+        "error_codes": { "items": { "$ref": "#/$defs/webErrorCode" } },
+        "fields": { "$ref": "#/$defs/webFields" }
+      } } } }
+    },
+    {
+      "if": { "properties": { "surface": { "const": "android" } }, "required": ["diagnostics"] },
+      "then": { "properties": { "diagnostics": { "properties": {
+        "error_codes": { "items": { "$ref": "#/$defs/androidErrorCode" } },
+        "fields": { "$ref": "#/$defs/androidFields" }
+      } } } }
+    },
+    {
+      "if": { "properties": { "surface": { "const": "bridge" } }, "required": ["diagnostics"] },
+      "then": { "properties": { "diagnostics": { "properties": {
+        "error_codes": { "items": { "$ref": "#/$defs/bridgeErrorCode" } },
+        "fields": { "$ref": "#/$defs/bridgeFields" }
+      } } } }
+    }
+  ],
+  "$defs": {
+    "userText": {
+      "type": "string",
+      "pattern": "^[^\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]*$"
+    },
+    "count": { "type": "integer", "minimum": 0, "maximum": 999 },
+    "yesNo": { "enum": ["yes", "no"] },
+    "domainLoad": { "enum": ["unknown", "loaded", "failed"] },
+    "webErrorCode": {
+      "enum": [
+        "sync_init_failed", "sync_failed",
+        "calendar_load_failed", "contacts_load_failed", "tasks_load_failed", "notes_load_failed",
+        "restore_failed", "other"
+      ]
+    },
+    "androidErrorCode": {
+      "enum": [
+        "network", "authentication", "permission", "provider", "storage", "configuration",
+        "setup_required", "parent_refresh", "child_removed", "interrupted", "unknown",
+        "startup_failed", "other"
+      ]
+    },
+    "bridgeErrorCode": {
+      "enum": [
+        "cache_backfill_integrity_error", "cache_pull_item_integrity_error",
+        "cache_revision_integrity_error", "cache_schema_remote_uid_integrity_error",
+        "cache_schema_token_revision_integrity_error", "cache_sync_token_integrity_error",
+        "cache_unresolved_retry_integrity_error", "sync_timeout", "sync_stopped", "other"
+      ]
+    },
+    "webFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "build_sha": { "type": "string", "pattern": "^[0-9a-f]{7,12}$" },
+        "domain_calendar": { "$ref": "#/$defs/domainLoad" },
+        "domain_contacts": { "$ref": "#/$defs/domainLoad" },
+        "domain_tasks": { "$ref": "#/$defs/domainLoad" },
+        "domain_notes": { "$ref": "#/$defs/domainLoad" },
+        "restore_status": { "enum": ["ok", "failed", "skipped", "none"] }
+      }
+    },
+    "androidFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "version_code": { "type": "integer", "minimum": 0, "maximum": 99999999 },
+        "accounts": { "$ref": "#/$defs/count" },
+        "startup_outcome": { "enum": ["succeeded", "failed", "not_recorded"] }
+      }
+    },
+    "bridgeFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": { "enum": ["frozen", "python"] },
+        "accounts": { "$ref": "#/$defs/count" },
+        "tray": { "$ref": "#/$defs/yesNo" },
+        "ssl": { "$ref": "#/$defs/yesNo" }
+      }
+    }
+  }
+}

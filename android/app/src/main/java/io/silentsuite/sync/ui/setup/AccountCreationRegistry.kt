@@ -115,6 +115,12 @@ class AccountCreationRegistry(private val store: Store) {
 
     companion object {
         private val LOCK = Any()
+
+        /**
+         * Held around a row's creation (CreateAccountFragment) and around setup recovery's last check and removal of
+         * one (GuardedRecoveryRemoval), so in this process neither runs inside the other.
+         */
+        internal val ROW_LOCK = Any()
         private const val VERSION = 1; private const val PREFS = "account_creation_registry"; private const val KEY = "rows"
         /** Indentation the platform preferences file appends after a value's terminal newline. */
         private const val LEGACY_PADDING = "    "
