@@ -159,8 +159,13 @@ For each width:
   a grouped overview and a back link on each sub-page (#832). That navigation
   was verified across mobile and desktop widths in #832, and its files are
   unchanged here.
-- [ ] Readability of each settings sub-page's content at mobile widths — not
-      re-audited as part of #295.
+- [x] Sub-page content at mobile widths — checked in the source of every
+  sub-page. Forms stack to one column, long fingerprints wrap, and nothing
+  needs horizontal scrolling. Action buttons, selects and the invite field on
+  Sharing, Import, Security and Subscription were 24–32px tall and are now at
+  least 44px tall below `md` (`max-md:min-h-[44px]`). The Security confirmation
+  dialog keeps a 16px margin from the screen edges. Full-width form fields on
+  Account (about 38px) and Export (about 34px) were left as they are.
 
 ### Collection management
 
@@ -179,13 +184,14 @@ For each width:
 Open items and known limitations. Some may be split into child issues of #295;
 see the epic for any live links.
 
-- Readability audit of settings sub-page content on mobile.
 - Moving a task to another list from the task editor is not available (on any
   width).
 - New contact: with the required name still empty, the first tap on
   "+ Add phone" can miss because the name error appears and shifts the form
   (all widths, existing behaviour).
 - Admin link and the onboarding checklist are only in the desktop sidebar.
+  Every checklist step is also reachable through Settings → Import, and
+  `/admin` still opens by URL.
 - Further mobile calendar view work is tracked in #229.
 
 ## Automated coverage
@@ -205,6 +211,7 @@ component:
 - `app/components/__tests__/CollectionListItem.test.tsx` and the
   `*ListPanel.test.tsx` files
 - `app/components/__tests__/confirm-dialog.test.tsx`
+- `app/(app)/settings/sharing/__tests__/page.test.tsx` (phone touch targets)
 
 Bottom-nav tab access and active state (including the Notes tab) are covered by
 `app/components/__tests__/bottom-nav.test.tsx`.
