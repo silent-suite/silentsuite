@@ -73,8 +73,33 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         return localCollection as LocalCalendar
     }
 
+    /**
+     * Events stored before the time-zone patch were resolved with ical4j's 2020 rules, so some are
+     * an hour off (America/Vancouver since November 2026). The server copies are unaffected, but
+     * an incremental sync never fetches an unchanged item again: list the calendar from the start
+     * once to store every event again with the current rules.
+     */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    override fun replayFromStart(): Boolean {
+        if (localCalendar().timeZoneRereadDone())
+            return false
+        Logger.log.info("Reading this calendar from the start once, to store its events with the current time-zone rules")
+        return true
+    }
+
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    override fun onReplayCompleted() {
+        localCalendar().markTimeZoneRereadDone()
+    }
+
     override fun processItem(item: Item) {
         val local = localCollection!!.findByFilename(item.uid)
+
+        // Local changes were uploaded before this listing; one made while it runs is kept for the next upload.
+        if (replaying && local != null && localCalendar().hasPendingChange(local)) {
+            Logger.log.info("Keeping a local change made during this re-read for the next upload")
+            return
+        }
 
         if (!item.isDeleted) {
             val inputReader = StringReader(String(item.content))

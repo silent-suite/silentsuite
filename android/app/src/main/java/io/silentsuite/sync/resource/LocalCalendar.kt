@@ -64,6 +64,16 @@ class LocalCalendar private constructor(
 
         val COLUMN_CTAG = Calendars.CAL_SYNC1
 
+        /** The [TIME_ZONE_REREAD] marker once this calendar's events were re-read with it. */
+        val COLUMN_TIME_ZONE_REREAD = Calendars.CAL_SYNC2
+
+        /**
+         * Changes when stored events have to be read from the server again because the way time
+         * zones are resolved changed. Version 1: the patched ical4j resolves tz database IDs with
+         * the device's rules (time-zone patch in ical4android, ICAL4J-PATCH.md).
+         */
+        const val TIME_ZONE_REREAD = "system-zone-rules-1"
+
         fun create(account: Account, provider: ContentProviderClient, cachedCollection: CachedCollection): Uri {
             val values = valuesFromCachedCollection(cachedCollection, true)
 
@@ -113,6 +123,25 @@ class LocalCalendar private constructor(
     fun update(cachedCollection: CachedCollection, updateColor: Boolean) =
             update(valuesFromCachedCollection(cachedCollection, updateColor))
 
+
+    /** Whether this calendar's events were already re-read with the current [TIME_ZONE_REREAD]. */
+    fun timeZoneRereadDone(): Boolean =
+        provider.query(calendarSyncURI(), arrayOf(COLUMN_TIME_ZONE_REREAD), null, null, null)?.use { cursor ->
+            cursor.moveToNext() && cursor.getString(0) == TIME_ZONE_REREAD
+        } ?: false
+
+    fun markTimeZoneRereadDone() {
+        update(ContentValues(1).apply { put(COLUMN_TIME_ZONE_REREAD, TIME_ZONE_REREAD) })
+    }
+
+    /** Whether [event] has a local change or deletion that isn't uploaded yet. */
+    fun hasPendingChange(event: LocalEvent): Boolean {
+        val id = event.id ?: return false
+        return provider.query(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)),
+                arrayOf(Events.DIRTY, Events.DELETED), null, null, null)?.use { cursor ->
+            cursor.moveToNext() && (cursor.getInt(0) != 0 || cursor.getInt(1) != 0)
+        } ?: false
+    }
 
     override fun findDeleted() =
             queryEvents("${Events.DELETED}!=0 AND ${Events.ORIGINAL_ID} IS NULL", null)
