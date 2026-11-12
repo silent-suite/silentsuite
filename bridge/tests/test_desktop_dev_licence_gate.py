@@ -763,3 +763,356 @@ def test_cli_keeps_link_unknown_when_its_backslash_target_differs_from_the_toc(c
         and "target" not in got and "target_origin" not in got, (
         f"a link to {ACTUAL_LINK_TARGET!r} was attributed through the TOC spelling {TOC_LINK_TARGET!r}: {got!r}")
     assert "_internal/libmalformed.so" in facts["unmapped_files"]
+
+
+# --- Policy candidate v9 schema: gate rules and collector evidence (tests first) ------
+#
+# The reviewed private candidate (policy-candidate-v9, plan gate GREEN at 20e7e721)
+# proposes keys the fixed synthetic contract above does not use. The gate must enforce
+# each one and fail closed:
+#   policy.json {"platforms": {label: "notices/policy-<label>.json"}} selects one platform
+#       policy (paths relative to the directory holding notices/); the platform policy's
+#       "platform" must equal facts["platform"]; "admitted" present and not true fails.
+#   required_statements [{file, must_contain, sha256?, must_not_contain?: [str]}]: the
+#       file exists with that SHA256, contains must_contain and none of must_not_contain.
+#   elections [{expression, elected, file, platforms, text}]: elected is one alternative
+#       of expression, this policy's platform is listed, and the text is present.
+#   runtime_modules [{module, owner, licence, typecode?, toc_sources_exactly?}]: an
+#       unmapped module needs a rule by exact name; with typecode/toc_sources_exactly the
+#       facts' module_sources for it must be exactly those sources, each with that typecode.
+#   licence_text_files {licence: [files]}: every text a used licence needs is present.
+# Each platform policy is evaluated alone: nothing from one platform's policy or run may
+# be required of, or satisfy, the other's (the v2 generator's shared REQUIRED_NOTICES list
+# leaked a Linux-only append into Windows; the gate keeps no state between checks).
+# The collector adds facts["platform"] ("linux-x86_64" / "windows-x86_64") and
+# facts["module_sources"] {unmapped module: [{typecode, source}]}, with source records of
+# the C5 shape (kind, path_class repo|site-packages|stdlib|other, relative_path, sha256,
+# bytes) and never an absolute build path.
+# All names, texts and hashes are SYNTHETIC; nothing here certifies real contents.
+
+LINUX, WINDOWS = "linux-x86_64", "windows-x86_64"
+FREETYPE_CREDIT = "based in part on the work of the FreeType Team"
+PLACEHOLDERS = ["<year>", "<owner>", "[yyyy]", "[name of copyright owner]"]
+KHRONOS_CARRIER = "NOTICES/shared/carriers/opengl/NOTICE-MIT-Khronos-old.txt"
+KHRONOS_LINE = "Copyright (c) 2013-2018 The Khronos Group Inc."
+KHRONOS_TEXT = f"{KHRONOS_LINE}\nSYNTHETIC MIT-Khronos-old body for gate logic tests only\n"
+KDE_CARRIER = "NOTICES/shared/carriers/ibus/NOTICE-BSD-3-Clause-KDE.txt"
+KDE_LINE = "Copyright © 2011-2018 The KDE community"
+KDE_TEXT = f"{KDE_LINE}\nSYNTHETIC BSD-3-Clause body for gate logic tests only\n"
+DBUS_ELECTION = {"expression": "AFL-2.1 OR GPL-2.0-or-later", "elected": "GPL-2.0-or-later",
+                 "file": "qtbase/src/dbus/dbus_minimal_p.h", "platforms": [LINUX], "text": "NOTICES/GPL-2.0.txt"}
+TESTS_SOURCE = {"bytes": 0, "kind": "file", "path_class": "repo", "relative_path": "bridge/tests/__init__.py",
+                "sha256": _sha(b"")}
+BRIDGE_SOURCE = {"bytes": 11, "kind": "file", "path_class": "repo",
+                 "relative_path": "bridge/src/silentsuite_bridge/__init__.py", "sha256": _sha(b"synthetic\n\n")}
+
+
+def _v9_facts(platform):
+    facts = _facts()
+    facts["platform"] = platform
+    facts["unmapped_modules"] = [BRIDGE_PKG, "tests"]
+    facts["module_sources"] = {
+        BRIDGE_PKG: [{"typecode": "PYMODULE-1", "source": dict(BRIDGE_SOURCE)}],
+        "tests": [{"typecode": "PYMODULE-1", "source": dict(TESTS_SOURCE)}],
+    }
+    return facts
+
+
+def _statement(file, must, data=None, must_not=()):
+    entry = {"file": file, "must_contain": must, "basis": "synthetic"}
+    if data is not None:
+        entry["sha256"] = _sha(data)
+        entry["must_not_contain"] = list(must_not)
+    return entry
+
+
+def _v9_policy(platform):
+    policy = _policy()
+    policy.update({"platform": platform, "admitted": True, "private_candidate": True})
+    policy["allowed_licences"] = policy["allowed_licences"] + ["AGPL-3.0-only"]
+    policy["licence_texts"]["AGPL-3.0-only"] = "NOTICES/AGPL-3.0.txt"
+    policy["licence_text_files"] = {"LGPL-3.0-only": ["NOTICES/LGPL-3.0.txt", f"NOTICES/{DIST}/LICENSE"]}
+    policy["runtime_modules"] = [
+        {"module": BRIDGE_PKG, "owner": "SilentSuite Bridge", "licence": "AGPL-3.0-only"},
+        {"module": "tests", "owner": "SilentSuite Bridge application (repository)", "licence": "AGPL-3.0-only",
+         "typecode": "PYMODULE-1", "toc_sources_exactly": [dict(TESTS_SOURCE)]},
+    ]
+    statements = [
+        _statement("README-dev-build.txt", FREETYPE_CREDIT),
+        _statement(KHRONOS_CARRIER, KHRONOS_LINE, KHRONOS_TEXT, ["<year>", "<owner>"]),
+    ]
+    if platform == LINUX:  # the KDE ibus carrier and the dbus election are Linux only
+        statements.append(_statement(KDE_CARRIER, KDE_LINE, KDE_TEXT, PLACEHOLDERS))
+        policy["elections"] = [dict(DBUS_ELECTION)]
+        policy["required_notices"] = policy["required_notices"] + [KDE_CARRIER, "NOTICES/GPL-2.0.txt"]
+    policy["required_notices"] = policy["required_notices"] + [KHRONOS_CARRIER]
+    policy["required_statements"] = statements
+    return policy
+
+
+def _v9_archive(root, platform):
+    archive, sources = _archive(root)
+    (archive / "README-dev-build.txt").write_text(
+        f"Experimental. This build {PROMINENT}.\nThis software is {FREETYPE_CREDIT}.\n", encoding="utf-8")
+    carrier = archive / KHRONOS_CARRIER
+    carrier.parent.mkdir(parents=True)
+    carrier.write_text(KHRONOS_TEXT, encoding="utf-8")
+    if platform == LINUX:
+        kde = archive / KDE_CARRIER
+        kde.parent.mkdir(parents=True)
+        kde.write_text(KDE_TEXT, encoding="utf-8")
+        (archive / "NOTICES" / "GPL-2.0.txt").write_text("synthetic GPL-2.0.txt\n", encoding="utf-8")
+    return archive, sources
+
+
+def _v9_case(tmp_path, platform):
+    archive, sources = _v9_archive(tmp_path / platform, platform)
+    return json.loads(json.dumps(_v9_facts(platform))), json.loads(json.dumps(_v9_policy(platform))), archive, sources
+
+
+@pytest.mark.parametrize("platform", [LINUX, WINDOWS])
+def test_v9_gate_passes_a_complete_platform_fixture(gate, tmp_path, platform):
+    facts, policy, archive, sources = _v9_case(tmp_path, platform)
+    assert gate.check(facts, policy, archive, sources) == []
+
+
+def test_v9_gate_keeps_platform_policies_separate_across_checks(gate, tmp_path):
+    # Windows has no KDE carrier, GPL-2.0 text or dbus election; checking Linux first
+    # (or in between) must not make Windows require them, and no input is mutated.
+    linux, windows = _v9_case(tmp_path, LINUX), _v9_case(tmp_path, WINDOWS)
+    before = json.dumps([linux[:2], windows[:2]], sort_keys=True)
+    results = [gate.check(*linux), gate.check(*windows), gate.check(*linux), gate.check(*windows)]
+    assert results == [[], [], [], []]
+    assert json.dumps([linux[:2], windows[:2]], sort_keys=True) == before, "the gate mutated its inputs"
+    assert not (windows[2] / KDE_CARRIER).exists(), "fixture control: the Windows archive has no KDE carrier"
+
+
+def _v9_mutations():
+    def statement_file_missing(facts, policy, archive, sources):
+        (archive / KHRONOS_CARRIER).unlink()
+
+    def statement_sha256_mismatch(facts, policy, archive, sources):
+        (archive / KHRONOS_CARRIER).write_text(KHRONOS_TEXT + "appended\n", encoding="utf-8")
+
+    def statement_must_contain_absent(facts, policy, archive, sources):
+        text = KHRONOS_TEXT.replace(KHRONOS_LINE, "Copyright (c) The Khronos Group Inc.")
+        (archive / KHRONOS_CARRIER).write_text(text, encoding="utf-8")
+        policy["required_statements"][1]["sha256"] = _sha(text)  # the hash alone must not satisfy it
+
+    def statement_placeholder_present(facts, policy, archive, sources):
+        text = KHRONOS_TEXT + "Copyright <year> <owner>\n"
+        (archive / KHRONOS_CARRIER).write_text(text, encoding="utf-8")
+        policy["required_statements"][1]["sha256"] = _sha(text)
+
+    def statement_without_must_contain(facts, policy, archive, sources):
+        del policy["required_statements"][1]["must_contain"]
+
+    def statement_must_not_contain_not_a_list(facts, policy, archive, sources):
+        policy["required_statements"][1]["must_not_contain"] = "<year>"
+
+    def statement_path_escapes_archive(facts, policy, archive, sources):
+        outside = archive.parent / "outside.txt"
+        outside.write_text(KHRONOS_TEXT, encoding="utf-8")
+        policy["required_statements"][1]["file"] = "../outside.txt"
+
+    def freetype_credit_missing(facts, policy, archive, sources):
+        (archive / "README-dev-build.txt").write_text(f"Experimental. This build {PROMINENT}.\n", encoding="utf-8")
+
+    def policy_not_admitted(facts, policy, archive, sources):
+        policy["admitted"] = False
+
+    def facts_from_another_platform(facts, policy, archive, sources):
+        facts["platform"] = WINDOWS if policy["platform"] == LINUX else LINUX
+
+    def facts_without_platform(facts, policy, archive, sources):
+        del facts["platform"]
+
+    def licence_text_file_missing(facts, policy, archive, sources):
+        policy["licence_text_files"]["LGPL-3.0-only"].append("NOTICES/absent.txt")
+
+    def module_without_rule(facts, policy, archive, sources):
+        facts["unmapped_modules"].append("tests.helpers")  # an extra descendant needs its own rule
+
+    def module_rule_licence_not_allowed(facts, policy, archive, sources):
+        policy["runtime_modules"][0]["licence"] = "GPL-3.0-only"
+
+    def module_typecode_unoptimised(facts, policy, archive, sources):
+        facts["module_sources"]["tests"][0]["typecode"] = "PYMODULE"
+
+    def module_typecode_optimize_2(facts, policy, archive, sources):
+        facts["module_sources"]["tests"][0]["typecode"] = "PYMODULE-2"
+
+    def module_source_hash_differs(facts, policy, archive, sources):
+        facts["module_sources"]["tests"][0]["source"]["sha256"] = _sha(b"not empty")
+
+    def module_source_not_from_repo(facts, policy, archive, sources):
+        facts["module_sources"]["tests"][0]["source"].update(path_class="site-packages", relative_path="tests/__init__.py")
+
+    def module_source_conflicting(facts, policy, archive, sources):
+        facts["module_sources"]["tests"].append({"typecode": "PYMODULE-1", "source": dict(TESTS_SOURCE)})
+
+    def module_source_evidence_missing(facts, policy, archive, sources):
+        del facts["module_sources"]["tests"]
+
+    return [statement_file_missing, statement_sha256_mismatch, statement_must_contain_absent,
+            statement_placeholder_present, statement_without_must_contain, statement_must_not_contain_not_a_list,
+            statement_path_escapes_archive, freetype_credit_missing, policy_not_admitted,
+            facts_from_another_platform, facts_without_platform, licence_text_file_missing, module_without_rule,
+            module_rule_licence_not_allowed, module_typecode_unoptimised, module_typecode_optimize_2,
+            module_source_hash_differs, module_source_not_from_repo, module_source_conflicting,
+            module_source_evidence_missing]
+
+
+@pytest.mark.parametrize("platform", [LINUX, WINDOWS])
+@pytest.mark.parametrize("mutate", _v9_mutations(), ids=lambda f: f.__name__)
+def test_v9_gate_fails_closed_on_each_rule(gate, tmp_path, mutate, platform):
+    facts, policy, archive, sources = _v9_case(tmp_path, platform)
+    mutate(facts, policy, archive, sources)
+    failures = gate.check(facts, policy, archive, sources)
+    assert isinstance(failures, list) and failures, f"{platform}: {mutate.__name__} was not refused"
+
+
+def _linux_mutations():
+    def kde_carrier_missing(facts, policy, archive, sources):
+        (archive / KDE_CARRIER).unlink()
+
+    def kde_placeholder_present(facts, policy, archive, sources):
+        text = KDE_TEXT + "Copyright [yyyy] [name of copyright owner]\n"
+        (archive / KDE_CARRIER).write_text(text, encoding="utf-8")
+        policy["required_statements"][2]["sha256"] = _sha(text)
+
+    def election_text_missing(facts, policy, archive, sources):
+        (archive / "NOTICES" / "GPL-2.0.txt").unlink()
+        policy["required_notices"].remove("NOTICES/GPL-2.0.txt")  # the election alone must require it
+
+    def election_not_an_alternative(facts, policy, archive, sources):
+        policy["elections"][0]["elected"] = "GPL-3.0-only"
+
+    def election_without_text(facts, policy, archive, sources):
+        del policy["elections"][0]["text"]
+
+    def election_for_another_platform(facts, policy, archive, sources):
+        policy["elections"][0]["platforms"] = [WINDOWS]
+
+    return [kde_carrier_missing, kde_placeholder_present, election_text_missing, election_not_an_alternative,
+            election_without_text, election_for_another_platform]
+
+
+@pytest.mark.parametrize("mutate", _linux_mutations(), ids=lambda f: f.__name__)
+def test_v9_gate_fails_closed_on_each_linux_only_rule(gate, tmp_path, mutate):
+    facts, policy, archive, sources = _v9_case(tmp_path, LINUX)
+    mutate(facts, policy, archive, sources)
+    failures = gate.check(facts, policy, archive, sources)
+    assert isinstance(failures, list) and failures, f"{mutate.__name__} was not refused"
+
+
+def test_v9_gate_refuses_a_linux_only_election_leaked_into_windows(gate, tmp_path):
+    # The v2 shared-list bug, as the gate sees it: a Linux-only row in the Windows policy.
+    facts, policy, archive, sources = _v9_case(tmp_path, WINDOWS)
+    (archive / "NOTICES" / "GPL-2.0.txt").write_text("synthetic GPL-2.0.txt\n", encoding="utf-8")
+    policy["elections"] = [dict(DBUS_ELECTION)]
+    assert gate.check(facts, policy, archive, sources), "a Linux-only election was accepted for Windows"
+
+
+def _write_policy_tree(root, policies):
+    """bridge/dev-build-shaped policy files: notices/policy.json naming each platform file."""
+    notices = root / "policy" / "notices"
+    notices.mkdir(parents=True)
+    index = {"schema_version": 1, "admitted": True, "platforms": {}}
+    for platform, policy in policies.items():
+        name = f"notices/policy-{platform}.json"
+        (notices.parent / name).write_text(json.dumps(policy), encoding="utf-8")
+        index["platforms"][platform] = name
+    (notices / "policy.json").write_text(json.dumps(index), encoding="utf-8")
+    return notices / "policy.json"
+
+
+def _run_gate_cli(gate, facts, policy_path, archive, sources):
+    facts_path = archive.parent / "facts.json"
+    facts_path.write_text(json.dumps(facts), encoding="utf-8")
+    return gate.main(["--facts", str(facts_path), "--policy", str(policy_path),
+                      "--archive-root", str(archive), "--source-dir", str(sources)])
+
+
+@pytest.mark.parametrize("platform", [LINUX, WINDOWS])
+def test_v9_gate_cli_selects_the_policy_for_the_facts_platform(gate, tmp_path, platform):
+    facts, _, archive, sources = _v9_case(tmp_path, platform)
+    index = _write_policy_tree(tmp_path, {LINUX: _v9_policy(LINUX), WINDOWS: _v9_policy(WINDOWS)})
+    assert _run_gate_cli(gate, facts, index, archive, sources) == 0
+
+
+def test_v9_gate_cli_fails_for_a_platform_the_index_does_not_name(gate, tmp_path):
+    facts, _, archive, sources = _v9_case(tmp_path, WINDOWS)
+    index = _write_policy_tree(tmp_path, {LINUX: _v9_policy(LINUX)})
+    assert _run_gate_cli(gate, facts, index, archive, sources) == 1
+
+
+def test_v9_gate_cli_fails_when_the_index_is_not_admitted(gate, tmp_path):
+    facts, _, archive, sources = _v9_case(tmp_path, LINUX)
+    index = _write_policy_tree(tmp_path, {LINUX: _v9_policy(LINUX)})
+    data = json.loads(index.read_text(encoding="utf-8"))
+    data["admitted"] = False
+    index.write_text(json.dumps(data), encoding="utf-8")
+    assert _run_gate_cli(gate, facts, index, archive, sources) == 1
+
+
+def test_v9_gate_cli_reports_unreadable_input(gate, tmp_path):
+    facts, _, archive, sources = _v9_case(tmp_path, LINUX)
+    broken = tmp_path / "broken-policy.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert _run_gate_cli(gate, facts, broken, archive, sources) == 2
+
+
+# Collector evidence for the module rules: platform label and per-module TOC sources.
+REPO_TESTS_INIT = BRIDGE_ROOT / "tests" / "__init__.py"
+
+
+def _module_source_fixture(collector, monkeypatch, tmp_path, pure):
+    _bundle_with(tmp_path, {})
+    workpath = tmp_path / "work"
+    _analysis_toc(workpath, scripts=[ENTRY_SCRIPT], pure=BASE_PURE + list(pure))
+    _controlled_subprocess(monkeypatch, collector)
+    return _run_cli(collector, tmp_path, workpath)
+
+
+def test_cli_records_the_platform_label(collector, monkeypatch, tmp_path):
+    code, facts = _module_source_fixture(collector, monkeypatch, tmp_path, [])
+    assert code == 0 and facts is not None, f"the collector did not write facts (exit {code})"
+    machine = "x86_64" if __import__("platform").machine().lower() in ("x86_64", "amd64") else None
+    if machine is None:
+        pytest.skip("platform label contract is defined for x86_64 runners only")
+    expected = {"linux": LINUX, "win32": WINDOWS}.get(sys.platform)
+    assert facts.get("platform") == expected
+
+
+def test_cli_records_repo_module_source_with_exact_typecode(collector, monkeypatch, tmp_path):
+    if not REPO_TESTS_INIT.is_file() or REPO_TESTS_INIT.stat().st_size != 0:
+        pytest.fail("prerequisite failed (not RED): bridge/tests/__init__.py is not the empty repo file")
+    code, facts = _module_source_fixture(collector, monkeypatch, tmp_path,
+                                         [("tests", str(REPO_TESTS_INIT), "PYMODULE-1")])
+    assert code == 0 and facts is not None, f"the collector did not write facts (exit {code})"
+    if "tests" not in facts["unmapped_modules"]:
+        pytest.fail("prerequisite failed (not RED): 'tests' is not unmapped in this fixture")
+    assert facts.get("module_sources", {}).get("tests") == [{"typecode": "PYMODULE-1", "source": TESTS_SOURCE}]
+
+
+def test_cli_records_each_distinct_module_source_without_absolute_paths(collector, monkeypatch, tmp_path):
+    first, second = tmp_path / "elsewhere" / "a" / "mystery.py", tmp_path / "elsewhere" / "b" / "mystery.py"
+    for path in (first, second):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"same synthetic bytes\n")
+    code, facts = _module_source_fixture(collector, monkeypatch, tmp_path, [
+        ("mystery", str(first), "PYMODULE"), ("mystery", str(second), "PYMODULE"),
+        ("mystery", str(first), "PYMODULE"),  # a repeat of the same file is one source
+        ("ghost", str(tmp_path / "missing.py"), "PYMODULE"),
+    ])
+    assert code == 0 and facts is not None, f"the collector did not write facts (exit {code})"
+    other = {"bytes": 21, "kind": "file", "path_class": "other", "relative_path": None,
+             "sha256": _sha(b"same synthetic bytes\n")}
+    sources = facts.get("module_sources", {})
+    assert sources.get("mystery") == [{"typecode": "PYMODULE", "source": other}] * 2, \
+        "two distinct source files must stay two entries even when their redacted records match"
+    assert sources.get("ghost") == [{"typecode": "PYMODULE",
+                                     "source": {"kind": "absent-or-not-regular", "path_class": "other",
+                                                "relative_path": None}}]
+    assert str(tmp_path) not in json.dumps(sources), "an absolute build path was written"
