@@ -210,7 +210,12 @@ def configdiff(sdk_include: Path, build_include: Path) -> dict:
             rows.append({"header": header, "sdk_present": sdk.is_file(), "build_present": ours.is_file()})
             continue
         left = set(sdk.read_text(encoding="utf-8").splitlines())
-        right = set(ours.read_text(encoding="utf-8").splitlines())
+        text = ours.read_text(encoding="utf-8")
+        forward = re.fullmatch(r'\s*#include "([^"]+)"[^\n]*\s*', text)
+        if forward:  # the build tree's include/ holds a one-line forwarding header
+            ours = Path(forward.group(1))
+            text = ours.read_text(encoding="utf-8")
+        right = set(text.splitlines())
         rows.append({"header": header, "identical": left == right, "sdk_sha256": _sha(sdk),
                      "build_sha256": _sha(ours), "only_sdk": sorted(left - right), "only_build": sorted(right - left)})
     return {"headers": rows, "all_identical": all(r.get("identical") for r in rows)}
