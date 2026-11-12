@@ -1116,3 +1116,179 @@ def test_cli_records_each_distinct_module_source_without_absolute_paths(collecto
                                      "source": {"kind": "absent-or-not-regular", "path_class": "other",
                                                 "relative_path": None}}]
     assert str(tmp_path) not in json.dumps(sources), "an absolute build path was written"
+
+
+# --- Archive texts: placeholders, SOURCE.txt and BUILD-INFO.json (tests first) --------
+#
+# bridge/dev-build/archive_texts.py, used by the package job's licence-gate/archive steps:
+#   fill(root, sha)                         {{GIT_SHA}} in README-dev-build.txt,
+#       NOTICES/RELINKING.txt and NOTICES/INSTALLATION-INFORMATION.txt; refuses a bad SHA,
+#       a missing file, any other {{...}} placeholder or a left-over draft marker.
+#   source_text(sha, policy, records, verification) -> SOURCE.txt text. Every policy
+#       source archive needs a record (url) and a verification entry with the same SHA256;
+#       the application git archive must be of this SHA; a signature entry must be verified.
+#       It states how each archive was verified (owner decision 2026-11-12: HTTPS and
+#       published checksums; signatures where the publisher provides one; full signature
+#       checks before any real release).
+#   build_info(sha, platform, bundle, extra) -> BUILD-INFO dict with every bundle file's
+#       SHA256 (links as their literal target); verify(info, bundle) -> failure strings.
+# Raises archive_texts.InputError for refusals. All values are SYNTHETIC.
+ARCHIVE_TEXTS = DEV_BUILD / "archive_texts.py"
+GIT_SHA = "0123456789abcdef0123456789abcdef01234567"
+DOC_FILES = ("README-dev-build.txt", "NOTICES/RELINKING.txt", "NOTICES/INSTALLATION-INFORMATION.txt")
+
+
+@pytest.fixture(scope="module")
+def texts():
+    _require()
+    return _load_helper(ARCHIVE_TEXTS, "archive_texts")
+
+
+def _docs(root):
+    for name in DOC_FILES:
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{name}\nCommit: {{{{GIT_SHA}}}}\nSee {{{{GIT_SHA}}}} again.\n", encoding="utf-8")
+    return root
+
+
+def test_fill_replaces_the_commit_placeholder_in_each_document(texts, tmp_path):
+    root = _docs(tmp_path / "archive")
+    texts.fill(root, GIT_SHA)
+    for name in DOC_FILES:
+        text = (root / name).read_text(encoding="utf-8")
+        assert text.count(GIT_SHA) == 2 and "{{" not in text, name
+
+
+@pytest.mark.parametrize("case", ["short-sha", "missing-file", "other-placeholder", "draft-marker"])
+def test_fill_refuses_unfinished_documents(texts, tmp_path, case):
+    root = _docs(tmp_path / "archive")
+    sha = GIT_SHA
+    if case == "short-sha":
+        sha = GIT_SHA[:12]
+    elif case == "missing-file":
+        (root / DOC_FILES[1]).unlink()
+    elif case == "other-placeholder":
+        (root / DOC_FILES[0]).write_text("Commit: {{GIT_SHA}} built {{DATE}}\n", encoding="utf-8")
+    else:
+        (root / DOC_FILES[2]).write_text("[DRAFT - UNPUBLISHED, NOT ADMITTED. Remove this block.]\n{{GIT_SHA}}\n",
+                                         encoding="utf-8")
+    with pytest.raises(texts.InputError):
+        texts.fill(root, sha)
+
+
+SIGNED = "Python-3.10.22.tar.xz"
+
+
+def _source_inputs():
+    archives = [
+        {"name": "qt-everywhere-src", "version": "6.12.0", "file": "qt-everywhere-src-6.12.0.tar.xz",
+         "sha256": _sha(b"qt")},
+        {"name": "cpython", "version": "3.10.22", "file": SIGNED, "sha256": _sha(b"python")},
+    ]
+    policy = {"platform": LINUX, "source_archives": archives}
+    records = [
+        {"file": archives[0]["file"], "sha256": archives[0]["sha256"], "kind": "source",
+         "url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz"},
+        {"file": SIGNED, "sha256": archives[1]["sha256"], "kind": "source",
+         "url": "https://www.python.org/ftp/python/3.10.22/Python-3.10.22.tar.xz"},
+    ]
+    verification = {
+        "artifact": f"bridge-desktop-dev-sources-{GIT_SHA}",
+        "application": {"file": f"silentsuite-bridge-{GIT_SHA}.tar.gz", "sha256": _sha(b"app"), "git_sha": GIT_SHA},
+        "archives": [
+            {"file": archives[0]["file"], "sha256": archives[0]["sha256"], "signature": None},
+            {"file": SIGNED, "sha256": archives[1]["sha256"],
+             "signature": {"type": "sigstore", "identity": "release-manager@example.invalid",
+                           "issuer": "https://issuer.example.invalid", "verified": True}},
+        ],
+    }
+    return policy, records, verification
+
+
+def test_source_text_names_every_archive_and_how_it_was_verified(texts):
+    policy, records, verification = _source_inputs()
+    text = texts.source_text(GIT_SHA, policy, records, verification)
+    assert GIT_SHA in text and verification["artifact"] in text
+    assert verification["application"]["file"] in text and verification["application"]["sha256"] in text
+    for archive, record in zip(policy["source_archives"], records):
+        assert archive["file"] in text and archive["sha256"] in text and record["url"] in text
+    assert "sigstore" in text.lower() and "release-manager@example.invalid" in text
+    assert "no signature" in text.lower(), "unsigned archives must say no signature was checked"
+    assert "before any real release" in text.lower()
+
+
+def _source_mutations():
+    def no_record(policy, records, verification):
+        del records[0]
+
+    def no_verification(policy, records, verification):
+        del verification["archives"][0]
+
+    def record_sha_differs(policy, records, verification):
+        records[0]["sha256"] = _sha(b"other")
+
+    def verification_sha_differs(policy, records, verification):
+        verification["archives"][1]["sha256"] = _sha(b"other")
+
+    def application_of_another_commit(policy, records, verification):
+        verification["application"]["git_sha"] = "f" * 40
+
+    def signature_not_verified(policy, records, verification):
+        verification["archives"][1]["signature"]["verified"] = False
+
+    def no_artifact_name(policy, records, verification):
+        del verification["artifact"]
+
+    return [no_record, no_verification, record_sha_differs, verification_sha_differs,
+            application_of_another_commit, signature_not_verified, no_artifact_name]
+
+
+@pytest.mark.parametrize("mutate", _source_mutations(), ids=lambda f: f.__name__)
+def test_source_text_refuses_unverified_or_mismatched_sources(texts, mutate):
+    policy, records, verification = _source_inputs()
+    mutate(policy, records, verification)
+    with pytest.raises(texts.InputError):
+        texts.source_text(GIT_SHA, policy, records, verification)
+
+
+def _program(root):
+    bundle = root / "silentsuite-bridge-desktop"
+    (bundle / "_internal" / "lib").mkdir(parents=True)
+    (bundle / "silentsuite-bridge-desktop").write_bytes(b"synthetic executable")
+    (bundle / "_internal" / "lib" / "libsynthetic.so.1").write_bytes(b"synthetic library")
+    if sys.platform != "win32":
+        (bundle / "_internal" / "libsynthetic.so.1").symlink_to("lib/libsynthetic.so.1")
+    return bundle
+
+
+def test_build_info_records_identity_and_every_bundle_file(texts, tmp_path):
+    bundle = _program(tmp_path)
+    info = texts.build_info(GIT_SHA, LINUX, bundle, {"run_id": "1", "run_attempt": "1"})
+    assert info["git_sha"] == GIT_SHA and info["platform"] == LINUX and info["run_id"] == "1"
+    files = {entry["path"]: entry for entry in info["bundle_files"]}
+    assert files["_internal/lib/libsynthetic.so.1"]["sha256"] == _sha(b"synthetic library")
+    assert files["silentsuite-bridge-desktop"]["sha256"] == _sha(b"synthetic executable")
+    if sys.platform != "win32":
+        assert files["_internal/libsynthetic.so.1"] == {"path": "_internal/libsynthetic.so.1",
+                                                       "symlink": "lib/libsynthetic.so.1"}
+    assert texts.verify(json.loads(json.dumps(info)), bundle) == []
+
+
+@pytest.mark.parametrize("case", ["changed", "extra", "missing", "relinked"])
+def test_verify_reports_bundle_drift(texts, tmp_path, case):
+    bundle = _program(tmp_path)
+    info = texts.build_info(GIT_SHA, LINUX, bundle, {})
+    if case == "changed":
+        (bundle / "_internal" / "lib" / "libsynthetic.so.1").write_bytes(b"modified library")
+    elif case == "extra":
+        (bundle / "_internal" / "added.txt").write_bytes(b"added")
+    elif case == "missing":
+        (bundle / "silentsuite-bridge-desktop").unlink()
+    else:
+        if sys.platform == "win32":
+            pytest.skip("in-bundle symlinks are a Linux observation here")
+        link = bundle / "_internal" / "libsynthetic.so.1"
+        link.unlink()
+        link.symlink_to("lib/../lib/libsynthetic.so.1")
+    assert texts.verify(info, bundle), f"{case} was not reported"
