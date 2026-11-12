@@ -18,22 +18,20 @@ import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.Month;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.ResolverStyle;
-import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.time.zone.ZoneOffsetTransition;
-import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 
 /**
@@ -59,11 +57,11 @@ public final class SystemVTimeZones {
             DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss", Locale.ROOT)
                     .withResolverStyle(ResolverStyle.STRICT);
 
-    /** Years of explicit onsets written when a yearly rule can't be expressed as an RRULE. */
-    static final int RDATE_FALLBACK_YEARS = 50;
+    /** Years of explicit onsets written when a zone's transitions don't follow yearly RRULEs. */
+    static final int EXPLICIT_YEARS = 50;
 
-    /** Years checked when deciding whether a yearly rule can be expressed as an RRULE. */
-    private static final int RRULE_CHECK_YEARS = 60;
+    /** Years of transitions an RRULE has to reproduce before it's used. */
+    static final int RRULE_CHECK_YEARS = 60;
 
     /**
      * @param id a TZID value
@@ -119,9 +117,13 @@ public final class SystemVTimeZones {
 
     /**
      * Generates a VTIMEZONE from the platform rules of {@code zone} that is correct from
-     * {@code earliest} on: the observance in effect then, every later historic transition, and
-     * the zone's ongoing yearly rules (as RRULEs, or as explicit onsets for rules RRULE can't
-     * express).
+     * {@code earliest} on: the observance in effect then, every later transition up to two years
+     * from now, and after that the zone's yearly transitions as RRULEs (or, when they don't repeat
+     * yearly, explicit onsets for {@value #EXPLICIT_YEARS} more years).
+     *
+     * Only {@link ZoneRules#nextTransition} and {@link ZoneRules#previousTransition} are used: on
+     * Android, {@code getTransitions()} and {@code getTransitionRules()} don't always list
+     * transitions those methods (and the offsets) do follow.
      *
      * Observances are typed by the rules' own daylight-saving flag. A zone that moved to
      * permanent daylight-style time (Vancouver) therefore ends on a DAYLIGHT observance, which
@@ -145,31 +147,33 @@ public final class SystemVTimeZones {
             observances.add(observance(rules.isDaylightSavings(earliest), offset, offset, start, null));
         }
 
-        // later historic transitions
-        Instant lastHistoric = null;
-        for (ZoneOffsetTransition transition : rules.getTransitions()) {
-            lastHistoric = transition.getInstant();
-            if (transition.getInstant().isAfter(earliest)) {
-                observances.add(observance(rules, transition));
-            }
+        // later transitions until the start of the year after next
+        final Instant now = Instant.now();
+        final int patternYear = year(earliest.isAfter(now) ? earliest : now) + 2;
+        final Instant patternStart = startOfYear(patternYear);
+        ZoneOffsetTransition transition = rules.nextTransition(earliest);
+        while (transition != null && transition.getInstant().isBefore(patternStart)) {
+            observances.add(observance(rules, transition));
+            transition = rules.nextTransition(transition.getInstant());
         }
 
-        // ongoing yearly rules
-        final Instant rulesFrom = lastHistoric != null && lastHistoric.isAfter(earliest) ? lastHistoric : earliest;
-        for (ZoneOffsetTransitionRule rule : rules.getTransitionRules()) {
-            int year = LocalDateTime.ofInstant(rulesFrom, ZoneOffset.UTC).getYear() - 1;
-            while (!rule.createTransition(year).getInstant().isAfter(rulesFrom)) {
-                year++;
+        // transitions from then on, as yearly RRULEs if they follow one
+        if (transition != null) {
+            final Instant checkEnd = startOfYear(patternYear + RRULE_CHECK_YEARS);
+            final List<ZoneOffsetTransition> future = new ArrayList<>();
+            while (transition != null && transition.getInstant().isBefore(checkEnd)) {
+                future.add(transition);
+                transition = rules.nextTransition(transition.getInstant());
             }
-            final boolean daylight = !rule.getOffsetAfter().equals(rule.getStandardOffset());
-            final String recur = recurFor(rule, year);
-            if (recur != null) {
-                observances.add(observance(daylight, rule.getOffsetBefore(), rule.getOffsetAfter(),
-                        rule.createTransition(year).getDateTimeBefore(), recur));
+            final List<Observance> yearly = yearlyObservances(rules, future, patternYear);
+            if (yearly != null) {
+                observances.addAll(yearly);
             } else {
-                for (int y = year; y < year + RDATE_FALLBACK_YEARS; y++) {
-                    observances.add(observance(daylight, rule.getOffsetBefore(), rule.getOffsetAfter(),
-                            rule.createTransition(y).getDateTimeBefore(), null));
+                final Instant explicitEnd = startOfYear(patternYear + EXPLICIT_YEARS);
+                for (ZoneOffsetTransition f : future) {
+                    if (f.getInstant().isBefore(explicitEnd)) {
+                        observances.add(observance(rules, f));
+                    }
                 }
             }
         }
@@ -180,6 +184,107 @@ public final class SystemVTimeZones {
             vTimeZone.getObservances().add(observance);
         }
         return vTimeZone;
+    }
+
+    private static int year(final Instant instant) {
+        return LocalDateTime.ofInstant(instant, ZoneOffset.UTC).getYear();
+    }
+
+    private static Instant startOfYear(final int year) {
+        return LocalDateTime.of(year, 1, 1, 0, 0).toInstant(ZoneOffset.UTC);
+    }
+
+    /**
+     * One observance with an RRULE per kind of transition (daylight flag and offsets), if every
+     * kind occurs exactly once a year from {@code firstYear} on, at the same local time, and on
+     * dates an RRULE can express; otherwise null.
+     */
+    static List<Observance> yearlyObservances(final ZoneRules rules, final List<ZoneOffsetTransition> transitions,
+                                              final int firstYear) {
+        final Map<String, List<ZoneOffsetTransition>> kinds = new LinkedHashMap<>();
+        for (ZoneOffsetTransition transition : transitions) {
+            final String kind = rules.isDaylightSavings(transition.getInstant()) + " " +
+                    transition.getOffsetBefore() + " " + transition.getOffsetAfter();
+            List<ZoneOffsetTransition> list = kinds.get(kind);
+            if (list == null) {
+                list = new ArrayList<>();
+                kinds.put(kind, list);
+            }
+            list.add(transition);
+        }
+
+        final List<Observance> observances = new ArrayList<>();
+        for (List<ZoneOffsetTransition> kind : kinds.values()) {
+            if (kind.size() != RRULE_CHECK_YEARS) {
+                return null;
+            }
+            final ZoneOffsetTransition first = kind.get(0);
+            final List<LocalDate> dates = new ArrayList<>();
+            for (int i = 0; i < kind.size(); i++) {
+                final LocalDateTime onset = kind.get(i).getDateTimeBefore();
+                if (onset.getYear() != firstYear + i || onset.getMonth() != first.getDateTimeBefore().getMonth() ||
+                        !onset.toLocalTime().equals(first.getDateTimeBefore().toLocalTime())) {
+                    return null;
+                }
+                dates.add(onset.toLocalDate());
+            }
+            final String byDay = byDayFor(dates);
+            if (byDay == null) {
+                return null;
+            }
+            observances.add(observance(rules.isDaylightSavings(first.getInstant()), first.getOffsetBefore(),
+                    first.getOffsetAfter(), first.getDateTimeBefore(),
+                    "FREQ=YEARLY;BYMONTH=" + first.getDateTimeBefore().getMonthValue() + ";" + byDay));
+        }
+        return observances;
+    }
+
+    /**
+     * The BYDAY/BYMONTHDAY part of a yearly RRULE that yields exactly {@code dates} (one per year,
+     * all in the same month), or null if there's none.
+     */
+    static String byDayFor(final List<LocalDate> dates) {
+        boolean sameDay = true;
+        boolean sameWeekday = true;
+        int minDay = Integer.MAX_VALUE, maxDay = Integer.MIN_VALUE;
+        int minFromEnd = Integer.MAX_VALUE, maxFromEnd = Integer.MIN_VALUE;
+        final LocalDate first = dates.get(0);
+        for (LocalDate date : dates) {
+            sameDay &= date.getDayOfMonth() == first.getDayOfMonth();
+            sameWeekday &= date.getDayOfWeek() == first.getDayOfWeek();
+            minDay = Math.min(minDay, date.getDayOfMonth());
+            maxDay = Math.max(maxDay, date.getDayOfMonth());
+            final int fromEnd = date.getDayOfMonth() - date.lengthOfMonth() - 1;   // -1 is the last day
+            minFromEnd = Math.min(minFromEnd, fromEnd);
+            maxFromEnd = Math.max(maxFromEnd, fromEnd);
+        }
+        if (sameDay) {
+            return "BYMONTHDAY=" + first.getDayOfMonth();
+        }
+        if (!sameWeekday) {
+            return null;
+        }
+        // every date lies in one window of seven days, so it is that window's only such weekday
+        final String weekday = abbreviation(first.getDayOfWeek());
+        if (maxDay - minDay <= 6) {
+            final int from = maxDay - 6;
+            if (from >= 1 && (from - 1) % 7 == 0 && from <= 22) {
+                return "BYDAY=" + ((from - 1) / 7 + 1) + weekday;
+            }
+            if (from >= 1 && from + 6 <= 28) {
+                return "BYDAY=" + weekday + ";BYMONTHDAY=" + range(from, from + 6);
+            }
+        }
+        if (maxFromEnd - minFromEnd <= 6) {
+            final int from = maxFromEnd - 6;
+            if (from == -7) {
+                return "BYDAY=-1" + weekday;
+            }
+            if (from >= -28) {
+                return "BYDAY=" + weekday + ";BYMONTHDAY=" + range(from, from + 6);
+            }
+        }
+        return null;
     }
 
     private static Observance observance(final ZoneRules rules, final ZoneOffsetTransition transition) {
@@ -215,59 +320,6 @@ public final class SystemVTimeZones {
             }
         }
         return observance;
-    }
-
-    /**
-     * Expresses a yearly transition rule as an RRULE, or returns null when the rule's local onset
-     * doesn't follow a pattern RRULE can express (for instance when the time definition moves the
-     * local onset across midnight).
-     */
-    static String recurFor(final ZoneOffsetTransitionRule rule, final int firstYear) {
-        final int month = rule.getMonth().getValue();
-        final int dom = rule.getDayOfMonthIndicator();
-        final DayOfWeek dow = rule.getDayOfWeek();
-        final String byDay;
-        if (dow == null) {
-            byDay = "BYMONTHDAY=" + dom;
-        } else if (dom > 0 && dom <= 22 && (dom - 1) % 7 == 0) {
-            byDay = "BYDAY=" + ((dom - 1) / 7 + 1) + abbreviation(dow);
-        } else if (dom == -1) {
-            byDay = "BYDAY=-1" + abbreviation(dow);
-        } else if (dom > 0 && dom + 6 <= 28) {
-            byDay = "BYDAY=" + abbreviation(dow) + ";BYMONTHDAY=" + range(dom, dom + 6);
-        } else if (dom > 0 && month != 2 && dom + 6 <= Month.of(month).length(false)) {
-            // the week ending on day `dom + 6`, counted from the month's end ("Sun>=25" in March is the last Sunday)
-            final int fromEnd = dom - Month.of(month).length(false) - 1;
-            byDay = fromEnd + 6 == -1 ? "BYDAY=-1" + abbreviation(dow)
-                    : "BYDAY=" + abbreviation(dow) + ";BYMONTHDAY=" + range(fromEnd, fromEnd + 6);
-        } else if (dom < 0 && dom - 6 >= -28) {
-            byDay = "BYDAY=" + abbreviation(dow) + ";BYMONTHDAY=" + range(dom - 6, dom);
-        } else {
-            return null;
-        }
-
-        // the pattern above must give the actual local onset in every year
-        final LocalTime time = rule.createTransition(firstYear).getDateTimeBefore().toLocalTime();
-        for (int year = firstYear; year < firstYear + RRULE_CHECK_YEARS; year++) {
-            final LocalDateTime onset = rule.createTransition(year).getDateTimeBefore();
-            if (!onset.toLocalTime().equals(time) || !onset.toLocalDate().equals(patternDate(year, month, dom, dow))) {
-                return null;
-            }
-        }
-        return "FREQ=YEARLY;BYMONTH=" + month + ";" + byDay;
-    }
-
-    private static LocalDate patternDate(final int year, final int month, final int dom, final DayOfWeek dow) {
-        final LocalDate monthStart = LocalDate.of(year, month, 1);
-        if (dow == null) {
-            return dom > 0 ? monthStart.withDayOfMonth(dom)
-                    : monthStart.with(TemporalAdjusters.lastDayOfMonth()).plusDays(dom + 1);
-        }
-        if (dom > 0) {
-            return monthStart.withDayOfMonth(dom).with(TemporalAdjusters.nextOrSame(dow));
-        }
-        return monthStart.with(TemporalAdjusters.lastDayOfMonth()).plusDays(dom + 1)
-                .with(TemporalAdjusters.previousOrSame(dow));
     }
 
     private static String range(final int from, final int to) {
