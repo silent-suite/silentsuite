@@ -1,4 +1,4 @@
-import { parseVEvent, generateVEvent } from '../utils/ical-parser.js';
+import { parseVEvent, generateVEvent, partitionRetainedRDates } from '../utils/ical-parser.js';
 import type { VEvent, VAlarm } from '../utils/ical-parser.js';
 import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
 import { expandRecurrence, occurrenceWallClock } from '../utils/recurrence.js';
@@ -32,6 +32,18 @@ export interface CalendarEvent {
    *  not exist in its zone (a DST gap), so it cannot be recovered from `startDate`. Present only
    *  in that case. Used only while it still resolves to `startDate` in `timezone`. */
   startWallClock?: string;
+  /** The source DURATION of an event read without DTEND. Written back instead of DTEND while
+   *  it still gives `endDate` from `startDate`, so nominal days and weeks keep their meaning
+   *  for every occurrence. Omitted otherwise. */
+  duration?: string;
+  /** STATUS and TRANSP from the source, written back unchanged. Omitted when absent. */
+  status?: string;
+  transp?: string;
+  /** Unsupported VEVENT property lines and subcomponents, kept so a web save does not
+   *  drop them (attendees, organizer, CLASS, SEQUENCE, X-properties and the like).
+   *  Revalidated when written. Omitted when there are none. */
+  unknownProperties?: string[];
+  unknownComponents?: string[][];
   created: Date;
   updated: Date;
 }
@@ -222,6 +234,47 @@ export function expandEventRecurrence(event: CalendarEvent, range: DateRange): D
 }
 
 /**
+ * End of an event that has DURATION instead of DTEND (RFC 5545 §3.3.6). Weeks and days are
+ * nominal: they keep the wall clock in `timeZone` (host-local when undefined, as for all-day and
+ * floating events), so P1D across a DST change is 23 or 25 hours. Hours, minutes and seconds are
+ * exact. Null for a missing, negative, zero or unreadable duration, or a timed part on an all-day
+ * event.
+ */
+function addICalDuration(start: Date, duration: string, allDay: boolean, timeZone: string | undefined): Date | null {
+  const match = duration.match(/^\+?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i);
+  if (!match) return null;
+  const [weeks, days, hours, minutes, seconds] = match.slice(1, 6).map((v) => Number(v ?? 0)) as [
+    number, number, number, number, number,
+  ];
+  if (weeks + days + hours + minutes + seconds === 0) return null;
+  if (allDay && hours + minutes + seconds !== 0) return null;
+  const nominalDays = weeks * 7 + days;
+  let afterDays: number;
+  if (timeZone === 'UTC' || nominalDays === 0) {
+    afterDays = start.getTime() + nominalDays * 86_400_000;
+  } else if (timeZone && isKnownTimeZone(timeZone)) {
+    const wall = wallTimeInZone(timeZone, start.getTime()) + nominalDays * 86_400_000;
+    const instant = wallTimeToInstant(timeZone, wall);
+    if (instant === null) return null;
+    afterDays = instant;
+  } else {
+    const local = new Date(start);
+    local.setDate(local.getDate() + nominalDays);
+    afterDays = local.getTime();
+  }
+  return new Date(afterDays + ((hours * 60 + minutes) * 60 + seconds) * 1000);
+}
+
+/** The event's source DURATION while it still gives `endDate` from `startDate`; otherwise undefined. */
+function currentDuration(
+  event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating' | 'duration' | 'startDate' | 'endDate'>,
+): string | undefined {
+  if (event.duration === undefined) return undefined;
+  const end = addICalDuration(event.startDate, event.duration, event.allDay, recurrenceTimeZone(event));
+  return end?.getTime() === event.endDate.getTime() ? event.duration : undefined;
+}
+
+/**
  * Convert a CalendarEvent to an iCalendar VEVENT string.
  */
 export function toVEvent(event: CalendarEvent): string {
@@ -236,11 +289,15 @@ export function toVEvent(event: CalendarEvent): string {
         ? formatICalDateTimeFloating(d)
         : formatICalDate(d, event.allDay);
 
+  // Keep the source DURATION while it still describes the event's length; otherwise write DTEND.
+  const keepDuration = currentDuration(event) !== undefined;
+
   const vevent: VEvent = {
     uid: event.uid,
     // A DST-gap DTSTART is written with its intended wall clock, which the instant cannot recover.
     dtstart: validStartWallClock(event) ?? formatTimed(event.startDate),
-    dtend: formatTimed(event.endDate),
+    dtend: keepDuration ? undefined : formatTimed(event.endDate),
+    duration: keepDuration ? event.duration : undefined,
     summary: event.title,
     description: event.description || undefined,
     location: event.location || undefined,
@@ -255,16 +312,20 @@ export function toVEvent(event: CalendarEvent): string {
         : undefined,
     valarms: event.alarms.length > 0 ? event.alarms : undefined,
     categories: event.categories && event.categories.length > 0 ? event.categories : undefined,
+    status: event.status,
+    transp: event.transp,
+    unknownProperties: event.unknownProperties,
+    unknownComponents: event.unknownComponents,
     created: formatICalDateTime(event.created),
     lastModified: formatICalDateTime(event.updated),
   };
 
   if (event.allDay) {
     vevent.dtstartParams = { VALUE: 'DATE' };
-    vevent.dtendParams = { VALUE: 'DATE' };
+    if (vevent.dtend) vevent.dtendParams = { VALUE: 'DATE' };
   } else if (tzid) {
     vevent.dtstartParams = { TZID: tzid };
-    vevent.dtendParams = { TZID: tzid };
+    if (vevent.dtend) vevent.dtendParams = { TZID: tzid };
   }
 
   return generateVEvent(vevent);
@@ -282,16 +343,24 @@ export function fromVEvent(veventStr: string): CalendarEvent {
   const startTzid = vevent.dtstartParams?.['TZID'];
   const endTzid = vevent.dtendParams?.['TZID'] ?? startTzid;
   const startParsed = parseICalDateValue(vevent.dtstart, startTzid);
+  const startIsFloating = !isAllDay && isFloatingICalDateTime(vevent.dtstart, vevent.dtstartParams);
+  const endFromDuration = !vevent.dtend && vevent.duration
+    ? addICalDuration(
+      startParsed.date,
+      vevent.duration,
+      isAllDay,
+      recurrenceTimeZone({ allDay: isAllDay, timezone: startTzid, floating: startIsFloating || undefined }),
+    )
+    : null;
   const endParsed = vevent.dtend
     ? parseICalDateValue(vevent.dtend, endTzid)
-    : { date: new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
+    : { date: endFromDuration ?? new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
 
   const exdateTzid = vevent.exdateParams?.['TZID'] ?? (isAllDay ? undefined : startTzid);
   const exceptions = (vevent.exdate ?? []).map(
     (d) => parseICalDateValue(d, exdateTzid).date,
   );
 
-  const startIsFloating = !isAllDay && isFloatingICalDateTime(vevent.dtstart, vevent.dtstartParams);
   // Captured from the wire value before parsing: a gap wall time cannot be recovered later.
   const startWallClock = isAllDay ? undefined : gapWallClock(startTzid, vevent.dtstart);
 
@@ -315,8 +384,52 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     timezone: startTzid ?? undefined,
     ...(startIsFloating ? { floating: true as const } : {}),
     ...(startWallClock ? { startWallClock } : {}),
+    ...(endFromDuration ? { duration: vevent.duration! } : {}),
+    ...(vevent.status ? { status: vevent.status } : {}),
+    ...(vevent.transp ? { transp: vevent.transp } : {}),
+    ...(vevent.unknownProperties ? { unknownProperties: [...vevent.unknownProperties] } : {}),
+    ...(vevent.unknownComponents
+      ? { unknownComponents: vevent.unknownComponents.map((block) => [...block]) }
+      : {}),
     created: vevent.created ? parseICalDateValue(vevent.created).date : now,
     updated: vevent.lastModified ? parseICalDateValue(vevent.lastModified).date : now,
+  };
+}
+
+/**
+ * End of the occurrence of `event` that starts at `start`: its source DURATION applied with
+ * nominal days and weeks in the event's own zone while that DURATION still matches the event,
+ * otherwise its fixed length.
+ */
+export function occurrenceEnd(
+  event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating' | 'duration' | 'startDate' | 'endDate'>,
+  start: Date,
+): Date {
+  const duration = currentDuration(event);
+  const nominal = duration !== undefined
+    ? addICalDuration(start, duration, event.allDay, recurrenceTimeZone(event))
+    : null;
+  return nominal ?? new Date(start.getTime() + (event.endDate.getTime() - event.startDate.getTime()));
+}
+
+/**
+ * Split an event's retained RDATE values at `cutoff`, for ending a series there. `before` is the
+ * event's retained property lines without RDATE values at or after `cutoff`; `from` holds those
+ * later RDATE lines. A value is compared as an instant, read with its own TZID, else the event's
+ * zone for timed values, else host-local. Either is undefined when empty.
+ */
+export function splitRetainedRecurrenceDates(
+  event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'unknownProperties'>,
+  cutoff: Date,
+): { before?: string[]; from?: string[] } {
+  const { rest, from } = partitionRetainedRDates(event.unknownProperties ?? [], (value, params) => {
+    const isDate = (params['VALUE'] ?? '').toUpperCase() === 'DATE' || /^\d{8}$/.test(value);
+    const tzid = params['TZID'] ?? (isDate || event.allDay ? undefined : event.timezone);
+    return parseICalDateValue(value, tzid).date.getTime() >= cutoff.getTime();
+  });
+  return {
+    ...(rest.length > 0 ? { before: rest } : {}),
+    ...(from.length > 0 ? { from } : {}),
   };
 }
 
