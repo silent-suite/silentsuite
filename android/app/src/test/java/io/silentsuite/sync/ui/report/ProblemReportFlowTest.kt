@@ -90,6 +90,15 @@ class ProblemReportFlowTest {
     }
 
     @Test
+    fun aRetryAfterZero503IsNotFollowedByASecondPost() {
+        server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0"))
+        server.enqueue(MockResponse().setResponseCode(201))
+        assertEquals(State.UNCONFIRMED, flow().send(body()))
+        Thread.sleep(300)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun serverErrorsAndRefusedConnectionsAreUnconfirmedAfterOneAttempt() {
         server.enqueue(MockResponse().setResponseCode(502))
         assertEquals(State.UNCONFIRMED, flow().send(body()))

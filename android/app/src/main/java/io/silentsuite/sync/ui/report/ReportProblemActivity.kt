@@ -240,7 +240,7 @@ class ReportProblemActivity : BaseActivity() {
 
 /** Survives rotation, so the frozen diagnostics and an in-flight send are kept and never repeated. */
 class ReportProblemViewModel : ViewModel() {
-    private val flow = ProblemReportFlow { ProblemReportTransport().post(it) }
+    private val flow = ProblemReportFlow { body -> transportForTest?.invoke(body) ?: ProblemReportTransport().post(body) }
     private val mutableState = MutableLiveData(State.EDITING)
     val state: LiveData<State> = mutableState
 
@@ -267,8 +267,11 @@ class ReportProblemViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) { mutableState.postValue(flow.deliver(body)) }
     }
 
-    private companion object {
-        const val KEY_DIAGNOSTICS = "report_problem_diagnostics"
-        const val KEY_STATE = "report_problem_state"
+    companion object {
+        private const val KEY_DIAGNOSTICS = "report_problem_diagnostics"
+        private const val KEY_STATE = "report_problem_state"
+
+        /** androidTest-only send seam (cleartext MockWebServer is refused on device); production posts to the endpoint. */
+        @JvmField @Volatile internal var transportForTest: ((ByteArray) -> Boolean)? = null
     }
 }

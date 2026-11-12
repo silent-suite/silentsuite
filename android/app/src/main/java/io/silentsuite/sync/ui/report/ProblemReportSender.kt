@@ -2,10 +2,12 @@ package io.silentsuite.sync.ui.report
 
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody
+import okio.BufferedSink
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -22,9 +24,23 @@ class ProblemReportTransport(
     fun post(body: ByteArray): Boolean {
         val request = Request.Builder()
             .url(endpoint)
-            .post(body.toRequestBody(JSON))
+            .post(OneShotBody(body))
             .build()
         return client.newCall(request).execute().use { it.code == 201 }
+    }
+
+    /**
+     * retryOnConnectionFailure(false) does not cover OkHttp's follow-ups: a 503 with "Retry-After: 0"
+     * (and a 421 on a coalesced connection) would be re-sent. A one-shot body makes OkHttp return
+     * that response instead, so one Send stays one POST.
+     */
+    private class OneShotBody(private val bytes: ByteArray) : RequestBody() {
+        override fun contentType(): MediaType = JSON
+        override fun contentLength(): Long = bytes.size.toLong()
+        override fun writeTo(sink: BufferedSink) {
+            sink.write(bytes)
+        }
+        override fun isOneShot(): Boolean = true
     }
 
     companion object {
