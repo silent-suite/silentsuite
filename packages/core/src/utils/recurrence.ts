@@ -133,6 +133,27 @@ export function untilDateBefore(instance: Date, timeZone?: string): string {
   return `${y}${m}${d}`;
 }
 
+/**
+ * A date-time UNTIL that ends a timed series before the occurrence at `instance`, so the
+ * occurrence on the previous day stays in the series. With a zone (an IANA zone or 'UTC') it is
+ * the UTC instant one second before the occurrence (`…Z`), as RFC 5545 requires for a zoned
+ * DTSTART. Without one (floating) it is 23:59:59 on the previous day as a floating wall clock;
+ * pass the occurrence's own `wallClock` (YYYYMMDDTHHMMSS, see occurrenceWallClock) so a host DST
+ * gap cannot move it to another date. A floating series with several occurrences a day also
+ * loses the earlier ones on the selected day.
+ */
+export function untilTimeBefore(instance: Date, timeZone?: string, wallClock?: string): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const date = (c: Date) => `${c.getUTCFullYear()}${pad(c.getUTCMonth() + 1)}${pad(c.getUTCDate())}`;
+  if (timeZone !== undefined) {
+    const c = new Date(Math.floor(instance.getTime() / 1000) * 1000 - 1000);
+    return `${date(c)}T${pad(c.getUTCHours())}${pad(c.getUTCMinutes())}${pad(c.getUTCSeconds())}Z`;
+  }
+  const c = new Date(parseWallClock(wallClock) ?? HOST_ZONE.toCivil(instance.getTime()));
+  c.setUTCDate(c.getUTCDate() - 1);
+  return `${date(c)}T235959`;
+}
+
 /** UNTIL as an instant: `…Z` is absolute; a date or floating value is a wall clock in the zone. */
 function parseUntil(value: string, zone: Zone): number {
   // Formats: 20260313, 20260313T120000, 20260313T120000Z

@@ -12,7 +12,7 @@ Open-source, zero-knowledge sync. Plaintext stays off the server; encryption key
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-0A1018.svg)](./LICENSE)
 [![Stars](https://img.shields.io/github/stars/silent-suite/silentsuite?style=flat&logo=github)](https://github.com/silent-suite/silentsuite/stargazers)
 
-[Website](https://silentsuite.io) · [Web app](https://app.silentsuite.io) · [Documentation](https://docs.silentsuite.io) · [Latest release](https://github.com/silent-suite/silentsuite/releases/latest)
+[Website](https://silentsuite.io) · [Web app](https://app.silentsuite.io) · [Documentation](https://docs.silentsuite.io) · [Latest release](https://github.com/silent-suite/silentsuite/releases/latest) · [Roadmap](./ROADMAP.md)
 
 <br />
 
@@ -177,6 +177,7 @@ If SilentSuite is useful to you, a star helps others discover the project.
 
 - [User guide](./docs/user-guide/)
 - [Self-hosting](./docs/self-hosting/)
+- [Roadmap](./ROADMAP.md)
 - [Contributing](./docs/contributing/)
 - [Translating SilentSuite](./TRANSLATING.md)
 - [Security model](https://silentsuite.io/security)
