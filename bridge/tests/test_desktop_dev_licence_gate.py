@@ -1461,3 +1461,11 @@ def test_gate_cli_fails_an_empty_policy(gate, tmp_path, where):
     else:
         policy_path = _write_policy_tree(tmp_path, {LINUX: {}})
     assert _run_gate_cli(gate, facts, policy_path, archive, sources) == 1
+
+
+def test_source_text_names_an_archive_once_when_its_version_repeats_the_file(texts):
+    policy, records, verification = _source_inputs()
+    policy["source_archives"][0]["version"] = policy["source_archives"][0]["file"]
+    text = texts.source_text(GIT_SHA, policy, records, verification)
+    name = policy["source_archives"][0]["file"]
+    assert f"{policy['source_archives'][0]['name']} {name}" not in text
