@@ -95,14 +95,15 @@ class ProblemReportTest {
             ProblemReport.isCustomServer(custom, hosted),
             listOf(SyncStatusStore.Status(lastFailureAt = now, lastFailureCategory = null)),
         )
-        val preview = ProblemReport.diagnosticsJson(input(listOf(account), versionName = "Private_Meeting_Title <x>"))
+        val preview = ProblemReport.diagnosticsJson(input(listOf(account), versionName = "0.5.18-beta <x>"))
         val body = build(diagnostics = preview)
         listOf("Private_Meeting_Title", "private-meeting-title", "example.org", "8443", "<x>").forEach {
             assertFalse(it, body.contains(it))
         }
         val diagnostics = parse(preview)
         assertEquals("custom", diagnostics.get("server").asString)
-        assertEquals("PrivateMeetingTitlex", diagnostics.get("app_version").asString)
+        // The version name is build-controlled; the schema allows [A-Za-z0-9._+-], so only other characters go.
+        assertEquals("0.5.18-betax", diagnostics.get("app_version").asString)
         // A failure without a known category is reported as "other", never by any name.
         assertEquals(listOf("other"), codes(diagnostics))
     }
