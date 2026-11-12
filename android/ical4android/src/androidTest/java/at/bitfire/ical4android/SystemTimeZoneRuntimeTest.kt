@@ -9,6 +9,7 @@ import androidx.test.rule.GrantPermissionRule
 import at.bitfire.ical4android.MiscUtils.ContentProviderClientHelper.closeCompat
 import at.bitfire.ical4android.impl.TestCalendar
 import at.bitfire.ical4android.impl.TestEvent
+import io.silentsuite.ical4j.SystemVTimeZones
 import net.fortuna.ical4j.data.CalendarBuilder
 import net.fortuna.ical4j.model.DateTime
 import net.fortuna.ical4j.model.Property
@@ -77,7 +78,9 @@ class SystemTimeZoneRuntimeTest {
         var checked = 0
         for (id in TreeSet(ZoneId.getAvailableZoneIds())) {
             val tz = DateUtils.ical4jTimeZone(id) ?: continue
-            val zone = ZoneId.of(tz.id)   // tz.alias may map an ID to another zone
+            // tz.alias may map an ID to another zone, which this test APK's java.time (desugared,
+            // minSdk 21) may not know; the app itself (minSdk 29) uses the platform's java.time
+            val zone = SystemVTimeZones.systemZone(tz.id) ?: continue
             var wall = LocalDateTime.of(2000, 1, 3, 10, 0)
             while (wall.year < 2036) {
                 val expected = wall.atZone(zone).toInstant().toEpochMilli()
@@ -165,7 +168,7 @@ class SystemTimeZoneRuntimeTest {
         for (at in listOf("20260108T100000", "20260715T100000", "20261119T100000", "20270115T100000").map { instant(it) }) {
             val observance = vTimeZone.getApplicableObservance(DateTime(at))
             val offset = (observance.getProperty(Property.TZOFFSETTO) as TzOffsetTo).offset.totalSeconds
-            assertEquals("at ${Instant.ofEpochMilli(at)}", vancouver.rules.getOffset(Instant.ofEpochMilli(at)).totalSeconds, offset)
+            assertEquals("at ${Instant.ofEpochMilli(at)} in\n$written", vancouver.rules.getOffset(Instant.ofEpochMilli(at)).totalSeconds, offset)
         }
     }
 

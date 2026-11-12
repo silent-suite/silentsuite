@@ -43,6 +43,9 @@ PRODUCER = "etebase-16kb"
 STATIC_JOB = "static-contracts"
 CONSUMERS = ("build-pr", "account-recreation-runtime", "color-parity-evidence", "registry-process-boundary")
 UNCHANGED_JOBS = ("signing-policy", "conscrypt-r28", "conscrypt-runtime")
+# Jobs added later on their own, outside the speed refactor these fixtures pin: the patched
+# ical4j's time-zone tests (JVM, and on the API 29 and 36 emulators). They build no Etebase.
+ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime"}
 ARTIFACT = "etebase-16kb-${{ github.sha }}"
 STAGING = "${{ runner.temp }}/etebase-16kb-artifact"
 BUILD_SCRIPT = "scripts/build-etebase-client-16kb.sh"
@@ -517,7 +520,7 @@ def test_candidate_workflow_satisfies_every_speed_contract(candidate):
 def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candidate):
     assert candidate["name"] == base["name"]
     assert _triggers(candidate) == _triggers(base)
-    assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER}
+    assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER} | ADDED_JOBS
     for name in UNCHANGED_JOBS:
         assert candidate["jobs"][name] == base["jobs"][name], name
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
@@ -540,7 +543,7 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
     assert {key: value for key, value in candidate.items() if key != "jobs"} == {
         key: value for key, value in predecessor.items() if key != "jobs"
     }
-    assert set(candidate["jobs"]) == set(predecessor["jobs"])
+    assert set(candidate["jobs"]) == set(predecessor["jobs"]) | ADDED_JOBS
     for name, job in predecessor["jobs"].items():
         if name == RUNTIME_LEDGER_JOB:
             job = _with_approved_runtime_ledger_changes(job)
