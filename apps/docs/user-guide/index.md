@@ -13,6 +13,7 @@ How-to guides for using SilentSuite -- your private, end-to-end encrypted sync f
 | [Notes](./notes.md) | How to manage your encrypted Markdown notes |
 | [How Encryption Works](./encryption-explained.md) | Understand what's encrypted, how, and why it matters |
 | [FAQ](./faq.md) | Frequently asked questions |
+| [Reporting a Problem](./reporting-a-problem.md) | Send a problem report or feature request, and what it includes |
 
 ---
 
