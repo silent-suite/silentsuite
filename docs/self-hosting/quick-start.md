@@ -47,7 +47,7 @@ Once the proxy is up:
 1. Open [app.silentsuite.io](https://app.silentsuite.io) or the SilentSuite mobile app.
 2. On the signup or login page, expand **Advanced Settings**.
 3. Enter `https://your-domain.com` as the server URL.
-4. Create your admin account and start syncing.
+4. Create your first account and start syncing. It is a normal app account, not a server administrator.
 
 ## Close Signups
 
