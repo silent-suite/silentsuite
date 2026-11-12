@@ -296,8 +296,79 @@ def canonical_principal_alias_path(path: str, user: str) -> str:
     return path
 
 
+# Radicale answers 401 before reading the request body, and its server closes
+# the connection after every response. Closing a socket with unread body bytes
+# makes the OS send a TCP reset, which can make a client lose the 401 challenge
+# instead of retrying with credentials (Apple Contacts, issue #992). Reading a
+# small unread body first lets the connection close cleanly.
+_UNAUTHORIZED_BODY_DRAIN_LIMIT = 1024 * 1024
+_BODY_DRAIN_CHUNK = 64 * 1024
+
+
+class _TrackedRequestBody:
+    """WSGI input wrapper that counts the body bytes the application read."""
+
+    def __init__(self, stream):
+        self._stream = stream
+        self.consumed = 0
+
+    def read(self, *args):
+        data = self._stream.read(*args)
+        self.consumed += len(data)
+        return data
+
+    def readline(self, *args):
+        data = self._stream.readline(*args)
+        self.consumed += len(data)
+        return data
+
+    def readlines(self, *args):
+        lines = self._stream.readlines(*args)
+        self.consumed += sum(len(line) for line in lines)
+        return lines
+
+    def __iter__(self):
+        return iter(self.readline, b"")
+
+
+def _content_length(environ) -> int:
+    try:
+        return max(int(environ.get("CONTENT_LENGTH") or 0), 0)
+    except ValueError:
+        return 0
+
+
+def _drain_unread_body(environ, body: _TrackedRequestBody) -> None:
+    """Read the rest of a small request body; never past Content-Length."""
+    if "100-continue" in str(environ.get("HTTP_EXPECT", "")).lower():
+        # The client waits for "100 Continue" before sending the body.
+        return
+    remaining = _content_length(environ) - body.consumed
+    if remaining <= 0 or remaining > _UNAUTHORIZED_BODY_DRAIN_LIMIT:
+        return
+    try:
+        while remaining > 0:
+            chunk = body.read(min(remaining, _BODY_DRAIN_CHUNK))
+            if not chunk:
+                return
+            remaining -= len(chunk)
+    except (OSError, ValueError):
+        # A slow or vanished client only loses the clean close.
+        return
+
+
 class Application(RadicaleApplication):
     """Radicale application with macOS's same-account principal alias support."""
+
+    def _handle_request(self, environ):
+        body = None
+        if environ.get("wsgi.input") is not None:
+            body = _TrackedRequestBody(environ["wsgi.input"])
+            environ["wsgi.input"] = body
+        response = super()._handle_request(environ)
+        if body is not None and response[0].startswith("401 "):
+            _drain_unread_body(environ, body)
+        return response
 
     def do_PROPFIND(self, environ, base_prefix, path, user):  # noqa: N802
         return super().do_PROPFIND(

@@ -66,5 +66,5 @@ today.
 ## Next Steps
 
 - [Configuration](./configuration.md) -- full reference for all environment variables.
-- [Admin Dashboard](./admin-dashboard.md) -- manage your instance via the web app.
+- [Admin Dashboard](./admin-dashboard.md) -- manage users via the Django admin panel.
 - [Backup & Restore](./backup-and-restore.md) -- protect your data.
