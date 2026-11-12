@@ -414,7 +414,7 @@ def _load_json(path: Path, what: str):
         raise InputError(f"{what} is unreadable ({type(exc).__name__})") from None
 
 
-def select_policy(policy_path: Path, platform) -> tuple[dict, list[str]]:
+def select_policy(policy_path: Path, platform) -> tuple[dict | None, list[str]]:
     """The platform policy for ``platform``, plus failures from the index (not admitted, not listed)."""
     policy = _load_json(policy_path, "--policy")
     if not isinstance(policy, dict):
@@ -429,7 +429,7 @@ def select_policy(policy_path: Path, platform) -> tuple[dict, list[str]]:
     platforms = policy.get("platforms")
     relative = platforms.get(platform) if isinstance(platforms, dict) and isinstance(platform, str) else None
     if relative is None:
-        return {}, failures + [f"policy index names no policy for platform {platform!r}"]
+        return None, failures + [f"policy index names no policy for platform {platform!r}"]
     base = Path(policy_path).resolve().parent.parent  # paths are relative to the directory holding notices/
     path = _inside(base, relative)
     if path is None:
@@ -460,7 +460,7 @@ def main(argv=None) -> int:
     except InputError as exc:
         print(f"licence_gate: invalid input: {exc}", file=sys.stderr)
         return 2
-    if policy:
+    if policy is not None:  # any loaded policy is checked; an empty one fails every rule it lacks
         failures += check(facts, policy, args.archive_root, args.source_dir, receipt)
     for failure in failures:
         print(f"FAIL {failure}")

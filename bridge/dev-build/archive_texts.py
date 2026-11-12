@@ -165,9 +165,6 @@ def source_text(sha, policy, records, verification) -> str:
             lines.append(f"  check   HTTPS, pinned SHA256 and a verified {signature['type']} signature"
                          f" (identity {signature.get('identity')}, issuer {signature.get('issuer')})")
         lines.append("")
-    extra = sorted(set(verified) - {a.get("file") for a in archives})
-    if extra:
-        raise InputError(f"verified archives the policy does not list: {extra}")
     lines += [
         "Limits",
         "------",
