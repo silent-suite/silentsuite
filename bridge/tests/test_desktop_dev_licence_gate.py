@@ -1497,3 +1497,33 @@ def test_gate_refuses_a_runtime_file_that_differs_from_its_pin(gate, tmp_path, c
     else:
         policy["runtime_files"][0]["sha256"] = "not-a-digest"
     assert gate.check(facts, policy, archive, sources), f"{case} was accepted"
+
+
+# A file that needs no licence notice (qt.conf: generated path configuration) is covered by
+# an explicit empty licence_text_files list, only when every use of that licence is a
+# runtime rule pinned to one exact file. Any other use of an empty list still fails.
+NO_NOTICE = "No licence notice required (generated configuration)"
+
+
+def _no_notice_case(tmp_path, pinned=True):
+    facts, policy, archive, sources = _pinned_runtime_case(tmp_path)
+    policy["allowed_licences"].append(NO_NOTICE)
+    policy["licence_text_files"][NO_NOTICE] = []
+    policy["runtime_files"][0]["licence"] = NO_NOTICE
+    if not pinned:
+        del policy["runtime_files"][0]["sha256"], policy["runtime_files"][0]["size"]
+    return facts, policy, archive, sources
+
+
+def test_gate_accepts_an_empty_text_list_for_pinned_files_only(gate, tmp_path):
+    assert gate.check(*_no_notice_case(tmp_path)) == []
+
+
+def test_gate_refuses_an_empty_text_list_for_an_unpinned_rule(gate, tmp_path):
+    assert gate.check(*_no_notice_case(tmp_path, pinned=False))
+
+
+def test_gate_refuses_an_empty_text_list_for_a_distribution(gate, tmp_path):
+    facts, policy, archive, sources = _no_notice_case(tmp_path)
+    policy["distributions"][DIST]["licence"] = NO_NOTICE
+    assert gate.check(facts, policy, archive, sources)
