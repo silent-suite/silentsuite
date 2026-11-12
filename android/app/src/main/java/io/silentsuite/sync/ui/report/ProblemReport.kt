@@ -212,9 +212,10 @@ object ProblemReport {
         }
     }
 
+    /** One address, matched against the whole string; only surrounding spaces are dropped, never CR, LF or tab. */
     private fun cleanContact(raw: String): String? {
-        val email = raw.trim()
-        if (email.isEmpty()) return null
+        if (raw.isBlank()) return null
+        val email = raw.trim(' ')
         if (email.length > MAX_CONTACT_CHARS || !CONTACT_EMAIL.matches(email))
             throw InvalidReport(Field.CONTACT_EMAIL, Problem.INVALID)
         return email

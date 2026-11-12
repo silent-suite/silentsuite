@@ -225,10 +225,13 @@ class ProblemReportTest {
     fun emptyTextAndBadEmailAreRejected() {
         expectInvalid(Field.SUMMARY, Problem.REQUIRED) { build(summary = "  \n ") }
         expectInvalid(Field.DESCRIPTION, Problem.REQUIRED) { build(description = "") }
-        listOf("no-at-sign", "a@b@c", "name with space@example.org", "<a@example.org>").forEach {
+        listOf("no-at-sign", "a@b@c", "name with space@example.org", "<a@example.org>",
+            "a@x.io\r", "a@x.io\n", "a@x.io\r\n", "a\n@x.io", "a@x.io\tb", "\ta@x.io", "a@x.io,b@y.io",
+            "a@x.io, b@y.io", "Name <a@x.io>").forEach {
             expectInvalid(Field.CONTACT_EMAIL, Problem.INVALID) { build(contact = it) }
         }
         assertNull(parse(build(contact = "   ")).get("contact_email"))
+        assertEquals("a@x.io", parse(build(contact = " a@x.io ")).get("contact_email").asString)
     }
 
     @Test
