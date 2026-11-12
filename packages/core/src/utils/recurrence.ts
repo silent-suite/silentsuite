@@ -155,26 +155,24 @@ export function untilTimeBefore(instance: Date, timeZone?: string, wallClock?: s
   return timeZone === undefined ? value : `${value}Z`;
 }
 
-/** UNTIL as an instant: `…Z` is absolute; a date or floating value is a wall clock in the zone. */
-function parseUntil(value: string, zone: Zone): number {
+/** UNTIL as civil ms (its digits read as a UTC wall clock), and whether it ends in `Z`. */
+function untilParts(value: string): { civil: number; utc: boolean } {
   // Formats: 20260313, 20260313T120000, 20260313T120000Z
   const clean = value.replace(/[^0-9TZ]/g, '');
   const year = parseInt(clean.slice(0, 4), 10);
   const month = parseInt(clean.slice(4, 6), 10) - 1;
   const day = parseInt(clean.slice(6, 8), 10);
-
-  if (clean.length <= 8) {
-    return zone.fromCivil(Date.UTC(year, month, day));
-  }
-
+  if (clean.length <= 8) return { civil: Date.UTC(year, month, day), utc: false };
   const hour = parseInt(clean.slice(9, 11), 10);
   const minute = parseInt(clean.slice(11, 13), 10);
   const second = parseInt(clean.slice(13, 15), 10);
+  return { civil: Date.UTC(year, month, day, hour, minute, second), utc: clean.endsWith('Z') };
+}
 
-  if (clean.endsWith('Z')) {
-    return Date.UTC(year, month, day, hour, minute, second);
-  }
-  return zone.fromCivil(Date.UTC(year, month, day, hour, minute, second));
+/** UNTIL as an instant: `…Z` is absolute; a date or floating value is a wall clock in the zone. */
+function parseUntil(value: string, zone: Zone): number {
+  const { civil, utc } = untilParts(value);
+  return utc ? civil : zone.fromCivil(civil);
 }
 
 const DAY_MAP: Record<string, number> = {
@@ -313,6 +311,11 @@ function expandWithCivil(
 
   const untilMs = rule.until !== undefined ? parseUntil(rule.until, zone) : undefined;
   const untilCivil = untilMs !== undefined ? zone.toCivil(untilMs) : undefined;
+  // Host-local (floating or all-day): a date or floating UNTIL is compared as a wall clock, as
+  // RFC 5545 defines floating time, so a host DST gap or repeated hour cannot move it across an
+  // occurrence. Zoned and UTC series and a `…Z` UNTIL keep the instant comparison below.
+  const untilParsed = zone === HOST_ZONE && rule.until !== undefined ? untilParts(rule.until) : undefined;
+  const untilWall = untilParsed !== undefined && !untilParsed.utc ? untilParsed.civil : undefined;
   const rangeStartMs = range.start.getTime();
   const rangeEndMs = range.end.getTime();
   const rangeStartCivil = zone.toCivil(rangeStartMs);
@@ -349,7 +352,9 @@ function expandWithCivil(
     const instantOf = (): number => (instant ??= zone.fromCivil(civil));
 
     // Stop conditions (instant semantics; civil prefilter avoids conversion far from bounds)
-    if (untilMs !== undefined && untilCivil !== undefined) {
+    if (untilWall !== undefined) {
+      if (civil > untilWall) break;
+    } else if (untilMs !== undefined && untilCivil !== undefined) {
       if (civil > untilCivil + CIVIL_MARGIN_MS) break;
       if (civil >= untilCivil - CIVIL_MARGIN_MS && instantOf() > untilMs) break;
     }

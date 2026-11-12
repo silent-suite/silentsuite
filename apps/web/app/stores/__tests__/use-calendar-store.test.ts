@@ -789,33 +789,40 @@ describe('useCalendarStore "this and future" keeps the previous occurrence', () 
     expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260106')
   })
 
-  it.each(ACTIONS)('floating series cut at a New York DST-gap occurrence (%s) stays cut in every zone', async (action) => {
-    // 8 Mar 2026 02:30 does not exist in New York; the occurrence resolves to 03:30 EDT.
+  // Floating series cut in New York at a DST transition, then reloaded in other host zones.
+  // 2026-03-08 02:00-03:00 does not exist in New York; 2026-11-01 01:00-02:00 happens twice.
+  const FLOATING_DST_CASES = [
+    { name: 'spring-forward 02:30 (inside the gap)', dtstart: '20260306T023000', month: 2, until: '20260308T022959', kept: ['6 2:30', '7 2:30'] },
+    { name: 'spring-forward 03:00 (cutoff inside the gap)', dtstart: '20260306T030000', month: 2, until: '20260308T025959', kept: ['6 3:0', '7 3:0'] },
+    { name: 'fall-back 01:30 (repeated hour)', dtstart: '20261030T013000', month: 9, until: '20261101T012959', kept: ['30 1:30', '31 1:30'] },
+  ] as const
+  const FLOATING_DST_MATRIX = FLOATING_DST_CASES.flatMap((c) => ACTIONS.map((action) => ({ ...c, action })))
+
+  it.each(FLOATING_DST_MATRIX)('floating series, $name ($action): only the selected and later occurrences go, in every zone', async ({ dtstart, month, until, kept, action }) => {
     const previousTZ = process.env.TZ
+    // Covers the last days of `month` and the start of the next one in the current host zone.
+    const range = () => ({ start: new Date(2026, month, 1), end: new Date(2026, month + 1, 12) })
     try {
       process.env.TZ = 'America/New_York'
       const master = deserializeCalendarEvent([
         'BEGIN:VEVENT',
-        'UID:floating-gap',
-        'SUMMARY:Floating gap series',
-        'DTSTART:20260306T023000',
-        'DTEND:20260306T033000',
+        'UID:floating-dst',
+        'SUMMARY:Floating DST series',
+        `DTSTART:${dtstart}`,
         'RRULE:FREQ=DAILY',
         'END:VEVENT',
       ].join('\r\n'))
-      const displayed = expandEventsForRange([master], { start: new Date(2026, 2, 1), end: new Date(2026, 2, 12) })
-      const instance = displayed[2]!.instanceDate
+      const instance = expandEventsForRange([master], range())[2]!.instanceDate
 
       const { ics } = await cutAt(master, action, instance)
 
       for (const zone of ['America/New_York', 'UTC', 'Asia/Tokyo']) {
         process.env.TZ = zone
-        const reloaded = deserializeCalendarEvent(ics)
-        const starts = expandEventsForRange([reloaded], { start: new Date(2026, 2, 1), end: new Date(2026, 2, 12) })
+        const starts = expandEventsForRange([deserializeCalendarEvent(ics)], range())
           .map((e) => `${e.startDate.getDate()} ${e.startDate.getHours()}:${e.startDate.getMinutes()}`)
-        expect({ zone, starts }).toEqual({ zone, starts: ['6 2:30', '7 2:30'] })
+        expect({ zone, starts }).toEqual({ zone, starts: [...kept] })
       }
-      expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260308T022959')
+      expect(lineOf(ics, 'RRULE')).toBe(`RRULE:FREQ=DAILY;UNTIL=${until}`)
     } finally {
       if (previousTZ === undefined) delete process.env.TZ
       else process.env.TZ = previousTZ
