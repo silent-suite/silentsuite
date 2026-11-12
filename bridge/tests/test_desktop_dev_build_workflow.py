@@ -79,7 +79,9 @@ CALLER_PATHS = DEV_CALLEE_PATHS | {
     "bridge/src/silentsuite_bridge/**",
     "bridge/tests/test_desktop_frozen.py",
 }
-PACKAGE_STEP_ORDER = ("build", "frozen-tests", "facts", "licence-gate", "archive", "upload")
+# relink: the Q7 relinking control on the exact archive this job built, before any upload
+# (Codex review of d39e3a9c: Q7 HOLD until the exact package is qualified pre-publication).
+PACKAGE_STEP_ORDER = ("build", "frozen-tests", "facts", "licence-gate", "archive", "relink", "upload")
 SOURCE_STEP_ORDER = ("fetch-sources", "verify-sources", "upload-sources")
 PACKAGE_RUNNERS = {"ubuntu-22.04", "windows-latest"}
 FORBIDDEN_TEXT = ("secrets.", "action-gh-release", "gh release", "git tag", "git push", "schedule:")
@@ -360,3 +362,15 @@ def test_dev_caller_gates_and_reverifies_the_archive(caller):
     for needed in ("archive_texts.py build-info", "archive_texts.py verify"):
         assert needed in archive, needed
     assert archive.index("archive_texts.py build-info") < archive.index("archive_texts.py verify")
+
+
+def test_dev_caller_qualifies_the_exact_package_by_relinking_before_upload(caller):
+    package = caller["jobs"]["package"]
+    steps = {step.get("id"): step for step in _steps(package) if step.get("id")}
+    relink = steps["relink"]["run"]
+    # the archive file this job wrote, extracted again; the shared helper does every step
+    for needed in ("relink_control.py package", "--archive", "relink_control.py build",
+                   "relink_control.py swap", "tests/test_desktop_frozen.py", "relink_control.py witness",
+                   "--negative-control"):
+        assert needed in relink, needed
+    assert "if" not in steps["relink"], "the relinking control is never skipped"
