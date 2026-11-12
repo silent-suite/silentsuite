@@ -153,7 +153,11 @@ jobs:
 
       # Publisher options from the SDK's config_qtbase.opt; omitted only build
       # infrastructure (sccache, SBOM generation, install prefix, debug info,
-      # headersclean checks); build only L and what it needs.
+      # headersclean checks); build only L and what it needs. Linux adds
+      # -no-feature-xcb-sm because the publisher's build had no libSM (its
+      # config_qtbase.summary: xcb-sm no) while this runner gets it as a dependency.
+      # Windows: no Vulkan headers on the runner, so QT_FEATURE_vulkan differs from
+      # the publisher's (recorded by the config-header comparison below).
       - name: Configure qtbase and build L (Linux)
         if: runner.os == 'Linux'
         timeout-minutes: 90
@@ -165,7 +169,7 @@ jobs:
           cd "$RUNNER_TEMP/qb"
           options=(-prefix "$RUNNER_TEMP/qt-prefix" -release -nomake examples -nomake tests
                    -qt-libjpeg -qt-libpng -qt-pcre -qt-harfbuzz -qt-doubleconversion -no-libudev
-                   -no-feature-liburing -bundled-xcb-xinput
+                   -no-feature-liburing -bundled-xcb-xinput -no-feature-xcb-sm
                    -- -DOpenGL_GL_PREFERENCE=LEGACY -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
                    -DQT_BUILD_TESTS=OFF)
           printf '%s\n' "configure ${options[*]}" "cmake --build . --target XcbQpaPrivate --parallel" > "$q7/recipe.txt"
