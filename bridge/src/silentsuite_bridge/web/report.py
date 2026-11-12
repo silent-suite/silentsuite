@@ -91,6 +91,8 @@ _PLATFORM_RE = re.compile(r"[a-z0-9._-]{1,32}")
 _CONTACT_RE = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,189}")
 # C0 and C1 controls except tab (0x09) and newline (0x0A).
 _CONTROL_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# Lone surrogate code points (Python str can hold them, e.g. surrogateescape).
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
 
 _STATUS_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -302,10 +304,9 @@ def _clean_text(value, label, max_chars, max_bytes):
     text = value.replace("\r\n", "\n")
     if _CONTROL_RE.search(text):
         raise ReportError(f"{label} contains unsupported control characters.")
-    try:
-        encoded = text.encode("utf-8")
-    except UnicodeEncodeError:
-        raise ReportError(f"{label} contains unsupported characters.") from None
+    if _SURROGATE_RE.search(text):
+        raise ReportError(f"{label} contains unsupported characters.")
+    encoded = text.encode("utf-8")
     if not text.strip():
         raise ReportError(f"{label} is required.")
     if len(text) > max_chars or len(encoded) > max_bytes:

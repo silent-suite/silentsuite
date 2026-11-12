@@ -312,6 +312,23 @@ def test_crlf_is_normalised_and_tab_newline_kept():
     assert payload["description"] == "line one\nline\ttwo\n"
 
 
+@pytest.mark.parametrize("surrogate", [
+    "\ud800", "\ud83d", "\udbff", "\udc00", "\udfff",
+    b"bad \xff bytes".decode("utf-8", "surrogateescape"),
+])
+def test_lone_surrogates_are_rejected_before_send(surrogate, report_state):
+    with pytest.raises(report.ReportError):
+        report.build_payload(_request(summary=f"bad {surrogate} text"))
+    with pytest.raises(report.ReportError):
+        report.build_payload(_request(description=f"bad {surrogate} text"))
+    # Through the route as well: rejected locally, relay never contacted.
+    body = json.dumps(_request(description=f"bad {surrogate} text")).encode()
+    status, _, response = _post("/.web/api/report", body)
+    assert status == 400
+    assert json.loads(response)["outcome"] == "invalid"
+    assert report_state.spy.calls == []
+
+
 def test_lone_surrogates_and_blank_text_are_rejected():
     with pytest.raises(report.ReportError):
         report.build_payload(_request(description="bad \ud83d text"))
