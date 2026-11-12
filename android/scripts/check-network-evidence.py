@@ -10,8 +10,30 @@ from pathlib import Path
 REQUIRED_SCENARIOS = {
     "clean_launch", "idle_5m", "account_setup", "login", "foreground_sync",
     "background_sync", "network_failure", "logout",
+    # Report a problem: only report_send may reach the report relay; the others are negative probes.
+    "report_open", "report_toggle_diagnostics", "report_cancel", "report_background", "report_send",
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+SCOPED_RULE_RE = re.compile(r"^([a-z0-9.-]+)\s+scenario=([a-z0-9_]+)$")
+
+
+def load_policy(path: Path) -> tuple[set[str], dict[str, str]]:
+    """Return global hosts and scenario-scoped hosts ({host: scenario})."""
+    allowed, scoped = set(), {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        rule = line.strip().lower()
+        if not rule or rule.startswith("#"):
+            continue
+        if len(rule.split()) == 1:
+            allowed.add(rule)
+            continue
+        match = SCOPED_RULE_RE.fullmatch(rule)
+        if not match or match.group(2) not in REQUIRED_SCENARIOS or match.group(1) in scoped:
+            raise ValueError(f"malformed endpoint rule: {line.strip()}")
+        scoped[match.group(1)] = match.group(2)
+    if allowed & set(scoped):
+        raise ValueError("a host cannot be both global and scenario-scoped")
+    return allowed, scoped
 
 
 def main() -> int:
@@ -24,12 +46,12 @@ def main() -> int:
     parser.add_argument("--raw-capture-sha256")
     parser.add_argument("--provenance-output", type=Path)
     args = parser.parse_args()
-    allowed = {line.strip().lower() for line in args.allowlist.read_text(encoding="utf-8").splitlines()
-               if line.strip() and not line.lstrip().startswith("#")}
     seen = set()
     seen_uids = set()
+    scoped_requests = {}
     failures = []
     try:
+        allowed, scoped = load_policy(args.allowlist)
         provenance_values = (args.app_uid, args.artifact_sha256, args.raw_capture_sha256, args.provenance_output)
         if any(value is not None for value in provenance_values) and not all(value is not None for value in provenance_values):
             raise ValueError("app UID, artifact SHA-256, raw capture SHA-256, and provenance output are required together")
@@ -52,7 +74,13 @@ def main() -> int:
             if not isinstance(requests, int) or requests < 0 or (requests == 0) != (host is None):
                 raise ValueError(f"line {number}: inconsistent request count/host")
             seen.add(scenario)
-            if host is not None and str(host).lower() not in allowed:
+            host_rule = None if host is None else str(host).lower()
+            if host_rule in scoped:
+                if scenario != scoped[host_rule]:
+                    failures.append(f"line {number}: {host} is allowed only in {scoped[host_rule]}, not {scenario}")
+                else:
+                    scoped_requests[host_rule] = scoped_requests.get(host_rule, 0) + requests
+            elif host_rule is not None and host_rule not in allowed:
                 failures.append(f"line {number}: host is not allowlisted: {host}")
             if scenario == "clean_launch" and requests != 0:
                 failures.append("clean_launch must have zero outbound requests")
@@ -63,6 +91,11 @@ def main() -> int:
         return 3
     if args.require_complete and seen != REQUIRED_SCENARIOS:
         failures.append("missing scenarios: " + ", ".join(sorted(REQUIRED_SCENARIOS - seen)))
+    # One user action is one request: more means a retry; none in a complete run means the probe did not run.
+    for host, scenario in sorted(scoped.items()):
+        count = scoped_requests.get(host, 0)
+        if count > 1 or (args.require_complete and count != 1):
+            failures.append(f"{scenario} must make exactly one request to {host}, found {count}")
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 2
