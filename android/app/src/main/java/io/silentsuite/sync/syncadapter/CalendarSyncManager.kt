@@ -92,11 +92,25 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         localCalendar().markTimeZoneRereadDone()
     }
 
+    /** What this run does with [item] given a local change of it that isn't uploaded yet. */
+    private fun replayLocalChange(item: Item, local: LocalEvent?): ReplayLocalChange {
+        val pending = replaying && local?.id?.let { localCalendar().hasPendingChange(it) } == true
+        return replayLocalChange(replaying, item.isDeleted, pending)
+    }
+
+    override fun keepsLocalChange(item: Item): Boolean {
+        if (!replaying || !item.isDeleted)
+            return false
+        val keep = replayLocalChange(item, localCollection!!.findByFilename(item.uid)) == ReplayLocalChange.SKIP_APPLY_AND_CACHE
+        if (keep)
+            Logger.log.info("Keeping a local change over a server deletion during this re-read")
+        return keep
+    }
+
     override fun processItem(item: Item) {
         val local = localCollection!!.findByFilename(item.uid)
 
-        // Local changes were uploaded before this listing; one made while it runs is kept for the next upload.
-        if (replaying && local != null && localCalendar().hasPendingChange(local)) {
+        if (replayLocalChange(item, local) == ReplayLocalChange.SKIP_APPLY) {
             Logger.log.info("Keeping a local change made during this re-read for the next upload")
             return
         }
@@ -174,3 +188,25 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         return localEvent
     }
 }
+
+/** How a calendar re-read treats a listed item whose local event has a change still to upload. */
+internal enum class ReplayLocalChange {
+    /** Apply and cache the listed item as usual. */
+    APPLY,
+    /** Keep the local event; cache the server's revision, which the local upload then replaces. */
+    SKIP_APPLY,
+    /** Keep the local event and don't cache a server deletion, so the cached live revision stays the upload's base. */
+    SKIP_APPLY_AND_CACHE
+}
+
+/**
+ * A re-read lists every item, also ones the server didn't change, so a local change made while it
+ * runs (to the event or any of its exceptions) would otherwise be overwritten. Outside a re-read
+ * items are applied as before.
+ */
+internal fun replayLocalChange(replaying: Boolean, remoteDeleted: Boolean, localPending: Boolean): ReplayLocalChange =
+    when {
+        !replaying || !localPending -> ReplayLocalChange.APPLY
+        remoteDeleted -> ReplayLocalChange.SKIP_APPLY_AND_CACHE
+        else -> ReplayLocalChange.SKIP_APPLY
+    }

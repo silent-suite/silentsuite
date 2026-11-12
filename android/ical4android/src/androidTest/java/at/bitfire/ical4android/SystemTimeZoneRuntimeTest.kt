@@ -151,6 +151,37 @@ class SystemTimeZoneRuntimeTest {
             begins)
     }
 
+    /** The calendar re-read keeps local changes; an exception can be dirty while its main event is clean. */
+    @Test
+    fun pendingChangesIncludeExceptionRows() {
+        val parsed = Event.eventsFromReader(StringReader(series)).single()
+        val id = ContentUris.parseId(TestEvent(calendar, parsed).add())
+        val exceptionId = provider.query(calendar.syncAdapterURI(CalendarContract.Events.CONTENT_URI),
+            arrayOf(CalendarContract.Events._ID), "${CalendarContract.Events.ORIGINAL_ID}=?", arrayOf(id.toString()), null)!!.use { cursor ->
+            assertTrue(cursor.moveToNext())
+            cursor.getLong(0)
+        }
+        fun mark(rowId: Long, column: String, value: Int) {
+            provider.update(calendar.syncAdapterURI(ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, rowId)),
+                android.content.ContentValues().apply { put(column, value) }, null, null)
+        }
+
+        mark(id, CalendarContract.Events.DIRTY, 0)
+        mark(exceptionId, CalendarContract.Events.DIRTY, 0)
+        assertEquals(false, calendar.hasPendingChange(id))
+
+        mark(exceptionId, CalendarContract.Events.DIRTY, 1)
+        assertEquals(true, calendar.hasPendingChange(id))
+        mark(exceptionId, CalendarContract.Events.DIRTY, 0)
+
+        mark(exceptionId, CalendarContract.Events.DELETED, 1)
+        assertEquals(true, calendar.hasPendingChange(id))
+        mark(exceptionId, CalendarContract.Events.DELETED, 0)
+
+        mark(id, CalendarContract.Events.DIRTY, 1)
+        assertEquals(true, calendar.hasPendingChange(id))
+    }
+
     @Test
     fun writtenEventKeepsWallTimesAndAMatchingDefinition() {
         val parsed = Event.eventsFromReader(StringReader(series)).single()

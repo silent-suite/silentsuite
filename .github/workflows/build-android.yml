@@ -445,6 +445,7 @@ jobs:
               "everySystemZoneMatchesTheDeviceRules",
               "vancouverSeriesThroughCalendarProvider",
               "writtenEventKeepsWallTimesAndAMatchingDefinition",
+              "pendingChangesIncludeExceptionRows",
           }
           records = []
           for path in glob.glob(

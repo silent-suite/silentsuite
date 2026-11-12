@@ -134,15 +134,6 @@ class LocalCalendar private constructor(
         update(ContentValues(1).apply { put(COLUMN_TIME_ZONE_REREAD, TIME_ZONE_REREAD) })
     }
 
-    /** Whether [event] has a local change or deletion that isn't uploaded yet. */
-    fun hasPendingChange(event: LocalEvent): Boolean {
-        val id = event.id ?: return false
-        return provider.query(syncAdapterURI(ContentUris.withAppendedId(Events.CONTENT_URI, id)),
-                arrayOf(Events.DIRTY, Events.DELETED), null, null, null)?.use { cursor ->
-            cursor.moveToNext() && (cursor.getInt(0) != 0 || cursor.getInt(1) != 0)
-        } ?: false
-    }
-
     override fun findDeleted() =
             queryEvents("${Events.DELETED}!=0 AND ${Events.ORIGINAL_ID} IS NULL", null)
 
