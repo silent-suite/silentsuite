@@ -35,7 +35,7 @@ class ProblemReportFlowTest {
     }
 
     private fun flow(timeoutMillis: Long = 2_000) = ProblemReportFlow(
-        ProblemReportTransport(server.url("/v1/reports"), ProblemReportTransport.newClient(timeoutMillis))::post,
+        ProblemReportTransport(server.url("/api/report"), ProblemReportTransport.newClient(timeoutMillis))::post,
     )
 
     private fun body(diagnostics: String? = preview) =
@@ -59,7 +59,7 @@ class ProblemReportFlowTest {
         assertEquals(State.SENT, flow().send(body))
         val request = server.takeRequest(1, TimeUnit.SECONDS)!!
         assertEquals("POST", request.method)
-        assertEquals("/v1/reports", request.path)
+        assertEquals("/api/report", request.path)
         assertTrue(request.getHeader("Content-Type")!!.startsWith("application/json"))
         assertNull(request.getHeader("Origin"))
         val sent = request.body.readByteArray()
@@ -70,7 +70,7 @@ class ProblemReportFlowTest {
 
     @Test
     fun timeoutIsUnconfirmedAndNeverResent() {
-        // The relay reads the request but answers only after the client has given up.
+        // The server reads the request but answers only after the client has given up.
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
         val flow = flow(timeoutMillis = 500)
         assertEquals(State.UNCONFIRMED, flow.send(body()))
@@ -94,11 +94,13 @@ class ProblemReportFlowTest {
         server.enqueue(MockResponse().setResponseCode(502))
         assertEquals(State.UNCONFIRMED, flow().send(body()))
         assertEquals(1, server.requestCount)
+        server.enqueue(MockResponse().setResponseCode(503))
+        assertEquals("503 is a failure like any other", State.UNCONFIRMED, flow().send(body()))
         server.enqueue(MockResponse().setResponseCode(200))
         assertEquals("only 201 confirms a report", State.UNCONFIRMED, flow().send(body()))
 
         val closed = MockWebServer().apply { start() }
-        val url = closed.url("/v1/reports")
+        val url = closed.url("/api/report")
         closed.shutdown()
         val refused = ProblemReportFlow(ProblemReportTransport(url)::post)
         assertEquals(State.UNCONFIRMED, refused.send(body()))
@@ -106,7 +108,7 @@ class ProblemReportFlowTest {
 
     @Test
     fun productionClientUsesTheFixedEndpointNoRedirectsNoRetryAndShortTimeouts() {
-        assertEquals("https://report.silentsuite.io/v1/reports", ProblemReport.ENDPOINT)
+        assertEquals("https://silentsuite.io/api/report", ProblemReport.ENDPOINT)
         val client = ProblemReportTransport.newClient()
         assertFalse(client.followRedirects)
         assertFalse(client.followSslRedirects)

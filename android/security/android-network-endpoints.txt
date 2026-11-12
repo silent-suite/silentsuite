@@ -1,10 +1,10 @@
 # Reviewed endpoint policy, schema 1. One lower-case host rule per line.
 # No endpoint is permitted before the user selects/configures a server, except the scenario-scoped
-# report relay below, which is reached only when the user presses Send.
+# report endpoint below, which is reached only when the user presses Send.
 # Authenticated scenarios substitute only the dedicated test server host supplied
 # as ANDROID_NETWORK_TEST_SERVER_URL; the evidence checker records <user-selected-server>.
 <user-selected-server>
 # Scenario-scoped rule: "<host> scenario=<name>" permits the host in that one scenario only and
-# fails it in every other scenario. The report relay receives exactly one request, and only after
-# the user presses Send in Settings -> Help -> Report a problem.
-report.silentsuite.io scenario=report_send
+# fails it in every other scenario. The exact host silentsuite.io (no subdomain) receives exactly one
+# request, to /api/report, and only after the user presses Send in Settings -> Help -> Report a problem.
+silentsuite.io scenario=report_send

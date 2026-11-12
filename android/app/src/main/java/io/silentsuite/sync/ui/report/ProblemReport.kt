@@ -11,7 +11,7 @@ import java.net.URI
  * account names, server addresses, collection data, exception text or device identifiers.
  */
 object ProblemReport {
-    const val ENDPOINT = "https://report.silentsuite.io/v1/reports"
+    const val ENDPOINT = "https://silentsuite.io/api/report"
     const val SUPPORT_EMAIL = "support@silentsuite.io"
     const val PRIVACY_POLICY_URL = "https://silentsuite.io/privacy#problem-reports"
 
@@ -137,7 +137,7 @@ object ProblemReport {
         return body
     }
 
-    /** Subject for "Email instead"; the text is not validated because nothing goes through the relay. */
+    /** Subject for "Email instead"; the text is not validated because nothing goes through the report endpoint. */
     fun emailSubject(kind: Kind, summary: String): String =
         (if (kind == Kind.PROBLEM) "Problem report: " else "Feature request: ") + normalize(summary)
 

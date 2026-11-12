@@ -10,7 +10,7 @@ from pathlib import Path
 REQUIRED_SCENARIOS = {
     "clean_launch", "idle_5m", "account_setup", "login", "foreground_sync",
     "background_sync", "network_failure", "logout",
-    # Report a problem: only report_send may reach the report relay; the others are negative probes.
+    # Report a problem: only report_send may reach the report endpoint (exact host silentsuite.io); the others are negative probes.
     "report_open", "report_toggle_diagnostics", "report_cancel", "report_background", "report_send",
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")

@@ -42,9 +42,9 @@ Exercise all scenarios separately:
 10. `report_toggle_diagnostics`: on that screen switch between Problem and Feature request and tick/untick Include diagnostic info several times
 11. `report_cancel`: fill in the form, then leave with Back without pressing Send
 12. `report_background`: fill in the form, put the app in the background for 5 minutes, then return without pressing Send
-13. `report_send`: fill in the form and press Send once (must make exactly one request to `report.silentsuite.io`)
+13. `report_send`: fill in the form and press Send once (must make exactly one request to `silentsuite.io`, the `/api/report` endpoint)
 
-`report.silentsuite.io` is a scenario-scoped rule (`<host> scenario=<name>` in the endpoint file): it is accepted only in `report_send` and fails every other scenario, including `clean_launch`, `login` and the four report negative probes above. A complete run must show exactly one request to it in `report_send`; more than one means a retry and fails. `report_send` files a real private issue through the relay, so use a summary that marks it as network-evidence test traffic and close the issue afterwards. Run it only after the relay is deployed and switched on.
+`silentsuite.io` is a scenario-scoped rule (`<host> scenario=<name>` in the endpoint file): it matches that exact host only (subdomains such as `server.silentsuite.io` are not covered by it), is accepted only in `report_send` and fails every other scenario, including `clean_launch`, `login` and the four report negative probes above. A complete run must show exactly one request to it in `report_send`; more than one means a retry and fails. `report_send` delivers a real email to the support inbox, so use a summary that marks it as network-evidence test traffic. Run it only after the report endpoint is deployed and switched on.
 
 The sanitized JSONL has one row per UID/destination/scenario:
 

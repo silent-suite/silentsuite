@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Settings → Help → Report a problem. Nothing leaves the device until the user presses Send (one
- * request to the relay, never retried) or picks an email app. The diagnostics shown in the preview
+ * request to the report endpoint, never retried) or picks an email app. The diagnostics shown in the preview
  * are captured once when the screen opens and sent byte for byte.
  */
 class ReportProblemActivity : BaseActivity() {

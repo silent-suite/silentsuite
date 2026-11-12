@@ -212,7 +212,7 @@ class ProblemReportTest {
         }
         expectInvalid(Field.DESCRIPTION, Problem.INVALID) { build(description = "a\uD83Db") }
         expectInvalid(Field.DESCRIPTION, Problem.INVALID) { build(description = "a\uDE00b") }
-        // Lone surrogates at either end, in the summary too: the relay rejects them, so they never reach Send.
+        // Lone surrogates at either end, in the summary too: the server rejects them, so they never reach Send.
         expectInvalid(Field.SUMMARY, Problem.INVALID) { build(summary = "ab\uD83D") }
         expectInvalid(Field.SUMMARY, Problem.INVALID) { build(summary = "\uDE00ab") }
         expectInvalid(Field.DESCRIPTION, Problem.INVALID) { build(description = "\uDE00\uD83D") }

@@ -10,7 +10,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Posts one report to the relay. A plain OkHttp client with the system trust store: not the account
+ * Posts one report to the report endpoint. A plain OkHttp client with the system trust store: not the account
  * HttpClient, whose user-added certificates belong to the user's own server. No redirects and no
  * connection retry, so one Send is at most one request.
  */
@@ -18,7 +18,7 @@ class ProblemReportTransport(
     private val endpoint: HttpUrl = ProblemReport.ENDPOINT.toHttpUrl(),
     private val client: OkHttpClient = newClient(),
 ) {
-    /** True only for the relay's 201; any other status, timeout or I/O error is unconfirmed. */
+    /** True only for a 201; any other status (503 included), timeout or I/O error is unconfirmed. */
     fun post(body: ByteArray): Boolean {
         val request = Request.Builder()
             .url(endpoint)
@@ -44,8 +44,8 @@ class ProblemReportTransport(
 }
 
 /**
- * One report, sent at most once. There is no automatic retry: after a timeout the relay may already
- * have filed the issue, so a failure ends in [State.UNCONFIRMED] and only Email or Copy remain.
+ * One report, sent at most once. There is no automatic retry: after a timeout the server may already
+ * have emailed the report, so a failure ends in [State.UNCONFIRMED] and only Email or Copy remain.
  */
 class ProblemReportFlow(private val transport: (ByteArray) -> Boolean) {
     enum class State { EDITING, SENDING, SENT, UNCONFIRMED }
