@@ -62,6 +62,48 @@ test('eligibility: stable and -beta (either GitHub prerelease flag) pass; drafts
   assert.equal(classifyRelease(release({ published_at: null })).eligible, false)
 })
 
+test('eligibility: follow-up betas vX.Y.Z-beta.N (N >= 2, no leading zeros) pass; every other suffix stays refused', () => {
+  for (const tag of ['v0.5.18-beta.2', 'v0.5.18-beta.9', 'v0.5.18-beta.10', 'v1.2.3-beta.123']) {
+    const verdict = classifyRelease(release({ tag_name: tag, prerelease: true }))
+    assert.equal(verdict.eligible, true, tag)
+    assert.equal(verdict.kind, 'beta', tag)
+    assert.equal(verdict.version, tag.slice(1), tag)
+    assert.equal(verdict.channel, 'main', tag)
+  }
+  assert.equal(classifyRelease(release({ tag_name: 'v0.5.18-beta.2', prerelease: false })).eligible, true, 'the GitHub prerelease flag does not matter for a beta')
+  for (const tag of [
+    'v0.5.18-beta.1', 'v0.5.18-beta.0', 'v0.5.18-beta.02', 'v0.5.18-beta.', 'v0.5.18-beta.2.1', 'v0.5.18-beta2', 'v0.5.18-beta-2',
+    'v0.5.18-beta.x', 'v0.5.18-beta.-2', 'v0.5.18-Beta.2', 'v0.5.18-rc.2', 'v0.5.18-rc1', 'v0.5.18-alpha.2', 'v0.5.18-alpha',
+    'v0.5.18-beta.2-hotfix', 'v0.5.18-beta.2+build', 'v0.5.18-preview', 'v0.5.18-beta.2 ', 'v0.5.18-beta.2\n',
+  ]) {
+    const verdict = classifyRelease(release({ tag_name: tag, prerelease: true }))
+    assert.equal(verdict.eligible, false, JSON.stringify(tag))
+    assert.match(verdict.reason, /outside the vX\.Y\.Z \/ vX\.Y\.Z-beta \/ vX\.Y\.Z-beta\.N grammar/, JSON.stringify(tag))
+  }
+})
+
+test('tag order is numeric: -beta < -beta.2 < -beta.10 < stable < next patch, and the newest beta.N is the publishable one', () => {
+  const ordered = ['v0.5.17', 'v0.5.18-beta', 'v0.5.18-beta.2', 'v0.5.18-beta.3', 'v0.5.18-beta.10', 'v0.5.18', 'v0.5.19-beta', 'v0.5.19']
+  for (let i = 0; i < ordered.length; i += 1) {
+    assert.equal(compareTags(ordered[i], ordered[i]), 0, ordered[i])
+    for (let j = i + 1; j < ordered.length; j += 1) {
+      assert.equal(Math.sign(compareTags(ordered[i], ordered[j])), -1, `${ordered[i]} < ${ordered[j]}`)
+      assert.equal(Math.sign(compareTags(ordered[j], ordered[i])), 1, `${ordered[j]} > ${ordered[i]}`)
+    }
+  }
+  assert.throws(() => compareTags('v0.5.18-beta.1', 'v0.5.18-beta'), /outside the release grammar/)
+  assert.throws(() => compareTags('v0.5.18-rc.2', 'v0.5.18'), /outside the release grammar/)
+  const now = Date.parse('2026-11-12T00:00:00Z')
+  const { candidates } = selectScheduleCandidates([
+    release({ id: 10, tag_name: 'v0.5.18-beta', published_at: '2026-11-10T00:00:00Z' }),
+    release({ id: 11, tag_name: 'v0.5.18-beta.2', published_at: '2026-11-11T00:00:00Z' }),
+    release({ id: 12, tag_name: 'v0.5.18-rc.3', published_at: '2026-11-11T12:00:00Z' }),
+  ], { now })
+  assert.deepEqual(candidates.map((c) => [c.releaseId, c.tag, c.publishable]), [[10, 'v0.5.18-beta', false], [11, 'v0.5.18-beta.2', true]])
+  assert.throws(() => markPublishable([{ releaseId: 1, tag: 'v0.5.18-beta.2' }, { releaseId: 2, tag: 'v0.5.18-beta.2' }]), /share tag/)
+  assert.deepEqual(markPublishable([{ releaseId: 1, tag: 'v0.5.18-beta.10' }, { releaseId: 2, tag: 'v0.5.18-beta.9' }]).map((c) => c.publishable), [true, false])
+})
+
 test('schedule candidates are bounded to the window, every omission carries a reason, and exactly the newest tag is publishable', () => {
   const now = Date.parse('2026-09-12T00:00:00Z')
   const { candidates, omitted } = selectScheduleCandidates([
@@ -920,7 +962,7 @@ test('pre-lane beta-channel releases are legacy-complete against the lane main-c
   const rel53 = observed.find((e) => e.id.startsWith('cf7cf99a650e'))
   assert.ok(compareRelease(laneExpected('0.5.3-beta').release, rel53, 'e569ce28e3f8647fa98e665185a96b267cf933370dc3481f4d40b2f5c9fb01db').some((d) => d.includes('"c"')), 'lane-path exact comparison still rejects a channel difference')
   assert.equal(legacyChannelAccepted('main', 'beta', '0.5.3-beta'), true)
-  for (const [e, o, v] of [['main', 'beta', '0.5.3'], ['main', 'beta', '0.5.3-beta.1'], ['main', 'nightly', '0.5.3-beta'], ['beta', 'main', '0.5.3-beta'], ['main', 'Beta', '0.5.3-beta'], ['main', undefined, '0.5.3-beta']]) {
+  for (const [e, o, v] of [['main', 'beta', '0.5.3'], ['main', 'beta', '0.5.3-beta.1'], ['main', 'beta', '0.5.18-beta.2'], ['main', 'nightly', '0.5.3-beta'], ['beta', 'main', '0.5.3-beta'], ['main', 'Beta', '0.5.3-beta'], ['main', undefined, '0.5.3-beta']]) {
     assert.equal(legacyChannelAccepted(e, o, v), false, `${e}/${o}/${v}`)
   }
 })
@@ -1004,6 +1046,9 @@ test('failure issue is structured, quotes untrusted text safely, names the re-ru
   assert.match(hostile.body, /\[tag failed validation\]/)
   assert.match(hostile.body, /\[run url failed validation\]/)
   assert.doesNotMatch(hostile.body, /<script>/)
+  const betaN = buildIssue({ releaseId: '400000000', tag: 'v0.5.18-beta.2', sourceSha: SHA, runUrl: 'https://github.com/silent-suite/silentsuite/actions/runs/1/attempts/1', phase: 'sign', outcome: 'failure', detail: '' })
+  assert.match(betaN.title, /v0\.5\.18-beta\.2/)
+  assert.doesNotMatch(betaN.body, /\[tag failed validation\]/)
   const stored = {}
   const fetchImpl = async (url, init) => {
     if (!init?.method || init.method === 'GET') {
