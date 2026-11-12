@@ -1440,3 +1440,24 @@ def test_gate_cli_uses_a_source_receipt(gate, tmp_path):
     code = gate.main(["--facts", str(facts_path), "--policy", str(index), "--archive-root", str(archive),
                       "--source-receipt", str(receipt)])
     assert code == 0
+
+
+# Review corrections at d39e3a9c (Codex R1, R2; reassessed Medium, fix).
+def test_source_text_accepts_a_receipt_that_also_covers_the_other_platform(texts):
+    # The source job verifies both platforms into one receipt; each package job writes
+    # SOURCE.txt for its own policy and lists only that policy's archives.
+    policy, records, verification = _source_inputs()
+    verification["archives"].append({"file": "windows-only.tar.gz", "sha256": _sha(b"win"), "signature": None})
+    text = texts.source_text(GIT_SHA, policy, records, verification)
+    assert "windows-only.tar.gz" not in text
+
+
+@pytest.mark.parametrize("where", ["direct", "indexed"])
+def test_gate_cli_fails_an_empty_policy(gate, tmp_path, where):
+    facts, _, archive, sources = _v9_case(tmp_path, LINUX)
+    if where == "direct":
+        policy_path = tmp_path / "empty-policy.json"
+        policy_path.write_text("{}", encoding="utf-8")
+    else:
+        policy_path = _write_policy_tree(tmp_path, {LINUX: {}})
+    assert _run_gate_cli(gate, facts, policy_path, archive, sources) == 1
