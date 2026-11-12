@@ -1,0 +1,1 @@
+Top bars are now navy with white titles and controls in light and dark themes, and the navigation bar matches the page. Calendar, Contacts and Tasks dashboard cards can open your apps. Contact labels now sync as Android contact groups and are kept when you edit a contact. Leaving a Notes notebook now shows an error if it fails.

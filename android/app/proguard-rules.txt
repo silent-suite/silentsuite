@@ -22,6 +22,11 @@
 -dontwarn freemarker.**                 # freemarker templating library (for creating hCards) not used
 -dontwarn org.jsoup.**                  # jsoup library (for hCard parsing) not used
 -keep class ezvcard.property.** { *; }  # keep all vCard properties (created at runtime)
+# Parameter case classes (TelephoneType, EmailType, ImageType, ...) are created by
+# reflection in VCardParameterCaseClasses, and vcard4android's Contact looks them up
+# in its static initializer. When R8 removed their constructors (0.5.18), the first
+# contact sync crashed with ExceptionInInitializerError. Keep constructors and constants.
+-keep class ezvcard.parameter.** { *; }
 
 # ical4j: ignore unused dynamic libraries
 -keep class net.fortuna.ical4j.** { *; }  # keep all model classes (properties/factories, created at runtime)
