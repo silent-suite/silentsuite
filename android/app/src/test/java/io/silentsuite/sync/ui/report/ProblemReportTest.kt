@@ -212,6 +212,10 @@ class ProblemReportTest {
         }
         expectInvalid(Field.DESCRIPTION, Problem.INVALID) { build(description = "a\uD83Db") }
         expectInvalid(Field.DESCRIPTION, Problem.INVALID) { build(description = "a\uDE00b") }
+        // Lone surrogates at either end, in the summary too: the relay rejects them, so they never reach Send.
+        expectInvalid(Field.SUMMARY, Problem.INVALID) { build(summary = "ab\uD83D") }
+        expectInvalid(Field.SUMMARY, Problem.INVALID) { build(summary = "\uDE00ab") }
+        expectInvalid(Field.DESCRIPTION, Problem.INVALID) { build(description = "\uDE00\uD83D") }
         val body = build(description = "line one\r\nline\ttwo")
         assertEquals("line one\nline\ttwo", parse(body).get("description").asString)
         assertFalse(body.contains("\\r"))
@@ -254,5 +258,6 @@ class ProblemReportTest {
         assertEquals("Details\nmore\n\nDiagnostic info:\n$preview", ProblemReport.emailBody("Details\r\nmore", preview))
         assertEquals("Details", ProblemReport.emailBody("Details", null))
         assertEquals("support@silentsuite.io", ProblemReport.SUPPORT_EMAIL)
+        assertEquals("https://silentsuite.io/privacy#problem-reports", ProblemReport.PRIVACY_POLICY_URL)
     }
 }

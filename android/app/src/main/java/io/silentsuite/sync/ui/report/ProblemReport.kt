@@ -13,7 +13,7 @@ import java.net.URI
 object ProblemReport {
     const val ENDPOINT = "https://report.silentsuite.io/v1/reports"
     const val SUPPORT_EMAIL = "support@silentsuite.io"
-    const val PRIVACY_POLICY_URL = "https://silentsuite.io/privacy"
+    const val PRIVACY_POLICY_URL = "https://silentsuite.io/privacy#problem-reports"
 
     const val MAX_SUMMARY_CHARS = 120
     const val MAX_SUMMARY_BYTES = 480
