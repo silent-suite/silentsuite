@@ -91,6 +91,7 @@ export {
   buildAlarmTrigger,
   parseAlarmTriggerMinutes,
   parseICalDateValue,
+  splitRetainedRecurrenceDates,
 } from './models/calendar-event.js';
 export type { CalendarEvent } from './models/calendar-event.js';
 

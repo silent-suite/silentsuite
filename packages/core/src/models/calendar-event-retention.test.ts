@@ -1,6 +1,13 @@
 // WEB-03: saving an event keeps VEVENT content the model does not edit.
 import { describe, it, expect } from 'vitest';
-import { deserializeCalendarEvent, serializeCalendarEvent, toVEvent, fromVEvent } from './calendar-event.js';
+import {
+  deserializeCalendarEvent,
+  serializeCalendarEvent,
+  toVEvent,
+  fromVEvent,
+  expandEventRecurrence,
+  splitRetainedRecurrenceDates,
+} from './calendar-event.js';
 import type { CalendarEvent } from './calendar-event.js';
 import { generateVEvent, parseVEvent } from '../utils/ical-parser.js';
 
@@ -113,9 +120,16 @@ describe('DURATION-only events (WEB-03)', () => {
     expect(event.endDate.getTime() - event.startDate.getTime()).toBe(90 * 60 * 1000);
   });
 
-  it('are written with the equivalent DTEND and no DURATION', () => {
+  it('keep their DURATION, and no DTEND, on a title-only save', () => {
     const written = edit(RICH_ITEM, { title: 'Planning v2' });
-    expect(written).toMatch(/^DTEND;TZID=Europe\/Vienna:20260706T113000$/m);
+    expect(count(written, 'DURATION:PT1H30M')).toBe(1);
+    expect(written).not.toMatch(/^DTEND/m);
+  });
+
+  it('are written with DTEND once the length is edited', () => {
+    const event = deserializeCalendarEvent(RICH_ITEM);
+    const written = edit(RICH_ITEM, { endDate: new Date(event.startDate.getTime() + 2 * 3600_000) });
+    expect(written).toMatch(/^DTEND;TZID=Europe\/Vienna:20260706T120000$/m);
     expect(written).not.toMatch(/^DURATION:/m);
   });
 
@@ -261,5 +275,93 @@ describe('retained recurrence lines follow the written DTSTART form (WEB-03)', (
       unknownProperties: ['RECURRENCE-ID:20260706T100000Z'],
     });
     expect(out).not.toMatch(/^RECURRENCE-ID/m);
+  });
+});
+
+describe('nominal DURATION days and weeks keep the wall clock across DST (WEB-03 review)', () => {
+  const single = (start: string, duration: string) =>
+    ['BEGIN:VEVENT', 'UID:dst', `DTSTART;TZID=America/New_York:${start}`, `DURATION:${duration}`, 'SUMMARY:dst', 'END:VEVENT'].join(CRLF);
+
+  it('P1D across the US spring change ends at the same wall clock (23 hours)', () => {
+    const event = fromVEvent(single('20260307T100000', 'P1D'));
+    expect(event.startDate.toISOString()).toBe('2026-03-07T15:00:00.000Z');
+    expect(event.endDate.toISOString()).toBe('2026-03-08T14:00:00.000Z');
+  });
+
+  it('P1W across the US spring change ends at the same wall clock', () => {
+    const event = fromVEvent(single('20260305T100000', 'P1W'));
+    expect(event.endDate.toISOString()).toBe('2026-03-12T14:00:00.000Z');
+  });
+
+  it('P1DT2H adds the exact hours after the nominal day', () => {
+    const event = fromVEvent(single('20260307T100000', 'P1DT2H'));
+    expect(event.endDate.toISOString()).toBe('2026-03-08T16:00:00.000Z');
+  });
+
+  it('a title-only save of a DST-straddling P1D keeps the stored DURATION', () => {
+    const written = edit(single('20260307T100000', 'P1D'), { title: 'renamed' });
+    expect(count(written, 'DURATION:P1D')).toBe(1);
+    expect(written).not.toMatch(/^DTEND/m);
+  });
+
+  it.each(['P1D', 'P1W'])('a recurring %s series straddling a later DST change keeps its DURATION on a title-only save', (duration) => {
+    const series = [
+      'BEGIN:VEVENT',
+      'UID:dst-series',
+      'DTSTART;TZID=America/New_York:20260226T100000',
+      `DURATION:${duration}`,
+      'RRULE:FREQ=WEEKLY;COUNT=4',
+      'SUMMARY:series',
+      'END:VEVENT',
+    ].join(CRLF);
+    const event = fromVEvent(series);
+    // The first occurrence has no DST change inside it: an exact 1 or 7 days.
+    expect(event.endDate.getTime() - event.startDate.getTime()).toBe((duration === 'P1W' ? 7 : 1) * 86_400_000);
+    // The series still crosses the 8 March change, and each occurrence keeps 10:00 local.
+    const starts = expandEventRecurrence(event, { start: new Date('2026-02-01T00:00:00Z'), end: new Date('2026-04-01T00:00:00Z') });
+    expect(starts.map((d) => d.toISOString())).toEqual([
+      '2026-02-26T15:00:00.000Z',
+      '2026-03-05T15:00:00.000Z',
+      '2026-03-12T14:00:00.000Z',
+      '2026-03-19T14:00:00.000Z',
+    ]);
+    const written = edit(series, { title: 'renamed' });
+    expect(count(written, `DURATION:${duration}`)).toBe(1);
+    expect(written).not.toMatch(/^DTEND/m);
+  });
+
+  it('control: a UTC P1D is exactly 24 hours', () => {
+    const event = fromVEvent(['BEGIN:VEVENT', 'UID:u', 'DTSTART:20260307T150000Z', 'DURATION:P1D', 'SUMMARY:u', 'END:VEVENT'].join(CRLF));
+    expect(event.endDate.toISOString()).toBe('2026-03-08T15:00:00.000Z');
+  });
+});
+
+describe('splitRetainedRecurrenceDates (WEB-03 review)', () => {
+  const base = { allDay: false, timezone: 'Europe/Vienna' as string | undefined };
+
+  it('splits RDATE values at the cutoff and keeps other lines before it', () => {
+    const { before, from } = splitRetainedRecurrenceDates(
+      { ...base, unknownProperties: ['X-A:1', 'RDATE;TZID=Europe/Vienna:20260701T100000,20260801T100000', 'RDATE:20260901T080000Z'] },
+      new Date('2026-07-15T00:00:00Z'),
+    );
+    expect(before).toEqual(['X-A:1', 'RDATE;TZID=Europe/Vienna:20260701T100000']);
+    expect(from).toEqual(['RDATE;TZID=Europe/Vienna:20260801T100000', 'RDATE:20260901T080000Z']);
+  });
+
+  it('counts a value exactly at the cutoff as later, and reads a zone-less value in the event zone', () => {
+    const { before, from } = splitRetainedRecurrenceDates(
+      { ...base, unknownProperties: ['RDATE:20260801T100000'] },
+      new Date('2026-08-01T08:00:00Z'),
+    );
+    expect(before).toBeUndefined();
+    expect(from).toEqual(['RDATE:20260801T100000']);
+  });
+
+  it('judges a PERIOD by its start', () => {
+    const { from } = splitRetainedRecurrenceDates(
+      { ...base, unknownProperties: ['RDATE;VALUE=PERIOD:20260801T080000Z/PT1H'] },
+      new Date('2026-08-01T07:00:00Z'),
+    );
+    expect(from).toEqual(['RDATE;VALUE=PERIOD:20260801T080000Z/PT1H']);
   });
 });

@@ -655,6 +655,35 @@ function recurrenceIdMatchesStart(value: string, params: Record<string, string>,
   return id.date === start.date && (id.date || id.floating === start.floating);
 }
 
+/**
+ * Split retained property lines at a point in an event's recurrence set: each RDATE value goes
+ * to `from` when `isFrom(value, params)` is true, otherwise it stays in `rest` (a PERIOD is
+ * judged by its start). Other lines stay in `rest`. Lines keep their own name and parameters;
+ * an RDATE line left without values is omitted. Inputs are never changed.
+ */
+export function partitionRetainedRDates(
+  lines: readonly string[],
+  isFrom: (value: string, params: Record<string, string>) => boolean,
+): { rest: string[]; from: string[] } {
+  const rest: string[] = [];
+  const from: string[] = [];
+  for (const line of lines) {
+    const { name, params, value } = parseProperty(line);
+    if (name !== 'RDATE') {
+      rest.push(line);
+      continue;
+    }
+    const head = line.slice(0, findPropertyColon(line));
+    const period = (params['VALUE'] ?? '').toUpperCase() === 'PERIOD';
+    const values = value.split(',');
+    const later = values.filter((v) => isFrom(period ? v.split('/')[0]! : v, params));
+    const earlier = values.filter((v) => !later.includes(v));
+    if (earlier.length > 0) rest.push(`${head}:${earlier.join(',')}`);
+    if (later.length > 0) from.push(`${head}:${later.join(',')}`);
+  }
+  return { rest, from };
+}
+
 /** Whether a retained VALARM still has the anchor its TRIGGER needs. Other components have no rule. */
 function alarmAnchored(block: string[], hasStart: boolean, hasDue: boolean, durationWritten: boolean): boolean {
   if (!/^BEGIN:VALARM$/i.test(block[0]!)) return true;

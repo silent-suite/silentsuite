@@ -1131,10 +1131,35 @@ describe('useCalendarStore keeps unsupported event content (WEB-03)', () => {
     expect(masterIcs).toMatch(/^X-EXAMPLE-PROP:keep-me$/m)
   })
 
-  it('a "this and future" series gets a new item without the series\' retained lines', async () => {
+  it('a "this and future" edit moves later RDATEs to the new series and keeps the rest on the original', async () => {
     const master = seedRemote(SERIES)
     await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-15T10:00:00Z'))
 
-    expect(lastCreated()).not.toMatch(/^(RDATE|ATTENDEE|X-EXAMPLE-PROP)[;:]/m)
+    const series = lastCreated()
+    expect(series).toMatch(/^RDATE:20270420T100000Z$/m)
+    expect(series).not.toMatch(/^(ATTENDEE|X-EXAMPLE-PROP)[;:]/m)
+    const masterIcs = lastUpdated()
+    expect(masterIcs).toMatch(/^RRULE:FREQ=WEEKLY;UNTIL=20270314$/m)
+    expect(masterIcs).not.toMatch(/^RDATE/m)
+    expect(masterIcs).toMatch(/^X-EXAMPLE-PROP:keep-me$/m)
+  })
+
+  it('a "this and future" edit keeps earlier RDATEs on the original only', async () => {
+    const master = seedRemote(SERIES.replace('RDATE:20270420T100000Z', 'RDATE:20270310T100000Z,20270420T100000Z'))
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Split' }, 'this_and_future', new Date('2027-03-15T10:00:00Z'))
+
+    expect(lastUpdated()).toMatch(/^RDATE:20270310T100000Z$/m)
+    expect(lastCreated()).toMatch(/^RDATE:20270420T100000Z$/m)
+  })
+
+  it('a "this and future" delete drops later RDATEs from the original', async () => {
+    const master = seedRemote(SERIES.replace('RDATE:20270420T100000Z', 'RDATE:20270310T100000Z,20270420T100000Z'))
+    await useCalendarStore.getState().deleteRecurringEvent(master.id, 'this_and_future', new Date('2027-03-15T10:00:00Z'))
+
+    const masterIcs = lastUpdated()
+    expect(masterIcs).toMatch(/^RRULE:FREQ=WEEKLY;UNTIL=20270314$/m)
+    expect(masterIcs).toMatch(/^RDATE:20270310T100000Z$/m)
+    expect(masterIcs).not.toMatch(/20270420/)
+    expect(etebaseMock.state.createItem).not.toHaveBeenCalled()
   })
 })

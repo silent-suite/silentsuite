@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, untilDateBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -116,9 +116,9 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
 }
 
 /**
- * A scoped copy is a new item with a new UID. The series' retained raw lines (RDATE,
- * RECURRENCE-ID, attendees and the like) describe the original item, so the copy starts
- * without them, as it did before they were kept.
+ * A scoped copy is a new item with a new UID. The series' retained raw lines (RECURRENCE-ID,
+ * attendees and the like) describe the original item, so the copy starts without them, as it
+ * did before they were kept. A "this and future" split moves later RDATEs separately.
  */
 const WITHOUT_RETAINED_CONTENT = { unknownProperties: undefined, unknownComponents: undefined } as const
 
@@ -393,11 +393,14 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
         const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
         const masterIndex = events.findIndex((e) => e.id === id)
+        // Retained RDATEs at or after the cut leave the original series with its RRULE.
+        const retainedDates = splitRetainedRecurrenceDates(master, instanceDate)
         const updatedMaster = {
           ...master,
           recurrenceRule: master.recurrenceRule
             ? addUntilToRRule(master.recurrenceRule, dayBefore)
             : null,
+          unknownProperties: retainedDates.before,
           updated: now,
         }
 
@@ -409,6 +412,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           id: newTempId,
           uid: newTempId,
           ...WITHOUT_RETAINED_CONTENT,
+          // The new series takes over the original's later retained RDATEs.
+          unknownProperties: retainedDates.from,
           startDate: instanceDate,
           endDate: new Date(instanceDate.getTime() + duration),
           exceptions: [],
@@ -493,11 +498,14 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
         const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
         const masterIndex = events.findIndex((e) => e.id === id)
+        // Retained RDATEs at or after the cut leave the original series with its RRULE.
+        const retainedDates = splitRetainedRecurrenceDates(master, instanceDate)
         const updatedMaster = {
           ...master,
           recurrenceRule: master.recurrenceRule
             ? addUntilToRRule(master.recurrenceRule, dayBefore)
             : null,
+          unknownProperties: retainedDates.before,
           updated: now,
         }
         const next = [...events]
