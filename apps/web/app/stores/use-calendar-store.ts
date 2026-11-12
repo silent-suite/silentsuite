@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceWallClock, recurrenceTimeZone, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -132,7 +132,12 @@ function addUntilToRRule(rrule: string, until: string): string {
  */
 function untilBeforeOccurrence(master: CalendarEvent, instanceDate: Date): string {
   const timeZone = recurrenceTimeZone(master)
-  return master.allDay ? untilDateBefore(instanceDate, timeZone) : untilTimeBefore(instanceDate, timeZone)
+  if (master.allDay) return untilDateBefore(instanceDate, timeZone)
+  // A floating series ends before the occurrence's own wall clock, which a host DST gap can move.
+  const wallClock = timeZone === undefined && master.recurrenceRule
+    ? occurrenceWallClock(master.recurrenceRule, master.startDate, instanceDate)
+    : undefined
+  return untilTimeBefore(instanceDate, timeZone, wallClock)
 }
 
 /** Sync a single event to Etebase (used by create/update helpers) */

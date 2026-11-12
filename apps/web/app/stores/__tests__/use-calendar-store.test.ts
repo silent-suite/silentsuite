@@ -788,6 +788,39 @@ describe('useCalendarStore "this and future" keeps the previous occurrence', () 
     ])
     expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260106')
   })
+
+  it.each(ACTIONS)('floating series cut at a New York DST-gap occurrence (%s) stays cut in every zone', async (action) => {
+    // 8 Mar 2026 02:30 does not exist in New York; the occurrence resolves to 03:30 EDT.
+    const previousTZ = process.env.TZ
+    try {
+      process.env.TZ = 'America/New_York'
+      const master = deserializeCalendarEvent([
+        'BEGIN:VEVENT',
+        'UID:floating-gap',
+        'SUMMARY:Floating gap series',
+        'DTSTART:20260306T023000',
+        'DTEND:20260306T033000',
+        'RRULE:FREQ=DAILY',
+        'END:VEVENT',
+      ].join('\r\n'))
+      const displayed = expandEventsForRange([master], { start: new Date(2026, 2, 1), end: new Date(2026, 2, 12) })
+      const instance = displayed[2]!.instanceDate
+
+      const { ics } = await cutAt(master, action, instance)
+
+      for (const zone of ['America/New_York', 'UTC', 'Asia/Tokyo']) {
+        process.env.TZ = zone
+        const reloaded = deserializeCalendarEvent(ics)
+        const starts = expandEventsForRange([reloaded], { start: new Date(2026, 2, 1), end: new Date(2026, 2, 12) })
+          .map((e) => `${e.startDate.getDate()} ${e.startDate.getHours()}:${e.startDate.getMinutes()}`)
+        expect({ zone, starts }).toEqual({ zone, starts: ['6 2:30', '7 2:30'] })
+      }
+      expect(lineOf(ics, 'RRULE')).toBe('RRULE:FREQ=DAILY;UNTIL=20260308T022959')
+    } finally {
+      if (previousTZ === undefined) delete process.env.TZ
+      else process.env.TZ = previousTZ
+    }
+  })
 })
 
 describe('useCalendarStore.updateEvent calendar moves', () => {
