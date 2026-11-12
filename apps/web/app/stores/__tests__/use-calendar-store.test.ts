@@ -1187,6 +1187,18 @@ describe('useCalendarStore keeps unsupported event content (WEB-03)', () => {
     expect(lastUpdated()).toMatch(/^DURATION:P1W$/m)
   })
 
+  it('after the series length is edited, a later "this" copy uses the edited length, not the old DURATION', async () => {
+    const master = seedRemote(WEEK_SERIES)
+    await useCalendarStore.getState().updateEvent(master.id, { endDate: new Date('2026-02-26T17:00:00Z') })
+    expect(lastUpdated()).toMatch(/^DTEND;TZID=America\/New_York:20260226T120000$/m)
+
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2026-03-05T15:00:00Z'))
+
+    const copy = lastCreated()
+    expect(copy).toMatch(/^DTEND;TZID=America\/New_York:20260305T120000$/m)
+    expect(copy).not.toMatch(/^DURATION/m)
+  })
+
   it('control: a copy whose length is edited writes DTEND', async () => {
     const master = seedRemote(WEEK_SERIES)
     await useCalendarStore.getState().updateRecurringEvent(

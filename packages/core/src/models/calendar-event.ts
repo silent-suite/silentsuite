@@ -265,6 +265,15 @@ function addICalDuration(start: Date, duration: string, allDay: boolean, timeZon
   return new Date(afterDays + ((hours * 60 + minutes) * 60 + seconds) * 1000);
 }
 
+/** The event's source DURATION while it still gives `endDate` from `startDate`; otherwise undefined. */
+function currentDuration(
+  event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating' | 'duration' | 'startDate' | 'endDate'>,
+): string | undefined {
+  if (event.duration === undefined) return undefined;
+  const end = addICalDuration(event.startDate, event.duration, event.allDay, recurrenceTimeZone(event));
+  return end?.getTime() === event.endDate.getTime() ? event.duration : undefined;
+}
+
 /**
  * Convert a CalendarEvent to an iCalendar VEVENT string.
  */
@@ -281,10 +290,7 @@ export function toVEvent(event: CalendarEvent): string {
         : formatICalDate(d, event.allDay);
 
   // Keep the source DURATION while it still describes the event's length; otherwise write DTEND.
-  const keepDuration =
-    event.duration !== undefined
-    && addICalDuration(event.startDate, event.duration, event.allDay, recurrenceTimeZone(event))?.getTime()
-      === event.endDate.getTime();
+  const keepDuration = currentDuration(event) !== undefined;
 
   const vevent: VEvent = {
     uid: event.uid,
@@ -392,14 +398,16 @@ export function fromVEvent(veventStr: string): CalendarEvent {
 
 /**
  * End of the occurrence of `event` that starts at `start`: its source DURATION applied with
- * nominal days and weeks in the event's own zone when it has one, otherwise its fixed length.
+ * nominal days and weeks in the event's own zone while that DURATION still matches the event,
+ * otherwise its fixed length.
  */
 export function occurrenceEnd(
   event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating' | 'duration' | 'startDate' | 'endDate'>,
   start: Date,
 ): Date {
-  const nominal = event.duration !== undefined
-    ? addICalDuration(start, event.duration, event.allDay, recurrenceTimeZone(event))
+  const duration = currentDuration(event);
+  const nominal = duration !== undefined
+    ? addICalDuration(start, duration, event.allDay, recurrenceTimeZone(event))
     : null;
   return nominal ?? new Date(start.getTime() + (event.endDate.getTime() - event.startDate.getTime()));
 }
