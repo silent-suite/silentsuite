@@ -23,6 +23,10 @@ class SettingsRoutingContractTest {
             .forEach { assertTrue(home.contains("android:key=\"$it\"")) }
         assertTrue("the Unsynced Notes row is in the hub and keeps no value", home.substringAfter(
             "android:key=\"unsynced_notes\"", "").substringBefore("/>").contains("android:persistent=\"false\""))
+        val help = File(resourceRoot, "settings_help.xml").readText()
+        assertTrue("Help offers Report a problem", help.contains("android:key=\"report_problem\""))
+        assertTrue(File(sourceRoot, "ui/AppSettingsActivity.kt").readText()
+            .contains("startActivity(ReportProblemActivity.newIntent(requireContext()))"))
         val advanced = File(resourceRoot, "settings_advanced.xml").readText()
         listOf("override_proxy", "distrust_system_certs", "select_language", "log_to_file", "log_verbose")
             .forEach { assertTrue(advanced.contains("android:key=\"$it\"")) }
