@@ -105,6 +105,7 @@ export default defineConfig({
         {
           text: 'Contributing',
           items: [
+            { text: 'Overview', link: '/contributing/' },
             { text: 'Development Setup', link: '/contributing/dev-setup' },
             { text: 'Architecture Overview', link: '/contributing/architecture-overview' },
             { text: 'Code Conventions', link: '/contributing/code-conventions' },
