@@ -1,9 +1,9 @@
 # SilentSuite roadmap
 
 ### Native iOS app
-Planned · [#52](https://github.com/silent-suite/silentsuite/issues/52)
+Planned · [#986](https://github.com/silent-suite/silentsuite/issues/986)
 
-Sync with the built-in Calendar, Contacts and Reminders apps on iPhone and iPad; iOS isn't supported yet.
+A SilentSuite app for iPhone and iPad. iOS isn't supported yet, and the app's scope and timing haven't been decided.
 
 ### Links between notes, tasks, events and contacts
 Planned · [#51](https://github.com/silent-suite/silentsuite/issues/51)
