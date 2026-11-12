@@ -1292,3 +1292,110 @@ def test_verify_reports_bundle_drift(texts, tmp_path, case):
         link.unlink()
         link.symlink_to("lib/../lib/libsynthetic.so.1")
     assert texts.verify(info, bundle), f"{case} was not reported"
+
+
+# --- Source materials for the caller's source job (tests first) ---------------------
+#
+# bridge/dev-build/source_materials.py (network use only in its CLI fetch):
+#   plan(records, platforms) -> rows to fetch: "shared" plus each platform's rows,
+#       one per file; the same file name with two SHA256s, a non-HTTPS URL or a URL
+#       that is a signature bundle rather than the file is refused (InputError).
+#       A row may carry sigstore {bundle_url, identity, issuer}.
+#   verify(rows, directory, application, artifact, sigstore_check) -> receipt for
+#       archive_texts.source_text, or InputError on a missing file, a size or SHA256
+#       mismatch, or a sigstore row whose check (sigstore_check(file, bundle, identity,
+#       issuer) -> bool) does not pass. Rows without sigstore get signature None.
+SOURCE_MATERIALS = DEV_BUILD / "source_materials.py"
+
+
+@pytest.fixture(scope="module")
+def materials():
+    _require()
+    return _load_helper(SOURCE_MATERIALS, "source_materials")
+
+
+def _row(name, data, url=None, **extra):
+    row = {"file": name, "sha256": _sha(data), "bytes": len(data), "kind": "source", "name": name,
+           "version": "1", "url": url or f"https://example.invalid/{name}"}
+    row.update(extra)
+    return row
+
+
+SIGSTORE = {"bundle_url": "https://example.invalid/py.tar.xz.sigstore", "identity": "rm@example.invalid",
+            "issuer": "https://issuer.example.invalid"}
+
+
+def _records():
+    return {"shared": [_row("qt.tar.xz", b"qt"), _row("py.tar.xz", b"py", sigstore=dict(SIGSTORE))],
+            LINUX: [_row("deb.tar.xz", b"deb"), _row("qt.tar.xz", b"qt")],
+            WINDOWS: [_row("win.tar.gz", b"win")]}
+
+
+def test_plan_merges_shared_and_platform_rows_once(materials):
+    rows = materials.plan(_records(), [LINUX, WINDOWS])
+    assert sorted(r["file"] for r in rows) == ["deb.tar.xz", "py.tar.xz", "qt.tar.xz", "win.tar.gz"]
+
+
+@pytest.mark.parametrize("case", ["conflicting-sha", "plain-http", "url-is-signature-bundle", "unknown-platform"])
+def test_plan_refuses_ambiguous_or_unsafe_rows(materials, case):
+    records, platforms = _records(), [LINUX, WINDOWS]
+    if case == "conflicting-sha":
+        records[WINDOWS].append(_row("qt.tar.xz", b"other qt"))
+    elif case == "plain-http":
+        records[LINUX][0]["url"] = "http://example.invalid/deb.tar.xz"
+    elif case == "url-is-signature-bundle":
+        records["shared"][1]["url"] = "https://example.invalid/py.tar.xz.sigstore"
+    else:
+        platforms = ["macos-arm64"]
+    with pytest.raises(materials.InputError):
+        materials.plan(records, platforms)
+
+
+def _fetched(tmp_path, rows):
+    directory = tmp_path / "sources"
+    directory.mkdir()
+    data = {"qt.tar.xz": b"qt", "py.tar.xz": b"py", "deb.tar.xz": b"deb", "win.tar.gz": b"win"}
+    for row in rows:
+        (directory / row["file"]).write_bytes(data[row["file"]])
+    (directory / "py.tar.xz.sigstore").write_bytes(b"synthetic bundle")
+    return directory
+
+
+APPLICATION = {"file": f"silentsuite-bridge-{GIT_SHA}.tar.gz", "sha256": _sha(b"app"), "git_sha": GIT_SHA}
+ARTIFACT = f"bridge-desktop-dev-sources-{GIT_SHA}"
+
+
+def test_verify_writes_a_receipt_that_source_text_accepts(materials, texts, tmp_path):
+    rows = materials.plan(_records(), [LINUX, WINDOWS])
+    directory = _fetched(tmp_path, rows)
+    calls = []
+
+    def check(file, bundle, identity, issuer):
+        calls.append((Path(file).name, Path(bundle).name, identity, issuer))
+        return True
+
+    receipt = materials.verify(rows, directory, APPLICATION, ARTIFACT, check)
+    assert calls == [("py.tar.xz", "py.tar.xz.sigstore", SIGSTORE["identity"], SIGSTORE["issuer"])]
+    signed = {a["file"]: a["signature"] for a in receipt["archives"]}
+    assert signed["qt.tar.xz"] is None and signed["py.tar.xz"]["verified"] is True
+    policy = {"platform": LINUX, "source_archives": [
+        {"name": r["name"], "version": r["version"], "file": r["file"], "sha256": r["sha256"]} for r in rows]}
+    text = texts.source_text(GIT_SHA, policy, rows, receipt)
+    assert "sigstore" in text.lower() and ARTIFACT in text
+
+
+@pytest.mark.parametrize("case", ["missing-file", "changed-bytes", "signature-fails", "bundle-missing"])
+def test_verify_refuses_unverified_sources(materials, tmp_path, case):
+    rows = materials.plan(_records(), [LINUX, WINDOWS])
+    directory = _fetched(tmp_path, rows)
+    result = True
+    if case == "missing-file":
+        (directory / "deb.tar.xz").unlink()
+    elif case == "changed-bytes":
+        (directory / "qt.tar.xz").write_bytes(b"qX")
+    elif case == "signature-fails":
+        result = False
+    else:
+        (directory / "py.tar.xz.sigstore").unlink()
+    with pytest.raises(materials.InputError):
+        materials.verify(rows, directory, APPLICATION, ARTIFACT, lambda *args: result)

@@ -311,3 +311,52 @@ def test_dev_caller_uploads_sources_then_binaries_only_after_every_gate(caller):
         assert "github.sha" in str(steps[-1]["with"]["name"])
     archive = next(step for step in _steps(package) if step.get("id") == "archive")
     assert "tar -czf" in archive["run"], "Linux archives must be tarballs (Actions artifacts drop exec bits)"
+
+
+# --- Upload safeguard: nothing is published without the owner's per-SHA approval ----
+#
+# Passing every gate is necessary, not sufficient: the owner approves publishing each
+# candidate separately (handoff 2026-11-12). The owner records that approval by setting
+# the repository variable BRIDGE_DESKTOP_DEV_PUBLISH_SHA to the exact commit, then
+# re-runs the caller. Unset or any other value: every gate still runs, nothing uploads.
+# Binaries upload only when this run's source upload actually succeeded, so a variable
+# changed mid-run can never publish binaries without their sources.
+PUBLISH_APPROVED = "vars.BRIDGE_DESKTOP_DEV_PUBLISH_SHA == github.sha"
+SOURCES_UPLOADED = "needs.source-materials.outputs.sources_uploaded == 'true'"
+
+
+def _condition(step):
+    return " ".join(str(step.get("if", "")).split())
+
+
+def test_dev_caller_publishes_only_with_owner_approval_for_this_sha(caller):
+    jobs = caller["jobs"]
+    sources, package = jobs["source-materials"], jobs["package"]
+    upload_sources = _steps(sources)[-1]
+    assert upload_sources.get("id") == "upload-sources"
+    assert _condition(upload_sources) == f"${{{{ {PUBLISH_APPROVED} }}}}", upload_sources.get("if")
+    output = " ".join(str((sources.get("outputs") or {}).get("sources_uploaded", "")).split())
+    assert output == "${{ steps.upload-sources.conclusion == 'success' }}", output
+    upload = _steps(package)[-1]
+    assert upload.get("id") == "upload"
+    condition = _condition(upload)
+    assert condition.startswith("${{") and condition.endswith("}}"), condition
+    clauses = {" ".join(part.split()) for part in condition[3:-2].split("&&")}
+    assert clauses == {PUBLISH_APPROVED, SOURCES_UPLOADED}, clauses
+    for job_id, job in jobs.items():
+        if job_id in ("source-materials", "package"):
+            continue
+        assert not any(s.get("uses", "").startswith(UPLOAD_ACTION) for s in _steps(job)), job_id
+
+
+def test_dev_caller_gates_and_reverifies_the_archive(caller):
+    package = caller["jobs"]["package"]
+    steps = {step.get("id"): step for step in _steps(package) if step.get("id")}
+    gate = steps["licence-gate"]["run"]
+    for needed in ("archive_texts.py fill", "archive_texts.py source", "licence_gate.py",
+                   "bridge/dev-build/notices/policy.json"):
+        assert needed in gate, needed
+    archive = steps["archive"]["run"]
+    for needed in ("archive_texts.py build-info", "archive_texts.py verify"):
+        assert needed in archive, needed
+    assert archive.index("archive_texts.py build-info") < archive.index("archive_texts.py verify")
