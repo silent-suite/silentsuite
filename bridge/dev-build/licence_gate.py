@@ -20,7 +20,8 @@ Rules (each fails closed):
 - distributions: listed, exact version, allowed licence; each vendor licence/notice
   file recorded with text and SHA256 and preserved under NOTICES/ with identical
   bytes (by hash, not by filename); no declared licence file missing; no duplicates;
-- unmapped files: each matches a runtime_files pattern with an allowed licence;
+- unmapped files: each matches a runtime_files pattern with an allowed licence; a rule
+  that pins "sha256"/"size" matches only a file with exactly those facts;
 - unmapped modules: each has a runtime_modules rule by exact name with an allowed
   licence; a rule with typecode/toc_sources_exactly needs facts["module_sources"] to
   be exactly those sources, each with exactly that typecode;
@@ -197,6 +198,7 @@ class _Check:
 
     def runtime_files(self) -> None:
         rules = self.policy.get("runtime_files") or []
+        observed = {e.get("path"): e for e in self.facts.get("bundle_files") or [] if isinstance(e, dict)}
         for path in self.facts.get("unmapped_files") or []:
             matches = [r for r in rules if isinstance(r.get("pattern"), str)
                        and fnmatch.fnmatchcase(path, r["pattern"])]
@@ -207,6 +209,23 @@ class _Check:
                 if not rule.get("owner"):
                     self.fail(f"unmapped file {path}: runtime rule {rule['pattern']!r} names no owner")
                 self.licence(rule.get("licence"), f"unmapped file {path}")
+                self.pinned(path, rule, observed.get(path))
+
+    def pinned(self, path, rule, entry) -> None:
+        """A rule that pins "sha256" and/or "size" covers only that exact file."""
+        if "sha256" not in rule and "size" not in rule:
+            return
+        digest, size = rule.get("sha256"), rule.get("size")
+        if "sha256" in rule and (not isinstance(digest, str) or not SHA256.match(digest)):
+            self.fail(f"unmapped file {path}: runtime rule pins an invalid SHA256")
+            return
+        if entry is None:
+            self.fail(f"unmapped file {path}: not in the facts' bundle files, so its pin cannot be checked")
+            return
+        if "sha256" in rule and entry.get("sha256") != digest:
+            self.fail(f"unmapped file {path}: SHA256 {entry.get('sha256')} is not the reviewed {digest}")
+        if "size" in rule and entry.get("size") != size:
+            self.fail(f"unmapped file {path}: {entry.get('size')} bytes, not the reviewed {size}")
 
     def runtime_modules(self) -> None:
         rules = {}
