@@ -25,6 +25,11 @@ Sources of each observation:
   ``dist_info_files`` lists every RECORD entry of the dist-info directory;
 - modules and scripts: the PYMODULE[-N] / PYSOURCE[-N] entries of PyInstaller's
   ``Analysis-00.toc`` in --workpath (-N is the bytecode optimization level);
+- per-module TOC sources (``module_sources``, unmapped modules only): each
+  distinct source file with its exact typecode, as a path class (repo,
+  site-packages, stdlib or other), a relative path (none for other), SHA256 and
+  size; absolute build paths are compared in memory and never written;
+- platform label (``platform``): ``linux-x86_64`` / ``windows-x86_64``;
 - per-file origin (``file_origins``): the build source path from the same TOC,
   classified by location: wheel, the bundle's own bootloader executable,
   PyInstaller-generated (under --workpath), interpreter runtime (under
@@ -52,8 +57,10 @@ import json
 import os
 import posixpath
 import re
+import platform
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path, PurePosixPath
 
 SCHEMA_VERSION = 1
@@ -77,6 +84,7 @@ WEBENGINE_PROBE = (
     f"print(json.dumps({{name: getattr(QtWebEngineCore, name)() for name in {WEBENGINE_FUNCTIONS!r}}}))"
 )
 DPKG_DOC_ROOT = Path("/usr/share/doc")
+REPO_ROOT = Path(__file__).resolve().parents[2]  # bridge/dev-build/ -> the repository checkout
 
 
 class InputError(Exception):
@@ -414,6 +422,12 @@ def collect(bundle_root, modules, search_path=None, build=None) -> dict:
         else:
             unmapped_modules.append(module)
 
+    module_entries = (build or {}).get("module_entries")
+    module_sources = None
+    if module_entries is not None:
+        module_sources = {module: _module_source_records(module_entries.get(module, []))
+                          for module in unmapped_modules}
+
     dist_facts = []
     for key in sorted(set(owned) | set(owned_modules)):
         dist = distributions[key]
@@ -443,7 +457,7 @@ def collect(bundle_root, modules, search_path=None, build=None) -> dict:
         if NATIVE_LIBRARY.search(name) and (QT_LIBRARY_NAME.search(name) or _inner(relative).startswith(QT_PLUGIN_DIRS)):
             qt_libraries.append(relative)
 
-    return {
+    facts = {
         "schema_version": SCHEMA_VERSION,
         "bundle_files": bundle_files,
         "distributions": dist_facts,
@@ -459,6 +473,53 @@ def collect(bundle_root, modules, search_path=None, build=None) -> dict:
         "qt_libraries": qt_libraries,
         "stdlib_names_available": bool(stdlib),
     }
+    if module_sources is not None:
+        facts["module_sources"] = module_sources
+    return facts
+
+
+def _path_class(path: Path) -> tuple[str, str | None]:
+    """A privacy-safe class and relative path for a build source (C5 shape); never an absolute path."""
+    roots = [("repo", REPO_ROOT)]
+    paths = sysconfig.get_paths()
+    roots += [("site-packages", Path(paths[key]).resolve()) for key in ("purelib", "platlib")]
+    roots.append(("stdlib", Path(paths["stdlib"]).resolve()))
+    for label, root in roots:
+        if root == path or root in path.parents:
+            return label, path.relative_to(root).as_posix()
+    return "other", None
+
+
+def _module_source_records(entries) -> list[dict]:
+    """One record per distinct (typecode, real source file); a repeated TOC entry is one source."""
+    seen = {}
+    for typecode, source in entries:
+        if source is None or source == "-":
+            seen.setdefault((typecode, None), {"typecode": typecode, "source": {"kind": "namespace-or-no-source"}})
+            continue
+        path = Path(source).resolve()
+        identity = (typecode, os.path.normcase(str(path)))  # in memory only
+        if identity in seen:
+            continue
+        label, relative = _path_class(path)
+        record = {"kind": "file", "path_class": label, "relative_path": relative}
+        try:
+            if not path.is_file():
+                record["kind"] = "absent-or-not-regular"
+            else:
+                record["sha256"] = _sha256_file(path)
+                record["bytes"] = path.stat().st_size
+        except OSError:
+            record = {"kind": "unhashable", "path_class": label, "relative_path": relative}
+        seen[identity] = {"typecode": typecode, "source": record}
+    return sorted(seen.values(), key=lambda item: json.dumps(item, sort_keys=True))
+
+
+def _platform_label() -> str:
+    machine = platform.machine().lower()
+    machine = "x86_64" if machine in ("x86_64", "amd64") else machine
+    system = {"linux": "linux", "win32": "windows", "darwin": "macos"}.get(sys.platform, sys.platform)
+    return f"{system}-{machine}"
 
 
 # --- CLI: real PyInstaller evidence ---------------------------------------------
@@ -492,7 +553,8 @@ def _toc_entries(value):
             yield from _toc_entries(item)
 
 
-def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], list[str], dict, dict, list[str], dict]:
+def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], list[str], dict, dict, list[str], dict,
+                                                                  dict]:
     if not workpath.is_dir():
         raise InputError("--workpath is not a directory")
     tocs = sorted(workpath.glob("*/Analysis-00.toc"))
@@ -504,12 +566,14 @@ def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], lis
     except (OSError, UnicodeDecodeError, ValueError, SyntaxError) as exc:
         raise InputError(f"Analysis-00.toc is not a readable literal TOC ({type(exc).__name__})") from None
     modules, scripts = set(), set()
+    module_entries: dict[str, list] = {}
     sources: dict[str, str | None] = {}
     links: dict[str, str] = {}
     conflicts = set()
     for name, source, typecode in _toc_entries(parsed):
         if typecode in MODULE_TYPECODES:
             modules.add(name)
+            module_entries.setdefault(name, []).append((typecode, source))
         elif typecode in SCRIPT_TYPECODES:
             scripts.add(name)
         elif source and source != "-":
@@ -529,7 +593,7 @@ def _analysis_evidence(workpath: Path, bundle_name: str) -> tuple[list[str], lis
         raise InputError(f"Analysis-00.toc module evidence does not contain {ENTRY_PACKAGE}; incomplete")
     toc = {"path": tocs[0].relative_to(workpath).as_posix(), "sha256": _sha256_file(tocs[0]),
            "bundle": bundle_name}
-    return sorted(modules), sorted(scripts), toc, sources, sorted(conflicts), links
+    return sorted(modules), sorted(scripts), toc, sources, sorted(conflicts), links, module_entries
 
 
 def _probe_observation(source: str, code: str, keys=None) -> dict:
@@ -590,10 +654,13 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         bundle = _single_bundle(args.dist)
-        modules, scripts, toc, sources, conflicts, links = _analysis_evidence(args.workpath, bundle.name)
+        modules, scripts, toc, sources, conflicts, links, module_entries = _analysis_evidence(args.workpath,
+                                                                                             bundle.name)
         executable = bundle.name + (".exe" if sys.platform == "win32" else "")
-        build = {"sources": sources, "links": links, "workpath": args.workpath, "executable": executable}
+        build = {"sources": sources, "links": links, "workpath": args.workpath, "executable": executable,
+                 "module_entries": module_entries}
         facts = collect(bundle, modules, build=build)
+        facts["platform"] = _platform_label()
     except InputError as exc:
         print(f"collect_bundle_facts: invalid input: {exc}", file=sys.stderr)
         return 2
