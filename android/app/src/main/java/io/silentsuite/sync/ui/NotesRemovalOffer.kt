@@ -21,6 +21,7 @@ import io.silentsuite.sync.ui.NotesRemovalAllowance.Key
 import io.silentsuite.sync.ui.NotesRemovalAllowance.Mint
 import io.silentsuite.sync.ui.PendingNotesRemovalGuard.Cause
 import io.silentsuite.sync.ui.PendingNotesRemovalGuard.Decision
+import io.silentsuite.sync.ui.PendingNotesRemovalGuard.Verdict
 import io.silentsuite.sync.ui.setup.AccountCreationRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +36,7 @@ import java.io.File
  * without asking (the maintainer's second reply of 2026-10-20 on #709).
  *
  * This is the one place where the app removes a row it cannot prove it owns: a row without a readable creation id, by
- * its confirmation alone. Nothing reaches it yet.
+ * its confirmation alone. A tap on the row in the removal section of Unsynced Notes opens it ([open]).
  */
 internal class NotesRemovalOffer(
     private val mainType: String,
@@ -88,6 +89,47 @@ internal class NotesRemovalOffer(
         val counts = allowance.counts()
         val decision = seams.decision(type, name)
         if (!decision.verdict.eligible) return null
+        return offered(counts, type, name, decision)
+    }
+
+    /** What a tap on a row of the removal section of Unsynced Notes comes to ([open]). */
+    sealed class Opened {
+        /** The confirmation shows now. */
+        data class Confirm(val shown: NotesRemovalAllowance.Shown) : Opened()
+
+        /** The row is no longer on this device. */
+        object Gone : Opened()
+
+        /** Nothing stands in the way now: Android settings can remove the row. */
+        object Allowed : Opened()
+
+        /** Still refused, in the words of [kind]. */
+        data class Refused(val kind: NotesRemovalNotice.Kind) : Opened()
+    }
+
+    /**
+     * A tap on the row in the removal section of Unsynced Notes, which checks again: [show]'s steps, with a read of
+     * the row between the counters and the guard, so a row that went before the tap is not offered, and one that goes
+     * after the counters fails the tap ([confirm]). A read of the rows that fails says nothing either way.
+     */
+    @WorkerThread
+    fun open(type: String, name: String): Opened {
+        if (type != mainType) return Opened.Refused(NotesRemovalNotice.Kind.UNCHECKED)
+        val counts = allowance.counts()
+        if (seams.present(type, name) == false) return Opened.Gone
+        val decision = seams.decision(type, name)
+        return when {
+            decision.verdict == Verdict.ALLOW -> Opened.Allowed
+            !decision.verdict.eligible -> Opened.Refused(NotesRemovalNotice.kind(decision))
+            // A creation of that row in progress: not offered now, as in show.
+            else -> offered(counts, type, name, decision)?.let { Opened.Confirm(it) }
+                ?: Opened.Refused(NotesRemovalNotice.Kind.UNCHECKED)
+        }
+    }
+
+    /** [show]'s last steps, for an eligible [decision] read after [counts]. */
+    private fun offered(counts: NotesRemovalAllowance.Counts, type: String, name: String,
+                        decision: Decision): NotesRemovalAllowance.Shown? {
         val records = seams.records()
         if (creating(records, type, name)) return null
         val recovery = recordsOf(records, type, name)
@@ -145,8 +187,7 @@ internal class NotesRemovalOffer(
             null
         }
 
-        override fun fingerprint(decision: Decision) = NotesRemovalOffer.fingerprint(context.noBackupFilesDir, decision,
-            stat = { stat(it) }, lstat = { lstat(it) })
+        override fun fingerprint(decision: Decision) = fingerprintOnDevice(context, decision)
 
         override fun remove(type: String, name: String, removed: () -> Unit) {
             val answered = AccountManagerCallback<Bundle> { io.launch { removed() } }
@@ -200,6 +241,16 @@ internal class NotesRemovalOffer(
             val pending = File(noBackup, Folder.PENDING.folderName)
             return Fingerprint(stats, decision.unknown, decision.unknown.associateWith { lstat(File(pending, it)) })
         }
+
+        /** [fingerprint] on this device, in no_backup: the offer's and the authenticator's answer's. */
+        @WorkerThread
+        fun fingerprintOnDevice(context: Context, decision: Decision): Fingerprint =
+            fingerprintIn(context.noBackupFilesDir, decision)
+
+        /** [fingerprint] in [noBackup], by Os.stat and Os.lstat. */
+        @WorkerThread
+        internal fun fingerprintIn(noBackup: File, decision: Decision): Fingerprint =
+            fingerprint(noBackup, decision, stat = { stat(it) }, lstat = { lstat(it) })
 
         /** [stat] with its change time in nanoseconds: st_ctime's whole seconds would miss a change in the same one. */
         private fun folderStat(stat: StructStat) = FolderStat.Stat(stat.st_dev, stat.st_ino, stat.st_mode,

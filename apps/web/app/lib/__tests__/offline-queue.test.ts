@@ -851,3 +851,110 @@ describe('offline-queue', () => {
     })
   })
 })
+
+// ── WEB-05: the queue's own refusals are not connectivity failures ──
+// Production mode (no encrypted queue store): content-bearing entries are
+// refused, and a full queue refuses further entries. Each refusal is captured
+// from the real enqueue and classified by the real isOfflineError, with
+// navigator.onLine set per test and restored in `finally`.
+
+describe('WEB-05 queue refusals are not offline errors', () => {
+  const PLAINTEXT_REFUSAL =
+    'Offline queue refuses to persist plaintext calendar update content without encrypted local persistence.'
+  const CAPACITY_REFUSAL =
+    `Offline queue is full (max ${MAX_QUEUE_SIZE} pending entries). Connect to the internet to sync your changes.`
+  const CONNECTIVITY = [
+    ['online', true],
+    ['offline', false],
+  ] as const
+
+  /** Run with navigator.onLine fixed, restoring the original property afterwards. */
+  async function withOnLine(online: boolean, run: () => Promise<void>): Promise<void> {
+    const original = Object.getOwnPropertyDescriptor(globalThis.navigator, 'onLine')
+    Object.defineProperty(globalThis.navigator, 'onLine', { configurable: true, get: () => online })
+    try {
+      await run()
+    } finally {
+      if (original) Object.defineProperty(globalThis.navigator, 'onLine', original)
+      else delete (globalThis.navigator as { onLine?: boolean }).onLine
+    }
+  }
+
+  /** Production queue configuration for one test; the file-level beforeEach re-enables it too. */
+  async function inProductionQueueMode(run: () => Promise<void>): Promise<void> {
+    _setEncryptedQueuePersistenceAvailableForTests(false)
+    try {
+      await run()
+    } finally {
+      _setEncryptedQueuePersistenceAvailableForTests(true)
+    }
+  }
+
+  const rejectionOf = (promise: Promise<unknown>) => promise.then(() => undefined, (err: unknown) => err)
+
+  it.each(CONNECTIVITY)('classifies a real plaintext refusal as not offline while %s', async (_state, online) => {
+    await inProductionQueueMode(() => withOnLine(online, async () => {
+      const refusal = await rejectionOf(enqueue({
+        type: 'update',
+        collectionType: 'calendar',
+        collectionUid: 'web05-calendar',
+        content: 'BEGIN:VCALENDAR\r\nSUMMARY:WEB05 synthetic\r\nEND:VCALENDAR',
+        tempId: 'web05-temp-event',
+      }))
+
+      expect((refusal as Error | undefined)?.message).toBe(PLAINTEXT_REFUSAL)
+      expect(await getAll()).toEqual([])
+      expect(navigator.onLine).toBe(online)
+
+      expect(isOfflineError(refusal)).toBe(false)
+    }))
+  })
+
+  it.each(CONNECTIVITY)(
+    'classifies a real capacity refusal of a content-free delete as not offline while %s',
+    async (_state, online) => {
+      await inProductionQueueMode(async () => {
+        for (let i = 0; i < MAX_QUEUE_SIZE; i++) {
+          await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: 'web05-calendar', itemUid: `web05-delete-${i}` })
+        }
+        const queued = await getAll()
+        expect(queued).toHaveLength(MAX_QUEUE_SIZE)
+        expect(queued.every((entry) => entry.type === 'delete' && entry.content === undefined && entry.status === 'pending')).toBe(true)
+        expect(new Set(queued.map((entry) => entry.itemUid)).size).toBe(MAX_QUEUE_SIZE)
+        expect(await isQueueFull()).toBe(true)
+
+        await withOnLine(online, async () => {
+          const refusal = await rejectionOf(enqueue({
+            type: 'delete',
+            collectionType: 'calendar',
+            collectionUid: 'web05-calendar',
+            itemUid: 'web05-delete-overflow',
+          }))
+
+          expect((refusal as Error | undefined)?.message).toBe(CAPACITY_REFUSAL)
+          const after = await getAll()
+          expect(after).toHaveLength(MAX_QUEUE_SIZE)
+          expect(after.some((entry) => entry.itemUid === 'web05-delete-overflow')).toBe(false)
+          expect(navigator.onLine).toBe(online)
+
+          expect(isOfflineError(refusal)).toBe(false)
+        })
+      })
+    },
+    20_000,
+  )
+
+  it.each(CONNECTIVITY)('control: network failures are still offline errors while %s', async (_state, online) => {
+    await withOnLine(online, async () => {
+      expect(isOfflineError(new TypeError('Failed to fetch'))).toBe(true)
+      expect(isOfflineError(new DOMException('Network request failed', 'NetworkError'))).toBe(true)
+      expect(isOfflineError(new Error('network request failed'))).toBe(true)
+    })
+  })
+
+  it('control: an unrelated error is not an offline error while online', async () => {
+    await withOnLine(true, async () => {
+      expect(isOfflineError(new Error('Invalid JSON'))).toBe(false)
+    })
+  })
+})

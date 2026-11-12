@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "silentsuite-bridge"
-version = "0.5.17-beta"
+version = "0.5.18-beta.2"
 description = "SilentSuite Bridge — Local E2EE CalDAV/CardDAV sync daemon"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Office/Business :: Groupware",
 ]
 dependencies = [
-    "etebase>=0.31.0",
+    "etebase>=0.31.5,<0.32",
     "radicale==3.2.3",
     "peewee>=3.14.0,<4.0.0",
     "msgpack>=1.0.0",

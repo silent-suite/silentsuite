@@ -1,0 +1,1 @@
+v0.2.0-beta: calendari, rubriche e elenchi di attività multipli; backup di esportazione Android; stati di sincronizzazione più chiari; branding rinnovato; e iscrizione annuale tramite Bitcoin/Lightning via BTCPay.

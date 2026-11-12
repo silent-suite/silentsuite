@@ -14,11 +14,13 @@ import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.preference.Preference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import io.silentsuite.sync.R
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
+import io.silentsuite.sync.ui.UnsyncedNotesDiscardPolicy.HubRemoval
 import io.silentsuite.sync.ui.UnsyncedNotesDiscardPolicy.Result
 import io.silentsuite.sync.ui.UnsyncedNotesDiscardPolicy.Step
 import io.silentsuite.sync.ui.UnsyncedNotesSignOutPolicy.Text
@@ -37,10 +39,17 @@ import kotlinx.coroutines.withContext
  * session: it reads the stores through [UnsyncedNotesStores], off the main thread, every time it resumes. The rows say
  * how many changes each store holds, that they could not be counted, that the store cannot be read right now, or that
  * its discard did not finish, never a count of zero, and a last row says when other Notes files could not be shown.
+ *
+ * Below them, read in the same load, the removal section ([NotesRemovalSection]): the accounts Android settings can't
+ * remove right now, with what stands in the way. A tap on one checks again, and for files only the confirmation can
+ * get past opens it ([NotesRemovalDialogFragment]); what that came to shows in a Snackbar, and the screen reads again.
  */
 class UnsyncedNotesFragment : PreferenceFragmentCompat() {
     /** Kept across a rotation and cleared once the screen is left, so a result never shows on a later visit. */
     private val model: UnsyncedNotesViewModel by viewModels()
+
+    /** The removal section's checks and its confirmation, which outlive the dialog ([NotesRemovalDialogFragment]). */
+    private val removal: NotesRemovalViewModel by viewModels()
 
     /** The Snackbar with Retry of a discard that did not finish, while it shows. */
     private var retryBar: Snackbar? = null
@@ -54,11 +63,32 @@ class UnsyncedNotesFragment : PreferenceFragmentCompat() {
         super.onViewCreated(view, savedInstanceState)
         model.listing.observe(viewLifecycleOwner, ::showListing)
         model.result.observe(viewLifecycleOwner, ::showResult)
+        removal.opened.observe(viewLifecycleOwner, ::showConfirmation)
+        removal.result.observe(viewLifecycleOwner) { result ->
+            if (result != null) {
+                showRemoval(result.name?.let { getString(result.message, it) } ?: getString(result.message))
+                removal.consume()
+                model.load()
+            }
+        }
+        removal.checked.observe(viewLifecycleOwner) { checked ->
+            if (checked != null) {
+                showRemoval(getString(checked.text, checked.name))
+                removal.consumeChecked()
+                model.load()
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
+        removal.inFront = true
         model.load()
+    }
+
+    override fun onPause() {
+        removal.inFront = false
+        super.onPause()
     }
 
     override fun onDestroyView() {
@@ -104,11 +134,74 @@ class UnsyncedNotesFragment : PreferenceFragmentCompat() {
                 true
             }
         })
+        // Read with the stores, in the same load, so "Nothing to show" never sits beside a row of the section.
+        val section = model.section.value
         when {
             listing.othersUnlisted -> addNote(KEY_OTHERS, R.string.notes_stores_others_unlisted)
             listing.unknownOthers -> addNote(KEY_OTHERS, R.string.notes_stores_others_unknown)
-            listing.rows.isEmpty() -> addNote(KEY_NONE, R.string.notes_stores_none)
+            listing.rows.isEmpty() && (section == null || section.empty) -> addNote(KEY_NONE, R.string.notes_stores_none)
         }
+        if (section != null && !section.empty) addSection(section)
+    }
+
+    /**
+     * The removal section, last: the accounts Android settings can't remove right now, each with what stands in the
+     * way, or one row when the accounts can't be read, under a heading that claims no refusal, as the guard may still
+     * allow a removal then. A tap checks again.
+     */
+    private fun addSection(section: NotesRemovalSection.Section) {
+        val category = PreferenceCategory(requireContext()).apply {
+            key = KEY_REMOVAL
+            setTitle(if (section.accountsUnread) R.string.notes_removal_section_title_unread
+                else R.string.notes_removal_section_title)
+            isPersistent = false
+        }
+        preferenceScreen.addPreference(category)
+        if (section.accountsUnread) category.addPreference(Preference(requireContext()).apply {
+            key = KEY_REMOVAL_ACCOUNTS
+            setTitle(R.string.notes_removal_section_accounts)
+            isSingleLineTitle = false
+            isPersistent = false
+            setOnPreferenceClickListener {
+                model.load()
+                true
+            }
+        })
+        for (row in section.rows) category.addPreference(Preference(requireContext()).apply {
+            key = removalKey(row.name)
+            title = row.name
+            setSummary(NotesRemovalSection.summary(row.kind))
+            isPersistent = false
+            setOnPreferenceClickListener {
+                removal.open(row.type, row.name)
+                true
+            }
+        })
+    }
+
+    /** A new confirmation of the removal section, unless the screen's state is saved; it shows once. */
+    private fun showConfirmation(shown: NotesRemovalAllowance.Shown?) {
+        if (shown == null || childFragmentManager.isStateSaved) return
+        NotesRemovalDialogFragment.newInstance(shown).show(childFragmentManager, NotesRemovalDialogFragment.TAG)
+        removal.consumeOpened()
+    }
+
+    /**
+     * What a removal or a check of the section came to, in up to four lines, since it starts with an account name. It
+     * takes the place of a discard's Retry while the screen holds a discard that did not finish, so that Retry shows
+     * again once this goes, unless another Snackbar took its place, which then does the same.
+     */
+    private fun showRemoval(text: String) {
+        val view = view ?: return
+        Snackbar.make(view, text, Snackbar.LENGTH_LONG).setTextMaxLines(4)
+            .addCallback(object : Snackbar.Callback() {
+                override fun onDismissed(bar: Snackbar?, event: Int) {
+                    val held = model.result.value
+                    if (event != Snackbar.Callback.DISMISS_EVENT_CONSECUTIVE && held is Result.NotFinished &&
+                        this@UnsyncedNotesFragment.view === view) showResult(held)
+                }
+            })
+            .show()
     }
 
     /** A last row with no action. */
@@ -161,24 +254,37 @@ class UnsyncedNotesFragment : PreferenceFragmentCompat() {
         private const val KEY_ROW = "unsynced_notes:"
         internal const val KEY_OTHERS = "unsynced_notes_others"
         internal const val KEY_NONE = "unsynced_notes_none"
+        internal const val KEY_REMOVAL = "unsynced_notes_removal"
+        internal const val KEY_REMOVAL_ACCOUNTS = "unsynced_notes_removal_accounts"
+        private const val KEY_REMOVAL_ROW = "unsynced_notes_removal:"
 
         internal fun rowKey(directory: String) = KEY_ROW + directory
 
+        internal fun removalKey(name: String) = KEY_REMOVAL_ROW + name
+
         /**
-         * Reads the stores off the main thread and shows the Settings hub's [row] only while some store holds anything,
-         * cannot be read, or has a discard that did not finish, with how many changes there are, or that not all of
-         * them could be counted. [fragment] calls it whenever it resumes, so a return from the screen shows what is
-         * there now.
+         * Reads the stores and the removal section off the main thread and shows the Settings hub's [row] only while
+         * some store holds anything, cannot be read, or has a discard that did not finish, with how many changes there
+         * are, or that not all of them could be counted; or, with no such store, while Android settings can't remove
+         * an account now or the accounts can't be read ([UnsyncedNotesDiscardPolicy.hubRemoval]), saying which.
+         * [fragment] calls it whenever it resumes, so a return from the screen shows what is there now.
          */
         internal fun refreshHubRow(fragment: Fragment, row: Preference) {
             val app = fragment.requireContext().applicationContext
             fragment.viewLifecycleOwner.lifecycleScope.launch {
-                val listing = withContext(Dispatchers.IO) { UnsyncedNotesStores.read(app) }
+                val (listing, removal) = withContext(Dispatchers.IO) {
+                    UnsyncedNotesStores.read(app) to NotesRemovalSection.read(app)
+                }
                 if (!fragment.isAdded) return@launch
                 val summary = UnsyncedNotesDiscardPolicy.hubSummary(listing)
-                row.isVisible = summary != null
+                val removalOnly = UnsyncedNotesDiscardPolicy.hubRemoval(summary, removal)
+                row.isVisible = summary != null || removalOnly != null
                 row.summary = when (summary) {
-                    null -> null
+                    null -> when (removalOnly) {
+                        HubRemoval.REFUSED -> fragment.getString(R.string.settings_unsynced_notes_removal)
+                        HubRemoval.ACCOUNTS_UNREAD -> fragment.getString(R.string.settings_unsynced_notes_accounts)
+                        null -> null
+                    }
                     is Text.Counted -> fragment.resources
                         .getQuantityString(R.plurals.settings_unsynced_notes_summary, summary.count, summary.count)
                     else -> fragment.getString(R.string.settings_unsynced_notes_uncounted)
@@ -290,6 +396,10 @@ class UnsyncedNotesDiscardDialogFragment : DialogFragment() {
 internal class UnsyncedNotesViewModel(app: Application) : AndroidViewModel(app) {
     private val mutableListing = MutableLiveData<UnsyncedNotesListing>()
     val listing: LiveData<UnsyncedNotesListing> = mutableListing
+
+    /** The removal section, read in the same load as [listing] and set just before it, so both show together. */
+    private val mutableSection = MutableLiveData<NotesRemovalSection.Section>()
+    val section: LiveData<NotesRemovalSection.Section> = mutableSection
     private val mutableResult = MutableLiveData<Result?>()
     val result: LiveData<Result?> = mutableResult
 
@@ -306,8 +416,13 @@ internal class UnsyncedNotesViewModel(app: Application) : AndroidViewModel(app) 
     fun load() {
         val load = ++loads
         viewModelScope.launch {
-            val read = withContext(Dispatchers.IO) { UnsyncedNotesStores.read(getApplication()) }
-            if (load == loads) mutableListing.value = read
+            val (read, section) = withContext(Dispatchers.IO) {
+                UnsyncedNotesStores.read(getApplication()) to NotesRemovalSection.read(getApplication())
+            }
+            if (load == loads) {
+                mutableSection.value = section
+                mutableListing.value = read
+            }
         }
     }
 

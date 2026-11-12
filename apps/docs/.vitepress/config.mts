@@ -57,6 +57,7 @@ export default defineConfig({
           text: 'Apps & Integrations',
           items: [
             { text: 'Overview', link: '/user-guide/apps/' },
+            { text: 'Web', link: '/user-guide/apps/web' },
             { text: 'Android', link: '/user-guide/apps/android' },
             { text: 'iOS (Roadmap)', link: '/user-guide/apps/ios' },
             { text: 'Tasks.org', link: '/user-guide/apps/tasks-org' },
@@ -104,6 +105,7 @@ export default defineConfig({
         {
           text: 'Contributing',
           items: [
+            { text: 'Overview', link: '/contributing/' },
             { text: 'Development Setup', link: '/contributing/dev-setup' },
             { text: 'Architecture Overview', link: '/contributing/architecture-overview' },
             { text: 'Code Conventions', link: '/contributing/code-conventions' },

@@ -1,10 +1,15 @@
-"""Static contracts for basic (non-full-mode) R8 optimisation of the Android app.
+"""Static contracts that keep R8 optimisation off for the Android app.
 
-Both minified build types select AGP's optimising default rules, so the debug
-APK exercised by instrumentation and the release artifacts are optimised alike.
-The surrounding R8 policy (compat mode, no obfuscation, the broad app keep, no
-resource shrinking, debug-only test rules) stays as it was, and CI inspects the
-effective release configuration that R8 actually merged.
+Both minified build types select AGP's non-optimising default rules
+(proguard-android.txt, which carries -dontoptimize), as 0.5.17 did. 0.5.18
+switched to proguard-android-optimize.txt; R8 then inlined and removed the
+private constructors of ez-vcard's parameter case classes (TelephoneType,
+EmailType, ImageType, ...), which ez-vcard creates by reflection and
+vcard4android's Contact looks up in its static initializer, so the first
+contact sync crashed with ExceptionInInitializerError. The surrounding R8
+policy (compat mode, no obfuscation, the broad app keep, no resource shrinking,
+debug-only test rules) stays as it was, and CI checks that the effective release
+configuration R8 actually merged still contains -dontoptimize.
 """
 
 import re
@@ -20,10 +25,10 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_BUILD_GRADLE = ROOT / "android/app/build.gradle"
 GRADLE_PROPERTIES = ROOT / "android/gradle.properties"
 APP_RULES = ROOT / "android/app/proguard-rules.txt"
-DEBUG_TEST_RULES = ROOT / "android/app/proguard-debug-test-rules.pro"
 ANDROID_CI_WORKFLOW = ROOT / ".github/workflows/build-android.yml"
 
 APP_KEEP = "-keep,includedescriptorclasses class io.silentsuite.sync.** { *; }"
+EZVCARD_PARAMETER_KEEP = "-keep class ezvcard.parameter.** { *; }"
 INSPECTION_STEP = "Inspect effective release R8 configuration"
 RELEASE_BUILD_STEP = "Build debug APK and unsigned release APK/AAB"
 EFFECTIVE_REPORTS = ("configuration.txt", "seeds.txt", "usage.txt")
@@ -68,16 +73,23 @@ def inspection_step() -> dict[str, object]:
     return steps[INSPECTION_STEP]
 
 
-# --- The change: optimising default rules in both minified build types ---
+# --- Non-optimising default rules in both minified build types ---
 
 
+# R8 optimisation broke reflection in ez-vcard/vcard4android and caused the 0.5.18
+# contact-sync crash, so both build types stay on the non-optimising defaults.
 @pytest.mark.parametrize("build_type", ["debug", "release"])
-def test_build_type_selects_r8_optimizing_default_rules(build_type):
+def test_build_type_selects_non_optimizing_default_rules(build_type):
     block = build_type_block(build_type)
-    assert "getDefaultProguardFile('proguard-android-optimize.txt')" in block, (
-        f"{build_type} must select proguard-android-optimize.txt (basic R8 optimisation)"
+    assert "getDefaultProguardFile('proguard-android.txt')" in block, (
+        f"{build_type} must select proguard-android.txt (R8 optimisation off)"
     )
-    assert "proguard-android.txt" not in block
+    assert "proguard-android-optimize.txt" not in block
+
+
+def test_app_rules_keep_ezvcard_parameter_case_classes():
+    # Their constructors and constants are only reached through reflection.
+    assert EZVCARD_PARAMETER_KEEP in active_directives(APP_RULES)
 
 
 # --- Preserved R8 policy ---
@@ -104,13 +116,6 @@ def test_app_rules_keep_obfuscation_off_and_the_broad_app_keep():
     directives = active_directives(APP_RULES)
     assert "-dontobfuscate" in directives
     assert APP_KEEP in directives
-
-
-@pytest.mark.parametrize("rules", [APP_RULES, DEBUG_TEST_RULES], ids=lambda path: path.name)
-def test_app_rules_do_not_disable_optimisation(rules):
-    assert not any(
-        directive.split()[0] == "-dontoptimize" for directive in active_directives(rules)
-    ), f"{rules.name} must not cancel R8 optimisation"
 
 
 def test_resource_shrinking_stays_off():
@@ -161,34 +166,35 @@ def run_inspection(directory: Path) -> subprocess.CompletedProcess:
 
 def test_release_r8_inspection_step_fails_closed(tmp_path):
     accepted = tmp_path / "accepted"
-    write_reports(
-        accepted,
-        "# proguard-android.txt once carried -dontoptimize\n-keep class a.B { *; }\n",
-    )
+    write_reports(accepted, "-keep class a.B { *; }\n  -dontoptimize\n")
     result = run_inspection(accepted)
     assert result.returncode == 0, result.stderr
     for report in EFFECTIVE_REPORTS:
         assert (accepted / EVIDENCE_DIR / report).is_file(), report
 
-    global_dontoptimize = tmp_path / "global-dontoptimize"
-    write_reports(global_dontoptimize, "-keep class a.B { *; }\n  -dontoptimize\n")
-    assert run_inspection(global_dontoptimize).returncode != 0
+    optimising = tmp_path / "optimising"
+    write_reports(optimising, "-keep class a.B { *; }\n")
+    assert run_inspection(optimising).returncode != 0, "a configuration without -dontoptimize was accepted"
+
+    commented = tmp_path / "commented"
+    write_reports(commented, "# proguard-android.txt carries -dontoptimize\n-keep class a.B { *; }\n")
+    assert run_inspection(commented).returncode != 0, "a commented-out -dontoptimize was accepted"
 
     for report in EFFECTIVE_REPORTS:
         missing = tmp_path / f"missing-{report}"
-        write_reports(missing, "-keep class a.B { *; }\n", omit=report)
+        write_reports(missing, "-keep class a.B { *; }\n-dontoptimize\n", omit=report)
         assert run_inspection(missing).returncode != 0, f"missing {report} was accepted"
 
 
-def test_release_r8_inspection_rejects_dontoptimize_after_another_directive(tmp_path):
+def test_release_r8_inspection_accepts_dontoptimize_after_another_directive(tmp_path):
     # R8 copies each merged rules file verbatim into configuration.txt, and options
     # are whitespace-separated, so a later option on the same line is still active.
     for index, line in enumerate(("-dontobfuscate -dontoptimize", "-keep class a.B { *; }\t-dontoptimize")):
         inline = tmp_path / f"inline-{index}"
         write_reports(inline, f"-keep class a.C {{ *; }}\n{line}\n")
-        assert run_inspection(inline).returncode != 0, f"an active inline -dontoptimize was accepted: {line!r}"
+        result = run_inspection(inline)
+        assert result.returncode == 0, f"an active inline -dontoptimize was rejected: {line!r}\n{result.stderr}"
 
     commented = tmp_path / "inline-comment"
-    write_reports(commented, "-dontobfuscate    # optimisation stays on; no -dontoptimize here\n")
-    result = run_inspection(commented)
-    assert result.returncode == 0, result.stderr
+    write_reports(commented, "-dontobfuscate    # no -dontoptimize here\n")
+    assert run_inspection(commented).returncode != 0, "an inline-commented -dontoptimize was accepted"

@@ -329,7 +329,7 @@ class CreateAccountFragment : DialogFragment() {
     }
 
     companion object {
-        private val CREATION_LOCK = Any()
+        private val CREATION_LOCK = AccountCreationRegistry.ROW_LOCK
 
         private const val ARG_LEASE_VERSION = "lease_ref_version"
         private const val ARG_LEASE_OWNER = "lease_owner_v1"

@@ -18,7 +18,7 @@ export const REGISTERED_DOCS_PATHS = new Set([
   '/user-guide/apps/android', '/user-guide/apps/dav-bridge', '/user-guide/apps/evolution',
   '/user-guide/apps/gnome', '/user-guide/apps/ios', '/user-guide/apps/kde',
   '/user-guide/apps/linux-bridge', '/user-guide/apps/macos', '/user-guide/apps/tasks-org',
-  '/user-guide/apps/thunderbird', '/user-guide/apps/windows',
+  '/user-guide/apps/thunderbird', '/user-guide/apps/web', '/user-guide/apps/windows',
 ])
 
 export const DOCS_ANALYTICS_DOMAIN = 'docs.silentsuite.io'

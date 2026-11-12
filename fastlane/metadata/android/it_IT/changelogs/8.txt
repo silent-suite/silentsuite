@@ -1,0 +1,9 @@
+SilentSuite v0.3.0-beta
+
+- Aggiunto il supporto crittografato per la gestione dei membri e degli inviti di condivisione.
+- Aggiunte etichette/categorie per eventi, attività e contatti.
+- Aggiunta la sincronizzazione manuale tramite scorrimento verso il basso (pull-to-refresh) sulle schermate degli account e delle raccolte Android.
+- Migliorata l'affidabilità dell'importazione dei contatti .vcf su Android con conteggi dei fallimenti sicuri per la privacy.
+- Perfezionate la barra di stato di Android, le icone della barra degli strumenti, le sfumature delle icone nel tema scuro e la schermata di accesso.
+- Aggiunti la ricerca nel calendario, le preferenze per data/settimana, l'esportazione per singola raccolta e la gestione delle raccolte via web mobile.
+- Rafforzate la privacy della coda offline, i flussi di lavoro di firma di Android, il bridge, il server e l'auto-hosting (self-hosting).

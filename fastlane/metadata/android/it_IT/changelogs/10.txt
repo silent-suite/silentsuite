@@ -1,0 +1,1 @@
+Risolve la compatibilità di Google Play con le librerie native a 16 KB ricompilando le dipendenze di sincronizzazione nativa con il supporto per dimensioni di pagina a 16 KB.

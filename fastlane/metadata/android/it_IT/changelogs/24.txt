@@ -1,0 +1,1 @@
+Ripristina un formato di archiviazione legacy per la configurazione dell'account che poteva impedire l'avvio dopo l'aggiornamento, senza cancellare i dati dell'app. Risolve un arresto anomalo durante la pulizia alla disconnessione dell'account. Sostituisce il link "Password dimenticata?" non funzionante con un aiuto in-app che spiega le limitazioni del recupero password.

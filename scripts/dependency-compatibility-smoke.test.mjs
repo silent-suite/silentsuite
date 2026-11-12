@@ -376,7 +376,7 @@ test('Next and its ESLint config stay on the patched compatible release', () => 
 })
 
 // Vite (GHSA-587h-7wmj-h5pm / CVE-2026-112942, with GHSA-698v-4r3x-3vcv and
-// GHSA-r825-w8mm-5pxw): Vite ships launch-editor, so the patched lines are 6.4.4 and 8.1.6.
+// GHSA-r825-w8mm-5pxw): Vite ships launch-editor, so the patched lines are 6.4.5 (GHSA-8g5g-mxqh-grgj) and 8.1.6.
 // pnpm resolves Vite once per consumer peer context, so every real consumer is walked from
 // its installed directory, one hop at a time, instead of through a package exports map.
 function installedPackageDir(fromDir, name) {
@@ -416,12 +416,12 @@ test('Vite 8 web and core consumers resolve the patched 8.1.6 release in every p
   ], '8.1.6')
 })
 
-test('Vite 6 docs consumers resolve the patched 6.4.4 release', () => {
+test('Vite 6 docs consumers resolve the patched 6.4.5 release', () => {
   const vitepress = installedPackageDir(resolve(import.meta.dirname, '..', 'apps/docs'), 'vitepress')
   assertViteConsumers([
     ['apps/docs > vitepress', vitepress, '1.6.4'],
     ['apps/docs > vitepress > @vitejs/plugin-vue', installedPackageDir(vitepress, '@vitejs/plugin-vue'), '5.2.4'],
-  ], '6.4.4')
+  ], '6.4.5')
 })
 
 test('Next resolves patched Sharp and transforms image data with patched libheif', async () => {
@@ -482,7 +482,7 @@ test('security overrides remain scoped to compatible vulnerable major lines', ()
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'js-yaml'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'nanoid@<3.3.18'), false)
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'browserslist'), false)
-  assert.equal(manifest.pnpm.overrides['vitepress>vite'], '6.4.4')
+  assert.equal(manifest.pnpm.overrides['vitepress>vite'], '6.4.5')
   assert.equal(Object.hasOwn(manifest.pnpm.overrides, 'vite'), false)
   // Only the bounded same-major Vite 8 selector may exist; Vite is never forced across a major.
   const viteSelectors = Object.entries(manifest.pnpm.overrides).filter(([selector]) => /^vite(@|$)/.test(selector))

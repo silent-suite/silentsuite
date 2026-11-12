@@ -1,0 +1,1 @@
+Migliora la gestione dei tentativi di avvio e aggiunge un report diagnostico che puoi visualizzare in anteprima, copiare o condividere se SilentSuite non riesce a completare l'avvio. I report non vengono mai inviati automaticamente. "Scopri le app per le attività" ora apre la documentazione di SilentSuite.

@@ -4,6 +4,7 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.notes.edit.PendingNotesStore.DiscardOutcome
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
 import io.silentsuite.sync.ui.UnsyncedNotesDiscardPolicy.Failure
+import io.silentsuite.sync.ui.UnsyncedNotesDiscardPolicy.HubRemoval
 import io.silentsuite.sync.ui.UnsyncedNotesDiscardPolicy.Result
 import io.silentsuite.sync.ui.UnsyncedNotesDiscardPolicy.Step
 import io.silentsuite.sync.ui.UnsyncedNotesSignOutPolicy.Text
@@ -105,6 +106,22 @@ class UnsyncedNotesDiscardPolicyTest {
             listing(othersUnlisted = true), listing(unknownOthers = true),
         )) {
             assertEquals("$mixed", Text.Uncounted, UnsyncedNotesDiscardPolicy.hubSummary(mixed))
+        }
+
+        // With no store to show, the row stays while Android settings can't remove an account, or the accounts can't
+        // be read, saying which, and only then.
+        val refused = NotesRemovalSection.Section(listOf(
+            NotesRemovalSection.Row("io.silentsuite", "a", NotesRemovalNotice.Kind.CONFIRM)), accountsUnread = false)
+        val unread = NotesRemovalSection.Section(emptyList(), accountsUnread = true)
+        val clear = NotesRemovalSection.Section(emptyList(), accountsUnread = false)
+        assertEquals(HubRemoval.REFUSED, UnsyncedNotesDiscardPolicy.hubRemoval(null, refused))
+        assertEquals(HubRemoval.ACCOUNTS_UNREAD, UnsyncedNotesDiscardPolicy.hubRemoval(null, unread))
+        assertNull(UnsyncedNotesDiscardPolicy.hubRemoval(null, clear))
+        for (summary in listOf(Text.Counted(3), Text.Uncounted)) {
+            for (section in listOf(refused, unread)) {
+                assertNull("the stores' summary comes first: $summary",
+                    UnsyncedNotesDiscardPolicy.hubRemoval(summary, section))
+            }
         }
     }
 
@@ -252,6 +269,13 @@ class UnsyncedNotesDiscardPolicyTest {
         assertTrue("the hub row's", fragment.contains("UnsyncedNotesDiscardPolicy.hubSummary(listing)") &&
             fragment.contains(
                 "getQuantityString(R.plurals.settings_unsynced_notes_summary, summary.count, summary.count)"))
+        assertTrue("the hub row's removal text", fragment.contains(
+            "UnsyncedNotesStores.read(app) to NotesRemovalSection.read(app)") &&
+            fragment.contains("row.isVisible = summary != null || removalOnly != null") &&
+            fragment.contains(
+                "HubRemoval.REFUSED -> fragment.getString(R.string.settings_unsynced_notes_removal)") &&
+            fragment.contains(
+                "HubRemoval.ACCOUNTS_UNREAD -> fragment.getString(R.string.settings_unsynced_notes_accounts)"))
         // Each count shown comes only from a Counted text, which never holds 0.
         val counts = Regex("getQuantityString\\(R\\.plurals\\.\\w+, (\\w+\\.count), (\\w+\\.count)")
             .findAll(fragment).map { it.groupValues[1] to it.groupValues[2] }.toList()
@@ -267,7 +291,15 @@ class UnsyncedNotesDiscardPolicyTest {
                 "                    .setAction(R.string.retry) { model.retry(result) }"))
         assertTrue("the others are short",
             fragment.contains("Snackbar.make(view, message, Snackbar.LENGTH_LONG).show()"))
-        assertEquals(2, Regex("Snackbar\\.make\\(").findAll(fragment).count())
+        // The third is the removal section's, also short, with room for an account name before its words. It takes the
+        // place of a held Retry, which shows again once it goes, unless another Snackbar took its place.
+        assertTrue(fragment.contains("Snackbar.make(view, text, Snackbar.LENGTH_LONG).setTextMaxLines(4)\n"))
+        val removal = body(fragment, "private fun showRemoval(text: String) {")
+        assertTrue(removal, removal.contains(
+            "event != Snackbar.Callback.DISMISS_EVENT_CONSECUTIVE && held is Result.NotFinished &&\n" +
+                "                        this@UnsyncedNotesFragment.view === view) showResult(held)"))
+        assertTrue(removal, removal.contains("val held = model.result.value"))
+        assertEquals(3, Regex("Snackbar\\.make\\(").findAll(fragment).count())
         assertEquals(R.string.notes_discard_not_finished,
             UnsyncedNotesDiscardPolicy.message(Result.NotFinished(directory, null, two)))
         assertEquals(R.string.notes_discard_done, UnsyncedNotesDiscardPolicy.message(Result.Done))

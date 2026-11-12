@@ -1,0 +1,1 @@
+Sincronizzazione crittografata end-to-end per calendario, contatti e attività
