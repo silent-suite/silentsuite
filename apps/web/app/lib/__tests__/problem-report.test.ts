@@ -269,6 +269,14 @@ describe('buildProblemReport', () => {
     expect(buildProblemReport({ ...base, summary: '\uD83D\uDE00', description: '\uD834\uDD1E' }).ok).toBe(true)
   })
 
+  it('accepts exactly one address that fully matches the schema pattern', () => {
+    for (const contactEmail of ['a@x.io\r', 'a@x.io\n', 'a@\nx.io', 'a@x.io\t', '\ta@x.io', 'a@x.io\r\nb@y.io', 'a@x.io,b@y.io', 'Name <a@x.io>', ' a@x.io', '   ']) {
+      expect(buildProblemReport({ ...base, contactEmail })).toEqual({ ok: false, errors: { contactEmail: 'invalid' } })
+    }
+    const report = buildProblemReport({ ...base, contactEmail: 'a@x.io' })
+    expect(report.ok && report.payload.contact_email).toBe('a@x.io')
+  })
+
   it('requires summary and description', () => {
     expect(buildProblemReport({ ...base, summary: '  ', description: '' })).toEqual({
       ok: false,

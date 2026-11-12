@@ -255,10 +255,10 @@ export function checkUserText(value: string, maxChars: number, maxBytes: number)
   return null
 }
 
+/** One address only: the whole string must match the schema pattern (anchored, no m flag, no trimming). */
 export function checkContactEmail(value: string): 'invalid' | null {
-  const email = value.trim()
-  if (email === '') return null
-  return email.length <= CONTACT_MAX_CHARS && CONTACT_PATTERN.test(email) ? null : 'invalid'
+  if (value === '') return null
+  return value.length <= CONTACT_MAX_CHARS && CONTACT_PATTERN.test(value) ? null : 'invalid'
 }
 
 export interface ReportInput {
@@ -283,7 +283,7 @@ export function buildProblemReport(input: ReportInput): BuildResult {
   if (contactProblem) errors.contactEmail = contactProblem
   if (Object.keys(errors).length > 0) return { ok: false, errors }
 
-  const contact = input.contactEmail.trim()
+  const contact = input.contactEmail
   const payload: ProblemReportPayload = {
     schema: 1,
     kind: input.kind,
