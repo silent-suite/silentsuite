@@ -114,5 +114,35 @@
       "description": "Most of the app is still in English. Italian covers only some screens for now. This choice applies to this browser only and is not synced to your account or other devices.",
       "partialTag": "(partial, experimental)"
     }
+  },
+  "SettingsReport": {
+    "title": "Report a problem",
+    "intro": "Tell us about a problem or suggest a feature. Nothing is sent until you press Send.",
+    "kindLabel": "What are you reporting?",
+    "kindProblem": "Problem",
+    "kindFeature": "Feature request",
+    "summaryLabel": "Summary",
+    "descriptionLabel": "Description",
+    "counter": "{count} / {max}",
+    "emailLabel": "Reply email (optional)",
+    "emailHint": "Only if you want an answer.",
+    "includeDiagnostics": "Include diagnostic info",
+    "previewLabel": "Diagnostic info that will be sent",
+    "previewHint": "This is exactly what will be sent with your report. It contains no account details, server addresses or content.",
+    "disclosure": "Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We delete it {days} days after we've dealt with it; to have it deleted sooner, email {email}.",
+    "privacyLink": "Privacy policy",
+    "send": "Send",
+    "sending": "Sending\u2026",
+    "emailInstead": "Email instead",
+    "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Copy failed",
+    "sent": "Thanks, your report was sent.",
+    "unconfirmed": "We couldn't confirm your report was sent. You can email it or copy it instead.",
+    "errors": {
+      "tooLong": "This is too long.",
+      "controlChars": "This contains characters that can't be sent.",
+      "email": "Enter a valid email address or leave this empty."
+    }
   }
 }

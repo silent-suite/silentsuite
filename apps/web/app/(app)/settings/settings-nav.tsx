@@ -42,6 +42,13 @@ const settingsGroups: SettingsGroup[] = [
       { label: 'Experimental', href: '/settings/experimental', hint: 'Optional features in development' },
     ],
   },
+  {
+    id: 'help',
+    label: 'Help',
+    links: [
+      { label: 'Report a problem', href: '/settings/report', hint: 'Problems & feature requests' },
+    ],
+  },
 ]
 
 function visibleGroups(): SettingsGroup[] {
