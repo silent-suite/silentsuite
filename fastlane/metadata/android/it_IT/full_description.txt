@@ -1,0 +1,13 @@
+Calendario, contatti e attività dovrebbero rimanere sincronizzati ovunque lavori: Android, macOS, Windows, Linux e sul web. SilentSuite mantiene questi dati disponibili su tutti i tuoi dispositivi applicando la crittografia end-to-end prima che qualsiasi informazione lasci il tuo dispositivo.
+
+<b>Sincronizzazione Zero-Knowledge</b><br />La crittografia e la decrittografia avvengono sul tuo dispositivo e le tue chiavi rimangono lì. Il server memorizza solo testo cifrato, quindi non può leggere ciò che conservi al suo interno. Questo è ciò che significa zero-knowledge nella pratica: la garanzia della privacy è un vincolo tecnico, non una dichiarazione di intenti.
+
+<b>Si adatta a ogni sistema che usi</b><br />Su Android, SilentSuite funziona come un adapter di sincronizzazione nativo per app compatibili di calendario, contatti e attività. Su macOS, Windows e Linux si integra tramite un bridge desktop leggero, consentendo ai tuoi dati crittografati di apparire negli strumenti già integrati nel tuo flusso di lavoro. L'app web ti offre l'accesso dal browser quando sei lontano dai tuoi dispositivi. Il supporto per iPhone arriverà presto.
+
+<b>Open Source e ispezionabile</b><br />Chiunque può leggere il codice, esaminare la crittografia e verificare autonomamente le promesse sulla privacy. Non ci sono componenti proprietari da accettare sulla fiducia.
+
+<b>In hosting o auto-ospitato</b><br />Usa il servizio in hosting o avvia il tuo server su hardware che controlli direttamente. I tuoi dati rimangono portatili: esportali in qualsiasi momento nei formati standard, senza alcun vincolo di lock-in.
+
+<b>Nota sulla Beta</b><br />Questa è una release beta. La sincronizzazione di calendario, contatti e attività rappresenta il fulcro di questa versione e ne costituisce il nucleo stabile. Feedback e segnalazioni di bug sono benvenuti tramite il link presente nell'app.
+
+<b>Di cosa hai bisogno</b><br />Richiede un account SilentSuite. La documentazione per l'auto-hosting è disponibile su docs.silentsuite.io.

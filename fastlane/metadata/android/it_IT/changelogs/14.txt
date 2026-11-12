@@ -1,0 +1,1 @@
+Aggiornamento importante: app Android riprogettata con Material 3, target Android 16 / API 36, affidabilità della sincronizzazione DAV Bridge e supporto macOS CardDAV rafforzati, passaggio della sessione di fatturazione sostituito con prove di link monouso, e aggiunto il setup iniziale riprendibile con cambio account.
