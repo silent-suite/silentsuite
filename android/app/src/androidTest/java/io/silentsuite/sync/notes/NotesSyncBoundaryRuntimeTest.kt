@@ -2040,14 +2040,15 @@ class NotesSyncBoundaryRuntimeTest {
         assertSent(account, "gen-acct", notebook, "an automatic run on Wi-Fi with the account switch on") { open() }
 
         // 2. A network name saved with the switch refuses on every network, Wi-Fi included (rows A15,
-        // A16, and A13 and A14 with a name): Android gives this app no Wi-Fi names, so the name cannot
-        // be checked (#971).
+        // A16, and A13 and A14 with a name), and the network is not read for that run: Android gives
+        // this app no Wi-Fi names, so the name cannot be checked (#971). The pinned reading is Wi-Fi,
+        // which the switch alone admits (step 1), and it counts every read.
         settings.syncWifiOnlySSID = "home"
         edit("edit 2")
-        for (connection in listOf(wifi, other, none)) {
-            pin(connection)
-            assertRefused(account, "gen-acct", note.uid, "an automatic run with a saved network name, connection $connection") { open() }
-        }
+        val reads = AtomicInteger()
+        NotesNetwork.readingOverride = { reads.incrementAndGet(); NotesNetworkPolicy.Reading(wifi) }
+        assertRefused(account, "gen-acct", note.uid, "an automatic run on Wi-Fi with a saved network name") { open() }
+        assertEquals("the network is not read for an automatic run a saved network name refuses", 0, reads.get())
 
         // 3. A run the user starts does not look at the account's rule: not at the switch off Wi-Fi
         // (row E2 with the switch on), not at the saved name on Wi-Fi (row E7).

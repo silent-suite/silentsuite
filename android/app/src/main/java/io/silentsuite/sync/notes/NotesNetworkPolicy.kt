@@ -40,7 +40,8 @@ object NotesNetworkPolicy {
 
     enum class Blocker { NOTES_SETTING, ACCOUNT_WIFI_ONLY, ACCOUNT_NETWORK_NAME }
 
-    data class Verdict(val blockers: Set<Blocker>, val connection: Connection) {
+    /** [connection] is null when the network was not read for the run: see [refusedUnread]. */
+    data class Verdict(val blockers: Set<Blocker>, val connection: Connection?) {
         val run: Boolean get() = blockers.isEmpty()
     }
 
@@ -72,6 +73,14 @@ object NotesNetworkPolicy {
         if (!explicit) accountBlocker(account, reading)?.let { blockers += it }
         return Verdict(blockers, reading.connection)
     }
+
+    /**
+     * The refusal of an automatic run that needs no reading, or null. With the switch on, a saved
+     * network name refuses on every network (#971), so a run gate that asks this first reads no
+     * network for that run. Every other run, and every run the user starts, goes to [decide].
+     */
+    fun refusedUnread(explicit: Boolean, account: AccountRule): Verdict? =
+        if (!explicit && account.wifiOnly && account.networkName != null) Verdict(setOf(Blocker.ACCOUNT_NETWORK_NAME), null) else null
 
     /**
      * One sentence of the line the notebook list shows while Notes do not sync by themselves on the

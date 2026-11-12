@@ -218,6 +218,24 @@ class NotesNetworkPolicyTest {
         assertEquals(Blocker.ACCOUNT_WIFI_ONLY, NotesNetworkPolicy.accountBlocker(on, none))
     }
 
+    @Test fun `an automatic run with the switch on and a saved name is refused before any reading, and no other run is`() {
+        for (explicit in listOf(false, true)) for (wifiOnly in listOf(false, true)) for (name in listOf(null, "", "home")) {
+            val account = AccountRule(wifiOnly, name)
+            val what = "explicit $explicit, switch $wifiOnly, name <$name>"
+            val unread = NotesNetworkPolicy.refusedUnread(explicit, account)
+            if (!explicit && wifiOnly && name != null) {
+                assertEquals(what, Verdict(setOf(Blocker.ACCOUNT_NETWORK_NAME), null), unread)
+                // The same answer as with a reading, whatever the reading and the settings.
+                for (reading in readings) for (automatic in Allowed.values()) for (syncNow in Allowed.values()) {
+                    val read = NotesNetworkPolicy.decide(explicit, Settings(automatic, syncNow), account, reading)
+                    assertTrue("$what, $reading: refused with a reading too", !read.run && Blocker.ACCOUNT_NETWORK_NAME in read.blockers)
+                }
+            } else {
+                assertNull(what, unread)
+            }
+        }
+    }
+
     @Test fun `a stored network name means nothing while the account switch is off`() {
         for (reading in readings) {
             assertNull("$reading", NotesNetworkPolicy.accountBlocker(offHome, reading))

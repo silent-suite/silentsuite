@@ -124,8 +124,8 @@ internal object NotesSyncRunner {
             if (!exactGenerationStillCurrent()) { finishWithoutOutcome(); return false }
             val settings = AccountSettings(appContext, account)
             // Design 3.6 and the answers of 2026-10-12 on #709: a run the user started follows the
-            // account's Sync now setting alone; any other run needs its automatic setting and the
-            // account's own Wi-Fi switch and network name. Decided once, before the run's own requests
+            // account's Sync now setting alone; any other run needs its automatic setting, the
+            // account's own Wi-Fi switch and no saved network name. Decided once, before the run's own requests
             // (the subscription check above comes first). A run that may not start records neither
             // success nor failure. Opening and closing its attempt are two status commits, and each
             // clears a recorded lifecycle storage fault.
@@ -133,7 +133,8 @@ internal object NotesSyncRunner {
             if (!network.run) {
                 // Rule names and the kind of connection only; never a network name. NONE also covers
                 // the reading some VPNs give while the device is online: no active network at all.
-                Logger.log.info("Notes sync not started on this network: ${network.blockers.joinToString()} (${network.connection})")
+                // "not read" is a saved network name, which refuses before the network is read.
+                Logger.log.info("Notes sync not started on this network: ${network.blockers.joinToString()} (${network.connection ?: "not read"})")
                 finishWithoutOutcome()
                 return false
             }

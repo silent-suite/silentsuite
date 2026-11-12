@@ -23,9 +23,9 @@ internal object NotesNetwork {
      * Android gives this app no Wi-Fi names, and a saved network name refuses without one (#971).
      *
      * The connectivity call itself is not guarded. The adapters do not guard it either, but they make
-     * it only with the switch on and for a sync that is not manual. Here it is made for every run, also
-     * one that no setting can refuse. If it throws, the run ends as an unknown failure, unless it was
-     * canceled, and nothing is sent.
+     * it only with the switch on and for a sync that is not manual. Here it is made for every run but
+     * an automatic one a saved network name refuses (#971), also for one that no setting can refuse.
+     * If it throws, the run ends as an unknown failure, unless it was canceled, and nothing is sent.
      */
     @Suppress("DEPRECATION")
     fun read(context: Context): NotesNetworkPolicy.Reading {
@@ -35,10 +35,14 @@ internal object NotesNetwork {
             connected = info?.isConnected == true, wifi = info?.type == ConnectivityManager.TYPE_WIFI))
     }
 
-    /** Whether a run for [account] may use the network it is on. Reads account data and the network: call off the main thread. */
+    /**
+     * Whether a run for [account] may use the network it is on. Reads account data, and the network
+     * unless a saved network name has refused the run already: call off the main thread.
+     */
     fun verdict(context: Context, manager: AccountManager, account: Account, accountSettings: AccountSettings,
                 explicit: Boolean): NotesNetworkPolicy.Verdict {
         val rule = NotesNetworkPolicy.AccountRule(accountSettings.syncWifiOnly, accountSettings.syncWifiOnlySSID)
+        NotesNetworkPolicy.refusedUnread(explicit, rule)?.let { return it }
         return NotesNetworkPolicy.decide(explicit, AccountSettings.notesNetworkSettings(manager, account), rule, read(context))
     }
 }

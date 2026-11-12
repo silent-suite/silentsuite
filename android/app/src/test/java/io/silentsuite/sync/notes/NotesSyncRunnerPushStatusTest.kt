@@ -98,7 +98,7 @@ class NotesSyncRunnerPushStatusTest {
         assertTrue(refused.contains("return false"))
         assertFalse("a refused run records no failure", refused.contains("recordFailure("))
         assertFalse("and no success", refused.contains("recordSuccess("))
-        val logLine = "Logger.log.info(\"Notes sync not started on this network: \${network.blockers.joinToString()} (\${network.connection})\")"
+        val logLine = "Logger.log.info(\"Notes sync not started on this network: \${network.blockers.joinToString()} (\${network.connection ?: \"not read\"})\")"
         assertEquals("the refusal's log line, word for word: rule names and the kind of connection, never a network name",
             1, refused.split(logLine).size - 1)
         assertEquals("and it is the only log call of the refusal", 1, refused.split("Logger.log.").size - 1)

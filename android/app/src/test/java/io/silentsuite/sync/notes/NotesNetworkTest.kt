@@ -2,6 +2,7 @@ package io.silentsuite.sync.notes
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
@@ -19,12 +20,15 @@ class NotesNetworkTest {
             "NotesNetworkPolicy.Reading(NotesNetworkPolicy.connectionOf(present = info != null,",
             "connected = info?.isConnected == true, wifi = info?.type == ConnectivityManager.TYPE_WIFI))",
             "NotesNetworkPolicy.AccountRule(accountSettings.syncWifiOnly, accountSettings.syncWifiOnlySSID)",
+            "NotesNetworkPolicy.refusedUnread(explicit, rule)?.let { return it }",
             "return NotesNetworkPolicy.decide(explicit, AccountSettings.notesNetworkSettings(manager, account), rule, read(context))",
         )) {
             assertEquals("exactly once in NotesNetwork.kt: $text", 1, source.split(text).size - 1)
         }
+        assertTrue("a saved network name refuses before the network is read (#971)",
+            source.indexOf("refusedUnread(explicit, rule)") < source.indexOf("rule, read(context))"))
         // #971: Android gives this app no Wi-Fi names, and a saved network name refuses without one.
-        for (text in listOf("WifiManager", "WIFI_SERVICE", "connectionInfo", ".ssid")) {
+        for (text in listOf("WifiManager", "WifiInfo", "WIFI_SERVICE", "connectionInfo", ".ssid", "getSSID")) {
             assertFalse("NotesNetwork.kt does not read the Wi-Fi name: $text", source.contains(text))
         }
         assertFalse("nothing in this file writes a log line", source.contains("Logger.") || source.contains("Log."))
