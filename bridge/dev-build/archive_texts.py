@@ -134,8 +134,8 @@ def source_text(sha, policy, records, verification) -> str:
         "publisher provides one; that is stated per archive. For the other archives",
         "no signature was checked, so the check shows the file is the one we pinned,",
         "not that it came from the publisher's own signing key. This is accepted for",
-        "experimental test downloads only; full signature checks are required before",
-        "any real release.",
+        "experimental test downloads only.",
+        "Full signature checks are required before any real release.",
         "",
     ]
     for archive in archives:
