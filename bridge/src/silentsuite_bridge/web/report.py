@@ -89,6 +89,7 @@ _REQUEST_KEYS = frozenset({"kind", "summary", "description", "contact_email", "d
 
 _APP_VERSION_RE = re.compile(r"[A-Za-z0-9._+-]{1,32}")
 _PLATFORM_RE = re.compile(r"[a-z0-9._-]{1,32}")
+# Schema pattern; always used with fullmatch (``$`` would admit a trailing newline).
 _CONTACT_RE = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,189}")
 # C0 and C1 controls except tab (0x09) and newline (0x0A).
 _CONTROL_RE = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
@@ -337,7 +338,8 @@ def build_payload(request):
     if contact is not None:
         if not isinstance(contact, str):
             raise ReportError("Reply email is not valid.")
-        contact = contact.strip()
+        # No stripping: the value must fullmatch the schema pattern as sent,
+        # so CR/LF/tab or a trailing newline is rejected, not trimmed away.
         if contact:
             if len(contact) > CONTACT_MAX_CHARS or not _CONTACT_RE.fullmatch(contact):
                 raise ReportError("Reply email is not valid.")

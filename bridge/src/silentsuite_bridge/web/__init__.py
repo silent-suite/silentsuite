@@ -2071,7 +2071,7 @@ REPORT_HTML = r"""<!DOCTYPE html>
                     kind: kind(),
                     summary: field('reportSummary'),
                     description: field('reportDescription'),
-                    contact_email: field('reportContact'),
+                    contact_email: field('reportContact').trim(),
                     diagnostics: include.checked ? DIAGNOSTICS : null
                 };
                 fetch('/.web/api/report', {

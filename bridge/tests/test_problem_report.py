@@ -304,6 +304,30 @@ def test_maximum_escaped_characters_fit_and_one_more_is_rejected():
         report.build_payload(_request(summary='"' * 121))
 
 
+@pytest.mark.parametrize("contact", [
+    "a@x.io\r",
+    "a@x.io\n",
+    "a\n@x.io",
+    "a@x.io\t",
+    "\ta@x.io",
+    "a@x.io\r\n",
+    " a@x.io",
+    "a@x.io,b@y.io",
+    "Name <a@x.io>",
+    "a@x.io b@y.io",
+    "no-at-sign.example",
+])
+def test_contact_email_must_fullmatch_the_schema_pattern(contact):
+    with pytest.raises(report.ReportError):
+        report.build_payload(_request(contact_email=contact))
+
+
+def test_valid_contact_email_is_kept_and_empty_is_omitted():
+    assert report.build_payload(_request(contact_email="a@x.io"))["contact_email"] == "a@x.io"
+    assert "contact_email" not in report.build_payload(_request(contact_email=""))
+    assert "contact_email" not in report.build_payload(_request(contact_email=None))
+
+
 @pytest.mark.parametrize("control", ["\x00", "\x07", "\x0b", "\x0c", "\r", "\x1b", "\x7f", "\x85", "\x9f"])
 def test_control_characters_are_rejected(control):
     with pytest.raises(report.ReportError):
