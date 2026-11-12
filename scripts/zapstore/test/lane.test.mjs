@@ -63,7 +63,7 @@ test('eligibility: stable and -beta (either GitHub prerelease flag) pass; drafts
 })
 
 test('eligibility: follow-up betas vX.Y.Z-beta.N (N >= 2, no leading zeros) pass; every other suffix stays refused', () => {
-  for (const tag of ['v0.5.18-beta.2', 'v0.5.18-beta.9', 'v0.5.18-beta.10', 'v1.2.3-beta.123']) {
+  for (const tag of ['v0.5.18-beta.2', 'v0.5.18-beta.9', 'v0.5.18-beta.10', 'v1.2.3-beta.123', 'v0.5.18-beta.999']) {
     const verdict = classifyRelease(release({ tag_name: tag, prerelease: true }))
     assert.equal(verdict.eligible, true, tag)
     assert.equal(verdict.kind, 'beta', tag)
@@ -75,6 +75,7 @@ test('eligibility: follow-up betas vX.Y.Z-beta.N (N >= 2, no leading zeros) pass
     'v0.5.18-beta.1', 'v0.5.18-beta.0', 'v0.5.18-beta.02', 'v0.5.18-beta.', 'v0.5.18-beta.2.1', 'v0.5.18-beta2', 'v0.5.18-beta-2',
     'v0.5.18-beta.x', 'v0.5.18-beta.-2', 'v0.5.18-Beta.2', 'v0.5.18-rc.2', 'v0.5.18-rc1', 'v0.5.18-alpha.2', 'v0.5.18-alpha',
     'v0.5.18-beta.2-hotfix', 'v0.5.18-beta.2+build', 'v0.5.18-preview', 'v0.5.18-beta.2 ', 'v0.5.18-beta.2\n',
+    'v0.5.18-beta.1000', 'v0.5.18-beta.9007199254740992', 'v0.5.18-beta.9007199254740993', `v0.5.18-beta.1${'0'.repeat(308)}`,
   ]) {
     const verdict = classifyRelease(release({ tag_name: tag, prerelease: true }))
     assert.equal(verdict.eligible, false, JSON.stringify(tag))
@@ -83,7 +84,7 @@ test('eligibility: follow-up betas vX.Y.Z-beta.N (N >= 2, no leading zeros) pass
 })
 
 test('tag order is numeric: -beta < -beta.2 < -beta.10 < stable < next patch, and the newest beta.N is the publishable one', () => {
-  const ordered = ['v0.5.17', 'v0.5.18-beta', 'v0.5.18-beta.2', 'v0.5.18-beta.3', 'v0.5.18-beta.10', 'v0.5.18', 'v0.5.19-beta', 'v0.5.19']
+  const ordered = ['v0.5.17', 'v0.5.18-beta', 'v0.5.18-beta.2', 'v0.5.18-beta.3', 'v0.5.18-beta.10', 'v0.5.18-beta.998', 'v0.5.18-beta.999', 'v0.5.18', 'v0.5.19-beta', 'v0.5.19']
   for (let i = 0; i < ordered.length; i += 1) {
     assert.equal(compareTags(ordered[i], ordered[i]), 0, ordered[i])
     for (let j = i + 1; j < ordered.length; j += 1) {
@@ -93,6 +94,7 @@ test('tag order is numeric: -beta < -beta.2 < -beta.10 < stable < next patch, an
   }
   assert.throws(() => compareTags('v0.5.18-beta.1', 'v0.5.18-beta'), /outside the release grammar/)
   assert.throws(() => compareTags('v0.5.18-rc.2', 'v0.5.18'), /outside the release grammar/)
+  assert.throws(() => compareTags('v0.5.18-beta.9007199254740992', 'v0.5.18-beta.9007199254740993'), /outside the release grammar/)
   const now = Date.parse('2026-11-12T00:00:00Z')
   const { candidates } = selectScheduleCandidates([
     release({ id: 10, tag_name: 'v0.5.18-beta', published_at: '2026-11-10T00:00:00Z' }),

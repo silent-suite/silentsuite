@@ -1,7 +1,8 @@
 // Release eligibility: which published GitHub releases may reach Zapstore.
 //
 // Allowed: stable `vX.Y.Z`, `vX.Y.Z-beta` and follow-up betas `vX.Y.Z-beta.N`
-// with N >= 2 written without leading zeros. A plain `-beta` is the first beta
+// with 2 <= N <= 999 written without leading zeros (the cap keeps Number()
+// exact, so the order stays total). A plain `-beta` is the first beta
 // of its version, so `-beta.1` (and `-beta.0`, `-beta.02`) are refused: each
 // position in the order has exactly one spelling. A beta tag is allowed whether
 // or not GitHub flags it as a prerelease (existing beta releases carry
@@ -10,7 +11,7 @@
 // for all of them, which is the current published behaviour; changing it is a
 // separate policy decision.
 
-export const TAG_GRAMMAR = /^v(\d+)\.(\d+)\.(\d+)(-beta(?:\.([2-9]|[1-9]\d+))?)?$/
+export const TAG_GRAMMAR = /^v(\d+)\.(\d+)\.(\d+)(-beta(?:\.([2-9]|[1-9]\d{1,2}))?)?$/
 export const CHANNEL = 'main'
 
 export function classifyRelease(release) {
