@@ -193,7 +193,7 @@ export type { VCard, VCardName, VCardPhone, VCardEmail, VCardAddress } from './u
 export { parseTodoistCsv } from './utils/csv-parser.js';
 
 // Recurrence expansion
-export { expandRecurrence, untilDateBefore, occurrenceWallClock } from './utils/recurrence.js';
+export { expandRecurrence, untilDateBefore, untilTimeBefore, occurrenceWallClock } from './utils/recurrence.js';
 export type { RecurrenceOptions } from './utils/recurrence.js';
 export {
   isFloatingICalDateTime,
