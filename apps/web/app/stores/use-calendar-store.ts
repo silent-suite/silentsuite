@@ -115,6 +115,13 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
   return copy
 }
 
+/**
+ * A scoped copy is a new item with a new UID. The series' retained raw lines (RDATE,
+ * RECURRENCE-ID, attendees and the like) describe the original item, so the copy starts
+ * without them, as it did before they were kept.
+ */
+const WITHOUT_RETAINED_CONTENT = { unknownProperties: undefined, unknownComponents: undefined } as const
+
 /** Add a date-only UNTIL (YYYYMMDD) to an existing RRULE, replacing any existing UNTIL or COUNT */
 function addUntilToRRule(rrule: string, untilDate: string): string {
   const parts = rrule.split(';').filter(
@@ -353,6 +360,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           ...master,
           id: newTempId,
           uid: newTempId,
+          ...WITHOUT_RETAINED_CONTENT,
           recurrenceRule: null,
           exceptions: [],
           startDate: instanceDate,
@@ -400,6 +408,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           ...master,
           id: newTempId,
           uid: newTempId,
+          ...WITHOUT_RETAINED_CONTENT,
           startDate: instanceDate,
           endDate: new Date(instanceDate.getTime() + duration),
           exceptions: [],

@@ -32,6 +32,14 @@ export interface CalendarEvent {
    *  not exist in its zone (a DST gap), so it cannot be recovered from `startDate`. Present only
    *  in that case. Used only while it still resolves to `startDate` in `timezone`. */
   startWallClock?: string;
+  /** STATUS and TRANSP from the source, written back unchanged. Omitted when absent. */
+  status?: string;
+  transp?: string;
+  /** Unsupported VEVENT property lines and subcomponents, kept so a web save does not
+   *  drop them (attendees, organizer, CLASS, SEQUENCE, X-properties and the like).
+   *  Revalidated when written. Omitted when there are none. */
+  unknownProperties?: string[];
+  unknownComponents?: string[][];
   created: Date;
   updated: Date;
 }
@@ -222,6 +230,28 @@ export function expandEventRecurrence(event: CalendarEvent, range: DateRange): D
 }
 
 /**
+ * End of an event that has DURATION instead of DTEND, read the same way the web import
+ * reads it. Null for a missing, negative, zero or unreadable duration, or a timed part
+ * on an all-day event.
+ */
+function addICalDuration(start: Date, duration: string, allDay: boolean): Date | null {
+  const match = duration.match(/^\+?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/i);
+  if (!match) return null;
+  const [weeks, days, hours, minutes, seconds] = match.slice(1, 6).map((v) => Number(v ?? 0)) as [
+    number, number, number, number, number,
+  ];
+  if (weeks + days + hours + minutes + seconds === 0) return null;
+  if (allDay) {
+    if (hours + minutes + seconds !== 0) return null;
+    const end = new Date(start);
+    end.setDate(end.getDate() + weeks * 7 + days);
+    return end;
+  }
+  const ms = ((((weeks * 7 + days) * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000;
+  return new Date(start.getTime() + ms);
+}
+
+/**
  * Convert a CalendarEvent to an iCalendar VEVENT string.
  */
 export function toVEvent(event: CalendarEvent): string {
@@ -255,6 +285,10 @@ export function toVEvent(event: CalendarEvent): string {
         : undefined,
     valarms: event.alarms.length > 0 ? event.alarms : undefined,
     categories: event.categories && event.categories.length > 0 ? event.categories : undefined,
+    status: event.status,
+    transp: event.transp,
+    unknownProperties: event.unknownProperties,
+    unknownComponents: event.unknownComponents,
     created: formatICalDateTime(event.created),
     lastModified: formatICalDateTime(event.updated),
   };
@@ -282,9 +316,12 @@ export function fromVEvent(veventStr: string): CalendarEvent {
   const startTzid = vevent.dtstartParams?.['TZID'];
   const endTzid = vevent.dtendParams?.['TZID'] ?? startTzid;
   const startParsed = parseICalDateValue(vevent.dtstart, startTzid);
+  const endFromDuration = !vevent.dtend && vevent.duration
+    ? addICalDuration(startParsed.date, vevent.duration, isAllDay)
+    : null;
   const endParsed = vevent.dtend
     ? parseICalDateValue(vevent.dtend, endTzid)
-    : { date: new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
+    : { date: endFromDuration ?? new Date(startParsed.date.getTime()), allDay: startParsed.allDay };
 
   const exdateTzid = vevent.exdateParams?.['TZID'] ?? (isAllDay ? undefined : startTzid);
   const exceptions = (vevent.exdate ?? []).map(
@@ -315,6 +352,12 @@ export function fromVEvent(veventStr: string): CalendarEvent {
     timezone: startTzid ?? undefined,
     ...(startIsFloating ? { floating: true as const } : {}),
     ...(startWallClock ? { startWallClock } : {}),
+    ...(vevent.status ? { status: vevent.status } : {}),
+    ...(vevent.transp ? { transp: vevent.transp } : {}),
+    ...(vevent.unknownProperties ? { unknownProperties: [...vevent.unknownProperties] } : {}),
+    ...(vevent.unknownComponents
+      ? { unknownComponents: vevent.unknownComponents.map((block) => [...block]) }
+      : {}),
     created: vevent.created ? parseICalDateValue(vevent.created).date : now,
     updated: vevent.lastModified ? parseICalDateValue(vevent.lastModified).date : now,
   };
