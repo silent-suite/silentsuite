@@ -108,6 +108,9 @@ def _content_sensitive_envelopes(remote):
     def load(blob):
         return objects[int.from_bytes(bytes(blob)[:8], "big")]
 
+    # Test helpers read envelopes through the store as well.
+    remote.store.save = save
+    remote.store.load = load
     remote.item_mgr.cache_save.side_effect = save
     remote.item_mgr.cache_load.side_effect = load
     create = remote.item_mgr.create.side_effect
