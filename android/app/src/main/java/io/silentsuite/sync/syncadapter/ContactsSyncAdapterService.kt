@@ -12,9 +12,11 @@ import android.content.*
 import android.os.Bundle
 import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.birthdays.BirthdayMaintenance
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalAddressBook
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -199,10 +201,28 @@ class ContactsSyncAdapterService : SyncAdapterService() {
             return when (providerOutcome) {
                 SyncManager.ProviderOutcome.FAILURE -> Completion.FAILURE
                 SyncManager.ProviderOutcome.CANCELLED -> Completion.SKIPPED
-                SyncManager.ProviderOutcome.SUCCESS -> Completion.SUCCESS
+                SyncManager.ProviderOutcome.SUCCESS -> {
+                    // Birthdays (#738): after this address book's own successful sync, before its
+                    // outcome is recorded. The sync manager and its client are already closed.
+                    BirthdayMaintenance.run(context, settings.account, admittedOwner(account, extras), "address-book sync")
+                    Completion.SUCCESS
+                }
                 SyncManager.ProviderOutcome.SKIPPED -> Completion.SKIPPED
             }
         }
+
+        /**
+         * The main-account identity this child sync was admitted for: its lifecycle target's, already checked
+         * as current above, or else the owner identity stored on the child row as listed now. Null (no
+         * admission) when neither is there or the lookup fails.
+         */
+        private fun admittedOwner(child: Account, extras: Bundle): SyncStatusStore.MainIdentity? =
+            contactsChildTarget(extras)?.mainIdentity ?: runCatching {
+                val manager = android.accounts.AccountManager.get(context)
+                manager.getAccountsByType(App.addressBookAccountType).singleOrNull { it == child }?.let { row ->
+                    SyncStatusStore.identityFromStorageKey(manager.getUserData(row, LocalAddressBook.USER_DATA_MAIN_ACCOUNT_IDENTITY))
+                }
+            }.getOrNull()
 
         override fun recordSuccess(account: Account, extras: Bundle): SyncStatusStore.MutationResult =
             recordChild(account, extras, SyncStatusStore.ChildResult.SUCCESS)

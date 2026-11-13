@@ -331,12 +331,26 @@ The server applies its own request size limits as well (`ETEBASE_MAX_AUTH_REQUES
 ### Trusted Proxy Headers
 
 The server only accepts `X-Forwarded-*` headers from `TRUSTED_PROXY_IPS`.
-Keep the default `127.0.0.1` when Caddy/nginx/cloudflared connects through the
-host loopback port. If a Docker-network proxy connects directly to the server
-container, set `TRUSTED_PROXY_IPS` in `.env` to that proxy's exact container IP
-before recreating the server. Multiple values are comma-separated, for example
-`TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.5`. Uvicorn matches exact IPs here; CIDR
-ranges are not supported.
+When Caddy, nginx or cloudflared runs on the host and connects to
+`127.0.0.1:3735`, Docker hands the connection to the server from its network
+gateway (often `172.x.0.1`), not from `127.0.0.1`. The installer therefore writes
+`TRUSTED_PROXY_IPS=127.0.0.1,docker-gateway`. The server replaces
+`docker-gateway` with that gateway address each time it starts. Because the
+port is published on `127.0.0.1` only, the gateway carries connections from
+programs on this machine and nothing else. If you publish the port on any other
+address, remove `docker-gateway`.
+
+If a Docker-network proxy connects directly to the server container, add that
+proxy's exact container IP to `TRUSTED_PROXY_IPS` in `.env` before recreating
+the server, for example `TRUSTED_PROXY_IPS=127.0.0.1,docker-gateway,172.18.0.5`.
+Uvicorn matches exact IPs here; CIDR ranges are not supported.
+
+Installs made by an older installer have `TRUSTED_PROXY_IPS=127.0.0.1`. If a
+host proxy gets "too many redirects" or a `301` back to the same `https://`
+URL, add `,docker-gateway` to that line and run
+`docker compose up -d --force-recreate server`. This needs a server image that
+knows the entry; an older image ignores it and keeps trusting only the other
+addresses.
 
 ### Traefik (Docker labels)
 

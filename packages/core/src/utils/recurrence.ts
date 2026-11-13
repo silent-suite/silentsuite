@@ -212,9 +212,7 @@ function addInterval(civil: Date, freq: string, interval: number, civilDtstart: 
       result.setUTCDate(Math.min(originalDay, lastDay));
       break;
     }
-    case 'YEARLY':
-      result.setUTCFullYear(result.getUTCFullYear() + interval);
-      break;
+    // YEARLY is expanded per year from DTSTART by expandYearly.
   }
   return result;
 }
@@ -225,6 +223,123 @@ function addInterval(civil: Date, freq: string, interval: number, civilDtstart: 
  * comparison is decisive and no Intl conversion is needed.
  */
 const CIVIL_MARGIN_MS = 36 * 60 * 60 * 1000;
+
+/**
+ * Civil ms for the given fields. Unlike `Date.UTC`, a year 0-99 is not read as 1900-1999, so a
+ * civil year stays the year given (as the previous `setUTCFullYear` stepping kept it). Fields
+ * out of range roll over as with `Date.UTC` (day 0 is the last day of the previous month).
+ */
+function civilAt(year: number, month: number, day: number, h = 0, mi = 0, s = 0, ms = 0): number {
+  const c = new Date(0);
+  c.setUTCFullYear(year, month, day);
+  c.setUTCHours(h, mi, s, ms);
+  return c.getTime();
+}
+
+/**
+ * The candidate civil values of one year of a YEARLY rule, in order, at DTSTART's civil time of
+ * day in the expansion zone. Each year is built from DTSTART rather than from the previous
+ * occurrence, so a date that does not exist in a year (Feb 29) is skipped instead of moving to
+ * Mar 1. With both BYMONTH and BYMONTHDAY, every listed month and day is generated; a negative
+ * BYMONTHDAY counts back from the end of the month (-1 is the last day).
+ */
+function yearlyCandidates(rule: RRuleParts, civilDtstart: Date, year: number): number[] {
+  const at = (month: number, day: number): number => civilAt(
+    year, month, day,
+    civilDtstart.getUTCHours(), civilDtstart.getUTCMinutes(), civilDtstart.getUTCSeconds(), civilDtstart.getUTCMilliseconds(),
+  );
+  if (rule.bymonth?.length && rule.bymonthday?.length) {
+    const result: number[] = [];
+    const months = [...new Set(rule.bymonth)].filter((m) => m >= 1 && m <= 12).sort((a, b) => a - b);
+    for (const month of months) {
+      const lastDay = new Date(civilAt(year, month, 0)).getUTCDate();
+      const days = rule.bymonthday
+        .map((day) => (day < 0 ? lastDay + 1 + day : day))
+        .filter((day) => day >= 1 && day <= lastDay);
+      for (const day of [...new Set(days)].sort((a, b) => a - b)) result.push(at(month - 1, day));
+    }
+    return result;
+  }
+  const c = at(civilDtstart.getUTCMonth(), civilDtstart.getUTCDate());
+  return new Date(c).getUTCMonth() === civilDtstart.getUTCMonth() ? [c] : [];
+}
+
+/** Values {@link expandWithCivil} has already resolved for the expansion, passed to YEARLY. */
+interface YearlyExpansion {
+  zone: Zone;
+  rule: RRuleParts;
+  dtstart: Date;
+  exdateSet: Set<number>;
+  untilMs: number | undefined;
+  untilCivil: number | undefined;
+  rangeStartMs: number;
+  rangeEndMs: number;
+  rangeStartCivil: number;
+  rangeEndCivil: number;
+  civilDtstart: Date;
+  firstCivil: number;
+  maxIterations: number;
+}
+
+/**
+ * YEARLY expansion: per-year candidates on the expansion zone's calendar, with the same bounds,
+ * first-instant, filter, COUNT and EXDATE handling as the main loop in {@link expandWithCivil}.
+ */
+function expandYearly(x: YearlyExpansion): CivilOccurrence[] {
+  const { zone, rule } = x;
+  const results: CivilOccurrence[] = [];
+  const generated = Boolean(rule.bymonth?.length && rule.bymonthday?.length);
+  const interval = rule.interval >= 1 ? rule.interval : 1;
+  let count = 0;
+
+  for (let year = x.civilDtstart.getUTCFullYear(), i = 0; i < x.maxIterations; year += interval, i++) {
+    const yearStart = civilAt(year, 0, 1);
+    if (yearStart > x.rangeEndCivil + CIVIL_MARGIN_MS) break;
+    if (x.untilCivil !== undefined && yearStart > x.untilCivil + CIVIL_MARGIN_MS) break;
+
+    for (const candidate of yearlyCandidates(rule, x.civilDtstart, year)) {
+      // Host calendar: a date the host skipped entirely takes the real date it resolves to,
+      // as in the main loop.
+      const civil = zone === HOST_ZONE && !hostDateExists(candidate)
+        ? HOST_ZONE.toCivil(HOST_ZONE.fromCivil(candidate))
+        : candidate;
+      if (civil < x.firstCivil) continue;
+
+      // The supplied DTSTART instant is the first occurrence (see the main loop).
+      let instant: number | undefined = civil === x.firstCivil ? x.dtstart.getTime() : undefined;
+      const instantOf = (): number => (instant ??= zone.fromCivil(civil));
+
+      // Candidates are in civil order, so the first one past a bound ends the expansion.
+      if (x.untilMs !== undefined && x.untilCivil !== undefined) {
+        if (civil > x.untilCivil + CIVIL_MARGIN_MS) return results;
+        if (civil >= x.untilCivil - CIVIL_MARGIN_MS && instantOf() > x.untilMs) return results;
+      }
+      if (civil > x.rangeEndCivil + CIVIL_MARGIN_MS) return results;
+      if (civil >= x.rangeEndCivil - CIVIL_MARGIN_MS && instantOf() > x.rangeEndMs) return results;
+
+      const day = new Date(civil);
+      let matchesRule = true;
+      if (rule.byday && rule.byday.length > 0) matchesRule = matchesByday(day, rule.byday);
+      if (!generated && matchesRule && rule.bymonth && rule.bymonth.length > 0) {
+        matchesRule = rule.bymonth.includes(day.getUTCMonth() + 1);
+      }
+      if (!generated && matchesRule && rule.bymonthday && rule.bymonthday.length > 0) {
+        matchesRule = rule.bymonthday.includes(day.getUTCDate());
+      }
+      if (!matchesRule) continue;
+
+      // As in the main loop: COUNT applies to rule-generated candidates before EXDATE removal,
+      // independent of range.start.
+      count++;
+      if (civil >= x.rangeStartCivil - CIVIL_MARGIN_MS) {
+        const at = instantOf();
+        if (at >= x.rangeStartMs && !x.exdateSet.has(at)) results.push({ at, civil });
+      }
+      if (rule.count !== undefined && count >= rule.count) return results;
+    }
+  }
+  return results;
+}
 
 /**
  * Expand an RRULE into occurrence dates within a given DateRange.
@@ -327,6 +442,15 @@ function expandWithCivil(
   );
   const dtstartDay = Math.floor(civilDtstart.getTime() / DAY_MS);
   const firstCivil = civilDtstart.getTime();
+
+  if (rule.freq === 'YEARLY') {
+    return expandYearly({
+      zone, rule, dtstart, exdateSet, untilMs, untilCivil,
+      rangeStartMs, rangeEndMs, rangeStartCivil, rangeEndCivil,
+      civilDtstart, firstCivil, maxIterations: MAX_ITERATIONS,
+    });
+  }
+
   let current = new Date(firstCivil);
   let count = 0;
   let iterations = 0;

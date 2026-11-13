@@ -10,7 +10,14 @@ from etebase_server.myauth.models import UserType, get_typed_user_model
 from ..db_hack import django_db_cleanup_decorator
 from ..msgpack import MsgpackResponse, MsgpackRoute
 from ..stoken_handler import filter_by_stoken_and_limit
-from ..utils import PERMISSIONS_READ, PERMISSIONS_READWRITE, BaseModel, get_object_or_404, permission_responses
+from ..utils import (
+    PERMISSIONS_READ,
+    PERMISSIONS_READWRITE,
+    BaseModel,
+    clamp_list_limit,
+    get_object_or_404,
+    permission_responses,
+)
 from .authentication import get_authenticated_user
 from .collection import get_collection, verify_collection_admin
 
@@ -62,7 +69,7 @@ def member_list(
 ):
     queryset = queryset.order_by("id")
     result, new_stoken_obj, done = filter_by_stoken_and_limit(
-        iterator, limit, queryset, models.CollectionMember.stoken_annotation
+        iterator, clamp_list_limit(limit), queryset, models.CollectionMember.stoken_annotation
     )
     new_stoken = new_stoken_obj and new_stoken_obj.uid
 

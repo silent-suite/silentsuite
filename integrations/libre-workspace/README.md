@@ -114,7 +114,8 @@ the installer starts the server, setup does three things:
 Without this, the server ignores Caddy's `X-Forwarded-Proto` header and
 redirects every HTTPS request back to itself. Setup stops without guessing if
 the server is on more than one network, has no IPv4 gateway, or the installer
-wrote a different `TRUSTED_PROXY_IPS` value. The port stays published on
+wrote a `TRUSTED_PROXY_IPS` value other than `127.0.0.1` or
+`127.0.0.1,docker-gateway`. The port stays published on
 `127.0.0.1` only.
 
 The Caddyfile is changed by writing a staged copy beside it, with the same
