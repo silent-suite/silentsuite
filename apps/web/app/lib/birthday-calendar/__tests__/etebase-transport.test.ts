@@ -353,6 +353,30 @@ describe('etebase birthday transport', () => {
     expect(changed.changedBooks).toEqual(['book-1'])
   })
 
+  it('still fails closed on a listing with entries but no final stoken', async () => {
+    const item = (uid: string) => ({ uid, isDeleted: false, getContent: vi.fn(async () => 'X') })
+    const finals: Array<Array<{ data: unknown[]; stoken: string | null; done: boolean }>> = [
+      [{ data: [item('c1')], stoken: null, done: true }],
+      [{ data: [item('c1')], stoken: '', done: true }],
+      [{ data: [item('c1')], stoken: 'page-1', done: false }, { data: [], stoken: null, done: true }],
+    ]
+    for (const pages of finals) {
+      const calendar = collection({ uid: 'cal-1', type: 'etebase.vevent', accessLevel: 1, content: birthdayMarkerContent('active') })
+      const listed = account([calendar])
+      calendar.itemManager.list.mockReset()
+      for (const page of pages) calendar.itemManager.list.mockResolvedValueOnce(page)
+      const transport = createEtebaseBirthdayTransport(listed, gates())
+      await transport.listInventory()
+      await expect(transport.listItems('cal-1')).resolves.toEqual({ complete: false, stoken: null, items: [] })
+    }
+
+    const inventory = account([])
+    inventory.list.mockReset()
+    inventory.list.mockResolvedValueOnce({ data: [collection({ uid: 'cal-1', type: 'etebase.vevent', accessLevel: 1 })], stoken: null, done: true })
+    const listedInventory = await createEtebaseBirthdayTransport(inventory, gates()).listInventory()
+    expect(listedInventory).toEqual({ complete: false, inventoryToken: null, collections: [] })
+  })
+
   it('does not upload a new Birthdays calendar after the epoch drops during create', async () => {
     let current = true
     const upload = vi.fn()

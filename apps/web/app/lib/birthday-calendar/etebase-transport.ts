@@ -160,8 +160,10 @@ async function pageUntilDone<T>(
     take(page.data ?? [])
   }
   // A finished listing of a collection with no items has no stoken: the server
-  // has nothing to anchor one to. It is still complete, like on Android and Bridge.
-  return { complete: true, token: page.stoken ?? null, rows: [...byKey.values()] }
+  // has nothing to anchor one to. Only an empty listing may end without one.
+  const token = page.stoken || null
+  if (token === null && byKey.size > 0) return { complete: false }
+  return { complete: true, token, rows: [...byKey.values()] }
 }
 
 export function createEtebaseBirthdayTransport(account: AccountLike, gates: BirthdayGates): BirthdayTransport {
