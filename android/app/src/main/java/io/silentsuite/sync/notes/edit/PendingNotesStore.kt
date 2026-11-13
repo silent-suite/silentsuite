@@ -832,7 +832,8 @@ internal class PendingNotesStore private constructor(
      * for the rest of the process, so a late save that opens the store again gets this instance and is
      * refused instead of recreating the directory. A call after a failed one tries the deletion again.
      *
-     * It returns only once the directory is shown gone by two checks that agree ([shownGone]). Otherwise it
+     * It returns only once the directory is shown gone by two checks that agree ([shownGone]) and its removal is
+     * synced ([syncRemoval]), whoever removed it, so a retry that finds it gone still syncs. Otherwise it
      * throws IOException, whatever the deletion answered, since the deletion counts a file it could not
      * remove as gone when File.exists() says so, and that answers false for a check that failed as well. A
      * caller may rely on a clear only when it returned, and a run takes the store for cleared in full only then
@@ -850,6 +851,7 @@ internal class PendingNotesStore private constructor(
             withdrawAcknowledgement()
             dir.deleteRecursively()
             if (!shownGone(dir)) throw IOException("could not clear the pending store")
+            syncRemoval()
             clearReturned = true
             finishes++
         }

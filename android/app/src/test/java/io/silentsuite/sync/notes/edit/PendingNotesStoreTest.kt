@@ -3360,6 +3360,38 @@ class PendingNotesStoreTest {
         s.unregister()
     }
 
+    @Test fun `a clear syncs the removal of the directory last`() {
+        val s = identityStore(syncDirectory = recordingSync)
+        s.saveLocal("n1", "b1", "r1", blob("cleared"), isCreate = false)
+        s.putNotebook("b1", blob("k"))
+        steps.clear()
+        s.clearAll()
+        assertFalse(s.dir.exists())
+        assertEquals("the removal of the directory is synced last", "sync notes-pending", steps.last())
+        assertTrue(s.clearedInFull())
+    }
+
+    @Test fun `a clear whose removal of the directory is not synced does not return, and its retry syncs it`() {
+        val s = identityStore(syncDirectory = recordingSync)
+        s.saveLocal("n1", "b1", "r1", blob("cleared"), isCreate = false)
+        parentSyncFails = true
+        assertThrows(java.io.IOException::class.java) { s.clearAll() }
+        assertFalse("the directory went", s.dir.exists())
+        assertFalse("but the clear did not finish", s.clearedInFull())
+        assertTrue(s.clearStopped())
+
+        // A retry finds the directory gone and removes nothing, and still syncs its removal before it returns.
+        steps.clear()
+        assertThrows(java.io.IOException::class.java) { s.clearAll() }
+        assertEquals(listOf("sync notes-pending"), steps)
+        assertFalse(s.clearedInFull())
+        parentSyncFails = false
+        steps.clear()
+        s.clearAll()
+        assertEquals(listOf("sync notes-pending"), steps)
+        assertTrue(s.clearedInFull())
+    }
+
     @Test fun `after a restart, a discard that finds the directory gone syncs its removal before the permit goes`() {
         val noBackup = tmp.newFolder("no_backup")
         val s = identityStore(noBackup, syncDirectory = recordingSync)
