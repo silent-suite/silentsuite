@@ -556,20 +556,21 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                 return null
             }
 
-            val resourceClient = HttpClient.Builder(context).setForeground(false).build().okHttpClient
-
-            try {
-                val response = resourceClient.newCall(Request.Builder()
-                        .get()
-                        .url(httpUrl)
-                        .build()).execute()
-
-                val body = response.body
-                if (body != null) {
-                    return body.bytes()
+            // Closing the client releases its certificate manager's service binding.
+            HttpClient.Builder(context).setForeground(false).build().use { resourceClient ->
+                try {
+                    resourceClient.okHttpClient.newCall(Request.Builder()
+                            .get()
+                            .url(httpUrl)
+                            .build()).execute().use { response ->
+                        val body = response.body
+                        if (body != null) {
+                            return body.bytes()
+                        }
+                    }
+                } catch (e: IOException) {
+                    Logger.log.log(Level.SEVERE, "Couldn't download external resource", e)
                 }
-            } catch (e: IOException) {
-                Logger.log.log(Level.SEVERE, "Couldn't download external resource", e)
             }
 
             return null

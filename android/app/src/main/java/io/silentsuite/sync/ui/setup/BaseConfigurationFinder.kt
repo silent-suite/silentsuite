@@ -16,11 +16,6 @@ import io.silentsuite.sync.log.Logger
 import java.net.URI
 
 class BaseConfigurationFinder(protected val context: Context, protected val credentials: LoginCredentials) {
-    protected var httpClient: okhttp3.OkHttpClient
-
-    init {
-        httpClient = HttpClient.Builder(context).build().okHttpClient
-    }
 
     fun findInitialConfiguration(): Configuration {
         var exception: Throwable? = null
@@ -29,9 +24,12 @@ class BaseConfigurationFinder(protected val context: Context, protected val cred
 
         var etebaseSession: String? = null
         try {
-            val client = Client.create(httpClient, uri.toString())
-            val etebase = Account.login(client, credentials.userName, credentials.password)
-            etebaseSession = etebase.save(null)
+            // Closing the client releases its certificate manager's service binding.
+            HttpClient.Builder(context).build().use { httpClient ->
+                val client = Client.create(httpClient.okHttpClient, uri.toString())
+                val etebase = Account.login(client, credentials.userName, credentials.password)
+                etebaseSession = etebase.save(null)
+            }
         } catch (e: java.lang.Exception) {
             Logger.log.warning("Configuration lookup failed: ${e.javaClass.name}")
             exception = e
