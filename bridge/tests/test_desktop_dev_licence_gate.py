@@ -1691,3 +1691,41 @@ def test_gate_refuses_os_package_drift(gate, tmp_path, case):
     else:
         policy["runtime_files"][0]["os_package"]["source"] = "ubuntu:libsynthetic_0.9-1"
     assert gate.check(facts, policy, archive, sources), f"{case} was accepted"
+
+
+# --- Admitted OS package versions for the package build (drift found at 5e65bd45) ------
+# bridge/dev-build/os_packages.py: apt_pins(policy) -> sorted unique "package=version" from the
+# runtime rules' os_package pins; apt_source(records) -> the snapshot.ubuntu.com apt lines of
+# records["ubuntu_archive"]. Malformed input raises os_packages.InputError.
+OS_PACKAGES = DEV_BUILD / "os_packages.py"
+
+
+@pytest.fixture(scope="module")
+def ospkg():
+    _require()
+    return _load_helper(OS_PACKAGES, "os_packages")
+
+
+def test_apt_pins_lists_each_pinned_package_once(ospkg):
+    policy = {"runtime_files": [
+        {"pattern": "_internal/a.so", "os_package": {"package": "liba1:amd64", "version": "1.0-1", "source": "s"}},
+        {"pattern": "_internal/b.so", "os_package": {"package": "liba1:amd64", "version": "1.0-1", "source": "s"}},
+        {"pattern": "_internal/c.so", "os_package": {"package": "libc2:amd64", "version": "2:2.0-3ubuntu1", "source": "t"}},
+        {"pattern": "_internal/d.so"}]}
+    assert ospkg.apt_pins(policy) == ["liba1:amd64=1.0-1", "libc2:amd64=2:2.0-3ubuntu1"]
+
+
+@pytest.mark.parametrize("case", ["two-versions", "unsafe-name"])
+def test_apt_pins_refuses_ambiguous_or_unsafe_pins(ospkg, case):
+    pins = [{"package": "liba1:amd64", "version": "1.0-1", "source": "s"}]
+    if case == "two-versions":
+        pins.append({"package": "liba1:amd64", "version": "1.0-2", "source": "s"})
+    else:
+        pins[0]["package"] = "liba1; rm"
+    with pytest.raises(ospkg.InputError):
+        ospkg.apt_pins({"runtime_files": [{"pattern": f"p{i}", "os_package": p} for i, p in enumerate(pins)]})
+
+
+def test_apt_source_names_the_admitted_snapshot(ospkg):
+    lines = ospkg.apt_source({"ubuntu_archive": UBUNTU})
+    assert lines == [f"deb https://snapshot.ubuntu.com/ubuntu/{UBUNTU['snapshot']} jammy-updates main"]

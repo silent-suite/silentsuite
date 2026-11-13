@@ -374,3 +374,14 @@ def test_dev_caller_qualifies_the_exact_package_by_relinking_before_upload(calle
                    "--negative-control"):
         assert needed in relink, needed
     assert "if" not in steps["relink"], "the relinking control is never skipped"
+
+
+def test_dev_caller_builds_linux_with_the_admitted_os_package_versions(caller):
+    # The gate refuses OS libraries that drifted from the admitted versions; the package
+    # job installs exactly those versions from the admitted snapshot before it builds.
+    steps = _steps(caller["jobs"]["package"])
+    ids = [step.get("id") for step in steps]
+    pin = [i for i, step in enumerate(steps) if "os_packages.py apt-pins" in step.get("run", "")]
+    assert len(pin) == 1 and pin[0] < ids.index("build"), "OS versions must be pinned before the build"
+    run = steps[pin[0]]["run"]
+    assert "os_packages.py apt-source" in run and "--allow-downgrades" in run
