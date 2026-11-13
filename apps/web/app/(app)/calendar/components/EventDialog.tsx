@@ -299,12 +299,20 @@ export function EventDialog({
   const isRecurring = isEdit && !!event.recurrenceRule
   const effectiveInstanceDate = instanceDate ?? event?.startDate ?? new Date()
 
-  const defaultStart = isEdit ? event.startDate : (initialStartDate ?? new Date())
+  // A generated birthday is read-only, so it shows the clicked occurrence rather than the
+  // series start (a fixed leap year that is neither the birth year nor this year).
+  const managedOccurrenceShift = isEdit && isManagedEvent && instanceDate
+    ? instanceDate.getTime() - event.startDate.getTime()
+    : 0
+  const defaultStart = isEdit
+    ? new Date(event.startDate.getTime() + managedOccurrenceShift)
+    : (initialStartDate ?? new Date())
+  const editEnd = isEdit ? new Date(event.endDate.getTime() + managedOccurrenceShift) : undefined
   // For all-day events, `event.endDate` follows iCal DTEND;VALUE=DATE convention
   // (exclusive — the day *after* the last day of the event). The form picker shows
   // the inclusive last day, so subtract one day before formatting.
-  const defaultEnd = isEdit
-    ? (event.allDay ? inclusiveAllDayEndDate(event.endDate) : event.endDate)
+  const defaultEnd = isEdit && editEnd
+    ? (event.allDay ? inclusiveAllDayEndDate(editEnd) : editEnd)
     : (initialEndDate ?? new Date(defaultStart.getTime() + 30 * 60 * 1000))
 
   // Initial all-day flag — needed before form state so we can pick the right
@@ -325,7 +333,7 @@ export function EventDialog({
   const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
   // A DST-gap start keeps its intended wall clock, which the instant alone would show shifted.
-  const startWallClock = isEdit ? validStartWallClock(event) : undefined
+  const startWallClock = isEdit && managedOccurrenceShift === 0 ? validStartWallClock(event) : undefined
   const initialStartTime = startWallClock
     ? `${startWallClock.slice(9, 11)}:${startWallClock.slice(11, 13)}`
     : formatTimeForInput(defaultStart, initialFormTz)
@@ -397,6 +405,9 @@ export function EventDialog({
     () => listedCalendars.filter((calendar) => !managedCalendarIds.includes(calendar.id)),
     [listedCalendars, managedCalendarIds],
   )
+  const managedCalendar = isManagedEvent
+    ? listedCalendars.find((calendar) => calendar.id === event?.calendarId)
+    : undefined
   const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
   const [selectedCalendarId, setSelectedCalendarId] = useState(
     isEdit ? (event.calendarId ?? defaultCalendarId) : defaultCalendarId,
@@ -821,7 +832,7 @@ export function EventDialog({
         <div
           ref={dialogRef}
           role="dialog"
-          aria-label={isEdit ? 'Edit event' : 'New event'}
+          aria-label={isManagedEvent ? 'Birthday' : isEdit ? 'Edit event' : 'New event'}
           aria-modal="true"
           className="flex h-full w-full flex-col overflow-hidden bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-2xl shadow-black/25 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[88vh] sm:w-full sm:max-w-2xl sm:rounded-3xl sm:border sm:border-[rgb(var(--border))] dark:shadow-black/60"
         >
@@ -837,18 +848,21 @@ export function EventDialog({
                 onClick={onClose}
                 className={`shrink-0 rounded-full border border-transparent px-3 py-2 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:border-[rgb(var(--border))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] ${focusRing}`}
               >
-                Cancel
+                {isManagedEvent ? 'Close' : 'Cancel'}
               </button>
 
               <div className="flex min-w-0 flex-1 flex-col items-center px-1 text-center">
                 <span className="text-base font-semibold tracking-tight text-[rgb(var(--foreground))]">
-                  {isEdit ? 'Edit event' : 'New event'}
+                  {isManagedEvent ? 'Birthday' : isEdit ? 'Edit event' : 'New event'}
                 </span>
                 <span className="mt-0.5 max-w-full truncate text-xs text-[rgb(var(--muted))] sm:text-sm">
                   {subtitle}
                 </span>
               </div>
 
+              {isManagedEvent ? (
+                <span className="w-[4.25rem] shrink-0" aria-hidden="true" />
+              ) : (
               <button
                 onClick={() => void handleSave()}
                 disabled={!canSave || saving || !canWrite}
@@ -857,6 +871,7 @@ export function EventDialog({
               >
                 {saving ? 'Saving…' : 'Done'}
               </button>
+              )}
             </div>
           </div>
 
@@ -901,6 +916,7 @@ export function EventDialog({
                     />
                   </div>
 
+                  {!(isManagedEvent && categories.length === 0) && (
                   <div className="flex items-start gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2.5 sm:min-w-[14rem]">
                     <Tag className={`${iconClass} mt-1`} />
                     <div className="min-w-0 flex-1">
@@ -913,9 +929,28 @@ export function EventDialog({
                       />
                     </div>
                   </div>
+                  )}
                 </div>
 
-                {calendarLists.length > 0 && (
+                {isManagedEvent && managedCalendar && (
+                  <div className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <CalendarDays className={iconClass} />
+                      <span className="text-sm font-medium text-[rgb(var(--foreground))]">Calendar</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pl-0 sm:pl-6">
+                      <span
+                        className="inline-flex min-h-9 items-center gap-2 rounded-full border border-transparent px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-black/10"
+                        style={{ backgroundColor: managedCalendar.color }}
+                      >
+                        <span className="h-2.5 w-2.5 rounded-full ring-1 ring-white/40" style={{ backgroundColor: managedCalendar.color }} />
+                        {managedCalendar.name}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {!isManagedEvent && calendarLists.length > 0 && (
                   <div className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-3">
                     <div className="flex items-center gap-2">
                       <CalendarDays className={iconClass} />

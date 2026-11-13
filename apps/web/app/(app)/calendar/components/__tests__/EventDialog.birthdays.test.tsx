@@ -58,9 +58,29 @@ describe('EventDialog with a managed Birthdays calendar (#738)', () => {
 
   it('shows a generated birthday read-only, with no save or delete', () => {
     renderWithIntl(<EventDialog mode="edit" event={birthday} onClose={vi.fn()} />)
-    expect((screen.getByRole('button', { name: 'Done' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    expect(screen.getByRole('dialog', { name: 'Birthday' })).toBeTruthy()
+    expect(screen.queryByText('Edit event')).toBeNull()
     expect(screen.getByText(/edit the contact/i)).toBeTruthy()
     expect((screen.getByLabelText('Event title') as HTMLInputElement).readOnly).toBe(true)
     expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
+  })
+
+  it('shows the clicked occurrence, the Birthdays calendar and no empty labels', () => {
+    renderWithIntl(<EventDialog mode="edit" event={birthday} instanceDate={new Date(2027, 2, 15)} onClose={vi.fn()} />)
+    expect(screen.getByText(/2027/)).toBeTruthy()
+    expect(screen.queryByText(/1972/)).toBeNull()
+    expect(screen.getByText('Birthdays')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /^Work$/ })).toBeNull()
+    expect(screen.queryByLabelText('Event labels')).toBeNull()
+  })
+
+  it('keeps the series start and normal header for an ordinary recurring event', () => {
+    const ordinary = { ...birthday, id: 'ev-1', uid: 'ev-1', title: 'Standup', calendarId: 'cal-a' } as CalendarEvent
+    renderWithIntl(<EventDialog mode="edit" event={ordinary} instanceDate={new Date(2027, 2, 15)} onClose={vi.fn()} />)
+    expect(screen.getByText('Edit event')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy()
+    expect(screen.queryByText(/2027/)).toBeNull()
   })
 })
