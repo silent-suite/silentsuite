@@ -54,6 +54,7 @@ class ViewCollectionFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        hideItemsForNotebook(view, requireIdentity().collectionType)
         runtimeFixture(requireContext(), requireIdentity())?.let { fixture ->
             initFixtureUi(view, fixture)
             return
@@ -82,6 +83,19 @@ class ViewCollectionFragment : Fragment() {
         }
     }
 
+    /**
+     * A notebook shows no heading, count or item list here: they read the cache without the Notes overlay
+     * (design 3.5), so they would show the server's text, and deleted notes, where the notebook list shows a
+     * change waiting on this device. Notes are read in the Notes screens. The type comes from the identity, as
+     * for the menu, so this holds before the collection loads.
+     */
+    private fun hideItemsForNotebook(container: View, type: String?) {
+        if (type != Constants.ETEBASE_TYPE_NOTES) return
+        for (id in listOf(R.id.recent_activity_title, R.id.stats_row, R.id.stats, R.id.progressBar, R.id.list_entries_container)) {
+            container.findViewById<View>(id)?.visibility = View.GONE
+        }
+    }
+
     private fun initFixtureUi(container: View, fixture: RuntimeCollectionFixture) {
         (activity as? BaseActivity?)?.supportActionBar?.title = fixture.name
         container.findViewById<TextView>(R.id.display_name).text = fixture.name
@@ -96,6 +110,7 @@ class ViewCollectionFragment : Fragment() {
         stats.text = if (fixture.itemContents.isEmpty()) getString(R.string.collection_recent_activity_none)
         else resources.getQuantityString(R.plurals.collection_recent_activity_items, fixture.itemContents.size, fixture.itemContents.size)
         container.findViewById<View>(R.id.progressBar).visibility = View.GONE
+        hideItemsForNotebook(container, fixture.type)
     }
 
     private fun initUi(container: View, cachedCollection: CachedCollection) {
@@ -140,7 +155,7 @@ class ViewCollectionFragment : Fragment() {
             owner.visibility = View.VISIBLE
             owner.text = getString(R.string.collection_shared_with_us)
         }
-
+        hideItemsForNotebook(container, requireIdentity().collectionType)
     }
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {

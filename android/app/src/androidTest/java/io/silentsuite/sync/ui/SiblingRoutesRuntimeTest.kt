@@ -844,6 +844,56 @@ class SiblingRoutesRuntimeTest {
         }} finally { ViewCollectionFragment.collectionExportCompletionOverride=null; ViewCollectionFragment.collectionExportOverride=null; ViewCollectionFragment.collectionExportDocumentLauncherOverride=null; runtimeFixtureOverride=null; removeAccountAndWait(manager, account) }
     }
 
+    /**
+     * A notebook on the generic collection screen shows its header but no heading, count or item list: they read
+     * the cache without the Notes overlay, so they would show the server's text where the device has newer local
+     * text. The menu offers neither import nor export, as before. Both hold again after a recreation.
+     */
+    @Test
+    fun aNotebookOnTheCollectionScreenShowsNoItemListOrCount() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = addAccount(manager, "notes-collection-view", "notes-collection-view-generation")
+        val state = RuntimeCollectionFixture("notebook-uid", Constants.ETEBASE_TYPE_NOTES, "Handrun notebook", "Notebook description",
+            0xff996633.toInt(), com.etebase.client.CollectionAccessLevel.Admin, listOf("one", "two", "three"), emptyList())
+        runtimeFixtureOverride = exactFixture(account, "notes-collection-view-generation", state.uid, null) { state }
+        fun assertNoItems(activity: CollectionActivity) {
+            assertEquals(state.name, activity.findViewById<TextView>(R.id.display_name).text.toString())
+            assertEquals(state.description, activity.findViewById<TextView>(R.id.description).text.toString())
+            for ((what, id) in listOf("heading" to R.id.recent_activity_title, "count row" to R.id.stats_row, "count" to R.id.stats,
+                    "progress" to R.id.progressBar, "item list" to R.id.list_entries_container)) {
+                assertEquals("no $what for a notebook", View.GONE, activity.findViewById<View>(id).visibility)
+            }
+            val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as ViewCollectionFragment
+            val menu = MenuBuilder(activity)
+            activity.menuInflater.inflate(R.menu.fragment_view_collection, menu)
+            fragment.onPrepareOptionsMenu(menu)
+            assertFalse("no import for a notebook", menu.findItem(R.id.on_import).isVisible)
+            assertFalse("no export for a notebook", menu.findItem(R.id.on_export).isVisible)
+        }
+        try {
+            ActivityScenario.launchActivityForResult<CollectionActivity>(
+                CollectionActivity.newIntent(context, account, "notes-collection-view-generation", state.uid)).use { s ->
+                waitUntil("notebook view") {
+                    var ok = false
+                    s.onActivity { ok = it.findViewById<TextView>(R.id.display_name)?.text?.toString() == state.name }
+                    ok
+                }
+                s.onActivity { assertNoItems(it) }
+                s.recreate()
+                waitUntil("notebook view after recreation") {
+                    var ok = false
+                    s.onActivity { ok = it.findViewById<TextView>(R.id.display_name)?.text?.toString() == state.name }
+                    ok
+                }
+                s.onActivity { assertNoItems(it) }
+            }
+        } finally {
+            runtimeFixtureOverride = null
+            removeAccountAndWait(manager, account)
+        }
+    }
+
     @Test
     fun collectionViewRendersRecreatesAndReturnsForExactCollection() {
         val context=InstrumentationRegistry.getInstrumentation().targetContext; val manager=AccountManager.get(context); val account=addAccount(manager,"ac41-view","ac41-view-generation"); val state=fixture()
@@ -931,8 +981,24 @@ class SiblingRoutesRuntimeTest {
             fun shownItems(activity: CollectionActivity) =
                 androidx.lifecycle.ViewModelProvider(activity)[ItemsViewModel::class.java].value
 
-            // The ordinary screen leaves the deleted contact out; calendars, tasks and notes keep theirs.
-            (mapOf(Constants.ETEBASE_TYPE_ADDRESS_BOOK to book) + siblings).forEach { (type, uid) ->
+            // The ordinary screen leaves the deleted contact out; calendars and tasks keep theirs. A notebook shows no
+            // item list or count at all, over the real cache: none is loaded for it, since the list would read the cache
+            // without the Notes overlay.
+            ActivityScenario.launch<CollectionActivity>(CollectionActivity.newIntent(context, account, generation,
+                siblings.getValue(Constants.ETEBASE_TYPE_NOTES))).use { s ->
+                waitUntil("the notebook's header") {
+                    var ok = false
+                    s.onActivity { a -> ok = a.findViewById<TextView>(R.id.display_name)?.text?.toString() == "Recovery notes" }
+                    ok
+                }
+                s.onActivity { a ->
+                    assertEquals("no item is loaded for a notebook", null, shownItems(a))
+                    for (id in listOf(R.id.recent_activity_title, R.id.stats_row, R.id.stats, R.id.progressBar, R.id.list_entries_container)) {
+                        assertEquals(a.resources.getResourceEntryName(id), View.GONE, a.findViewById<View>(id).visibility)
+                    }
+                }
+            }
+            (mapOf(Constants.ETEBASE_TYPE_ADDRESS_BOOK to book) + siblings.filterKeys { it != Constants.ETEBASE_TYPE_NOTES }).forEach { (type, uid) ->
                 ActivityScenario.launch<CollectionActivity>(CollectionActivity.newIntent(context, account, generation, uid)).use { s ->
                     val expected = if (type == Constants.ETEBASE_TYPE_ADDRESS_BOOK) 1 else 2
                     waitUntil("ordinary list of $type") {

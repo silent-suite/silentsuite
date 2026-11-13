@@ -141,7 +141,10 @@ class CollectionActivity() : BaseActivity() {
                         return@observe
                     }
                     val presentation = if (route.recovery) ItemPresentation.DELETED_CONTACTS else ItemPresentation.ORDINARY
-                    itemsModel.loadItems(this, route.account, route.creationId, route.collectionUid, accountHolder, cachedCollection, presentation)
+                    // A notebook's items are not shown here (ViewCollectionFragment), so none is decrypted for it.
+                    if (cachedCollection.collectionType != Constants.ETEBASE_TYPE_NOTES) {
+                        itemsModel.loadItems(this, route.account, route.creationId, route.collectionUid, accountHolder, cachedCollection, presentation)
+                    }
                     if (installInitialView) {
                         installInitialView = false
                         val exactIdentity = CollectionLifecycleIdentity.existing(

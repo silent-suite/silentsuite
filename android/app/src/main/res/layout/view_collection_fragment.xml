@@ -16,7 +16,10 @@
             android:layout_marginTop="@dimen/spacing_16"
             android:layout_marginEnd="@dimen/spacing_16" />
 
+        <!-- The heading, the count and the item list are hidden for a notebook: they read the cache without
+             the Notes overlay, so they would show server text where the device has newer local text. -->
         <TextView
+            android:id="@+id/recent_activity_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingStart="@dimen/spacing_16"
@@ -36,6 +39,7 @@
             android:visibility="gone" />
 
         <LinearLayout
+            android:id="@+id/stats_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
