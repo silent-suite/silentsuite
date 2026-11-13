@@ -88,7 +88,8 @@ export interface BirthdayTransport {
    */
   checkSourceTokens?(tokens: {
     inventoryToken: string
-    books: Array<{ bookUid: string; stoken: string }>
+    /** stoken is null for a book that was empty when it was read. */
+    books: Array<{ bookUid: string; stoken: string | null }>
   }): Promise<{ complete: boolean; inventoryChanged: boolean; changedBooks: string[] }>
   /** Local create plus upload of a private marked calendar. No invitation. */
   createBirthdayCalendar?(input: { name: string; content: string }): Promise<
@@ -210,7 +211,8 @@ async function reconcileOnce(input: {
     const afterBook = gateBlock(input.gates)
     if (afterBook) return skipped(afterBook, sourceTokens)
     sourceTokens.books.push({ bookUid: book.uid, stoken: page.stoken })
-    if (!page.complete || page.stoken === null) return failed('incomplete-book', sourceTokens)
+    // An empty book has no stoken; the post-check then lists it from the start.
+    if (!page.complete || (page.stoken === null && page.items.length > 0)) return failed('incomplete-book', sourceTokens)
     if (page.items.some((item) => item.content === null)) return failed('unreadable-contact', sourceTokens)
     sourceBooks.push({
       bookUid: book.uid,
