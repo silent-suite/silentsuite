@@ -10,8 +10,8 @@ const mocks = vi.hoisted(() => ({
   deleteEvent: vi.fn(),
   preferences: { defaultReminder: 'none', timeFormat: '24h', defaultTimezone: 'UTC', dateFormat: 'system' },
   calendars: [
-    { id: 'bday-1', name: 'Birthdays', color: '#f59e0b', visible: true },
-    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true },
+    { id: 'bday-1', name: 'Birthdays', color: '#f59e0b', visible: true, accessLevel: 1 },
+    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true, accessLevel: 2 },
   ],
 }))
 
