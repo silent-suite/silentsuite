@@ -202,4 +202,5 @@ export {
   gapWallClock,
   validStartWallClock,
   eventOccurrenceWallClock,
+  recurrenceRuleFrom,
 } from './models/calendar-event.js';

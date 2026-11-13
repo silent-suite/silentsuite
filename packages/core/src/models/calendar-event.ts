@@ -1,7 +1,7 @@
 import { parseVEvent, generateVEvent, partitionRetainedRDates } from '../utils/ical-parser.js';
 import type { VEvent, VAlarm } from '../utils/ical-parser.js';
 import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
-import { expandRecurrence, occurrenceWallClock } from '../utils/recurrence.js';
+import { expandRecurrence, occurrenceWallClock, occurrencesBefore } from '../utils/recurrence.js';
 import type { DateRange } from './types.js';
 
 export interface CalendarEvent {
@@ -219,6 +219,27 @@ export function recurrenceTimeZone(
   if (event.timezone) return event.timezone;
   if (event.floating === true) return undefined;
   return 'UTC';
+}
+
+/**
+ * The RRULE for a series that continues `master` from its occurrence at `instance` (a "this and
+ * future" split). A COUNT keeps only the occurrences still to come from `instance` on, so the two
+ * series together have as many occurrences as the original; other rules are returned unchanged.
+ */
+export function recurrenceRuleFrom(master: CalendarEvent, instance: Date): string | null {
+  const rule = master.recurrenceRule;
+  if (!rule) return rule;
+  const parts = rule.split(';');
+  const countIndex = parts.findIndex((part) => /^COUNT=/i.test(part));
+  if (countIndex === -1) return rule;
+  const count = Number.parseInt(parts[countIndex]!.slice('COUNT='.length), 10);
+  if (!Number.isFinite(count)) return rule;
+  const before = occurrencesBefore(rule, master.startDate, instance, {
+    timeZone: recurrenceTimeZone(master),
+    startWallClock: validStartWallClock(master),
+  });
+  parts[countIndex] = `COUNT=${Math.max(1, count - before)}`;
+  return parts.join(';');
 }
 
 /**
