@@ -21,7 +21,9 @@ Rules (each fails closed):
   file recorded with text and SHA256 and preserved under NOTICES/ with identical
   bytes (by hash, not by filename); no declared licence file missing; no duplicates;
 - unmapped files: each matches a runtime_files pattern with an allowed licence; a rule
-  that pins "sha256"/"size" matches only a file with exactly those facts;
+  that pins "sha256"/"size" matches only a file with exactly those facts; a rule with
+  "os_package" {package, version, source} needs the facts' dpkg origin of that exact
+  package and version, and "source" among the offered source archives;
 - unmapped modules: each has a runtime_modules rule by exact name with an allowed
   licence; a rule with typecode/toc_sources_exactly needs facts["module_sources"] to
   be exactly those sources, each with exactly that typecode;
@@ -216,6 +218,8 @@ class _Check:
                 exact = isinstance(rule.get("sha256"), str) and SHA256.match(rule["sha256"]) is not None
                 self.licence(rule.get("licence"), f"unmapped file {path}", pinned=exact)
                 self.pinned(path, rule, observed.get(path))
+                if "os_package" in rule:
+                    self.os_package(path, rule["os_package"])
 
     def pinned(self, path, rule, entry) -> None:
         """A rule that pins "sha256" and/or "size" covers only that exact file."""
@@ -232,6 +236,22 @@ class _Check:
             self.fail(f"unmapped file {path}: SHA256 {entry.get('sha256')} is not the reviewed {digest}")
         if "size" in rule and entry.get("size") != size:
             self.fail(f"unmapped file {path}: {entry.get('size')} bytes, not the reviewed {size}")
+
+    def os_package(self, path, pin) -> None:
+        """The file must come from exactly this dpkg package and version, whose source is offered."""
+        origin = (self.facts.get("file_origins") or {}).get(path) or {}
+        if not isinstance(pin, dict) or not all(isinstance(pin.get(k), str) and pin[k]
+                                                for k in ("package", "version", "source")):
+            self.fail(f"unmapped file {path}: malformed os_package pin")
+            return
+        if origin.get("class") != "os-package":
+            self.fail(f"unmapped file {path}: the facts do not record it as an OS package file")
+        elif (origin.get("package"), origin.get("version")) != (pin["package"], pin["version"]):
+            self.fail(f"unmapped file {path}: from {origin.get('package')} {origin.get('version')}, not the reviewed "
+                      f"{pin['package']} {pin['version']}")
+        names = {a.get("name") for a in self.policy.get("source_archives") or [] if isinstance(a, dict)}
+        if pin["source"] not in names:
+            self.fail(f"unmapped file {path}: its source {pin['source']} is not among the offered source archives")
 
     def runtime_modules(self) -> None:
         rules = {}

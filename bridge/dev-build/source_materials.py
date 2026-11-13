@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import lzma
 import posixpath
 import re
 import subprocess
@@ -101,12 +102,118 @@ def _download(url: str, target: Path) -> None:
             time.sleep(5 * (attempt + 1))
 
 
-def fetch(rows, directory: Path) -> None:
+def fetch(rows, directory: Path, archive=None) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     for row in rows:
         _download(row["url"], directory / row["file"])
         if "sigstore" in row:
             _download(row["sigstore"]["bundle_url"], directory / _bundle_name(row))
+    if archive and _ubuntu_rows(rows):
+        base = f"https://snapshot.ubuntu.com/ubuntu/{archive['snapshot']}/dists"
+        for suite in archive["suites"]:
+            target = directory / "ubuntu-archive" / suite
+            target.mkdir(parents=True, exist_ok=True)
+            _download(f"{base}/{suite}/InRelease", target / "InRelease")
+            for component in archive["components"]:
+                _download(f"{base}/{suite}/{component}/source/Sources.xz", target / f"{component}-Sources.xz")
+
+
+# --- Ubuntu archive chain ------------------------------------------------------------
+# Ubuntu signs each suite's InRelease with its archive key. The signed text lists the
+# SHA256 of every Sources index; Sources lists each source package's .dsc and files; each
+# .dsc lists its files again. A launchpad.net row is verified only through that chain.
+UBUNTU_HOST = "launchpad.net"
+SNAPSHOT = re.compile(r"^\d{8}T\d{6}Z$")
+NAME = re.compile(r"^[a-z0-9-]+$")
+
+
+def _ubuntu_rows(rows) -> list[dict]:
+    return [r for r in rows if urllib.parse.urlsplit(r["url"]).netloc == UBUNTU_HOST]
+
+
+def gpgv_check(inrelease, keyring) -> tuple[str, str]:
+    """The signed text of an InRelease and the signing key's fingerprint, via gpgv."""
+    output = Path(str(inrelease) + ".verified")
+    done = subprocess.run(["gpgv", "--status-fd", "1", "--keyring", str(keyring), "--output", str(output),
+                           str(inrelease)], capture_output=True, text=True, timeout=120)
+    signed = [line.split()[2] for line in done.stdout.splitlines() if line.startswith("[GNUPG:] VALIDSIG ")]
+    if done.returncode != 0 or len(signed) != 1 or not output.is_file():
+        raise InputError(f"{Path(inrelease).parent.name}: InRelease signature did not verify")
+    return output.read_text(encoding="utf-8"), signed[0]
+
+
+def _checksums(text: str) -> list[tuple[str, int, str]]:
+    match = re.search(r"^Checksums-Sha256:\n((?:[ \t].*\n?)+)", text, re.M)
+    if not match:
+        return []
+    entries = []
+    for line in match.group(1).splitlines():
+        parts = line.split()
+        if len(parts) == 3:
+            entries.append((parts[0], int(parts[1]), parts[2]))
+    return entries
+
+
+def _release_hashes(text: str) -> dict[str, str]:
+    hashes, inside = {}, False
+    for line in text.splitlines():
+        if line.startswith("SHA256:"):
+            inside = True
+            continue
+        if inside and line.startswith(" "):
+            parts = line.split()
+            if len(parts) == 3:
+                hashes[parts[2]] = parts[0]
+        elif inside:
+            break
+    return hashes
+
+
+def _verify_ubuntu(rows, directory: Path, archive, archive_check) -> dict:
+    """Signature records for every launchpad.net row, or InputError."""
+    if not archive:
+        raise InputError("Ubuntu source rows need the records' ubuntu_archive settings")
+    if not SNAPSHOT.match(str(archive.get("snapshot", ""))) or not archive.get("keyring") \
+            or not all(NAME.match(str(x)) for x in archive.get("suites", []) + archive.get("components", [])):
+        raise InputError("malformed ubuntu_archive settings")
+    stanzas = []  # (suite, component, fingerprint, entries)
+    for suite in archive["suites"]:
+        folder = directory / "ubuntu-archive" / suite
+        release, fingerprint = archive_check(folder / "InRelease", archive["keyring"])
+        hashes = _release_hashes(release)
+        for component in archive["components"]:
+            data = (folder / f"{component}-Sources.xz").read_bytes()
+            if hashlib.sha256(data).hexdigest() != hashes.get(f"{component}/source/Sources.xz"):
+                raise InputError(f"{suite}/{component}: Sources.xz does not match the signed InRelease")
+            for text in lzma.decompress(data).decode("utf-8", "replace").split("\n\n"):
+                entries = _checksums(text + "\n")
+                if entries:
+                    stanzas.append((suite, component, fingerprint, entries))
+    wanted = {r["file"]: r for r in _ubuntu_rows(rows)}
+    signed = {}
+    for name, row in wanted.items():
+        if not name.endswith(".dsc"):
+            continue
+        key = (row["sha256"], row["bytes"], name)
+        matches = [s for s in stanzas if key in s[3]]
+        if not matches:
+            raise InputError(f"{name}: not listed with this SHA256 and size in a signed Sources index")
+        suite, component, fingerprint, entries = matches[0]
+        dsc = set(_checksums((directory / name).read_bytes().decode("utf-8", "replace")))
+        record = {"type": "ubuntu-archive", "identity": fingerprint, "verified": True,
+                  "issuer": f"{suite}/{component} at snapshot.ubuntu.com {archive['snapshot']}"}
+        signed[name] = record
+        for sha, size, member in entries:
+            if member == name or member not in wanted:
+                continue
+            other = wanted[member]
+            if (other["sha256"], other["bytes"], member) != (sha, size, member) or (sha, size, member) not in dsc:
+                raise InputError(f"{member}: differs from the signed Sources entry or the .dsc of {name}")
+            signed[member] = record
+    unbound = sorted(set(wanted) - set(signed))
+    if unbound:
+        raise InputError(f"Ubuntu rows not bound to a verified .dsc: {unbound}")
+    return signed
 
 
 def sigstore_cli(file, bundle, identity, issuer) -> bool:
@@ -116,7 +223,8 @@ def sigstore_cli(file, bundle, identity, issuer) -> bool:
     return done.returncode == 0
 
 
-def verify(rows, directory, application, artifact, sigstore_check=sigstore_cli) -> dict:
+def verify(rows, directory, application, artifact, sigstore_check=sigstore_cli, archive=None,
+           archive_check=gpgv_check) -> dict:
     directory = Path(directory)
     if not artifact or not isinstance(application, dict):
         raise InputError("the artifact name and the application archive are required")
@@ -142,6 +250,11 @@ def verify(rows, directory, application, artifact, sigstore_check=sigstore_cli) 
             signature = {"type": "sigstore", "identity": spec["identity"], "issuer": spec["issuer"],
                          "bundle": bundle.name, "bundle_sha256": _sha_file(bundle), "verified": True}
         archives.append({"file": row["file"], "sha256": actual, "bytes": size, "signature": signature})
+    if _ubuntu_rows(rows):
+        ubuntu = _verify_ubuntu(rows, directory, archive, archive_check)
+        for entry in archives:
+            if entry["file"] in ubuntu:
+                entry["signature"] = ubuntu[entry["file"]]
     return {"artifact": artifact, "application": application, "archives": archives}
 
 
@@ -167,16 +280,18 @@ def main(argv=None) -> int:
     verify_parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args(argv)
     try:
-        rows = plan(_load(args.records), [p for p in args.platforms.split(",") if p])
+        records = _load(args.records)
+        rows = plan(records, [p for p in args.platforms.split(",") if p])
+        archive = records.get("ubuntu_archive")
         if args.command == "fetch":
-            fetch(rows, args.dir)
+            fetch(rows, args.dir, archive)
             print(f"source_materials: fetched {len(rows)} archives")
         else:
             if not re.match(r"^[0-9a-f]{40}$", args.git_sha) or not args.application.is_file():
                 raise InputError("the application archive or the git SHA is missing or malformed")
             application = {"file": args.application.name, "sha256": _sha_file(args.application),
                            "bytes": args.application.stat().st_size, "git_sha": args.git_sha}
-            receipt = verify(rows, args.dir, application, args.artifact)
+            receipt = verify(rows, args.dir, application, args.artifact, archive=archive)
             args.out.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             signed = sum(1 for a in receipt["archives"] if a["signature"])
             print(f"source_materials: verified {len(rows)} archives ({signed} with a signature check)")
