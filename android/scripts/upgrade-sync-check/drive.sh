@@ -63,7 +63,7 @@ launch() { adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/de
 alive() { adb shell pidof "$PKG" >/dev/null 2>&1; }
 
 hide_keyboard() {
-  if adb shell dumpsys input_method 2>/dev/null | grep -q "mInputShown=true"; then
+  if grep -q "mInputShown=true" <<<"$(adb shell dumpsys input_method 2>/dev/null)"; then
     adb shell input keyevent 4; sleep 1
   fi
 }
@@ -115,7 +115,14 @@ install_apk() {
   grant
 }
 
-crashed() { adb logcat -b crash -d 2>/dev/null | grep -q "$PKG"; }
+# Prints yes if the app is in the crash buffer, no if not, unreadable if adb cannot read it.
+# The buffer is read in full before matching: `adb ... | grep -q` lets grep exit on the first
+# match, adb then dies of SIGPIPE, and pipefail turns a large crash into "no crash".
+crash_state() {
+  local buf
+  buf="$(adb logcat -b crash -d 2>/dev/null)" || { echo unreadable; return; }
+  if grep -qF "$PKG" <<<"$buf"; then echo yes; else echo no; fi
+}
 
 # Signs in from whatever screen the app shows and walks post-login setup to the dashboard.
 sign_in() {
@@ -170,12 +177,12 @@ tap_sync() {
 watch_phase() {
   local phase="$1" secs="$2" want="$3" t=0 crash=no count=0
   while [ "$t" -lt "$secs" ]; do
-    crashed && break
+    crash="$(crash_state)"; [ "$crash" = no ] || break
     count="$(contact_count)"
     [ "$count" -ge "$want" ] && { sleep 20; break; }
     sleep 5; t=$((t + 5))
   done
-  crashed && crash=yes
+  [ "$crash" = no ] && crash="$(crash_state)"
   count="$(contact_count)"
   adb logcat -b crash -d > "$OUT/$phase-logcat-crash.txt" 2>&1
   adb logcat -d -v threadtime > "$OUT/$phase-logcat-all.txt" 2>&1
@@ -188,6 +195,7 @@ watch_phase() {
   [ -n "$cause" ] || cause="$(grep -m1 -A1 "FATAL EXCEPTION" "$OUT/$phase-logcat-crash.txt" | tail -1 | sed 's/^.*AndroidRuntime: //' | tr -d '\r')"
   version="$(grep -m1 -o "versionName=[^ ]*" "$OUT/$phase-package.txt")"
   [ "$crash" = yes ] && verdict="FAIL (app crashed)"
+  [ "$crash" = unreadable ] && verdict="FAIL (crash buffer unreadable)"
   [ "$crash" = no ] && [ "$count" -lt "$want" ] && verdict="FAIL (not exercised: $count of $want contacts stored)"
   echo "$phase [$version]: $verdict contacts=$count/$want${cause:+ | $cause}" | tee -a "$SUMMARY"
   adb logcat -b all -c 2>/dev/null || true
@@ -232,6 +240,9 @@ fresh_phase() {
   sign_in_and_sync fresh 4
 }
 
+# The self-test sources this file for its functions only.
+[ "${UPGRADE_SYNC_CHECK_SOURCE_ONLY:-}" = 1 ] && return 0
+
 wait_boot || exit 1
 install_ca
 lock_network || { log "egress lock not verified; stopping before any sign-in"; exit 1; }
@@ -246,4 +257,4 @@ fi
 fresh_phase || failed=1
 
 log "summary:"; cat "$SUMMARY"
-[ "$failed" = 0 ] && grep -c PASS "$SUMMARY" | grep -qx 3
+[ "$failed" = 0 ] && [ "$(grep -c PASS "$SUMMARY")" = 3 ]
