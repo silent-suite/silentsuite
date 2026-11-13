@@ -4,7 +4,8 @@ import { useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import { buildSignupPageviewPayload, SIGNUP_ANALYTICS_PATHS } from '@/app/lib/public-analytics'
 
-const PLAUSIBLE_EVENT_ENDPOINT = 'https://plausible.silentsuite.io/api/event'
+// Same-origin relay (app/api/event/route.ts); the browser never contacts the analytics host.
+const ANALYTICS_RELAY_ENDPOINT = '/api/event'
 
 // The baseline pageview gate is the canonical production origin plus the registered
 // route only. It is deliberately independent of NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED,
@@ -33,10 +34,10 @@ export function sendSignupPageview({
 
   if (beacon) {
     const blob = new Blob([payload], { type: 'application/json' })
-    if (beacon(PLAUSIBLE_EVENT_ENDPOINT, blob)) return
+    if (beacon(ANALYTICS_RELAY_ENDPOINT, blob)) return
   }
 
-  void fetcher(PLAUSIBLE_EVENT_ENDPOINT, {
+  void fetcher(ANALYTICS_RELAY_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: payload,

@@ -133,6 +133,81 @@ class SettingsRuntimeTest {
     }
 
     @Test
+    fun savedWifiNetworkNameIsExplainedAndRemovableButNotEnterable() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val manager = AccountManager.get(context)
+        val saved = Account("settings-ssid-${System.nanoTime()}@example.invalid", App.accountType)
+        val plain = Account("settings-nossid-${System.nanoTime()}@example.invalid", App.accountType)
+        listOf(saved, plain).forEachIndexed { index, account ->
+            check(manager.addAccountExplicitly(account, null, null))
+            AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+            check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, "ssid-$index"))
+            AccountSettings(context, account).setSyncWiFiOnly(true)
+        }
+        AccountSettings(context, saved).syncWifiOnlySSID = "Home Net"
+        fun fragmentOf(activity: AppSettingsActivity): AppSettingsActivity.CategoryFragment {
+            activity.supportFragmentManager.executePendingTransactions()
+            return activity.supportFragmentManager.findFragmentById(android.R.id.content)
+                as AppSettingsActivity.CategoryFragment
+        }
+        fun rowOf(activity: AppSettingsActivity) = fragmentOf(activity).findPreference<Preference>("sync_wifi_only_ssid")!!
+        try {
+            ActivityScenario.launch<AppSettingsActivity>(
+                AppSettingsActivity.newIntent(context, plain, "ssid-1", SettingsCategory.SYNC)
+            ).use { scenario ->
+                scenario.onActivity { activity -> assertFalse(rowOf(activity).isVisible) }
+            }
+            ActivityScenario.launch<AppSettingsActivity>(
+                AppSettingsActivity.newIntent(context, saved, "ssid-0", SettingsCategory.SYNC)
+            ).use { scenario ->
+                scenario.onActivity { activity ->
+                    val row = rowOf(activity)
+                    assertTrue(row.isVisible)
+                    assertTrue(row.isEnabled)
+                    assertTrue(row.summary.toString().contains("Home Net"))
+                    row.performClick()
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    val dialog = fragmentOf(activity).savedNetworkDialog!!
+                    assertTrue(dialog.isShowing)
+                    dialog.getButton(DialogInterface.BUTTON_NEGATIVE).performClick()
+                }
+                instrumentation.waitForIdleSync()
+                assertEquals("Home Net", AccountSettings(context, saved).syncWifiOnlySSID)
+                // Recreated while the dialog is open: it closes, and the name stays saved.
+                scenario.onActivity { activity -> rowOf(activity).performClick() }
+                instrumentation.waitForIdleSync()
+                var openDialog: AlertDialog? = null
+                scenario.onActivity { activity -> openDialog = fragmentOf(activity).savedNetworkDialog }
+                assertTrue(openDialog!!.isShowing)
+                scenario.recreate()
+                instrumentation.waitForIdleSync()
+                instrumentation.runOnMainSync { assertFalse(openDialog!!.isShowing) }
+                assertEquals("Home Net", AccountSettings(context, saved).syncWifiOnlySSID)
+                scenario.onActivity { activity ->
+                    assertNull(fragmentOf(activity).savedNetworkDialog)
+                    assertTrue(rowOf(activity).isVisible)
+                    rowOf(activity).performClick()
+                }
+                instrumentation.waitForIdleSync()
+                scenario.onActivity { activity ->
+                    fragmentOf(activity).savedNetworkDialog!!.getButton(DialogInterface.BUTTON_POSITIVE).performClick()
+                }
+                instrumentation.waitForIdleSync()
+                assertNull(AccountSettings(context, saved).syncWifiOnlySSID)
+                assertTrue(AccountSettings(context, saved).syncWifiOnly)
+                scenario.onActivity { activity -> assertFalse(rowOf(activity).isVisible) }
+            }
+        } finally {
+            removeAccountAndWait(manager, saved)
+            removeAccountAndWait(manager, plain)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    @Test
     fun staleNotificationAndLegacyRoutesRejectReaddedSameNameAcrossProcessStyleRelaunch() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)

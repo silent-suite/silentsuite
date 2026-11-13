@@ -12,6 +12,7 @@ import android.content.*
 import android.os.Bundle
 import android.provider.ContactsContract
 import io.silentsuite.sync.*
+import io.silentsuite.sync.birthdays.BirthdayMaintenance
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalAddressBook
@@ -51,6 +52,10 @@ class AddressBooksSyncAdapterService : SyncAdapterService() {
                 // An incomplete refresh exits before child discovery but must release the client.
                 contactsProvider.release()
             }
+
+            // Birthdays (#738): after a completed collection refresh and local address-book update,
+            // also when no address book remains, so removing the last one removes its birthdays.
+            BirthdayMaintenance.run(context, account, contactsMainIdentity(extras), "address-book refresh")
 
             val childAccounts = LocalAddressBook.find(context, null, account).map { it.androidAccount }.toSet()
             val attemptId = contactsAttempt(extras)

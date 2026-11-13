@@ -7,6 +7,7 @@ import { logger } from '@/app/lib/logger'
 import { keepPendingCacheRecords, useEtebaseStore, withoutPendingDeletes } from '@/app/stores/use-etebase-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
+import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { useNoteStore } from '@/app/stores/use-note-store'
@@ -362,6 +363,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             useDomainSnapshotStore.getState().markApplied('contacts', accountEpoch)
             logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
             await mirrorToCache(type, items)
+            requestBirthdayReconcile(accountEpoch)
           } else if (type === 'notes') {
             const notes = items.map((item) => ({ ...core.noteFromEtebaseItem(item.uid, item.content, item.meta, item.collectionUid), revision: item.revision }))
             domainItemCount = notes.length
@@ -444,6 +446,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
               })
               assertCurrentAccountEpoch(accountEpoch)
               useContactStore.getState().syncFromRemote(contacts)
+              requestBirthdayReconcile(accountEpoch)
             }
           } catch (err) {
             if (err instanceof AccountBoundaryChangedError) return

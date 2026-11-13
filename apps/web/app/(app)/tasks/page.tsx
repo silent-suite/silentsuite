@@ -11,6 +11,7 @@ import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { formatDate } from '@/app/lib/date'
+import { canWriteCollection, findItemCollection } from '@/app/lib/collection-access'
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
@@ -579,10 +580,12 @@ function PrioritySelector({
   value,
   onChange,
   disabled = false,
+  disabledTitle = 'Subscription required',
 }: {
   value: Priority
   onChange: (p: Priority) => void
   disabled?: boolean
+  disabledTitle?: string
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -639,7 +642,7 @@ function PrioritySelector({
         aria-haspopup="listbox"
         aria-expanded={open}
         className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-medium ${PRIORITY_COLORS[value]} transition-opacity ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80'}`}
-        title={disabled ? 'Subscription required' : undefined}
+        title={disabled ? disabledTitle : undefined}
       >
         <Flag className="h-3 w-3" />
         {PRIORITY_LABELS[value]}
@@ -686,10 +689,12 @@ function DateInput({
   value,
   onChange,
   disabled = false,
+  disabledTitle = 'Subscription required',
 }: {
   value: Date | null
   onChange: (d: Date | null) => void
   disabled?: boolean
+  disabledTitle?: string
 }) {
   const formatted = value
     ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
@@ -712,7 +717,7 @@ function DateInput({
         readOnly={disabled}
         aria-label="Task due date"
         className={`bg-transparent text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-1 focus:ring-emerald-500 rounded px-2 py-1.5 border border-transparent hover:border-[rgb(var(--border))] ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-        title={disabled ? 'Subscription required' : undefined}
+        title={disabled ? disabledTitle : undefined}
       />
     </div>
   )
@@ -724,7 +729,11 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
   const updateTask = useTaskStore((s) => s.updateTask)
   const deleteTask = useTaskStore((s) => s.deleteTask)
   const toggleComplete = useTaskStore((s) => s.toggleComplete)
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
+  // A task in a list shared read-only is read-only, as when the subscription has ended.
+  const listWritable = useTaskListStore((s) => canWriteCollection(findItemCollection(s.lists, task.listId)))
+  const canWrite = canWriteAccount && listWritable
+  const readOnlyTitle = !canWriteAccount ? 'Subscription required' : 'This task list is read-only'
   const t = useTranslations('Labels')
 
   const [expanded, setExpanded] = useState(false)
@@ -786,7 +795,7 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
           disabled={!canWrite}
           className={`max-md:min-h-[44px] max-md:min-w-[44px] flex shrink-0 items-center justify-center ${!canWrite ? 'opacity-50 cursor-not-allowed' : ''}`}
           aria-label={task.completed ? 'Mark incomplete' : 'Mark complete'}
-          title={!canWrite ? 'Subscription required' : undefined}
+          title={!canWrite ? readOnlyTitle : undefined}
         >
           <span
             className={`flex h-5 w-5 items-center justify-center rounded-full border-2 ${
@@ -903,11 +912,13 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
               value={task.due_date}
               onChange={(d) => canWrite && updateTask(task.id, { due_date: d })}
               disabled={!canWrite}
+              disabledTitle={readOnlyTitle}
             />
             <PrioritySelector
               value={task.priority}
               onChange={(p) => canWrite && updateTask(task.id, { priority: p })}
               disabled={!canWrite}
+              disabledTitle={readOnlyTitle}
             />
           </div>
           <textarea

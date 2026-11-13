@@ -12,9 +12,11 @@ import androidx.fragment.app.activityViewModels
 import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
 import com.etebase.client.CollectionAccessLevel
+import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.birthdays.BirthdayCalendar
 import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.ui.BaseActivity
@@ -65,6 +67,8 @@ class ViewCollectionFragment : Fragment() {
             }
             (activity as? BaseActivity?)?.supportActionBar?.title = it.meta.name
             initUi(view, it)
+            // The menu hides two controls for a calendar until its model is known; prepare it again now.
+            requireActivity().invalidateOptionsMenu()
         }
         itemsModel.observe(viewLifecycleOwner) {
             val stats = view.findViewById<TextView>(R.id.stats)
@@ -150,10 +154,30 @@ class ViewCollectionFragment : Fragment() {
         // note titles and the notebook structure, so the actions stay hidden rather than misleading.
         // The identity carries the type from the start; the loaded collection can still be null
         // here, for example right after the activity is restored.
-        val type = runtimeFixture(requireContext(), requireIdentity())?.type ?: requireIdentity().collectionType
+        val fixture = runtimeFixture(requireContext(), requireIdentity())
+        val type = fixture?.type ?: requireIdentity().collectionType
         val notebook = type == Constants.ETEBASE_TYPE_NOTES
-        menu.findItem(R.id.on_import)?.isVisible = !notebook
+        // An active Birthdays calendar offers neither import nor member management (plan2 §4, plan3 §1).
+        val activeBirthdays = fixture == null && type == Constants.ETEBASE_TYPE_CALENDAR && !loadedCalendarIsOrdinary()
+        menu.findItem(R.id.on_import)?.isVisible = !notebook && !activeBirthdays
         menu.findItem(R.id.on_export)?.isVisible = !notebook
+        menu.findItem(R.id.on_manage_members)?.isVisible = !activeBirthdays
+    }
+
+    /**
+     * Whether the loaded calendar is known not to be an active Birthdays calendar: its content can be read and is
+     * not the active marker, as for an ordinary or a retired calendar. Before the model is loaded, or when its
+     * content cannot be read, this is false, so the two controls stay hidden until the menu is prepared again
+     * with a readable model.
+     */
+    private fun loadedCalendarIsOrdinary(): Boolean {
+        val loaded = collectionModel.value ?: return false
+        val content = try {
+            loaded.col.content
+        } catch (e: EtebaseException) {
+            return false
+        }
+        return BirthdayCalendar.markerState(content) != BirthdayCalendar.MarkerState.ACTIVE
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

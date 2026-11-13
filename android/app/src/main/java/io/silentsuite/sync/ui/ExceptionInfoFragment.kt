@@ -36,7 +36,7 @@ class ExceptionInfoFragment : DialogFragment() {
                 .setTitle(title)
                 .setMessage("${exception.javaClass.canonicalName}\n" + exception.localizedMessage)
                 .setNegativeButton(R.string.exception_show_details) { _, _ ->
-                    val intent = DebugInfoActivity.newIntent(context, this::class.toString())
+                    val intent = DebugInfoActivity.newIntent(context)
                     intent.putExtra(DebugInfoActivity.KEY_THROWABLE, exception)
                     if (account != null)
                         intent.putExtra(Constants.KEY_ACCOUNT, account)
