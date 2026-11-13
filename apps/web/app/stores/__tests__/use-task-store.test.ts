@@ -231,6 +231,34 @@ describe('useTaskStore', () => {
     })
 
     it.each([
+      ['toggleComplete', (id: string) => useTaskStore.getState().toggleComplete(id)],
+      ['updateTask', (id: string) => useTaskStore.getState().updateTask(id, { title: 'Renamed' })],
+      ['deleteTask', (id: string) => useTaskStore.getState().deleteTask(id)],
+    ])('never queues %s for an account that took over just after the create finished', async (_name, run) => {
+      _setEncryptedQueuePersistenceAvailableForTests(true)
+      const { finish, updateItem, deleteItem } = deferredCreate()
+      const creating = useTaskStore.getState().createTask({ title: 'Quick' })
+      const tempId = useTaskStore.getState().tasks[0]!.id
+      const operation = run(tempId)
+      // The edit's own local update already ran, so the next task-store update is the create's
+      // rename, which settles its pending entry with no await in between. Two microtask hops from
+      // there land the switch after the pending-create wait resolved but before the edit resumes.
+      const unsubscribe = useTaskStore.subscribe(() => {
+        unsubscribe()
+        queueMicrotask(() => queueMicrotask(switchToAccountB))
+      })
+
+      finish()
+      await creating.catch(() => {})
+      await operation.catch(() => {})
+
+      expect(useEtebaseStore.getState().accountFingerprint).toBe('account-b')
+      expect(updateItem).not.toHaveBeenCalled()
+      expect(deleteItem).not.toHaveBeenCalled()
+      expect((await getAll()).filter((entry) => entry.accountFingerprint === 'account-b')).toHaveLength(0)
+    })
+
+    it.each([
       ['toggleComplete', () => useTaskStore.getState().toggleComplete('temp-task')],
       ['updateTask', () => useTaskStore.getState().updateTask('temp-task', { title: 'Renamed' })],
       ['deleteTask', () => useTaskStore.getState().deleteTask('temp-task')],

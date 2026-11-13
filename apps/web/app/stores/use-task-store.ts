@@ -91,18 +91,18 @@ function defaultTaskListId(): string | undefined {
 const savingCreates = new Map<string, Promise<string | null>>()
 
 /**
- * A task edited while its create is still in flight has only a temporary id
- * with no Etebase item behind it yet. Returns undefined when no create is
- * pending, so the caller stays synchronous and keeps the account it started
- * in. Otherwise resolves to the item UID to sync under (the temporary id if
- * the create was not acknowledged), or null when the account changed while
- * waiting.
+ * The id to sync an edit or delete under. A task edited while its create is
+ * still in flight has only a temporary id with no Etebase item behind it yet,
+ * so wait for the create and use the item UID it was given (the temporary id
+ * if the create was not acknowledged). Without a pending create this returns
+ * the id synchronously: the caller must not yield before capturing its
+ * account. After a wait, the caller must still check that its account epoch
+ * is current before reading any account state.
  */
-function waitForPendingCreate(id: string): Promise<string | null> | undefined {
+function syncTargetId(id: string): string | Promise<string> {
   const saving = savingCreates.get(id)
-  if (!saving) return undefined
-  const accountEpoch = getAccountEpoch()
-  return saving.then((itemUid) => (isCurrentAccountEpoch(accountEpoch) ? itemUid ?? id : null))
+  if (!saving) return id
+  return saving.then((itemUid) => itemUid ?? id)
 }
 
 export const useTaskStore = create<TaskState & TaskActions>()(
@@ -206,11 +206,12 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         next[index] = updated
         set({ tasks: next })
 
-        // Await only when a create is pending: an unconditional await would let
-        // the account change before the guard below is captured.
-        const pendingCreate = waitForPendingCreate(id)
-        const targetId = pendingCreate ? await pendingCreate : id
-        if (targetId === null) return
+        // Yield only for a pending create, and drop the sync if another account
+        // took over while waiting, before reading any account state below.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
@@ -249,11 +250,12 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         const taskToDelete = get().tasks.find((t) => t.id === id)
         set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }))
 
-        // Await only when a create is pending: an unconditional await would let
-        // the account change before the guard below is captured.
-        const pendingCreate = waitForPendingCreate(id)
-        const targetId = pendingCreate ? await pendingCreate : id
-        if (targetId === null) return
+        // Yield only for a pending create, and drop the sync if another account
+        // took over while waiting, before reading any account state below.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
@@ -301,11 +303,12 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         next[index] = updated
         set({ tasks: next })
 
-        // Await only when a create is pending: an unconditional await would let
-        // the account change before the guard below is captured.
-        const pendingCreate = waitForPendingCreate(id)
-        const targetId = pendingCreate ? await pendingCreate : id
-        if (targetId === null) return
+        // Yield only for a pending create, and drop the sync if another account
+        // took over while waiting, before reading any account state below.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
