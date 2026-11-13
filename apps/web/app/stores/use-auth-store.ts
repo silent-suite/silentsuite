@@ -9,7 +9,7 @@ import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/constants'
 import { secureGet, secureSet, secureRemove, secureRemoveIfEqual, secureClear, migrateFromLocalStorage } from '@/app/lib/secure-storage'
 import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
-import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
+import { clearAll as clearOfflineQueue, clearOtherAccounts as clearOtherAccountsOfflineQueue } from '@/app/lib/offline-queue'
 import { createLoginSessionPersistenceDiagnostics } from '@/app/lib/sync-restore-diagnostics'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import {
@@ -1702,17 +1702,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true, error: null })
     try {
       const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
-      const { savedSession } = await etebaseLogIn(email, password, serverUrl)
+      const { savedSession, accountFingerprint } = await etebaseLogIn(email, password, serverUrl)
       // A successful Etebase login may be an account switch in the same browser
-      // profile. The offline queue can contain item UIDs/collection UIDs and,
-      // in future encrypted-cache mode, mutation content. Clear it after the
-      // credentials are verified but before storing a new Etebase session, so
-      // failed login attempts do not destroy the current account's offline work
-      // and queued work from one account cannot replay into another account.
+      // profile. The offline queue holds item/collection UIDs and sealed
+      // custody. After the credentials are verified but before storing a new
+      // Etebase session, drop every record that does not belong to the account
+      // that just signed in, so queued work from one account cannot replay into
+      // another. The signing-in account keeps its own pending changes (e.g. a
+      // re-login after a Billing outage signed this tab out). Without a
+      // fingerprint the account is unknown, so the whole queue is cleared.
+      // Failed login attempts never reach this point.
       // Reset all decrypted account-scoped stores at the same verified account
       // boundary so a partial restore cannot retain the prior account's data.
       await resetInMemoryAccountState('login')
-      await clearOfflineQueue()
+      if (accountFingerprint) await clearOtherAccountsOfflineQueue(accountFingerprint)
+      else await clearOfflineQueue()
       if (!isSelfHosted && !isCustomServer(serverUrl)) clearHostedValidationMarkers()
       await secureSet('etebase_session', savedSession)
       try {
