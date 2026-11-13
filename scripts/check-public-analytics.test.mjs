@@ -162,3 +162,48 @@ test('generated scans reject the upstream analytics host in browser chunks', asy
     assert.match(await checkGeneratedAppTree(root), /settings\/subscription\/page-a\.js: upstream analytics host in browser bundle/)
   })
 })
+
+// A real build nests route chunks at .next/static/chunks/app/(app) and lists every
+// chunk a route loads in .next/app-build-manifest.json.
+async function withManifestBuild(files, manifest, run) {
+  await withGeneratedAppTree({
+    ...Object.fromEntries(Object.entries(files).map(([file, contents]) => [`.next/${file}`, contents])),
+    '.next/app-build-manifest.json': JSON.stringify({ pages: manifest }),
+  }, (root) => run(path.join(root, '.next/static/chunks/app/(app)')))
+}
+
+test('enabled generated app scan accepts the endpoint in a shared chunk the subscription route loads', async () => {
+  await withManifestBuild({
+    'static/chunks/app/(app)/settings/subscription/page-a.js': 'console.log("subscription")',
+    'static/chunks/9704-a.js': `${endpoint} keepalive:!0`,
+  }, {
+    '/(app)/settings/subscription/page': ['static/chunks/9704-a.js', 'static/chunks/app/(app)/settings/subscription/page-a.js'],
+  }, async (appRoot) => {
+    assert.equal(await checkGeneratedAppTree(appRoot), '')
+  })
+})
+
+test('enabled generated app scan rejects a shared endpoint chunk loaded by another authenticated route', async () => {
+  await withManifestBuild({
+    'static/chunks/app/(app)/settings/subscription/page-a.js': 'console.log("subscription")',
+    'static/chunks/app/(app)/calendar/page-b.js': 'console.log("calendar")',
+    'static/chunks/9704-a.js': endpoint,
+  }, {
+    '/(app)/settings/subscription/page': ['static/chunks/9704-a.js', 'static/chunks/app/(app)/settings/subscription/page-a.js'],
+    '/(app)/calendar/page': ['static/chunks/9704-a.js', 'static/chunks/app/(app)/calendar/page-b.js'],
+  }, async (appRoot) => {
+    assert.match(await checkGeneratedAppTree(appRoot), /\/\(app\)\/calendar\/page: analytics endpoint in authenticated production bundle/)
+  })
+})
+
+test('enabled generated app scan still fails when no chunk the subscription route loads carries the endpoint', async () => {
+  await withManifestBuild({
+    'static/chunks/app/(app)/settings/subscription/page-a.js': 'console.log("subscription")',
+    'static/chunks/9704-a.js': endpoint,
+  }, {
+    '/(app)/settings/subscription/page': ['static/chunks/app/(app)/settings/subscription/page-a.js'],
+    '/(auth)/signup/page': ['static/chunks/9704-a.js'],
+  }, async (appRoot) => {
+    assert.match(await checkGeneratedAppTree(appRoot), /subscription route chunk: expected analytics endpoint absent/)
+  })
+})

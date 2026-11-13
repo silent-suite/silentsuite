@@ -114,6 +114,32 @@ try {
     }
   }
   await scanGenerated(generatedAppRoot)
+  // The same-origin sender is shared with the signup pages, so webpack may emit it
+  // in a shared chunk that the subscription route loads rather than in the route
+  // chunk itself. The app build manifest (four levels above chunks/app/(app))
+  // lists every chunk each route loads: the subscription route must load the
+  // endpoint, and no other authenticated route may.
+  const nextDirectory = path.resolve(generatedAppRoot, '../../../..')
+  let manifestPages
+  try {
+    manifestPages = JSON.parse(await readFile(path.join(nextDirectory, 'app-build-manifest.json'), 'utf8')).pages
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+  if (manifestPages) {
+    const endpointChunks = new Map()
+    async function chunkCarriesEndpoint(file) {
+      if (!endpointChunks.has(file)) endpointChunks.set(file, (await readFile(path.join(nextDirectory, file), 'utf8')).includes(analyticsEndpoint))
+      return endpointChunks.get(file)
+    }
+    for (const [route, files] of Object.entries(manifestPages)) {
+      if (!route.startsWith('/(app)/')) continue
+      let carries = false
+      for (const file of files) if (await chunkCarriesEndpoint(file)) carries = true
+      if (route === '/(app)/settings/subscription/page') subscriptionRouteContainsEndpoint ||= carries
+      else if (carries) violations.push(`${route}: analytics endpoint in authenticated production bundle`)
+    }
+  }
   if (enabledGeneratedBuild && !subscriptionRouteContainsEndpoint) {
     violations.push('subscription route chunk: expected analytics endpoint absent')
   }
