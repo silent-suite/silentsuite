@@ -1,0 +1,4 @@
+# Licence and notice texts are shipped byte for byte and pinned by SHA256 (#171):
+# never convert their line endings on checkout.
+notices/** -text
+README-dev-build.txt -text
