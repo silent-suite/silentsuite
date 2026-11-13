@@ -896,7 +896,13 @@ class Etebase:
         every collection has had its turn so the cycle is reported as failed.
         """
         logger.info("=== Starting full sync cycle ===")
-        failures = self.sync_collection_list()
+        failures = []
+        # Collection uploads failing inside the list sync are deferred here.
+        self._deferred_collection_failures = failures
+        try:
+            self.sync_collection_list()
+        finally:
+            self._deferred_collection_failures = None
         for collection in self.list():
             try:
                 self.sync_collection(collection.uid)
@@ -926,12 +932,8 @@ class Etebase:
         logger.info("=== Full sync cycle complete ===")
 
     def sync_collection_list(self):
-        """Sync the list of collections (push then pull).
-
-        Returns the collection upload failures that were deferred so the
-        list pull and the other collections could still run.
-        """
-        failures = self.push_collection_list()
+        """Sync the list of collections (push then pull)."""
+        self.push_collection_list()
 
         col_mgr = self.etebase.get_collection_manager()
         stoken = self.user.stoken
@@ -944,7 +946,6 @@ class Etebase:
                 self._assert_session_current()
 
                 done, stoken = self._apply_collection_list_page(col_mgr, col_list)
-        return failures
 
     def _apply_collection_list_page(self, col_mgr, col_list):
         with self._mutation_session_guard():
@@ -1047,7 +1048,12 @@ class Etebase:
         return len(changed) > 0
 
     def push_collection_list(self):
-        """Upload changed collections; return the failures left pending."""
+        """Upload changed collections, one failure not blocking the others.
+
+        Failed collections stay dirty. Within ``sync`` the failures are
+        handed to the cycle, which raises after the remaining work; a direct
+        call raises the first failure once every collection was tried.
+        """
         col_mgr = self.etebase.get_collection_manager()
         failures = []
 
@@ -1088,7 +1094,11 @@ class Etebase:
                             .execute()
                         )
                         reanchor_dav_state(collection, previous_state_hash)
-        return failures
+        if failures:
+            deferred = getattr(self, "_deferred_collection_failures", None)
+            if deferred is None:
+                raise failures[0]
+            deferred.extend(failures)
 
     def sync_collection(self, uid):
         """Sync a single collection (push then pull)."""
