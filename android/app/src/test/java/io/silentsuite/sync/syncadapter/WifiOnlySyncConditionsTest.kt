@@ -53,13 +53,14 @@ class WifiOnlySyncConditionsTest {
                 "!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(settings)",
             "syncadapter/TasksSyncAdapterService.kt" to
                 "!extras.containsKey(ContentResolver.SYNC_EXTRAS_MANUAL) && !checkSyncConditions(accountSettings)",
-            // Notes runs decide with NotesNetwork: a run the user started follows the Sync now for Notes
-            // setting instead of this switch (NotesNetworkPolicy.decide, NotesNetworkPolicyTest).
-            "notes/NotesSyncRunner.kt" to
-                "NotesNetwork.verdict(appContext, manager, account, settings, explicit = request.manual)",
         ).forEach { (file, guard) ->
             assertTrue("$file keeps its manual bypass", File(sourceRoot, file).readText().contains(guard))
         }
+        // Notes runs decide with NotesNetwork: a run the user started follows the Sync now for Notes
+        // setting instead of this switch (NotesNetworkPolicy.decide, NotesNetworkPolicyTest).
+        assertTrue("the Notes runner tells NotesNetwork whether the user started the run",
+            File(sourceRoot, "notes/NotesSyncRunner.kt").readText()
+                .contains("NotesNetwork.verdict(appContext, manager, account, settings, explicit = request.manual)"))
     }
 
     @Test

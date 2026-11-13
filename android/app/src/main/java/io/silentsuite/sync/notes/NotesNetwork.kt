@@ -14,17 +14,18 @@ internal object NotesNetwork {
     @JvmField internal var readingOverride: (() -> NotesNetworkPolicy.Reading)? = null
 
     /**
-     * The network as the account's own Wi-Fi switch reads it (syncConditionsAllow in
-     * syncadapter/SyncAdapterService.kt): the active network, connected and of type Wi-Fi, with the
-     * same calls on every API level from 29. No active network reads as NONE. That is not the same as
+     * The network as the account's own Wi-Fi switch reads it (onConnectedWifi, through
+     * syncConditionsAllow, in syncadapter/SyncAdapterService.kt): the active network, connected and
+     * of type Wi-Fi, with the same calls on every API level from 29. No active network reads as NONE. That is not the same as
      * "no connection": the platform can report none under some VPNs while the device is online.
      *
      * The Wi-Fi name is never read. The manifest asks for no location permission, so from API 29
      * Android gives this app no Wi-Fi names, and a saved network name refuses without one (#971).
      *
      * The connectivity call itself is not guarded. The adapters do not guard it either, but they make
-     * it only with the switch on and for a sync that is not manual. Here it is made for every run but
-     * an automatic one a saved network name refuses (#971), also for one that no setting can refuse.
+     * it only with the switch on, no network name saved, and for a sync that is not manual. Here it is
+     * made for every run but an automatic one a saved network name refuses (#971), also for one that
+     * no setting can refuse.
      * If it throws, the run ends as an unknown failure, unless it was canceled, and nothing is sent.
      */
     @Suppress("DEPRECATION")

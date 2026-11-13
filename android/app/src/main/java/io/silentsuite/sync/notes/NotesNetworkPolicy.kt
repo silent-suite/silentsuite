@@ -45,7 +45,7 @@ object NotesNetworkPolicy {
         val run: Boolean get() = blockers.isEmpty()
     }
 
-    /** The account switch's own mapping (syncConditionsAllow): connected and of type Wi-Fi is Wi-Fi. */
+    /** The account switch's own mapping (onConnectedWifi): connected and of type Wi-Fi is Wi-Fi. */
     fun connectionOf(present: Boolean, connected: Boolean, wifi: Boolean): Connection = when {
         !present || !connected -> Connection.NONE
         wifi -> Connection.WIFI
