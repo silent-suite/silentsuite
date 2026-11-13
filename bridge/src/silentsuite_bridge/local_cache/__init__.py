@@ -650,6 +650,15 @@ def reanchor_dav_state(cache_col, previous_state_hash):
     return moved > 0
 
 
+def _log_collection_failure(stage, error):
+    """Log one deferred collection failure: no identifiers, message or trace."""
+    logger.warning(
+        "%s failed; other collections continue (%s)",
+        stage,
+        bounded_exception_class(error),
+    )
+
+
 class StorageException(Exception):
     pass
 
@@ -879,11 +888,29 @@ class Etebase:
                 )
 
     def sync(self):
-        """Full bidirectional sync: push local changes, pull remote changes."""
+        """Full bidirectional sync: push local changes, pull remote changes.
+
+        A collection that fails (for example after losing write access or
+        membership while it still has unsynced edits) does not stop the
+        others. Its edits stay pending, and the first failure is raised once
+        every collection has had its turn so the cycle is reported as failed.
+        """
         logger.info("=== Starting full sync cycle ===")
-        self.sync_collection_list()
+        failures = self.sync_collection_list()
         for collection in self.list():
-            self.sync_collection(collection.uid)
+            try:
+                self.sync_collection(collection.uid)
+            except SessionSuperseded:
+                raise
+            except Exception as exc:
+                _log_collection_failure("Collection sync", exc)
+                failures.append(exc)
+        if failures:
+            logger.warning(
+                "Sync cycle left %d collection operation(s) unsynchronized",
+                len(failures),
+            )
+            raise failures[0]
         unresolved = (
             models.DavUnresolvedItem.select()
             .join(models.CollectionEntity)
@@ -899,8 +926,12 @@ class Etebase:
         logger.info("=== Full sync cycle complete ===")
 
     def sync_collection_list(self):
-        """Sync the list of collections (push then pull)."""
-        self.push_collection_list()
+        """Sync the list of collections (push then pull).
+
+        Returns the collection upload failures that were deferred so the
+        list pull and the other collections could still run.
+        """
+        failures = self.push_collection_list()
 
         col_mgr = self.etebase.get_collection_manager()
         stoken = self.user.stoken
@@ -913,6 +944,7 @@ class Etebase:
                 self._assert_session_current()
 
                 done, stoken = self._apply_collection_list_page(col_mgr, col_list)
+        return failures
 
     def _apply_collection_list_page(self, col_mgr, col_list):
         with self._mutation_session_guard():
@@ -1015,7 +1047,9 @@ class Etebase:
         return len(changed) > 0
 
     def push_collection_list(self):
+        """Upload changed collections; return the failures left pending."""
         col_mgr = self.etebase.get_collection_manager()
+        failures = []
 
         with db.database_proxy.connection_context():
             changed = list(self._collection_list_dirty_get())
@@ -1025,11 +1059,19 @@ class Etebase:
                 original_dirty = collection.dirty
                 original_new = collection.new
                 original_deleted = collection.deleted
-                col = col_mgr.cache_load(collection.eb_col)
+                try:
+                    col = col_mgr.cache_load(collection.eb_col)
 
-                if collection.deleted:
-                    col.delete()
-                col_mgr.upload(col, None)
+                    if collection.deleted:
+                        col.delete()
+                    col_mgr.upload(col, None)
+                except SessionSuperseded:
+                    raise
+                except Exception as exc:
+                    # The collection stays dirty and is retried next cycle.
+                    _log_collection_failure("Collection upload", exc)
+                    failures.append(exc)
+                    continue
                 with self._mutation_session_guard():
                     with db.database_proxy.atomic("IMMEDIATE"):
                         self._assert_session_current()
@@ -1046,6 +1088,7 @@ class Etebase:
                             .execute()
                         )
                         reanchor_dav_state(collection, previous_state_hash)
+        return failures
 
     def sync_collection(self, uid):
         """Sync a single collection (push then pull)."""
