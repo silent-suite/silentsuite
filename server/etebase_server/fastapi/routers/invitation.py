@@ -16,6 +16,7 @@ from ..utils import (
     PERMISSIONS_READWRITE,
     BaseModel,
     Context,
+    clamp_list_limit,
     get_object_or_404,
     get_user_username_email_kwargs,
     is_collection_admin,
@@ -105,6 +106,7 @@ def list_common(
     limit: int,
 ) -> InvitationListResponse:
     queryset = queryset.order_by("id")
+    limit = clamp_list_limit(limit)
 
     if iterator is not None:
         iterator_obj = get_object_or_404(queryset, uid=iterator)

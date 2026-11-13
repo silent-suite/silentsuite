@@ -24,6 +24,7 @@ from ..utils import (
     Context,
     Prefetch,
     PrefetchQuery,
+    clamp_list_limit,
     get_object_or_404,
     is_collection_admin,
     msgpack_encode,
@@ -36,11 +37,6 @@ collection_router = APIRouter(route_class=MsgpackRoute, responses=permission_res
 item_router = APIRouter(route_class=MsgpackRoute, responses=permission_responses)
 CollectionQuerySet = QuerySet[models.Collection]
 CollectionItemQuerySet = QuerySet[models.CollectionItem]
-
-# Largest page the collection and item lists return. A larger requested limit is
-# clamped rather than refused: clients page on `done` and the stoken, so a short
-# page only means another request. Clients ask for 100 at most (default 50).
-MAX_LIST_LIMIT = 500
 
 
 class ListMulti(BaseModel):
@@ -223,7 +219,7 @@ def collection_list_common(
 ) -> CollectionListResponse:
     result, new_stoken_obj, done = filter_by_stoken_and_limit(
         stoken,
-        min(limit, MAX_LIST_LIMIT),
+        clamp_list_limit(limit),
         queryset.filter(items__revisions__current=True),
         models.Collection.stoken_annotation,
     )
@@ -452,7 +448,7 @@ def item_list_common(
 ) -> CollectionItemListResponse:
     result, new_stoken_obj, done = filter_by_stoken_and_limit(
         stoken,
-        min(limit, MAX_LIST_LIMIT),
+        clamp_list_limit(limit),
         queryset.filter(revisions__current=True),
         models.CollectionItem.stoken_annotation,
     )
@@ -534,6 +530,7 @@ def item_revisions(
     items: CollectionItemQuerySet = Depends(get_item_queryset),
 ):
     item = get_object_or_404(items, uid=item_uid)
+    limit = clamp_list_limit(limit)
 
     queryset = item.revisions.order_by("-id")
 
