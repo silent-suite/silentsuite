@@ -9,6 +9,7 @@ import { useTaskStore } from '@/app/stores/use-task-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { useNoteStore } from '@/app/stores/use-note-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
@@ -348,6 +349,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             domainItemCount = tasks.length
             useTaskStore.getState().syncFromRemote(tasks)
+            useDomainSnapshotStore.getState().markApplied('tasks', accountEpoch)
             logger.log(`[sync-provider] Loaded ${tasks.length} tasks from server`)
             await mirrorToCache(type, items)
           } else if (type === 'contacts') {
@@ -358,6 +360,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             domainItemCount = contacts.length
             useContactStore.getState().syncFromRemote(contacts)
+            useDomainSnapshotStore.getState().markApplied('contacts', accountEpoch)
             logger.log(`[sync-provider] Loaded ${contacts.length} contacts from server`)
             await mirrorToCache(type, items)
             requestBirthdayReconcile(accountEpoch)
@@ -378,6 +381,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
             })
             domainItemCount = events.length
             useCalendarStore.getState().syncFromRemote(events)
+            useDomainSnapshotStore.getState().markApplied('calendar', accountEpoch)
             logger.log(`[sync-provider] Loaded ${events.length} calendar events from server`)
             await mirrorToCache(type, items)
           }

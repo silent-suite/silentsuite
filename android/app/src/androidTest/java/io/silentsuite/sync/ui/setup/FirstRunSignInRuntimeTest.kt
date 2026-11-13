@@ -134,7 +134,17 @@ class FirstRunSignInRuntimeTest {
                 activity.findViewById<View>(requiredId(activity, "forgot_password")).performClick()
                 fragment.childFragmentManager.executePendingTransactions()
             }
-            scenario.recreate()
+            // onDestroy opens the 2 s owner rebind window before the old window is torn down.
+            // A loaded emulator has stalled that teardown for 4 s, so the replacement was
+            // admitted fresh and reset to account choice. Hold the setup clock at its current
+            // value across the relaunch; this method checks restoration, not rebind expiry.
+            val recreationNow = SetupElapsedClock.now()
+            SetupElapsedClock.nowForTest = { recreationNow }
+            try {
+                scenario.recreate()
+            } finally {
+                SetupElapsedClock.nowForTest = null
+            }
             scenario.onActivity { activity ->
                 assertVisibleDestination(activity, "LoginCredentialsFragment")
                 val fragment = activity.supportFragmentManager.findFragmentById(android.R.id.content)!!

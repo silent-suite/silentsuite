@@ -1,0 +1,1 @@
+Rinomina il pacchetto Android in io.silentsuite.android e allinea la versione Android alla v0.1.3-beta. Se hai installato un APK beta precedente, aggiungi nuovamente il tuo account dopo aver installato questa build.

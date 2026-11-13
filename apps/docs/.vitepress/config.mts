@@ -51,6 +51,7 @@ export default defineConfig({
             { text: 'Notes', link: '/user-guide/notes' },
             { text: 'How Encryption Works', link: '/user-guide/encryption-explained' },
             { text: 'FAQ', link: '/user-guide/faq' },
+            { text: 'Reporting a Problem', link: '/user-guide/reporting-a-problem' },
           ],
         },
         {
@@ -105,6 +106,7 @@ export default defineConfig({
         {
           text: 'Contributing',
           items: [
+            { text: 'Overview', link: '/contributing/' },
             { text: 'Development Setup', link: '/contributing/dev-setup' },
             { text: 'Architecture Overview', link: '/contributing/architecture-overview' },
             { text: 'Code Conventions', link: '/contributing/code-conventions' },

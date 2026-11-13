@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { useSyncStore } from '../use-sync-store'
 import { getPendingCount, getStaleEntries, remove, replay } from '@/app/lib/offline-queue'
-import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 
 const etebaseMock = vi.hoisted(() => ({
   state: {
@@ -365,5 +366,46 @@ describe('useSyncStore', () => {
     } finally {
       vi.mocked(getPendingCount).mockResolvedValue(0)
     }
+  })
+})
+
+// ── WEB-07 review follow-up: snapshot marks follow the store write ──
+// Retry publishes 'loaded' for a recovered domain inside refreshCollection,
+// while a slower sibling refresh is still in flight. Export readiness must not
+// see that domain as ready until its items have reached the UI store.
+
+describe('simulateSyncCycle marks a domain snapshot only after its store write (WEB-07)', () => {
+  beforeEach(() => {
+    resetStore()
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
+  })
+
+  it('does not mark a recovered domain while a sibling refresh is still running', async () => {
+    let releaseCalendar!: (items: unknown[]) => void
+    etebaseMock.state.refreshCollection.mockImplementation((type: string) =>
+      type === 'calendar' ? new Promise((resolve) => { releaseCalendar = resolve }) : Promise.resolve([]),
+    )
+
+    useSyncStore.getState().simulateSyncCycle()
+    await vi.waitFor(() => expect(releaseCalendar).toBeTypeOf('function'))
+    await flushPromises()
+
+    expect(useDomainSnapshotStore.getState().appliedEpoch).toEqual({})
+
+    releaseCalendar([])
+    await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+
+    const epoch = getAccountEpoch()
+    expect(useDomainSnapshotStore.getState().appliedEpoch).toEqual({ tasks: epoch, contacts: epoch, calendar: epoch })
+  })
+
+  it('does not mark a domain whose refresh did not load', async () => {
+    etebaseMock.state.domainLoadState = { ...etebaseMock.state.domainLoadState, contacts: 'failed' }
+
+    useSyncStore.getState().simulateSyncCycle()
+    await vi.waitFor(() => expect(useSyncStore.getState().syncStatus).toBe('synced'))
+
+    expect(useDomainSnapshotStore.getState().appliedEpoch.contacts).toBeUndefined()
+    expect(useDomainSnapshotStore.getState().appliedEpoch.tasks).toBe(getAccountEpoch())
   })
 })

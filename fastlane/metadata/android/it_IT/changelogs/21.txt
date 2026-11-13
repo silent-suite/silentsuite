@@ -1,0 +1,1 @@
+Risolve un ciclo continuo di ripristino all'avvio (recovery loop) dopo l'accesso, consentendo il completamento o la ripetizione della configurazione senza rimuovere l'account o cancellare i dati dell'app.

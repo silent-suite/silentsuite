@@ -159,7 +159,7 @@ function FingerprintConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={submitting}
-            className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] disabled:opacity-50"
+            className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))] disabled:opacity-50"
           >
             Cancel
           </button>
@@ -167,7 +167,7 @@ function FingerprintConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={submitting}
-            className="rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+            className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
           >
             {confirmLabel}
           </button>
@@ -488,7 +488,7 @@ export default function SharingSettingsPage() {
             type="button"
             onClick={refreshInvitations}
             disabled={loadingInvites}
-            className="inline-flex items-center gap-2 rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))] disabled:opacity-50"
+            className="max-md:min-h-[44px] inline-flex items-center gap-2 rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))] disabled:opacity-50"
           >
             <RefreshCcw className="h-3.5 w-3.5" />
             Refresh
@@ -512,14 +512,14 @@ export default function SharingSettingsPage() {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={() => handleReject(invitation)} className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                  <button type="button" onClick={() => handleReject(invitation)} className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
                     Reject
                   </button>
                   <button
                     type="button"
                     onClick={() => handleAccept(invitation)}
                     disabled={!invitation.senderFingerprint}
-                    className="rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
+                    className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))] disabled:opacity-50"
                   >
                     Accept
                   </button>
@@ -538,7 +538,7 @@ export default function SharingSettingsPage() {
                   <p className="text-sm font-medium text-[rgb(var(--foreground))]">To {outgoingInvitationTitle(invitation)}</p>
                   <p className="text-xs text-[rgb(var(--muted))]">Access: {accessLevelLabel(invitation.accessLevel)}</p>
                 </div>
-                <button type="button" onClick={() => handleCancelOutgoing(invitation)} className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                <button type="button" onClick={() => handleCancelOutgoing(invitation)} className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
                   Cancel invitation
                 </button>
               </div>
@@ -570,12 +570,12 @@ export default function SharingSettingsPage() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {card.accessLevel === 1 && (
-                    <button type="button" onClick={() => handleLoadMembers(card)} className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                    <button type="button" onClick={() => handleLoadMembers(card)} className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
                       Load members
                     </button>
                   )}
                   {card.accessLevel !== 1 && (
-                    <button type="button" onClick={() => handleLeave(card)} className="rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                    <button type="button" onClick={() => handleLeave(card)} className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] px-3 py-2 text-xs font-medium text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
                       Leave collection
                     </button>
                   )}
@@ -596,7 +596,7 @@ export default function SharingSettingsPage() {
                       setInviteUsernames((current) => ({ ...current, [card.uid]: value }))
                     }}
                     placeholder="friend@example.com"
-                    className="min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
+                    className="max-md:min-h-[44px] min-w-0 flex-1 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))]"
                   />
                   <select
                     value={inviteAccessLevels[card.uid] ?? 'readOnly'}
@@ -604,13 +604,13 @@ export default function SharingSettingsPage() {
                       const value = event.target.value as CollectionAccessLevel
                       setInviteAccessLevels((current) => ({ ...current, [card.uid]: value }))
                     }}
-                    className="rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
+                    className="max-md:min-h-[44px] rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
                   >
                     {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
                       <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
-                  <button type="button" onClick={() => handleInvite(card)} className="rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))]">
+                  <button type="button" onClick={() => handleInvite(card)} className="max-md:min-h-[44px] rounded-lg bg-[rgb(var(--primary))] px-3 py-2 text-xs font-medium text-white hover:bg-[rgb(var(--primary-hover))]">
                     Invite
                   </button>
                 </div>
@@ -642,16 +642,16 @@ export default function SharingSettingsPage() {
                                 const value = event.target.value as CollectionAccessLevel
                                 setMemberAccessDrafts((current) => ({ ...current, [draftKey]: value }))
                               }}
-                              className="rounded border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs text-[rgb(var(--foreground))]"
+                              className="max-md:min-h-[44px] rounded border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-xs text-[rgb(var(--foreground))]"
                             >
                               {Object.entries(ACCESS_LEVEL_LABELS).map(([value, label]) => (
                                 <option key={value} value={value}>{label}</option>
                               ))}
                             </select>
-                            <button type="button" onClick={() => handleChangeMemberAccess(card, member)} className="rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                            <button type="button" onClick={() => handleChangeMemberAccess(card, member)} className="max-md:min-h-[44px] rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
                               Save
                             </button>
-                            <button type="button" onClick={() => handleRemoveMember(card, member.username)} className="rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
+                            <button type="button" onClick={() => handleRemoveMember(card, member.username)} className="max-md:min-h-[44px] rounded border border-[rgb(var(--border))] px-2 py-1 text-xs text-[rgb(var(--foreground))] hover:bg-[rgb(var(--background))]">
                               Remove
                             </button>
                           </div>

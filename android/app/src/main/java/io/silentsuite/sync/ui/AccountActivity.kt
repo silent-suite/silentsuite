@@ -1394,6 +1394,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         private lateinit var statusIdentity: SyncStatusStore.MainIdentity
         private var davService: AccountUpdateService.InfoBinder? = null
         private var syncStatusListener: Any? = null
+        /** Whether a binding is registered, connected or not. Only [onCleared] unbinds it. */
         private var serviceBound = false
         private var initializedIdentity: ExactAccountIdentity? = null
         private val dashboardTransitionDeduper = MeaningfulDashboardTransitionDeduper()
@@ -1425,8 +1426,20 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             // The in-app Notes job has no ContentResolver footprint; observe it directly.
             NotesSyncCoordinator.addListener(this)
 
-            context.bindService(Intent(context, AccountUpdateService::class.java), this, Context.BIND_AUTO_CREATE)
+            // Bind through the application context, the owner unbindService uses in onCleared. The
+            // binding lives as long as this model, across recreation. Binding through the Activity
+            // would register it under that Activity, which AppCompat-wrapped activities never clean
+            // up, so the unbind failed and every Activity that bound stayed reachable.
+            val appContext = this.context
+            appContext.bindService(Intent(appContext, AccountUpdateService::class.java), this, Context.BIND_AUTO_CREATE)
+            // The registration exists even if the call returned false or the model is cleared before
+            // the connection arrives, so it is always released in onCleared.
+            serviceBound = true
         }
+
+        @VisibleForTesting
+        internal val serviceConnectedForTesting: Boolean
+            get() = davService != null
 
         @Synchronized
         fun loadAccount() {
@@ -1481,8 +1494,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 try {
                     context.unbindService(this)
                 } catch (e: IllegalArgumentException) {
-                    // The service connection can be reported as connected while Android
-                    // has already dropped the registration during fast activity teardown.
+                    // Defensive only: bind and unbind use the same application context.
                     Logger.log.fine("Account update service was already unbound")
                 } finally {
                     serviceBound = false
@@ -1497,7 +1509,6 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            serviceBound = true
             davService = service as AccountUpdateService.InfoBinder
             davService!!.addRefreshingStatusListener(this, false)
 
@@ -1505,8 +1516,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
+            // The binding stays registered and reconnects, so it still needs onCleared's unbind.
             davService = null
-            serviceBound = false
         }
 
         override fun onDavRefreshStatusChanged(id: Long, refreshing: Boolean) {

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SettingsLayout from '../layout'
 import SettingsPage from '../page'
@@ -7,12 +7,21 @@ const state = vi.hoisted(() => ({
   pathname: '/settings',
   selfHosted: false,
   redirect: vi.fn(),
+  replace: vi.fn(),
+  wide: false,
+  listeners: new Set<() => void>(),
 }))
 
 vi.mock('next/navigation', () => ({
   usePathname: () => state.pathname,
   redirect: state.redirect,
+  useRouter: () => ({ replace: state.replace }),
 }))
+
+function setViewportWide(wide: boolean) {
+  state.wide = wide
+  state.listeners.forEach((listener) => listener())
+}
 vi.mock('@/app/lib/self-hosted', () => ({
   get isSelfHosted() {
     return state.selfHosted
@@ -29,6 +38,7 @@ const hostedLinks = [
   ['Mobile app', '/settings/mobile', 'Android install options'],
   ['Desktop bridge', '/settings/desktop', 'Use desktop calendar clients'],
   ['Experimental', '/settings/experimental', 'Optional features in development'],
+  ['Report a problem', '/settings/report', 'Problems & feature requests'],
 ]
 
 function settingsNav() {
@@ -53,9 +63,47 @@ describe('settings navigation', () => {
     state.pathname = '/settings'
     state.selfHosted = false
     state.redirect.mockClear()
+    state.replace.mockClear()
+    state.wide = false
+    state.listeners.clear()
+    window.matchMedia = vi.fn((query: string) => ({
+      get matches() {
+        return query === '(min-width: 1024px)' && state.wide
+      },
+      media: query,
+      addEventListener: (_: string, listener: () => void) => state.listeners.add(listener),
+      removeEventListener: (_: string, listener: () => void) => state.listeners.delete(listener),
+    })) as unknown as typeof window.matchMedia
   })
 
-  it('renders /settings as a grouped overview instead of redirecting', () => {
+  it('opens Account straight away when the settings rail is visible', () => {
+    state.wide = true
+    render(
+      <SettingsLayout>
+        <SettingsPage />
+      </SettingsLayout>,
+    )
+
+    expect(state.replace).toHaveBeenCalledWith('/settings/account')
+    expect(settingsNav().parentElement).toHaveClass('lg:hidden')
+  })
+
+  it('keeps the overview list below lg and opens Account if the window widens', () => {
+    const view = render(
+      <SettingsLayout>
+        <SettingsPage />
+      </SettingsLayout>,
+    )
+    expect(state.replace).not.toHaveBeenCalled()
+
+    act(() => setViewportWide(true))
+    expect(state.replace).toHaveBeenCalledWith('/settings/account')
+
+    view.unmount()
+    expect(state.listeners.size).toBe(0)
+  })
+
+  it('renders /settings as a grouped overview on narrow screens', () => {
     render(
       <SettingsLayout>
         <SettingsPage />
@@ -68,6 +116,7 @@ describe('settings navigation', () => {
       'Data',
       'Get the apps',
       'Advanced',
+      'Help',
     ])
     const links = navLinks()
     expect(links.map((link) => link.getAttribute('href'))).toEqual(hostedLinks.map(([, href]) => href))
@@ -114,6 +163,18 @@ describe('settings navigation', () => {
     expect(within(nav).getByRole('link', { name: 'Security' })).toHaveAttribute('aria-current', 'page')
     expect(within(nav).getAllByRole('link').filter((link) => link.hasAttribute('aria-current'))).toHaveLength(1)
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
+  it('offers Report a problem in the overview and the rail, also when self-hosted', () => {
+    state.selfHosted = true
+    const view = render(<SettingsPage />)
+    expect(within(settingsNav()).getByRole('link', { name: /^Report a problem/ })).toHaveAttribute('href', '/settings/report')
+    view.unmount()
+
+    renderDetail('/settings/report')
+    const report = within(settingsNav()).getByRole('link', { name: 'Report a problem' })
+    expect(report).toHaveAttribute('href', '/settings/report')
+    expect(report).toHaveAttribute('aria-current', 'page')
   })
 
   it('marks nested paths active only on whole path segments', () => {

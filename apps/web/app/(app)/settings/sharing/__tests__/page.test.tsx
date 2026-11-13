@@ -85,7 +85,7 @@ function createSdkAccount(id: string, incoming: unknown[] = []) {
     getInvitationManager: () => invitationManager,
     getCollectionManager: () => ({ getMemberManager: () => memberManager }),
   }
-  return { account, invitationManager }
+  return { account, invitationManager, memberManager }
 }
 
 function adminCollection(type: SharingType) {
@@ -486,5 +486,24 @@ describe('SharingSettingsPage copy', () => {
     expect(screen.queryByText('Zero-knowledge sharing')).toBeNull()
     expect(screen.getByText(/removing a member does not revoke a key they already received/i)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Settings → Security' })).toHaveAttribute('href', '/settings/security')
+  })
+})
+
+describe('SharingSettingsPage phone touch targets', () => {
+  it('gives invitation, invite and member controls the 44px mobile minimum', async () => {
+    const { memberManager } = setupPage('calendar', [incomingInvitation()])
+    memberManager.list.mockResolvedValue(page([{ username: 'friend@example.com', accessLevel: 2 }]) as any)
+
+    await screen.findByText('From friend@example.com')
+    fireEvent.click(screen.getByRole('button', { name: 'Load members' }))
+    await screen.findByRole('button', { name: 'Remove' })
+
+    const controls = [
+      ...['Refresh', 'Reject', 'Accept', 'Load members', 'Invite', 'Save', 'Remove'].map((name) =>
+        screen.getByRole('button', { name })),
+      screen.getByPlaceholderText('friend@example.com'),
+      ...screen.getAllByRole('combobox'),
+    ]
+    for (const control of controls) expect(control.className).toContain('max-md:min-h-[44px]')
   })
 })

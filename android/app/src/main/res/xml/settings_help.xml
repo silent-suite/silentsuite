@@ -7,5 +7,6 @@
   ~ http://www.gnu.org/licenses/gpl.html
   -->
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+    <Preference android:key="report_problem" android:title="@string/report_problem_title" android:summary="@string/report_problem_pref_summary" android:persistent="false" />
     <Preference android:key="settings_category_advanced" android:title="@string/settings_category_advanced" android:summary="@string/settings_category_advanced_summary" android:persistent="false" />
 </PreferenceScreen>
