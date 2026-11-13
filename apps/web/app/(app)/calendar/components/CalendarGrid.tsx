@@ -11,6 +11,7 @@ import { createEventsServicePlugin } from '@schedule-x/events-service'
 import { useTheme } from 'next-themes'
 import { useCalendarStore, type CalendarView } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { isManagedBirthdayCalendar } from '@/app/lib/birthday-calendar/session'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import type { CalendarEvent, DateRange, FirstDayOfWeek } from '@silentsuite/core'
@@ -986,6 +987,8 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
           getTimeFromY,
         )
         if (!event) return
+        // A generated birthday is read-only: no move or resize gesture starts.
+        if (isManagedBirthdayCalendar(event.calendarId)) return
 
         if (isNearBottom) {
           // Phase 3: Start potential resize
@@ -1440,6 +1443,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         getTimeFromY,
       )
       if (!event) return
+      if (isManagedBirthdayCalendar(event.calendarId)) return
 
       const startX = touch.clientX
       const startY = touch.clientY

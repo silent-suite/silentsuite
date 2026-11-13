@@ -6,7 +6,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 
 const mocks = vi.hoisted(() => ({ session: null as string | null, proof: vi.fn(), login: vi.fn(), signup: vi.fn(), push: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mocks.push }), useSearchParams: () => new URLSearchParams('setup_intent=setup-test&redirect_status=succeeded') }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
 vi.mock('../components/step-create-vault', () => ({ StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button onClick={onComplete}>Complete vault</button> }))
 vi.mock('../components/step-create-paid-account', () => ({ StepCreatePaidAccount: () => <div>Create new account step</div> }))
 vi.mock('@/app/lib/secure-storage', () => ({
