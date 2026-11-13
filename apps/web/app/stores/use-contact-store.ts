@@ -5,6 +5,7 @@ import type { Contact, SyncStatus } from '@silentsuite/core'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { AccountBoundaryChangedError, getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard } from '@/app/lib/offline-queue-account'
 import { readOutstanding } from '@/app/lib/offline-queue'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
@@ -392,6 +393,8 @@ export const useContactStore = create<ContactState & ContactActions>()(
             showErrorToast(sealIntent === 'favorite' ? 'Failed to update favorite. Please try again.' : 'Failed to save contact. Please try again.')
             return false
           }
+          // Only a server-confirmed save; queued or failed saves are not remote confirmation.
+          if (outcome === 'remote') requestBirthdayReconcile(accountEpoch)
           void useLabelSuggestionsStore.getState().recordUsage('contacts', draft.categories ?? [])
           return true
         }
@@ -445,6 +448,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
         const contact: StoredContact = { ...pending, id: itemUid, revision: committedRevision }
         set((state) => ({ contacts: state.contacts.map((record) => (record === pending ? contact : record)) }))
         void useLabelSuggestionsStore.getState().recordUsage('contacts', contact.categories ?? [])
+        requestBirthdayReconcile(accountEpoch)
         return contact
       },
 
@@ -496,6 +500,7 @@ export const useContactStore = create<ContactState & ContactActions>()(
         if (liveLedger(id) || hasContactFieldDraft(id)) return true
         // Not optimistic: the contact leaves the list only once the delete is accepted.
         set((state) => ({ contacts: state.contacts.filter((c) => c.id !== id) }))
+        requestBirthdayReconcile(accountEpoch)
         publishSaveState(id)
         return true
       },

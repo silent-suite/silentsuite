@@ -43,6 +43,9 @@ PRODUCER = "etebase-16kb"
 STATIC_JOB = "static-contracts"
 CONSUMERS = ("build-pr", "account-recreation-runtime", "color-parity-evidence", "registry-process-boundary")
 UNCHANGED_JOBS = ("signing-policy", "conscrypt-r28", "conscrypt-runtime")
+# Jobs added later on their own, outside the speed refactor these fixtures pin: the patched
+# ical4j's time-zone tests (JVM, and on the API 29 and 36 emulators). They build no Etebase.
+ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime"}
 ARTIFACT = "etebase-16kb-${{ github.sha }}"
 STAGING = "${{ runner.temp }}/etebase-16kb-artifact"
 BUILD_SCRIPT = "scripts/build-etebase-client-16kb.sh"
@@ -334,21 +337,25 @@ def _without_admission(job: dict) -> dict:
 
 
 # The first approved runtime-job change since both predecessors: the focused runtime ledger grew from 172 to
-# 186 methods, seven in a new fresh-emulator API 36 launcher-recovery shard that API 29 runs with its
-# account-dashboard shard (#898), one Notes startup sweep case and five Notes account-removal cases in
-# status-routes, and one setup recovery replacement case in first-run-setup (#966). Only the matrix row after API 36 first-run-setup and these four exact lines of the runtime job's
+# 233 methods, seven in a new fresh-emulator API 36 launcher-recovery shard that API 29 runs with its
+# account-dashboard shard (#898), one Notes startup sweep case, five Notes account-removal cases, one
+# saved WiFi network case (#971) and 43 Birthdays cases in status-routes, one setup recovery replacement case in first-run-setup (#966), and three Report a problem screen cases in
+# status-routes. Only the matrix row after API 36 first-run-setup and these four exact lines of the runtime job's
 # final assertion are carried forward; every other byte must still match.
+# The count lines then grew from 233 to 247 for five synthetic Etebase token-capture feasibility methods and
+# nine subscription-notice dashboard methods, all in the API 36 account-dashboard shard (which API 29 runs
+# with its account-dashboard shard).
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':78,'29:sibling-routes':48,'35:all':186,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':78}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':53,'29:first-run-setup':20,'29:status-routes':125,'29:sibling-routes':48,'35:all':247,'36:account-dashboard':47,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':125}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "if len(canonical) != 186 or len(expected) != expected_sizes[key]:\n",
+        "if len(canonical) != 247 or len(expected) != expected_sizes[key]:\n",
     ),
     (
         "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
@@ -517,7 +524,7 @@ def test_candidate_workflow_satisfies_every_speed_contract(candidate):
 def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candidate):
     assert candidate["name"] == base["name"]
     assert _triggers(candidate) == _triggers(base)
-    assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER}
+    assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER} | ADDED_JOBS
     for name in UNCHANGED_JOBS:
         assert candidate["jobs"][name] == base["jobs"][name], name
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
@@ -540,7 +547,7 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
     assert {key: value for key, value in candidate.items() if key != "jobs"} == {
         key: value for key, value in predecessor.items() if key != "jobs"
     }
-    assert set(candidate["jobs"]) == set(predecessor["jobs"])
+    assert set(candidate["jobs"]) == set(predecessor["jobs"]) | ADDED_JOBS
     for name, job in predecessor["jobs"].items():
         if name == RUNTIME_LEDGER_JOB:
             job = _with_approved_runtime_ledger_changes(job)
@@ -596,9 +603,9 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
     # Any other change to the same step, including another count, still fails the comparison.
     for old, new in (
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
-        ("'36:account-dashboard':33", "'36:account-dashboard':34"),
+        ("'36:account-dashboard':47", "'36:account-dashboard':48"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) != 186 or", "if len(canonical) < 186 or"),
+        ("if len(canonical) != 247 or", "if len(canonical) < 247 or"),
         ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
     ):
         mutated = copy.deepcopy(current)

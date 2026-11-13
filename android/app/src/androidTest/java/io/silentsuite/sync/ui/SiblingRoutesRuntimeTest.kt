@@ -90,6 +90,21 @@ class SiblingRoutesRuntimeTest {
                 io.silentsuite.sync.ui.setup.PostLoginSetupState.COMPLETE.name)
         }
         check(manager.addAccountExplicitly(account, null, userdata))
+
+        // These accounts are synthetic UI-route fixtures, not accounts whose sync lifecycle is
+        // under test. API 36's SyncManager has a per-minute JobScheduler enqueue limit; allowing
+        // every registered adapter to schedule work for dozens of short-lived fixture accounts
+        // can crash the emulator system process before the UI test finishes. Keep fixture accounts
+        // explicitly non-syncable and remove any periodic work immediately after registration.
+        ContentResolver.getSyncAdapterTypes()
+            .asSequence()
+            .filter { it.accountType == account.type }
+            .forEach { adapter ->
+                ContentResolver.setSyncAutomatically(account, adapter.authority, false)
+                ContentResolver.setIsSyncable(account, adapter.authority, 0)
+                ContentResolver.removePeriodicSync(account, adapter.authority, Bundle())
+            }
+
         assertEquals(creationId, manager.getUserData(account, AccountSettings.KEY_CREATION_ID))
         return account
     }

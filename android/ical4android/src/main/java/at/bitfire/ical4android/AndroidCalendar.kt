@@ -196,6 +196,17 @@ abstract class AndroidCalendar<out T: AndroidEvent>(
     fun findById(id: Long) = queryEvents("${Events._ID}=?", arrayOf(id.toString())).firstOrNull()
             ?: throw FileNotFoundException()
 
+    /**
+     * Whether the event [id] or one of its exceptions has a local change or deletion that isn't
+     * synchronized yet (an exception can be dirty while its main event is clean).
+     */
+    fun hasPendingChange(id: Long): Boolean =
+        provider.query(syncAdapterURI(Events.CONTENT_URI), arrayOf(Events._ID),
+                "(${Events._ID}=? OR ${Events.ORIGINAL_ID}=?) AND (${Events.DIRTY}!=0 OR ${Events.DELETED}!=0)",
+                arrayOf(id.toString(), id.toString()), null)?.use { cursor ->
+            cursor.count > 0
+        } ?: false
+
 
     fun syncAdapterURI(uri: Uri) = uri.buildUpon()
             .appendQueryParameter(CALLER_IS_SYNCADAPTER, "true")
