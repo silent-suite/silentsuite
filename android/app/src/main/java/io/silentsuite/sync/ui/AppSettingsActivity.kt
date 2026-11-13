@@ -674,7 +674,7 @@ class AppSettingsActivity : BaseActivity() {
                 true
             }
             requirePreference<Preference>("show_debug_info").setOnPreferenceClickListener {
-                startActivity(DebugInfoActivity.newIntent(requireContext(), AppSettingsActivity::class.java.name))
+                startActivity(DebugInfoActivity.newIntent(requireContext()))
                 true
             }
             initLanguagePreference()

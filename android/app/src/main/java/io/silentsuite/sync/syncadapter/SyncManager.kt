@@ -252,7 +252,6 @@ constructor(protected val context: Context, protected val account: Account, prot
             val detailsIntent = notificationManager.detailsIntent
             notificationManager.setAccount(account, accountCreationId)
             if (e !is UnauthorizedException) {
-                detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                 detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
             }
 
