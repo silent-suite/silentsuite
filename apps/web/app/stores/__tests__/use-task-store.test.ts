@@ -6,6 +6,7 @@ import { deserializeTask, taskICalDateFromProperty } from '@silentsuite/core'
 import { useTaskStore } from '../use-task-store'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useAuthStore } from '../use-auth-store'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { _setEncryptedQueuePersistenceAvailableForTests, getAll } from '@/app/lib/offline-queue'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 import { EtebaseRequest, ReferenceServer, makeSavedNote } from './web744-sdk-fixture'
@@ -206,6 +207,44 @@ describe('useTaskStore', () => {
 
       expect(useTaskStore.getState().tasks).toHaveLength(0)
       expect(deleteItem).toHaveBeenCalledWith('tasks', 'remote-task')
+    })
+
+    /** Another account takes over this browser, as a sign-in reset does. */
+    function switchToAccountB() {
+      bumpAccountEpoch()
+      useEtebaseStore.setState({ account: {}, accountFingerprint: 'account-b', itemCache: new Map() } as any)
+    }
+
+    it('drops an edit whose pending create finishes after the account changed', async () => {
+      const { finish, updateItem } = deferredCreate()
+      const creating = useTaskStore.getState().createTask({ title: 'Quick' })
+      const tempId = useTaskStore.getState().tasks[0]!.id
+
+      const toggling = useTaskStore.getState().toggleComplete(tempId)
+      switchToAccountB()
+      finish()
+      await creating.catch(() => {})
+      await toggling
+
+      expect(updateItem).not.toHaveBeenCalled()
+      expect(await getAll()).toHaveLength(0)
+    })
+
+    it.each([
+      ['toggleComplete', () => useTaskStore.getState().toggleComplete('temp-task')],
+      ['updateTask', () => useTaskStore.getState().updateTask('temp-task', { title: 'Renamed' })],
+      ['deleteTask', () => useTaskStore.getState().deleteTask('temp-task')],
+    ])('never queues %s for the next account when no create is pending', async (_name, run) => {
+      // Content-bearing updates must reach the queue for this check, as with an encrypted store.
+      _setEncryptedQueuePersistenceAvailableForTests(true)
+      useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map() } as any)
+      useTaskStore.setState({ tasks: [queuedTask()] })
+
+      const operation = run()
+      switchToAccountB()
+      await operation.catch(() => {})
+
+      expect((await getAll()).filter((entry) => entry.accountFingerprint === 'account-b')).toHaveLength(0)
     })
   })
 

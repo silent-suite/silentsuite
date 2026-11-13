@@ -91,18 +91,18 @@ function defaultTaskListId(): string | undefined {
 const savingCreates = new Map<string, Promise<string | null>>()
 
 /**
- * The id to sync an edit or delete under. A task edited while its create is
- * still in flight has only a temporary id with no Etebase item behind it yet,
- * so wait for the create and use the item UID it was given. Returns null when
- * the account changed in the meantime.
+ * A task edited while its create is still in flight has only a temporary id
+ * with no Etebase item behind it yet. Returns undefined when no create is
+ * pending, so the caller stays synchronous and keeps the account it started
+ * in. Otherwise resolves to the item UID to sync under (the temporary id if
+ * the create was not acknowledged), or null when the account changed while
+ * waiting.
  */
-async function syncTargetId(id: string): Promise<string | null> {
+function waitForPendingCreate(id: string): Promise<string | null> | undefined {
   const saving = savingCreates.get(id)
-  if (!saving) return id
+  if (!saving) return undefined
   const accountEpoch = getAccountEpoch()
-  const itemUid = await saving
-  if (!isCurrentAccountEpoch(accountEpoch)) return null
-  return itemUid ?? id
+  return saving.then((itemUid) => (isCurrentAccountEpoch(accountEpoch) ? itemUid ?? id : null))
 }
 
 export const useTaskStore = create<TaskState & TaskActions>()(
@@ -206,7 +206,10 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         next[index] = updated
         set({ tasks: next })
 
-        const targetId = await syncTargetId(id)
+        // Await only when a create is pending: an unconditional await would let
+        // the account change before the guard below is captured.
+        const pendingCreate = waitForPendingCreate(id)
+        const targetId = pendingCreate ? await pendingCreate : id
         if (targetId === null) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
@@ -246,7 +249,10 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         const taskToDelete = get().tasks.find((t) => t.id === id)
         set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }))
 
-        const targetId = await syncTargetId(id)
+        // Await only when a create is pending: an unconditional await would let
+        // the account change before the guard below is captured.
+        const pendingCreate = waitForPendingCreate(id)
+        const targetId = pendingCreate ? await pendingCreate : id
         if (targetId === null) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
@@ -295,7 +301,10 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         next[index] = updated
         set({ tasks: next })
 
-        const targetId = await syncTargetId(id)
+        // Await only when a create is pending: an unconditional await would let
+        // the account change before the guard below is captured.
+        const pendingCreate = waitForPendingCreate(id)
+        const targetId = pendingCreate ? await pendingCreate : id
         if (targetId === null) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
