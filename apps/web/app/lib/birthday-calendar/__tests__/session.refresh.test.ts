@@ -12,6 +12,7 @@ import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { selectQualifyingBirthdayCalendarIds, useBirthdayMarkerStore } from '../markers'
 import {
@@ -56,6 +57,7 @@ describe('Birthdays session refresh and account scoping (#738)', () => {
     vi.useFakeTimers()
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     useCalendarStore.setState({ events: [] })
+    useExperimentalStore.setState({ hydrated: true, birthdayAccounts: ['fp-a', 'fp-b'] })
     useBirthdayMarkerStore.setState({ snapshot: null })
     useAuthStore.setState({ canWrite: () => true } as never)
     useSyncStore.setState({ isOnline: true } as never)

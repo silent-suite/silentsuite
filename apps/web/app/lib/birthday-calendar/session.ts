@@ -11,6 +11,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
+import { isBirthdaysEnabledFor } from '@/app/stores/use-experimental-store'
 import { createEtebaseBirthdayTransport } from './etebase-transport'
 import { disableBirthdayCalendar, enableBirthdayCalendar } from './lifecycle'
 import {
@@ -103,15 +104,24 @@ function sameOrigin(origin: Origin): boolean {
 function gatesFor(origin: Origin): BirthdayGates {
   return {
     accountEpoch: origin.epoch,
-    isCurrentEpoch: () => sameOrigin(origin),
+    isCurrentEpoch: () => sameOrigin(origin) && optedIn(origin),
     canWrite: () => useAuthStore.getState().canWrite(),
     isOnline: () => useSyncStore.getState().isOnline,
     hasSubtleCrypto,
   }
 }
 
+/** The experimental opt-in, checked again at every gate so switching it off stops a pending or running pass. */
+function optedIn(origin: Origin): boolean {
+  try {
+    return isBirthdaysEnabledFor(origin.fingerprint)
+  } catch {
+    return false
+  }
+}
+
 function ready(origin: Origin): boolean {
-  return sameOrigin(origin) && useAuthStore.getState().canWrite() && useSyncStore.getState().isOnline && hasSubtleCrypto()
+  return sameOrigin(origin) && optedIn(origin) && useAuthStore.getState().canWrite() && useSyncStore.getState().isOnline && hasSubtleCrypto()
 }
 
 /** Debounced passive run. A newer schedule for the same process replaces the pending one. */

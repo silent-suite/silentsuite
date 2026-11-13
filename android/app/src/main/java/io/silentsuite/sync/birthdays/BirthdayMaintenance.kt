@@ -155,7 +155,7 @@ internal object BirthdayMaintenance {
             }
             val gate = {
                 ExactAccountRouting.validate(row, creationId, App.accountType, manager) != null &&
-                    !Thread.currentThread().isInterrupted
+                    optedIn(context, row) && !Thread.currentThread().isInterrupted
             }
             if (!gate()) {
                 Logger.log.info("Birthdays after the $trigger skipped (stopped)")
@@ -230,7 +230,7 @@ internal object BirthdayMaintenance {
             val manager = AccountManager.get(context)
             val gate = {
                 stillWanted() && ExactAccountRouting.validate(main, creationId, App.accountType, manager) != null &&
-                    !Thread.currentThread().isInterrupted
+                    optedIn(context, main) && !Thread.currentThread().isInterrupted
             }
             if (!gate()) {
                 Logger.log.info("Birthdays $action skipped (stopped)")
