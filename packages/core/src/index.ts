@@ -190,7 +190,8 @@ export {
 export type { VCard, VCardName, VCardPhone, VCardEmail, VCardAddress } from './utils/vcard-parser.js';
 
 // Todoist CSV parser
-export { parseTodoistCsv } from './utils/csv-parser.js';
+export { parseTodoistCsv, parseTodoistDate } from './utils/csv-parser.js';
+export { isKnownTimeZone } from './utils/zoned-time.js';
 
 // Recurrence expansion
 export { expandRecurrence, untilDateBefore, untilTimeBefore, occurrenceWallClock } from './utils/recurrence.js';

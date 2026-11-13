@@ -333,3 +333,42 @@ describe('C3a-R5 TaskImport reports only acknowledged tasks and keeps the rest f
     expect(payloadTitles(0)).toEqual(['First task', 'Second task'])
   })
 })
+
+describe('TaskImport Todoist due time of day', () => {
+  const HEADER = 'TYPE,CONTENT,DESCRIPTION,PRIORITY,INDENT,AUTHOR,RESPONSIBLE,DATE,DATE_LANG,TIMEZONE,DURATION,DURATION_UNIT'
+
+  beforeEach(() => {
+    mocks.importTasks.mockReset().mockResolvedValue(1)
+    mocks.onImportComplete.mockReset()
+  })
+
+  async function importRow(date: string, timezone: string) {
+    const { container } = renderWithIntl(<TaskImport onImportComplete={mocks.onImportComplete} />)
+    const csv = [HEADER, `task,Timed task,,4,1,me,,${date},en,${timezone},,`].join('\n')
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [new File([csv], 'todoist.csv', { type: 'text/csv' })] } })
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 tasks' }))
+    await waitFor(() => expect(mocks.importTasks).toHaveBeenCalledTimes(1))
+    return (mocks.importTasks.mock.calls[0]![0] as NewTask[])[0]!
+  }
+
+  it('keeps the time and anchors it in the TIMEZONE column', async () => {
+    const task = await importRow('2026-12-05 14:30', 'Europe/Berlin')
+
+    expect(task.due_ical).toEqual({ kind: 'tzid', value: '20261205T143000', tzid: 'Europe/Berlin' })
+    expect(task.due_date).toEqual(new Date('2026-12-05T13:30:00Z'))
+  })
+
+  it('keeps the time of a month-name date as a floating time when TIMEZONE is unknown', async () => {
+    const task = await importRow('Dec 5 2026 14:30', 'Not/AZone')
+
+    expect(task.due_ical).toEqual({ kind: 'floating', value: '20261205T143000' })
+    expect(task.due_date).toEqual(new Date(2026, 11, 5, 14, 30))
+  })
+
+  it('control: a date without a time stays a date', async () => {
+    const task = await importRow('2026-12-05', 'Europe/Berlin')
+
+    expect(task.due_ical).toEqual({ kind: 'date', value: '20261205' })
+    expect(task.due_date).toEqual(new Date(2026, 11, 5))
+  })
+})
