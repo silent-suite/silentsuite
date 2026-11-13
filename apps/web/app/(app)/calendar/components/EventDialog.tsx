@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
 import { useTranslations } from 'next-intl'
@@ -15,6 +15,7 @@ import { buildAlarmTrigger, gapWallClock, parseAlarmTriggerMinutes, validStartWa
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
+import { canWriteCollection, findItemCollection } from '@/app/lib/collection-access'
 import { Globe } from 'lucide-react'
 import {
   formatDateForInputInZone,
@@ -276,7 +277,7 @@ export function EventDialog({
   const updateRecurringEvent = useCalendarStore((s) => s.updateRecurringEvent)
   const deleteRecurringEvent = useCalendarStore((s) => s.deleteRecurringEvent)
 
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
   const notifications = useNotifications()
   const t = useTranslations('Labels')
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
@@ -392,15 +393,26 @@ export function EventDialog({
     isEdit ? (event.calendarId ?? defaultCalendarId) : defaultCalendarId,
   )
 
+  // Only calendars the account may write to are offered as targets; an edited
+  // event's own calendar stays listed so it always shows.
+  const writableCalendars = useMemo(() => calendarLists.filter(canWriteCollection), [calendarLists])
+  const eventCalendar = isEdit ? findItemCollection(calendarLists, event.calendarId) : undefined
+  const pickerCalendars = eventCalendar && !writableCalendars.includes(eventCalendar)
+    ? [eventCalendar, ...writableCalendars]
+    : writableCalendars
+  // An event in a calendar shared read-only opens read-only, as when the subscription has ended.
+  const calendarWritable = canWriteCollection(isEdit ? eventCalendar : findItemCollection(calendarLists, selectedCalendarId))
+  const canWrite = canWriteAccount && calendarWritable
+
   useEffect(() => {
-    if (isEdit || calendarLists.length === 0) return
-    if (calendarLists.some((calendar) => calendar.id === selectedCalendarId)) return
+    if (isEdit || writableCalendars.length === 0) return
+    if (writableCalendars.some((calendar) => calendar.id === selectedCalendarId)) return
     setSelectedCalendarId(
-      calendarLists.some((calendar) => calendar.id === defaultCalendarId)
+      writableCalendars.some((calendar) => calendar.id === defaultCalendarId)
         ? defaultCalendarId
-        : calendarLists[0]!.id,
+        : writableCalendars[0]!.id,
     )
-  }, [calendarLists, defaultCalendarId, isEdit, selectedCalendarId])
+  }, [writableCalendars, defaultCalendarId, isEdit, selectedCalendarId])
 
   // Saving state to prevent double-submission
   const [saving, setSaving] = useState(false)
@@ -480,7 +492,7 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const handleSave = useCallback(async () => {
-    if (!title.trim() || saving) return
+    if (!canWrite || !title.trim() || saving) return
     if (startDateError || endDateError) return
 
     // For a DST-gap start, unchanged inputs keep the exact stored instants: the form rebuilds
@@ -600,6 +612,7 @@ export function EventDialog({
     initialStartTime,
     initialEndDateIso,
     initialEndTime,
+    canWrite,
     createEvent,
     updateEvent,
     onClose,
@@ -610,7 +623,7 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const handleDelete = useCallback(() => {
-    if (!isEdit) return
+    if (!isEdit || !canWrite) return
 
     if (isRecurring) {
       setScopeDialog({ mode: 'delete' })
@@ -618,7 +631,7 @@ export function EventDialog({
       void deleteEvent(event.id)
       onClose()
     }
-  }, [isEdit, isRecurring, event, deleteEvent, onClose])
+  }, [isEdit, canWrite, isRecurring, event, deleteEvent, onClose])
 
   // ---------------------------------------------------------------------------
   // Scope dialog confirm / cancel
@@ -843,7 +856,7 @@ export function EventDialog({
                 onClick={() => void handleSave()}
                 disabled={!canSave || saving || !canWrite}
                 className={`shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
-                title={!canWrite ? 'Subscription required' : undefined}
+                title={!canWriteAccount ? 'Subscription required' : !calendarWritable ? 'This calendar is read-only' : undefined}
               >
                 {saving ? 'Saving…' : 'Done'}
               </button>
@@ -900,14 +913,14 @@ export function EventDialog({
                   </div>
                 </div>
 
-                {calendarLists.length > 0 && (
+                {pickerCalendars.length > 0 && (
                   <div className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-3">
                     <div className="flex items-center gap-2">
                       <CalendarDays className={iconClass} />
                       <span className="text-sm font-medium text-[rgb(var(--foreground))]">Calendar</span>
                     </div>
                     <div className="flex flex-wrap gap-2 pl-0 sm:pl-6">
-                      {calendarLists.map((cal) => (
+                      {pickerCalendars.map((cal) => (
                         <button
                           key={cal.id}
                           type="button"
