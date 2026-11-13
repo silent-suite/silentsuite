@@ -35,6 +35,7 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.ui.report.ReportProblemActivity
 import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.ui.settings.SettingsCategory
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
@@ -609,6 +610,10 @@ class AppSettingsActivity : BaseActivity() {
         }
 
         private fun setupHelp() {
+            requirePreference<Preference>("report_problem").setOnPreferenceClickListener {
+                startActivity(ReportProblemActivity.newIntent(requireContext()))
+                true
+            }
             requirePreference<Preference>("settings_category_advanced").setOnPreferenceClickListener {
                 host.showCategory(SettingsCategory.ADVANCED)
                 true

@@ -49,15 +49,56 @@ android {
     }
 }
 
+// ical4j 3.0.20 with SilentSuite's time-zone patch (ICAL4J-PATCH.md). The upstream jar is verified
+// and repackaged without the replaced classes, so the unpatched ones can't reach any classpath.
+def ical4jSha256 = 'fa735cba44d522a0d9c0acfe5c1ff5f5ffc00daff78d7e67a1b7e6e78ec49395'
+def ical4jReplacedClasses = [
+        'net/fortuna/ical4j/model/DateTime.class',
+        'net/fortuna/ical4j/model/DateTime$*.class',
+        'net/fortuna/ical4j/model/Iso8601.class',
+        'net/fortuna/ical4j/model/TimeZone.class'
+]
+
+configurations {
+    upstreamIcal4j {
+        transitive = false
+    }
+}
+
+def strippedIcal4j = tasks.register('strippedIcal4j', Jar) {
+    def upstream = configurations.upstreamIcal4j
+    inputs.files(upstream)
+    archiveFileName = "ical4j-${versions.ical4j}-unpatched-classes-removed.jar"
+    destinationDirectory = layout.buildDirectory.dir('ical4j')
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+    from({ zipTree(upstream.singleFile) }) {
+        exclude ical4jReplacedClasses
+        exclude 'META-INF/MANIFEST.MF'
+    }
+    doFirst {
+        def jar = upstream.singleFile
+        def sha256 = java.security.MessageDigest.getInstance('SHA-256').digest(jar.bytes).encodeHex().toString()
+        if (sha256 != ical4jSha256)
+            throw new GradleException("${jar.name} has SHA-256 ${sha256}, expected ${ical4jSha256}")
+    }
+}
+
 dependencies {
     def androidX = rootProject.ext.androidXVersions
+
+    upstreamIcal4j "org.mnode.ical4j:ical4j:${versions.ical4j}"
 
     implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}"
 
-    api("org.mnode.ical4j:ical4j:${versions.ical4j}") {
-        exclude module: 'javax.mail'
-    }
+    // ical4j without the classes that src/main/java/net/fortuna/ical4j/model replaces (ICAL4J-PATCH.md),
+    // plus ical4j's own dependencies from its POM; javax.mail is replaced by android-mail below
+    api files(strippedIcal4j)
+    api 'org.slf4j:slf4j-api:1.7.25'
+    api 'commons-codec:commons-codec:1.11'
+    api 'org.apache.commons:commons-lang3:3.8.1'
+    api 'org.apache.commons:commons-collections4:4.1'
     // ical4j requires JavaMail API (e.g. for EMAIL parameter)
     implementation 'com.sun.mail:android-mail:1.6.5'
     // noinspection GradleDependency

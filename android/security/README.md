@@ -38,6 +38,13 @@ Exercise all scenarios separately:
 6. `background_sync`
 7. `network_failure` using a deliberate DNS/auth/network failure
 8. `logout`
+9. `report_open`: open Settings → Help and troubleshooting → Report a problem, type a summary and description, wait 30 seconds
+10. `report_toggle_diagnostics`: on that screen switch between Problem and Feature request and tick/untick Include diagnostic info several times
+11. `report_cancel`: fill in the form, then leave with Back without pressing Send
+12. `report_background`: fill in the form, put the app in the background for 5 minutes, then return without pressing Send
+13. `report_send`: fill in the form and press Send once (must make exactly one request to `silentsuite.io`, the `/api/report` endpoint)
+
+`silentsuite.io` is a scenario-scoped rule (`<host> scenario=<name>` in the endpoint file): it matches that exact host only (subdomains such as `server.silentsuite.io` are not covered by it), is accepted only in `report_send` and fails every other scenario, including `clean_launch`, `login` and the four report negative probes above. A complete run must show exactly one request to it in `report_send`; more than one means a retry and fails. `report_send` delivers a real email to the support inbox, so use a summary that marks it as network-evidence test traffic. Run it only after the report endpoint is deployed and switched on.
 
 The sanitized JSONL has one row per UID/destination/scenario:
 
@@ -45,7 +52,7 @@ The sanitized JSONL has one row per UID/destination/scenario:
 {"scenario":"foreground_sync","uid":10123,"host":"<user-selected-server>","requests":2}
 ```
 
-Use `host:null` and `requests:0` when no request occurred. Normalize the dedicated configured auth/sync host to `<user-selected-server>` after confirming the raw destination. Compare every destination to `security/android-network-endpoints.txt`. Plausible, Telegram, advertising, crash, and analytics destinations are prohibited. Never normalize an unexpected destination into the placeholder.
+Use `host:null` and `requests:0` when no request occurred. Normalize the dedicated configured auth/sync host to `<user-selected-server>` after confirming the raw destination. Compare every destination to `security/android-network-endpoints.txt`, including its scenario-scoped rules. Plausible, Telegram, advertising, crash, and analytics destinations are prohibited. Never normalize an unexpected destination into the placeholder.
 
 Before dispatching `.github/workflows/android-network-evidence.yml`, place **only** the sanitized JSONL in the protected `android-network-evidence` environment secret `ANDROID_NETWORK_EVIDENCE_JSONL`. Supply the exact tested APK SHA-256, the one app UID, the raw-capture SHA-256, an opaque restricted evidence record ID, and a named accountable human owner. The checker rejects malformed digests and mixed/mismatched UIDs, hashes the JSONL, and binds those values in sanitized provenance.
 

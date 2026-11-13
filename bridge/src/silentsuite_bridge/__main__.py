@@ -364,6 +364,9 @@ def start_tray():
 
         tray = BridgeTray(bridge_state="starting")
         tray.run_detached()
+        from .web.report import mark_tray_active
+
+        mark_tray_active()
         return tray
     except Exception as e:
         logger.warning("Failed to start system tray (%s)", bounded_exception_class(e))
