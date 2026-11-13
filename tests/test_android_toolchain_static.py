@@ -64,3 +64,31 @@ def test_nested_standalone_wrapper_versions_are_not_root_toolchain_inputs():
 
     for path, distribution in expected_urls.items():
         assert distribution in read(path), path
+
+
+def test_root_gradle_distribution_is_checksum_pinned():
+    wrapper = read("android/gradle/wrapper/gradle-wrapper.properties")
+
+    # Official sha256 of gradle-8.13-all.zip from services.gradle.org.
+    assert (
+        "distributionSha256Sum=fba8464465835e74f7270bbf43d6d8a8d7709ab0a43ce1aa3323f73e9aa0c612"
+        in wrapper.splitlines()
+    )
+
+
+def test_jitpack_serves_only_the_module_missing_from_maven_central():
+    build = read("android/build.gradle")
+
+    assert build.count("https://jitpack.io") == 1
+    jitpack = build[build.index("maven { url 'https://jitpack.io'"):]
+    jitpack = jitpack[: jitpack.index("google()")]
+    assert re.findall(r'include\w+\(([^)]*)\)', jitpack) == ['"com.github.cachapa", "ExpandableLayout"']
+
+
+def test_android_ci_validates_every_gradle_wrapper_jar():
+    workflow = read(".github/workflows/build-android.yml")
+
+    assert (
+        "uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1"
+        in workflow
+    )

@@ -1084,6 +1084,60 @@ def test_every_workflow_action_is_pinned_to_an_immutable_commit():
     assert violations == []
 
 
+BRIDGE_BUILD_REQUIREMENTS = ROOT / "bridge" / "requirements-build.txt"
+HASHED_BUILD_INSTALL = (
+    "python -m pip install --disable-pip-version-check --require-hashes "
+    "--only-binary=:all: -r requirements-build.txt"
+)
+DIGEST_PINNED_IMAGE = re.compile(r"^[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}$")
+
+
+def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
+    build = load(BRIDGE_BUILD_WORKFLOW)["jobs"]["build"]
+    native = step_named(build, "Install dependencies (native)")["run"]
+    qemu = step_named(build, "Build + smoke test (QEMU arm64)")["with"]["run"]
+    for script in (native, qemu):
+        assert HASHED_BUILD_INSTALL in script
+        assert "pip install pyinstaller" not in script
+        assert "--upgrade pip" not in script
+        # The extras either install as declared or the build fails.
+        assert "||" not in script
+        assert 'pip install -e ".[dev,tray]"' in script
+
+    lines = [
+        line
+        for line in BRIDGE_BUILD_REQUIREMENTS.read_text(encoding="utf-8").replace("\\\n", " ").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    names = set()
+    for line in lines:
+        requirement, _, options = line.partition("--hash=")
+        specifier = requirement.split(";")[0].strip()
+        assert re.fullmatch(r"[A-Za-z0-9._-]+==[A-Za-z0-9.]+", specifier), line
+        hashes = ("--hash=" + options).split()
+        assert hashes and all(re.fullmatch(r"--hash=sha256:[0-9a-f]{64}", item) for item in hashes), line
+        names.add(specifier.split("==")[0])
+    assert {"pip", "pyinstaller", "pyinstaller-hooks-contrib"} <= names
+
+
+def test_bridge_build_container_inputs_are_pinned_and_verified():
+    build = load(BRIDGE_BUILD_WORKFLOW)["jobs"]["build"]
+    qemu_setup = step_named(build, "Set up QEMU")["with"]
+    assert DIGEST_PINNED_IMAGE.match(qemu_setup.get("image", "")), qemu_setup
+    assert qemu_setup.get("cache-image") == "false"
+
+    container = step_named(build, "Build + smoke test (QEMU arm64)")["with"]
+    assert DIGEST_PINNED_IMAGE.match(container["image"]), container["image"]
+    script = container["run"]
+    assert "sh.rustup.rs" not in script
+    assert not re.search(r"curl[^\n|]*\|\s*(?:ba)?sh", script)
+    assert re.search(r"RUSTUP_INIT_SHA256=[0-9a-f]{64}\n", script)
+    download = script.index("-o /tmp/rustup-init")
+    verify = script.index('echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c -')
+    run = script.index("/tmp/rustup-init -y --default-toolchain 1.63.0")
+    assert download < verify < run
+
+
 ALLOWED_RELEASE_SECRETS = {
     "GITHUB_TOKEN",
     "ANDROID_KEYSTORE_BASE64",
