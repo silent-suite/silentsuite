@@ -114,5 +114,35 @@
       "description": "Gran parte dell'app è ancora in inglese. Per ora l'italiano copre solo alcune schermate. Questa scelta vale solo per questo browser e non viene sincronizzata con il tuo account o con altri dispositivi.",
       "partialTag": "(parziale, sperimentale)"
     }
+  },
+  "SettingsReport": {
+    "title": "Segnala un problema",
+    "intro": "Segnalaci un problema o suggerisci una funzione. Non viene inviato nulla finché non premi Invia.",
+    "kindLabel": "Cosa vuoi segnalare?",
+    "kindProblem": "Problema",
+    "kindFeature": "Richiesta di funzione",
+    "summaryLabel": "Riepilogo",
+    "descriptionLabel": "Descrizione",
+    "counter": "{count} / {max}",
+    "emailLabel": "Email per la risposta (facoltativa)",
+    "emailHint": "Solo se vuoi una risposta.",
+    "includeDiagnostics": "Includi informazioni diagnostiche",
+    "previewLabel": "Informazioni diagnostiche che verranno inviate",
+    "previewHint": "Questo è esattamente ciò che verrà inviato con la segnalazione. Non contiene dati dell'account, indirizzi del server né contenuti.",
+    "disclosure": "La segnalazione viene inviata tramite Cloudflare e recapitata via email (tramite Resend) alla casella di supporto di SilentSuite. Non è cifrata end-to-end e non è collegata al tuo account. La eliminiamo {days} giorni dopo averla gestita; per farla eliminare prima scrivi a {email}.",
+    "privacyLink": "Informativa sulla privacy",
+    "send": "Invia",
+    "sending": "Invio in corso\u2026",
+    "emailInstead": "Invia per email",
+    "copy": "Copia",
+    "copied": "Copiato",
+    "copyFailed": "Copia non riuscita",
+    "sent": "Grazie, la tua segnalazione è stata inviata.",
+    "unconfirmed": "Non possiamo confermare che la segnalazione sia stata inviata. Puoi inviarla per email o copiarla.",
+    "errors": {
+      "tooLong": "Il testo è troppo lungo.",
+      "controlChars": "Il testo contiene caratteri che non possono essere inviati.",
+      "email": "Inserisci un indirizzo email valido o lascia il campo vuoto."
+    }
   }
 }

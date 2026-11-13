@@ -239,7 +239,7 @@ class Task: ICalendar() {
         ).filterNotNull().minOrNull()
         // add VTIMEZONE components
         for (tz in usedTimeZones)
-            ical.components += minifyVTimeZone(tz.vTimeZone, earliest)
+            ical.components += vTimeZoneFor(tz, earliest)
 
         softValidate(ical)
         CalendarOutputter(false).output(ical, os)

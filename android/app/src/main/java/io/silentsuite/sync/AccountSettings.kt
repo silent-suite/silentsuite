@@ -206,6 +206,7 @@ constructor(internal val context: Context, internal val account: Account) {
         const val KEY_INITIAL_SYNC_REQUEST_ID = "post_login_initial_sync_request_id_v1"
         const val KEY_CONTEXTUAL_PERMISSION_DENIALS = "post_login_contextual_permission_denials_v1"
         const val KEY_NOTES_ENABLED = "notes_enabled_v1"
+        const val KEY_BIRTHDAYS_ENABLED = "birthdays_enabled_v1"
         const val KEY_COLLECTION_LIST_TYPES = "collection_list_types_v1"
         const val KEY_NOTES_AUTOMATIC_NETWORK = "notes_automatic_network_v1"
         const val KEY_NOTES_SYNC_NOW_NETWORK = "notes_sync_now_network_v1"
@@ -334,6 +335,19 @@ constructor(internal val context: Context, internal val account: Account) {
 
         fun writeNotesSyncNowNetwork(accountManager: AccountManager, account: Account, allowed: NotesNetworkPolicy.Allowed): Boolean =
             writeVerified(accountManager, account, KEY_NOTES_SYNC_NOW_NETWORK, allowed.name)
+
+        /**
+         * Per-account experimental Birthdays calendar opt-in. Absent means off, and so does a read that fails;
+         * turning it off leaves any Birthdays calendar on the server as it is.
+         */
+        fun birthdaysEnabled(accountManager: AccountManager, account: Account): Boolean = try {
+            accountManager.getUserData(account, KEY_BIRTHDAYS_ENABLED) == "true"
+        } catch (e: Exception) {
+            false
+        }
+
+        fun writeBirthdaysEnabled(accountManager: AccountManager, account: Account, enabled: Boolean): Boolean =
+            writeVerified(accountManager, account, KEY_BIRTHDAYS_ENABLED, if (enabled) "true" else "false")
 
         /**
          * The collection types the saved account-wide collection-list cursor covers. When the app

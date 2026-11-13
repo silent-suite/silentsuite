@@ -10,6 +10,7 @@ Menu actions:
 - Copy CalDAV URL
 - Copy CardDAV URL
 - Open Dashboard (opens localhost in browser)
+- Report a problem (opens the dashboard report page)
 - Re-authenticate (opens browser auth flow)
 - Quit
 
@@ -69,6 +70,14 @@ def _dashboard_url():
     if requested:
         return config.listener_base_url(requested["host"], requested["port"]) + "/"
     return None
+
+
+def _report_url():
+    """Return the dashboard's report page URL, or None when not bound."""
+    url = _dashboard_url()
+    if url is None:
+        return None
+    return url.rstrip("/") + "/.web/report"
 
 
 def _account_dav_url(email):
@@ -239,6 +248,17 @@ class BridgeTray:
             enabled=_dashboard_enabled,
         )
 
+        def _open_report(_icon=None, _item=None):
+            url = _report_url()
+            if url is not None:
+                webbrowser.open(url)
+
+        report_item = pystray.MenuItem(
+            "Report a problem",
+            _open_report,
+            enabled=_dashboard_enabled,
+        )
+
         return pystray.Menu(
             pystray.MenuItem(
                 f"Status: {status_text}",
@@ -254,6 +274,7 @@ class BridgeTray:
             *account_items,
             pystray.Menu.SEPARATOR,
             dashboard_item,
+            report_item,
             pystray.MenuItem(
                 "Add / Re-authenticate Account",
                 lambda _icon=None, _item=None: self._reauthenticate(),

@@ -20,6 +20,7 @@ import com.etebase.client.Item
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.birthdays.BirthdayCalendar
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
 import io.silentsuite.sync.resource.LocalCalendar
@@ -51,12 +52,56 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         return Constants.NOTIFICATION_CALENDAR_SYNC
     }
 
+    /** Whether this calendar is the active Birthdays calendar, as read afresh in [prepare]. */
+    private var birthdaysActive = false
+
     @Throws(ContactsStorageException::class, CalendarStorageException::class)
     override fun prepare(): Boolean {
         if (!super.prepare())
             return false
 
+        // The Birthdays marker is the collection's own content, which the cached collection need not
+        // hold. It is read afresh before any local change is pushed; a read that fails ends the sync
+        // before anything is uploaded, so an unreadable marker never makes the calendar writable.
+        val content = colMgr.fetch(cachedCollection.col.uid).content
+        birthdaysActive = BirthdayCalendar.markerState(content) == BirthdayCalendar.MarkerState.ACTIVE
+        localCalendar().updateAccessLevel(cachedCollection.col.accessLevel, birthdaysActive)
+        if (birthdaysActive)
+            Logger.log.info("Active Birthdays calendar: local changes are restored from the server, never uploaded")
+
         return true
+    }
+
+    /** The active Birthdays calendar's local edits and deletions are restored, never uploaded. */
+    override fun discardsLocalChanges(): Boolean = birthdaysActive || super.discardsLocalChanges()
+
+    /**
+     * For the active Birthdays calendar, reapplies the cached server event (already downloaded by
+     * an earlier sync) over a discarded local change, keeping its file name, so the provider shows
+     * the server's content again before the dirty flag is cleared. Other calendars keep the default.
+     */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    override fun restoreLocalFromRemote(local: LocalEvent): String? {
+        if (!birthdaysActive)
+            return super.restoreLocalFromRemote(local)
+        // The Etebase cache is keyed by the item/file UID, not the iCalendar UID.
+        val itemUid = local.fileName
+            ?: throw CalendarStorageException("Cannot restore a Birthdays event without its cached item UID")
+
+        val cached = synchronized(etebaseLocalCache) {
+            etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, itemUid)
+        }
+        if (cached == null || cached.item.isDeleted)
+            throw CalendarStorageException("The server copy of a Birthdays event is unavailable")
+
+        val remote = Event.eventsFromReader(StringReader(cached.content))
+        if (remote.isEmpty())
+            throw CalendarStorageException("The server copy of a Birthdays event is invalid")
+
+        Logger.log.info("Reapplying the server's Birthdays event over a discarded local change")
+        local.eTag = cached.item.etag
+        local.update(remote[0])
+        return cached.item.etag
     }
 
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
@@ -73,8 +118,47 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         return localCollection as LocalCalendar
     }
 
+    /**
+     * Events stored before the time-zone patch were resolved with ical4j's 2020 rules, so some are
+     * an hour off (America/Vancouver since November 2026). The server copies are unaffected, but
+     * an incremental sync never fetches an unchanged item again: list the calendar from the start
+     * once to store every event again with the current rules.
+     */
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    override fun replayFromStart(): Boolean {
+        if (localCalendar().timeZoneRereadDone())
+            return false
+        Logger.log.info("Reading this calendar from the start once, to store its events with the current time-zone rules")
+        return true
+    }
+
+    @Throws(CalendarStorageException::class, ContactsStorageException::class)
+    override fun onReplayCompleted() {
+        localCalendar().markTimeZoneRereadDone()
+    }
+
+    /** What this run does with [item] given a local change of it that isn't uploaded yet. */
+    private fun replayLocalChange(item: Item, local: LocalEvent?): ReplayLocalChange {
+        val pending = replaying && local?.id?.let { localCalendar().hasPendingChange(it) } == true
+        return replayLocalChange(replaying, item.isDeleted, pending)
+    }
+
+    override fun keepsLocalChange(item: Item): Boolean {
+        if (!replaying || !item.isDeleted)
+            return false
+        val keep = replayLocalChange(item, localCollection!!.findByFilename(item.uid)) == ReplayLocalChange.SKIP_APPLY_AND_CACHE
+        if (keep)
+            Logger.log.info("Keeping a local change over a server deletion during this re-read")
+        return keep
+    }
+
     override fun processItem(item: Item) {
         val local = localCollection!!.findByFilename(item.uid)
+
+        if (replayLocalChange(item, local) == ReplayLocalChange.SKIP_APPLY) {
+            Logger.log.info("Keeping a local change made during this re-read for the next upload")
+            return
+        }
 
         if (!item.isDeleted) {
             val inputReader = StringReader(String(item.content))
@@ -149,3 +233,25 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
         return localEvent
     }
 }
+
+/** How a calendar re-read treats a listed item whose local event has a change still to upload. */
+internal enum class ReplayLocalChange {
+    /** Apply and cache the listed item as usual. */
+    APPLY,
+    /** Keep the local event; cache the server's revision, which the local upload then replaces. */
+    SKIP_APPLY,
+    /** Keep the local event and don't cache a server deletion, so the cached live revision stays the upload's base. */
+    SKIP_APPLY_AND_CACHE
+}
+
+/**
+ * A re-read lists every item, also ones the server didn't change, so a local change made while it
+ * runs (to the event or any of its exceptions) would otherwise be overwritten. Outside a re-read
+ * items are applied as before.
+ */
+internal fun replayLocalChange(replaying: Boolean, remoteDeleted: Boolean, localPending: Boolean): ReplayLocalChange =
+    when {
+        !replaying || !localPending -> ReplayLocalChange.APPLY
+        remoteDeleted -> ReplayLocalChange.SKIP_APPLY_AND_CACHE
+        else -> ReplayLocalChange.SKIP_APPLY
+    }

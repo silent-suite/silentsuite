@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 192, f"expected 192 Android resource XML files, found {len(files)}"
+    assert len(files) == 193, f"expected 193 Android resource XML files, found {len(files)}"
     assert {"drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml"} <= {
         path.relative_to(RES).as_posix() for path in files
     }
@@ -930,7 +930,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("189", '"29:account-dashboard": 38', "81", "48"):
+    for count in ("250", '"29:account-dashboard": 52', "128", "48"):
         assert count in runner
 
 
@@ -1053,9 +1053,9 @@ def test_credential_free_evidence_and_runtime_routes_are_explicit():
     assert "for _ in {1..10}; do" in focused_script
     assert focused_script.rstrip().endswith(runner)
     assert all(step.get("name") != "Configure required system navigation mode" for step in focused_job["steps"])
-    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':81,'29:sibling-routes':48,'35:all':189,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':81}" in workflow
+    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':53,'29:first-run-setup':20,'29:status-routes':128,'29:sibling-routes':48,'35:all':250,'36:account-dashboard':47,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':128}" in workflow
     runner_source = source("android/scripts/run-focused-runtime-tests.sh")
-    assert '"29:account-dashboard": 38' in runner_source
+    assert '"29:account-dashboard": 52' in runner_source
 
 
 def test_app_ui_avoids_deprecated_edge_to_edge_window_apis():

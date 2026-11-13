@@ -13,8 +13,8 @@ import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.CalendarContract
-import android.text.TextUtils
 import androidx.annotation.VisibleForTesting
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import androidx.preference.EditTextPreference
@@ -25,6 +25,7 @@ import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreferenceCompat
 import at.bitfire.cert4android.CustomCertManager
 import at.bitfire.ical4android.TaskProvider.Companion.TASK_PROVIDERS
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
@@ -35,6 +36,7 @@ import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.ui.report.ReportProblemActivity
 import io.silentsuite.sync.ui.settings.AppPreferences
 import io.silentsuite.sync.ui.settings.SettingsCategory
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
@@ -381,6 +383,15 @@ class AppSettingsActivity : BaseActivity() {
             get() = SettingsCategory.fromRoute(requireArguments().getString(ARG_CATEGORY))
         private val host: AppSettingsActivity get() = requireActivity() as AppSettingsActivity
         private lateinit var appPreferences: AppPreferences
+        /** The open "Remove saved network?" dialog, for the runtime tests. */
+        @VisibleForTesting internal var savedNetworkDialog: AlertDialog? = null
+
+        override fun onDestroyView() {
+            // A plain dialog does not survive recreation; close it rather than leak its window.
+            savedNetworkDialog?.dismiss()
+            savedNetworkDialog = null
+            super.onDestroyView()
+        }
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             preferenceManager.sharedPreferencesName = AppPreferences.PREFERENCES_NAME
@@ -476,6 +487,16 @@ class AppSettingsActivity : BaseActivity() {
                 { m, a, v -> AccountSettings.writeNotesSyncNowNetwork(m, a, v) },
                 { if (it == NotesNetworkPolicy.Allowed.WIFI_ONLY) R.string.settings_notes_sync_now_network_wifi
                   else R.string.settings_notes_sync_now_network_any })
+            requirePreference<SwitchPreferenceCompat>("birthdays_enabled").apply {
+                isEnabled = account != null
+                isChecked = account != null && AccountSettings.birthdaysEnabled(AccountManager.get(requireContext()), account)
+                setOnPreferenceChangeListener { _, value ->
+                    // Revalidate the retained generation immediately before the account-scoped write. Only the
+                    // opt-in is stored; turning it off leaves any Birthdays calendar on the server as it is.
+                    val exact = exactSelectedAccount() ?: return@setOnPreferenceChangeListener false
+                    AccountSettings.writeBirthdaysEnabled(AccountManager.get(requireContext().applicationContext), exact, value as Boolean)
+                }
+            }
         }
 
         /** One of the two Notes network settings (design 3.6): never persisted by the preference, always written to the exact account. */
@@ -544,16 +565,22 @@ class AppSettingsActivity : BaseActivity() {
                     }
                 }
             }
-            requirePreference<EditTextPreference>("sync_wifi_only_ssid").apply {
-                isEnabled = settings != null
-                if (settings != null) {
-                    text = settings.syncWifiOnlySSID
-                    updateSsidSummary(this, settings.syncWifiOnlySSID)
-                    setOnPreferenceChangeListener { _, value ->
-                        val ssid = (value as String).takeUnless { TextUtils.isEmpty(it) }
-                        if (!mutateExactAccount { it.syncWifiOnlySSID = ssid })
-                            return@setOnPreferenceChangeListener false
-                        updateSsidSummary(this, ssid)
+            // A saved network name can no longer be matched (#971): it is shown, explained and
+            // removable, and a new one cannot be entered.
+            requirePreference<Preference>("sync_wifi_only_ssid").apply {
+                val ssid = settings?.syncWifiOnlySSID
+                isVisible = ssid != null
+                if (ssid != null) {
+                    summary = getString(R.string.settings_sync_wifi_only_ssid_blocked, ssid)
+                    setOnPreferenceClickListener {
+                        savedNetworkDialog = MaterialAlertDialogBuilder(requireContext())
+                            .setTitle(R.string.settings_sync_wifi_only_ssid_remove_title)
+                            .setMessage(R.string.settings_sync_wifi_only_ssid_remove_message)
+                            .setPositiveButton(R.string.settings_sync_wifi_only_ssid_remove) { _, _ ->
+                                if (mutateExactAccount { it.syncWifiOnlySSID = null }) isVisible = false
+                            }
+                            .setNegativeButton(android.R.string.cancel, null)
+                            .show()
                         true
                     }
                 }
@@ -573,11 +600,6 @@ class AppSettingsActivity : BaseActivity() {
                 preference.setSummary(R.string.settings_sync_summary_manually)
             else
                 preference.summary = getString(R.string.settings_sync_summary_periodically, preference.entry)
-        }
-
-        private fun updateSsidSummary(preference: EditTextPreference, ssid: String?) {
-            if (ssid == null) preference.setSummary(R.string.settings_sync_wifi_only_ssid_off)
-            else preference.summary = getString(R.string.settings_sync_wifi_only_ssid_on, ssid)
         }
 
         private fun setupNotifications() {
@@ -637,6 +659,10 @@ class AppSettingsActivity : BaseActivity() {
         }
 
         private fun setupHelp() {
+            requirePreference<Preference>("report_problem").setOnPreferenceClickListener {
+                startActivity(ReportProblemActivity.newIntent(requireContext()))
+                true
+            }
             requirePreference<Preference>("settings_category_advanced").setOnPreferenceClickListener {
                 host.showCategory(SettingsCategory.ADVANCED)
                 true

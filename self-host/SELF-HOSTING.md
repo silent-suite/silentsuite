@@ -134,7 +134,7 @@ If the path you give runs through a symlink, the installer resolves it once
 while checking the parent and then uses only the resolved location, so
 re-pointing that symlink later cannot redirect the install.
 
-The first user to sign up in the SilentSuite app becomes the server admin.
+The first account to sign up in the SilentSuite app is an ordinary app account; it does not become a server administrator. The server administrator is the separate Django admin login created from `SUPER_USER` and `SUPER_PASS` (see [Admin Panel](#admin-panel)).
 
 Then set up your reverse proxy to forward HTTPS traffic to `localhost:3735`.
 
@@ -331,12 +331,26 @@ The server applies its own request size limits as well (`ETEBASE_MAX_AUTH_REQUES
 ### Trusted Proxy Headers
 
 The server only accepts `X-Forwarded-*` headers from `TRUSTED_PROXY_IPS`.
-Keep the default `127.0.0.1` when Caddy/nginx/cloudflared connects through the
-host loopback port. If a Docker-network proxy connects directly to the server
-container, set `TRUSTED_PROXY_IPS` in `.env` to that proxy's exact container IP
-before recreating the server. Multiple values are comma-separated, for example
-`TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.5`. Uvicorn matches exact IPs here; CIDR
-ranges are not supported.
+When Caddy, nginx or cloudflared runs on the host and connects to
+`127.0.0.1:3735`, Docker hands the connection to the server from its network
+gateway (often `172.x.0.1`), not from `127.0.0.1`. The installer therefore writes
+`TRUSTED_PROXY_IPS=127.0.0.1,docker-gateway`. The server replaces
+`docker-gateway` with that gateway address each time it starts. Because the
+port is published on `127.0.0.1` only, the gateway carries connections from
+programs on this machine and nothing else. If you publish the port on any other
+address, remove `docker-gateway`.
+
+If a Docker-network proxy connects directly to the server container, add that
+proxy's exact container IP to `TRUSTED_PROXY_IPS` in `.env` before recreating
+the server, for example `TRUSTED_PROXY_IPS=127.0.0.1,docker-gateway,172.18.0.5`.
+Uvicorn matches exact IPs here; CIDR ranges are not supported.
+
+Installs made by an older installer have `TRUSTED_PROXY_IPS=127.0.0.1`. If a
+host proxy gets "too many redirects" or a `301` back to the same `https://`
+URL, add `,docker-gateway` to that line and run
+`docker compose up -d --force-recreate server`. This needs a server image that
+knows the entry; an older image ignores it and keeps trusting only the other
+addresses.
 
 ### Traefik (Docker labels)
 
@@ -377,7 +391,7 @@ Once your server is running and your reverse proxy is configured:
 
 1. Open [app.silentsuite.io](https://app.silentsuite.io) in a browser for the first signup
 2. On the signup page, expand **Advanced Settings**
-3. Enter the one-time first-admin URL printed by the installer as the server URL:
+3. Enter the one-time first-signup URL printed by the installer as the server URL:
    `https://sync.example.com/?bootstrap_token=YOUR_TOKEN`
 4. Create your account and start syncing
 5. **Run `./close-signups.sh`** from your install directory — see below.
@@ -390,13 +404,13 @@ The server ships with `ETEBASE_DISABLE_SIGNUP=false` so your first account can b
 https://sync.example.com/?bootstrap_token=YOUR_TOKEN
 ```
 
-This keeps a random visitor from racing you for the first account if they discover the server URL during setup. Once any user exists, the token is no longer required; you should still close signups immediately after creating your admin account. After that first browser signup, you can connect the mobile app with the normal server URL (`https://sync.example.com`).
+This keeps a random visitor from racing you for the first account if they discover the server URL during setup. Once any user exists, the token is no longer required; you should still close signups immediately after creating your first account. After that first browser signup, you can connect the mobile app with the normal server URL (`https://sync.example.com`).
 
 If you configure self-hosting manually instead of using `install.sh`, generate and set a strong `ETEBASE_BOOTSTRAP_ADMIN_TOKEN` yourself before first boot. Leaving it empty preserves the old open-first-signup behavior for compatibility and does **not** protect the first account from a public first-signup race.
 
 Because the bootstrap token is passed in the server URL, it may appear in local browser history, terminal scrollback, or reverse-proxy access logs. Complete the first signup promptly; after the first app account exists, the token is ignored. If you suspect it was exposed before signup, rotate `ETEBASE_BOOTSTRAP_ADMIN_TOKEN` in `.env`, clear any leaked URL from logs/history where practical, and recreate the server container before trying again.
 
-Once your admin account is registered, close signups:
+Once your first account is registered, close signups:
 
 ```bash
 cd silentsuite-server
@@ -452,6 +466,8 @@ before you ran it.
 ## Admin Panel
 
 The advanced Django admin panel is disabled by default in self-host installs (`ETEBASE_DISABLE_DJANGO_ADMIN=true`) because normal operators do not need it exposed on the public sync domain. If you need it for recovery or advanced maintenance, set `ETEBASE_DISABLE_DJANGO_ADMIN=false` in `.env`, recreate the server container, and protect `/admin/` with your reverse proxy or Cloudflare Access before exposing it.
+
+To delete a user, enable the panel, log in with `SUPER_USER` and `SUPER_PASS`, open **Users**, delete the app account, then set `ETEBASE_DISABLE_DJANGO_ADMIN=true` again and recreate the server container. Deleting an app account removes it and its collections from the database. See [Admin Dashboard](https://docs.silentsuite.io/self-hosting/admin-dashboard) for the full steps.
 
 ## Backup and Recovery
 
