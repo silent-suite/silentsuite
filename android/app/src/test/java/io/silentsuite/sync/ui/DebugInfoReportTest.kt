@@ -9,7 +9,13 @@ import java.io.IOException
 /** The shareable debug report names exception classes only and leaves out device and caller details. */
 class DebugInfoReportTest {
 
-    private class SyntheticException(message: String, cause: Throwable? = null) : Exception(message, cause)
+    private class SyntheticException(message: String, cause: Throwable) : Exception(message, cause)
+
+    /** Its cause can be set after construction, which lets a test build a cause cycle. */
+    private class CyclicException(message: String) : Exception(message) {
+        var next: Throwable? = null
+        override val cause: Throwable? get() = next
+    }
 
     @Test
     fun exceptionChainListsClassNamesWithoutMessagesOrFrames() {
@@ -35,12 +41,12 @@ class DebugInfoReportTest {
 
     @Test
     fun exceptionChainStopsOnCauseCycle() {
-        val first = SyntheticException("a")
+        val first = CyclicException("a")
         val second = IllegalStateException("b", first)
-        first.initCause(second)
+        first.next = second
 
         assertEquals(
-            listOf(SyntheticException::class.java.name, "Caused by: java.lang.IllegalStateException"),
+            listOf(CyclicException::class.java.name, "Caused by: java.lang.IllegalStateException"),
             exceptionClassChain(first).lines(),
         )
     }
