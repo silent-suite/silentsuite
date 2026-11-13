@@ -2,7 +2,10 @@ import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
 
 const appsRoot = path.resolve('apps')
-const analyticsEndpoint = 'plausible.silentsuite.io/api/event'
+// App browser senders post to the same-origin relay; only the server-side relay
+// module names the upstream analytics host.
+const analyticsEndpoint = '/api/event'
+const upstreamAnalyticsHost = 'plausible.silentsuite.io'
 const generatedAppRootArgument = process.argv.find((argument) => argument.startsWith('--generated-app-root='))
 const generatedAppRoot = generatedAppRootArgument
   ? path.resolve(generatedAppRootArgument.slice('--generated-app-root='.length))
@@ -16,6 +19,7 @@ const allowedAnalyticsFiles = new Set([
   path.join(appsRoot, 'web/app/(auth)/signup/signup-analytics.tsx'),
   path.join(appsRoot, 'web/app/(auth)/signup/commercial-funnel-analytics.tsx'),
   path.join(appsRoot, 'web/app/(app)/settings/subscription/subscription-entry.tsx'),
+  path.join(appsRoot, 'web/app/lib/analytics-relay.ts'),
   path.join(appsRoot, 'web/next.config.js'),
   path.join(appsRoot, 'docs/.vitepress/config.mts'),
   path.join(appsRoot, 'docs/.vitepress/theme/index.mts'),
@@ -63,6 +67,17 @@ const requiredContracts = new Map([
   ]],
   ['apps/web/app/(auth)/signup/commercial-funnel-analytics.tsx', ["enabled === 'true'", 'buildPlanSelectedPayload', 'buildCheckoutInitiatedPayload', 'buildCheckoutReturnedPayload']],
   ['apps/web/app/(app)/settings/subscription/subscription-entry.tsx', ['buildSubscriptionManagementEntryPayload']],
+  // Same-origin relay: fixed upstream, hosted-only gates, rebuilt payloads and the
+  // peer-validated client address header.
+  ['apps/web/app/lib/analytics-relay.ts', [
+    "export const ANALYTICS_UPSTREAM = 'https://plausible.silentsuite.io/api/event'",
+    "process.env.NEXT_PUBLIC_SELF_HOSTED !== 'true'",
+    "process.env.NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED === 'true'",
+    'INVENTORY.get(canonicalJson(parsed))',
+    "headers.get('x-real-ip')",
+    'X-Plausible-IP',
+  ]],
+  ['apps/web/app/api/event/route.ts', ['relayAnalyticsEvent']],
   ['Dockerfile.web', ['ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
   ['.github/workflows/deploy-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true']],
   ['.github/workflows/preview-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
@@ -89,6 +104,7 @@ try {
       if (entry.isDirectory()) await scanGenerated(fullPath)
       else if (/\.js$/.test(entry.name)) {
         const source = await readFile(fullPath, 'utf8')
+        if (source.includes(upstreamAnalyticsHost)) violations.push(`${path.relative(process.cwd(), fullPath)}: upstream analytics host in browser bundle`)
         if (!source.includes(analyticsEndpoint)) continue
         const relativePath = path.relative(generatedAppRoot, fullPath)
         const isSubscriptionRouteChunk = /^settings[\\/]subscription[\\/]page-[^\\/]+\.js$/.test(relativePath)
@@ -120,6 +136,7 @@ try {
       if (entry.isDirectory()) await scanGeneratedAuth(fullPath)
       else if (/\.js$/.test(entry.name)) {
         const source = await readFile(fullPath, 'utf8')
+        if (source.includes(upstreamAnalyticsHost)) violations.push(`${path.relative(process.cwd(), fullPath)}: upstream analytics host in browser bundle`)
         if (source.includes('NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED')) {
           violations.push(`${path.relative(process.cwd(), fullPath)}: unresolved signup analytics flag literal in public bundle`)
         }

@@ -7,7 +7,7 @@ import { promisify } from 'node:util'
 import test from 'node:test'
 
 const execFileAsync = promisify(execFile)
-const endpoint = 'https://plausible.silentsuite.io/api/event'
+const endpoint = '/api/event'
 
 async function withGeneratedAppTree(files, run) {
   const root = await mkdtemp(path.join(tmpdir(), 'public-analytics-'))
@@ -146,5 +146,19 @@ test('enabled generated app scan permits the endpoint only in the subscription r
     'settings/subscription/page-a.js': endpoint,
   }, async (root) => {
     assert.equal(await checkGeneratedAppTree(root), '')
+  })
+})
+
+test('generated scans reject the upstream analytics host in browser chunks', async () => {
+  await withGeneratedAppTree({
+    'signup/layout-a.js': `${endpoint} keepalive:!0`,
+    'signup/page-a.js': 'fetch("https://plausible.silentsuite.io/api/event")',
+  }, async (root) => {
+    assert.match(await checkGeneratedAuthTree(root), /signup\/page-a\.js: upstream analytics host in browser bundle/)
+  })
+  await withGeneratedAppTree({
+    'settings/subscription/page-a.js': `${endpoint} plausible.silentsuite.io`,
+  }, async (root) => {
+    assert.match(await checkGeneratedAppTree(root), /settings\/subscription\/page-a\.js: upstream analytics host in browser bundle/)
   })
 })
