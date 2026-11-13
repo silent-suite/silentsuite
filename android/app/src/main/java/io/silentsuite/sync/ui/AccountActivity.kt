@@ -52,7 +52,9 @@ import io.silentsuite.sync.Constants.ETEBASE_TYPE_CALENDAR
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_NOTES
 import io.silentsuite.sync.Constants.KEY_ACCOUNT
+import io.silentsuite.sync.billing.AccountNoticeClient
 import io.silentsuite.sync.billing.BillingManager
+import io.silentsuite.sync.birthdays.BirthdayMaintenance
 import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.log.Logger
@@ -105,6 +107,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     internal var listTaskDAV: ListView? = null
     internal var listNotes: ListView? = null
 
+    /** A Birthdays turn-on or turn-off of this Activity is running; both actions stay disabled until it ends. */
+    private var birthdaysBusy = false
+
     internal val openTasksPackage = "org.dmfs.tasks"
     internal val tasksOrgPackage = "org.tasks"
 
@@ -115,6 +120,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     private var swipeRefreshLayout: SwipeRefreshLayout? = null
     private var accountListExpanded = false
     private var pendingExportKind: AndroidExportKind? = null
+    private var subscriptionNoticeSeq = 0
+    private var subscriptionNoticeJob: Job? = null
+    private var subscriptionPageOpened = false
+    /** True from this Activity's onResume to its onPause; the lifecycle still reports STARTED inside onResume. */
+    private var subscriptionNoticeResumed = false
+    private var subscriptionStatusDefaultColors: android.content.res.ColorStateList? = null
+    private val subscriptionNoticeTimer = android.os.Handler(android.os.Looper.getMainLooper())
+    private val subscriptionNoticeTick = Runnable { onSubscriptionNoticeTick() }
     private var signOutOnly = false
     private var renderedSignOutErrorId = 0L
     private var signOutCompletionHandled = false
@@ -239,6 +252,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             savedInstanceState?.getBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, false) ?: false
         )
         taskAppReminderDismissed = savedInstanceState?.getBoolean(KEY_TASK_APP_REMINDER_DISMISSED, false) ?: false
+        // A dashboard recreated while the subscription page is open must still force its refresh on return.
+        subscriptionPageOpened = savedInstanceState?.getBoolean(KEY_SUBSCRIPTION_PAGE_OPENED, false) ?: false
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
@@ -303,6 +318,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         tbCalDAV.inflateMenu(R.menu.caldav_actions)
         tbCalDAV.setOnMenuItemClickListener(this)
         tbCalDAV.setTitle(R.string.settings_caldav)
+        renderBirthdaysActions()
 
         // TaskDAV toolbar
         val tbTaskDAV = findViewById<View>(R.id.taskdav_menu) as Toolbar
@@ -353,6 +369,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         outState.putBoolean(KEY_NOTIFICATION_PERMISSION_PENDING, notificationPermissionFlow.notificationRequestPending)
         outState.putBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, notificationPermissionFlow.runtimePermissionFlowStarted)
         outState.putBoolean(KEY_TASK_APP_REMINDER_DISMISSED, taskAppReminderDismissed)
+        outState.putBoolean(KEY_SUBSCRIPTION_PAGE_OPENED, subscriptionPageOpened)
     }
 
     override fun onDestroy() {
@@ -492,10 +509,15 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         accountInfo?.let { info ->
             if (info.notesEnabled != AccountSettings.notesEnabled(AccountManager.get(this), account)) model.loadAccount()
         }
+        // The experimental Birthdays toggle lives there too; it decides whether the Calendars menu offers its actions.
+        renderBirthdaysActions()
+        refreshSubscriptionNoticeOnResume()
     }
 
     override fun onPause() {
         super.onPause()
+        subscriptionNoticeResumed = false
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
         if (syncStatusObserver != null) {
             ContentResolver.removeStatusChangeListener(syncStatusObserver)
             syncStatusObserver = null
@@ -557,6 +579,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.create_calendar -> {
                 launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_CALENDAR))
             }
+            R.id.birthdays_turn_on -> switchBirthdays(on = true)
+            R.id.birthdays_turn_off -> switchBirthdays(on = false)
             R.id.create_tasklist -> {
                 launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_TASKS))
             }
@@ -1851,6 +1875,52 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     /* USER ACTIONS */
 
+    /**
+     * The Calendars menu's explicit Birthdays switch (plan3 §3). Each run qualifies everything fresh in
+     * [BirthdayMaintenance.turn]; offering both actions claims nothing about the current state. While one
+     * runs, both actions are disabled. After its IO work ended, and only while this exact generation is
+     * still current, the dashboard reloads; both actions are then enabled again. Both are offered only while
+     * the account has the experimental Birthdays calendar turned on ([renderBirthdaysActions]); the turn itself
+     * checks that again.
+     */
+    private fun switchBirthdays(on: Boolean) {
+        if (birthdaysBusy || !exactAccountStillCurrent()) return
+        birthdaysBusy = true
+        setBirthdaysActionsEnabled(false)
+        // Resolved before the IO work: the exact account and generation this Activity holds.
+        val exact = account
+        val creationId = accountCreationId
+        val appContext = applicationContext
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    BirthdayMaintenance.turn(appContext, exact, creationId, on, ::exactAccountStillCurrent)
+                }
+            } finally {
+                birthdaysBusy = false
+                if (!isDestroyed) {
+                    if (exactAccountStillCurrent()) model.loadAccount()
+                    setBirthdaysActionsEnabled(true)
+                }
+            }
+        }
+    }
+
+    /**
+     * The Calendars menu offers the Birthdays actions only while this account has the experimental Birthdays
+     * calendar turned on in Settings. Turning it off hides them and changes nothing on the server.
+     */
+    private fun renderBirthdaysActions() {
+        val visible = AccountSettings.birthdaysEnabled(AccountManager.get(this), account)
+        val menu = findViewById<Toolbar>(R.id.caldav_menu).menu
+        for (id in intArrayOf(R.id.birthdays_turn_on, R.id.birthdays_turn_off)) menu.findItem(id)?.isVisible = visible
+    }
+
+    private fun setBirthdaysActionsEnabled(enabled: Boolean) {
+        val menu = findViewById<Toolbar>(R.id.caldav_menu).menu
+        for (id in intArrayOf(R.id.birthdays_turn_on, R.id.birthdays_turn_off)) menu.findItem(id)?.isEnabled = enabled
+    }
+
     private fun launchCollectionIntent(intent: Intent) {
         if (!exactAccountStillCurrent()) return
         collectionIntentLauncherOverride?.invoke(intent) ?: startActivity(intent)
@@ -1919,39 +1989,217 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         return authorities.any { ContentResolver.isSyncActive(account, it) }
     }
 
-    private fun loadSubscriptionStatus() {
-        val subscriptionCard = findViewById<View>(R.id.subscription_card)
+    /**
+     * Reads the informational subscription notice for this exact generation (plan v3 A4).
+     *
+     * Ordinary reads join an in-flight read and otherwise use a last-confirmed in-memory snapshot of
+     * at most [SUBSCRIPTION_NOTICE_TTL_MS]. A forced read (return from the subscription page, or a
+     * running trial's end) supersedes any in-flight read. Only the latest read of the current
+     * generation publishes; an older completion, success or failure, changes nothing. The notice
+     * never reaches BillingManager or sync eligibility.
+     */
+    private fun loadSubscriptionStatus(forced: Boolean = false) {
+        if (!exactAccountStillCurrent()) {
+            hideSubscriptionNotice()
+            return
+        }
+        val key = subscriptionNoticeKey()
+        // Recompute what is shown before joining or starting a read: a snapshot past its maximum age
+        // is hidden, and a running trial whose end has passed is hidden and claims its one forced read.
+        val seqBefore = subscriptionNoticeSeq
+        val cached = subscriptionNoticeCache[key]
+        val fresh = cached != null && isFreshSubscriptionNotice(cached)
+        if (cached != null && fresh) renderSubscriptionNotice(cached) else hideSubscriptionNotice()
+        if (subscriptionNoticeSeq != seqBefore) return  // the render claimed the trial end's forced read
+        if (!forced && (subscriptionNoticeJob?.isActive == true || fresh)) return
+        val seq = ++subscriptionNoticeSeq
+        subscriptionNoticeJob = lifecycleScope.launch {
+            val stillCurrent = { exactAccountStillCurrent() }
+            val loaded = try {
+                withContext(Dispatchers.IO) {
+                    if (!stillCurrent()) null
+                    else billingStatusOverride?.invoke(this@AccountActivity, account, accountCreationId)
+                        ?: AccountNoticeClient.load(this@AccountActivity, account, stillCurrent)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+            if (seq != subscriptionNoticeSeq) return@launch
+            if (loaded == null || !exactAccountStillCurrent()) {
+                subscriptionNoticeCache.remove(key)
+                hideSubscriptionNotice()
+                return@launch
+            }
+            val entry = CachedSubscriptionNotice(loaded, System.currentTimeMillis())
+            subscriptionNoticeCache[key] = entry
+            renderSubscriptionNotice(entry)
+        }
+    }
+
+    private fun isFreshSubscriptionNotice(entry: CachedSubscriptionNotice) =
+        System.currentTimeMillis() - entry.fetchedAt < SUBSCRIPTION_NOTICE_TTL_MS
+
+    @VisibleForTesting
+    internal fun reloadSubscriptionStatusForTesting() = loadSubscriptionStatus()
+
+    private fun subscriptionNoticeKey() = "${account.name}\u0000$accountCreationId"
+
+    private fun hideSubscriptionNotice() {
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
+        findViewById<View>(R.id.subscription_card)?.visibility = View.GONE
+    }
+
+    /**
+     * Shows [entry] if it is still within its maximum age, and arms the next check at the earliest of
+     * its maximum age and, for a running trial, the next day boundary or the trial end.
+     */
+    private fun renderSubscriptionNotice(entry: CachedSubscriptionNotice) {
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
+        if (!exactAccountStillCurrent() || !isFreshSubscriptionNotice(entry)) {
+            hideSubscriptionNotice()
+            return
+        }
+        val status = entry.status
+        var deadline: Long? = null
         val planView = findViewById<TextView>(R.id.subscription_plan)
         val statusView = findViewById<TextView>(R.id.subscription_status)
         val trialView = findViewById<TextView>(R.id.subscription_trial)
         val actionButton = findViewById<com.google.android.material.button.MaterialButton>(R.id.subscription_action)
-
-        // Unknown, healthy and routine plan state never occupies the sync overview.
-        subscriptionCard.visibility = View.GONE
-
-        lifecycleScope.launch {
-            val status = withContext(Dispatchers.IO) {
-                if (!exactAccountStillCurrent()) return@withContext null
-                val loaded = billingStatusOverride?.invoke(this@AccountActivity, account, accountCreationId)
-                    ?: BillingManager.getInstance().getSubscriptionStatus(
-                        this@AccountActivity, account, accountCreationId)
-                loaded?.takeIf { exactAccountStillCurrent() }
+        val infoButton = findViewById<View>(R.id.subscription_info)
+        if (subscriptionStatusDefaultColors == null) subscriptionStatusDefaultColors = statusView.textColors
+        when {
+            status.isPastDue -> {
+                infoButton.visibility = View.GONE
+                updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
             }
-            if (!exactAccountStillCurrent() || status == null) return@launch
-
-            if (status.isUnknown || (!status.isPastDue && !status.isExpiredOrCancelled)) {
-                return@launch
+            status.status == "trialing" && status.plan == "trial" -> {
+                deadline = renderRunningTrial(status, planView, statusView, trialView, actionButton, infoButton)
+                if (deadline == null) {
+                    hideSubscriptionNotice()
+                    return
+                }
             }
-
-            if (!exactAccountStillCurrent()) return@launch
-            updateSubscriptionUi(status, planView, statusView, trialView, actionButton)
-            if (!exactAccountStillCurrent()) return@launch
-            subscriptionCard.visibility = View.VISIBLE
+            status.status == "expired" || status.status == "cancelled" ->
+                renderEndedNotice(status, planView, statusView, trialView, actionButton, infoButton)
+            else -> {
+                hideSubscriptionNotice()
+                return
+            }
         }
+        findViewById<View>(R.id.subscription_card).visibility = View.VISIBLE
+        armSubscriptionNoticeTimer(entry, deadline)
     }
 
-    @VisibleForTesting
-    internal fun reloadSubscriptionStatusForTesting() = loadSubscriptionStatus()
+    /**
+     * Only while resumed (tracked by [subscriptionNoticeResumed], because the lifecycle still reports
+     * STARTED inside onResume). A timer armed for an older render is always replaced or removed.
+     */
+    private fun armSubscriptionNoticeTimer(entry: CachedSubscriptionNotice, deadline: Long?) {
+        subscriptionNoticeTimer.removeCallbacks(subscriptionNoticeTick)
+        if (!subscriptionNoticeResumed) return
+        val maxAge = entry.fetchedAt + SUBSCRIPTION_NOTICE_TTL_MS
+        val next = if (deadline != null) minOf(deadline, maxAge) else maxAge
+        subscriptionNoticeTimer.postDelayed(subscriptionNoticeTick, (next - System.currentTimeMillis()).coerceAtLeast(250L))
+    }
+
+    /**
+     * The next time this countdown changes (day boundary or trial end; [Long.MAX_VALUE] when no end
+     * is known), or null when nothing is shown: the trial has ended by this device's clock, or no
+     * count is known.
+     */
+    private fun renderRunningTrial(
+        status: BillingManager.SubscriptionStatus,
+        planView: TextView,
+        statusView: TextView,
+        trialView: TextView,
+        actionButton: View,
+        infoButton: View,
+    ): Long? {
+        val now = System.currentTimeMillis()
+        val endsAt = status.renewalDate?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+        if (endsAt != null && endsAt <= now) {
+            // Hide the countdown and ask once; never conclude "ended" from this device's clock.
+            claimTrialEndRefresh(status.renewalDate)
+            return null
+        }
+        val days = endsAt?.let { ((it - now + DAY_MS - 1) / DAY_MS).toInt() } ?: status.trialDaysRemaining
+        if (days == null || days < 1) return null
+        planView.text = resources.getQuantityString(R.plurals.subscription_notice_trial_days_left, days, days)
+        if (endsAt != null) {
+            statusView.visibility = View.VISIBLE
+            statusView.text = getString(R.string.subscription_notice_trial_ends, mediumDate(endsAt))
+        } else {
+            statusView.visibility = View.GONE
+        }
+        subscriptionStatusDefaultColors?.let { statusView.setTextColor(it) }
+        trialView.visibility = View.GONE
+        actionButton.visibility = View.GONE
+        infoButton.visibility = View.VISIBLE
+        infoButton.setOnClickListener { openSubscriptionPage() }
+        return if (endsAt != null) endsAt - (days - 1) * DAY_MS else Long.MAX_VALUE
+    }
+
+    private fun renderEndedNotice(
+        status: BillingManager.SubscriptionStatus,
+        planView: TextView,
+        statusView: TextView,
+        trialView: TextView,
+        actionButton: com.google.android.material.button.MaterialButton,
+        infoButton: View,
+    ) {
+        planView.setText(if (status.plan == "trial") R.string.subscription_notice_trial_ended
+            else R.string.subscription_notice_access_ended)
+        val endedAt = status.renewalDate?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+        if (endedAt != null) {
+            statusView.visibility = View.VISIBLE
+            statusView.text = getString(R.string.subscription_notice_ended_on, mediumDate(endedAt))
+        } else {
+            statusView.visibility = View.GONE
+        }
+        subscriptionStatusDefaultColors?.let { statusView.setTextColor(it) }
+        trialView.visibility = View.GONE
+        infoButton.visibility = View.GONE
+        actionButton.visibility = View.VISIBLE
+        actionButton.setText(R.string.subscription_notice_view)
+        actionButton.setOnClickListener { openSubscriptionPage() }
+    }
+
+    private fun mediumDate(millis: Long): String =
+        java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(millis))
+
+    private fun openSubscriptionPage() {
+        if (!exactAccountStillCurrent()) return
+        subscriptionPageOpened = true
+        launchExactAccountRoute(Intent(Intent.ACTION_VIEW, Uri.parse(BillingManager.BILLING_MANAGE_URL)))
+    }
+
+    /** At most one forced read per account generation and trial end instant. */
+    private fun claimTrialEndRefresh(trialEndsAt: String?) {
+        if (trialEndsAt == null || !subscriptionNoticeEndClaims.add("${subscriptionNoticeKey()}\u0000$trialEndsAt")) return
+        subscriptionNoticeCache.remove(subscriptionNoticeKey())
+        loadSubscriptionStatus(forced = true)
+    }
+
+    /**
+     * A scheduled check: re-renders the current snapshot, or, once it is past its maximum age, hides
+     * it and starts one ordinary read (joining any read already in flight).
+     */
+    private fun onSubscriptionNoticeTick() {
+        if (!subscriptionNoticeResumed) return
+        loadSubscriptionStatus()
+    }
+
+    private fun refreshSubscriptionNoticeOnResume() {
+        subscriptionNoticeResumed = true
+        if (subscriptionPageOpened) {
+            subscriptionPageOpened = false
+            loadSubscriptionStatus(forced = true)
+        } else {
+            loadSubscriptionStatus()
+        }
+    }
 
     private fun updateSubscriptionUi(
         status: BillingManager.SubscriptionStatus,
@@ -1981,6 +2229,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         internal const val EXTRA_CREATION_ID = AppSettingsActivity.EXTRA_CREATION_ID
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
+        private const val KEY_SUBSCRIPTION_PAGE_OPENED = "subscriptionPageOpened"
         private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
         private const val KEY_STARTUP_PERMISSION_FLOW_STARTED = "startup_permission_flow_started"
         private const val KEY_TASK_APP_REMINDER_DISMISSED = "task_app_reminder_dismissed"
@@ -2036,6 +2285,13 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         @JvmField internal var permissionRemediationLauncherOverride: ((Intent) -> Unit)? = null
         @VisibleForTesting
         @JvmField internal var masterSyncEnableOverride: (() -> Unit)? = null
+
+        /** In-memory only, keyed by account name and creation ID; nothing is persisted. */
+        private const val SUBSCRIPTION_NOTICE_TTL_MS = 15 * 60 * 1000L
+        private const val DAY_MS = 24 * 60 * 60 * 1000L
+        internal class CachedSubscriptionNotice(val status: BillingManager.SubscriptionStatus, val fetchedAt: Long)
+        private val subscriptionNoticeCache = java.util.concurrent.ConcurrentHashMap<String, CachedSubscriptionNotice>()
+        private val subscriptionNoticeEndClaims: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
 
 }
