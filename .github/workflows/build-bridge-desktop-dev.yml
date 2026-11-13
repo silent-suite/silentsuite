@@ -331,7 +331,7 @@ jobs:
           python bridge/dev-build/relink_control.py package --archive "$archive" --frozen-out "$RUNNER_TEMP/frozen" --dest "$RUNNER_TEMP/relink" \
             --receipt "$q7/package.json"
           bundle=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['bundle'])" "$q7/package.json")
-          nonce=$(python -c "import secrets; print(secrets.token_hex(16))")
+          nonce=$(python -c "import os; print(os.urandom(16).hex())")
           curl -fsSL --retry 3 -o "$RUNNER_TEMP/qt-src.tar.xz" "$QT_SOURCE_URL"
           python bridge/dev-build/relink_control.py extract --archive "$RUNNER_TEMP/qt-src.tar.xz" --sha256 "$QT_SOURCE_SHA256" \
             --dest "$RUNNER_TEMP/qs" --receipt "$q7/extract.json"
