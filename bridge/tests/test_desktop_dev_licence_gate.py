@@ -1527,3 +1527,159 @@ def test_gate_refuses_an_empty_text_list_for_a_distribution(gate, tmp_path):
     facts, policy, archive, sources = _no_notice_case(tmp_path)
     policy["distributions"][DIST]["licence"] = NO_NOTICE
     assert gate.check(facts, policy, archive, sources)
+
+
+# --- Ubuntu archive signature chain (Codex admission F2; owner 2026-11-13: verify Ubuntu too) --
+#
+# Records may carry "ubuntu_archive": {snapshot, suites, components, keyring}. fetch()
+# downloads <dir>/ubuntu-archive/<suite>/InRelease and <component>-Sources.xz from
+# snapshot.ubuntu.com/ubuntu/<snapshot>/dists/<suite>/. verify(..., archive_check=...) then,
+# for every row served from launchpad.net: the InRelease signature must verify
+# (archive_check(inrelease, keyring) -> (signed text, key fingerprint)); each Sources.xz
+# must match the SHA256 in that signed text; the row's .dsc must be listed there with its
+# SHA256 and size; and every row of that source package must match both the signed Sources
+# stanza and the .dsc's own Checksums-Sha256. Rows get signature
+# {"type": "ubuntu-archive", "identity": <fingerprint>, "issuer": <suite/component @ snapshot>}.
+import lzma
+
+UBUNTU = {"snapshot": "20261101T000000Z", "suites": ["jammy-updates"], "components": ["main"],
+          "keyring": "/usr/share/keyrings/ubuntu-archive-keyring.gpg"}
+FPR = "F6ECB3762474EDA9D21B7022871920D1991BC93C"
+ORIG, DEB = b"synthetic orig tarball", b"synthetic debian tarball"
+
+
+def _lp(name):
+    return f"https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libsynthetic/1.0-1/{name}"
+
+
+def _ubuntu_case(tmp_path):
+    files = {"libsynthetic_1.0.orig.tar.xz": ORIG, "libsynthetic_1.0-1.debian.tar.xz": DEB}
+    checksums = "".join(f" {_sha(data)} {len(data)} {name}\n" for name, data in files.items())
+    dsc = (f"-----BEGIN PGP SIGNED MESSAGE-----\n\nFormat: 3.0 (quilt)\nSource: libsynthetic\nVersion: 1.0-1\n"
+           f"Checksums-Sha256:\n{checksums}\n-----BEGIN PGP SIGNATURE-----\nsynthetic\n-----END PGP SIGNATURE-----\n"
+           ).encode("utf-8")
+    files["libsynthetic_1.0-1.dsc"] = dsc
+    stanza = ("Package: libsynthetic\nVersion: 1.0-1\nChecksums-Sha256:\n"
+              + "".join(f" {_sha(data)} {len(data)} {name}\n" for name, data in files.items()))
+    sources_xz = lzma.compress(("Package: other\nVersion: 2\n\n" + stanza).encode("utf-8"))
+    directory = tmp_path / "sources"
+    suite = directory / "ubuntu-archive" / "jammy-updates"
+    suite.mkdir(parents=True)
+    (suite / "main-Sources.xz").write_bytes(sources_xz)
+    (suite / "InRelease").write_bytes(b"synthetic signed InRelease")
+    release = (f"Suite: jammy-updates\nSHA256:\n {_sha(sources_xz)} {len(sources_xz)} main/source/Sources.xz\n"
+               f" {'0' * 64} 1 main/source/Sources.gz\n")
+    for name, data in files.items():
+        (directory / name).write_bytes(data)
+    (directory / "qt.tar.xz").write_bytes(b"qt")
+    rows = [_row(name, data, url=_lp(name)) for name, data in sorted(files.items())] + [_row("qt.tar.xz", b"qt")]
+    return rows, directory, release
+
+
+def _archive_check(release, calls=None):
+    def check(inrelease, keyring):
+        if calls is not None:
+            calls.append((Path(inrelease).parent.name, keyring))
+        return release, FPR
+    return check
+
+
+def test_verify_binds_ubuntu_sources_through_the_signed_archive_index(materials, tmp_path):
+    rows, directory, release = _ubuntu_case(tmp_path)
+    calls = []
+    receipt = materials.verify(rows, directory, APPLICATION, ARTIFACT, lambda *a: True,
+                               archive=UBUNTU, archive_check=_archive_check(release, calls))
+    assert calls == [("jammy-updates", UBUNTU["keyring"])]
+    signed = {a["file"]: a["signature"] for a in receipt["archives"]}
+    assert signed["qt.tar.xz"] is None
+    for name in ("libsynthetic_1.0-1.dsc", "libsynthetic_1.0.orig.tar.xz", "libsynthetic_1.0-1.debian.tar.xz"):
+        assert signed[name]["type"] == "ubuntu-archive" and signed[name]["identity"] == FPR, name
+        assert signed[name]["verified"] is True and "jammy-updates/main" in signed[name]["issuer"]
+
+
+def _ubuntu_mutations():
+    def bad_signature(rows, directory, release):
+        def check(inrelease, keyring):
+            raise materials_module().InputError("gpgv: BAD signature")
+        return check
+
+    def sources_hash_differs(rows, directory, release):
+        (directory / "ubuntu-archive" / "jammy-updates" / "main-Sources.xz").write_bytes(lzma.compress(b"Package: x\n"))
+
+    def dsc_not_listed(rows, directory, release):
+        (directory / "ubuntu-archive" / "jammy-updates" / "main-Sources.xz").write_bytes(lzma.compress(b"Package: x\n"))
+        return release.replace(release.split()[3], _sha(lzma.compress(b"Package: x\n")))
+
+    def tarball_differs_from_dsc(rows, directory, release):
+        dsc = directory / "libsynthetic_1.0-1.dsc"
+        dsc.write_bytes(dsc.read_bytes().replace(_sha(ORIG).encode(), _sha(b"other").encode()))
+        row = next(r for r in rows if r["file"].endswith(".dsc"))
+        row["sha256"], row["bytes"] = _sha(dsc.read_bytes()), dsc.stat().st_size
+
+    def launchpad_row_outside_the_package(rows, directory, release):
+        (directory / "stray.tar.xz").write_bytes(b"stray")
+        rows.append(_row("stray.tar.xz", b"stray", url=_lp("stray.tar.xz")))
+
+    def no_archive_config(rows, directory, release):
+        return "NO-ARCHIVE"
+
+    return [bad_signature, sources_hash_differs, dsc_not_listed, tarball_differs_from_dsc,
+            launchpad_row_outside_the_package, no_archive_config]
+
+
+_MATERIALS = {}
+
+
+def materials_module():
+    return _MATERIALS["module"]
+
+
+@pytest.mark.parametrize("mutate", _ubuntu_mutations(), ids=lambda f: f.__name__)
+def test_verify_refuses_an_unbound_ubuntu_source(materials, tmp_path, mutate):
+    _MATERIALS["module"] = materials
+    rows, directory, release = _ubuntu_case(tmp_path)
+    result = mutate(rows, directory, release)
+    archive, check = UBUNTU, _archive_check(release)
+    if callable(result):
+        check = result
+    elif result == "NO-ARCHIVE":
+        archive = None
+    elif isinstance(result, str):
+        check = _archive_check(result)
+    with pytest.raises(materials.InputError):
+        materials.verify(rows, directory, APPLICATION, ARTIFACT, lambda *a: True, archive=archive, archive_check=check)
+
+
+# --- OS package version binding in runtime rules (supporting fix for source matching) -----
+# A runtime rule may name os_package {package, version, source}: the facts must record that
+# file as a dpkg file of exactly that package and version, and "source" must be the name of
+# one of the policy's source archives. Runner images drift; drift must fail, not ship
+# binaries whose matching source is no longer the one offered.
+def _os_case(tmp_path):
+    facts, policy, archive, sources = _pinned_runtime_case(tmp_path)
+    del policy["runtime_files"][0]["sha256"], policy["runtime_files"][0]["size"]
+    policy["runtime_files"][0]["os_package"] = {"package": OS_PACKAGE, "version": "1.0-1",
+                                                "source": "ubuntu:libsynthetic_1.0-1"}
+    policy["source_archives"].append({"name": "ubuntu:libsynthetic_1.0-1", "version": "1.0-1",
+                                      "file": "libsynthetic_1.0-1.dsc", "sha256": _sha(b"dsc")})
+    (sources / "libsynthetic_1.0-1.dsc").write_bytes(b"dsc")
+    facts["file_origins"] = {"_internal/python310.dll": {"class": "os-package", "package": OS_PACKAGE,
+                                                         "version": "1.0-1"}}
+    return facts, policy, archive, sources
+
+
+def test_gate_accepts_a_runtime_file_from_the_pinned_os_package(gate, tmp_path):
+    assert gate.check(*_os_case(tmp_path)) == []
+
+
+@pytest.mark.parametrize("case", ["version-drift", "not-an-os-file", "source-not-offered"])
+def test_gate_refuses_os_package_drift(gate, tmp_path, case):
+    facts, policy, archive, sources = _os_case(tmp_path)
+    origin = facts["file_origins"]["_internal/python310.dll"]
+    if case == "version-drift":
+        origin["version"] = "1.0-1ubuntu0.2"
+    elif case == "not-an-os-file":
+        facts["file_origins"]["_internal/python310.dll"] = {"class": "unknown", "source": None}
+    else:
+        policy["runtime_files"][0]["os_package"]["source"] = "ubuntu:libsynthetic_0.9-1"
+    assert gate.check(facts, policy, archive, sources), f"{case} was accepted"
