@@ -1,0 +1,254 @@
+# Android upgrade-and-sync check. Builds release-variant APKs of the latest published release
+# ("previous") and of the candidate from source, each with its own R8/ProGuard settings, signs
+# both with a throwaway key generated in the job (no repository secrets, no release keys, no
+# environment), and drives them on an emulator against a CI-local self-host server:
+#   previous  sign in and sync the seeded contacts
+#   upgrade   adb install -r the candidate over it and sync a new contact
+#   fresh     fresh install of the candidate and its first sync
+# The job fails if the app crashes in any phase, a phase is not exercised, or the expected
+# contacts are not stored. It produces nothing releasable. Added after the v0.5.18-beta sync
+# crash (R8 stripped ez-vcard constructors), which only release builds showed.
+name: Android upgrade and sync check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-upgrade-sync-check.yml'
+      - 'android/scripts/upgrade-sync-check/**'
+      # Version bumps (release PRs), R8/ProGuard rules, AGP/R8 flags and library versions.
+      - 'android/build.gradle'
+      - 'android/*/build.gradle'
+      - 'android/gradle.properties'
+      - 'android/app/proguard-rules*'
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: 'Candidate ref (default: the dispatched ref)'
+        required: false
+        default: ''
+      previous_ref:
+        description: 'Previous ref (default: the latest published release that is not the candidate)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-upgrade-sync-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve previous and candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      candidate_sha: ${{ steps.refs.outputs.candidate_sha }}
+      previous_sha: ${{ steps.refs.outputs.previous_sha }}
+    steps:
+      - name: Resolve refs to commits
+        id: refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_REF: ${{ inputs.candidate_ref || github.event.pull_request.head.sha || github.sha }}
+          PREVIOUS_REF: ${{ inputs.previous_ref }}
+        run: |
+          set -euo pipefail
+          sha_of() { gh api "repos/$GITHUB_REPOSITORY/commits/$1" --jq .sha; }
+          candidate="$(sha_of "$CANDIDATE_REF")"
+          previous_name="$PREVIOUS_REF"
+          if [ -n "$previous_name" ]; then
+            previous="$(sha_of "$previous_name")"
+          else
+            # Releases come newest first; skip drafts and a release cut from the candidate itself.
+            previous=""
+            for tag in $(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=20" --jq '.[] | select(.draft | not) | .tag_name'); do
+              sha="$(sha_of "$tag")"
+              if [ "$sha" != "$candidate" ]; then previous="$sha"; previous_name="$tag"; break; fi
+            done
+            [ -n "$previous" ] || { echo "no published release to upgrade from"; exit 1; }
+          fi
+          echo "candidate_sha=$candidate" >> "$GITHUB_OUTPUT"
+          echo "previous_sha=$previous" >> "$GITHUB_OUTPUT"
+          echo "Previous: $previous_name ($previous)" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Candidate: $CANDIDATE_REF ($candidate)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build ${{ matrix.role }} release APK
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        include:
+          - role: previous
+            sha: ${{ needs.resolve.outputs.previous_sha }}
+          - role: candidate
+            sha: ${{ needs.resolve.outputs.candidate_sha }}
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.sha }}
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - name: Install Android NDK r28, CMake and build-tools
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager)"
+          yes | "$SDKMANAGER" --install "ndk;28.2.13676358" "cmake;3.22.1" "build-tools;36.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Build the Etebase 16 KB and Conscrypt r28 AARs with this ref's scripts
+        run: |
+          bash scripts/build-etebase-client-16kb.sh
+          bash scripts/build-conscrypt-android-r28.sh
+      - name: Provision the pinned release JDK (release builds require it)
+        run: bash scripts/reproducible-build-contract.sh provision-jdk
+      - name: Build the release variant (unsigned)
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          ./gradlew app:assembleRelease --no-daemon -PrequireEtebase16Kb=true -PrequireConscryptR28=true
+          mapfile -t apks < <(find app/build/outputs/apk/release -name '*.apk')
+          [ "${#apks[@]}" = 1 ] || { printf 'expected one release APK, found: %s\n' "${apks[*]}"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/apk"
+          cp "${apks[0]}" "$RUNNER_TEMP/apk/${{ matrix.role }}.apk"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upgrade-sync-apk-${{ matrix.role }}
+          path: ${{ runner.temp }}/apk/${{ matrix.role }}.apk
+          if-no-files-found: error
+          retention-days: 1
+
+  check:
+    name: Upgrade and first sync on API 30
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          pattern: upgrade-sync-apk-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/apk
+
+      - name: Throwaway CA and server certificate for 10.0.2.2
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/srv"; mkdir -p "$d"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=SilentSuite CI check CA" \
+            -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+            -keyout "$RUNNER_TEMP/ca.key" -out "$RUNNER_TEMP/ca.pem"
+          openssl req -newkey rsa:2048 -nodes -subj "/CN=10.0.2.2" -keyout "$d/server.key" -out "$RUNNER_TEMP/server.csr"
+          printf 'subjectAltName=IP:10.0.2.2,IP:127.0.0.1\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE\n' > "$RUNNER_TEMP/ext.cnf"
+          openssl x509 -req -in "$RUNNER_TEMP/server.csr" -CA "$RUNNER_TEMP/ca.pem" -CAkey "$RUNNER_TEMP/ca.key" \
+            -CAcreateserial -days 2 -extfile "$RUNNER_TEMP/ext.cnf" -out "$d/server.pem"
+          head -c 48 /dev/urandom | base64 > "$d/secret.txt"
+          cat > "$d/etebase-server.ini" <<'INI'
+          [global]
+          secret_file = /etc/etebase-server/secret.txt
+          debug = false
+          static_root = /data/static
+          media_root = /data/media
+
+          [allowed_hosts]
+          allowed_host1 = *
+
+          [database]
+          engine = django.db.backends.sqlite3
+          name = /data/db.sqlite3
+          INI
+          sed -i 's/^          //' "$d/etebase-server.ini"
+          chmod 755 "$d"; chmod 644 "$d"/*
+
+      - name: Start the self-host server from this commit's Dockerfile.server
+        run: |
+          set -euo pipefail
+          docker build -f Dockerfile.server -t ss-server:check .
+          docker run -d --name ss-server -p 127.0.0.1:3735:3735 -p 127.0.0.1:8000:8000 \
+            -v "$RUNNER_TEMP/srv:/etc/etebase-server:ro" \
+            -e ETEBASE_EASY_CONFIG_PATH=/etc/etebase-server/etebase-server.ini \
+            -e ETEBASE_SECURE_SSL_REDIRECT=false \
+            ss-server:check sh -c 'python manage.py migrate --noinput && { uvicorn etebase_server.asgi:application --host 0.0.0.0 --port 8000 & exec uvicorn etebase_server.asgi:application --host 0.0.0.0 --port 3735 --ssl-keyfile /etc/etebase-server/server.key --ssl-certfile /etc/etebase-server/server.pem; }'
+          for i in $(seq 1 60); do
+            curl -s -o /dev/null --cacert "$RUNNER_TEMP/ca.pem" https://127.0.0.1:3735/ && curl -s -o /dev/null http://127.0.0.1:8000/ && break
+            sleep 2
+          done
+          curl -sS -o /dev/null -w 'https %{http_code}\n' --cacert "$RUNNER_TEMP/ca.pem" https://127.0.0.1:3735/api/v1/authentication/is_etebase/
+          curl -sS -o /dev/null -w 'http %{http_code}\n' http://127.0.0.1:8000/api/v1/authentication/is_etebase/
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.10'
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: '1.63.0'
+      - name: Install etebase-py for the synthetic account
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'etebase==0.31.5'
+          echo "REPRO_USER=check$(date +%s)" >> "$GITHUB_ENV"
+          echo "REPRO_PASS=Check$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$GITHUB_ENV"
+      - run: python android/scripts/upgrade-sync-check/signup.py http://127.0.0.1:8000 "$REPRO_USER" "$REPRO_PASS"
+
+      - name: Sign both release-variant APKs with one throwaway CI key
+        run: |
+          set -euo pipefail
+          bt="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          pw="$(head -c 18 /dev/urandom | base64)"
+          keytool -genkeypair -keystore "$RUNNER_TEMP/ci-throwaway.jks" -storepass "$pw" -keypass "$pw" \
+            -alias check -keyalg RSA -keysize 2048 -validity 2 -dname "CN=SilentSuite CI throwaway"
+          for n in previous candidate; do
+            "$bt/apksigner" sign --ks "$RUNNER_TEMP/ci-throwaway.jks" --ks-pass "pass:$pw" \
+              --out "$RUNNER_TEMP/apk/$n-signed.apk" "$RUNNER_TEMP/apk/$n.apk"
+          done
+          rm -f "$RUNNER_TEMP/ci-throwaway.jks"
+          sha256sum "$RUNNER_TEMP"/apk/*.apk
+
+      - name: Enable KVM
+        run: sudo chmod 666 /dev/kvm || true
+
+      - name: Previous release, in-place upgrade, fresh install
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          APK_PREVIOUS: ${{ runner.temp }}/apk/previous-signed.apk
+          APK_CANDIDATE: ${{ runner.temp }}/apk/candidate-signed.apk
+          CA_PEM: ${{ runner.temp }}/ca.pem
+          SERVER_URL: https://10.0.2.2:3735
+          OUT: ${{ runner.temp }}/evidence
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect -no-snapshot
+          disable-animations: true
+          script: timeout 2400 bash android/scripts/upgrade-sync-check/drive.sh
+
+      - name: Server log and summary
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/evidence"
+          docker logs ss-server > "$RUNNER_TEMP/evidence/server.log" 2>&1 || true
+          cat "$RUNNER_TEMP/evidence/summary.txt" 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: upgrade-sync-check-evidence
+          path: ${{ runner.temp }}/evidence
+          if-no-files-found: warn
+          retention-days: 14
