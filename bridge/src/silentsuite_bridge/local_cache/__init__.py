@@ -19,6 +19,7 @@ from functools import wraps
 
 import msgpack
 import peewee as pw
+import vobject
 from etebase import Account, Client, CollectionAccessLevel, FetchOptions
 
 from .. import config
@@ -672,6 +673,54 @@ def reanchor_dav_state(cache_col, previous_state_hash):
         .execute()
     )
     return moved > 0
+
+
+CONFLICT_COPY_LABEL = " (conflict copy)"
+_CONFLICT_COPY_CANDIDATES = 8
+_CONFLICT_COPY_COMPONENTS = ("VEVENT", "VTODO", "VJOURNAL")
+
+
+def _parse_conflict_copy(content):
+    """Parse a local edit for its conflict copy; None if it cannot be copied."""
+    try:
+        parsed = vobject.readOne(content.decode("utf-8"))
+    except Exception:
+        return None
+    if parsed.name == "VCARD":
+        return parsed
+    if parsed.name == "VCALENDAR" and any(
+        child.name in _CONFLICT_COPY_COMPONENTS for child in parsed.getChildren()
+    ):
+        return parsed
+    return None
+
+
+def _label_conflict_copy(component, label_name, uid):
+    """Give one component the copy UID and a recognisable label."""
+    if "uid" in component.contents:
+        component.uid.value = uid
+    else:
+        component.add("uid").value = uid
+    if label_name in component.contents:
+        line = component.contents[label_name][0]
+        line.value = f"{line.value}{CONFLICT_COPY_LABEL}"
+    else:
+        component.add(label_name).value = CONFLICT_COPY_LABEL.strip()
+
+
+def _conflict_copy_content(parsed, uid):
+    """Serialize ``parsed`` as a copy: every item component gets ``uid``.
+
+    All components of an event or task move together, so recurrence
+    overrides stay attached to their copied master.
+    """
+    if parsed.name == "VCARD":
+        _label_conflict_copy(parsed, "fn", uid)
+    else:
+        for child in parsed.getChildren():
+            if child.name in _CONFLICT_COPY_COMPONENTS:
+                _label_conflict_copy(child, "summary", uid)
+    return parsed.serialize().encode("utf-8")
 
 
 def _log_collection_failure(stage, error):
@@ -1751,6 +1800,15 @@ class Etebase:
             return len(changed) > 0
 
     def push_collection(self, uid):
+        """Upload pending item changes without overwriting newer server data.
+
+        Items whose server revision moved on since they were last synced are
+        conflicts: the server version is kept and a local edit is saved as a
+        new "conflict copy" item (a local deletion simply yields to the
+        server). Everything else is uploaded with an etag-checked
+        transaction, so a change racing this push fails the chunk instead of
+        being overwritten; the rows stay dirty and are retried next cycle.
+        """
         CHUNK_PUSH = 30
 
         with db.database_proxy.connection_context():
@@ -1759,45 +1817,229 @@ class Etebase:
             col = col_mgr.cache_load(cache_col.eb_col)
             item_mgr = col_mgr.get_item_manager(col)
 
-            changed = list(self._collection_dirty_get(cache_col))
-            logger.info("PUSH collection: %d dirty/new items to push", len(changed))
+            # A second pass uploads conflict copies made by the first.
+            for _pass in range(2):
+                changed = list(self._collection_dirty_get(cache_col))
+                logger.info(
+                    "PUSH collection: %d dirty/new items to push", len(changed)
+                )
+                if not changed:
+                    return
+                copies = 0
+                for chunk in batch(changed, CHUNK_PUSH):
+                    copies += self._push_chunk(cache_col, col, item_mgr, chunk)
+                if not copies:
+                    return
 
-            if not changed:
-                return
+    def _push_chunk(self, cache_col, col, item_mgr, chunk):
+        original_rows = [
+            (item.id, item.eb_item, item.dirty, item.new) for item in chunk
+        ]
+        chunk_items = [item_mgr.cache_load(row.eb_item) for row in chunk]
+        # Read-only: returns only items whose server revision differs from
+        # the revision each local edit was based on.
+        remote_by_uid = {
+            remote.uid: remote
+            for remote in item_mgr.fetch_updates(chunk_items, None).data
+        }
+        upload = []
+        acknowledged = []
+        copies = conflicts = 0
+        for row, original, local in zip(chunk, original_rows, chunk_items):
+            remote = remote_by_uid.get(local.uid)
+            if remote is None:
+                upload.append((original, local))
+            elif remote.etag == local.etag:
+                # The server already holds this revision (an earlier upload
+                # whose acknowledgement was lost). Store the server envelope:
+                # it carries that revision as the base of the next edit.
+                acknowledged.append((original, remote))
+            else:
+                conflicts += 1
+                copies += self._resolve_push_conflict(
+                    cache_col, col, item_mgr, row, original, local, remote
+                )
+        if acknowledged:
+            self._acknowledge_push(cache_col, item_mgr, acknowledged)
+        if upload:
+            logger.info(
+                "PUSH collection: uploading batch of %d items", len(upload)
+            )
+            item_mgr.transaction([local for _original, local in upload], None, None)
+            logger.info("PUSH collection: batch upload succeeded")
+            self._acknowledge_push(cache_col, item_mgr, upload)
+        if conflicts or acknowledged:
+            logger.info(
+                "PUSH collection: %d conflicts (%d kept as copies), "
+                "%d already on the server",
+                conflicts,
+                copies,
+                len(acknowledged),
+            )
+        return copies
 
-            for chunk in batch(changed, CHUNK_PUSH):
-                original_rows = [
-                    (item.id, item.eb_item, item.dirty, item.new)
-                    for item in chunk
-                ]
-                chunk_items = list(map(lambda x: item_mgr.cache_load(x.eb_item), chunk))
-                logger.info("PUSH collection: uploading batch of %d items", len(chunk_items))
-                item_mgr.batch(chunk_items, None, None)
-                logger.info("PUSH collection: batch upload succeeded")
-                with self._mutation_session_guard():
-                    with db.database_proxy.atomic("IMMEDIATE"):
-                        self._assert_session_current()
-                        # Acknowledgement rewrites envelopes and clears flags
-                        # without a DAV-visible change; keep tokens provable.
-                        previous_state_hash = dav_collection_state_hash(cache_col)
-                        for original, item in zip(original_rows, chunk_items):
-                            item_id, original_envelope, original_dirty, original_new = original
-                            uploaded_envelope = item_mgr.cache_save(item)
-                            (
-                                models.ItemEntity.update(
-                                    eb_item=uploaded_envelope,
-                                    dirty=False,
-                                    new=False,
-                                )
-                                .where(
-                                    (models.ItemEntity.id == item_id)
-                                    & (models.ItemEntity.eb_item == original_envelope)
-                                    & (models.ItemEntity.dirty == original_dirty)
-                                    & (models.ItemEntity.new == original_new)
-                                )
-                                .execute()
-                            )
-                        reanchor_dav_state(cache_col, previous_state_hash)
+    def _acknowledge_push(self, cache_col, item_mgr, pairs):
+        with self._mutation_session_guard():
+            with db.database_proxy.atomic("IMMEDIATE"):
+                self._assert_session_current()
+                # Acknowledgement rewrites envelopes and clears flags
+                # without a DAV-visible change; keep tokens provable.
+                previous_state_hash = dav_collection_state_hash(cache_col)
+                for original, item in pairs:
+                    item_id, original_envelope, original_dirty, original_new = original
+                    uploaded_envelope = item_mgr.cache_save(item)
+                    (
+                        models.ItemEntity.update(
+                            eb_item=uploaded_envelope,
+                            dirty=False,
+                            new=False,
+                        )
+                        .where(
+                            (models.ItemEntity.id == item_id)
+                            & (models.ItemEntity.eb_item == original_envelope)
+                            & (models.ItemEntity.dirty == original_dirty)
+                            & (models.ItemEntity.new == original_new)
+                        )
+                        .execute()
+                    )
+                reanchor_dav_state(cache_col, previous_state_hash)
+
+    @staticmethod
+    def _first_free_copy_identity(cache_col, base_uid, suffix):
+        """Return the first unused (uid, href) for a conflict copy, or None.
+
+        Every occupied candidate belongs to another item: a copy is created
+        in the same transaction that settles its original, so it cannot
+        exist while the original is still pending at that revision.
+        """
+        copy_uid = None
+        for index in range(1, _CONFLICT_COPY_CANDIDATES + 1):
+            candidate = base_uid if index == 1 else f"{base_uid}-{index}"
+            if not models.ItemEntity.select().where(
+                (models.ItemEntity.collection == cache_col)
+                & (models.ItemEntity.uid == candidate)
+            ).exists():
+                copy_uid = candidate
+                break
+        if copy_uid is None:
+            return None
+        for index in range(_CONFLICT_COPY_CANDIDATES + 1):
+            href = opaque_dav_href(
+                copy_uid if index == 0 else f"{copy_uid}:{index}", suffix
+            )
+            # Tombstones keep their mapper, so they block a candidate too.
+            if not (
+                models.HrefMapper.select()
+                .join(models.ItemEntity)
+                .where(
+                    (models.ItemEntity.collection == cache_col)
+                    & (models.HrefMapper.href == href)
+                )
+                .exists()
+            ):
+                return copy_uid, href
+        return None
+
+    def _resolve_push_conflict(
+        self, cache_col, col, item_mgr, row, original, local, remote
+    ):
+        """Settle one conflict: server version wins, a local edit is copied.
+
+        Returns 1 when a copy was created, else 0. Leaves the row pending
+        (to retry next cycle) when it changed meanwhile, when the edit
+        cannot be parsed, or when no copy identity is free.
+        """
+        item_id, original_envelope, original_dirty, original_new = original
+        parsed = None
+        if not local.deleted:
+            # Decrypt and parse outside the writer transaction.
+            parsed = _parse_conflict_copy(local.content)
+            if parsed is None:
+                logger.warning(
+                    "PUSH collection: a conflicting local edit could not be "
+                    "copied; it stays pending"
+                )
+                return 0
+        base_uid = "{}-conflict-{}".format(
+            row.uid,
+            hashlib.sha256(f"{remote.uid}:{local.etag}".encode("utf-8")).hexdigest()[:12],
+        )
+        suffix = ".vcf" if col.collection_type == "etebase.vcard" else ".ics"
+        with self._mutation_session_guard():
+            with db.database_proxy.atomic("IMMEDIATE"):
+                self._assert_session_current()
+                current = models.ItemEntity.get_or_none(
+                    models.ItemEntity.id == item_id
+                )
+                if current is None or (
+                    current.eb_item,
+                    current.dirty,
+                    current.new,
+                ) != (original_envelope, original_dirty, original_new):
+                    return 0
+                copy_identity = None
+                if parsed is not None:
+                    copy_identity = self._first_free_copy_identity(
+                        cache_col, base_uid, suffix
+                    )
+                    if copy_identity is None:
+                        logger.warning(
+                            "PUSH collection: no free identity for a conflict "
+                            "copy; the local edit stays pending"
+                        )
+                        return 0
+                # Server version wins for the original item and its href.
+                state_before_original = dav_collection_state_hash(cache_col)
+                current.eb_item = item_mgr.cache_save(remote)
+                current.deleted = remote.deleted
+                current.dirty = False
+                current.new = False
+                current.save(
+                    only=[
+                        models.ItemEntity.eb_item,
+                        models.ItemEntity.deleted,
+                        models.ItemEntity.dirty,
+                        models.ItemEntity.new,
+                    ]
+                )
+                mapper = models.HrefMapper.get_or_none(
+                    models.HrefMapper.content == current
+                )
+                if mapper is not None:
+                    record_dav_change(
+                        cache_col,
+                        mapper.href,
+                        previous_state_hash=state_before_original,
+                        etag=remote.etag,
+                        deleted=remote.deleted,
+                    )
+                else:
+                    reanchor_dav_state(cache_col, state_before_original)
+                if copy_identity is None:
+                    return 0
+                copy_uid, copy_href = copy_identity
+                # Taken after the first revision so the ledger stays chained.
+                state_before_copy = dav_collection_state_hash(cache_col)
+                copy_item = item_mgr.create(
+                    {"name": copy_uid, "mtime": get_millis(), "dav_href": copy_href},
+                    _conflict_copy_content(parsed, copy_uid),
+                )
+                copy_row = models.ItemEntity.create(
+                    collection=cache_col,
+                    uid=copy_uid,
+                    remote_uid=copy_item.uid,
+                    eb_item=item_mgr.cache_save(copy_item),
+                    new=True,
+                    dirty=True,
+                )
+                models.HrefMapper.create(content=copy_row, href=copy_href)
+                record_dav_change(
+                    cache_col,
+                    copy_href,
+                    previous_state_hash=state_before_copy,
+                    etag=copy_item.etag,
+                )
+                return 1
 
     # --- CRUD operations ---
 
