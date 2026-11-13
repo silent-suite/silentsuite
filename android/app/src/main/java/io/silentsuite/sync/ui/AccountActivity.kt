@@ -53,6 +53,7 @@ import io.silentsuite.sync.Constants.ETEBASE_TYPE_TASKS
 import io.silentsuite.sync.Constants.ETEBASE_TYPE_NOTES
 import io.silentsuite.sync.Constants.KEY_ACCOUNT
 import io.silentsuite.sync.billing.BillingManager
+import io.silentsuite.sync.birthdays.BirthdayMaintenance
 import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.dataexport.AndroidExportKind
 import io.silentsuite.sync.log.Logger
@@ -104,6 +105,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     internal var listCardDAV: ListView? = null
     internal var listTaskDAV: ListView? = null
     internal var listNotes: ListView? = null
+
+    /** A Birthdays turn-on or turn-off of this Activity is running; both actions stay disabled until it ends. */
+    private var birthdaysBusy = false
 
     internal val openTasksPackage = "org.dmfs.tasks"
     internal val tasksOrgPackage = "org.tasks"
@@ -303,6 +307,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         tbCalDAV.inflateMenu(R.menu.caldav_actions)
         tbCalDAV.setOnMenuItemClickListener(this)
         tbCalDAV.setTitle(R.string.settings_caldav)
+        renderBirthdaysActions()
 
         // TaskDAV toolbar
         val tbTaskDAV = findViewById<View>(R.id.taskdav_menu) as Toolbar
@@ -492,6 +497,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         accountInfo?.let { info ->
             if (info.notesEnabled != AccountSettings.notesEnabled(AccountManager.get(this), account)) model.loadAccount()
         }
+        // The experimental Birthdays toggle lives there too; it decides whether the Calendars menu offers its actions.
+        renderBirthdaysActions()
     }
 
     override fun onPause() {
@@ -557,6 +564,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             R.id.create_calendar -> {
                 launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_CALENDAR))
             }
+            R.id.birthdays_turn_on -> switchBirthdays(on = true)
+            R.id.birthdays_turn_off -> switchBirthdays(on = false)
             R.id.create_tasklist -> {
                 launchCollectionIntent(CollectionActivity.newCreateCollectionIntent(this@AccountActivity, account, accountCreationId, ETEBASE_TYPE_TASKS))
             }
@@ -1850,6 +1859,52 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
     }
 
     /* USER ACTIONS */
+
+    /**
+     * The Calendars menu's explicit Birthdays switch (plan3 §3). Each run qualifies everything fresh in
+     * [BirthdayMaintenance.turn]; offering both actions claims nothing about the current state. While one
+     * runs, both actions are disabled. After its IO work ended, and only while this exact generation is
+     * still current, the dashboard reloads; both actions are then enabled again. Both are offered only while
+     * the account has the experimental Birthdays calendar turned on ([renderBirthdaysActions]); the turn itself
+     * checks that again.
+     */
+    private fun switchBirthdays(on: Boolean) {
+        if (birthdaysBusy || !exactAccountStillCurrent()) return
+        birthdaysBusy = true
+        setBirthdaysActionsEnabled(false)
+        // Resolved before the IO work: the exact account and generation this Activity holds.
+        val exact = account
+        val creationId = accountCreationId
+        val appContext = applicationContext
+        lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    BirthdayMaintenance.turn(appContext, exact, creationId, on, ::exactAccountStillCurrent)
+                }
+            } finally {
+                birthdaysBusy = false
+                if (!isDestroyed) {
+                    if (exactAccountStillCurrent()) model.loadAccount()
+                    setBirthdaysActionsEnabled(true)
+                }
+            }
+        }
+    }
+
+    /**
+     * The Calendars menu offers the Birthdays actions only while this account has the experimental Birthdays
+     * calendar turned on in Settings. Turning it off hides them and changes nothing on the server.
+     */
+    private fun renderBirthdaysActions() {
+        val visible = AccountSettings.birthdaysEnabled(AccountManager.get(this), account)
+        val menu = findViewById<Toolbar>(R.id.caldav_menu).menu
+        for (id in intArrayOf(R.id.birthdays_turn_on, R.id.birthdays_turn_off)) menu.findItem(id)?.isVisible = visible
+    }
+
+    private fun setBirthdaysActionsEnabled(enabled: Boolean) {
+        val menu = findViewById<Toolbar>(R.id.caldav_menu).menu
+        for (id in intArrayOf(R.id.birthdays_turn_on, R.id.birthdays_turn_off)) menu.findItem(id)?.isEnabled = enabled
+    }
 
     private fun launchCollectionIntent(intent: Intent) {
         if (!exactAccountStillCurrent()) return
