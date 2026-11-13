@@ -700,6 +700,59 @@ internal class PendingNotesStore private constructor(
     fun discard(noteUid: String): Unit = locked { removeEntry(noteUid, (readEntry(noteUid) as? Read.Present)?.entry) }
 
     /**
+     * The user's confirmed discard of one note's held or unreadable text, as the screen showed it: [shownVersion]
+     * is the version of the entry the user saw, or null when the screen showed it as a file that cannot be read.
+     * It removes the entry only when what is there now is that one, checked under the same lock as the removal, so a
+     * confirmation for older text never deletes text the user has not seen. Every write of new text takes a new
+     * version ([nextVersion]), and this instance never hands out a version twice, so an equal version is the text
+     * that was shown; a hold or a recorded failure keeps the version and the text. A file shown as unreadable goes
+     * only when it is the note's own entry file, read in full now, and still does not decode: a read that fails says
+     * nothing about what the file holds (it may be newer text a run read fine meanwhile), and an interrupted write
+     * goes only with the whole store. Otherwise nothing is written or deleted, and the answer carries what is there
+     * now, for the screen to show and ask again. Throws, and discards nothing, as [discard] does for a conflict copy
+     * whose original cannot be removed or read.
+     */
+    fun discard(noteUid: String, shownVersion: Long?): NoteDiscard = locked {
+        val now = readEntry(noteUid)
+        when (now) {
+            Read.Missing -> NoteDiscard.Missing
+            is Read.Present -> if (shownVersion != null && now.entry.version == shownVersion) {
+                removeEntry(noteUid, now.entry)
+                NoteDiscard.Done
+            } else {
+                NoteDiscard.Changed(now)
+            }
+            is Read.Unreadable -> if (shownVersion == null && now.file == noteFile(noteUid).name && decodedBad(noteUid)) {
+                removeEntry(noteUid, null)
+                NoteDiscard.Done
+            } else {
+                NoteDiscard.Changed(now)
+            }
+        }
+    }
+
+    /** Whether [noteUid]'s entry file reads in full and does not decode; false when the read itself fails. */
+    private fun decodedBad(noteUid: String): Boolean {
+        val bytes = try {
+            readIfPresent(noteFile(noteUid))
+        } catch (_: IOException) {
+            return false
+        } ?: return false
+        return PendingCodec.decodeEntry(bytes) is PendingCodec.Decoded.Bad
+    }
+
+    sealed class NoteDiscard {
+        /** The entry the user was shown is gone. */
+        object Done : NoteDiscard()
+
+        /** No entry was there, so nothing was deleted. */
+        object Missing : NoteDiscard()
+
+        /** What is there now is not what the user was shown: [now]. Nothing was deleted. */
+        data class Changed(val now: Read) : NoteDiscard()
+    }
+
+    /**
      * Removes [noteUid]'s entry as the user's discard does, whose full read gave [entry], or null when it read as
      * missing or unreadable: a conflict copy takes the original it replaced with it ([removeReplacedOriginal]).
      */

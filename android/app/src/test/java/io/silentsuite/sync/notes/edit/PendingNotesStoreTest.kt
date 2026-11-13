@@ -1194,6 +1194,103 @@ class PendingNotesStoreTest {
         assertEquals("orig", editor.noteUid)
     }
 
+    // ---- the held screen's discard of one note, checked against the version it showed ----
+
+    @Test fun `a discard for the version shown removes that entry`() {
+        store.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.READ_ONLY, now = 5))
+        val shown = entry("n1").version
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n1", shown))
+        assertEquals(Read.Missing, store.read("n1"))
+        assertFalse(File(dir, "n1.note").exists())
+    }
+
+    @Test fun `a discard for an older version deletes nothing and answers with what is there now`() {
+        store.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        store.hold("n1", HeldReason.READ_ONLY, now = 5)
+        val shown = entry("n1").version
+        // An editor that was open when access changed saves into the held text after the screen read it.
+        assertTrue(store.saveLocal("n1", "b1", "r1", blob("typed later"), isCreate = false) is SaveOutcome.SavedToHolding)
+        val before = filesOf(dir)
+        val answer = store.discard("n1", shown)
+        assertEquals(PendingNotesStore.NoteDiscard.Changed(store.read("n1")), answer)
+        assertEquals("nothing was deleted", before, filesOf(dir))
+        assertArrayEquals(blob("typed later"), entry("n1").blob)
+        // Asked again with the text that is there now, it goes.
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n1", entry("n1").version))
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a discard of a note with no entry deletes nothing`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        val before = filesOf(dir)
+        assertEquals(PendingNotesStore.NoteDiscard.Missing, store.discard("n1", 1))
+        assertEquals(PendingNotesStore.NoteDiscard.Missing, store.discard("n1", null))
+        assertEquals(before, filesOf(dir))
+    }
+
+    @Test fun `an unreadable entry goes only for a discard that was shown it as unreadable`() {
+        store.saveLocal("n1", "b1", "r1", blob("text"), isCreate = false)
+        val version = entry("n1").version
+        File(dir, "n1.note").writeBytes(byteArrayOf(0))
+        val before = filesOf(dir)
+        assertTrue(store.discard("n1", version) is PendingNotesStore.NoteDiscard.Changed)
+        assertEquals("shown as text, now unreadable: nothing goes", before, filesOf(dir))
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n1", null))
+        assertFalse(File(dir, "n1.note").exists())
+    }
+
+    @Test fun `a discard shown as unreadable deletes nothing while the file cannot be read at all`() {
+        store.saveLocal("n1", "b1", "r1", blob("newer text a run could read"), isCreate = false)
+        // The read fails now, as on an I/O error: it says nothing about what the file holds.
+        val file = File(dir, "n1.note")
+        // Windows cannot take read permission away; the case runs where it can, as on CI.
+        assumeTrue("read permission can be taken away", file.setReadable(false))
+        assumeTrue("the platform refuses the read", runCatching { file.readBytes() }.isFailure)
+        try {
+            val before = file.length()
+            assertTrue(store.discard("n1", null) is PendingNotesStore.NoteDiscard.Changed)
+            assertTrue("nothing was deleted", file.exists())
+            assertEquals(before, file.length())
+        } finally {
+            file.setReadable(true)
+        }
+        assertArrayEquals(blob("newer text a run could read"), entry("n1").blob)
+    }
+
+    @Test fun `a discard shown as unreadable leaves an interrupted write for the whole store's discard`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        File(dir, "n1.note.new").writeBytes(byteArrayOf(0))
+        val answer = store.discard("n1", null)
+        assertTrue("$answer", answer is PendingNotesStore.NoteDiscard.Changed || answer == PendingNotesStore.NoteDiscard.Missing)
+        assertTrue("the interrupted write stays", File(dir, "n1.note.new").exists())
+    }
+
+    @Test fun `a discard shown as unreadable does not delete an entry that reads now`() {
+        store.saveLocal("n1", "b1", "r1", blob("text"), isCreate = false)
+        val before = filesOf(dir)
+        assertEquals(PendingNotesStore.NoteDiscard.Changed(store.read("n1")), store.discard("n1", null))
+        assertEquals(before, filesOf(dir))
+    }
+
+    @Test fun `a version-checked discard of a held conflict copy takes the original with it, or fails and keeps both`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (failing && it.name == "orig.note") throw java.io.IOException("could not remove orig.note")
+        }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("copy1", HeldReason.READ_ONLY, now = 5))
+        val shown = entry("copy1").version
+        assertThrows(java.io.IOException::class.java) { store.discard("copy1", shown) }
+        assertEquals(PendingEntry.State.HELD, entry("copy1").state)
+        assertEquals("orig", entry("copy1").origin?.noteUid)
+        assertTrue("the original stays too", store.read("orig") is Read.Present)
+        failing = false
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("copy1", shown))
+        assertTrue(store.scan().entries.isEmpty())
+    }
+
     // ---- removing a conflict copy that still carries its origin link ----
 
     @Test fun `discarding a held conflict copy takes the original it replaced with it, or fails`() {
