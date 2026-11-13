@@ -36,6 +36,7 @@ from ..local_cache import (
     is_safe_dav_href,
     opaque_dav_href,
     record_dav_change,
+    retire_settled_tombstone,
 )
 from ..local_cache.models import (
     CollectionEntity,
@@ -1028,6 +1029,23 @@ class Collection(BaseCollection):
                     vobject_item,
                     dav_href=href,
                 )
+                created_cache = etesync_item.cache_item
+                reused_ids = {created_cache.id}
+                if stale_mappers:
+                    reused_ids.add(stale_mappers[0].content.id)
+                uid_holders = list(
+                    ItemEntity.select().where(
+                        (ItemEntity.collection == cache_col)
+                        & (ItemEntity.uid == created_cache.uid)
+                    )
+                )
+                for holder in uid_holders:
+                    # A settled deletion at another href gives up its UID;
+                    # anything else keeps it and the upload is rejected.
+                    if holder.id not in reused_ids and not (
+                        retire_settled_tombstone(holder)
+                    ):
+                        raise ValueError("item UID is already in use")
                 if stale_mappers:
                     # Revive the row that already owns this collection-scoped
                     # href so retained DAV history never loses its identity.
