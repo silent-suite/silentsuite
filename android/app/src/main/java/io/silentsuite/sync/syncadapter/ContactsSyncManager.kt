@@ -559,7 +559,11 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                 return null
             }
 
-            return HttpClient.Builder(context).setForeground(false).build().use { client ->
+            // Non-interactive: an unknown certificate fails at once rather than holding the sync for
+            // a user decision the call deadline cannot interrupt. No network logging: in debug
+            // builds it would buffer the whole body before the size check.
+            return HttpClient.Builder(context, interactiveCertificates = false, networkLogging = false)
+                    .setForeground(false).build().use { client ->
                 fetchBounded(client.okHttpClient, httpUrl)
             }
         }

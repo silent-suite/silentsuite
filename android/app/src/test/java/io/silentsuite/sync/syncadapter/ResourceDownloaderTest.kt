@@ -1,17 +1,23 @@
 package io.silentsuite.sync.syncadapter
 
+import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.syncadapter.ContactsSyncManager.ResourceDownloader
 import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 import java.util.concurrent.TimeUnit
+import java.util.logging.Level
+import java.util.logging.Logger
 
 class ResourceDownloaderTest {
     private lateinit var server: MockWebServer
@@ -71,5 +77,27 @@ class ResourceDownloaderTest {
         assertNull(fetch(callTimeoutMillis = 500))
         val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
         assertTrue("took $elapsedMillis ms", elapsedMillis < 3_000)
+    }
+
+    @Test
+    fun networkLoggingCanBeLeftOffEvenWhenVerbose() {
+        val verbose = Logger.getAnonymousLogger().apply { level = Level.FINEST }
+        fun hasLogging(networkLogging: Boolean) =
+                HttpClient.Builder(null, null, verbose, networkLogging = networkLogging).build().use { client ->
+                    client.okHttpClient.interceptors.any { it is HttpLoggingInterceptor }
+                }
+        assertTrue(hasLogging(networkLogging = true))
+        assertFalse(hasLogging(networkLogging = false))
+    }
+
+    @Test
+    fun photoClientIsNonInteractiveAndUnlogged() {
+        val main = File("src/main/java/io/silentsuite/sync")
+        val downloader = File(main, "syncadapter/ContactsSyncManager.kt").readText()
+        assertTrue(Regex("""HttpClient\.Builder\(\s*context\s*,\s*interactiveCertificates\s*=\s*false\s*,\s*networkLogging\s*=\s*false\s*\)""")
+                .containsMatchIn(downloader))
+        // The flag must reach cert4android, where false rejects unknown certificates without waiting.
+        val builder = File(main, "HttpClient.kt").readText()
+        assertTrue(Regex("""CustomCertManager\(\s*context\s*,\s*interactiveCertificates\s*,""").containsMatchIn(builder))
     }
 }
