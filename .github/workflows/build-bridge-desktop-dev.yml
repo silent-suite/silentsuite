@@ -134,7 +134,8 @@ jobs:
             --platforms linux-x86_64,windows-x86_64 --dir "$dir" \
             --application "$dir/silentsuite-bridge-$GITHUB_SHA.tar.gz" --git-sha "$GITHUB_SHA" \
             --artifact "bridge-desktop-dev-sources-$GITHUB_SHA" --out "$dir/source-verification.json"
-          echo "receipt=$(base64 -w0 "$dir/source-verification.json")" >> "$GITHUB_OUTPUT"
+          # gzip keeps the receipt well under the 128 KiB limit of one environment string downstream.
+          echo "receipt=$(gzip -9n < "$dir/source-verification.json" | base64 -w0)" >> "$GITHUB_OUTPUT"
 
       - name: Upload source materials (only with the owner's approval of this commit)
         id: upload-sources
@@ -262,7 +263,7 @@ jobs:
           done
           cp bridge/dev-build/README-dev-build.txt "$root/README-dev-build.txt"
           python bridge/dev-build/archive_texts.py fill --root "$root" --sha "$GITHUB_SHA"
-          python -c "import base64, os, sys; sys.stdout.buffer.write(base64.b64decode(os.environ['SOURCE_RECEIPT']))" \
+          python -c "import base64, gzip, os, sys; sys.stdout.buffer.write(gzip.decompress(base64.b64decode(os.environ['SOURCE_RECEIPT'])))" \
             > "$RUNNER_TEMP/pkg/source-verification.json"
           python bridge/dev-build/archive_texts.py source --sha "$GITHUB_SHA" \
             --policy "bridge/dev-build/notices/policy-${{ matrix.label }}.json" \
