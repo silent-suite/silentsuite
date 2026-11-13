@@ -832,15 +832,18 @@ internal class PendingNotesStore private constructor(
      * for the rest of the process, so a late save that opens the store again gets this instance and is
      * refused instead of recreating the directory. A call after a failed one tries the deletion again.
      *
+     * The files go as in [discardStore] ([deleteAll]): the ones in a listing of the store, entries first and the
+     * counter last, each committed file's removal synced, as in a discard, and none followed, so a link in the store
+     * goes as a link and a folder in it that holds anything stays. A listing that fails, unless the directory is shown
+     * not to be there, throws before anything goes. A partial clear leaves what [deleteAll] did not reach, with the
+     * counter there while any note is.
+     *
      * It returns only once the directory is shown gone by two checks that agree ([shownGone]) and its removal is
-     * synced ([syncRemoval]), whoever removed it, so a retry that finds it gone still syncs. Otherwise it
-     * throws IOException, whatever the deletion answered, since the deletion counts a file it could not
-     * remove as gone when File.exists() says so, and that answers false for a check that failed as well. A
-     * caller may rely on a clear only when it returned, and a run takes the store for cleared in full only then
-     * ([clearedInFull]). A clear writes the store, so it withdraws the store's acknowledgement first
+     * synced ([syncRemoval]), whoever removed it, so a retry that finds it gone still syncs. Otherwise it throws
+     * IOException. A caller may rely on a clear only when it returned, and a run takes the store for cleared in full
+     * only then ([clearedInFull]). A clear writes the store, so it withdraws the store's acknowledgement first
      * ([acknowledged]), and throws before anything goes when that cannot be shown. While the folder is a link, or
-     * lstat cannot tell ([followable]), it throws before that and deletes nothing, since the deletion would follow a
-     * link to a directory.
+     * lstat cannot tell ([followable]), it throws before that and deletes nothing.
      */
     fun clearAll() {
         synchronized(lock) {
@@ -849,7 +852,7 @@ internal class PendingNotesStore private constructor(
             beforeClearForTesting?.invoke()
             if (!followable()) throw IOException(LINKED)
             withdrawAcknowledgement()
-            dir.deleteRecursively()
+            deleteAll(listing().map { it.name })
             if (!shownGone(dir)) throw IOException("could not clear the pending store")
             syncRemoval()
             clearReturned = true
@@ -1399,8 +1402,8 @@ internal class PendingNotesStore private constructor(
      * directory, which is then not shown gone.
      *
      * The removal of the directory is not synced here, since this call finds the directory already gone when an
-     * earlier one removed it and then failed at that sync: [discardStore] syncs it once the directory is shown
-     * gone, whoever removed it ([syncRemoval]).
+     * earlier one removed it and then failed at that sync: [discardStore] and [clearAll] sync it once the directory
+     * is shown gone, whoever removed it ([syncRemoval]).
      */
     private fun deleteAll(listed: List<String>) {
         val held = listed.toHashSet()

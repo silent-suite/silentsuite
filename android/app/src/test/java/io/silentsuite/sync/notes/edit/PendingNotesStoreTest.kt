@@ -2020,9 +2020,9 @@ class PendingNotesStoreTest {
             .findAll(code).count())
         assertEquals("no other test for ABSENT", 6, Regex("""[=!]=\s*Presence\.ABSENT\b""").findAll(code).count())
         assertEquals(2, Regex("""\) != Presence\.PRESENT\b""").findAll(code).count())
-        // A clear returns only on its own check that the directory is gone, never on what the deletion answered.
-        assertEquals(listOf("dir.deleteRecursively()"),
-            code.lines().filter { "deleteRecursively" in it }.map { it.trim() })
+        // Nothing deletes recursively, which follows a link to a directory: a clear removes the files one at a time,
+        // as a discard does, and returns only on its own check that the directory is gone.
+        assertEquals(emptyList<String>(), code.lines().filter { "deleteRecursively" in it }.map { it.trim() })
 
         // The discard permits decide the same way: no File.exists(), and mkdir answers first.
         val permits = File("src/main/java/io/silentsuite/sync/notes/edit/PendingNotesDiscardPermits.kt").readText()
@@ -3360,7 +3360,7 @@ class PendingNotesStoreTest {
         s.unregister()
     }
 
-    @Test fun `a clear syncs the removal of the directory last`() {
+    @Test fun `a clear syncs the store's directory after its files go and then the removal of the directory`() {
         val s = identityStore(syncDirectory = recordingSync)
         s.saveLocal("n1", "b1", "r1", blob("cleared"), isCreate = false)
         s.putNotebook("b1", blob("k"))
@@ -3368,6 +3368,8 @@ class PendingNotesStoreTest {
         s.clearAll()
         assertFalse(s.dir.exists())
         assertEquals("the removal of the directory is synced last", "sync notes-pending", steps.last())
+        assertTrue("each file's removal is synced before the directory goes: $steps",
+            steps.indexOf("sync ${s.dir.name}") in 0 until steps.indexOf("sync notes-pending"))
         assertTrue(s.clearedInFull())
     }
 
@@ -3390,6 +3392,29 @@ class PendingNotesStoreTest {
         s.clearAll()
         assertEquals(listOf("sync notes-pending"), steps)
         assertTrue(s.clearedInFull())
+    }
+
+    @Test fun `a clear removes a link in the store as a link and deletes nothing it points at`() {
+        val elsewhere = tmp.newFolder("elsewhere")
+        val kept = File(elsewhere, "n1.note").apply { writeBytes(blob("another store's text")) }
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        linked(File(dir, "attachments"), elsewhere)
+        store.clearAll()
+        assertFalse(dir.exists())
+        assertArrayEquals("what the link pointed at stays", blob("another store's text"), kept.readBytes())
+    }
+
+    @Test fun `a clear deletes nothing inside a folder in the store, and does not return while the folder is there`() {
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        val inner = File(File(dir, "attachments").apply { assertTrue(mkdir()) }, "kept").apply { writeBytes(blob("x")) }
+        assertThrows(java.io.IOException::class.java) { store.clearAll() }
+        assertTrue("the folder's file stays", inner.exists())
+        assertFalse("the store's own files went", File(dir, "n1.note").exists())
+        assertFalse(store.clearedInFull())
+        assertTrue(inner.delete())
+        store.clearAll()
+        assertFalse(dir.exists())
+        assertTrue(store.clearedInFull())
     }
 
     @Test fun `after a restart, a discard that finds the directory gone syncs its removal before the permit goes`() {
@@ -3754,9 +3779,13 @@ class PendingNotesStoreTest {
         assertFalse("a removal", s.acknowledged())
         assertNull(permitsOf(s).acknowledgement(s.dir.name))
         assertEquals(DiscardOutcome.Acknowledged, s.discardStore(s.unsynced()))
-        s.clearAll()
+        // A clear withdraws it before anything goes, also when the store cannot be listed and so nothing goes.
+        assertThrows(java.io.IOException::class.java) { s.clearAll() }
         assertFalse("a clear", s.acknowledged())
         assertNull(permitsOf(s).acknowledgement(s.dir.name))
+        PendingNotesStore.listFilesForTesting = null
+        s.clearAll()
+        assertTrue(s.clearedInFull())
     }
 
     @Test fun `an acknowledgement holds for its own directory only, not one that replaced it, nor another store`() {
