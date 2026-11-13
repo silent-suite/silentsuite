@@ -65,6 +65,21 @@ jobs:
       - name: Run Android static Python contracts
         run: python -m pytest ../tests/test_android_*.py -q
 
+  # Every committed gradle-wrapper.jar must match a published Gradle release.
+  gradle-wrapper-validation:
+    name: Validate Gradle wrapper
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate Gradle wrapper JARs
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
   signing-policy:
     name: Enforce Android signing boundary
     runs-on: ubuntu-latest

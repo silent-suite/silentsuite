@@ -44,8 +44,9 @@ STATIC_JOB = "static-contracts"
 CONSUMERS = ("build-pr", "account-recreation-runtime", "color-parity-evidence", "registry-process-boundary")
 UNCHANGED_JOBS = ("signing-policy", "conscrypt-r28", "conscrypt-runtime")
 # Jobs added later on their own, outside the speed refactor these fixtures pin: the patched
-# ical4j's time-zone tests (JVM, and on the API 29 and 36 emulators). They build no Etebase.
-ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime"}
+# ical4j's time-zone tests (JVM, and on the API 29 and 36 emulators) and the Gradle wrapper
+# JAR validation. They build no Etebase.
+ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime", "gradle-wrapper-validation"}
 ARTIFACT = "etebase-16kb-${{ github.sha }}"
 STAGING = "${{ runner.temp }}/etebase-16kb-artifact"
 BUILD_SCRIPT = "scripts/build-etebase-client-16kb.sh"
