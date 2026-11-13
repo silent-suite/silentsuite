@@ -730,6 +730,7 @@ describe('EventDialog in a calendar shared read-only', () => {
     expect(title).toHaveAttribute('readonly')
     expect(screen.queryByRole('button', { name: /Delete event/ })).toBeNull()
     expect(screen.queryByRole('button', { name: '+ Add' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Repeat frequency' })).toBeDisabled()
 
     fireEvent.keyDown(title, { key: 'Enter' })
     expect(mocks.updateEvent).not.toHaveBeenCalled()
@@ -741,6 +742,7 @@ describe('EventDialog in a calendar shared read-only', () => {
 
     expect(screen.getByRole('button', { name: /Delete event/ })).toBeInTheDocument()
     expect(screen.getByRole('textbox', { name: 'Event title' })).not.toHaveAttribute('readonly')
+    expect(screen.getByRole('combobox', { name: 'Repeat frequency' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Family' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Shared' })).toBeNull()
 
