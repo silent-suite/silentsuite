@@ -175,7 +175,7 @@ class LoginCredentialsChangeFragment : DialogFragment() {
                     .setIcon(R.drawable.ic_error_dark)
                     .setMessage(requireArguments().getInt(KEY_MESSAGE_RES))
                     .setNeutralButton(R.string.login_view_logs) { _, _ ->
-                        startActivity(DebugInfoActivity.newIntent(requireContext(), NothingDetectedFragment::class.java.name))
+                        startActivity(DebugInfoActivity.newIntent(requireContext()))
                     }
                     .setPositiveButton(android.R.string.ok) { dialog, which ->
                         // dismiss
