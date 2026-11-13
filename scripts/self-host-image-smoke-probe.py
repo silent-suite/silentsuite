@@ -11,6 +11,7 @@ Modes:
   wait             block until the server answers HTTP at all
   trusted          assertions issued from an IP listed in TRUSTED_PROXY_IPS
   untrusted        assertions issued from an IP that is *not* trusted
+  honoured         a forwarded https scheme is honoured (read-only; no signups)
   admin-enabled    assertions for ETEBASE_DISABLE_DJANGO_ADMIN=false
 
 Every mode exits non-zero with a specific message on the first failed contract.
@@ -202,6 +203,16 @@ def check_untrusted(base: str) -> None:
     print("untrusted forwarded identity correctly ignored")
 
 
+def check_honoured(base: str) -> None:
+    status, headers, _ = request(base, "GET", "/", headers={"X-Forwarded-Proto": "https"})
+    if status != 200:
+        fail(
+            "trusted proxy: a forwarded https scheme from a trusted source must be honoured "
+            f"(expected HTTP 200, got {status} location={headers.get('location')!r})"
+        )
+    print("forwarded https scheme honoured")
+
+
 def check_admin_enabled(base: str) -> None:
     status, _, _ = request(base, "GET", "/admin/", headers={"X-Forwarded-Proto": "https"})
     if status == 404:
@@ -213,7 +224,7 @@ def check_admin_enabled(base: str) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", required=True, choices=("imports", "wait", "trusted", "untrusted", "admin-enabled"))
+    parser.add_argument("--mode", required=True, choices=("imports", "wait", "trusted", "untrusted", "honoured", "admin-enabled"))
     parser.add_argument("--base", default="", help="http://<server-container>:<port>")
     parser.add_argument("--platform", default="", help="linux/amd64 or linux/arm64")
     parser.add_argument("--token", default="", help="expected ETEBASE_BOOTSTRAP_ADMIN_TOKEN")
@@ -232,6 +243,8 @@ def main() -> int:
             check_trusted(arguments.base, arguments.token)
         elif arguments.mode == "untrusted":
             check_untrusted(arguments.base)
+        elif arguments.mode == "honoured":
+            check_honoured(arguments.base)
         elif arguments.mode == "admin-enabled":
             check_admin_enabled(arguments.base)
     except ContractError as error:

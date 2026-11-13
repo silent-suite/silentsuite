@@ -9,7 +9,7 @@ vi.hoisted(() => {
 })
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, trackCheckoutInitiated: vi.fn(), trackPlanSelected: vi.fn() }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null, trackCheckoutInitiated: vi.fn(), trackPlanSelected: vi.fn() }))
 vi.mock('@/app/lib/secure-storage', () => ({ secureGet: vi.fn(), secureSet: vi.fn(), secureRemove: vi.fn(), secureClear: vi.fn(), migrateFromLocalStorage: vi.fn() }))
 
 const requestId = 'e91a6d70-0d4e-4352-9bdc-426d1f76d771'

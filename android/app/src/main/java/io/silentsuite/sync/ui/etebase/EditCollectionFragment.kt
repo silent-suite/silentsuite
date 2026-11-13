@@ -20,6 +20,7 @@ import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.edit.NoteMetaCodec
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.requestSync
@@ -525,82 +526,122 @@ class EditCollectionFragment : Fragment() {
             saveFixtureCollection(identity)
             return
         }
-        var ok = true
 
-        val meta = cachedCollection.meta
-        val v = requireView()
-
-        var edit = v.findViewById<EditText>(R.id.display_name)
-        meta.name = edit.text.toString()
-        if (TextUtils.isEmpty(meta.name)) {
-            edit.error = getString(R.string.create_collection_display_name_required)
-            ok = false
+        val view = requireView()
+        val name = view.findViewById<EditText>(R.id.display_name).text.toString()
+        if (TextUtils.isEmpty(name)) {
+            view.findViewById<EditText>(R.id.display_name).error = getString(R.string.create_collection_display_name_required)
+            return
         }
-
-        edit = v.findViewById<EditText>(R.id.description)
-        meta.description = StringUtils.trimToNull(edit.text.toString())
-
-        meta.mtime = System.currentTimeMillis()
-
-        if (ok) {
-            when (cachedCollection.collectionType) {
-                Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS, Constants.ETEBASE_TYPE_NOTES -> {
-                    val view = v.findViewById<View>(R.id.color)
-                    val color = (view.background as ColorDrawable).color
-                    meta.color = String.format("#%06X", 0xFFFFFF and color)
-                }
-                Constants.ETEBASE_TYPE_ADDRESS_BOOK -> {
-                }
+        val description = StringUtils.trimToNull(view.findViewById<EditText>(R.id.description).text.toString())
+        val color = when (cachedCollection.collectionType) {
+            Constants.ETEBASE_TYPE_CALENDAR, Constants.ETEBASE_TYPE_TASKS, Constants.ETEBASE_TYPE_NOTES -> {
+                val colorView = view.findViewById<View>(R.id.color)
+                val colorInt = (colorView.background as ColorDrawable).color
+                String.format("#%06X", 0xFFFFFF and colorInt)
             }
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK -> null // Preserve any color written by another client.
+            else -> null
+        }
+        val mtime = System.currentTimeMillis()
 
-            loadingModel.setLoading(true)
-            val applicationContext = requireContext().applicationContext
-            lifecycleScope.launch {
-                try {
-                    val colUid = withContext(Dispatchers.IO) {
-                        if (!identity.validate(applicationContext)) return@withContext null
-                        val col = cachedCollection.col
-                        col.meta = meta
-                        if (!uploadCollection(identity, applicationContext, col)) return@withContext null
-                        if (!identity.validate(applicationContext)) return@withContext null
-                        requestSync(applicationContext, model.value!!.account)
-                        col.uid
-                    }
-                    if (colUid == null) {
-                        activity?.finish()
-                        return@launch
-                    }
-                    collectionModel.loadCollection(applicationContext, identity.account, identity.creationId, model.value!!, colUid)
-                    if (isCreating) {
-                        // Load the items since we just created it
-                        itemsModel.loadItems(applicationContext, identity.account, identity.creationId, colUid, model.value!!, cachedCollection)
-                        parentFragmentManager.commit {
-                            val identity = CollectionLifecycleIdentity.existing(
-                                model.value!!.account,
-                                identity.creationId,
-                                colUid,
-                                cachedCollection.collectionType
-                            )
-                            replace(R.id.fragment_container, ViewCollectionFragment.newInstance(identity))
-                        }
+        loadingModel.setLoading(true)
+        val applicationContext = requireContext().applicationContext
+        lifecycleScope.launch {
+            try {
+                val colUid = withContext(Dispatchers.IO) {
+                    if (!identity.validate(applicationContext)) return@withContext null
+                    val colMgr = model.value!!.colMgr
+                    // Work on a copy: a refused merge or failed upload must not leave the screen's cached
+                    // collection mutated, or let a later Save upload a partially changed object.
+                    val onScreen = cachedCollection.col
+                    // Fetch the latest shared revision before merging, so a stale cache cannot overwrite
+                    // metadata another client added since the last sync.
+                    val col = if (isCreating) {
+                        colMgr.cacheLoad(colMgr.cacheSave(onScreen))
                     } else {
-                        parentFragmentManager.popBackStack()
+                        colMgr.fetch(onScreen.uid)
                     }
-                } catch (e: EtebaseException) {
-                    val context = context
-                    if (context != null) {
-                        MaterialAlertDialogBuilder(requireContext())
-                                .setIcon(R.drawable.ic_info_dark)
-                                .setTitle(R.string.exception)
-                                .setMessage(e.localizedMessage)
-                                .setPositiveButton(android.R.string.yes) { _, _ -> }.show()
+                    if (col.uid != onScreen.uid || col.collectionType != cachedCollection.collectionType) {
+                        throw CollectionMetadataWriteException("The server returned a different collection. Refresh and try again.")
                     }
-                } finally {
-                    loadingModel.setLoading(false)
+                    when (val merged = NoteMetaCodec.mergeCollection(col.getMetaRaw(), name, description, mtime, color)) {
+                        is NoteMetaCodec.Merge.Merged -> {
+                            col.setMetaRaw(merged.bytes)
+                            if (!col.getMetaRaw().contentEquals(merged.bytes)) {
+                                throw CollectionMetadataWriteException("Raw collection metadata did not read back byte-for-byte; nothing was uploaded.")
+                            }
+                            val readBack = col.meta
+                            if (readBack.name != merged.name || readBack.description != description ||
+                                readBack.mtime != mtime || (color != null && readBack.color != color)) {
+                                throw CollectionMetadataWriteException("Collection metadata did not read back as written; nothing was uploaded.")
+                            }
+                        }
+                        is NoteMetaCodec.Merge.Refused -> throw CollectionMetadataWriteException(
+                            "Collection metadata contains an ambiguous '${merged.key}' field (${merged.why}). Nothing was uploaded; refresh the collection before trying again."
+                        )
+                        is NoteMetaCodec.Merge.NotAMap -> throw CollectionMetadataWriteException(
+                            "Collection metadata is not a valid single MessagePack map (${merged.reason}). Nothing was uploaded."
+                        )
+                    }
+                    if (!uploadCollection(identity, applicationContext, col)) return@withContext null
+                    if (!identity.validate(applicationContext)) return@withContext null
+                    requestSync(applicationContext, model.value!!.account)
+                    col.uid
                 }
+                if (colUid == null) {
+                    activity?.finish()
+                    return@launch
+                }
+                // This ViewModel is already initialized for the same UID, so loadCollection() is a no-op.
+                // Read the just-uploaded cache entry and publish it explicitly; otherwise the next Edit
+                // screen reuses the pre-save CachedCollection and shows stale metadata (including the old name).
+                val refreshedCollection = withContext(Dispatchers.IO) {
+                    val holder = model.value ?: return@withContext null
+                    if (holder.account != identity.account) return@withContext null
+                    synchronized(holder.etebaseLocalCache) {
+                        holder.etebaseLocalCache.collectionGet(holder.colMgr, colUid)
+                    }
+                } ?: throw CollectionMetadataWriteException("The saved collection could not be reloaded from the local cache.")
+                collectionModel.setCollection(refreshedCollection)
+                if (isCreating) {
+                    // Load the items since we just created it
+                    itemsModel.loadItems(applicationContext, identity.account, identity.creationId, colUid, model.value!!, cachedCollection)
+                    parentFragmentManager.commit {
+                        val nextIdentity = CollectionLifecycleIdentity.existing(
+                            model.value!!.account,
+                            identity.creationId,
+                            colUid,
+                            cachedCollection.collectionType
+                        )
+                        replace(R.id.fragment_container, ViewCollectionFragment.newInstance(nextIdentity))
+                    }
+                } else {
+                    parentFragmentManager.popBackStack()
+                }
+            } catch (e: EtebaseException) {
+                Logger.log.warning("Collection edit failed: ${e.javaClass.name}")
+                showCollectionSaveError(e.localizedMessage ?: "The collection could not be saved.")
+            } catch (e: CollectionMetadataWriteException) {
+                Logger.log.warning("Collection metadata save refused: ${e.message}")
+                showCollectionSaveError(e.message ?: "Collection metadata could not be saved safely.")
+            } finally {
+                loadingModel.setLoading(false)
             }
         }
     }
+
+    private fun showCollectionSaveError(message: String) {
+        val current = context ?: return
+        MaterialAlertDialogBuilder(current)
+            .setIcon(R.drawable.ic_info_dark)
+            .setTitle(R.string.exception)
+            .setMessage(message)
+            .setPositiveButton(android.R.string.ok) { _, _ -> }
+            .show()
+    }
+
+    private class CollectionMetadataWriteException(message: String) : Exception(message)
 
     private fun saveFixtureCollection(identity: CollectionLifecycleIdentity) {
         val view = requireView()
