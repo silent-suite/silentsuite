@@ -37,6 +37,11 @@ item_router = APIRouter(route_class=MsgpackRoute, responses=permission_responses
 CollectionQuerySet = QuerySet[models.Collection]
 CollectionItemQuerySet = QuerySet[models.CollectionItem]
 
+# Largest page the collection and item lists return. A larger requested limit is
+# clamped rather than refused: clients page on `done` and the stoken, so a short
+# page only means another request. Clients ask for 100 at most (default 50).
+MAX_LIST_LIMIT = 500
+
 
 class ListMulti(BaseModel):
     collectionTypes: t.List[bytes]
@@ -217,7 +222,10 @@ def collection_list_common(
     prefetch: Prefetch,
 ) -> CollectionListResponse:
     result, new_stoken_obj, done = filter_by_stoken_and_limit(
-        stoken, limit, queryset.filter(items__revisions__current=True), models.Collection.stoken_annotation
+        stoken,
+        min(limit, MAX_LIST_LIMIT),
+        queryset.filter(items__revisions__current=True),
+        models.Collection.stoken_annotation,
     )
     new_stoken = new_stoken_obj and new_stoken_obj.uid
     context = Context(user, prefetch)
@@ -443,7 +451,10 @@ def item_list_common(
     prefetch: Prefetch,
 ) -> CollectionItemListResponse:
     result, new_stoken_obj, done = filter_by_stoken_and_limit(
-        stoken, limit, queryset.filter(revisions__current=True), models.CollectionItem.stoken_annotation
+        stoken,
+        min(limit, MAX_LIST_LIMIT),
+        queryset.filter(revisions__current=True),
+        models.CollectionItem.stoken_annotation,
     )
     new_stoken = new_stoken_obj and new_stoken_obj.uid
     context = Context(user, prefetch)
