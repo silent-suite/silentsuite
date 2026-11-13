@@ -16,6 +16,7 @@ from silentsuite_bridge.radicale.storage import Collection
 from tests.test_carddav_remote_delete_convergence import (
     COLLECTION_UID,
     _bridge,
+    _remote_item,
     _seed,
     _service,
 )
@@ -53,10 +54,10 @@ def _call(app, method, href, body=b""):
     return captured["status"], response.decode()
 
 
-def _card(version, uid, nickname, fn="Lars Example"):
+def _card(version, uid, nickname, fn="Lars Example", group=""):
     return (
         f"BEGIN:VCARD\r\nVERSION:{version}\r\nUID:{uid}\r\nFN:{fn}\r\n"
-        f"N:Example;Lars;;;\r\nNICKNAME:{nickname}\r\nEND:VCARD\r\n"
+        f"N:Example;Lars;;;\r\n{group}NICKNAME:{nickname}\r\nEND:VCARD\r\n"
     ).encode()
 
 
@@ -112,3 +113,63 @@ def test_direct_upload_keeps_every_nickname(tmp_path, monkeypatch):
     )
 
     assert "NICKNAME:Lasse,QA-Lars" in remote.created[0].content.decode()
+
+
+GROUPED_NICKNAMES = pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("Lasse", ["Lasse"]), ("Lasse,QA-Lars", ["Lasse", "QA-Lars"])],
+    ids=["single", "list"],
+)
+
+
+def _groups(text):
+    return [line.group for line in vobject.readOne(text).contents["nickname"]]
+
+
+@pytest.mark.parametrize("version", ["3.0", "4.0"])
+@GROUPED_NICKNAMES
+def test_grouped_nickname_survives_create_and_replace(
+    tmp_path, monkeypatch, version, raw, expected
+):
+    app, database, user, remote, _direct = _bridge(tmp_path, monkeypatch)
+    _seed(remote, _service(database, user, remote))
+
+    for fn in ("Lars Example", "Lars Renamed"):
+        body = _card(version, "lars", raw, fn=fn, group="item1.")
+        status, _body = _call(app, "PUT", "lars.vcf", body)
+        assert status.startswith("201")
+        stored = remote.created[0].content.decode()
+        assert fn in stored
+        assert _nicknames(stored) == expected
+        assert _groups(stored) == ["item1"]
+        status, served = _call(app, "GET", "lars.vcf")
+        assert status.startswith("200")
+        assert _nicknames(served) == expected
+        assert _groups(served) == ["item1"]
+
+
+@pytest.mark.parametrize("version", ["3.0", "4.0"])
+@GROUPED_NICKNAMES
+def test_stored_grouped_nickname_is_served(
+    tmp_path, monkeypatch, version, raw, expected
+):
+    app, database, user, remote, _direct = _bridge(tmp_path, monkeypatch)
+    service = _service(database, user, remote)
+    _seed(remote, service)
+    content = _card(version, "lars", raw, group="item1.").decode()
+    remote.queue_item_page(
+        _remote_item(
+            "remote-lars",
+            content,
+            meta={"name": "lars", "dav_href": "lars.vcf"},
+            etag="etag-lars",
+        ),
+        stoken="items-lars",
+    )
+    service.sync()
+
+    status, served = _call(app, "GET", "lars.vcf")
+
+    assert status.startswith("200")
+    assert _nicknames(served) == expected
+    assert _groups(served) == ["item1"]
