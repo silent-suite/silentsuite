@@ -15,12 +15,14 @@ import { useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
+import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { CalendarListPanel } from '../CalendarListPanel'
 
 const ON = 'Turn on Birthdays calendar'
 const OFF = 'Turn off Birthdays calendar'
 
-function setup({ active = [] as string[], own = [] as string[] } = {}) {
+function setup({ active = [] as string[], own = [] as string[], experiment = true } = {}) {
+  useExperimentalStore.setState({ hydrated: true, notesAccounts: [], birthdayAccounts: experiment ? ['fp-a'] : [] })
   useEtebaseStore.setState({ accountFingerprint: 'fp-a', createCollection: vi.fn(), deleteCollection: vi.fn(), updateCollectionMeta: vi.fn() } as never)
   useAuthStore.setState({ canWrite: () => true } as never)
   useCalendarListStore.setState({
@@ -44,6 +46,16 @@ describe('CalendarListPanel Birthdays control (#738)', () => {
     lifecycle.enable.mockReset()
     lifecycle.disable.mockReset()
     Object.values(toastMock).forEach((mock) => mock.mockReset())
+  })
+
+  it('shows no Birthdays control while the experiment is off, even with a Birthdays calendar on', () => {
+    setup({ active: ['bday-1'], own: ['bday-1'], experiment: false })
+    render(<CalendarListPanel />)
+    expect(screen.queryByRole('button', { name: ON })).toBeNull()
+    expect(screen.queryByRole('button', { name: OFF })).toBeNull()
+    expect(screen.queryByText('Birthdays from contacts')).toBeNull()
+    act(() => useExperimentalStore.getState().setBirthdaysEnabled('fp-a', true))
+    expect(screen.getByRole('button', { name: OFF })).toBeTruthy()
   })
 
   it('turns generation on from its own control and reports success', async () => {
@@ -137,6 +149,7 @@ describe('CalendarListPanel Birthdays control (#738)', () => {
 
   it('an action that finishes after the account changed shows nothing in the new account', async () => {
     setup()
+    useExperimentalStore.setState({ birthdayAccounts: ['fp-a', 'fp-b'] })
     const pending = deferred<{ status: string }>()
     lifecycle.enable.mockReturnValue(pending.promise)
     render(<CalendarListPanel />)

@@ -6,6 +6,7 @@ import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { showErrorToast, showSuccessToast, showWarningToast } from '@/app/stores/use-toast-store'
 import { getAccountEpoch } from '@/app/lib/account-epoch'
+import { useBirthdaysEnabled } from '@/app/hooks/use-birthdays-enabled'
 import {
   disableBirthdayCalendarFromSession,
   enableBirthdayCalendarFromSession,
@@ -28,6 +29,7 @@ export function CalendarListPanel() {
   const accountFingerprint = useEtebaseStore((s) => s.accountFingerprint)
   const managedIds = useManagedBirthdayCalendarIds()
   const ownIds = useQualifyingBirthdayCalendarIds()
+  const birthdaysEnabled = useBirthdaysEnabled()
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const [pending, setPending] = useState<PendingAction | null>(null)
@@ -167,21 +169,23 @@ export function CalendarListPanel() {
         )}
       </div>
 
-      <div className="mt-2 flex items-center justify-between gap-2 px-1">
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
-          <Cake className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">Birthdays from contacts</span>
-        </span>
-        <button
-          type="button"
-          onClick={() => void handleBirthdays()}
-          disabled={busy}
-          aria-label={generationOn ? 'Turn off Birthdays calendar' : 'Turn on Birthdays calendar'}
-          className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-emerald-600 hover:bg-[rgb(var(--surface))] disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-        >
-          {busy ? 'Working…' : generationOn ? 'Turn off' : 'Turn on'}
-        </button>
-      </div>
+      {birthdaysEnabled && (
+        <div className="mt-2 flex items-center justify-between gap-2 px-1">
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
+            <Cake className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Birthdays from contacts</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => void handleBirthdays()}
+            disabled={busy}
+            aria-label={generationOn ? 'Turn off Birthdays calendar' : 'Turn on Birthdays calendar'}
+            className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-emerald-600 hover:bg-[rgb(var(--surface))] disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          >
+            {busy ? 'Working…' : generationOn ? 'Turn off' : 'Turn on'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }

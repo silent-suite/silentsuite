@@ -58,6 +58,7 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { getAccountEpoch } from '@/app/lib/account-epoch'
 import { birthdayMarkerContent } from '@silentsuite/core'
 import { selectManagedBirthdayCalendarIds, useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
@@ -121,6 +122,7 @@ describe('SyncProvider requests Birthdays generation after a successful contact 
     useContactStore.setState({ contacts: [] })
     coreMock.restoreSession.mockReset()
     coreMock.getAccountFingerprint.mockReset().mockReturnValue(TEST_FINGERPRINT)
+    useExperimentalStore.setState({ hydrated: true, notesAccounts: [], birthdayAccounts: [TEST_FINGERPRINT] })
     birthdayMock.scheduleBirthdayReconcile.mockReset()
     birthdayMock.resetBirthdayProjection.mockReset()
     toastMock.showErrorToast.mockReset()

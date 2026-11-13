@@ -25,6 +25,7 @@ import { useContactStore, resetContactLifecycle } from '../use-contact-store'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useContactListStore } from '../use-contact-list-store'
 import { useAuthStore } from '../use-auth-store'
+import { useExperimentalStore } from '../use-experimental-store'
 import { TEST_FINGERPRINT } from './offline-queue-store-test-utils'
 
 function contact(id: string): Contact & { revision: string } {
@@ -57,6 +58,7 @@ describe('contact store requests Birthdays generation only after server-confirme
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     useContactListStore.setState({ lists: [{ id: 'contacts-1', name: 'Contacts', color: '#fff', visible: true, accessLevel: 2 }], activeListId: 'contacts-1' })
     useAuthStore.setState({ canWrite: () => true } as any)
+    useExperimentalStore.setState({ hydrated: true, notesAccounts: [], birthdayAccounts: [TEST_FINGERPRINT] })
     birthdayMock.scheduleBirthdayReconcile.mockReset()
     toastMock.showErrorToast.mockReset()
   })
@@ -66,6 +68,14 @@ describe('contact store requests Birthdays generation only after server-confirme
     await expect(useContactStore.getState().updateContact('c1', { birthday: '1985-03-16' })).resolves.toBe(true)
     await settled()
     expect(birthdayMock.scheduleBirthdayReconcile).toHaveBeenCalledTimes(1)
+  })
+
+  it('requests nothing while the Birthdays experiment is off for the account', async () => {
+    useExperimentalStore.setState({ birthdayAccounts: ['another-account'] })
+    account('remote')
+    await expect(useContactStore.getState().updateContact('c1', { birthday: '1985-03-16' })).resolves.toBe(true)
+    await settled()
+    expect(birthdayMock.scheduleBirthdayReconcile).not.toHaveBeenCalled()
   })
 
   it('a queued update is not remote confirmation', async () => {
