@@ -1324,22 +1324,27 @@ class AccountDashboardRuntimeTest {
             }
         }
 
-        // The dashboard is recreated while stopped behind the subscription page; returning must still force a read.
+        // The dashboard is recreated after the subscription page was opened; the new instance's first resume
+        // (the return) must still force a read although the pre-payment snapshot is fresh. ActivityScenario
+        // resumes a stopped Activity before recreating it, which would consume the pending refresh on the old
+        // instance, so this recreates from RESUMED: the old instance saves state and is destroyed without
+        // resuming again.
         val now = System.currentTimeMillis()
         val recreated = NoticeSeam { call ->
             if (call == 1) trialNotice(now + 5 * DAY_MS - HOUR_MS, 5) else trialNotice(now + 2 * DAY_MS - HOUR_MS, 2)
         }
         withDashboardAccount(beforeLaunch = { _, _ -> recreated.install(mutableListOf()) }) { _, _, scenario ->
             waitForNoticeText(scenario, "Free trial: 5 days left")
+            var opener: AccountActivity? = null
             scenario.onActivity { activity ->
+                opener = activity
                 val info = infoButton(activity)
                 assertTrue("info button is not available to open the subscription page", info?.isShown == true)
                 info!!.performClick()
             }
-            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            assertEquals("opening the subscription page must not read by itself", 1, recreated.calls.get())
             scenario.recreate()
-            assertEquals("recreation alone must not read again while the snapshot is fresh", 1, recreated.calls.get())
-            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            scenario.onActivity { assertTrue("the dashboard was not recreated", it !== opener) }
             recreated.awaitCall(2)
             waitForNoticeText(scenario, "Free trial: 2 days left")
         }
