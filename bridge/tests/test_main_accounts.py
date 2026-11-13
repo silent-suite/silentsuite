@@ -94,6 +94,53 @@ def test_generate_localhost_certificate_creates_san_cert(tmp_path):
     assert (parsed["notAfter"] - parsed["notBefore"]).days <= 398
 
 
+BUNDLE_LIBS = "/tmp/_MEIsynthetic"
+
+
+@pytest.mark.parametrize(
+    ("original", "expected"),
+    [("/opt/host/lib", "/opt/host/lib"), (None, None)],
+    ids=["restored", "unset"],
+)
+def test_frozen_build_gives_openssl_the_host_library_path(
+    tmp_path, monkeypatch, original, expected
+):
+    """A frozen build must not hand its bundled libcrypto to host openssl."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", BUNDLE_LIBS)
+    if original is None:
+        monkeypatch.delenv("LD_LIBRARY_PATH_ORIG", raising=False)
+    else:
+        monkeypatch.setenv("LD_LIBRARY_PATH_ORIG", original)
+    seen = []
+
+    def fake_run(argv, **kwargs):
+        seen.append((argv[:2], kwargs.get("env")))
+        return subprocess.CompletedProcess(argv, 0, stdout="pubkey", stderr="")
+
+    monkeypatch.setattr(main_module.subprocess, "run", fake_run)
+    cert_path = str(tmp_path / "localhost-cert.pem")
+    key_path = str(tmp_path / "localhost-key.pem")
+
+    main_module._generate_localhost_certificate(cert_path, key_path)
+    assert main_module._cert_and_key_match(cert_path, key_path) is True
+
+    assert [argv for argv, _env in seen] == [
+        ["openssl", "req"], ["openssl", "x509"], ["openssl", "pkey"]
+    ]
+    for _argv, env in seen:
+        assert env is not None
+        assert env.get("LD_LIBRARY_PATH") == expected
+        assert BUNDLE_LIBS not in env.values()
+
+
+def test_unfrozen_run_keeps_the_library_path(monkeypatch):
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/dev/lib")
+
+    assert main_module._host_tool_env()["LD_LIBRARY_PATH"] == "/opt/dev/lib"
+
+
 @pytest.mark.skipif(not _openssl_available(), reason="openssl not available")
 def test_generated_key_has_posix_0600_mode(tmp_path):
     """POSIX-only: generated private key is hardened to 0600 best-effort."""
