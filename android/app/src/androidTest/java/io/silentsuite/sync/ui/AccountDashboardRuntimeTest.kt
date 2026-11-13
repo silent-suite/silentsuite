@@ -1323,6 +1323,26 @@ class AccountDashboardRuntimeTest {
                 }
             }
         }
+
+        // The dashboard is recreated while stopped behind the subscription page; returning must still force a read.
+        val now = System.currentTimeMillis()
+        val recreated = NoticeSeam { call ->
+            if (call == 1) trialNotice(now + 5 * DAY_MS - HOUR_MS, 5) else trialNotice(now + 2 * DAY_MS - HOUR_MS, 2)
+        }
+        withDashboardAccount(beforeLaunch = { _, _ -> recreated.install(mutableListOf()) }) { _, _, scenario ->
+            waitForNoticeText(scenario, "Free trial: 5 days left")
+            scenario.onActivity { activity ->
+                val info = infoButton(activity)
+                assertTrue("info button is not available to open the subscription page", info?.isShown == true)
+                info!!.performClick()
+            }
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            scenario.recreate()
+            assertEquals("recreation alone must not read again while the snapshot is fresh", 1, recreated.calls.get())
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+            recreated.awaitCall(2)
+            waitForNoticeText(scenario, "Free trial: 2 days left")
+        }
     }
 
     @Test

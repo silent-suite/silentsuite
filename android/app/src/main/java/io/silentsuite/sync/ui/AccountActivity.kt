@@ -252,6 +252,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             savedInstanceState?.getBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, false) ?: false
         )
         taskAppReminderDismissed = savedInstanceState?.getBoolean(KEY_TASK_APP_REMINDER_DISMISSED, false) ?: false
+        // A dashboard recreated while the subscription page is open must still force its refresh on return.
+        subscriptionPageOpened = savedInstanceState?.getBoolean(KEY_SUBSCRIPTION_PAGE_OPENED, false) ?: false
 
         // TODO(Phase2): Set username in Sentry crash reporting context
 
@@ -367,6 +369,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         outState.putBoolean(KEY_NOTIFICATION_PERMISSION_PENDING, notificationPermissionFlow.notificationRequestPending)
         outState.putBoolean(KEY_STARTUP_PERMISSION_FLOW_STARTED, notificationPermissionFlow.runtimePermissionFlowStarted)
         outState.putBoolean(KEY_TASK_APP_REMINDER_DISMISSED, taskAppReminderDismissed)
+        outState.putBoolean(KEY_SUBSCRIPTION_PAGE_OPENED, subscriptionPageOpened)
     }
 
     override fun onDestroy() {
@@ -2226,6 +2229,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         internal const val EXTRA_CREATION_ID = AppSettingsActivity.EXTRA_CREATION_ID
         private const val REQUEST_CREATE_EXPORT_DOCUMENT = 7501
         private const val KEY_PENDING_EXPORT_KIND = "pendingExportKind"
+        private const val KEY_SUBSCRIPTION_PAGE_OPENED = "subscriptionPageOpened"
         private const val KEY_NOTIFICATION_PERMISSION_PENDING = "notification_permission_pending"
         private const val KEY_STARTUP_PERMISSION_FLOW_STARTED = "startup_permission_flow_started"
         private const val KEY_TASK_APP_REMINDER_DISMISSED = "task_app_reminder_dismissed"
