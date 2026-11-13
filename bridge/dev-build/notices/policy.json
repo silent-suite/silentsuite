@@ -1,0 +1,12 @@
+{
+  "admission": {
+    "candidate_manifest_sha256": "99859f58a6aac1d0ba08621132ac17a2c2d5aa2f68b1484cafcf308135f660c5",
+    "review": "review-public-9372086"
+  },
+  "admitted": true,
+  "platforms": {
+    "linux-x86_64": "notices/policy-linux-x86_64.json",
+    "windows-x86_64": "notices/policy-windows-x86_64.json"
+  },
+  "schema_version": 1
+}

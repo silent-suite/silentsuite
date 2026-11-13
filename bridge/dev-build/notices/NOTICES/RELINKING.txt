@@ -1,0 +1,175 @@
+Replacing Qt, PySide6 and other LGPL libraries in this build
+Commit: {{GIT_SHA}}
+
+SilentSuite Bridge desktop uses Qt and PySide6 under the GNU LGPL. You may
+replace those libraries with versions you modified or built yourself, and run
+the program with them. You may also debug the program, and reverse-engineer
+it as far as you need to debug your changes. Nothing in this archive adds
+terms against that, and there is no separate EULA.
+
+
+How the libraries are shipped
+-----------------------------
+The program is a PyInstaller onedir bundle, built from
+bridge/silentsuite-bridge-desktop.spec with entry point
+bridge/entrypoint_desktop.py:
+
+  Linux:   silentsuite-bridge-desktop/silentsuite-bridge-desktop + _internal/
+  Windows: SilentSuite Bridge\SilentSuite Bridge.exe + _internal\
+
+Qt and PySide6 are not linked into the program statically. PyInstaller's own
+PySide6 hooks copy them into _internal/ as separate dynamic libraries (.so on
+Linux, .dll and .pyd on Windows), along with the QtWebEngineProcess helper
+and its resources and locales. The program loads them from there at startup.
+The spec turns off UPX and stripping, so the files are left as built.
+
+Some things the spec does on purpose that a replacement has to respect:
+- It leaves out these Qt families, with their bindings and libraries and the
+  plugins and QML files that depend on them: Charts, Data Visualization,
+  Graphs, Quick 3D, Quick Timeline, Virtual Keyboard and Wayland Compositor.
+- On Windows, the API-set forwarder DLLs, ucrtbase.dll and the OpenSSL 3
+  DLLs are dropped. The bundle uses the system C runtime, and Qt's TLS
+  backend falls back to schannel.
+
+The exact file list is in BUILD-INFO.json, and NOTICES lists the Qt
+libraries and their versions. Use those rather than guessing at paths.
+
+The Linux bundle also carries Ubuntu 22.04 system libraries in _internal/,
+some under the LGPL (for example libatk-1.0.so.0, libcairo.so.2,
+libavahi-client.so.3, libtasn1.so.6 and libgmp.so.10). NOTICES lists their
+licences. The same in-place method below works for them.
+
+
+Option 1: replace a library inside the bundle
+---------------------------------------------
+1. Copy the whole extracted program folder somewhere new and work on the
+   copy. Keep the original for comparison.
+2. Get the source for the exact version that shipped. SOURCE.txt says where
+   the matching archives are, and NOTICES records the versions.
+3. Build your modified library against that same version, with a compatible
+   compiler and configuration. Qt's libraries depend on each other and on
+   their plugins. PySide6 and Shiboken6 are built for one particular Qt. If
+   your build isn't ABI-compatible with what's in the bundle, you'll have to
+   rebuild the parts that depend on it too. Apart from the tested example
+   below, we haven't tried other combinations, and nothing here promises
+   compatibility.
+4. Put your file in place of the original, with exactly the same name and
+   location. If the bundle has symlinks or duplicate copies of a library
+   under different names, keep that arrangement so the loader still finds
+   the names it expects.
+5. Keep the things that travel with Qt in step with what you replaced:
+   plugins, the QtWebEngineProcess helper, resource and locale files. Don't
+   mix files from different Qt builds unless you know they match.
+6. Run the modified copy using the isolated setup in README-dev-build.txt:
+   separate user or VM, a throwaway SILENTSUITE_DATA_DIR, an unused
+   SILENTSUITE_LISTEN_PORT, a synthetic account, start at login left off.
+   Don't add --no-sandbox; the app refuses to start with a disabled sandbox
+   or remote debugging anyway.
+
+After this, the hashes in BUILD-INFO.json won't match your copy. That's
+expected, since they describe the original build.
+
+
+Tested example: one Qt library rebuilt from source
+--------------------------------------------------
+Before this archive was uploaded, CI did the following with it on its own
+platform. It rebuilt one Qt library from qt-everywhere-src-6.12.0.tar.xz
+(listed in SOURCE.txt, SHA256
+98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165) with a
+small source change, put the result in place of the bundled copy in an
+extracted copy of this archive, and ran the same startup tests the build
+itself has to pass. The program started with the rebuilt library loaded from
+its place in the bundle. The receipts are in the q7 folder that sits next to
+the archive in the same CI artifact.
+
+The library:
+  Linux:   _internal/PySide6/Qt/lib/libQt6XcbQpa.so.6, Qt's X11 platform
+           integration. _internal/libQt6XcbQpa.so.6 is a symlink to it, so
+           replacing the real file is enough.
+  Windows: _internal\PySide6\plugins\platforms\qwindows.dll, Qt's Windows
+           platform integration.
+
+The change: a few lines appended to
+qtbase/src/plugins/platforms/xcb/qxcbintegration.cpp (Linux) or
+qtbase/src/plugins/platforms/windows/qwindowsintegration.cpp (Windows). When
+the environment variable SILENTSUITE_RELINK_WITNESS names a file, the library
+adds one line to that file as it loads. The test uses that line, and the
+operating system's list of loaded files, to tell the rebuilt library from the
+original.
+
+The build, run from an empty build folder next to the qtbase folder of the
+source archive. CI also passes -prefix with a scratch folder; nothing gets
+installed.
+
+  Linux (Ubuntu 22.04, GCC 11, CMake and Ninja; the -dev packages are listed
+  as LINUX_BUILD_PACKAGES in bridge/dev-build/relink_control.py):
+
+    ../qtbase/configure -release -nomake examples -nomake tests \
+        -qt-libjpeg -qt-libpng -qt-pcre -qt-harfbuzz -qt-doubleconversion \
+        -no-libudev -no-feature-liburing -bundled-xcb-xinput \
+        -no-feature-xcb-sm -- -DOpenGL_GL_PREFERENCE=LEGACY \
+        -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++ -DQT_BUILD_TESTS=OFF
+    cmake --build . --target XcbQpaPrivate --parallel
+
+  The new library is lib/libQt6XcbQpa.so.6.12.0. Copy it over
+  _internal/PySide6/Qt/lib/libQt6XcbQpa.so.6.
+
+  Windows (x64 Visual Studio 2022 developer environment, CMake and Ninja):
+
+    ..\qtbase\configure.bat -release -nomake examples -nomake tests -qt-zlib ^
+        -- -DQT_BUILD_TESTS=OFF
+    cmake --build . --target QWindowsIntegrationPlugin --parallel
+
+  The new library is plugins\platforms\qwindows.dll. Copy it over
+  _internal\PySide6\plugins\platforms\qwindows.dll.
+
+These are the options the Qt Company's own Qt 6.12.0 qtbase build records
+(config_qtbase.opt in its qtbase SDK package), minus settings that only
+concern its build machines, such as compiler caching, SBOM generation and
+debug symbols. On Linux, -no-feature-xcb-sm reproduces their result: their
+build had no libSM. With these options the generated Qt Core and Qt Gui
+configuration headers came out identical to the Qt Company's on Linux. On
+Windows they differed in one setting, Vulkan support, because the build
+machine had no Vulkan headers. The app doesn't use Vulkan.
+
+What this shows is that one Qt library can be rebuilt from the published
+source and swapped into this build. It doesn't show that every library can
+be rebuilt the same way, and it doesn't cover PySide6 or Shiboken6, whose
+source is pyside-setup-everywhere-src-6.12.0 in SOURCE.txt.
+
+
+Option 2: rebuild the application
+---------------------------------
+The source for this build includes a git archive of commit {{GIT_SHA}}.
+The steps below are the ones CI's frozen startup workflow
+(.github/workflows/test-bridge-desktop-frozen.yml) uses at that commit.
+That workflow runs Python 3.10 on ubuntu-22.04 and windows-latest. It also
+installs a Rust toolchain for the etebase dependency, and on Linux a list of
+X11/Qt runtime packages. Look in the workflow for those details.
+
+From the bridge/ folder of the unpacked source:
+
+  python -m pip install --upgrade pip
+  pip install -e .
+  pip install -r tests/desktop_smoke/requirements.txt
+  pip install pyinstaller
+
+The requirements file pins PySide6. To use your own Qt or PySide6, install
+your build into that environment in place of the pinned one. PyInstaller
+isn't pinned; the version CI used is recorded with the build.
+
+Then build:
+
+  python -m PyInstaller silentsuite-bridge-desktop.spec --noconfirm --clean \
+      --distpath <dist> --workpath <work>
+
+The program folder appears in <dist>, laid out as above. For building a Qt
+library, see the tested example above and Qt's own documentation.
+
+
+What this text is not
+---------------------
+It isn't a written offer for source, legal advice or a certificate of
+compliance. What you should check are the source archives and full licence
+texts that come with this build, plus BUILD-INFO.json. If something is
+missing from them, that's a real gap, and this text doesn't fill it.

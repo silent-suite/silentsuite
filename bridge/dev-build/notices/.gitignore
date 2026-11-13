@@ -1,0 +1,4 @@
+# Licence and notice texts copied verbatim from upstream source trees (#171).
+# Their directory names (node_modules, build) are part of the upstream paths, not build output.
+!node_modules/
+!build/

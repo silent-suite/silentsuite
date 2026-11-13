@@ -1,0 +1,44 @@
+EGL-Registry: per-file notices for the registry files that the pinned ANGLE in Qt WebEngine 6.140.0 (Chromium third_party/angle) references.
+Revision 7dea2ed79187cd13f76183c4b9100159b9e3e071, pinned in src/3rdparty/chromium/third_party/angle/DEPS. Each header block below is copied verbatim from the file at that revision. Full licence text: NOTICES/shared/qt-6.12.0/0043/qt-everywhere-src-6.12.0/qtbase/LICENSES/Apache-2.0.txt.
+
+== api/egl.xml
+source: https://chromium.googlesource.com/external/github.com/KhronosGroup/EGL-Registry at 7dea2ed79187cd13f76183c4b9100159b9e3e071
+url: https://chromium.googlesource.com/external/github.com/KhronosGroup/EGL-Registry/+/7dea2ed79187cd13f76183c4b9100159b9e3e071/api/egl.xml?format=TEXT
+sha256 (decoded file): 90b71edc4a46525781925e4166bb4ea527751a71a789ec5cc442571334f60bc2
+consumed by: third_party/angle/scripts/registry_xml.py
+licence: Apache-2.0
+--- header block, verbatim ---
+<!--
+    Copyright 2013-2020 The Khronos Group Inc.
+    SPDX-License-Identifier: Apache-2.0
+     -->
+
+== api/KHR/khrplatform.h
+source: https://chromium.googlesource.com/external/github.com/KhronosGroup/EGL-Registry at 7dea2ed79187cd13f76183c4b9100159b9e3e071
+url: https://chromium.googlesource.com/external/github.com/KhronosGroup/EGL-Registry/+/7dea2ed79187cd13f76183c4b9100159b9e3e071/api/KHR/khrplatform.h?format=TEXT
+sha256 (decoded file): 7b1e01aaa7ad8f6fc34b5c7bdf79ebf5189bb09e2c4d2e79fc5d350623d11e83
+consumed by: third_party/angle/build_overrides/dawn.gni; third_party/dawn/third_party/khronos/BUILD.gn
+licence: Khronos MIT-style permission notice, complete in the header (no SPDX line)
+--- header block, verbatim ---
+/*
+** Copyright (c) 2008-2018 The Khronos Group Inc.
+**
+** Permission is hereby granted, free of charge, to any person obtaining a
+** copy of this software and/or associated documentation files (the
+** "Materials"), to deal in the Materials without restriction, including
+** without limitation the rights to use, copy, modify, merge, publish,
+** distribute, sublicense, and/or sell copies of the Materials, and to
+** permit persons to whom the Materials are furnished to do so, subject to
+** the following conditions:
+**
+** The above copyright notice and this permission notice shall be included
+** in all copies or substantial portions of the Materials.
+**
+** THE MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+** EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+** MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+** IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+** CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+** TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+** MATERIALS OR THE USE OR OTHER DEALINGS IN THE MATERIALS.
+*/

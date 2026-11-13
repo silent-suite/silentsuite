@@ -1,0 +1,2245 @@
+{
+  "admitted": true,
+  "allowed_licences": [
+    "AGPL-3.0-only",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "GPL-2.0-or-later WITH Bootloader-exception",
+    "GPL-3.0-only",
+    "LGPL-3.0-only",
+    "LicenseRef-passlib-LICENSE",
+    "MIT",
+    "MPL-2.0",
+    "PSF-2.0",
+    "Apache-2.0 AND BSD-3-Clause",
+    "No licence notice required (PyInstaller-generated Qt path configuration)",
+    "LGPL-3.0-only (Qt Core) with retained notices: PCRE2 (LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception), sljit (BSD-2-Clause), sha3 brg_endian (BSD-2-Clause), Keccak and blake2 (CC0-1.0, blake2's CC0-1.0 alternative elected), qexpected_p.h (CC0-1.0), Unicode data tables (Unicode-3.0)",
+    "LGPL-3.0-only (Qt Gui) with retained notices: qgrayraster.c (FTL elected over GPL-2.0-only; FreeType credit in README-dev-build.txt), qimagescale.cpp (BSD-2-Clause AND Imlib2), qopengles2ext.h (MIT-Khronos-old, Khronos Group copyright), qfontsubset_agl.cpp (BSD-3-Clause, Adobe copyright), harfbuzz-ng and md4c (MIT), emoji-segmenter (Apache-2.0); bundled FreeType with its Zlib, BDF (MIT) and PCF (MIT AND MIT-open-group) sub-licences",
+    "LGPL-3.0-only (Qt Multimedia) with the MIT notice of pipewire/qpipewire_spa_compat_p.h retained",
+    "LGPL-3.0-only (QML module glue from qtdeclarative with no sources of its own; the style libraries it links are traced separately)",
+    "LGPL-3.0-only for the Qt-authored code; Chromium third-party notices are carried as a superset under NOTICES/shared/qtwebengine-6.140.0* (required_notices); no completeness or binary-inclusion claim"
+  ],
+  "distributions": {
+    "PySide6": {
+      "licence": "LGPL-3.0-only",
+      "version": "6.12.0"
+    },
+    "PySide6_Addons": {
+      "licence": "LGPL-3.0-only",
+      "version": "6.12.0"
+    },
+    "PySide6_Essentials": {
+      "licence": "LGPL-3.0-only",
+      "version": "6.12.0"
+    },
+    "PySide6_Pdf": {
+      "licence": "LGPL-3.0-only",
+      "version": "6.12.0.140"
+    },
+    "PySide6_WebEngine": {
+      "licence": "LGPL-3.0-only",
+      "version": "6.12.0.140"
+    },
+    "Radicale": {
+      "licence": "GPL-3.0-only",
+      "version": "3.2.3"
+    },
+    "appdirs": {
+      "licence": "MIT",
+      "version": "1.4.4"
+    },
+    "certifi": {
+      "licence": "MPL-2.0",
+      "version": "2026.10.23"
+    },
+    "charset-normalizer": {
+      "licence": "MIT",
+      "version": "3.5.2"
+    },
+    "defusedxml": {
+      "licence": "PSF-2.0",
+      "version": "0.7.1"
+    },
+    "etebase": {
+      "licence": "BSD-3-Clause",
+      "version": "0.32.0"
+    },
+    "idna": {
+      "licence": "BSD-3-Clause",
+      "version": "3.20"
+    },
+    "msgpack": {
+      "licence": "Apache-2.0",
+      "version": "1.2.4"
+    },
+    "packaging": {
+      "licence": "Apache-2.0",
+      "version": "26.3"
+    },
+    "passlib": {
+      "licence": "LicenseRef-passlib-LICENSE",
+      "version": "1.7.4"
+    },
+    "peewee": {
+      "licence": "MIT",
+      "version": "3.19.0"
+    },
+    "pika": {
+      "licence": "BSD-3-Clause",
+      "version": "1.4.4"
+    },
+    "python-dateutil": {
+      "licence": "Apache-2.0 AND BSD-3-Clause",
+      "version": "3.0.0"
+    },
+    "pytz": {
+      "licence": "MIT",
+      "version": "2026.6"
+    },
+    "requests": {
+      "licence": "Apache-2.0",
+      "version": "2.34.2"
+    },
+    "setuptools": {
+      "licence": "MIT",
+      "version": "65.5.0"
+    },
+    "shiboken6": {
+      "licence": "LGPL-3.0-only",
+      "version": "6.12.0"
+    },
+    "six": {
+      "licence": "MIT",
+      "version": "1.17.0"
+    },
+    "typing_extensions": {
+      "licence": "PSF-2.0",
+      "version": "4.16.0"
+    },
+    "tzdata": {
+      "licence": "Apache-2.0",
+      "version": "2026.6"
+    },
+    "urllib3": {
+      "licence": "MIT",
+      "version": "2.8.0"
+    },
+    "vobject": {
+      "licence": "Apache-2.0",
+      "version": "0.9.9"
+    }
+  },
+  "licence_text_files": {
+    "AGPL-3.0-only": [
+      "NOTICES/AGPL-3.0.txt"
+    ],
+    "Apache-2.0": [
+      "NOTICES/Apache-2.0.txt",
+      "NOTICES/windows-x86_64/distributions/msgpack/licenses/COPYING",
+      "NOTICES/windows-x86_64/distributions/packaging/licenses/LICENSE",
+      "NOTICES/windows-x86_64/distributions/packaging/licenses/LICENSE.APACHE",
+      "NOTICES/windows-x86_64/distributions/packaging/licenses/LICENSE.BSD",
+      "NOTICES/windows-x86_64/distributions/requests/licenses/LICENSE",
+      "NOTICES/windows-x86_64/distributions/requests/licenses/NOTICE",
+      "NOTICES/windows-x86_64/distributions/tzdata/licenses/LICENSE",
+      "NOTICES/windows-x86_64/distributions/tzdata/licenses/licenses/LICENSE_APACHE",
+      "NOTICES/windows-x86_64/distributions/vobject/LICENSE-2.0.txt",
+      "NOTICES/shared/pyinstaller/notice-0.txt",
+      "NOTICES/shared/pyinstaller/notice-1.txt",
+      "NOTICES/shared/pyinstaller/notice-2.txt"
+    ],
+    "Apache-2.0 AND BSD-3-Clause": [
+      "NOTICES/Apache-2.0.txt",
+      "NOTICES/windows-x86_64/distributions/python-dateutil/licenses/LICENSE"
+    ],
+    "BSD-3-Clause": [
+      "NOTICES/windows-x86_64/distributions/etebase/licenses/LICENSE",
+      "NOTICES/windows-x86_64/distributions/idna/licenses/LICENSE.md",
+      "NOTICES/windows-x86_64/distributions/pika/licenses/LICENSE"
+    ],
+    "GPL-2.0-or-later WITH Bootloader-exception": [
+      "NOTICES/GPL-2.0.txt",
+      "NOTICES/shared/pyinstaller/notice-0.txt",
+      "NOTICES/shared/pyinstaller/notice-1.txt",
+      "NOTICES/shared/pyinstaller/notice-2.txt"
+    ],
+    "GPL-3.0-only": [
+      "NOTICES/GPL-3.0.txt",
+      "NOTICES/windows-x86_64/distributions/Radicale/COPYING.md"
+    ],
+    "LGPL-3.0-only": [
+      "NOTICES/LGPL-3.0.txt",
+      "NOTICES/windows-x86_64/distributions/PySide6/licenses/LicenseRef-Qt-Commercial.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/Apache-2.0.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/BSD-3-Clause.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/GFDL-1.3-no-invariants-only.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/GPL-2.0-only.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/GPL-3.0-only.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/LGPL-3.0-only.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/LicenseRef-Qt-Commercial.txt",
+      "NOTICES/shared/pyside-6.12.0/pyside-setup-everywhere-src-6.12.0/LICENSES/Qt-GPL-exception-1.0.txt",
+      "NOTICES/windows-x86_64/distributions/PySide6_Addons/licenses/LicenseRef-Qt-Commercial.txt",
+      "NOTICES/windows-x86_64/distributions/PySide6_Essentials/licenses/LicenseRef-Qt-Commercial.txt",
+      "NOTICES/windows-x86_64/distributions/PySide6_Pdf/licenses/LicenseRef-Qt-Commercial.txt",
+      "NOTICES/windows-x86_64/distributions/PySide6_WebEngine/licenses/LicenseRef-Qt-Commercial.txt",
+      "NOTICES/windows-x86_64/distributions/shiboken6/licenses/LicenseRef-Qt-Commercial.txt"
+    ],
+    "LGPL-3.0-only (QML module glue from qtdeclarative with no sources of its own; the style libraries it links are traced separately)": [
+      "NOTICES/LGPL-3.0.txt",
+      "NOTICES/GPL-3.0.txt"
+    ],
+    "LGPL-3.0-only (Qt Core) with retained notices: PCRE2 (LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception), sljit (BSD-2-Clause), sha3 brg_endian (BSD-2-Clause), Keccak and blake2 (CC0-1.0, blake2's CC0-1.0 alternative elected), qexpected_p.h (CC0-1.0), Unicode data tables (Unicode-3.0)": [
+      "NOTICES/LGPL-3.0.txt",
+      "NOTICES/GPL-3.0.txt",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/pcre2/LICENCE.md",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/pcre2/LICENSE-SLJIT",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/sha3/BRG_ENDIAN_LICENSE",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/sha3/CC0_LICENSE",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/blake2/COPYING",
+      "NOTICES/shared/qt-6.12.0/0049/qt-everywhere-src-6.12.0/qtbase/LICENSES/CC0-1.0.txt",
+      "NOTICES/shared/qt-6.12.0/0074/qt-everywhere-src-6.12.0/qtbase/LICENSES/Unicode-3.0.txt",
+      "NOTICES/shared/qt-6.12.0/0062/qt-everywhere-src-6.12.0/qtbase/LICENSES/LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception.txt"
+    ],
+    "LGPL-3.0-only (Qt Gui) with retained notices: qgrayraster.c (FTL elected over GPL-2.0-only; FreeType credit in README-dev-build.txt), qimagescale.cpp (BSD-2-Clause AND Imlib2), qopengles2ext.h (MIT-Khronos-old, Khronos Group copyright), qfontsubset_agl.cpp (BSD-3-Clause, Adobe copyright), harfbuzz-ng and md4c (MIT), emoji-segmenter (Apache-2.0); bundled FreeType with its Zlib, BDF (MIT) and PCF (MIT AND MIT-open-group) sub-licences": [
+      "NOTICES/LGPL-3.0.txt",
+      "NOTICES/GPL-3.0.txt",
+      "NOTICES/shared/qt-6.12.0/0050/qt-everywhere-src-6.12.0/qtbase/LICENSES/FTL.txt",
+      "NOTICES/shared/qt-6.12.0/0044/qt-everywhere-src-6.12.0/qtbase/LICENSES/BSD-2-Clause.txt",
+      "NOTICES/shared/qt-6.12.0/0058/qt-everywhere-src-6.12.0/qtbase/LICENSES/Imlib2.txt",
+      "NOTICES/shared/qt-6.12.0/0068/qt-everywhere-src-6.12.0/qtbase/LICENSES/MIT-Khronos-old.txt",
+      "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/opengl/NOTICE-MIT-Khronos-old.txt",
+      "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/text/NOTICE-BSD-3-Clause-Adobe-Glyph-List.txt",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/harfbuzz-ng/COPYING",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/md4c/LICENSE.md",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/emoji-segmenter/qt_attribution.json",
+      "NOTICES/shared/qt-6.12.0/0070/qt-everywhere-src-6.12.0/qtbase/LICENSES/MIT.txt",
+      "NOTICES/Apache-2.0.txt",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/freetype/ZLIB-LICENSE.txt",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/freetype/BDF-LICENSE.txt",
+      "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/freetype/PCF-LICENSE.txt",
+      "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/painting/NOTICE-qimagescale.txt"
+    ],
+    "LGPL-3.0-only (Qt Multimedia) with the MIT notice of pipewire/qpipewire_spa_compat_p.h retained": [
+      "NOTICES/LGPL-3.0.txt",
+      "NOTICES/GPL-3.0.txt",
+      "NOTICES/shared/qt-6.12.0/0070/qt-everywhere-src-6.12.0/qtbase/LICENSES/MIT.txt"
+    ],
+    "LGPL-3.0-only for the Qt-authored code; Chromium third-party notices are carried as a superset under NOTICES/shared/qtwebengine-6.140.0* (required_notices); no completeness or binary-inclusion claim": [
+      "NOTICES/LGPL-3.0.txt",
+      "NOTICES/GPL-3.0.txt"
+    ],
+    "LicenseRef-passlib-LICENSE": [
+      "NOTICES/windows-x86_64/distributions/passlib/LICENSE"
+    ],
+    "MIT": [
+      "NOTICES/windows-x86_64/distributions/appdirs/LICENSE.txt",
+      "NOTICES/windows-x86_64/distributions/charset-normalizer/licenses/LICENSE",
+      "NOTICES/windows-x86_64/distributions/peewee/licenses/LICENSE",
+      "NOTICES/windows-x86_64/distributions/pytz/LICENSE.txt",
+      "NOTICES/windows-x86_64/distributions/setuptools/LICENSE",
+      "NOTICES/windows-x86_64/distributions/six/LICENSE",
+      "NOTICES/windows-x86_64/distributions/urllib3/licenses/LICENSE.txt"
+    ],
+    "MPL-2.0": [
+      "NOTICES/windows-x86_64/distributions/certifi/licenses/LICENSE"
+    ],
+    "No licence notice required (PyInstaller-generated Qt path configuration)": [],
+    "PSF-2.0": [
+      "NOTICES/windows-x86_64/distributions/defusedxml/LICENSE",
+      "NOTICES/windows-x86_64/distributions/typing_extensions/licenses/LICENSE",
+      "NOTICES/shared/cpython-3.10.11/LICENSE"
+    ]
+  },
+  "licence_texts": {
+    "AGPL-3.0-only": "NOTICES/AGPL-3.0.txt",
+    "Apache-2.0": "NOTICES/Apache-2.0.txt",
+    "GPL-2.0-or-later WITH Bootloader-exception": "NOTICES/GPL-2.0.txt",
+    "GPL-3.0-only": "NOTICES/GPL-3.0.txt",
+    "LGPL-3.0-only": "NOTICES/LGPL-3.0.txt"
+  },
+  "platform": "windows-x86_64",
+  "prominent_notice": {
+    "file": "README-dev-build.txt",
+    "must_contain": "uses Qt and PySide6 under the GNU LGPL"
+  },
+  "qt_libraries": {
+    "Qt63DAnimation.dll": "LGPL-3.0-only",
+    "Qt63DCore.dll": "LGPL-3.0-only",
+    "Qt63DExtras.dll": "LGPL-3.0-only",
+    "Qt63DInput.dll": "LGPL-3.0-only",
+    "Qt63DLogic.dll": "LGPL-3.0-only",
+    "Qt63DQuick.dll": "LGPL-3.0-only",
+    "Qt63DQuickAnimation.dll": "LGPL-3.0-only",
+    "Qt63DQuickExtras.dll": "LGPL-3.0-only",
+    "Qt63DQuickInput.dll": "LGPL-3.0-only",
+    "Qt63DQuickLogic.dll": "LGPL-3.0-only",
+    "Qt63DQuickRender.dll": "LGPL-3.0-only",
+    "Qt63DQuickScene2D.dll": "LGPL-3.0-only",
+    "Qt63DQuickScene3D.dll": "LGPL-3.0-only",
+    "Qt63DRender.dll": "LGPL-3.0-only",
+    "Qt6Concurrent.dll": "LGPL-3.0-only",
+    "Qt6Core.dll": "LGPL-3.0-only (Qt Core) with retained notices: PCRE2 (LicenseRef-BSD-3-Clause-with-PCRE2-Binary-Like-Packages-Exception), sljit (BSD-2-Clause), sha3 brg_endian (BSD-2-Clause), Keccak and blake2 (CC0-1.0, blake2's CC0-1.0 alternative elected), qexpected_p.h (CC0-1.0), Unicode data tables (Unicode-3.0)",
+    "Qt6Gui.dll": "LGPL-3.0-only (Qt Gui) with retained notices: qgrayraster.c (FTL elected over GPL-2.0-only; FreeType credit in README-dev-build.txt), qimagescale.cpp (BSD-2-Clause AND Imlib2), qopengles2ext.h (MIT-Khronos-old, Khronos Group copyright), qfontsubset_agl.cpp (BSD-3-Clause, Adobe copyright), harfbuzz-ng and md4c (MIT), emoji-segmenter (Apache-2.0); bundled FreeType with its Zlib, BDF (MIT) and PCF (MIT AND MIT-open-group) sub-licences",
+    "Qt6LabsAnimation.dll": "LGPL-3.0-only",
+    "Qt6LabsFolderListModel.dll": "LGPL-3.0-only",
+    "Qt6LabsPlatform.dll": "LGPL-3.0-only",
+    "Qt6LabsQmlModels.dll": "LGPL-3.0-only",
+    "Qt6LabsSettings.dll": "LGPL-3.0-only",
+    "Qt6LabsSharedImage.dll": "LGPL-3.0-only",
+    "Qt6LabsStyleKit.dll": "LGPL-3.0-only",
+    "Qt6LabsStyleKitImpl.dll": "LGPL-3.0-only",
+    "Qt6LabsSynchronizer.dll": "LGPL-3.0-only",
+    "Qt6LabsWavefrontMesh.dll": "LGPL-3.0-only",
+    "Qt6Location.dll": "LGPL-3.0-only",
+    "Qt6Multimedia.dll": "LGPL-3.0-only (Qt Multimedia) with the MIT notice of pipewire/qpipewire_spa_compat_p.h retained",
+    "Qt6MultimediaQuick.dll": "LGPL-3.0-only",
+    "Qt6Network.dll": "LGPL-3.0-only",
+    "Qt6OpenGL.dll": "LGPL-3.0-only",
+    "Qt6OpenGLWidgets.dll": "LGPL-3.0-only",
+    "Qt6Pdf.dll": "LGPL-3.0-only",
+    "Qt6PdfQuick.dll": "LGPL-3.0-only",
+    "Qt6Positioning.dll": "LGPL-3.0-only",
+    "Qt6PositioningQuick.dll": "LGPL-3.0-only",
+    "Qt6PrintSupport.dll": "LGPL-3.0-only",
+    "Qt6Qml.dll": "LGPL-3.0-only",
+    "Qt6QmlCore.dll": "LGPL-3.0-only",
+    "Qt6QmlDesignSupport.dll": "LGPL-3.0-only",
+    "Qt6QmlLocalStorage.dll": "LGPL-3.0-only",
+    "Qt6QmlMeta.dll": "LGPL-3.0-only",
+    "Qt6QmlModels.dll": "LGPL-3.0-only",
+    "Qt6QmlNetwork.dll": "LGPL-3.0-only",
+    "Qt6QmlWorkerScript.dll": "LGPL-3.0-only",
+    "Qt6QmlXmlListModel.dll": "LGPL-3.0-only",
+    "Qt6Quick.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2Basic.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2BasicStyleImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2FluentWinUI3.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2FluentWinUI3StyleImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2Fusion.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2FusionStyleImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2Imagine.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2ImagineStyleImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2Impl.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2Material.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2MaterialStyleImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2Native.dll": "LGPL-3.0-only (QML module glue from qtdeclarative with no sources of its own; the style libraries it links are traced separately)",
+    "Qt6QuickControls2Universal.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2UniversalStyleImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2Windows.dll": "LGPL-3.0-only",
+    "Qt6QuickControls2WindowsStyleImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickDialogs2.dll": "LGPL-3.0-only",
+    "Qt6QuickDialogs2QuickImpl.dll": "LGPL-3.0-only",
+    "Qt6QuickDialogs2Utils.dll": "LGPL-3.0-only",
+    "Qt6QuickEffects.dll": "LGPL-3.0-only",
+    "Qt6QuickLayouts.dll": "LGPL-3.0-only",
+    "Qt6QuickNativeStyle.dll": "LGPL-3.0-only",
+    "Qt6QuickParticles.dll": "LGPL-3.0-only",
+    "Qt6QuickShapes.dll": "LGPL-3.0-only",
+    "Qt6QuickShapesDesignHelpers.dll": "LGPL-3.0-only",
+    "Qt6QuickTemplates2.dll": "LGPL-3.0-only",
+    "Qt6QuickTest.dll": "LGPL-3.0-only",
+    "Qt6QuickVectorImage.dll": "LGPL-3.0-only",
+    "Qt6QuickVectorImageGenerator.dll": "LGPL-3.0-only",
+    "Qt6QuickVectorImageHelpers.dll": "LGPL-3.0-only",
+    "Qt6QuickWidgets.dll": "LGPL-3.0-only",
+    "Qt6RemoteObjects.dll": "LGPL-3.0-only",
+    "Qt6RemoteObjectsQml.dll": "LGPL-3.0-only",
+    "Qt6Scxml.dll": "LGPL-3.0-only",
+    "Qt6ScxmlQml.dll": "LGPL-3.0-only",
+    "Qt6Sensors.dll": "LGPL-3.0-only",
+    "Qt6SensorsQuick.dll": "LGPL-3.0-only",
+    "Qt6SerialPort.dll": "LGPL-3.0-only",
+    "Qt6ShaderTools.dll": "LGPL-3.0-only",
+    "Qt6SpatialAudio.dll": "LGPL-3.0-only",
+    "Qt6Sql.dll": "LGPL-3.0-only",
+    "Qt6StateMachine.dll": "LGPL-3.0-only",
+    "Qt6StateMachineQml.dll": "LGPL-3.0-only",
+    "Qt6Svg.dll": "LGPL-3.0-only",
+    "Qt6Test.dll": "LGPL-3.0-only",
+    "Qt6TextToSpeech.dll": "LGPL-3.0-only",
+    "Qt6WebChannel.dll": "LGPL-3.0-only",
+    "Qt6WebChannelQuick.dll": "LGPL-3.0-only",
+    "Qt6WebEngineCore.dll": "LGPL-3.0-only for the Qt-authored code; Chromium third-party notices are carried as a superset under NOTICES/shared/qtwebengine-6.140.0* (required_notices); no completeness or binary-inclusion claim",
+    "Qt6WebEngineQuick.dll": "LGPL-3.0-only",
+    "Qt6WebEngineQuickDelegatesQml.dll": "LGPL-3.0-only",
+    "Qt6WebEngineWidgets.dll": "LGPL-3.0-only",
+    "Qt6WebSockets.dll": "LGPL-3.0-only",
+    "Qt6WebView.dll": "LGPL-3.0-only",
+    "Qt6WebViewQuick.dll": "LGPL-3.0-only",
+    "Qt6Widgets.dll": "LGPL-3.0-only",
+    "QtWebEngineProcess.exe": "LGPL-3.0-only",
+    "qcertonlybackend.dll": "LGPL-3.0-only",
+    "qdirect2d.dll": "LGPL-3.0-only",
+    "qgif.dll": "LGPL-3.0-only",
+    "qicns.dll": "LGPL-3.0-only",
+    "qico.dll": "LGPL-3.0-only",
+    "qjpeg.dll": "LGPL-3.0-only",
+    "qminimal.dll": "LGPL-3.0-only",
+    "qmldbg_debugger.dll": "LGPL-3.0-only",
+    "qmldbg_inspector.dll": "LGPL-3.0-only",
+    "qmldbg_local.dll": "LGPL-3.0-only",
+    "qmldbg_messages.dll": "LGPL-3.0-only",
+    "qmldbg_native.dll": "LGPL-3.0-only",
+    "qmldbg_nativedebugger.dll": "LGPL-3.0-only",
+    "qmldbg_preview.dll": "LGPL-3.0-only",
+    "qmldbg_profiler.dll": "LGPL-3.0-only",
+    "qmldbg_quickeventreplay.dll": "LGPL-3.0-only",
+    "qmldbg_quickprofiler.dll": "LGPL-3.0-only",
+    "qmldbg_server.dll": "LGPL-3.0-only",
+    "qmldbg_tcp.dll": "LGPL-3.0-only",
+    "qmodernwindowsstyle.dll": "LGPL-3.0-only",
+    "qnetworklistmanager.dll": "LGPL-3.0-only",
+    "qoffscreen.dll": "LGPL-3.0-only",
+    "qopensslbackend.dll": "LGPL-3.0-only",
+    "qpdf.dll": "LGPL-3.0-only",
+    "qschannelbackend.dll": "LGPL-3.0-only",
+    "qsvg.dll": "LGPL-3.0-only",
+    "qsvgicon.dll": "LGPL-3.0-only",
+    "qtga.dll": "LGPL-3.0-only",
+    "qtiff.dll": "LGPL-3.0-only",
+    "qtposition_nmea.dll": "LGPL-3.0-only",
+    "qtposition_positionpoll.dll": "LGPL-3.0-only",
+    "qtposition_winrt.dll": "LGPL-3.0-only",
+    "qtuiotouchplugin.dll": "LGPL-3.0-only",
+    "qwbmp.dll": "LGPL-3.0-only",
+    "qwebp.dll": "LGPL-3.0-only",
+    "qwindows.dll": "LGPL-3.0-only"
+  },
+  "relinking": {
+    "admitted": true,
+    "determination": "NOTICES/INSTALLATION-INFORMATION.txt",
+    "instructions": "NOTICES/RELINKING.txt"
+  },
+  "required_notices": [
+    "NOTICES/LGPL-3.0.txt",
+    "NOTICES/GPL-3.0.txt",
+    "NOTICES/AGPL-3.0.txt",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/harfbuzz-ng/COPYING",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/harfbuzz-ng/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/pcre2/LICENCE.md",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/pcre2/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/pcre2/LICENSE-SLJIT",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/md4c/LICENSE.md",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/md4c/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/sha3/BRG_ENDIAN_LICENSE",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/sha3/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/sha3/CC0_LICENSE",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/blake2/COPYING",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/blake2/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/libpsl/PSL-LICENSE.txt",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/libpsl/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/libpsl/src/LICENSE.chromium",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/emoji-segmenter/qt_attribution.json",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/ffmpeg/CREDITS.chromium",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/freetype/src/docs/FTL.TXT",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/libaom/source/libaom/PATENTS",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/libvpx/source/libvpx/PATENTS",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/libwebm/source/PATENTS.TXT",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/libwebp/src/PATENTS",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/screen-ai/THIRD_PARTY_LICENSES",
+    "NOTICES/shared/qtwebengine-6.140.0-declared/src/3rdparty/chromium/third_party/wtl/Ms-PL.txt",
+    "NOTICES/shared/qtwebengine-6.140.0/0023/src/3rdparty/chromium/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0632/src/3rdparty/chromium/third_party/libvpx/source/libvpx/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0658/src/3rdparty/chromium/third_party/libwebm/source/LICENSE.TXT",
+    "NOTICES/shared/qtwebengine-6.140.0/0674/src/3rdparty/chromium/third_party/libwebp/src/COPYING",
+    "NOTICES/shared/qtwebengine-6.140.0/0717/src/3rdparty/chromium/third_party/zlib/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0941/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/hashbrown-v0_15/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0947/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_calendar_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0948/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_list-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0949/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/synstructure-v0_13/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0950/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/itoa-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0952/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/toktrie-v1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0953/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/cxxbridge-macro-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0955/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/skrifa-v0_39/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0957/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/diplomat_core-v0_12/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0959/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/potential_utf-v0_1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0962/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_locale-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0963/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/libm-v0_2/LICENSE.txt",
+    "NOTICES/shared/qtwebengine-6.140.0/0964/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0967/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/fdeflate-v0_3/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0969/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/bitflags-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0971/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/combine-v4/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0972/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/calendrical_calculations-v0_2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0973/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/zerovec-v0_11/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0974/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/log-v0_4/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0976/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/flate2-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0978/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/serde_derive-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0980/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/num-rational-v0_4/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0984/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_normalizer-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0985/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/serde_json-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0989/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/writeable-v0_6/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0990/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/symphonia-bundle-flac-v0_5/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0991/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/diplomat-runtime-v0_12/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0993/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_locale_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/0994/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/temporal_capi-v0_0_11/LICENSE-Apache",
+    "NOTICES/shared/qtwebengine-6.140.0/0995/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/temporal_capi-v0_0_11/LICENSE-MIT",
+    "NOTICES/shared/qtwebengine-6.140.0/0996/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/regex-syntax-v0_8/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/0999/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/encoding_rs-v0_8/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1006/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/base64-v0_22/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1008/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/serde_json_lenient-v0_2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1010/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/regex-automata-v0_4/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1014/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_experimental-v0_3/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1015/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/strck-v1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1016/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/proc-macro2-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1018/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/simd-adler32-v0_3/LICENSE.md",
+    "NOTICES/shared/qtwebengine-6.140.0/1019/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_list_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1021/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/jiff-tzdb-v0_1/LICENSE-MIT",
+    "NOTICES/shared/qtwebengine-6.140.0/1022/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/fend-core-v1/LICENSE.md",
+    "NOTICES/shared/qtwebengine-6.140.0/1023/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/strum_macros-v0_27/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1024/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_properties_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1025/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/font-types-v0_10/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1027/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_provider-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1028/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/temporal_rs-v0_0_11/LICENSE-Apache",
+    "NOTICES/shared/qtwebengine-6.140.0/1029/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/temporal_rs-v0_0_11/LICENSE-MIT",
+    "NOTICES/shared/qtwebengine-6.140.0/1030/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/adler2-v2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1033/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/num-bigint-v0_4/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1037/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/zerofrom-v0_1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1038/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/bytes-v1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1039/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/diplomat-v0_12/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1041/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/smallvec-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1046/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/miniz_oxide-v0_8/LICENSE-APACHE.md",
+    "NOTICES/shared/qtwebengine-6.140.0/1050/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/cfg-if-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1053/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/memchr-v2/LICENSE-MIT",
+    "NOTICES/shared/qtwebengine-6.140.0/1054/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/unicode-ident-v1/LICENSE-UNICODE",
+    "NOTICES/shared/qtwebengine-6.140.0/1055/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/unicode-ident-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1057/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/rustversion-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1059/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/symphonia-metadata-v0_5/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1060/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/arrayvec-v0_7/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1062/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/stable_deref_trait-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1064/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_experimental_data-v0_3/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1065/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/cxx-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1067/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_decimal_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1068/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_casemap_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1069/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_plurals_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1070/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/lazy_static-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1072/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/core_maths-v0_1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1073/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/bitflags-v2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1075/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_collections-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1076/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/symphonia-v0_5/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1077/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_casemap-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1078/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/displaydoc-v0_2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1080/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/qr_code-v2/LICENSE-APACHE.txt",
+    "NOTICES/shared/qtwebengine-6.140.0/1082/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/ryu-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1084/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/tinystr-v0_8/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1085/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_plurals-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1086/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/timezone_provider-v0_0_11/LICENSE-Apache",
+    "NOTICES/shared/qtwebengine-6.140.0/1087/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/timezone_provider-v0_0_11/LICENSE-MIT",
+    "NOTICES/shared/qtwebengine-6.140.0/1088/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/read-fonts-v0_36/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1091/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_locale_core-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1092/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/symphonia-utils-xiph-v0_5/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1093/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/cxxbridge-flags-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1095/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/subtle-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1096/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_decimal-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1099/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/static_assertions-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1101/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/either-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1103/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/zerovec-derive-v0_11/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1104/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/zip-v4/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1107/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/ixdtf-v0_6/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1108/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/equivalent-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1110/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/libc-v0_2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1112/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/bytemuck_derive-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1115/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/zerotrie-v0_2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1118/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/heck-v0_5/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1120/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/png-v0_18/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1122/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_calendar-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1123/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/yoke-derive-v0_8/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1124/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/num-integer-v0_1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1126/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/yoke-v0_8/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1130/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/zerofrom-derive-v0_1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1131/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/crc32fast-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1133/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/num-traits-v0_2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1137/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_properties-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1138/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/foldhash-v0_1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1141/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/anyhow-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1145/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_normalizer_data-v2/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1146/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/quote-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1148/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/fixed_decimal-v0_7/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1149/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/autocfg-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1151/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/llguidance-v1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1152/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/tzif-v0_4/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1154/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/serde-v1/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1156/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/icu_pattern-v0_4/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1158/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/litemap-v0_8/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1159/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/strum-v0_27/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1160/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/symphonia-core-v0_5/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1161/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/syn-v2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1163/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/indexmap-v2/LICENSE-APACHE",
+    "NOTICES/shared/qtwebengine-6.140.0/1167/src/3rdparty/chromium/third_party/rust/chromium_crates_io/vendor/derivre-v0_3/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1480/src/3rdparty/chromium/third_party/libaom/source/libaom/LICENSE",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/freetype/ZLIB-LICENSE.txt",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/freetype/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/freetype/BDF-LICENSE.txt",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/freetype/PCF-LICENSE.txt",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/wintab/wintab.h",
+    "NOTICES/shared/qt-6.12.0-3rdparty/qtbase/src/3rdparty/wintab/qt_attribution.json",
+    "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/opengl/REUSE.toml",
+    "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/opengl/NOTICE-MIT-Khronos-old.txt",
+    "NOTICES/shared/qt-6.12.0/0068/qt-everywhere-src-6.12.0/qtbase/LICENSES/MIT-Khronos-old.txt",
+    "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/text/REUSE.toml",
+    "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/text/NOTICE-BSD-3-Clause-Adobe-Glyph-List.txt",
+    "NOTICES/shared/qt-6.12.0/0045/qt-everywhere-src-6.12.0/qtbase/LICENSES/BSD-3-Clause.txt",
+    "NOTICES/shared/qtwebengine-6.140.0/0514/src/3rdparty/chromium/third_party/vulkan-loader/src/LICENSE.txt",
+    "NOTICES/shared/qtwebengine-6.140.0/1317/src/3rdparty/chromium/third_party/abseil-cpp/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/2544/src/3rdparty/chromium/net/third_party/quiche/src/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/libc@2222607a3ea3d5f65338d3b36a4cc5fb563169ab/LICENSE.TXT",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/googleurl@dfe8ef6164f8b4e3e9a9cbe8521bb81359918393/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/2373/src/3rdparty/chromium/third_party/jsoncpp/source/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1324/src/3rdparty/chromium/third_party/fuchsia-sdk/README.chromium",
+    "NOTICES/shared/qt-6.12.0/0043/qt-everywhere-src-6.12.0/qtbase/LICENSES/Apache-2.0.txt",
+    "NOTICES/shared/qtwebengine-6.140.0/0166/src/3rdparty/chromium/third_party/cpu_features/src/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0/1349/src/3rdparty/chromium/third_party/angle/third_party/OpenGL-Registry/README.chromium",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/libc@866857ce9ca0e6fc6b37fbd1725c3c70c98b0837/LICENSE.TXT",
+    "NOTICES/shared/qtwebengine-6.140.0/1368/src/3rdparty/chromium/third_party/angle/third_party/EGL-Registry/README.chromium",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/OpenCL-Docs@774114e8761920b976d538d47fad8178d05984ec/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/OpenCL-ICD-Loader@9b5e3849b49a1448996c8b96ba086cd774d987db/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/astc-encoder@2319d9c4d4af53a7fc7c52985e264ce6e8a02a9b/LICENSE.txt",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/OpenXR-SDK@57572a0e91890fe7183de25a62153aec955d64ba/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/OpenXR-SDK@57572a0e91890fe7183de25a62153aec955d64ba/src/external/jnipp/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/upstream/OpenXR-SDK@57572a0e91890fe7183de25a62153aec955d64ba/LICENSES/Apache-2.0.txt",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/cipd/fuchsia-sdk-core-linux-amd64@version_29.20250730.5.1/LICENSE",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/cipd/fuchsia-sdk-core-linux-amd64@version_29.20250730.5.1/AUTHORS",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/cipd/fuchsia-sdk-core-linux-amd64@version_29.20250730.5.1/PATENTS",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/cipd/fuchsia-sdk-core-linux-amd64@version_29.20250730.5.1/NOTICE.fuchsia",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/OpenGL-Registry@200cea4030cb49d3e40677379e6368a5f0e8c27b/NOTICE-per-file.txt",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/EGL-Registry@7dea2ed79187cd13f76183c4b9100159b9e3e071/NOTICE-per-file.txt",
+    "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/OpenCL-Docs@774114e8761920b976d538d47fad8178d05984ec/NOTICE-per-file.txt",
+    "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/painting/NOTICE-qimagescale.txt"
+  ],
+  "required_statements": [
+    {
+      "basis": "FTL.txt:116-119 (Qt Gui qgrayraster.c, FTL elected)",
+      "file": "README-dev-build.txt",
+      "must_contain": "based in part on the work of the FreeType Team"
+    },
+    {
+      "basis": "r3 section 2: keep Copyright (c) 2013-2018 The Khronos Group Inc.",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/opengl/REUSE.toml",
+      "must_contain": "Copyright (c) 2013-2018 The Khronos Group Inc.",
+      "must_not_contain": [],
+      "sha256": "1084e9135a394fee7cb91578aaa507a6def8ea15be309138f7b6bee65a2a2245"
+    },
+    {
+      "basis": "complete MIT-Khronos-old notice with the carrier's copyright line (Codex r3/v7 finding 3)",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/opengl/NOTICE-MIT-Khronos-old.txt",
+      "must_contain": "Copyright (c) 2013-2018 The Khronos Group Inc.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>"
+      ],
+      "sha256": "a636e87df90a07eccc5dcb7ae9800f5346c198476dcfebe553f5f4cbfb907b50"
+    },
+    {
+      "basis": "MIT-Khronos-old licence body present",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/opengl/NOTICE-MIT-Khronos-old.txt",
+      "must_contain": "THE MATERIALS ARE PROVIDED \"AS IS\"",
+      "must_not_contain": [],
+      "sha256": "a636e87df90a07eccc5dcb7ae9800f5346c198476dcfebe553f5f4cbfb907b50"
+    },
+    {
+      "basis": "r3 section 2: keep Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/text/REUSE.toml",
+      "must_contain": "Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems",
+      "must_not_contain": [],
+      "sha256": "e7c6817874c5a2260dbf7b66c607e70185d41c6dba6b0520030d0dbb32ea72d3"
+    },
+    {
+      "basis": "complete BSD-3-Clause notice with the carrier's copyright line (Codex r3/v7 finding 3)",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/text/NOTICE-BSD-3-Clause-Adobe-Glyph-List.txt",
+      "must_contain": "Copyright 2002, 2003, 2005, 2006, 2008, 2010, 2015 Adobe Systems",
+      "must_not_contain": [
+        "<year>",
+        "<owner>"
+      ],
+      "sha256": "b0b2d8cd9704db691fa2f805eac6e404fe8677bd244057de2e63582e98853748"
+    },
+    {
+      "basis": "BSD-3-Clause licence body present",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/text/NOTICE-BSD-3-Clause-Adobe-Glyph-List.txt",
+      "must_contain": "Neither the name of the copyright holder nor the names of its contributors",
+      "must_not_contain": [],
+      "sha256": "b0b2d8cd9704db691fa2f805eac6e404fe8677bd244057de2e63582e98853748"
+    },
+    {
+      "basis": "Fuchsia SDK LICENSE at version:29.20250730.5.1",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/cipd/fuchsia-sdk-core-linux-amd64@version_29.20250730.5.1/LICENSE",
+      "must_contain": "Copyright 2019 The Fuchsia Authors.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "83c1763356e822adde0a2cae748d938a73fdc263849ccff6b27776dff213bd32"
+    },
+    {
+      "basis": "Fuchsia SDK AUTHORS at version:29.20250730.5.1",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/cipd/fuchsia-sdk-core-linux-amd64@version_29.20250730.5.1/AUTHORS",
+      "must_contain": "This is the list of Fuchsia Authors.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "48815dbcb90b34f9c93914a5ec66a463821d51f47bf44986ed5f9f5a8f12d433"
+    },
+    {
+      "basis": "Fuchsia SDK PATENTS at version:29.20250730.5.1",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/cipd/fuchsia-sdk-core-linux-amd64@version_29.20250730.5.1/PATENTS",
+      "must_contain": "Fuchsia project",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "52beb3ac72a0e7f5060384d16e4e6f91573016448fbff363c0b01a66fe99f547"
+    },
+    {
+      "basis": "OpenGL-Registry per-file header copyright line",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/OpenGL-Registry@200cea4030cb49d3e40677379e6368a5f0e8c27b/NOTICE-per-file.txt",
+      "must_contain": "Copyright 2013-2020 The Khronos Group Inc.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "c3fc82d4a3bb6a3b9cc49ddfd3ff9e0aa0d7762c290b98bddf7be4902691a0ae"
+    },
+    {
+      "basis": "EGL-Registry per-file header copyright line",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/EGL-Registry@7dea2ed79187cd13f76183c4b9100159b9e3e071/NOTICE-per-file.txt",
+      "must_contain": "Copyright (c) 2008-2018 The Khronos Group Inc.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "35f442895b85ddf4f695fc85553a0cf33b633517afe09398f8f419d5e60b9616"
+    },
+    {
+      "basis": "EGL-Registry per-file header copyright line",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/EGL-Registry@7dea2ed79187cd13f76183c4b9100159b9e3e071/NOTICE-per-file.txt",
+      "must_contain": "Copyright 2013-2020 The Khronos Group Inc.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "35f442895b85ddf4f695fc85553a0cf33b633517afe09398f8f419d5e60b9616"
+    },
+    {
+      "basis": "OpenCL-Docs per-file header copyright line",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/OpenCL-Docs@774114e8761920b976d538d47fad8178d05984ec/NOTICE-per-file.txt",
+      "must_contain": "Copyright 2013-2022 The Khronos Group Inc.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "b759a160e375788e7313f452a4513211ca24a323742da2423a9ac08d2c1a2db2"
+    },
+    {
+      "basis": "cl.xml header exceptions carried",
+      "file": "NOTICES/shared/qtwebengine-6.140.0-overinclusion/per-file/OpenCL-Docs@774114e8761920b976d538d47fad8178d05984ec/NOTICE-per-file.txt",
+      "must_contain": "Exceptions to the Apache 2.0 License",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "b759a160e375788e7313f452a4513211ca24a323742da2423a9ac08d2c1a2db2"
+    },
+    {
+      "basis": "Codex admission finding F1: qimagescale.cpp notices retained (BSD-2-Clause AND Imlib2)",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/painting/NOTICE-qimagescale.txt",
+      "must_contain": "Copyright (C) 2016 The Qt Company Ltd.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "bcd10a62e237e74401380534a398d05ac3156ceb5fe81f067f940ffb1afd3991"
+    },
+    {
+      "basis": "Codex admission finding F1: qimagescale.cpp notices retained (BSD-2-Clause AND Imlib2)",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/painting/NOTICE-qimagescale.txt",
+      "must_contain": "Copyright (C) 2004, 2005 Daniel M. Duley",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "bcd10a62e237e74401380534a398d05ac3156ceb5fe81f067f940ffb1afd3991"
+    },
+    {
+      "basis": "Codex admission finding F1: qimagescale.cpp notices retained (BSD-2-Clause AND Imlib2)",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/painting/NOTICE-qimagescale.txt",
+      "must_contain": "Imlib2 is (C) Carsten Haitzler and various contributors.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "bcd10a62e237e74401380534a398d05ac3156ceb5fe81f067f940ffb1afd3991"
+    },
+    {
+      "basis": "Codex admission finding F1: qimagescale.cpp notices retained (BSD-2-Clause AND Imlib2)",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/painting/NOTICE-qimagescale.txt",
+      "must_contain": "The MMX code\n * is by Willem Monsuwe <willem@stack.nl>.",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "bcd10a62e237e74401380534a398d05ac3156ceb5fe81f067f940ffb1afd3991"
+    },
+    {
+      "basis": "Codex admission finding F1: qimagescale.cpp notices retained (BSD-2-Clause AND Imlib2)",
+      "file": "NOTICES/shared/qt-6.12.0-carriers/qtbase/src/gui/painting/NOTICE-qimagescale.txt",
+      "must_contain": "Redistributions in binary form must reproduce the above copyright",
+      "must_not_contain": [
+        "<year>",
+        "<owner>",
+        "[yyyy]",
+        "[name of copyright owner]"
+      ],
+      "sha256": "bcd10a62e237e74401380534a398d05ac3156ceb5fe81f067f940ffb1afd3991"
+    }
+  ],
+  "runtime_files": [
+    {
+      "licence": "GPL-2.0-or-later WITH Bootloader-exception",
+      "owner": "PyInstaller bootloader",
+      "pattern": "SilentSuite Bridge.exe"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/VCRUNTIME140.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/VCRUNTIME140_1.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_asyncio.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_bz2.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_ctypes.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_decimal.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_elementtree.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_hashlib.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_lzma.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_multiprocessing.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_overlapped.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_queue.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_socket.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_sqlite3.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_ssl.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_uuid.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/_zoneinfo.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython standard library (PyInstaller-packed)",
+      "pattern": "_internal/base_library.zip"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/libcrypto-1_1.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/libffi-7.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/libssl-1_1.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/pyexpat.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/python3.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/python310.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/select.pyd"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/sqlite3.dll"
+    },
+    {
+      "licence": "PSF-2.0",
+      "owner": "CPython",
+      "pattern": "_internal/unicodedata.pyd"
+    },
+    {
+      "basis": "notice-source dispositions.r2.json PROPOSE_ADMIT; the final build must observe these exact bytes",
+      "licence": "No licence notice required (PyInstaller-generated Qt path configuration)",
+      "owner": "PyInstaller Qt hook (generated [Paths] configuration)",
+      "pattern": "_internal/PySide6/qt.conf",
+      "sha256": "7712b1f9e1ccfab81569eeb9551791b96ff8b3db7df89086cddc2336c8527bd6",
+      "size": 21
+    }
+  ],
+  "runtime_modules": [
+    {
+      "licence": "Apache-2.0",
+      "module": "_pyi_rth_utils",
+      "owner": "PyInstaller runtime hooks"
+    },
+    {
+      "licence": "Apache-2.0",
+      "module": "_pyi_rth_utils.qt",
+      "owner": "PyInstaller runtime hooks"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.__main__",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.accounts",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.auth_browser",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.auth_cli",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.autostart",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.config",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.desktop",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.desktop_autostart",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.desktop_ipc",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.instance",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.local_cache",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.local_cache.db",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.local_cache.models",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.operator_output",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.privacy_logging",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale.application",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale.auth",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale.creds",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale.etesync_cache",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale.rights",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale.server",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.radicale.storage",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.tray",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.check",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.fs",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.http",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.platform",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.replace",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.restart",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.types",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.update.verify",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "licence": "AGPL-3.0-only",
+      "module": "silentsuite_bridge.web",
+      "owner": "SilentSuite Bridge"
+    },
+    {
+      "basis": "notice-source-20261110/notices/dispositions.r2.json windows-x86_64:tests (GREEN)",
+      "licence": "AGPL-3.0-only",
+      "module": "tests",
+      "obligation": "re-observe in the final windows-x86_64 delivery build; any other typecode fails",
+      "owner": "SilentSuite Bridge application (repository)",
+      "toc_sources_exactly": [
+        {
+          "bytes": 0,
+          "kind": "file",
+          "path_class": "repo",
+          "relative_path": "bridge/tests/__init__.py",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "typecode": "PYMODULE-1"
+    }
+  ],
+  "schema_version": 1,
+  "source_archives": [
+    {
+      "file": "qt-everywhere-src-6.12.0.tar.xz",
+      "name": "qt-everywhere-src",
+      "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165",
+      "version": "6.12.0"
+    },
+    {
+      "file": "6.12.0-0-202609281005qtwebengine-everywhere-src-6.140.0.tar.xz",
+      "name": "qtwebengine-everywhere-src",
+      "sha256": "141e9b230e5ec9ee65a7357ca4b87d702e4badc515289eeade1047a788bb96e7",
+      "version": "6.140.0"
+    },
+    {
+      "file": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+      "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+      "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751",
+      "version": "pyside-setup-everywhere-src-6.12.0.tar.xz"
+    },
+    {
+      "file": "etebase-0.32.0.tar.gz",
+      "name": "etebase-0.32.0.tar.gz",
+      "sha256": "2443e27da0d6098736b1f3bd0f8f5de6b3d71693431953c8f6610bb0ff676546",
+      "version": "etebase-0.32.0.tar.gz"
+    },
+    {
+      "file": "addr2line-0.21.0.crate",
+      "name": "crate:addr2line",
+      "sha256": "8a30b2e23b9e17a9f90641c7ab1549cd9b44f296d3ccbf309d2863cfe398a0cb",
+      "version": "0.21.0"
+    },
+    {
+      "file": "adler-1.0.2.crate",
+      "name": "crate:adler",
+      "sha256": "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe",
+      "version": "1.0.2"
+    },
+    {
+      "file": "aligned-0.4.1.crate",
+      "name": "crate:aligned",
+      "sha256": "80a21b9440a626c7fc8573a9e3d3a06b75c7c97754c2949bc7857b90353ca655",
+      "version": "0.4.1"
+    },
+    {
+      "file": "as-slice-0.2.1.crate",
+      "name": "crate:as-slice",
+      "sha256": "516b6b4f0e40d50dcda9365d53964ec74560ad4284da2e7fc97122cd83174516",
+      "version": "0.2.1"
+    },
+    {
+      "file": "autocfg-1.1.0.crate",
+      "name": "crate:autocfg",
+      "sha256": "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa",
+      "version": "1.1.0"
+    },
+    {
+      "file": "backtrace-0.3.69.crate",
+      "name": "crate:backtrace",
+      "sha256": "2089b7e3f35b9dd2d0ed921ead4f6d318c27680d4a5bd167b3ee120edb105837",
+      "version": "0.3.69"
+    },
+    {
+      "file": "base64-0.21.5.crate",
+      "name": "crate:base64",
+      "sha256": "35636a1494ede3b646cc98f74f8e62c773a38a659ebc777a2cf26b9b74171df9",
+      "version": "0.21.5"
+    },
+    {
+      "file": "bitflags-1.3.2.crate",
+      "name": "crate:bitflags",
+      "sha256": "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a",
+      "version": "1.3.2"
+    },
+    {
+      "file": "bitflags-2.4.1.crate",
+      "name": "crate:bitflags",
+      "sha256": "327762f6e5a765692301e5bb513e0d9fef63be86bbc14528052b1cd3e6f03e07",
+      "version": "2.4.1"
+    },
+    {
+      "file": "bumpalo-3.14.0.crate",
+      "name": "crate:bumpalo",
+      "sha256": "7f30e7476521f6f8af1a1c4c0b8cc94f0bee37d91763d0ca2665f299b6cd8aec",
+      "version": "3.14.0"
+    },
+    {
+      "file": "byteorder-1.5.0.crate",
+      "name": "crate:byteorder",
+      "sha256": "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b",
+      "version": "1.5.0"
+    },
+    {
+      "file": "bytes-1.5.0.crate",
+      "name": "crate:bytes",
+      "sha256": "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223",
+      "version": "1.5.0"
+    },
+    {
+      "file": "cc-1.0.83.crate",
+      "name": "crate:cc",
+      "sha256": "f1174fb0b6ec23863f8b971027804a42614e347eafb0a95bf0b12cdae21fc4d0",
+      "version": "1.0.83"
+    },
+    {
+      "file": "cfg-if-1.0.0.crate",
+      "name": "crate:cfg-if",
+      "sha256": "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd",
+      "version": "1.0.0"
+    },
+    {
+      "file": "core-foundation-0.9.4.crate",
+      "name": "crate:core-foundation",
+      "sha256": "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f",
+      "version": "0.9.4"
+    },
+    {
+      "file": "core-foundation-sys-0.8.6.crate",
+      "name": "crate:core-foundation-sys",
+      "sha256": "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f",
+      "version": "0.8.6"
+    },
+    {
+      "file": "cvt-0.1.2.crate",
+      "name": "crate:cvt",
+      "sha256": "d2ae9bf77fbf2d39ef573205d554d87e86c12f1994e9ea335b0651b9b278bcf1",
+      "version": "0.1.2"
+    },
+    {
+      "file": "ed25519-1.5.3.crate",
+      "name": "crate:ed25519",
+      "sha256": "91cff35c70bba8a626e3185d8cd48cc11b5437e1a5bcd15b9b5fa3c64b6dfee7",
+      "version": "1.5.3"
+    },
+    {
+      "file": "encoding_rs-0.8.33.crate",
+      "name": "crate:encoding_rs",
+      "sha256": "7268b386296a025e474d5140678f75d6de9493ae55a5d709eeb9dd08149945e1",
+      "version": "0.8.33"
+    },
+    {
+      "file": "equivalent-1.0.1.crate",
+      "name": "crate:equivalent",
+      "sha256": "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5",
+      "version": "1.0.1"
+    },
+    {
+      "file": "errno-0.3.8.crate",
+      "name": "crate:errno",
+      "sha256": "a258e46cdc063eb8519c00b9fc845fc47bcfca4130e2f08e88665ceda8474245",
+      "version": "0.3.8"
+    },
+    {
+      "file": "etebase-0.6.1.crate",
+      "name": "crate:etebase",
+      "sha256": "447bbbd0acdb2301b11080cbdea4a3934af4868bc2dba5f8abf09117962ba372",
+      "version": "0.6.1"
+    },
+    {
+      "file": "fastrand-2.0.1.crate",
+      "name": "crate:fastrand",
+      "sha256": "25cbce373ec4653f1a01a31e8a5e5ec0c622dc27ff9c4e6606eefef5cbbed4a5",
+      "version": "2.0.1"
+    },
+    {
+      "file": "fnv-1.0.7.crate",
+      "name": "crate:fnv",
+      "sha256": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+      "version": "1.0.7"
+    },
+    {
+      "file": "foreign-types-0.3.2.crate",
+      "name": "crate:foreign-types",
+      "sha256": "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1",
+      "version": "0.3.2"
+    },
+    {
+      "file": "foreign-types-shared-0.1.1.crate",
+      "name": "crate:foreign-types-shared",
+      "sha256": "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b",
+      "version": "0.1.1"
+    },
+    {
+      "file": "form_urlencoded-1.2.1.crate",
+      "name": "crate:form_urlencoded",
+      "sha256": "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456",
+      "version": "1.2.1"
+    },
+    {
+      "file": "fs_at-0.1.10.crate",
+      "name": "crate:fs_at",
+      "sha256": "982f82cc75107eef84f417ad6c53ae89bf65b561937ca4a3b3b0fd04d0aa2425",
+      "version": "0.1.10"
+    },
+    {
+      "file": "futures-channel-0.3.30.crate",
+      "name": "crate:futures-channel",
+      "sha256": "eac8f7d7865dcb88bd4373ab671c8cf4508703796caa2b1985a9ca867b3fcb78",
+      "version": "0.3.30"
+    },
+    {
+      "file": "futures-core-0.3.30.crate",
+      "name": "crate:futures-core",
+      "sha256": "dfc6580bb841c5a68e9ef15c77ccc837b40a7504914d52e47b8b0e9bbda25a1d",
+      "version": "0.3.30"
+    },
+    {
+      "file": "futures-io-0.3.30.crate",
+      "name": "crate:futures-io",
+      "sha256": "a44623e20b9681a318efdd71c299b6b222ed6f231972bfe2f224ebad6311f0c1",
+      "version": "0.3.30"
+    },
+    {
+      "file": "futures-sink-0.3.30.crate",
+      "name": "crate:futures-sink",
+      "sha256": "9fb8e00e87438d937621c1c6269e53f536c14d3fbd6a042bb24879e57d474fb5",
+      "version": "0.3.30"
+    },
+    {
+      "file": "futures-task-0.3.30.crate",
+      "name": "crate:futures-task",
+      "sha256": "38d84fa142264698cdce1a9f9172cf383a0c82de1bddcf3092901442c4097004",
+      "version": "0.3.30"
+    },
+    {
+      "file": "futures-util-0.3.30.crate",
+      "name": "crate:futures-util",
+      "sha256": "3d6401deb83407ab3da39eba7e33987a73c3df0c82b4bb5813ee871c19c41d48",
+      "version": "0.3.30"
+    },
+    {
+      "file": "gimli-0.28.1.crate",
+      "name": "crate:gimli",
+      "sha256": "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253",
+      "version": "0.28.1"
+    },
+    {
+      "file": "h2-0.3.22.crate",
+      "name": "crate:h2",
+      "sha256": "4d6250322ef6e60f93f9a2162799302cd6f68f79f6e5d85c8c16f14d1d958178",
+      "version": "0.3.22"
+    },
+    {
+      "file": "hashbrown-0.14.3.crate",
+      "name": "crate:hashbrown",
+      "sha256": "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604",
+      "version": "0.14.3"
+    },
+    {
+      "file": "heck-0.5.0.crate",
+      "name": "crate:heck",
+      "sha256": "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea",
+      "version": "0.5.0"
+    },
+    {
+      "file": "hermit-abi-0.3.3.crate",
+      "name": "crate:hermit-abi",
+      "sha256": "d77f7ec81a6d05a3abb01ab6eb7590f6083d08449fe5a1c8b1e620283546ccb7",
+      "version": "0.3.3"
+    },
+    {
+      "file": "http-0.2.11.crate",
+      "name": "crate:http",
+      "sha256": "8947b1a6fad4393052c7ba1f4cd97bed3e953a95c79c92ad9b051a04611d9fbb",
+      "version": "0.2.11"
+    },
+    {
+      "file": "http-body-0.4.6.crate",
+      "name": "crate:http-body",
+      "sha256": "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2",
+      "version": "0.4.6"
+    },
+    {
+      "file": "httparse-1.8.0.crate",
+      "name": "crate:httparse",
+      "sha256": "d897f394bad6a705d5f4104762e116a75639e470d80901eed05a860a95cb1904",
+      "version": "1.8.0"
+    },
+    {
+      "file": "httpdate-1.0.3.crate",
+      "name": "crate:httpdate",
+      "sha256": "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9",
+      "version": "1.0.3"
+    },
+    {
+      "file": "hyper-0.14.28.crate",
+      "name": "crate:hyper",
+      "sha256": "bf96e135eb83a2a8ddf766e426a841d8ddd7449d5f00d34ea02b41d2f19eef80",
+      "version": "0.14.28"
+    },
+    {
+      "file": "hyper-tls-0.5.0.crate",
+      "name": "crate:hyper-tls",
+      "sha256": "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905",
+      "version": "0.5.0"
+    },
+    {
+      "file": "idna-0.5.0.crate",
+      "name": "crate:idna",
+      "sha256": "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6",
+      "version": "0.5.0"
+    },
+    {
+      "file": "indexmap-2.1.0.crate",
+      "name": "crate:indexmap",
+      "sha256": "d530e1a18b1cb4c484e6e34556a0d948706958449fca0cab753d649f2bce3d1f",
+      "version": "2.1.0"
+    },
+    {
+      "file": "ipnet-2.9.0.crate",
+      "name": "crate:ipnet",
+      "sha256": "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3",
+      "version": "2.9.0"
+    },
+    {
+      "file": "itoa-1.0.10.crate",
+      "name": "crate:itoa",
+      "sha256": "b1a46d1a171d865aa5f83f92695765caa047a9b4cbae2cbf37dbd613a793fd4c",
+      "version": "1.0.10"
+    },
+    {
+      "file": "js-sys-0.3.66.crate",
+      "name": "crate:js-sys",
+      "sha256": "cee9c64da59eae3b50095c18d3e74f8b73c0b86d2792824ff01bbce68ba229ca",
+      "version": "0.3.66"
+    },
+    {
+      "file": "lazy_static-1.4.0.crate",
+      "name": "crate:lazy_static",
+      "sha256": "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646",
+      "version": "1.4.0"
+    },
+    {
+      "file": "libc-0.2.151.crate",
+      "name": "crate:libc",
+      "sha256": "302d7ab3130588088d277783b1e2d2e10c9e9e4a16dd9050e6ec93fb3e7048f4",
+      "version": "0.2.151"
+    },
+    {
+      "file": "libsodium-sys-0.2.7.crate",
+      "name": "crate:libsodium-sys",
+      "sha256": "6b779387cd56adfbc02ea4a668e704f729be8d6a6abd2c27ca5ee537849a92fd",
+      "version": "0.2.7"
+    },
+    {
+      "file": "linux-raw-sys-0.4.12.crate",
+      "name": "crate:linux-raw-sys",
+      "sha256": "c4cd1a83af159aa67994778be9070f0ae1bd732942279cabb14f86f986a21456",
+      "version": "0.4.12"
+    },
+    {
+      "file": "log-0.4.20.crate",
+      "name": "crate:log",
+      "sha256": "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f",
+      "version": "0.4.20"
+    },
+    {
+      "file": "memchr-2.6.4.crate",
+      "name": "crate:memchr",
+      "sha256": "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167",
+      "version": "2.6.4"
+    },
+    {
+      "file": "mime-0.3.17.crate",
+      "name": "crate:mime",
+      "sha256": "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a",
+      "version": "0.3.17"
+    },
+    {
+      "file": "miniz_oxide-0.7.1.crate",
+      "name": "crate:miniz_oxide",
+      "sha256": "e7810e0be55b428ada41041c41f32c9f1a42817901b4ccf45fa3d4b6561e74c7",
+      "version": "0.7.1"
+    },
+    {
+      "file": "mio-0.8.10.crate",
+      "name": "crate:mio",
+      "sha256": "8f3d0b296e374a4e6f3c7b0a1f5a51d748a0d34c85e7dc48fc3fa9a87657fe09",
+      "version": "0.8.10"
+    },
+    {
+      "file": "native-tls-0.2.11.crate",
+      "name": "crate:native-tls",
+      "sha256": "07226173c32f2926027b63cce4bcd8076c3552846cbe7925f3aaffeac0a3b92e",
+      "version": "0.2.11"
+    },
+    {
+      "file": "nix-0.26.4.crate",
+      "name": "crate:nix",
+      "sha256": "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b",
+      "version": "0.26.4"
+    },
+    {
+      "file": "normpath-1.1.1.crate",
+      "name": "crate:normpath",
+      "sha256": "ec60c60a693226186f5d6edf073232bfb6464ed97eb22cf3b01c1e8198fd97f5",
+      "version": "1.1.1"
+    },
+    {
+      "file": "num-traits-0.2.17.crate",
+      "name": "crate:num-traits",
+      "sha256": "39e3200413f237f41ab11ad6d161bc7239c84dcb631773ccd7de3dfe4b5c267c",
+      "version": "0.2.17"
+    },
+    {
+      "file": "num_cpus-1.16.0.crate",
+      "name": "crate:num_cpus",
+      "sha256": "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43",
+      "version": "1.16.0"
+    },
+    {
+      "file": "object-0.32.2.crate",
+      "name": "crate:object",
+      "sha256": "a6a622008b6e321afc04970976f62ee297fdbaa6f95318ca343e3eebb9648441",
+      "version": "0.32.2"
+    },
+    {
+      "file": "once_cell-1.21.4.crate",
+      "name": "crate:once_cell",
+      "sha256": "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50",
+      "version": "1.21.4"
+    },
+    {
+      "file": "openssl-0.10.72.crate",
+      "name": "crate:openssl",
+      "sha256": "fedfea7d58a1f73118430a55da6a286e7b044961736ce96a16a17068ea25e5da",
+      "version": "0.10.72"
+    },
+    {
+      "file": "openssl-macros-0.1.1.crate",
+      "name": "crate:openssl-macros",
+      "sha256": "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c",
+      "version": "0.1.1"
+    },
+    {
+      "file": "openssl-probe-0.1.5.crate",
+      "name": "crate:openssl-probe",
+      "sha256": "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf",
+      "version": "0.1.5"
+    },
+    {
+      "file": "openssl-src-300.2.1+3.2.0.crate",
+      "name": "crate:openssl-src",
+      "sha256": "3fe476c29791a5ca0d1273c697e96085bbabbbea2ef7afd5617e78a4b40332d3",
+      "version": "300.2.1+3.2.0"
+    },
+    {
+      "file": "openssl-sys-0.9.108.crate",
+      "name": "crate:openssl-sys",
+      "sha256": "e145e1651e858e820e4860f7b9c5e169bc1d8ce1c86043be79fa7b7634821847",
+      "version": "0.9.108"
+    },
+    {
+      "file": "paste-1.0.14.crate",
+      "name": "crate:paste",
+      "sha256": "de3145af08024dea9fa9914f381a17b8fc6034dfb00f3a84013f7ff43f29ed4c",
+      "version": "1.0.14"
+    },
+    {
+      "file": "percent-encoding-2.3.1.crate",
+      "name": "crate:percent-encoding",
+      "sha256": "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e",
+      "version": "2.3.1"
+    },
+    {
+      "file": "pin-project-lite-0.2.13.crate",
+      "name": "crate:pin-project-lite",
+      "sha256": "8afb450f006bf6385ca15ef45d71d2288452bc3683ce2e2cacc0d18e4be60b58",
+      "version": "0.2.13"
+    },
+    {
+      "file": "pin-utils-0.1.0.crate",
+      "name": "crate:pin-utils",
+      "sha256": "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184",
+      "version": "0.1.0"
+    },
+    {
+      "file": "pkg-config-0.3.28.crate",
+      "name": "crate:pkg-config",
+      "sha256": "69d3587f8a9e599cc7ec2c00e331f71c4e69a5f9a4b8a6efd5b07466b9736f9a",
+      "version": "0.3.28"
+    },
+    {
+      "file": "portable-atomic-1.15.0.crate",
+      "name": "crate:portable-atomic",
+      "sha256": "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85",
+      "version": "1.15.0"
+    },
+    {
+      "file": "proc-macro2-1.0.107.crate",
+      "name": "crate:proc-macro2",
+      "sha256": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
+      "version": "1.0.107"
+    },
+    {
+      "file": "pyo3-0.30.1.crate",
+      "name": "crate:pyo3",
+      "sha256": "229ca13b8a15bb0d1487b81ab975bfcd97513416499a8312011b6036e42e0de4",
+      "version": "0.30.1"
+    },
+    {
+      "file": "pyo3-build-config-0.30.1.crate",
+      "name": "crate:pyo3-build-config",
+      "sha256": "70130e2b6dd1ee589a8788026a429561ca5c40fa7a2fa7914c2282eddae24700",
+      "version": "0.30.1"
+    },
+    {
+      "file": "pyo3-ffi-0.30.1.crate",
+      "name": "crate:pyo3-ffi",
+      "sha256": "5e7ff73c555c286d212d4ce7e5fbda845a973c4f61bd5f160f5f2c3c2a04d1c4",
+      "version": "0.30.1"
+    },
+    {
+      "file": "pyo3-macros-0.30.1.crate",
+      "name": "crate:pyo3-macros",
+      "sha256": "c46d2e5862c7bb8207e3b639f713dda3c499933444784154c11d013c5a691b60",
+      "version": "0.30.1"
+    },
+    {
+      "file": "pyo3-macros-backend-0.30.1.crate",
+      "name": "crate:pyo3-macros-backend",
+      "sha256": "38b89f066f2ae72a2aef52d1537ca2fcd104440ebfadee06e97aa90738a25b9b",
+      "version": "0.30.1"
+    },
+    {
+      "file": "quote-1.0.47.crate",
+      "name": "crate:quote",
+      "sha256": "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001",
+      "version": "1.0.47"
+    },
+    {
+      "file": "redox_syscall-0.4.1.crate",
+      "name": "crate:redox_syscall",
+      "sha256": "4722d768eff46b75989dd134e5c353f0d6296e5aaa3132e776cbdb56be7731aa",
+      "version": "0.4.1"
+    },
+    {
+      "file": "remove_dir_all-0.8.2.crate",
+      "name": "crate:remove_dir_all",
+      "sha256": "23895cfadc1917fed9c6ed76a8c2903615fa3704f7493ff82b364c6540acc02b",
+      "version": "0.8.2"
+    },
+    {
+      "file": "reqwest-0.11.23.crate",
+      "name": "crate:reqwest",
+      "sha256": "37b1ae8d9ac08420c66222fb9096fc5de435c3c48542bc5336c51892cffafb41",
+      "version": "0.11.23"
+    },
+    {
+      "file": "rmp-0.8.12.crate",
+      "name": "crate:rmp",
+      "sha256": "7f9860a6cc38ed1da53456442089b4dfa35e7cedaa326df63017af88385e6b20",
+      "version": "0.8.12"
+    },
+    {
+      "file": "rmp-serde-1.1.2.crate",
+      "name": "crate:rmp-serde",
+      "sha256": "bffea85eea980d8a74453e5d02a8d93028f3c34725de143085a844ebe953258a",
+      "version": "1.1.2"
+    },
+    {
+      "file": "rustc-demangle-0.1.23.crate",
+      "name": "crate:rustc-demangle",
+      "sha256": "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76",
+      "version": "0.1.23"
+    },
+    {
+      "file": "rustix-0.38.28.crate",
+      "name": "crate:rustix",
+      "sha256": "72e572a5e8ca657d7366229cdde4bd14c4eb5499a9573d4d366fe1b599daa316",
+      "version": "0.38.28"
+    },
+    {
+      "file": "ryu-1.0.16.crate",
+      "name": "crate:ryu",
+      "sha256": "f98d2aa92eebf49b69786be48e4477826b256916e84a57ff2a4f21923b48eb4c",
+      "version": "1.0.16"
+    },
+    {
+      "file": "same-file-1.0.6.crate",
+      "name": "crate:same-file",
+      "sha256": "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502",
+      "version": "1.0.6"
+    },
+    {
+      "file": "schannel-0.1.22.crate",
+      "name": "crate:schannel",
+      "sha256": "0c3733bf4cf7ea0880754e19cb5a462007c4a8c1914bff372ccc95b464f1df88",
+      "version": "0.1.22"
+    },
+    {
+      "file": "security-framework-2.9.2.crate",
+      "name": "crate:security-framework",
+      "sha256": "05b64fb303737d99b81884b2c63433e9ae28abebe5eb5045dcdd175dc2ecf4de",
+      "version": "2.9.2"
+    },
+    {
+      "file": "security-framework-sys-2.9.1.crate",
+      "name": "crate:security-framework-sys",
+      "sha256": "e932934257d3b408ed8f30db49d85ea163bfe74961f017f405b025af298f0c7a",
+      "version": "2.9.1"
+    },
+    {
+      "file": "serde-1.0.193.crate",
+      "name": "crate:serde",
+      "sha256": "25dd9975e68d0cb5aa1120c288333fc98731bd1dd12f561e468ea4728c042b89",
+      "version": "1.0.193"
+    },
+    {
+      "file": "serde_bytes-0.11.12.crate",
+      "name": "crate:serde_bytes",
+      "sha256": "ab33ec92f677585af6d88c65593ae2375adde54efdbf16d597f2cbc7a6d368ff",
+      "version": "0.11.12"
+    },
+    {
+      "file": "serde_derive-1.0.193.crate",
+      "name": "crate:serde_derive",
+      "sha256": "43576ca501357b9b071ac53cdc7da8ef0cbd9493d8df094cd821777ea6e894d3",
+      "version": "1.0.193"
+    },
+    {
+      "file": "serde_json-1.0.108.crate",
+      "name": "crate:serde_json",
+      "sha256": "3d1c7e3eac408d115102c4c24ad393e0821bb3a5df4d506a80f85f7a742a526b",
+      "version": "1.0.108"
+    },
+    {
+      "file": "serde_repr-0.1.17.crate",
+      "name": "crate:serde_repr",
+      "sha256": "3081f5ffbb02284dda55132aa26daecedd7372a42417bbbab6f14ab7d6bb9145",
+      "version": "0.1.17"
+    },
+    {
+      "file": "serde_urlencoded-0.7.1.crate",
+      "name": "crate:serde_urlencoded",
+      "sha256": "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd",
+      "version": "0.7.1"
+    },
+    {
+      "file": "signature-1.6.4.crate",
+      "name": "crate:signature",
+      "sha256": "74233d3b3b2f6d4b006dc19dee745e73e2a6bfb6f93607cd3b02bd5b00797d7c",
+      "version": "1.6.4"
+    },
+    {
+      "file": "slab-0.4.9.crate",
+      "name": "crate:slab",
+      "sha256": "8f92a496fb766b417c996b9c5e57daf2f7ad3b0bebe1ccfca4856390e3d3bb67",
+      "version": "0.4.9"
+    },
+    {
+      "file": "socket2-0.5.5.crate",
+      "name": "crate:socket2",
+      "sha256": "7b5fac59a5cb5dd637972e5fca70daf0523c9067fcdc4842f053dae04a18f8e9",
+      "version": "0.5.5"
+    },
+    {
+      "file": "sodiumoxide-0.2.7.crate",
+      "name": "crate:sodiumoxide",
+      "sha256": "e26be3acb6c2d9a7aac28482586a7856436af4cfe7100031d219de2d2ecb0028",
+      "version": "0.2.7"
+    },
+    {
+      "file": "stable_deref_trait-1.2.0.crate",
+      "name": "crate:stable_deref_trait",
+      "sha256": "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3",
+      "version": "1.2.0"
+    },
+    {
+      "file": "syn-2.0.43.crate",
+      "name": "crate:syn",
+      "sha256": "ee659fb5f3d355364e1f3e5bc10fb82068efbf824a1e9d1c9504244a6469ad53",
+      "version": "2.0.43"
+    },
+    {
+      "file": "syn-3.0.9.crate",
+      "name": "crate:syn",
+      "sha256": "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b",
+      "version": "3.0.9"
+    },
+    {
+      "file": "system-configuration-0.5.1.crate",
+      "name": "crate:system-configuration",
+      "sha256": "ba3a3adc5c275d719af8cb4272ea1c4a6d668a777f37e115f6d11ddbc1c8e0e7",
+      "version": "0.5.1"
+    },
+    {
+      "file": "system-configuration-sys-0.5.0.crate",
+      "name": "crate:system-configuration-sys",
+      "sha256": "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9",
+      "version": "0.5.0"
+    },
+    {
+      "file": "target-lexicon-0.13.5.crate",
+      "name": "crate:target-lexicon",
+      "sha256": "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca",
+      "version": "0.13.5"
+    },
+    {
+      "file": "tempfile-3.8.1.crate",
+      "name": "crate:tempfile",
+      "sha256": "7ef1adac450ad7f4b3c28589471ade84f25f731a7a0fe30d71dfa9f60fd808e5",
+      "version": "3.8.1"
+    },
+    {
+      "file": "tinyvec-1.6.0.crate",
+      "name": "crate:tinyvec",
+      "sha256": "87cc5ceb3875bb20c2890005a4e226a4651264a5c75edb2421b52861a0a0cb50",
+      "version": "1.6.0"
+    },
+    {
+      "file": "tinyvec_macros-0.1.1.crate",
+      "name": "crate:tinyvec_macros",
+      "sha256": "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20",
+      "version": "0.1.1"
+    },
+    {
+      "file": "tokio-1.35.1.crate",
+      "name": "crate:tokio",
+      "sha256": "c89b4efa943be685f629b149f53829423f8f5531ea21249408e8e2f8671ec104",
+      "version": "1.35.1"
+    },
+    {
+      "file": "tokio-native-tls-0.3.1.crate",
+      "name": "crate:tokio-native-tls",
+      "sha256": "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2",
+      "version": "0.3.1"
+    },
+    {
+      "file": "tokio-util-0.7.10.crate",
+      "name": "crate:tokio-util",
+      "sha256": "5419f34732d9eb6ee4c3578b7989078579b7f039cbbb9ca2c4da015749371e15",
+      "version": "0.7.10"
+    },
+    {
+      "file": "tower-service-0.3.2.crate",
+      "name": "crate:tower-service",
+      "sha256": "b6bc1c9ce2b5135ac7f93c72918fc37feb872bdc6a5533a8b85eb4b86bfdae52",
+      "version": "0.3.2"
+    },
+    {
+      "file": "tracing-0.1.40.crate",
+      "name": "crate:tracing",
+      "sha256": "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef",
+      "version": "0.1.40"
+    },
+    {
+      "file": "tracing-core-0.1.32.crate",
+      "name": "crate:tracing-core",
+      "sha256": "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54",
+      "version": "0.1.32"
+    },
+    {
+      "file": "try-lock-0.2.5.crate",
+      "name": "crate:try-lock",
+      "sha256": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b",
+      "version": "0.2.5"
+    },
+    {
+      "file": "unicode-bidi-0.3.14.crate",
+      "name": "crate:unicode-bidi",
+      "sha256": "6f2528f27a9eb2b21e69c95319b30bd0efd85d09c379741b0f78ea1d86be2416",
+      "version": "0.3.14"
+    },
+    {
+      "file": "unicode-ident-1.0.12.crate",
+      "name": "crate:unicode-ident",
+      "sha256": "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b",
+      "version": "1.0.12"
+    },
+    {
+      "file": "unicode-normalization-0.1.22.crate",
+      "name": "crate:unicode-normalization",
+      "sha256": "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921",
+      "version": "0.1.22"
+    },
+    {
+      "file": "url-2.5.0.crate",
+      "name": "crate:url",
+      "sha256": "31e6302e3bb753d46e83516cae55ae196fc0c309407cf11ab35cc51a4c2a4633",
+      "version": "2.5.0"
+    },
+    {
+      "file": "vcpkg-0.2.15.crate",
+      "name": "crate:vcpkg",
+      "sha256": "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426",
+      "version": "0.2.15"
+    },
+    {
+      "file": "walkdir-2.4.0.crate",
+      "name": "crate:walkdir",
+      "sha256": "d71d857dc86794ca4c280d616f7da00d2dbfd8cd788846559a6813e6aa4b54ee",
+      "version": "2.4.0"
+    },
+    {
+      "file": "want-0.3.1.crate",
+      "name": "crate:want",
+      "sha256": "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e",
+      "version": "0.3.1"
+    },
+    {
+      "file": "wasi-0.11.0+wasi-snapshot-preview1.crate",
+      "name": "crate:wasi",
+      "sha256": "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423",
+      "version": "0.11.0+wasi-snapshot-preview1"
+    },
+    {
+      "file": "wasm-bindgen-0.2.89.crate",
+      "name": "crate:wasm-bindgen",
+      "sha256": "0ed0d4f68a3015cc185aff4db9506a015f4b96f95303897bfa23f846db54064e",
+      "version": "0.2.89"
+    },
+    {
+      "file": "wasm-bindgen-backend-0.2.89.crate",
+      "name": "crate:wasm-bindgen-backend",
+      "sha256": "1b56f625e64f3a1084ded111c4d5f477df9f8c92df113852fa5a374dbda78826",
+      "version": "0.2.89"
+    },
+    {
+      "file": "wasm-bindgen-futures-0.4.39.crate",
+      "name": "crate:wasm-bindgen-futures",
+      "sha256": "ac36a15a220124ac510204aec1c3e5db8a22ab06fd6706d881dc6149f8ed9a12",
+      "version": "0.4.39"
+    },
+    {
+      "file": "wasm-bindgen-macro-0.2.89.crate",
+      "name": "crate:wasm-bindgen-macro",
+      "sha256": "0162dbf37223cd2afce98f3d0785506dcb8d266223983e4b5b525859e6e182b2",
+      "version": "0.2.89"
+    },
+    {
+      "file": "wasm-bindgen-macro-support-0.2.89.crate",
+      "name": "crate:wasm-bindgen-macro-support",
+      "sha256": "f0eb82fcb7930ae6219a7ecfd55b217f5f0893484b7a13022ebb2b2bf20b5283",
+      "version": "0.2.89"
+    },
+    {
+      "file": "wasm-bindgen-shared-0.2.89.crate",
+      "name": "crate:wasm-bindgen-shared",
+      "sha256": "7ab9b36309365056cd639da3134bf87fa8f3d86008abf99e612384a6eecd459f",
+      "version": "0.2.89"
+    },
+    {
+      "file": "web-sys-0.3.66.crate",
+      "name": "crate:web-sys",
+      "sha256": "50c24a44ec86bb68fbecd1b3efed7e85ea5621b39b35ef2766b66cd984f8010f",
+      "version": "0.3.66"
+    },
+    {
+      "file": "winapi-0.3.9.crate",
+      "name": "crate:winapi",
+      "sha256": "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419",
+      "version": "0.3.9"
+    },
+    {
+      "file": "winapi-i686-pc-windows-gnu-0.4.0.crate",
+      "name": "crate:winapi-i686-pc-windows-gnu",
+      "sha256": "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6",
+      "version": "0.4.0"
+    },
+    {
+      "file": "winapi-util-0.1.6.crate",
+      "name": "crate:winapi-util",
+      "sha256": "f29e6f9198ba0d26b4c9f07dbe6f9ed633e1f3d5b8b414090084349e46a52596",
+      "version": "0.1.6"
+    },
+    {
+      "file": "winapi-x86_64-pc-windows-gnu-0.4.0.crate",
+      "name": "crate:winapi-x86_64-pc-windows-gnu",
+      "sha256": "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f",
+      "version": "0.4.0"
+    },
+    {
+      "file": "windows-sys-0.45.0.crate",
+      "name": "crate:windows-sys",
+      "sha256": "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0",
+      "version": "0.45.0"
+    },
+    {
+      "file": "windows-sys-0.48.0.crate",
+      "name": "crate:windows-sys",
+      "sha256": "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9",
+      "version": "0.48.0"
+    },
+    {
+      "file": "windows-sys-0.52.0.crate",
+      "name": "crate:windows-sys",
+      "sha256": "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows-targets-0.42.2.crate",
+      "name": "crate:windows-targets",
+      "sha256": "8e5180c00cd44c9b1c88adb3693291f1cd93605ded80c250a75d472756b4d071",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows-targets-0.48.5.crate",
+      "name": "crate:windows-targets",
+      "sha256": "9a2fa6e2155d7247be68c096456083145c183cbbbc2764150dda45a87197940c",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows-targets-0.52.0.crate",
+      "name": "crate:windows-targets",
+      "sha256": "8a18201040b24831fbb9e4eb208f8892e1f50a37feb53cc7ff887feb8f50e7cd",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows_aarch64_gnullvm-0.42.2.crate",
+      "name": "crate:windows_aarch64_gnullvm",
+      "sha256": "597a5118570b68bc08d8d59125332c54f1ba9d9adeedeef5b99b02ba2b0698f8",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows_aarch64_gnullvm-0.48.5.crate",
+      "name": "crate:windows_aarch64_gnullvm",
+      "sha256": "2b38e32f0abccf9987a4e3079dfb67dcd799fb61361e53e2882c3cbaf0d905d8",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows_aarch64_gnullvm-0.52.0.crate",
+      "name": "crate:windows_aarch64_gnullvm",
+      "sha256": "cb7764e35d4db8a7921e09562a0304bf2f93e0a51bfccee0bd0bb0b666b015ea",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows_aarch64_msvc-0.42.2.crate",
+      "name": "crate:windows_aarch64_msvc",
+      "sha256": "e08e8864a60f06ef0d0ff4ba04124db8b0fb3be5776a5cd47641e942e58c4d43",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows_aarch64_msvc-0.48.5.crate",
+      "name": "crate:windows_aarch64_msvc",
+      "sha256": "dc35310971f3b2dbbf3f0690a219f40e2d9afcf64f9ab7cc1be722937c26b4bc",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows_aarch64_msvc-0.52.0.crate",
+      "name": "crate:windows_aarch64_msvc",
+      "sha256": "bbaa0368d4f1d2aaefc55b6fcfee13f41544ddf36801e793edbbfd7d7df075ef",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows_i686_gnu-0.42.2.crate",
+      "name": "crate:windows_i686_gnu",
+      "sha256": "c61d927d8da41da96a81f029489353e68739737d3beca43145c8afec9a31a84f",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows_i686_gnu-0.48.5.crate",
+      "name": "crate:windows_i686_gnu",
+      "sha256": "a75915e7def60c94dcef72200b9a8e58e5091744960da64ec734a6c6e9b3743e",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows_i686_gnu-0.52.0.crate",
+      "name": "crate:windows_i686_gnu",
+      "sha256": "a28637cb1fa3560a16915793afb20081aba2c92ee8af57b4d5f28e4b3e7df313",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows_i686_msvc-0.42.2.crate",
+      "name": "crate:windows_i686_msvc",
+      "sha256": "44d840b6ec649f480a41c8d80f9c65108b92d89345dd94027bfe06ac444d1060",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows_i686_msvc-0.48.5.crate",
+      "name": "crate:windows_i686_msvc",
+      "sha256": "8f55c233f70c4b27f66c523580f78f1004e8b5a8b659e05a4eb49d4166cca406",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows_i686_msvc-0.52.0.crate",
+      "name": "crate:windows_i686_msvc",
+      "sha256": "ffe5e8e31046ce6230cc7215707b816e339ff4d4d67c65dffa206fd0f7aa7b9a",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows_x86_64_gnu-0.42.2.crate",
+      "name": "crate:windows_x86_64_gnu",
+      "sha256": "8de912b8b8feb55c064867cf047dda097f92d51efad5b491dfb98f6bbb70cb36",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows_x86_64_gnu-0.48.5.crate",
+      "name": "crate:windows_x86_64_gnu",
+      "sha256": "53d40abd2583d23e4718fddf1ebec84dbff8381c07cae67ff7768bbf19c6718e",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows_x86_64_gnu-0.52.0.crate",
+      "name": "crate:windows_x86_64_gnu",
+      "sha256": "3d6fa32db2bc4a2f5abeacf2b69f7992cd09dca97498da74a151a3132c26befd",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows_x86_64_gnullvm-0.42.2.crate",
+      "name": "crate:windows_x86_64_gnullvm",
+      "sha256": "26d41b46a36d453748aedef1486d5c7a85db22e56aff34643984ea85514e94a3",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows_x86_64_gnullvm-0.48.5.crate",
+      "name": "crate:windows_x86_64_gnullvm",
+      "sha256": "0b7b52767868a23d5bab768e390dc5f5c55825b6d30b86c844ff2dc7414044cc",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows_x86_64_gnullvm-0.52.0.crate",
+      "name": "crate:windows_x86_64_gnullvm",
+      "sha256": "1a657e1e9d3f514745a572a6846d3c7aa7dbe1658c056ed9c3344c4109a6949e",
+      "version": "0.52.0"
+    },
+    {
+      "file": "windows_x86_64_msvc-0.42.2.crate",
+      "name": "crate:windows_x86_64_msvc",
+      "sha256": "9aec5da331524158c6d1a4ac0ab1541149c0b9505fde06423b02f5ef0106b9f0",
+      "version": "0.42.2"
+    },
+    {
+      "file": "windows_x86_64_msvc-0.48.5.crate",
+      "name": "crate:windows_x86_64_msvc",
+      "sha256": "ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538",
+      "version": "0.48.5"
+    },
+    {
+      "file": "windows_x86_64_msvc-0.52.0.crate",
+      "name": "crate:windows_x86_64_msvc",
+      "sha256": "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04",
+      "version": "0.52.0"
+    },
+    {
+      "file": "winreg-0.50.0.crate",
+      "name": "crate:winreg",
+      "sha256": "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1",
+      "version": "0.50.0"
+    },
+    {
+      "file": "rust-src-1.99.1.tar.xz",
+      "name": "rust:rust-src:*",
+      "sha256": "e485a88c45db546b73571df7bebfcb4454ba4fb552c492e25fc5b00eeb5bf22d",
+      "version": "1.99.1"
+    },
+    {
+      "file": "pyinstaller-6.22.3.tar.gz",
+      "name": "pyinstaller",
+      "sha256": "05eb2f5615503e72939a7224d68b4aff572c6b0438ee4a17d0a4b481f399362d",
+      "version": "6.22.3"
+    },
+    {
+      "file": "Python-3.10.11.tar.xz",
+      "name": "cpython",
+      "sha256": "3c3bc3048303721c904a03eb8326b631e921f11cc3be2988456a42f115daf04c",
+      "version": "3.10.11"
+    },
+    {
+      "file": "certifi-2026.10.23.tar.gz",
+      "name": "certifi",
+      "sha256": "a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd",
+      "version": "2026.10.23"
+    },
+    {
+      "file": "radicale-3.2.3.tar.gz",
+      "name": "Radicale",
+      "sha256": "12414266520b958e709165579654969c434909b6fa644b9e18e613400ca5fd1e",
+      "version": "3.2.3"
+    }
+  ]
+}

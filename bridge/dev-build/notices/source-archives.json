@@ -1,0 +1,4509 @@
+{
+  "application": {
+    "kind": "git-archive-obligation",
+    "name": "silentsuite-bridge",
+    "note": "a `git archive` of the FINAL delivery SHA must be produced and SHA-verified at run time (v9 section 2 source-materials); the current SHA is not the delivered SHA"
+  },
+  "linux-x86_64": [
+    {
+      "bytes": 19907500,
+      "file": "Python-3.10.22.tar.xz",
+      "kind": "source",
+      "name": "cpython",
+      "note": "publisher Sigstore bundle; the packaging source job verifies the signature",
+      "sha256": "c61fe9b1a1a7ec2a0b0388e664187c378a5325a89e3606d220abf5bdfccb2543",
+      "sigstore": {
+        "bundle_url": "https://www.python.org/ftp/python/3.10.22/Python-3.10.22.tar.xz.sigstore",
+        "identity": "pablogsal@python.org",
+        "issuer": "https://accounts.google.com"
+      },
+      "url": "https://www.python.org/ftp/python/3.10.22/Python-3.10.22.tar.xz",
+      "version": "3.10.22"
+    },
+    {
+      "bytes": 3010,
+      "file": "alsa-lib_1.2.6.1-1ubuntu1.2.dsc",
+      "kind": "source",
+      "name": "ubuntu:alsa-lib_1.2.6.1-1ubuntu1.2",
+      "note": null,
+      "sha256": "e333bd3c3c60b8617dbc956f06f5b7dad0d862288542d272a267d360fd5c3b55",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/alsa-lib/1.2.6.1-1ubuntu1.2/alsa-lib_1.2.6.1-1ubuntu1.2.dsc",
+      "version": "alsa-lib_1.2.6.1-1ubuntu1.2"
+    },
+    {
+      "bytes": 34256,
+      "file": "alsa-lib_1.2.6.1-1ubuntu1.2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:alsa-lib_1.2.6.1-1ubuntu1.2",
+      "note": null,
+      "sha256": "fd30152719525f094a951c63811bfcb7410f5d6b8d63987e9f71a95deb2a95e7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/alsa-lib/1.2.6.1-1ubuntu1.2/alsa-lib_1.2.6.1-1ubuntu1.2.debian.tar.xz",
+      "version": "alsa-lib_1.2.6.1-1ubuntu1.2"
+    },
+    {
+      "bytes": 833,
+      "file": "alsa-lib_1.2.6.1.orig.tar.bz2.asc",
+      "kind": "source",
+      "name": "ubuntu:alsa-lib_1.2.6.1-1ubuntu1.2",
+      "note": null,
+      "sha256": "6a1f4df007b3e1804c57162e9fef8f2b99c4d7ea48bd4def27d0b9b7dab7350c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/alsa-lib/1.2.6.1-1ubuntu1.2/alsa-lib_1.2.6.1.orig.tar.bz2.asc",
+      "version": "alsa-lib_1.2.6.1-1ubuntu1.2"
+    },
+    {
+      "bytes": 1079670,
+      "file": "alsa-lib_1.2.6.1.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:alsa-lib_1.2.6.1-1ubuntu1.2",
+      "note": null,
+      "sha256": "ad582993d52cdb5fb159a0beab60a6ac57eab0cc1bdf85dc4db6d6197f02333f",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/alsa-lib/1.2.6.1-1ubuntu1.2/alsa-lib_1.2.6.1.orig.tar.bz2",
+      "version": "alsa-lib_1.2.6.1-1ubuntu1.2"
+    },
+    {
+      "bytes": 2632,
+      "file": "at-spi2-atk_2.38.0-3.dsc",
+      "kind": "source",
+      "name": "ubuntu:at-spi2-atk_2.38.0-3",
+      "note": null,
+      "sha256": "10decc2dc684dd907314f79e231c796408c91910c6b63f8accd516cb09a79b9b",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/at-spi2-atk/2.38.0-3/at-spi2-atk_2.38.0-3.dsc",
+      "version": "at-spi2-atk_2.38.0-3"
+    },
+    {
+      "bytes": 97464,
+      "file": "at-spi2-atk_2.38.0.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:at-spi2-atk_2.38.0-3",
+      "note": null,
+      "sha256": "cfa008a5af822b36ae6287f18182c40c91dd699c55faa38605881ed175ca464f",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/at-spi2-atk/2.38.0-3/at-spi2-atk_2.38.0.orig.tar.xz",
+      "version": "at-spi2-atk_2.38.0-3"
+    },
+    {
+      "bytes": 10740,
+      "file": "at-spi2-atk_2.38.0-3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:at-spi2-atk_2.38.0-3",
+      "note": null,
+      "sha256": "4209f16cfb970c97320fb9842604edf4c3ea362de29ba0b00e22543b023838f2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/at-spi2-atk/2.38.0-3/at-spi2-atk_2.38.0-3.debian.tar.xz",
+      "version": "at-spi2-atk_2.38.0-3"
+    },
+    {
+      "bytes": 11896,
+      "file": "at-spi2-core_2.44.0-3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:at-spi2-core_2.44.0-3",
+      "note": null,
+      "sha256": "60c996f063bb9722c729aa191b9e7a0ef51e479872544cf008d613ddb6a22c6d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/at-spi2-core/2.44.0-3/at-spi2-core_2.44.0-3.debian.tar.xz",
+      "version": "at-spi2-core_2.44.0-3"
+    },
+    {
+      "bytes": 209692,
+      "file": "at-spi2-core_2.44.0.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:at-spi2-core_2.44.0-3",
+      "note": null,
+      "sha256": "7eee3cf285b089060fd6b6e51b3eb2cacf752cca3a082c7f4c2c5ab841e51353",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/at-spi2-core/2.44.0-3/at-spi2-core_2.44.0.orig.tar.xz",
+      "version": "at-spi2-core_2.44.0-3"
+    },
+    {
+      "bytes": 2743,
+      "file": "at-spi2-core_2.44.0-3.dsc",
+      "kind": "source",
+      "name": "ubuntu:at-spi2-core_2.44.0-3",
+      "note": null,
+      "sha256": "a1fc91ef1d34305678f7a2223810c8631ab65b87b77b767d1a1352f48a9df02b",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/at-spi2-core/2.44.0-3/at-spi2-core_2.44.0-3.dsc",
+      "version": "at-spi2-core_2.44.0-3"
+    },
+    {
+      "bytes": 299100,
+      "file": "atk1.0_2.36.0.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:atk1.0_2.36.0-3build1",
+      "note": null,
+      "sha256": "fb76247e369402be23f1f5c65d38a9639c1164d934e40f6a9cf3c9e96b652788",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/atk1.0/2.36.0-3build1/atk1.0_2.36.0.orig.tar.xz",
+      "version": "atk1.0_2.36.0-3build1"
+    },
+    {
+      "bytes": 12228,
+      "file": "atk1.0_2.36.0-3build1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:atk1.0_2.36.0-3build1",
+      "note": null,
+      "sha256": "2122335c9ac1e98a959766838fbb4b0dfefdcda8b89ddb6a34286655e33ac646",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/atk1.0/2.36.0-3build1/atk1.0_2.36.0-3build1.debian.tar.xz",
+      "version": "atk1.0_2.36.0-3build1"
+    },
+    {
+      "bytes": 2310,
+      "file": "atk1.0_2.36.0-3build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:atk1.0_2.36.0-3build1",
+      "note": null,
+      "sha256": "8ccdb950635739c256f7f986845a44fb839a70120fbc5f267d9ea785b348b73a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/atk1.0/2.36.0-3build1/atk1.0_2.36.0-3build1.dsc",
+      "version": "atk1.0_2.36.0-3build1"
+    },
+    {
+      "bytes": 4137,
+      "file": "avahi_0.8-5ubuntu5.5.dsc",
+      "kind": "source",
+      "name": "ubuntu:avahi_0.8-5ubuntu5.5",
+      "note": null,
+      "sha256": "149eef4e79e39ecd9d4fa55e38571d869257a5121e717d48494650c93147f2e5",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/avahi/0.8-5ubuntu5.5/avahi_0.8-5ubuntu5.5.dsc",
+      "version": "avahi_0.8-5ubuntu5.5"
+    },
+    {
+      "bytes": 49384,
+      "file": "avahi_0.8-5ubuntu5.5.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:avahi_0.8-5ubuntu5.5",
+      "note": null,
+      "sha256": "3d5ca4a2fae9ebac67ff47c09e893abf8bc150af4dcd2d5ef0bdf62d330070d0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/avahi/0.8-5ubuntu5.5/avahi_0.8-5ubuntu5.5.debian.tar.xz",
+      "version": "avahi_0.8-5ubuntu5.5"
+    },
+    {
+      "bytes": 1591458,
+      "file": "avahi_0.8.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:avahi_0.8-5ubuntu5.5",
+      "note": null,
+      "sha256": "060309d7a333d38d951bc27598c677af1796934dbd98e1024e7ad8de798fedda",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/avahi/0.8-5ubuntu5.5/avahi_0.8.orig.tar.gz",
+      "version": "avahi_0.8-5ubuntu5.5"
+    },
+    {
+      "bytes": 2376,
+      "file": "brotli_1.0.9-2ubuntu0.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:brotli_1.0.9-2ubuntu0.1",
+      "note": null,
+      "sha256": "2c57d187ac44d7b42862138fb3dac4426236edea2fcd17ab96407d4209acdeae",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/brotli/1.0.9-2ubuntu0.1/brotli_1.0.9-2ubuntu0.1.dsc",
+      "version": "brotli_1.0.9-2ubuntu0.1"
+    },
+    {
+      "bytes": 8004,
+      "file": "brotli_1.0.9-2ubuntu0.1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:brotli_1.0.9-2ubuntu0.1",
+      "note": null,
+      "sha256": "d40552e0699ccdde6d70e41c204d53d5152e0987dc4f9c41b5f5c03a0543bcba",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/brotli/1.0.9-2ubuntu0.1/brotli_1.0.9-2ubuntu0.1.debian.tar.xz",
+      "version": "brotli_1.0.9-2ubuntu0.1"
+    },
+    {
+      "bytes": 486984,
+      "file": "brotli_1.0.9.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:brotli_1.0.9-2ubuntu0.1",
+      "note": null,
+      "sha256": "f9e8d81d0405ba66d181529af42a3354f838c939095ff99930da6aa9cdf6fe46",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/brotli/1.0.9-2ubuntu0.1/brotli_1.0.9.orig.tar.gz",
+      "version": "brotli_1.0.9-2ubuntu0.1"
+    },
+    {
+      "bytes": 1691,
+      "file": "bzip2_1.0.8-5ubuntu0.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:bzip2_1.0.8-5ubuntu0.1",
+      "note": null,
+      "sha256": "1ad3043d238291a40eee40785a7575012986daa2ec957fceaac66ad3be8e3691",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/bzip2/1.0.8-5ubuntu0.1/bzip2_1.0.8-5ubuntu0.1.dsc",
+      "version": "bzip2_1.0.8-5ubuntu0.1"
+    },
+    {
+      "bytes": 27508,
+      "file": "bzip2_1.0.8-5ubuntu0.1.debian.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:bzip2_1.0.8-5ubuntu0.1",
+      "note": null,
+      "sha256": "bf144c1281e08e7e6690d3cfa60c5167be49a993fa9d17c8ce4a9da3ce68607e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/bzip2/1.0.8-5ubuntu0.1/bzip2_1.0.8-5ubuntu0.1.debian.tar.bz2",
+      "version": "bzip2_1.0.8-5ubuntu0.1"
+    },
+    {
+      "bytes": 810029,
+      "file": "bzip2_1.0.8.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:bzip2_1.0.8-5ubuntu0.1",
+      "note": null,
+      "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/bzip2/1.0.8-5ubuntu0.1/bzip2_1.0.8.orig.tar.gz",
+      "version": "bzip2_1.0.8-5ubuntu0.1"
+    },
+    {
+      "bytes": 2838,
+      "file": "cairo_1.16.0-5ubuntu2.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:cairo_1.16.0-5ubuntu2.1",
+      "note": null,
+      "sha256": "695111fafc7dd5f2a8012efb628ed71c4aeae6b112ba4e7995aeafe7e4a609f8",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/cairo/1.16.0-5ubuntu2.1/cairo_1.16.0-5ubuntu2.1.dsc",
+      "version": "cairo_1.16.0-5ubuntu2.1"
+    },
+    {
+      "bytes": 35940,
+      "file": "cairo_1.16.0-5ubuntu2.1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:cairo_1.16.0-5ubuntu2.1",
+      "note": null,
+      "sha256": "bf29ca80c54f34affeffc7d356934c407e492304d42a5426ce144adc45083398",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/cairo/1.16.0-5ubuntu2.1/cairo_1.16.0-5ubuntu2.1.debian.tar.xz",
+      "version": "cairo_1.16.0-5ubuntu2.1"
+    },
+    {
+      "bytes": 41997432,
+      "file": "cairo_1.16.0.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:cairo_1.16.0-5ubuntu2.1",
+      "note": null,
+      "sha256": "5e7b29b3f113ef870d1e3ecf8adf21f923396401604bda16d44be45e66052331",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/cairo/1.16.0-5ubuntu2.1/cairo_1.16.0.orig.tar.xz",
+      "version": "cairo_1.16.0-5ubuntu2.1"
+    },
+    {
+      "bytes": 3139,
+      "file": "cups_2.4.1op1-1ubuntu4.21.dsc",
+      "kind": "source",
+      "name": "ubuntu:cups_2.4.1op1-1ubuntu4.21",
+      "note": null,
+      "sha256": "2593c7647f2a172bcb16f05c859b3ab483638bd752082ccabeee93f7da6b8e56",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/cups/2.4.1op1-1ubuntu4.21/cups_2.4.1op1-1ubuntu4.21.dsc",
+      "version": "cups_2.4.1op1-1ubuntu4.21"
+    },
+    {
+      "bytes": 386936,
+      "file": "cups_2.4.1op1-1ubuntu4.21.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:cups_2.4.1op1-1ubuntu4.21",
+      "note": null,
+      "sha256": "2554532c37c7ba8cc0add966d944b1089aadcc544ae31a9e7a96c0b5f37c2d5e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/cups/2.4.1op1-1ubuntu4.21/cups_2.4.1op1-1ubuntu4.21.debian.tar.xz",
+      "version": "cups_2.4.1op1-1ubuntu4.21"
+    },
+    {
+      "bytes": 8113914,
+      "file": "cups_2.4.1op1.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:cups_2.4.1op1-1ubuntu4.21",
+      "note": null,
+      "sha256": "c7339f75f8d4f2dec50c673341a45fc06b6885bb6d4366d6bf59a4e6c10ae178",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/cups/2.4.1op1-1ubuntu4.21/cups_2.4.1op1.orig.tar.gz",
+      "version": "cups_2.4.1op1-1ubuntu4.21"
+    },
+    {
+      "bytes": 3271,
+      "file": "dbus_1.12.20-2ubuntu4.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:dbus_1.12.20-2ubuntu4.1",
+      "note": null,
+      "sha256": "9eb0861266c097572ae79ced86c85fda3401c6544f1d08151213683e036f8be9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/dbus/1.12.20-2ubuntu4.1/dbus_1.12.20-2ubuntu4.1.dsc",
+      "version": "dbus_1.12.20-2ubuntu4.1"
+    },
+    {
+      "bytes": 65220,
+      "file": "dbus_1.12.20-2ubuntu4.1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:dbus_1.12.20-2ubuntu4.1",
+      "note": null,
+      "sha256": "c1f655920ef22949145c7b2287a057012c71ae39b3998b8bc260ce0609c30585",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/dbus/1.12.20-2ubuntu4.1/dbus_1.12.20-2ubuntu4.1.debian.tar.xz",
+      "version": "dbus_1.12.20-2ubuntu4.1"
+    },
+    {
+      "bytes": 2095511,
+      "file": "dbus_1.12.20.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:dbus_1.12.20-2ubuntu4.1",
+      "note": null,
+      "sha256": "f77620140ecb4cdc67f37fb444f8a6bea70b5b6461f12f1cbe2cec60fa7de5fe",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/dbus/1.12.20-2ubuntu4.1/dbus_1.12.20.orig.tar.gz",
+      "version": "dbus_1.12.20-2ubuntu4.1"
+    },
+    {
+      "bytes": 3190,
+      "file": "e2fsprogs_1.46.5-2ubuntu1.2.dsc",
+      "kind": "source",
+      "name": "ubuntu:e2fsprogs_1.46.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "6f41e832d3e69bff96374f20e886a286f6dd8cfff68c1f0fc902281ed365560a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/e2fsprogs/1.46.5-2ubuntu1.2/e2fsprogs_1.46.5-2ubuntu1.2.dsc",
+      "version": "e2fsprogs_1.46.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 86604,
+      "file": "e2fsprogs_1.46.5-2ubuntu1.2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:e2fsprogs_1.46.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "b04fad2b12787628497127e6fab76de11c54229e08a406eba126df13f5224fdf",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/e2fsprogs/1.46.5-2ubuntu1.2/e2fsprogs_1.46.5-2ubuntu1.2.debian.tar.xz",
+      "version": "e2fsprogs_1.46.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 488,
+      "file": "e2fsprogs_1.46.5.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:e2fsprogs_1.46.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "b1e248ed73d4d67ac0cf7760e780e0a5cd2db85bbb9a5dcc235538b596128916",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/e2fsprogs/1.46.5-2ubuntu1.2/e2fsprogs_1.46.5.orig.tar.gz.asc",
+      "version": "e2fsprogs_1.46.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 9530158,
+      "file": "e2fsprogs_1.46.5.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:e2fsprogs_1.46.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "b7430d1e6b7b5817ce8e36d7c8c7c3249b3051d0808a96ffd6e5c398e4e2fbb9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/e2fsprogs/1.46.5-2ubuntu1.2/e2fsprogs_1.46.5.orig.tar.gz",
+      "version": "e2fsprogs_1.46.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 1491,
+      "file": "expat_2.4.7-1ubuntu0.9.dsc",
+      "kind": "source",
+      "name": "ubuntu:expat_2.4.7-1ubuntu0.9",
+      "note": null,
+      "sha256": "9ff52aea8b3e05014959059d9455f94cb3850d942fb1b0e058e0630bcc8e78bc",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/expat/2.4.7-1ubuntu0.9/expat_2.4.7-1ubuntu0.9.dsc",
+      "version": "expat_2.4.7-1ubuntu0.9"
+    },
+    {
+      "bytes": 59156,
+      "file": "expat_2.4.7-1ubuntu0.9.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:expat_2.4.7-1ubuntu0.9",
+      "note": null,
+      "sha256": "769abc2ab3b3a911160cc9d6fdab8d3f48de7ffa6ad969a8a8e6c08b0fcb64ce",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/expat/2.4.7-1ubuntu0.9/expat_2.4.7-1ubuntu0.9.debian.tar.xz",
+      "version": "expat_2.4.7-1ubuntu0.9"
+    },
+    {
+      "bytes": 8316374,
+      "file": "expat_2.4.7.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:expat_2.4.7-1ubuntu0.9",
+      "note": null,
+      "sha256": "ddc1111651cdd4095b67c9d9ed46babfb8fb64843d89ff785399f5739b84867b",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/expat/2.4.7-1ubuntu0.9/expat_2.4.7.orig.tar.gz",
+      "version": "expat_2.4.7-1ubuntu0.9"
+    },
+    {
+      "bytes": 1723639,
+      "file": "fontconfig_2.13.1.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:fontconfig_2.13.1-4.2ubuntu5",
+      "note": null,
+      "sha256": "f655dd2a986d7aa97e052261b36aa67b0a64989496361eca8d604e6414006741",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/fontconfig/2.13.1-4.2ubuntu5/fontconfig_2.13.1.orig.tar.bz2",
+      "version": "fontconfig_2.13.1-4.2ubuntu5"
+    },
+    {
+      "bytes": 28084,
+      "file": "fontconfig_2.13.1-4.2ubuntu5.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:fontconfig_2.13.1-4.2ubuntu5",
+      "note": null,
+      "sha256": "15ade6954950577f355a55abcebe59f58e13df3dc616419af34ca0c19bbae0bd",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/fontconfig/2.13.1-4.2ubuntu5/fontconfig_2.13.1-4.2ubuntu5.debian.tar.xz",
+      "version": "fontconfig_2.13.1-4.2ubuntu5"
+    },
+    {
+      "bytes": 2449,
+      "file": "fontconfig_2.13.1-4.2ubuntu5.dsc",
+      "kind": "source",
+      "name": "ubuntu:fontconfig_2.13.1-4.2ubuntu5",
+      "note": null,
+      "sha256": "c5c3098474374f20d79e3a8c00dd849f75388af0c99b6f7ec3dfc724886c4cdd",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/fontconfig/2.13.1-4.2ubuntu5/fontconfig_2.13.1-4.2ubuntu5.dsc",
+      "version": "fontconfig_2.13.1-4.2ubuntu5"
+    },
+    {
+      "bytes": 3791,
+      "file": "freetype_2.11.1+dfsg-1ubuntu0.4.dsc",
+      "kind": "source",
+      "name": "ubuntu:freetype_2.11.1+dfsg-1ubuntu0.4",
+      "note": null,
+      "sha256": "502ed7709166f21aea8ffc3b7799fa72138ebdf9c2f0719b103db30f35e4f325",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/freetype/2.11.1+dfsg-1ubuntu0.4/freetype_2.11.1+dfsg-1ubuntu0.4.dsc",
+      "version": "freetype_2.11.1+dfsg-1ubuntu0.4"
+    },
+    {
+      "bytes": 42820,
+      "file": "freetype_2.11.1+dfsg-1ubuntu0.4.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:freetype_2.11.1+dfsg-1ubuntu0.4",
+      "note": null,
+      "sha256": "16671da9ac041f3e25fc4b88d8f3a4dbae59dbd1e2565f358362ca62424f67df",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/freetype/2.11.1+dfsg-1ubuntu0.4/freetype_2.11.1+dfsg-1ubuntu0.4.debian.tar.xz",
+      "version": "freetype_2.11.1+dfsg-1ubuntu0.4"
+    },
+    {
+      "bytes": 1988020,
+      "file": "freetype_2.11.1+dfsg.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:freetype_2.11.1+dfsg-1ubuntu0.4",
+      "note": null,
+      "sha256": "ef93541237834445eb7ff355e7d4139d48844f9c977a485dea1316df54994473",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/freetype/2.11.1+dfsg-1ubuntu0.4/freetype_2.11.1+dfsg.orig.tar.xz",
+      "version": "freetype_2.11.1+dfsg-1ubuntu0.4"
+    },
+    {
+      "bytes": 195,
+      "file": "freetype_2.11.1+dfsg.orig-ft2docs.tar.xz.asc",
+      "kind": "source",
+      "name": "ubuntu:freetype_2.11.1+dfsg-1ubuntu0.4",
+      "note": null,
+      "sha256": "67cbc2f192460dc4d46129e7debe55b40a9fa6e224ffeed70b4cf397ebaccab5",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/freetype/2.11.1+dfsg-1ubuntu0.4/freetype_2.11.1+dfsg.orig-ft2docs.tar.xz.asc",
+      "version": "freetype_2.11.1+dfsg-1ubuntu0.4"
+    },
+    {
+      "bytes": 2038348,
+      "file": "freetype_2.11.1+dfsg.orig-ft2docs.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:freetype_2.11.1+dfsg-1ubuntu0.4",
+      "note": null,
+      "sha256": "755e29908093c19138a38775784b0accf7e838ffa28a25b8722b3dfe651d80fa",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/freetype/2.11.1+dfsg-1ubuntu0.4/freetype_2.11.1+dfsg.orig-ft2docs.tar.xz",
+      "version": "freetype_2.11.1+dfsg-1ubuntu0.4"
+    },
+    {
+      "bytes": 195,
+      "file": "freetype_2.11.1+dfsg.orig-ft2demos.tar.xz.asc",
+      "kind": "source",
+      "name": "ubuntu:freetype_2.11.1+dfsg-1ubuntu0.4",
+      "note": null,
+      "sha256": "d911a95830c50efcf60398e51db4ec307bbf4d24168377b515aded0611e977c0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/freetype/2.11.1+dfsg-1ubuntu0.4/freetype_2.11.1+dfsg.orig-ft2demos.tar.xz.asc",
+      "version": "freetype_2.11.1+dfsg-1ubuntu0.4"
+    },
+    {
+      "bytes": 257240,
+      "file": "freetype_2.11.1+dfsg.orig-ft2demos.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:freetype_2.11.1+dfsg-1ubuntu0.4",
+      "note": null,
+      "sha256": "c60620d49d0f16d95586eb868c01b129569409e6cfdcb87a78e0482a12604672",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/freetype/2.11.1+dfsg-1ubuntu0.4/freetype_2.11.1+dfsg.orig-ft2demos.tar.xz",
+      "version": "freetype_2.11.1+dfsg-1ubuntu0.4"
+    },
+    {
+      "bytes": 2442,
+      "file": "fribidi_1.0.8-2ubuntu3.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:fribidi_1.0.8-2ubuntu3.1",
+      "note": null,
+      "sha256": "585c32773194a19ab4e64e37e86c2d9627ba1235c496fe07544f8b8f80233160",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/fribidi/1.0.8-2ubuntu3.1/fribidi_1.0.8-2ubuntu3.1.dsc",
+      "version": "fribidi_1.0.8-2ubuntu3.1"
+    },
+    {
+      "bytes": 10888,
+      "file": "fribidi_1.0.8-2ubuntu3.1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:fribidi_1.0.8-2ubuntu3.1",
+      "note": null,
+      "sha256": "c4a0185e8b55a2520eb98575acdfbb7d42b36a1ad2b22f1c2f308a20ee3466f9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/fribidi/1.0.8-2ubuntu3.1/fribidi_1.0.8-2ubuntu3.1.debian.tar.xz",
+      "version": "fribidi_1.0.8-2ubuntu3.1"
+    },
+    {
+      "bytes": 2077095,
+      "file": "fribidi_1.0.8.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:fribidi_1.0.8-2ubuntu3.1",
+      "note": null,
+      "sha256": "94c7b68d86ad2a9613b4dcffe7bbeb03523d63b5b37918bdf2e4ef34195c1e6c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/fribidi/1.0.8-2ubuntu3.1/fribidi_1.0.8.orig.tar.bz2",
+      "version": "fribidi_1.0.8-2ubuntu3.1"
+    },
+    {
+      "bytes": 27845,
+      "file": "gcc-12_12.3.0-1ubuntu1~22.04.3.dsc",
+      "kind": "source",
+      "name": "ubuntu:gcc-12_12.3.0-1ubuntu1~22.04.3",
+      "note": null,
+      "sha256": "ec040a1fa94186bd53535f7156e086e67863bb55836ae7fd7fef64f1ab66b04d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gcc-12/12.3.0-1ubuntu1~22.04.3/gcc-12_12.3.0-1ubuntu1~22.04.3.dsc",
+      "version": "gcc-12_12.3.0-1ubuntu1~22.04.3"
+    },
+    {
+      "bytes": 587456,
+      "file": "gcc-12_12.3.0-1ubuntu1~22.04.3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gcc-12_12.3.0-1ubuntu1~22.04.3",
+      "note": null,
+      "sha256": "44074c3d5e7d97365f1f7b45291ade2ee40ed6300176530d912e7cc0ceba77ab",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gcc-12/12.3.0-1ubuntu1~22.04.3/gcc-12_12.3.0-1ubuntu1~22.04.3.debian.tar.xz",
+      "version": "gcc-12_12.3.0-1ubuntu1~22.04.3"
+    },
+    {
+      "bytes": 91555468,
+      "file": "gcc-12_12.3.0.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:gcc-12_12.3.0-1ubuntu1~22.04.3",
+      "note": null,
+      "sha256": "62b0fc89b6d41f9df2470d0fb4995f6ff5885f910518a2c6a44a6888ea5a9ea1",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gcc-12/12.3.0-1ubuntu1~22.04.3/gcc-12_12.3.0.orig.tar.gz",
+      "version": "gcc-12_12.3.0-1ubuntu1~22.04.3"
+    },
+    {
+      "bytes": 3238,
+      "file": "gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5.dsc",
+      "kind": "source",
+      "name": "ubuntu:gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5",
+      "note": null,
+      "sha256": "87b6107536b3cf76d413abca072619814db2e2e9249ea6152a1f4ff4860b23d3",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gdk-pixbuf/2.42.8+dfsg-1ubuntu0.5/gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5.dsc",
+      "version": "gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5"
+    },
+    {
+      "bytes": 30172,
+      "file": "gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5",
+      "note": null,
+      "sha256": "43353cee25c5bbc00cdd1e7b0b850166e14bc8997c4d1338d182db783226713c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gdk-pixbuf/2.42.8+dfsg-1ubuntu0.5/gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5.debian.tar.xz",
+      "version": "gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5"
+    },
+    {
+      "bytes": 6439548,
+      "file": "gdk-pixbuf_2.42.8+dfsg.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5",
+      "note": null,
+      "sha256": "c1f00d4419e164d160c9d9b49a90890e516c1624bcd0c2a120eb7f529835b5d3",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gdk-pixbuf/2.42.8+dfsg-1ubuntu0.5/gdk-pixbuf_2.42.8+dfsg.orig.tar.xz",
+      "version": "gdk-pixbuf_2.42.8+dfsg-1ubuntu0.5"
+    },
+    {
+      "bytes": 3674,
+      "file": "glib2.0_2.72.4-0ubuntu2.10.dsc",
+      "kind": "source",
+      "name": "ubuntu:glib2.0_2.72.4-0ubuntu2.10",
+      "note": null,
+      "sha256": "29ad099fa2f59d77424dfc8bccb474df79e4c79f2d603228aef02a679a292ca9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/glib2.0/2.72.4-0ubuntu2.10/glib2.0_2.72.4-0ubuntu2.10.dsc",
+      "version": "glib2.0_2.72.4-0ubuntu2.10"
+    },
+    {
+      "bytes": 170208,
+      "file": "glib2.0_2.72.4-0ubuntu2.10.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:glib2.0_2.72.4-0ubuntu2.10",
+      "note": null,
+      "sha256": "e81d6f72522eb2092ddec06760753d5fe7866eab553237a4c237b613e592df69",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/glib2.0/2.72.4-0ubuntu2.10/glib2.0_2.72.4-0ubuntu2.10.debian.tar.xz",
+      "version": "glib2.0_2.72.4-0ubuntu2.10"
+    },
+    {
+      "bytes": 4884256,
+      "file": "glib2.0_2.72.4.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:glib2.0_2.72.4-0ubuntu2.10",
+      "note": null,
+      "sha256": "8848aba518ba2f4217d144307a1d6cb9afcc92b54e5c13ac1f8c4d4608e96f0e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/glib2.0/2.72.4-0ubuntu2.10/glib2.0_2.72.4.orig.tar.xz",
+      "version": "glib2.0_2.72.4-0ubuntu2.10"
+    },
+    {
+      "bytes": 1853476,
+      "file": "gmp_6.2.1+dfsg.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gmp_2:6.2.1+dfsg-3ubuntu1",
+      "note": null,
+      "sha256": "c6ba08e3f079260ab90ff44ab8801eae134cd62cd78f4aa56317c0e70daa40cb",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gmp/2:6.2.1+dfsg-3ubuntu1/gmp_6.2.1+dfsg.orig.tar.xz",
+      "version": "gmp_2:6.2.1+dfsg-3ubuntu1"
+    },
+    {
+      "bytes": 40996,
+      "file": "gmp_6.2.1+dfsg-3ubuntu1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gmp_2:6.2.1+dfsg-3ubuntu1",
+      "note": null,
+      "sha256": "371f81cd30902da41fb4cd084fa2d4e5e353c1f812e79184158479cc96aedd76",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gmp/2:6.2.1+dfsg-3ubuntu1/gmp_6.2.1+dfsg-3ubuntu1.debian.tar.xz",
+      "version": "gmp_2:6.2.1+dfsg-3ubuntu1"
+    },
+    {
+      "bytes": 2355,
+      "file": "gmp_6.2.1+dfsg-3ubuntu1.dsc",
+      "kind": "source",
+      "name": "ubuntu:gmp_2:6.2.1+dfsg-3ubuntu1",
+      "note": null,
+      "sha256": "aad30e80591b3a3bea84ef1c3d1c46657dcdd639a10f093b6a4a231461e015e6",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gmp/2:6.2.1+dfsg-3ubuntu1/gmp_6.2.1+dfsg-3ubuntu1.dsc",
+      "version": "gmp_2:6.2.1+dfsg-3ubuntu1"
+    },
+    {
+      "bytes": 3575,
+      "file": "gnutls28_3.7.3-4ubuntu1.9.dsc",
+      "kind": "source",
+      "name": "ubuntu:gnutls28_3.7.3-4ubuntu1.9",
+      "note": null,
+      "sha256": "dcf44b5f38fb5044aaea929fc0a89744f3e86ceee8733f6781f86fd0c35e56c8",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gnutls28/3.7.3-4ubuntu1.9/gnutls28_3.7.3-4ubuntu1.9.dsc",
+      "version": "gnutls28_3.7.3-4ubuntu1.9"
+    },
+    {
+      "bytes": 127136,
+      "file": "gnutls28_3.7.3-4ubuntu1.9.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gnutls28_3.7.3-4ubuntu1.9",
+      "note": null,
+      "sha256": "dab5939b10476b56358262432f40191a5ecee941d1cda16f9ec1dd3e3ceb6314",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gnutls28/3.7.3-4ubuntu1.9/gnutls28_3.7.3-4ubuntu1.9.debian.tar.xz",
+      "version": "gnutls28_3.7.3-4ubuntu1.9"
+    },
+    {
+      "bytes": 833,
+      "file": "gnutls28_3.7.3.orig.tar.xz.asc",
+      "kind": "source",
+      "name": "ubuntu:gnutls28_3.7.3-4ubuntu1.9",
+      "note": null,
+      "sha256": "a2f95ac5d7dd951bddef01ec9930616dd1a5226173b3dc7896b3bed411c91d9a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gnutls28/3.7.3-4ubuntu1.9/gnutls28_3.7.3.orig.tar.xz.asc",
+      "version": "gnutls28_3.7.3-4ubuntu1.9"
+    },
+    {
+      "bytes": 6119292,
+      "file": "gnutls28_3.7.3.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gnutls28_3.7.3-4ubuntu1.9",
+      "note": null,
+      "sha256": "fc59c43bc31ab20a6977ff083029277a31935b8355ce387b634fa433f8f6c49a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gnutls28/3.7.3-4ubuntu1.9/gnutls28_3.7.3.orig.tar.xz",
+      "version": "gnutls28_3.7.3-4ubuntu1.9"
+    },
+    {
+      "bytes": 2698,
+      "file": "graphite2_1.3.14-1ubuntu0.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:graphite2_1.3.14-1ubuntu0.1",
+      "note": null,
+      "sha256": "fa3ded8974494bcfcec90b83cf581de1341100b83f20217f30a819e522f7c199",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/graphite2/1.3.14-1ubuntu0.1/graphite2_1.3.14-1ubuntu0.1.dsc",
+      "version": "graphite2_1.3.14-1ubuntu0.1"
+    },
+    {
+      "bytes": 12932,
+      "file": "graphite2_1.3.14-1ubuntu0.1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:graphite2_1.3.14-1ubuntu0.1",
+      "note": null,
+      "sha256": "2a573bb291d53438aae7db6655e68f8544f885dc3530a1cbee8a4f7313515407",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/graphite2/1.3.14-1ubuntu0.1/graphite2_1.3.14-1ubuntu0.1.debian.tar.xz",
+      "version": "graphite2_1.3.14-1ubuntu0.1"
+    },
+    {
+      "bytes": 6629829,
+      "file": "graphite2_1.3.14.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:graphite2_1.3.14-1ubuntu0.1",
+      "note": null,
+      "sha256": "7a3b342c5681921ce2e0c2496509d30b5b078399d5a7bd2358f95166d57d91df",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/graphite2/1.3.14-1ubuntu0.1/graphite2_1.3.14.orig.tar.gz",
+      "version": "graphite2_1.3.14-1ubuntu0.1"
+    },
+    {
+      "bytes": 4492,
+      "file": "gtk+3.0_3.24.33-1ubuntu2.2.dsc",
+      "kind": "source",
+      "name": "ubuntu:gtk+3.0_3.24.33-1ubuntu2.2",
+      "note": null,
+      "sha256": "0abcce1e1db4494ff9e07ec8dcda39503ad8d31ebfded46ee09b13ec2e147ada",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gtk+3.0/3.24.33-1ubuntu2.2/gtk+3.0_3.24.33-1ubuntu2.2.dsc",
+      "version": "gtk+3.0_3.24.33-1ubuntu2.2"
+    },
+    {
+      "bytes": 431240,
+      "file": "gtk+3.0_3.24.33-1ubuntu2.2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gtk+3.0_3.24.33-1ubuntu2.2",
+      "note": null,
+      "sha256": "842fe4b2590378b3e57890fc4455e2b9674ca2d31697d2ecd64459f5f29f5295",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gtk+3.0/3.24.33-1ubuntu2.2/gtk+3.0_3.24.33-1ubuntu2.2.debian.tar.xz",
+      "version": "gtk+3.0_3.24.33-1ubuntu2.2"
+    },
+    {
+      "bytes": 22449472,
+      "file": "gtk+3.0_3.24.33.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:gtk+3.0_3.24.33-1ubuntu2.2",
+      "note": null,
+      "sha256": "588b06522e25d1579e989b6f9d8a1bdbf2fe13cde01a04e904ff346a225e7801",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/gtk+3.0/3.24.33-1ubuntu2.2/gtk+3.0_3.24.33.orig.tar.xz",
+      "version": "gtk+3.0_3.24.33-1ubuntu2.2"
+    },
+    {
+      "bytes": 2855,
+      "file": "harfbuzz_2.7.4-1ubuntu3.2.dsc",
+      "kind": "source",
+      "name": "ubuntu:harfbuzz_2.7.4-1ubuntu3.2",
+      "note": null,
+      "sha256": "6c75d24d8abd1fd901b9ffe8d4943c0837d96badd67c7c7672d5e619fc758d79",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/harfbuzz/2.7.4-1ubuntu3.2/harfbuzz_2.7.4-1ubuntu3.2.dsc",
+      "version": "harfbuzz_2.7.4-1ubuntu3.2"
+    },
+    {
+      "bytes": 15000,
+      "file": "harfbuzz_2.7.4-1ubuntu3.2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:harfbuzz_2.7.4-1ubuntu3.2",
+      "note": null,
+      "sha256": "39c75dcef97ae5b6d60fbdf2228ee040f5f7dd6fad4e18c06901cf708a1ca1cd",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/harfbuzz/2.7.4-1ubuntu3.2/harfbuzz_2.7.4-1ubuntu3.2.debian.tar.xz",
+      "version": "harfbuzz_2.7.4-1ubuntu3.2"
+    },
+    {
+      "bytes": 9532468,
+      "file": "harfbuzz_2.7.4.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:harfbuzz_2.7.4-1ubuntu3.2",
+      "note": null,
+      "sha256": "6ad11d653347bd25d8317589df4e431a2de372c0cf9be3543368e07ec23bb8e7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/harfbuzz/2.7.4-1ubuntu3.2/harfbuzz_2.7.4.orig.tar.xz",
+      "version": "harfbuzz_2.7.4-1ubuntu3.2"
+    },
+    {
+      "bytes": 97232,
+      "file": "keyutils_1.6.1.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:keyutils_1.6.1-2ubuntu3",
+      "note": null,
+      "sha256": "c8b15722ae51d95b9ad76cc6d49a4c2cc19b0c60f72f61fb9bf43eea7cbd64ce",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/keyutils/1.6.1-2ubuntu3/keyutils_1.6.1.orig.tar.bz2",
+      "version": "keyutils_1.6.1-2ubuntu3"
+    },
+    {
+      "bytes": 18936,
+      "file": "keyutils_1.6.1-2ubuntu3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:keyutils_1.6.1-2ubuntu3",
+      "note": null,
+      "sha256": "e9e8992edcc28599fb59ca1dc9ecbfb6b35175fb712f86b13bf4dc35397631f9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/keyutils/1.6.1-2ubuntu3/keyutils_1.6.1-2ubuntu3.debian.tar.xz",
+      "version": "keyutils_1.6.1-2ubuntu3"
+    },
+    {
+      "bytes": 2203,
+      "file": "keyutils_1.6.1-2ubuntu3.dsc",
+      "kind": "source",
+      "name": "ubuntu:keyutils_1.6.1-2ubuntu3",
+      "note": null,
+      "sha256": "6ce03824add78e1dc385723ce354a5513eb1ab4b83643e91e9b2c64f81112f9d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/keyutils/1.6.1-2ubuntu3/keyutils_1.6.1-2ubuntu3.dsc",
+      "version": "keyutils_1.6.1-2ubuntu3"
+    },
+    {
+      "bytes": 3700,
+      "file": "krb5_1.19.2-2ubuntu0.10.dsc",
+      "kind": "source",
+      "name": "ubuntu:krb5_1.19.2-2ubuntu0.10",
+      "note": null,
+      "sha256": "8c0af704dea8312f715c750c9f97e257f3c50c969de20818e1eab1e8175bcad1",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/krb5/1.19.2-2ubuntu0.10/krb5_1.19.2-2ubuntu0.10.dsc",
+      "version": "krb5_1.19.2-2ubuntu0.10"
+    },
+    {
+      "bytes": 128576,
+      "file": "krb5_1.19.2-2ubuntu0.10.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:krb5_1.19.2-2ubuntu0.10",
+      "note": null,
+      "sha256": "d0598b76e607cff3733b8858db4bc63547a536b762fdbbc865683c2fdcc99d84",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/krb5/1.19.2-2ubuntu0.10/krb5_1.19.2-2ubuntu0.10.debian.tar.xz",
+      "version": "krb5_1.19.2-2ubuntu0.10"
+    },
+    {
+      "bytes": 8741053,
+      "file": "krb5_1.19.2.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:krb5_1.19.2-2ubuntu0.10",
+      "note": null,
+      "sha256": "10453fee4e3a8f8ce6129059e5c050b8a65dab1c257df68b99b3112eaa0cdf6a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/krb5/1.19.2-2ubuntu0.10/krb5_1.19.2.orig.tar.gz",
+      "version": "krb5_1.19.2-2ubuntu0.10"
+    },
+    {
+      "bytes": 2292,
+      "file": "libbsd_0.11.5-1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libbsd_0.11.5-1",
+      "note": null,
+      "sha256": "51479863a91fc2293da337d926862465e460bf4afdc3c0b362939749bfee6c53",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libbsd/0.11.5-1/libbsd_0.11.5-1.dsc",
+      "version": "libbsd_0.11.5-1"
+    },
+    {
+      "bytes": 409972,
+      "file": "libbsd_0.11.5.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libbsd_0.11.5-1",
+      "note": null,
+      "sha256": "1a9c952525635c1bb6770cb22e969b938d8e6a9d7912362b98ee8370599b0efd",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libbsd/0.11.5-1/libbsd_0.11.5.orig.tar.xz",
+      "version": "libbsd_0.11.5-1"
+    },
+    {
+      "bytes": 833,
+      "file": "libbsd_0.11.5.orig.tar.xz.asc",
+      "kind": "source",
+      "name": "ubuntu:libbsd_0.11.5-1",
+      "note": null,
+      "sha256": "95e418668c1d3f16a63dca24b9149119bdaf5095a3e1f3f84673be1a108a0916",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libbsd/0.11.5-1/libbsd_0.11.5.orig.tar.xz.asc",
+      "version": "libbsd_0.11.5-1"
+    },
+    {
+      "bytes": 17604,
+      "file": "libbsd_0.11.5-1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libbsd_0.11.5-1",
+      "note": null,
+      "sha256": "83d6f3205c8e0119de85763831f3e09a8152a695d2cebc5a55069472e97e6d0c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libbsd/0.11.5-1/libbsd_0.11.5-1.debian.tar.xz",
+      "version": "libbsd_0.11.5-1"
+    },
+    {
+      "bytes": 2318,
+      "file": "libcap2_2.44-1ubuntu0.22.04.3.dsc",
+      "kind": "source",
+      "name": "ubuntu:libcap2_1:2.44-1ubuntu0.22.04.3",
+      "note": null,
+      "sha256": "67523116f07081f3a8066f737b9c84f92f5e854f13f38487c1ce485a43d85bd7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libcap2/1:2.44-1ubuntu0.22.04.3/libcap2_2.44-1ubuntu0.22.04.3.dsc",
+      "version": "libcap2_1:2.44-1ubuntu0.22.04.3"
+    },
+    {
+      "bytes": 24880,
+      "file": "libcap2_2.44-1ubuntu0.22.04.3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libcap2_1:2.44-1ubuntu0.22.04.3",
+      "note": null,
+      "sha256": "6a6435b74e9b2ec65eb1ee2b7958c37777fe005312feac37d84f4167521d135a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libcap2/1:2.44-1ubuntu0.22.04.3/libcap2_2.44-1ubuntu0.22.04.3.debian.tar.xz",
+      "version": "libcap2_1:2.44-1ubuntu0.22.04.3"
+    },
+    {
+      "bytes": 125568,
+      "file": "libcap2_2.44.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libcap2_1:2.44-1ubuntu0.22.04.3",
+      "note": null,
+      "sha256": "92188359cd5be86e8e5bd3f6483ac6ce582264f912398937ef763def2205c8e1",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libcap2/1:2.44-1ubuntu0.22.04.3/libcap2_2.44.orig.tar.xz",
+      "version": "libcap2_1:2.44-1ubuntu0.22.04.3"
+    },
+    {
+      "bytes": 2239,
+      "file": "libdatrie_0.2.13-2.dsc",
+      "kind": "source",
+      "name": "ubuntu:libdatrie_0.2.13-2",
+      "note": null,
+      "sha256": "d359689deccfa654ab844d6e955fff5e826d9a5dc9a74408d1b6a095f78ab0e5",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libdatrie/0.2.13-2/libdatrie_0.2.13-2.dsc",
+      "version": "libdatrie_0.2.13-2"
+    },
+    {
+      "bytes": 314072,
+      "file": "libdatrie_0.2.13.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libdatrie_0.2.13-2",
+      "note": null,
+      "sha256": "12231bb2be2581a7f0fb9904092d24b0ed2a271a16835071ed97bed65267f4be",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libdatrie/0.2.13-2/libdatrie_0.2.13.orig.tar.xz",
+      "version": "libdatrie_0.2.13-2"
+    },
+    {
+      "bytes": 9604,
+      "file": "libdatrie_0.2.13-2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libdatrie_0.2.13-2",
+      "note": null,
+      "sha256": "3f341eb067c5365345e0a416a3c835a8e785c3220aca27c8fb2a01499d0214e9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libdatrie/0.2.13-2/libdatrie_0.2.13-2.debian.tar.xz",
+      "version": "libdatrie_0.2.13-2"
+    },
+    {
+      "bytes": 17484,
+      "file": "libepoxy_1.5.10-1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libepoxy_1.5.10-1",
+      "note": null,
+      "sha256": "1bf5529ecd4fe6d6fa56836154b659d1d84c5f171a9b38fae1ff873271c54efe",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libepoxy/1.5.10-1/libepoxy_1.5.10-1.debian.tar.xz",
+      "version": "libepoxy_1.5.10-1"
+    },
+    {
+      "bytes": 332078,
+      "file": "libepoxy_1.5.10.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libepoxy_1.5.10-1",
+      "note": null,
+      "sha256": "a7ced37f4102b745ac86d6a70a9da399cc139ff168ba6b8002b4d8d43c900c15",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libepoxy/1.5.10-1/libepoxy_1.5.10.orig.tar.gz",
+      "version": "libepoxy_1.5.10-1"
+    },
+    {
+      "bytes": 2095,
+      "file": "libepoxy_1.5.10-1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libepoxy_1.5.10-1",
+      "note": null,
+      "sha256": "4cb85aae6a878860f181bb1e657dc1cd6f5147c2638de532bae0a3c62d2d9971",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libepoxy/1.5.10-1/libepoxy_1.5.10-1.dsc",
+      "version": "libepoxy_1.5.10-1"
+    },
+    {
+      "bytes": 1948,
+      "file": "libffi_3.4.2-4.dsc",
+      "kind": "source",
+      "name": "ubuntu:libffi_3.4.2-4",
+      "note": null,
+      "sha256": "c7c4890a434795e41a77bddbca949fb904b022a70d8446c5a005ec0f9ed4c554",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libffi/3.4.2-4/libffi_3.4.2-4.dsc",
+      "version": "libffi_3.4.2-4"
+    },
+    {
+      "bytes": 1351355,
+      "file": "libffi_3.4.2.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libffi_3.4.2-4",
+      "note": null,
+      "sha256": "540fb721619a6aba3bdeef7d940d8e9e0e6d2c193595bc243241b77ff9e93620",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libffi/3.4.2-4/libffi_3.4.2.orig.tar.gz",
+      "version": "libffi_3.4.2-4"
+    },
+    {
+      "bytes": 8164,
+      "file": "libffi_3.4.2-4.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libffi_3.4.2-4",
+      "note": null,
+      "sha256": "06d936d00d43e7999d0bce0aa2e0f1550109295b8093de77e6453acb9eacfd19",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libffi/3.4.2-4/libffi_3.4.2-4.debian.tar.xz",
+      "version": "libffi_3.4.2-4"
+    },
+    {
+      "bytes": 2915,
+      "file": "libgcrypt20_1.9.4-3ubuntu3.3.dsc",
+      "kind": "source",
+      "name": "ubuntu:libgcrypt20_1.9.4-3ubuntu3.3",
+      "note": null,
+      "sha256": "d5f3d4082c4c6ab97d500dd299d0b45644dde808709a030502158831eacd76c2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgcrypt20/1.9.4-3ubuntu3.3/libgcrypt20_1.9.4-3ubuntu3.3.dsc",
+      "version": "libgcrypt20_1.9.4-3ubuntu3.3"
+    },
+    {
+      "bytes": 74408,
+      "file": "libgcrypt20_1.9.4-3ubuntu3.3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libgcrypt20_1.9.4-3ubuntu3.3",
+      "note": null,
+      "sha256": "184bf9126ee3a38c70bcdd584bcf363c564848ef3329546b18082ded62bf68d7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgcrypt20/1.9.4-3ubuntu3.3/libgcrypt20_1.9.4-3ubuntu3.3.debian.tar.xz",
+      "version": "libgcrypt20_1.9.4-3ubuntu3.3"
+    },
+    {
+      "bytes": 228,
+      "file": "libgcrypt20_1.9.4.orig.tar.bz2.asc",
+      "kind": "source",
+      "name": "ubuntu:libgcrypt20_1.9.4-3ubuntu3.3",
+      "note": null,
+      "sha256": "aa44cb00b779b4e75f3e63abeedd4112b10b4b92914dad8f23438fd0217a9fec",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgcrypt20/1.9.4-3ubuntu3.3/libgcrypt20_1.9.4.orig.tar.bz2.asc",
+      "version": "libgcrypt20_1.9.4-3ubuntu3.3"
+    },
+    {
+      "bytes": 3239704,
+      "file": "libgcrypt20_1.9.4.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:libgcrypt20_1.9.4-3ubuntu3.3",
+      "note": null,
+      "sha256": "ea849c83a72454e3ed4267697e8ca03390aee972ab421e7df69dfe42b65caaf7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgcrypt20/1.9.4-3ubuntu3.3/libgcrypt20_1.9.4.orig.tar.bz2",
+      "version": "libgcrypt20_1.9.4-3ubuntu3.3"
+    },
+    {
+      "bytes": 2270,
+      "file": "libgpg-error_1.43-3.dsc",
+      "kind": "source",
+      "name": "ubuntu:libgpg-error_1.43-3",
+      "note": null,
+      "sha256": "4cebb44aa01a2dfc75eae5b5758ac73f353778e1391e55726264fabf06944a23",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgpg-error/1.43-3/libgpg-error_1.43-3.dsc",
+      "version": "libgpg-error_1.43-3"
+    },
+    {
+      "bytes": 999006,
+      "file": "libgpg-error_1.43.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:libgpg-error_1.43-3",
+      "note": null,
+      "sha256": "a9ab83ca7acc442a5bd846a75b920285ff79bdb4e3d34aa382be88ed2c3aebaf",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgpg-error/1.43-3/libgpg-error_1.43.orig.tar.bz2",
+      "version": "libgpg-error_1.43-3"
+    },
+    {
+      "bytes": 238,
+      "file": "libgpg-error_1.43.orig.tar.bz2.asc",
+      "kind": "source",
+      "name": "ubuntu:libgpg-error_1.43-3",
+      "note": null,
+      "sha256": "6f1f0354aee0abc946d7f0e604fa69d5826a312baabcc0bb4fad4f97899cfa80",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgpg-error/1.43-3/libgpg-error_1.43.orig.tar.bz2.asc",
+      "version": "libgpg-error_1.43-3"
+    },
+    {
+      "bytes": 19264,
+      "file": "libgpg-error_1.43-3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libgpg-error_1.43-3",
+      "note": null,
+      "sha256": "d9d4efa45fc8d58152cbfa3bbaa68ed1977d8c56b7d59a579ef4feb4ffe7ec83",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libgpg-error/1.43-3/libgpg-error_1.43-3.debian.tar.xz",
+      "version": "libgpg-error_1.43-3"
+    },
+    {
+      "bytes": 2169556,
+      "file": "libidn2_2.3.2.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libidn2_2.3.2-2build1",
+      "note": null,
+      "sha256": "76940cd4e778e8093579a9d195b25fff5e936e9dc6242068528b437a76764f91",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libidn2/2.3.2-2build1/libidn2_2.3.2.orig.tar.gz",
+      "version": "libidn2_2.3.2-2build1"
+    },
+    {
+      "bytes": 488,
+      "file": "libidn2_2.3.2.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:libidn2_2.3.2-2build1",
+      "note": null,
+      "sha256": "3d533d0b18e031e90fbee0e552e1a034ef0b5bb11298019f0b99c0c85132ff9a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libidn2/2.3.2-2build1/libidn2_2.3.2.orig.tar.gz.asc",
+      "version": "libidn2_2.3.2-2build1"
+    },
+    {
+      "bytes": 15972,
+      "file": "libidn2_2.3.2-2build1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libidn2_2.3.2-2build1",
+      "note": null,
+      "sha256": "4111fae48e55185111ea05a70618114aa6c76f440d384f5985008c0cab3a9132",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libidn2/2.3.2-2build1/libidn2_2.3.2-2build1.debian.tar.xz",
+      "version": "libidn2_2.3.2-2build1"
+    },
+    {
+      "bytes": 2655,
+      "file": "libidn2_2.3.2-2build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libidn2_2.3.2-2build1",
+      "note": null,
+      "sha256": "b163760eee669b374571286b920e90a9647b436af745192b7d7ac9c87f9c3f47",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libidn2/2.3.2-2build1/libidn2_2.3.2-2build1.dsc",
+      "version": "libidn2_2.3.2-2build1"
+    },
+    {
+      "bytes": 2257645,
+      "file": "libjpeg-turbo_2.1.2.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libjpeg-turbo_2.1.2-0ubuntu1",
+      "note": null,
+      "sha256": "e7fdc8a255c45bc8fbd9aa11c1a49c23092fcd7379296aeaeb14d3343a3d1bed",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libjpeg-turbo/2.1.2-0ubuntu1/libjpeg-turbo_2.1.2.orig.tar.gz",
+      "version": "libjpeg-turbo_2.1.2-0ubuntu1"
+    },
+    {
+      "bytes": 17240,
+      "file": "libjpeg-turbo_2.1.2-0ubuntu1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libjpeg-turbo_2.1.2-0ubuntu1",
+      "note": null,
+      "sha256": "1cdfbd71818526459bf73ffe42bd0e4927f75681384c87ec01569fdcb1bf2529",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libjpeg-turbo/2.1.2-0ubuntu1/libjpeg-turbo_2.1.2-0ubuntu1.debian.tar.xz",
+      "version": "libjpeg-turbo_2.1.2-0ubuntu1"
+    },
+    {
+      "bytes": 1690,
+      "file": "libjpeg-turbo_2.1.2-0ubuntu1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libjpeg-turbo_2.1.2-0ubuntu1",
+      "note": null,
+      "sha256": "c351c2dbc18346c95ad473d58452cd73ae1e8401c5e8f627e0ab3611bd89bf3c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libjpeg-turbo/2.1.2-0ubuntu1/libjpeg-turbo_2.1.2-0ubuntu1.dsc",
+      "version": "libjpeg-turbo_2.1.2-0ubuntu1"
+    },
+    {
+      "bytes": 264472,
+      "file": "libmd_1.0.4.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libmd_1.0.4-1build1",
+      "note": null,
+      "sha256": "f51c921042e34beddeded4b75557656559cf5b1f2448033b4c1eec11c07e530f",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libmd/1.0.4-1build1/libmd_1.0.4.orig.tar.xz",
+      "version": "libmd_1.0.4-1build1"
+    },
+    {
+      "bytes": 833,
+      "file": "libmd_1.0.4.orig.tar.xz.asc",
+      "kind": "source",
+      "name": "ubuntu:libmd_1.0.4-1build1",
+      "note": null,
+      "sha256": "32deebe1cfab127ee69a3e8c8caf439e459b7cdcdd7535fe021cb485adc14057",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libmd/1.0.4-1build1/libmd_1.0.4.orig.tar.xz.asc",
+      "version": "libmd_1.0.4-1build1"
+    },
+    {
+      "bytes": 10264,
+      "file": "libmd_1.0.4-1build1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libmd_1.0.4-1build1",
+      "note": null,
+      "sha256": "ea7327ee6adee8ddd1f3b1d6c1780f05acff01666199cecf4342a2a05a7a443e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libmd/1.0.4-1build1/libmd_1.0.4-1build1.debian.tar.xz",
+      "version": "libmd_1.0.4-1build1"
+    },
+    {
+      "bytes": 2380,
+      "file": "libmd_1.0.4-1build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libmd_1.0.4-1build1",
+      "note": null,
+      "sha256": "0f282b79cd8eac2910677fd1f38a5baa5740df50b4e1da0922d35a6726e88e74",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libmd/1.0.4-1build1/libmd_1.0.4-1build1.dsc",
+      "version": "libmd_1.0.4-1build1"
+    },
+    {
+      "bytes": 2377,
+      "file": "libpng1.6_1.6.37-3ubuntu0.7.dsc",
+      "kind": "source",
+      "name": "ubuntu:libpng1.6_1.6.37-3ubuntu0.7",
+      "note": null,
+      "sha256": "99d52ac4ad74f8b5f61964bc2d50e287db814862727da2b396654e7197201368",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libpng1.6/1.6.37-3ubuntu0.7/libpng1.6_1.6.37-3ubuntu0.7.dsc",
+      "version": "libpng1.6_1.6.37-3ubuntu0.7"
+    },
+    {
+      "bytes": 52872,
+      "file": "libpng1.6_1.6.37-3ubuntu0.7.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libpng1.6_1.6.37-3ubuntu0.7",
+      "note": null,
+      "sha256": "f92774b9bd5037b7e40755ee96223abc3244c64f8de09d66430dddc60e6e5f45",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libpng1.6/1.6.37-3ubuntu0.7/libpng1.6_1.6.37-3ubuntu0.7.debian.tar.xz",
+      "version": "libpng1.6_1.6.37-3ubuntu0.7"
+    },
+    {
+      "bytes": 1508805,
+      "file": "libpng1.6_1.6.37.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libpng1.6_1.6.37-3ubuntu0.7",
+      "note": null,
+      "sha256": "ca74a0dace179a8422187671aee97dd3892b53e168627145271cad5b5ac81307",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libpng1.6/1.6.37-3ubuntu0.7/libpng1.6_1.6.37.orig.tar.gz",
+      "version": "libpng1.6_1.6.37-3ubuntu0.7"
+    },
+    {
+      "bytes": 206826,
+      "file": "libselinux_3.3.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libselinux_3.3-1build2",
+      "note": null,
+      "sha256": "acfdee27633d2496508c28727c3d41d3748076f66d42fccde2e6b9f3463a7057",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libselinux/3.3-1build2/libselinux_3.3.orig.tar.gz",
+      "version": "libselinux_3.3-1build2"
+    },
+    {
+      "bytes": 24052,
+      "file": "libselinux_3.3-1build2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libselinux_3.3-1build2",
+      "note": null,
+      "sha256": "ccb8550d4cbb6ec9be4febdba0cc7f7d2d82f92eeffe0606e198f560cebd71e6",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libselinux/3.3-1build2/libselinux_3.3-1build2.debian.tar.xz",
+      "version": "libselinux_3.3-1build2"
+    },
+    {
+      "bytes": 2644,
+      "file": "libselinux_3.3-1build2.dsc",
+      "kind": "source",
+      "name": "ubuntu:libselinux_3.3-1build2",
+      "note": null,
+      "sha256": "a96392937f548874b80115e444e857f72257dedc6b6d66aa16657d301e9a621a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libselinux/3.3-1build2/libselinux_3.3-1build2.dsc",
+      "version": "libselinux_3.3-1build2"
+    },
+    {
+      "bytes": 2777,
+      "file": "libtasn1-6_4.18.0-4ubuntu0.2.dsc",
+      "kind": "source",
+      "name": "ubuntu:libtasn1-6_4.18.0-4ubuntu0.2",
+      "note": null,
+      "sha256": "959cc5799f608a5ddc7aba7fcc765588b5dc82c7d987bd17a4274222a5171d41",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libtasn1-6/4.18.0-4ubuntu0.2/libtasn1-6_4.18.0-4ubuntu0.2.dsc",
+      "version": "libtasn1-6_4.18.0-4ubuntu0.2"
+    },
+    {
+      "bytes": 25324,
+      "file": "libtasn1-6_4.18.0-4ubuntu0.2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libtasn1-6_4.18.0-4ubuntu0.2",
+      "note": null,
+      "sha256": "450340a2e588e4fcbfcbf2eece3c516a3fc25f6606e0fa341155326ab72137a0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libtasn1-6/4.18.0-4ubuntu0.2/libtasn1-6_4.18.0-4ubuntu0.2.debian.tar.xz",
+      "version": "libtasn1-6_4.18.0-4ubuntu0.2"
+    },
+    {
+      "bytes": 228,
+      "file": "libtasn1-6_4.18.0.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:libtasn1-6_4.18.0-4ubuntu0.2",
+      "note": null,
+      "sha256": "68edccaf988071e0c0154495e82be0b783553a49762381435accc79f2fdb463d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libtasn1-6/4.18.0-4ubuntu0.2/libtasn1-6_4.18.0.orig.tar.gz.asc",
+      "version": "libtasn1-6_4.18.0-4ubuntu0.2"
+    },
+    {
+      "bytes": 1724441,
+      "file": "libtasn1-6_4.18.0.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libtasn1-6_4.18.0-4ubuntu0.2",
+      "note": null,
+      "sha256": "4365c154953563d64c67a024b607d1ee75c6db76e0d0f65709ea80a334cd1898",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libtasn1-6/4.18.0-4ubuntu0.2/libtasn1-6_4.18.0.orig.tar.gz",
+      "version": "libtasn1-6_4.18.0-4ubuntu0.2"
+    },
+    {
+      "bytes": 2457,
+      "file": "libthai_0.1.29-1build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libthai_0.1.29-1build1",
+      "note": null,
+      "sha256": "1f021fa685c211d68aa2dc8b568d045480ebb40b5ca5b52181ab50000c01cfe3",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libthai/0.1.29-1build1/libthai_0.1.29-1build1.dsc",
+      "version": "libthai_0.1.29-1build1"
+    },
+    {
+      "bytes": 12676,
+      "file": "libthai_0.1.29-1build1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libthai_0.1.29-1build1",
+      "note": null,
+      "sha256": "6aede1220d716f4291b8e9ee60383b4ff3c09c2abe17982443d977c557426866",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libthai/0.1.29-1build1/libthai_0.1.29-1build1.debian.tar.xz",
+      "version": "libthai_0.1.29-1build1"
+    },
+    {
+      "bytes": 417728,
+      "file": "libthai_0.1.29.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libthai_0.1.29-1build1",
+      "note": null,
+      "sha256": "fc80cc7dcb50e11302b417cebd24f2d30a8b987292e77e003267b9100d0f4bcd",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libthai/0.1.29-1build1/libthai_0.1.29.orig.tar.xz",
+      "version": "libthai_0.1.29-1build1"
+    },
+    {
+      "bytes": 1928,
+      "file": "libunistring_1.0-1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libunistring_1.0-1",
+      "note": null,
+      "sha256": "d93859cde749a30f55404ea1ef0ed4f02e58d2475a7c7e088b264d4df0626061",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libunistring/1.0-1/libunistring_1.0-1.dsc",
+      "version": "libunistring_1.0-1"
+    },
+    {
+      "bytes": 2367800,
+      "file": "libunistring_1.0.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libunistring_1.0-1",
+      "note": null,
+      "sha256": "5bab55b49f75d77ed26b257997e919b693f29fd4a1bc22e0e6e024c246c72741",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libunistring/1.0-1/libunistring_1.0.orig.tar.xz",
+      "version": "libunistring_1.0-1"
+    },
+    {
+      "bytes": 42004,
+      "file": "libunistring_1.0-1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libunistring_1.0-1",
+      "note": null,
+      "sha256": "7cf35dfd1de973ee3944930d215750c7de27ececd91616ad129ac5a238b1538f",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libunistring/1.0-1/libunistring_1.0-1.debian.tar.xz",
+      "version": "libunistring_1.0-1"
+    },
+    {
+      "bytes": 2349,
+      "file": "libx11_1.7.5-1ubuntu0.4.dsc",
+      "kind": "source",
+      "name": "ubuntu:libx11_2:1.7.5-1ubuntu0.4",
+      "note": null,
+      "sha256": "8565b89dbdb083fe62a544ac9475ab33dfe83724989d2254d64ee6706fc37aea",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libx11/2:1.7.5-1ubuntu0.4/libx11_1.7.5-1ubuntu0.4.dsc",
+      "version": "libx11_2:1.7.5-1ubuntu0.4"
+    },
+    {
+      "bytes": 102864,
+      "file": "libx11_1.7.5-1ubuntu0.4.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libx11_2:1.7.5-1ubuntu0.4",
+      "note": null,
+      "sha256": "e7c2bdf52da7c84dd46f6532584dcaf2dda62354409e49fbfe502adc9f3f7491",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libx11/2:1.7.5-1ubuntu0.4/libx11_1.7.5-1ubuntu0.4.diff.gz",
+      "version": "libx11_2:1.7.5-1ubuntu0.4"
+    },
+    {
+      "bytes": 358,
+      "file": "libx11_1.7.5.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:libx11_2:1.7.5-1ubuntu0.4",
+      "note": null,
+      "sha256": "8332442d1675118c43e341630bf62aeb93972254d139bb865cc047006ca7e8d6",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libx11/2:1.7.5-1ubuntu0.4/libx11_1.7.5.orig.tar.gz.asc",
+      "version": "libx11_2:1.7.5-1ubuntu0.4"
+    },
+    {
+      "bytes": 3170022,
+      "file": "libx11_1.7.5.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libx11_2:1.7.5-1ubuntu0.4",
+      "note": null,
+      "sha256": "78992abcd2bfdebe657699203ad8914e7ae77025175460e04a1045387192a978",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libx11/2:1.7.5-1ubuntu0.4/libx11_1.7.5.orig.tar.gz",
+      "version": "libx11_2:1.7.5-1ubuntu0.4"
+    },
+    {
+      "bytes": 2315,
+      "file": "libxau_1.0.9-1build5.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxau_1:1.0.9-1build5",
+      "note": null,
+      "sha256": "1e6f3b420f37e6ed492c009741f784c35ef1c19f11f8c83b4777b2590382b721",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxau/1:1.0.9-1build5/libxau_1.0.9-1build5.dsc",
+      "version": "libxau_1:1.0.9-1build5"
+    },
+    {
+      "bytes": 10579,
+      "file": "libxau_1.0.9-1build5.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxau_1:1.0.9-1build5",
+      "note": null,
+      "sha256": "ba43fc817c512c7105865233f31d8ab08a95e71ce3b2b8a5c2568fc0129ab6de",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxau/1:1.0.9-1build5/libxau_1.0.9-1build5.diff.gz",
+      "version": "libxau_1:1.0.9-1build5"
+    },
+    {
+      "bytes": 801,
+      "file": "libxau_1.0.9.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:libxau_1:1.0.9-1build5",
+      "note": null,
+      "sha256": "af6104aaf3c5ede529e381237dd60f49640ec96593a84502fa493b86582b2f04",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxau/1:1.0.9-1build5/libxau_1.0.9.orig.tar.gz.asc",
+      "version": "libxau_1:1.0.9-1build5"
+    },
+    {
+      "bytes": 394068,
+      "file": "libxau_1.0.9.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxau_1:1.0.9-1build5",
+      "note": null,
+      "sha256": "1f123d8304b082ad63a9e89376400a3b1d4c29e67e3ea07b3f659cccca690eea",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxau/1:1.0.9-1build5/libxau_1.0.9.orig.tar.gz",
+      "version": "libxau_1:1.0.9-1build5"
+    },
+    {
+      "bytes": 5480,
+      "file": "libxcb_1.14-3ubuntu3.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxcb_1.14-3ubuntu3",
+      "note": null,
+      "sha256": "538fe3e3534dd129de3c980a675eb25ae3b7575d6e2a3606ef3944f73fa477ba",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcb/1.14-3ubuntu3/libxcb_1.14-3ubuntu3.dsc",
+      "version": "libxcb_1.14-3ubuntu3"
+    },
+    {
+      "bytes": 27588,
+      "file": "libxcb_1.14-3ubuntu3.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxcb_1.14-3ubuntu3",
+      "note": null,
+      "sha256": "f5940b0b91c3fef855b959eadbe5111dc812f59af96adcaa70141ea6b58860d0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcb/1.14-3ubuntu3/libxcb_1.14-3ubuntu3.diff.gz",
+      "version": "libxcb_1.14-3ubuntu3"
+    },
+    {
+      "bytes": 640322,
+      "file": "libxcb_1.14.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxcb_1.14-3ubuntu3",
+      "note": null,
+      "sha256": "2c7fcddd1da34d9b238c9caeda20d3bd7486456fc50b3cc6567185dbd5b0ad02",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcb/1.14-3ubuntu3/libxcb_1.14.orig.tar.gz",
+      "version": "libxcb_1.14-3ubuntu3"
+    },
+    {
+      "bytes": 2199,
+      "file": "libxcomposite_0.4.5-1build2.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxcomposite_1:0.4.5-1build2",
+      "note": null,
+      "sha256": "3aa647834419c277fd6ed4f147bd7d45dd27d5792cc873d7e3e24e001c6bc454",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcomposite/1:0.4.5-1build2/libxcomposite_0.4.5-1build2.dsc",
+      "version": "libxcomposite_1:0.4.5-1build2"
+    },
+    {
+      "bytes": 7794,
+      "file": "libxcomposite_0.4.5-1build2.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxcomposite_1:0.4.5-1build2",
+      "note": null,
+      "sha256": "c3a90d54f1ae62644620f4ca627d2eff8aae873a742fc03703b23cbdcc72b11f",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcomposite/1:0.4.5-1build2/libxcomposite_0.4.5-1build2.diff.gz",
+      "version": "libxcomposite_1:0.4.5-1build2"
+    },
+    {
+      "bytes": 386513,
+      "file": "libxcomposite_0.4.5.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxcomposite_1:0.4.5-1build2",
+      "note": null,
+      "sha256": "581c7fc0f41a99af38b1c36b9be64bc13ef3f60091cd3f01105bbc7c01617d6c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcomposite/1:0.4.5-1build2/libxcomposite_0.4.5.orig.tar.gz",
+      "version": "libxcomposite_1:0.4.5-1build2"
+    },
+    {
+      "bytes": 2392,
+      "file": "libxcursor_1.2.0-2build4.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxcursor_1:1.2.0-2build4",
+      "note": null,
+      "sha256": "7b6034e80109880f1b9e4cd8f2500b896362ef9e7dfc42a4bd79888e5a73628a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcursor/1:1.2.0-2build4/libxcursor_1.2.0-2build4.dsc",
+      "version": "libxcursor_1:1.2.0-2build4"
+    },
+    {
+      "bytes": 9232,
+      "file": "libxcursor_1.2.0-2build4.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libxcursor_1:1.2.0-2build4",
+      "note": null,
+      "sha256": "43324de8c31d3171dddff36d9851ed98a6855207edd3a42669db0c3222c6cb39",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcursor/1:1.2.0-2build4/libxcursor_1.2.0-2build4.debian.tar.xz",
+      "version": "libxcursor_1:1.2.0-2build4"
+    },
+    {
+      "bytes": 408135,
+      "file": "libxcursor_1.2.0.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxcursor_1:1.2.0-2build4",
+      "note": null,
+      "sha256": "ad5b2574fccaa4c3fa67b9874fbed863d29ad230c784e9a08b20692418f6a1f8",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxcursor/1:1.2.0-2build4/libxcursor_1.2.0.orig.tar.gz",
+      "version": "libxcursor_1:1.2.0-2build4"
+    },
+    {
+      "bytes": 2256,
+      "file": "libxdamage_1.1.5-2build2.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxdamage_1:1.1.5-2build2",
+      "note": null,
+      "sha256": "ad5237d02bbec58be007d1a9b4f771bec5694ccbdf8801941299c05d9ab9d2f5",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxdamage/1:1.1.5-2build2/libxdamage_1.1.5-2build2.dsc",
+      "version": "libxdamage_1:1.1.5-2build2"
+    },
+    {
+      "bytes": 6144,
+      "file": "libxdamage_1.1.5-2build2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libxdamage_1:1.1.5-2build2",
+      "note": null,
+      "sha256": "0f4579b386bb5a4f7a06ac5fad32ca1542d5dc064af2fedc666c21aa5a2a7b83",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxdamage/1:1.1.5-2build2/libxdamage_1.1.5-2build2.debian.tar.xz",
+      "version": "libxdamage_1:1.1.5-2build2"
+    },
+    {
+      "bytes": 370586,
+      "file": "libxdamage_1.1.5.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxdamage_1:1.1.5-2build2",
+      "note": null,
+      "sha256": "630ec53abb8c2d6dac5cd9f06c1f73ffb4a3167f8118fdebd77afd639dbc2019",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxdamage/1:1.1.5-2build2/libxdamage_1.1.5.orig.tar.gz",
+      "version": "libxdamage_1:1.1.5-2build2"
+    },
+    {
+      "bytes": 2252,
+      "file": "libxdmcp_1.1.3-0ubuntu5.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxdmcp_1:1.1.3-0ubuntu5",
+      "note": null,
+      "sha256": "205a1610391cf9e2985e5e2080dab36a5471e585eb91970ec1d8c09008e1e5e5",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxdmcp/1:1.1.3-0ubuntu5/libxdmcp_1.1.3-0ubuntu5.dsc",
+      "version": "libxdmcp_1:1.1.3-0ubuntu5"
+    },
+    {
+      "bytes": 18395,
+      "file": "libxdmcp_1.1.3-0ubuntu5.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxdmcp_1:1.1.3-0ubuntu5",
+      "note": null,
+      "sha256": "5848aea7f2f5abbb50d9841557b07d5fde4500238cf3e316142259656dd1bd7b",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxdmcp/1:1.1.3-0ubuntu5/libxdmcp_1.1.3-0ubuntu5.diff.gz",
+      "version": "libxdmcp_1:1.1.3-0ubuntu5"
+    },
+    {
+      "bytes": 429668,
+      "file": "libxdmcp_1.1.3.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxdmcp_1:1.1.3-0ubuntu5",
+      "note": null,
+      "sha256": "2ef9653d32e09d1bf1b837d0e0311024979653fe755ad3aaada8db1aa6ea180c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxdmcp/1:1.1.3-0ubuntu5/libxdmcp_1.1.3.orig.tar.gz",
+      "version": "libxdmcp_1:1.1.3-0ubuntu5"
+    },
+    {
+      "bytes": 2250,
+      "file": "libxext_1.3.4-1build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxext_2:1.3.4-1build1",
+      "note": null,
+      "sha256": "0b0d4395cbcbbdb5aa60677524b9dea7fbcbb9b32d03a892095a1c666fd65f4a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxext/2:1.3.4-1build1/libxext_1.3.4-1build1.dsc",
+      "version": "libxext_2:1.3.4-1build1"
+    },
+    {
+      "bytes": 12588,
+      "file": "libxext_1.3.4-1build1.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxext_2:1.3.4-1build1",
+      "note": null,
+      "sha256": "0efc1abad5202351c44a469fc91cc0eea3836e302884d9f6b2a29436f94d7498",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxext/2:1.3.4-1build1/libxext_1.3.4-1build1.diff.gz",
+      "version": "libxext_2:1.3.4-1build1"
+    },
+    {
+      "bytes": 494434,
+      "file": "libxext_1.3.4.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxext_2:1.3.4-1build1",
+      "note": null,
+      "sha256": "8ef0789f282826661ff40a8eef22430378516ac580167da35cc948be9041aac1",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxext/2:1.3.4-1build1/libxext_1.3.4.orig.tar.gz",
+      "version": "libxext_2:1.3.4-1build1"
+    },
+    {
+      "bytes": 2264,
+      "file": "libxfixes_6.0.0-1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxfixes_1:6.0.0-1",
+      "note": null,
+      "sha256": "b202607cf98f13ed33c7c5e23f9b82aa010527114a70488e283710b875741edf",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxfixes/1:6.0.0-1/libxfixes_6.0.0-1.dsc",
+      "version": "libxfixes_1:6.0.0-1"
+    },
+    {
+      "bytes": 387810,
+      "file": "libxfixes_6.0.0.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxfixes_1:6.0.0-1",
+      "note": null,
+      "sha256": "82045da5625350838390c9440598b90d69c882c324ca92f73af9f0e992cb57c7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxfixes/1:6.0.0-1/libxfixes_6.0.0.orig.tar.gz",
+      "version": "libxfixes_1:6.0.0-1"
+    },
+    {
+      "bytes": 195,
+      "file": "libxfixes_6.0.0.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:libxfixes_1:6.0.0-1",
+      "note": null,
+      "sha256": "e5598f42aa32140936c7772ab4d99ba35ecb859c29adc1703bb51440e7a54928",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxfixes/1:6.0.0-1/libxfixes_6.0.0.orig.tar.gz.asc",
+      "version": "libxfixes_1:6.0.0-1"
+    },
+    {
+      "bytes": 16999,
+      "file": "libxfixes_6.0.0-1.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxfixes_1:6.0.0-1",
+      "note": null,
+      "sha256": "55ea9197ba72c33de59a396437f24b8ccdf387832fad200768931f6276dccb93",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxfixes/1:6.0.0-1/libxfixes_6.0.0-1.diff.gz",
+      "version": "libxfixes_1:6.0.0-1"
+    },
+    {
+      "bytes": 2242,
+      "file": "libxi_1.8-1build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxi_2:1.8-1build1",
+      "note": null,
+      "sha256": "cbb116fd7fda21a2d4db06403676bbf88947d5be309399f7cf088e76621b10b4",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxi/2:1.8-1build1/libxi_1.8-1build1.dsc",
+      "version": "libxi_2:1.8-1build1"
+    },
+    {
+      "bytes": 24823,
+      "file": "libxi_1.8-1build1.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxi_2:1.8-1build1",
+      "note": null,
+      "sha256": "6708c98f19156f763bdd99e73364a12aa414d7b1477272ed7033841b3551e554",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxi/2:1.8-1build1/libxi_1.8-1build1.diff.gz",
+      "version": "libxi_2:1.8-1build1"
+    },
+    {
+      "bytes": 616977,
+      "file": "libxi_1.8.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxi_2:1.8-1build1",
+      "note": null,
+      "sha256": "c80fd200a1190e4406bb4cc6958839d9651638cb47fa546a595d4bebcd3b9e2d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxi/2:1.8-1build1/libxi_1.8.orig.tar.gz",
+      "version": "libxi_2:1.8-1build1"
+    },
+    {
+      "bytes": 2088,
+      "file": "libxinerama_1.1.4-3.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxinerama_2:1.1.4-3",
+      "note": null,
+      "sha256": "5fe68b94d4cbc4be1ba37bbf676fbece3920b2c59a33cc94c4e4c7a140958edd",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxinerama/2:1.1.4-3/libxinerama_1.1.4-3.dsc",
+      "version": "libxinerama_2:1.1.4-3"
+    },
+    {
+      "bytes": 380740,
+      "file": "libxinerama_1.1.4.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxinerama_2:1.1.4-3",
+      "note": null,
+      "sha256": "64de45e18cc76b8e703cb09b3c9d28bd16e3d05d5cd99f2d630de2d62c3acc18",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxinerama/2:1.1.4-3/libxinerama_1.1.4.orig.tar.gz",
+      "version": "libxinerama_2:1.1.4-3"
+    },
+    {
+      "bytes": 8436,
+      "file": "libxinerama_1.1.4-3.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxinerama_2:1.1.4-3",
+      "note": null,
+      "sha256": "127f99cde4e62d8ed0c11acda9491926df693b31bed4f56fc1cba39c461444d9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxinerama/2:1.1.4-3/libxinerama_1.1.4-3.diff.gz",
+      "version": "libxinerama_2:1.1.4-3"
+    },
+    {
+      "bytes": 2734,
+      "file": "libxkbcommon_1.4.0-1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxkbcommon_1.4.0-1",
+      "note": null,
+      "sha256": "d3bf81d0ca57558675733bb6f0388592ef61705de204c91a6c0056fe673523b2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxkbcommon/1.4.0-1/libxkbcommon_1.4.0-1.dsc",
+      "version": "libxkbcommon_1.4.0-1"
+    },
+    {
+      "bytes": 471948,
+      "file": "libxkbcommon_1.4.0.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libxkbcommon_1.4.0-1",
+      "note": null,
+      "sha256": "106cec5263f9100a7e79b5f7220f889bc78e7d7ffc55d2b6fdb1efefb8024031",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxkbcommon/1.4.0-1/libxkbcommon_1.4.0.orig.tar.xz",
+      "version": "libxkbcommon_1.4.0-1"
+    },
+    {
+      "bytes": 8028,
+      "file": "libxkbcommon_1.4.0-1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libxkbcommon_1.4.0-1",
+      "note": null,
+      "sha256": "401ae56e00755d1159c8dd0495dabdf39fa1108fa0cfb234f033f3452bf0c5d4",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxkbcommon/1.4.0-1/libxkbcommon_1.4.0-1.debian.tar.xz",
+      "version": "libxkbcommon_1.4.0-1"
+    },
+    {
+      "bytes": 2411,
+      "file": "libxkbfile_1.1.0-1build3.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxkbfile_1:1.1.0-1build3",
+      "note": null,
+      "sha256": "6fb7755c3c8a0c1c9033e28b46915b1fe9c9de1670f3db94cdbc30af012050e4",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxkbfile/1:1.1.0-1build3/libxkbfile_1.1.0-1build3.dsc",
+      "version": "libxkbfile_1:1.1.0-1build3"
+    },
+    {
+      "bytes": 10311,
+      "file": "libxkbfile_1.1.0-1build3.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxkbfile_1:1.1.0-1build3",
+      "note": null,
+      "sha256": "6f287bfe80eb79b42bdf75bc259e206e642ddaf5a98aea01f71b220dbcff26ff",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxkbfile/1:1.1.0-1build3/libxkbfile_1.1.0-1build3.diff.gz",
+      "version": "libxkbfile_1:1.1.0-1build3"
+    },
+    {
+      "bytes": 801,
+      "file": "libxkbfile_1.1.0.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:libxkbfile_1:1.1.0-1build3",
+      "note": null,
+      "sha256": "998e90cb1bf5cff3386ea0c1715370fd9753c4bfdb49e81c9131de6ba60aa1fa",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxkbfile/1:1.1.0-1build3/libxkbfile_1.1.0.orig.tar.gz.asc",
+      "version": "libxkbfile_1:1.1.0-1build3"
+    },
+    {
+      "bytes": 441021,
+      "file": "libxkbfile_1.1.0.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxkbfile_1:1.1.0-1build3",
+      "note": null,
+      "sha256": "2a92adda3992aa7cbad758ef0b8dfeaedebb49338b772c64ddf369d78c1c51d3",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxkbfile/1:1.1.0-1build3/libxkbfile_1.1.0.orig.tar.gz",
+      "version": "libxkbfile_1:1.1.0-1build3"
+    },
+    {
+      "bytes": 2148,
+      "file": "libxrandr_1.5.2-1build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxrandr_2:1.5.2-1build1",
+      "note": null,
+      "sha256": "835d990e0f8adbdcf4ec8850133fb6c863e5123c91f90b9bcb1e266c8f0ed1a0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxrandr/2:1.5.2-1build1/libxrandr_1.5.2-1build1.dsc",
+      "version": "libxrandr_2:1.5.2-1build1"
+    },
+    {
+      "bytes": 17189,
+      "file": "libxrandr_1.5.2-1build1.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxrandr_2:1.5.2-1build1",
+      "note": null,
+      "sha256": "4f25a8166fd07cba3ff4af6b6f65f7afedaa45ab926bbd7319044e4d5cd7a791",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxrandr/2:1.5.2-1build1/libxrandr_1.5.2-1build1.diff.gz",
+      "version": "libxrandr_2:1.5.2-1build1"
+    },
+    {
+      "bytes": 411714,
+      "file": "libxrandr_1.5.2.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxrandr_2:1.5.2-1build1",
+      "note": null,
+      "sha256": "3f10813ab355e7a09f17e147d61b0ce090d898a5ea5b5519acd0ef68675dcf8e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxrandr/2:1.5.2-1build1/libxrandr_1.5.2.orig.tar.gz",
+      "version": "libxrandr_2:1.5.2-1build1"
+    },
+    {
+      "bytes": 2196,
+      "file": "libxrender_0.9.10-1build4.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxrender_1:0.9.10-1build4",
+      "note": null,
+      "sha256": "e93b6a2977502b02f6b616784dd9d4acb3686cfd2a2dbc54ad6545e0f1ffe152",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxrender/1:0.9.10-1build4/libxrender_0.9.10-1build4.dsc",
+      "version": "libxrender_1:0.9.10-1build4"
+    },
+    {
+      "bytes": 15809,
+      "file": "libxrender_0.9.10-1build4.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxrender_1:0.9.10-1build4",
+      "note": null,
+      "sha256": "b56ff0a20ca53f321a4f574d71efae04ff6be4efdf593af763b0872ac1ce3c85",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxrender/1:0.9.10-1build4/libxrender_0.9.10-1build4.diff.gz",
+      "version": "libxrender_1:0.9.10-1build4"
+    },
+    {
+      "bytes": 373717,
+      "file": "libxrender_0.9.10.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxrender_1:0.9.10-1build4",
+      "note": null,
+      "sha256": "770527cce42500790433df84ec3521e8bf095dfe5079454a92236494ab296adf",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxrender/1:0.9.10-1build4/libxrender_0.9.10.orig.tar.gz",
+      "version": "libxrender_1:0.9.10-1build4"
+    },
+    {
+      "bytes": 1777,
+      "file": "libxtst_1.2.3-1ubuntu0.22.04.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libxtst_2:1.2.3-1ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "52a2ae40cc68c8c6ba07b352a2d82deddace882a2a6f709b7e2cc67b027a57c9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxtst/2:1.2.3-1ubuntu0.22.04.1/libxtst_1.2.3-1ubuntu0.22.04.1.dsc",
+      "version": "libxtst_2:1.2.3-1ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 11378,
+      "file": "libxtst_1.2.3-1ubuntu0.22.04.1.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:libxtst_2:1.2.3-1ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "1c9a23f0e3f031dee9625dec0179e85abb894f666467797c70006b92c76171be",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxtst/2:1.2.3-1ubuntu0.22.04.1/libxtst_1.2.3-1ubuntu0.22.04.1.diff.gz",
+      "version": "libxtst_2:1.2.3-1ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 400197,
+      "file": "libxtst_1.2.3.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:libxtst_2:1.2.3-1ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "a0c83acce02d4923018c744662cb28eb0dbbc33b4adc027726879ccf68fbc2c2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libxtst/2:1.2.3-1ubuntu0.22.04.1/libxtst_1.2.3.orig.tar.gz",
+      "version": "libxtst_2:1.2.3-1ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 2398,
+      "file": "libzstd_1.4.8+dfsg-3build1.dsc",
+      "kind": "source",
+      "name": "ubuntu:libzstd_1.4.8+dfsg-3build1",
+      "note": null,
+      "sha256": "d4f80bb9278967f55a38c50c7e2bb8102328c7d2955bdcd9b7dedc70cd4a8c9e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libzstd/1.4.8+dfsg-3build1/libzstd_1.4.8+dfsg-3build1.dsc",
+      "version": "libzstd_1.4.8+dfsg-3build1"
+    },
+    {
+      "bytes": 12316,
+      "file": "libzstd_1.4.8+dfsg-3build1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libzstd_1.4.8+dfsg-3build1",
+      "note": null,
+      "sha256": "60d554776b4fbee2aa81eb9990cbe156636b1ec4e4213b73fd190057680241ba",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libzstd/1.4.8+dfsg-3build1/libzstd_1.4.8+dfsg-3build1.debian.tar.xz",
+      "version": "libzstd_1.4.8+dfsg-3build1"
+    },
+    {
+      "bytes": 1331996,
+      "file": "libzstd_1.4.8+dfsg.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:libzstd_1.4.8+dfsg-3build1",
+      "note": null,
+      "sha256": "1e8ce5c4880a6d5bd8d3186e4186607dd19b64fc98a3877fc13aeefd566d67c5",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/libzstd/1.4.8+dfsg-3build1/libzstd_1.4.8+dfsg.orig.tar.xz",
+      "version": "libzstd_1.4.8+dfsg-3build1"
+    },
+    {
+      "bytes": 2091,
+      "file": "lz4_1.9.3-2build2.dsc",
+      "kind": "source",
+      "name": "ubuntu:lz4_1.9.3-2build2",
+      "note": null,
+      "sha256": "24f317883fddecd5488241a836a951e83dbd7070b667e34eed4319d2090244a9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/lz4/1.9.3-2build2/lz4_1.9.3-2build2.dsc",
+      "version": "lz4_1.9.3-2build2"
+    },
+    {
+      "bytes": 14088,
+      "file": "lz4_1.9.3-2build2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:lz4_1.9.3-2build2",
+      "note": null,
+      "sha256": "46e79943d637f60be3a8c1e5edaba8890599e0fdcc2a58462e4eb194f1e56352",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/lz4/1.9.3-2build2/lz4_1.9.3-2build2.debian.tar.xz",
+      "version": "lz4_1.9.3-2build2"
+    },
+    {
+      "bytes": 320958,
+      "file": "lz4_1.9.3.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:lz4_1.9.3-2build2",
+      "note": null,
+      "sha256": "030644df4611007ff7dc962d981f390361e6c97a34e5cbc393ddfbe019ffe2c1",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/lz4/1.9.3-2build2/lz4_1.9.3.orig.tar.gz",
+      "version": "lz4_1.9.3-2build2"
+    },
+    {
+      "bytes": 5839,
+      "file": "mesa_23.2.1-1ubuntu3.1~22.04.4.dsc",
+      "kind": "source",
+      "name": "ubuntu:mesa_23.2.1-1ubuntu3.1~22.04.4",
+      "note": null,
+      "sha256": "b59a9239b335cf6096a799bb5aecf5d664762882f9ada30d79ed893dbda259df",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/mesa/23.2.1-1ubuntu3.1~22.04.4/mesa_23.2.1-1ubuntu3.1~22.04.4.dsc",
+      "version": "mesa_23.2.1-1ubuntu3.1~22.04.4"
+    },
+    {
+      "bytes": 230800,
+      "file": "mesa_23.2.1-1ubuntu3.1~22.04.4.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:mesa_23.2.1-1ubuntu3.1~22.04.4",
+      "note": null,
+      "sha256": "a870171e601fc9bf99751ce315bacf68a0d57fe4f386a22626111be5dac572c0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/mesa/23.2.1-1ubuntu3.1~22.04.4/mesa_23.2.1-1ubuntu3.1~22.04.4.diff.gz",
+      "version": "mesa_23.2.1-1ubuntu3.1~22.04.4"
+    },
+    {
+      "bytes": 30631591,
+      "file": "mesa_23.2.1.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:mesa_23.2.1-1ubuntu3.1~22.04.4",
+      "note": null,
+      "sha256": "c1458ab511b87d60644b2c46d67f7d9d5c0e3db691db6aae11762b1cc5b43ca0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/mesa/23.2.1-1ubuntu3.1~22.04.4/mesa_23.2.1.orig.tar.gz",
+      "version": "mesa_23.2.1-1ubuntu3.1~22.04.4"
+    },
+    {
+      "bytes": 4251,
+      "file": "ncurses_6.3-2ubuntu0.3.dsc",
+      "kind": "source",
+      "name": "ubuntu:ncurses_6.3-2ubuntu0.3",
+      "note": null,
+      "sha256": "a0a8bee662ca780de89b728f25d073eebb75ee2ec222698ac9c3f2c8b7c28ec5",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/ncurses/6.3-2ubuntu0.3/ncurses_6.3-2ubuntu0.3.dsc",
+      "version": "ncurses_6.3-2ubuntu0.3"
+    },
+    {
+      "bytes": 57172,
+      "file": "ncurses_6.3-2ubuntu0.3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:ncurses_6.3-2ubuntu0.3",
+      "note": null,
+      "sha256": "05dbb05d1001c90b8cd30f608f3efd15a77a14ca675ef9e23041d6ebc26c1942",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/ncurses/6.3-2ubuntu0.3/ncurses_6.3-2ubuntu0.3.debian.tar.xz",
+      "version": "ncurses_6.3-2ubuntu0.3"
+    },
+    {
+      "bytes": 729,
+      "file": "ncurses_6.3.orig.tar.gz.asc",
+      "kind": "source",
+      "name": "ubuntu:ncurses_6.3-2ubuntu0.3",
+      "note": null,
+      "sha256": "37b9e80c11fa02fbd8caf42ab9573427f54f2c7212eb4aeec9f455b5d79dee14",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/ncurses/6.3-2ubuntu0.3/ncurses_6.3.orig.tar.gz.asc",
+      "version": "ncurses_6.3-2ubuntu0.3"
+    },
+    {
+      "bytes": 3583550,
+      "file": "ncurses_6.3.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:ncurses_6.3-2ubuntu0.3",
+      "note": null,
+      "sha256": "97fc51ac2b085d4cde31ef4d2c3122c21abc217e9090a43a30fc5ec21684e059",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/ncurses/6.3-2ubuntu0.3/ncurses_6.3.orig.tar.gz",
+      "version": "ncurses_6.3-2ubuntu0.3"
+    },
+    {
+      "bytes": 2165,
+      "file": "nettle_3.7.3-1build2.dsc",
+      "kind": "source",
+      "name": "ubuntu:nettle_3.7.3-1build2",
+      "note": null,
+      "sha256": "46de1c6d01561bcf67922a8398f2aba038ce89be182644eec4227d7e14d998ee",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nettle/3.7.3-1build2/nettle_3.7.3-1build2.dsc",
+      "version": "nettle_3.7.3-1build2"
+    },
+    {
+      "bytes": 22100,
+      "file": "nettle_3.7.3-1build2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:nettle_3.7.3-1build2",
+      "note": null,
+      "sha256": "ee9dda53e8a7c14ec91c3655fa59d685aa21873d1f279f8deaba4581880eba69",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nettle/3.7.3-1build2/nettle_3.7.3-1build2.debian.tar.xz",
+      "version": "nettle_3.7.3-1build2"
+    },
+    {
+      "bytes": 2383985,
+      "file": "nettle_3.7.3.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:nettle_3.7.3-1build2",
+      "note": null,
+      "sha256": "661f5eb03f048a3b924c3a8ad2515d4068e40f67e774e8a26827658007e3bcf0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nettle/3.7.3-1build2/nettle_3.7.3.orig.tar.gz",
+      "version": "nettle_3.7.3-1build2"
+    },
+    {
+      "bytes": 2110,
+      "file": "nspr_4.35-0ubuntu0.22.04.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:nspr_2:4.35-0ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "5f08dc54402d4344c1645d065850d601dc63922358f5b5acafc35d57a42a7287",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nspr/2:4.35-0ubuntu0.22.04.1/nspr_4.35-0ubuntu0.22.04.1.dsc",
+      "version": "nspr_2:4.35-0ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 11384,
+      "file": "nspr_4.35-0ubuntu0.22.04.1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:nspr_2:4.35-0ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "ca95603d43cdef386939b16bcdeecc43084c484afd7a7fec0cbb76aef6115ab1",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nspr/2:4.35-0ubuntu0.22.04.1/nspr_4.35-0ubuntu0.22.04.1.debian.tar.xz",
+      "version": "nspr_2:4.35-0ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 1096974,
+      "file": "nspr_4.35.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:nspr_2:4.35-0ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "7ea3297ea5969b5d25a5dd8d47f2443cda88e9ee746301f6e1e1426f8a6abc8f",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nspr/2:4.35-0ubuntu0.22.04.1/nspr_4.35.orig.tar.gz",
+      "version": "nspr_2:4.35-0ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 2294,
+      "file": "nss_3.98-0ubuntu0.22.04.5.dsc",
+      "kind": "source",
+      "name": "ubuntu:nss_2:3.98-0ubuntu0.22.04.5",
+      "note": null,
+      "sha256": "0eb8720621d107ae7f11ab5b7e32313a92e5c3cb5842439b5ae83d48491d147d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nss/2:3.98-0ubuntu0.22.04.5/nss_3.98-0ubuntu0.22.04.5.dsc",
+      "version": "nss_2:3.98-0ubuntu0.22.04.5"
+    },
+    {
+      "bytes": 30164,
+      "file": "nss_3.98-0ubuntu0.22.04.5.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:nss_2:3.98-0ubuntu0.22.04.5",
+      "note": null,
+      "sha256": "478a701d771141d8529232cea72344e1d47a37c875a998e8544ae26fc8cc3b78",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nss/2:3.98-0ubuntu0.22.04.5/nss_3.98-0ubuntu0.22.04.5.debian.tar.xz",
+      "version": "nss_2:3.98-0ubuntu0.22.04.5"
+    },
+    {
+      "bytes": 76685475,
+      "file": "nss_3.98.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:nss_2:3.98-0ubuntu0.22.04.5",
+      "note": null,
+      "sha256": "f549cc33d35c0601674bfacf7c6ad683c187595eb4125b423238d3e9aa4209ce",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/nss/2:3.98-0ubuntu0.22.04.5/nss_3.98.orig.tar.gz",
+      "version": "nss_2:3.98-0ubuntu0.22.04.5"
+    },
+    {
+      "bytes": 2486,
+      "file": "openssl_3.0.2-0ubuntu1.30.dsc",
+      "kind": "source",
+      "name": "ubuntu:openssl_3.0.2-0ubuntu1.30",
+      "note": null,
+      "sha256": "22b1c851fb5c229b27f497b1867e994ab2ad2f90d288d2dc3bd6eef15f6307bc",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/openssl/3.0.2-0ubuntu1.30/openssl_3.0.2-0ubuntu1.30.dsc",
+      "version": "openssl_3.0.2-0ubuntu1.30"
+    },
+    {
+      "bytes": 319128,
+      "file": "openssl_3.0.2-0ubuntu1.30.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:openssl_3.0.2-0ubuntu1.30",
+      "note": null,
+      "sha256": "b2f4d75e1eba248397d8e4f4a029195ec3bb0e971b2e975594115a1c79b31c47",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/openssl/3.0.2-0ubuntu1.30/openssl_3.0.2-0ubuntu1.30.debian.tar.xz",
+      "version": "openssl_3.0.2-0ubuntu1.30"
+    },
+    {
+      "bytes": 15038141,
+      "file": "openssl_3.0.2.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:openssl_3.0.2-0ubuntu1.30",
+      "note": null,
+      "sha256": "98e91ccead4d4756ae3c9cde5e09191a8e586d9f4d50838e7ec09d6411dfdb63",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/openssl/3.0.2-0ubuntu1.30/openssl_3.0.2.orig.tar.gz",
+      "version": "openssl_3.0.2-0ubuntu1.30"
+    },
+    {
+      "bytes": 2616,
+      "file": "p11-kit_0.24.0-6ubuntu0.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:p11-kit_0.24.0-6ubuntu0.1",
+      "note": null,
+      "sha256": "768512830457908290e7e22a638f967ef2ae405f665b835700c0b4b4817fc72c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/p11-kit/0.24.0-6ubuntu0.1/p11-kit_0.24.0-6ubuntu0.1.dsc",
+      "version": "p11-kit_0.24.0-6ubuntu0.1"
+    },
+    {
+      "bytes": 26060,
+      "file": "p11-kit_0.24.0-6ubuntu0.1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:p11-kit_0.24.0-6ubuntu0.1",
+      "note": null,
+      "sha256": "674f0e3da6b2dea75dcd9c60022f8771972c0cb42b26783df9d2f35aa61d7100",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/p11-kit/0.24.0-6ubuntu0.1/p11-kit_0.24.0-6ubuntu0.1.debian.tar.xz",
+      "version": "p11-kit_0.24.0-6ubuntu0.1"
+    },
+    {
+      "bytes": 833,
+      "file": "p11-kit_0.24.0.orig.tar.xz.asc",
+      "kind": "source",
+      "name": "ubuntu:p11-kit_0.24.0-6ubuntu0.1",
+      "note": null,
+      "sha256": "f9996976ae08e48ac652d2aad3f0528a75f87eaa6c17cf076ec00e7ce2fbaeed",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/p11-kit/0.24.0-6ubuntu0.1/p11-kit_0.24.0.orig.tar.xz.asc",
+      "version": "p11-kit_0.24.0-6ubuntu0.1"
+    },
+    {
+      "bytes": 834392,
+      "file": "p11-kit_0.24.0.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:p11-kit_0.24.0-6ubuntu0.1",
+      "note": null,
+      "sha256": "81e6140584f635e4e956a1b93a32239acf3811ff5b2d3a5c6094e94e99d2c685",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/p11-kit/0.24.0-6ubuntu0.1/p11-kit_0.24.0.orig.tar.xz",
+      "version": "p11-kit_0.24.0-6ubuntu0.1"
+    },
+    {
+      "bytes": 3878,
+      "file": "pango1.0_1.50.6+ds-2ubuntu1.dsc",
+      "kind": "source",
+      "name": "ubuntu:pango1.0_1.50.6+ds-2ubuntu1",
+      "note": null,
+      "sha256": "c757b318c7862a162830c765eb2f26ca31837ad08aa752cc2736aa05c9f4fca2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pango1.0/1.50.6+ds-2ubuntu1/pango1.0_1.50.6+ds-2ubuntu1.dsc",
+      "version": "pango1.0_1.50.6+ds-2ubuntu1"
+    },
+    {
+      "bytes": 51196,
+      "file": "pango1.0_1.50.6+ds-2ubuntu1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:pango1.0_1.50.6+ds-2ubuntu1",
+      "note": null,
+      "sha256": "b16ad51d8b0837303fc57db029fbda8dc5d12e2fd03a1fedb647ce253a87b1f1",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pango1.0/1.50.6+ds-2ubuntu1/pango1.0_1.50.6+ds-2ubuntu1.debian.tar.xz",
+      "version": "pango1.0_1.50.6+ds-2ubuntu1"
+    },
+    {
+      "bytes": 2673480,
+      "file": "pango1.0_1.50.6+ds.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:pango1.0_1.50.6+ds-2ubuntu1",
+      "note": null,
+      "sha256": "70f0323d6270ee12e8ae14a2959b7227088e3146801d09309558bebb1f2f9df7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pango1.0/1.50.6+ds-2ubuntu1/pango1.0_1.50.6+ds.orig.tar.xz",
+      "version": "pango1.0_1.50.6+ds-2ubuntu1"
+    },
+    {
+      "bytes": 2142,
+      "file": "pcre2_10.39-3ubuntu0.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:pcre2_10.39-3ubuntu0.1",
+      "note": null,
+      "sha256": "f78f76a3e7d1ebbe1f03df40211ffd4922337c7f7848097c399befb620a0a471",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pcre2/10.39-3ubuntu0.1/pcre2_10.39-3ubuntu0.1.dsc",
+      "version": "pcre2_10.39-3ubuntu0.1"
+    },
+    {
+      "bytes": 11214,
+      "file": "pcre2_10.39-3ubuntu0.1.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:pcre2_10.39-3ubuntu0.1",
+      "note": null,
+      "sha256": "cce22d08265cc8d322281242f555044a62302d4df9b0fa44c8c4536819dae47d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pcre2/10.39-3ubuntu0.1/pcre2_10.39-3ubuntu0.1.diff.gz",
+      "version": "pcre2_10.39-3ubuntu0.1"
+    },
+    {
+      "bytes": 2309964,
+      "file": "pcre2_10.39.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:pcre2_10.39-3ubuntu0.1",
+      "note": null,
+      "sha256": "0781bd2536ef5279b1943471fdcdbd9961a2845e1d2c9ad849b9bd98ba1a9bd4",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pcre2/10.39-3ubuntu0.1/pcre2_10.39.orig.tar.gz",
+      "version": "pcre2_10.39-3ubuntu0.1"
+    },
+    {
+      "bytes": 2101,
+      "file": "pcre3_8.39-13ubuntu0.22.04.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:pcre3_2:8.39-13ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "f9c1a08a5856eee3644a4f5bbffe62ff04d21940ebd7798e7b15f48463571867",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pcre3/2:8.39-13ubuntu0.22.04.1/pcre3_8.39-13ubuntu0.22.04.1.dsc",
+      "version": "pcre3_2:8.39-13ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 28251,
+      "file": "pcre3_8.39-13ubuntu0.22.04.1.debian.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:pcre3_2:8.39-13ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "b6542e9adae20f212637f133e892c1d6874d9a21af928ed4cbd94fb77133916e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pcre3/2:8.39-13ubuntu0.22.04.1/pcre3_8.39-13ubuntu0.22.04.1.debian.tar.gz",
+      "version": "pcre3_2:8.39-13ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 1560758,
+      "file": "pcre3_8.39.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:pcre3_2:8.39-13ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "b858099f82483031ee02092711689e7245586ada49e534a06e678b8ea9549e8b",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pcre3/2:8.39-13ubuntu0.22.04.1/pcre3_8.39.orig.tar.bz2",
+      "version": "pcre3_2:8.39-13ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 2160,
+      "file": "pixman_0.40.0-1ubuntu0.22.04.1.dsc",
+      "kind": "source",
+      "name": "ubuntu:pixman_0.40.0-1ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "83b2ae547a01139e41a50a104a16186defaa2a627c632e247d45637177f1a90e",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pixman/0.40.0-1ubuntu0.22.04.1/pixman_0.40.0-1ubuntu0.22.04.1.dsc",
+      "version": "pixman_0.40.0-1ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 327740,
+      "file": "pixman_0.40.0-1ubuntu0.22.04.1.diff.gz",
+      "kind": "source",
+      "name": "ubuntu:pixman_0.40.0-1ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "687d499fdc3cc752d308e5dfdb38048df6a238cdd4b341b504ec6dd45a0763e7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pixman/0.40.0-1ubuntu0.22.04.1/pixman_0.40.0-1ubuntu0.22.04.1.diff.gz",
+      "version": "pixman_0.40.0-1ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 913976,
+      "file": "pixman_0.40.0.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:pixman_0.40.0-1ubuntu0.22.04.1",
+      "note": null,
+      "sha256": "6d200dec3740d9ec4ec8d1180e25779c00bc749f94278c8b9021f5534db223fc",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/pixman/0.40.0-1ubuntu0.22.04.1/pixman_0.40.0.orig.tar.gz",
+      "version": "pixman_0.40.0-1ubuntu0.22.04.1"
+    },
+    {
+      "bytes": 2432,
+      "file": "readline_8.1.2-1.dsc",
+      "kind": "source",
+      "name": "ubuntu:readline_8.1.2-1",
+      "note": null,
+      "sha256": "8558058b41165ffbbf406e744e726326e649a55c0f2c1490a467c01d314adec2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/readline/8.1.2-1/readline_8.1.2-1.dsc",
+      "version": "readline_8.1.2-1"
+    },
+    {
+      "bytes": 2993073,
+      "file": "readline_8.1.2.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:readline_8.1.2-1",
+      "note": null,
+      "sha256": "7589a2381a8419e68654a47623ce7dfcb756815c8fee726b98f90bf668af7bc6",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/readline/8.1.2-1/readline_8.1.2.orig.tar.gz",
+      "version": "readline_8.1.2-1"
+    },
+    {
+      "bytes": 29292,
+      "file": "readline_8.1.2-1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:readline_8.1.2-1",
+      "note": null,
+      "sha256": "0c39840fbed2abd3f93083d75c974e39855fd41aa6df5fa1be06d147e86071ca",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/readline/8.1.2-1/readline_8.1.2-1.debian.tar.xz",
+      "version": "readline_8.1.2-1"
+    },
+    {
+      "bytes": 2602,
+      "file": "sqlite3_3.37.2-2ubuntu0.8.dsc",
+      "kind": "source",
+      "name": "ubuntu:sqlite3_3.37.2-2ubuntu0.8",
+      "note": null,
+      "sha256": "637d981e996fec129c8b902c36b87910f8b0e6303ff9e00dcb5918df5c54ca78",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/sqlite3/3.37.2-2ubuntu0.8/sqlite3_3.37.2-2ubuntu0.8.dsc",
+      "version": "sqlite3_3.37.2-2ubuntu0.8"
+    },
+    {
+      "bytes": 36152,
+      "file": "sqlite3_3.37.2-2ubuntu0.8.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:sqlite3_3.37.2-2ubuntu0.8",
+      "note": null,
+      "sha256": "6cf7d3db197bd5e76c81876e3a4536c75a322cdbb1c8d6cffc507de5adceb969",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/sqlite3/3.37.2-2ubuntu0.8/sqlite3_3.37.2-2ubuntu0.8.debian.tar.xz",
+      "version": "sqlite3_3.37.2-2ubuntu0.8"
+    },
+    {
+      "bytes": 7623768,
+      "file": "sqlite3_3.37.2.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:sqlite3_3.37.2-2ubuntu0.8",
+      "note": null,
+      "sha256": "3157723da779963f7887f29de12289a4890f0c18eb17b570aa2c8d2c96d31d6f",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/sqlite3/3.37.2-2ubuntu0.8/sqlite3_3.37.2.orig.tar.xz",
+      "version": "sqlite3_3.37.2-2ubuntu0.8"
+    },
+    {
+      "bytes": 5694016,
+      "file": "sqlite3_3.37.2.orig-www.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:sqlite3_3.37.2-2ubuntu0.8",
+      "note": null,
+      "sha256": "63dbd1c7abab37ec5beed22dae75bac048efead0f19aa5cad49b4bd690335ebd",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/sqlite3/3.37.2-2ubuntu0.8/sqlite3_3.37.2.orig-www.tar.xz",
+      "version": "sqlite3_3.37.2-2ubuntu0.8"
+    },
+    {
+      "bytes": 5907,
+      "file": "systemd_249.11-0ubuntu3.23.dsc",
+      "kind": "source",
+      "name": "ubuntu:systemd_249.11-0ubuntu3.23",
+      "note": null,
+      "sha256": "96d06c4f802aa2a7b4d52dbcbbb04648994f7e8ba2eaef8fe3039075050f1a6d",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/systemd/249.11-0ubuntu3.23/systemd_249.11-0ubuntu3.23.dsc",
+      "version": "systemd_249.11-0ubuntu3.23"
+    },
+    {
+      "bytes": 276508,
+      "file": "systemd_249.11-0ubuntu3.23.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:systemd_249.11-0ubuntu3.23",
+      "note": null,
+      "sha256": "149803061ffbd7b5deb82747a58fe482d9ff23849bfbed40aac19ccae1462c81",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/systemd/249.11-0ubuntu3.23/systemd_249.11-0ubuntu3.23.debian.tar.xz",
+      "version": "systemd_249.11-0ubuntu3.23"
+    },
+    {
+      "bytes": 10622702,
+      "file": "systemd_249.11.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:systemd_249.11-0ubuntu3.23",
+      "note": null,
+      "sha256": "305ba81cc33593bc2e8e9d6dc7f964b1c0a9303155fced5e6b1d236577441bf2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/systemd/249.11-0ubuntu3.23/systemd_249.11.orig.tar.gz",
+      "version": "systemd_249.11-0ubuntu3.23"
+    },
+    {
+      "bytes": 4550,
+      "file": "util-linux_2.37.2-4ubuntu3.6.dsc",
+      "kind": "source",
+      "name": "ubuntu:util-linux_2.37.2-4ubuntu3.6",
+      "note": null,
+      "sha256": "e2b458d2005c328b0187ded5acac81c530cca8bf164f7c20b8370d02c4ffaebc",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/util-linux/2.37.2-4ubuntu3.6/util-linux_2.37.2-4ubuntu3.6.dsc",
+      "version": "util-linux_2.37.2-4ubuntu3.6"
+    },
+    {
+      "bytes": 120724,
+      "file": "util-linux_2.37.2-4ubuntu3.6.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:util-linux_2.37.2-4ubuntu3.6",
+      "note": null,
+      "sha256": "d556ef8fb39638a6fee023dc02d1ed4c9a15d6065f844fa885ddb5b9e755ae31",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/util-linux/2.37.2-4ubuntu3.6/util-linux_2.37.2-4ubuntu3.6.debian.tar.xz",
+      "version": "util-linux_2.37.2-4ubuntu3.6"
+    },
+    {
+      "bytes": 5621624,
+      "file": "util-linux_2.37.2.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:util-linux_2.37.2-4ubuntu3.6",
+      "note": null,
+      "sha256": "6a0764c1aae7fb607ef8a6dd2c0f6c47d5e5fd27aa08820abaad9ec14e28e9d9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/util-linux/2.37.2-4ubuntu3.6/util-linux_2.37.2.orig.tar.xz",
+      "version": "util-linux_2.37.2-4ubuntu3.6"
+    },
+    {
+      "bytes": 2217,
+      "file": "xcb-util_0.4.0-1build2.dsc",
+      "kind": "source",
+      "name": "ubuntu:xcb-util_0.4.0-1build2",
+      "note": null,
+      "sha256": "e403336044c8227452becee1fe6d305db747ac507013a66e70f42e6a4123311b",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util/0.4.0-1build2/xcb-util_0.4.0-1build2.dsc",
+      "version": "xcb-util_0.4.0-1build2"
+    },
+    {
+      "bytes": 4580,
+      "file": "xcb-util_0.4.0-1build2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util_0.4.0-1build2",
+      "note": null,
+      "sha256": "035077ebaeeee92ff0a7f2f1d97d2b96d0148c0007f2f689d63ed9bd013aaf98",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util/0.4.0-1build2/xcb-util_0.4.0-1build2.debian.tar.xz",
+      "version": "xcb-util_0.4.0-1build2"
+    },
+    {
+      "bytes": 362923,
+      "file": "xcb-util_0.4.0.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util_0.4.0-1build2",
+      "note": null,
+      "sha256": "0ed0934e2ef4ddff53fcc70fc64fb16fe766cd41ee00330312e20a985fd927a7",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util/0.4.0-1build2/xcb-util_0.4.0.orig.tar.gz",
+      "version": "xcb-util_0.4.0-1build2"
+    },
+    {
+      "bytes": 280852,
+      "file": "xcb-util-cursor_0.1.1.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-cursor_0.1.1-4ubuntu1",
+      "note": null,
+      "sha256": "517a1febcede3bc994e356c4c066e297a12ca219063b7d39047e29c7a8860652",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-cursor/0.1.1-4ubuntu1/xcb-util-cursor_0.1.1.orig.tar.bz2",
+      "version": "xcb-util-cursor_0.1.1-4ubuntu1"
+    },
+    {
+      "bytes": 3776,
+      "file": "xcb-util-cursor_0.1.1-4ubuntu1.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-cursor_0.1.1-4ubuntu1",
+      "note": null,
+      "sha256": "c9c19d20952bb844d4599f2eca1427a487f304ce6867418e3e3f63aaa799c0a0",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-cursor/0.1.1-4ubuntu1/xcb-util-cursor_0.1.1-4ubuntu1.debian.tar.xz",
+      "version": "xcb-util-cursor_0.1.1-4ubuntu1"
+    },
+    {
+      "bytes": 2185,
+      "file": "xcb-util-cursor_0.1.1-4ubuntu1.dsc",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-cursor_0.1.1-4ubuntu1",
+      "note": null,
+      "sha256": "a5706a8da50a866a0a9338546a7d7361683fff104c9dfbf42f8b5fee2c421d88",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-cursor/0.1.1-4ubuntu1/xcb-util-cursor_0.1.1-4ubuntu1.dsc",
+      "version": "xcb-util-cursor_0.1.1-4ubuntu1"
+    },
+    {
+      "bytes": 2121,
+      "file": "xcb-util-image_0.4.0-2.dsc",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-image_0.4.0-2",
+      "note": null,
+      "sha256": "6a01c919e437b18ecd00c02c7ed1a5b0ff85cd0e3f7effd89ac8226a3fa5e299",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-image/0.4.0-2/xcb-util-image_0.4.0-2.dsc",
+      "version": "xcb-util-image_0.4.0-2"
+    },
+    {
+      "bytes": 327891,
+      "file": "xcb-util-image_0.4.0.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-image_0.4.0-2",
+      "note": null,
+      "sha256": "2db96a37d78831d643538dd1b595d7d712e04bdccf8896a5e18ce0f398ea2ffc",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-image/0.4.0-2/xcb-util-image_0.4.0.orig.tar.bz2",
+      "version": "xcb-util-image_0.4.0-2"
+    },
+    {
+      "bytes": 4508,
+      "file": "xcb-util-image_0.4.0-2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-image_0.4.0-2",
+      "note": null,
+      "sha256": "cf7d3d2ee9b462c93ba51f95857e2044b5e1b5d91bb5b88be71b2d1aacc2f025",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-image/0.4.0-2/xcb-util-image_0.4.0-2.debian.tar.xz",
+      "version": "xcb-util-image_0.4.0-2"
+    },
+    {
+      "bytes": 2315,
+      "file": "xcb-util-keysyms_0.4.0-1build3.dsc",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-keysyms_0.4.0-1build3",
+      "note": null,
+      "sha256": "5a83beb9ffb67c550e9dd89a2dfdc814176be49f50b51838525c8baf20457a5a",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-keysyms/0.4.0-1build3/xcb-util-keysyms_0.4.0-1build3.dsc",
+      "version": "xcb-util-keysyms_0.4.0-1build3"
+    },
+    {
+      "bytes": 4460,
+      "file": "xcb-util-keysyms_0.4.0-1build3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-keysyms_0.4.0-1build3",
+      "note": null,
+      "sha256": "23dfbb54ff32bd0b0a67da70793e5496fa7e0334eea37388532d1981c2f34597",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-keysyms/0.4.0-1build3/xcb-util-keysyms_0.4.0-1build3.debian.tar.xz",
+      "version": "xcb-util-keysyms_0.4.0-1build3"
+    },
+    {
+      "bytes": 289880,
+      "file": "xcb-util-keysyms_0.4.0.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-keysyms_0.4.0-1build3",
+      "note": null,
+      "sha256": "0ef8490ff1dede52b7de533158547f8b454b241aa3e4dcca369507f66f216dd9",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-keysyms/0.4.0-1build3/xcb-util-keysyms_0.4.0.orig.tar.bz2",
+      "version": "xcb-util-keysyms_0.4.0-1build3"
+    },
+    {
+      "bytes": 2388,
+      "file": "xcb-util-renderutil_0.3.9-1build3.dsc",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-renderutil_0.3.9-1build3",
+      "note": null,
+      "sha256": "baff0b59d348632f66f60cbdd7f75a38353bc69eb64ccd1252879598347bf168",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-renderutil/0.3.9-1build3/xcb-util-renderutil_0.3.9-1build3.dsc",
+      "version": "xcb-util-renderutil_0.3.9-1build3"
+    },
+    {
+      "bytes": 4512,
+      "file": "xcb-util-renderutil_0.3.9-1build3.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-renderutil_0.3.9-1build3",
+      "note": null,
+      "sha256": "ff35b6b5a8d009d7f607f447eec42a1ec2de5186f38e01a43485294188c5170c",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-renderutil/0.3.9-1build3/xcb-util-renderutil_0.3.9-1build3.debian.tar.xz",
+      "version": "xcb-util-renderutil_0.3.9-1build3"
+    },
+    {
+      "bytes": 292898,
+      "file": "xcb-util-renderutil_0.3.9.orig.tar.bz2",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-renderutil_0.3.9-1build3",
+      "note": null,
+      "sha256": "c6e97e48fb1286d6394dddb1c1732f00227c70bd1bedb7d1acabefdd340bea5b",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-renderutil/0.3.9-1build3/xcb-util-renderutil_0.3.9.orig.tar.bz2",
+      "version": "xcb-util-renderutil_0.3.9-1build3"
+    },
+    {
+      "bytes": 2428,
+      "file": "xcb-util-wm_0.4.1-1.1build2.dsc",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-wm_0.4.1-1.1build2",
+      "note": null,
+      "sha256": "0c0993c06aa5e20950245d9a8aca3deeb7aa2129ecaf0783bbf37ce5a0ae60be",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-wm/0.4.1-1.1build2/xcb-util-wm_0.4.1-1.1build2.dsc",
+      "version": "xcb-util-wm_0.4.1-1.1build2"
+    },
+    {
+      "bytes": 4620,
+      "file": "xcb-util-wm_0.4.1-1.1build2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-wm_0.4.1-1.1build2",
+      "note": null,
+      "sha256": "cbf5ce21c783753ad6a783addbefc732e5955ce7f5f81af51b03a258d04befda",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-wm/0.4.1-1.1build2/xcb-util-wm_0.4.1-1.1build2.debian.tar.xz",
+      "version": "xcb-util-wm_0.4.1-1.1build2"
+    },
+    {
+      "bytes": 395835,
+      "file": "xcb-util-wm_0.4.1.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:xcb-util-wm_0.4.1-1.1build2",
+      "note": null,
+      "sha256": "038b39c4bdc04a792d62d163ba7908f4bb3373057208c07110be73c1b04b8334",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xcb-util-wm/0.4.1-1.1build2/xcb-util-wm_0.4.1.orig.tar.gz",
+      "version": "xcb-util-wm_0.4.1-1.1build2"
+    },
+    {
+      "bytes": 2646,
+      "file": "xz-utils_5.2.5-2ubuntu1.2.dsc",
+      "kind": "source",
+      "name": "ubuntu:xz-utils_5.2.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "3c61a0ac421477b976f2b31e5f62d90438c6bf15846f45a850bec4cc1919c6a2",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xz-utils/5.2.5-2ubuntu1.2/xz-utils_5.2.5-2ubuntu1.2.dsc",
+      "version": "xz-utils_5.2.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 38160,
+      "file": "xz-utils_5.2.5-2ubuntu1.2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xz-utils_5.2.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "602bf9898bea5ae02284e16c7a2a52cb8e0086b5bea406e7f50999464260c287",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xz-utils/5.2.5-2ubuntu1.2/xz-utils_5.2.5-2ubuntu1.2.debian.tar.xz",
+      "version": "xz-utils_5.2.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 833,
+      "file": "xz-utils_5.2.5.orig.tar.xz.asc",
+      "kind": "source",
+      "name": "ubuntu:xz-utils_5.2.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "6efc0075a58912e640119d2b52ef7d1518b260d8720fadc73df21ab7fc727624",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xz-utils/5.2.5-2ubuntu1.2/xz-utils_5.2.5.orig.tar.xz.asc",
+      "version": "xz-utils_5.2.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 1148824,
+      "file": "xz-utils_5.2.5.orig.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:xz-utils_5.2.5-2ubuntu1.2",
+      "note": null,
+      "sha256": "3e1e518ffc912f86608a8cb35e4bd41ad1aec210df2a47aaa1f95e7f5576ef56",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/xz-utils/5.2.5-2ubuntu1.2/xz-utils_5.2.5.orig.tar.xz",
+      "version": "xz-utils_5.2.5-2ubuntu1.2"
+    },
+    {
+      "bytes": 2649,
+      "file": "zlib_1.2.11.dfsg-2ubuntu9.2.dsc",
+      "kind": "source",
+      "name": "ubuntu:zlib_1:1.2.11.dfsg-2ubuntu9.2",
+      "note": null,
+      "sha256": "ac50a5e5803c128eaef7eceda71fa13ffab3ed1e949008be244d8754d9c59e47",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/zlib/1:1.2.11.dfsg-2ubuntu9.2/zlib_1.2.11.dfsg-2ubuntu9.2.dsc",
+      "version": "zlib_1:1.2.11.dfsg-2ubuntu9.2"
+    },
+    {
+      "bytes": 60140,
+      "file": "zlib_1.2.11.dfsg-2ubuntu9.2.debian.tar.xz",
+      "kind": "source",
+      "name": "ubuntu:zlib_1:1.2.11.dfsg-2ubuntu9.2",
+      "note": null,
+      "sha256": "5678d0b3d1e609297e5a3dedfcb3474bab1cafe82c0c29aec2cef01e49a88d39",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/zlib/1:1.2.11.dfsg-2ubuntu9.2/zlib_1.2.11.dfsg-2ubuntu9.2.debian.tar.xz",
+      "version": "zlib_1:1.2.11.dfsg-2ubuntu9.2"
+    },
+    {
+      "bytes": 370248,
+      "file": "zlib_1.2.11.dfsg.orig.tar.gz",
+      "kind": "source",
+      "name": "ubuntu:zlib_1:1.2.11.dfsg-2ubuntu9.2",
+      "note": null,
+      "sha256": "80c481411a4fe8463aeb8270149a0e80bb9eaf7da44132b6e16f2b5af01bc899",
+      "url": "https://launchpad.net/ubuntu/+archive/primary/+sourcefiles/zlib/1:1.2.11.dfsg-2ubuntu9.2/zlib_1.2.11.dfsg.orig.tar.gz",
+      "version": "zlib_1:1.2.11.dfsg-2ubuntu9.2"
+    },
+    {
+      "bytes": 136225,
+      "file": "certifi-2026.10.23.tar.gz",
+      "kind": "source",
+      "name": "certifi",
+      "note": "publisher sdist, digest verified",
+      "sha256": "a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd",
+      "url": "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz",
+      "version": "2026.10.23"
+    },
+    {
+      "bytes": 131496,
+      "file": "radicale-3.2.3.tar.gz",
+      "kind": "source",
+      "name": "Radicale",
+      "note": "publisher sdist, digest verified",
+      "sha256": "12414266520b958e709165579654969c434909b6fa644b9e18e613400ca5fd1e",
+      "url": "https://files.pythonhosted.org/packages/08/c9/4c5beb7d6fc8d8dce2fd07d9c4209388270337a80be4c3907e513bec88c2/radicale-3.2.3.tar.gz",
+      "version": "3.2.3"
+    }
+  ],
+  "shared": [
+    {
+      "bytes": 443394020,
+      "file": "qt-everywhere-src-6.12.0.tar.xz",
+      "kind": "source",
+      "name": "qt-everywhere-src",
+      "note": null,
+      "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165",
+      "url": "https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz",
+      "version": "6.12.0"
+    },
+    {
+      "bytes": 584649116,
+      "file": "6.12.0-0-202609281005qtwebengine-everywhere-src-6.140.0.tar.xz",
+      "final_url": "https://ftp.fau.de/qtproject/online/qtsdkrepository/all_os/extensions/qtwebengine/6120/61400/src_doc_examples/extensions.qtwebengine.6120.61400.src/6.12.0-0-202609281005qtwebengine-everywhere-src-6.140.0.tar.xz",
+      "kind": "source",
+      "name": "qtwebengine-everywhere-src",
+      "note": "WebEngine and Pdf payload/source association accepted with limits",
+      "sha256": "141e9b230e5ec9ee65a7357ca4b87d702e4badc515289eeade1047a788bb96e7",
+      "url": "https://download.qt.io/online/qtsdkrepository/all_os/extensions/qtwebengine/6120/61400/src_doc_examples/extensions.qtwebengine.6120.61400.src/6.12.0-0-202609281005qtwebengine-everywhere-src-6.140.0.tar.xz",
+      "version": "6.140.0"
+    },
+    {
+      "bytes": 18211772,
+      "file": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+      "kind": "source",
+      "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+      "note": null,
+      "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751",
+      "url": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/pyside-setup-everywhere-src-6.12.0.tar.xz",
+      "version": "pyside-setup-everywhere-src-6.12.0.tar.xz"
+    },
+    {
+      "bytes": 24922,
+      "file": "etebase-0.32.0.tar.gz",
+      "kind": "source",
+      "name": "etebase-0.32.0.tar.gz",
+      "note": null,
+      "sha256": "2443e27da0d6098736b1f3bd0f8f5de6b3d71693431953c8f6610bb0ff676546",
+      "url": "https://files.pythonhosted.org/packages/ca/dc/c468a2db6251e6c916e2e99e8596a5fc5fadffd9ffbc4288d8eeada71fd1/etebase-0.32.0.tar.gz",
+      "version": "etebase-0.32.0.tar.gz"
+    },
+    {
+      "bytes": 40807,
+      "file": "addr2line-0.21.0.crate",
+      "kind": "source",
+      "name": "crate:addr2line",
+      "note": null,
+      "sha256": "8a30b2e23b9e17a9f90641c7ab1549cd9b44f296d3ccbf309d2863cfe398a0cb",
+      "url": "https://static.crates.io/crates/addr2line/addr2line-0.21.0.crate",
+      "version": "0.21.0"
+    },
+    {
+      "bytes": 12778,
+      "file": "adler-1.0.2.crate",
+      "kind": "source",
+      "name": "crate:adler",
+      "note": null,
+      "sha256": "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe",
+      "url": "https://static.crates.io/crates/adler/adler-1.0.2.crate",
+      "version": "1.0.2"
+    },
+    {
+      "bytes": 8532,
+      "file": "aligned-0.4.1.crate",
+      "kind": "source",
+      "name": "crate:aligned",
+      "note": null,
+      "sha256": "80a21b9440a626c7fc8573a9e3d3a06b75c7c97754c2949bc7857b90353ca655",
+      "url": "https://static.crates.io/crates/aligned/aligned-0.4.1.crate",
+      "version": "0.4.1"
+    },
+    {
+      "bytes": 6942,
+      "file": "as-slice-0.2.1.crate",
+      "kind": "source",
+      "name": "crate:as-slice",
+      "note": null,
+      "sha256": "516b6b4f0e40d50dcda9365d53964ec74560ad4284da2e7fc97122cd83174516",
+      "url": "https://static.crates.io/crates/as-slice/as-slice-0.2.1.crate",
+      "version": "0.2.1"
+    },
+    {
+      "bytes": 13272,
+      "file": "autocfg-1.1.0.crate",
+      "kind": "source",
+      "name": "crate:autocfg",
+      "note": null,
+      "sha256": "d468802bab17cbc0cc575e9b053f41e72aa36bfa6b7f55e3529ffa43161b97fa",
+      "url": "https://static.crates.io/crates/autocfg/autocfg-1.1.0.crate",
+      "version": "1.1.0"
+    },
+    {
+      "bytes": 77299,
+      "file": "backtrace-0.3.69.crate",
+      "kind": "source",
+      "name": "crate:backtrace",
+      "note": null,
+      "sha256": "2089b7e3f35b9dd2d0ed921ead4f6d318c27680d4a5bd167b3ee120edb105837",
+      "url": "https://static.crates.io/crates/backtrace/backtrace-0.3.69.crate",
+      "version": "0.3.69"
+    },
+    {
+      "bytes": 77134,
+      "file": "base64-0.21.5.crate",
+      "kind": "source",
+      "name": "crate:base64",
+      "note": null,
+      "sha256": "35636a1494ede3b646cc98f74f8e62c773a38a659ebc777a2cf26b9b74171df9",
+      "url": "https://static.crates.io/crates/base64/base64-0.21.5.crate",
+      "version": "0.21.5"
+    },
+    {
+      "bytes": 23021,
+      "file": "bitflags-1.3.2.crate",
+      "kind": "source",
+      "name": "crate:bitflags",
+      "note": null,
+      "sha256": "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a",
+      "url": "https://static.crates.io/crates/bitflags/bitflags-1.3.2.crate",
+      "version": "1.3.2"
+    },
+    {
+      "bytes": 37043,
+      "file": "bitflags-2.4.1.crate",
+      "kind": "source",
+      "name": "crate:bitflags",
+      "note": null,
+      "sha256": "327762f6e5a765692301e5bb513e0d9fef63be86bbc14528052b1cd3e6f03e07",
+      "url": "https://static.crates.io/crates/bitflags/bitflags-2.4.1.crate",
+      "version": "2.4.1"
+    },
+    {
+      "bytes": 82400,
+      "file": "bumpalo-3.14.0.crate",
+      "kind": "source",
+      "name": "crate:bumpalo",
+      "note": null,
+      "sha256": "7f30e7476521f6f8af1a1c4c0b8cc94f0bee37d91763d0ca2665f299b6cd8aec",
+      "url": "https://static.crates.io/crates/bumpalo/bumpalo-3.14.0.crate",
+      "version": "3.14.0"
+    },
+    {
+      "bytes": 23288,
+      "file": "byteorder-1.5.0.crate",
+      "kind": "source",
+      "name": "crate:byteorder",
+      "note": null,
+      "sha256": "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b",
+      "url": "https://static.crates.io/crates/byteorder/byteorder-1.5.0.crate",
+      "version": "1.5.0"
+    },
+    {
+      "bytes": 58909,
+      "file": "bytes-1.5.0.crate",
+      "kind": "source",
+      "name": "crate:bytes",
+      "note": null,
+      "sha256": "a2bd12c1caf447e69cd4528f47f94d203fd2582878ecb9e9465484c4148a8223",
+      "url": "https://static.crates.io/crates/bytes/bytes-1.5.0.crate",
+      "version": "1.5.0"
+    },
+    {
+      "bytes": 68343,
+      "file": "cc-1.0.83.crate",
+      "kind": "source",
+      "name": "crate:cc",
+      "note": null,
+      "sha256": "f1174fb0b6ec23863f8b971027804a42614e347eafb0a95bf0b12cdae21fc4d0",
+      "url": "https://static.crates.io/crates/cc/cc-1.0.83.crate",
+      "version": "1.0.83"
+    },
+    {
+      "bytes": 7934,
+      "file": "cfg-if-1.0.0.crate",
+      "kind": "source",
+      "name": "crate:cfg-if",
+      "note": null,
+      "sha256": "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd",
+      "url": "https://static.crates.io/crates/cfg-if/cfg-if-1.0.0.crate",
+      "version": "1.0.0"
+    },
+    {
+      "bytes": 27743,
+      "file": "core-foundation-0.9.4.crate",
+      "kind": "source",
+      "name": "crate:core-foundation",
+      "note": null,
+      "sha256": "91e195e091a93c46f7102ec7818a2aa394e1e1771c3ab4825963fa03e45afb8f",
+      "url": "https://static.crates.io/crates/core-foundation/core-foundation-0.9.4.crate",
+      "version": "0.9.4"
+    },
+    {
+      "bytes": 37629,
+      "file": "core-foundation-sys-0.8.6.crate",
+      "kind": "source",
+      "name": "crate:core-foundation-sys",
+      "note": null,
+      "sha256": "06ea2b9bc92be3c2baa9334a323ebca2d6f074ff852cd1d7b11064035cd3868f",
+      "url": "https://static.crates.io/crates/core-foundation-sys/core-foundation-sys-0.8.6.crate",
+      "version": "0.8.6"
+    },
+    {
+      "bytes": 6214,
+      "file": "cvt-0.1.2.crate",
+      "kind": "source",
+      "name": "crate:cvt",
+      "note": null,
+      "sha256": "d2ae9bf77fbf2d39ef573205d554d87e86c12f1994e9ea335b0651b9b278bcf1",
+      "url": "https://static.crates.io/crates/cvt/cvt-0.1.2.crate",
+      "version": "0.1.2"
+    },
+    {
+      "bytes": 17118,
+      "file": "ed25519-1.5.3.crate",
+      "kind": "source",
+      "name": "crate:ed25519",
+      "note": null,
+      "sha256": "91cff35c70bba8a626e3185d8cd48cc11b5437e1a5bcd15b9b5fa3c64b6dfee7",
+      "url": "https://static.crates.io/crates/ed25519/ed25519-1.5.3.crate",
+      "version": "1.5.3"
+    },
+    {
+      "bytes": 1370071,
+      "file": "encoding_rs-0.8.33.crate",
+      "kind": "source",
+      "name": "crate:encoding_rs",
+      "note": null,
+      "sha256": "7268b386296a025e474d5140678f75d6de9493ae55a5d709eeb9dd08149945e1",
+      "url": "https://static.crates.io/crates/encoding_rs/encoding_rs-0.8.33.crate",
+      "version": "0.8.33"
+    },
+    {
+      "bytes": 6615,
+      "file": "equivalent-1.0.1.crate",
+      "kind": "source",
+      "name": "crate:equivalent",
+      "note": null,
+      "sha256": "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5",
+      "url": "https://static.crates.io/crates/equivalent/equivalent-1.0.1.crate",
+      "version": "1.0.1"
+    },
+    {
+      "bytes": 10645,
+      "file": "errno-0.3.8.crate",
+      "kind": "source",
+      "name": "crate:errno",
+      "note": null,
+      "sha256": "a258e46cdc063eb8519c00b9fc845fc47bcfca4130e2f08e88665ceda8474245",
+      "url": "https://static.crates.io/crates/errno/errno-0.3.8.crate",
+      "version": "0.3.8"
+    },
+    {
+      "bytes": 63459,
+      "file": "etebase-0.6.1.crate",
+      "kind": "source",
+      "name": "crate:etebase",
+      "note": null,
+      "sha256": "447bbbd0acdb2301b11080cbdea4a3934af4868bc2dba5f8abf09117962ba372",
+      "url": "https://static.crates.io/crates/etebase/etebase-0.6.1.crate",
+      "version": "0.6.1"
+    },
+    {
+      "bytes": 14664,
+      "file": "fastrand-2.0.1.crate",
+      "kind": "source",
+      "name": "crate:fastrand",
+      "note": null,
+      "sha256": "25cbce373ec4653f1a01a31e8a5e5ec0c622dc27ff9c4e6606eefef5cbbed4a5",
+      "url": "https://static.crates.io/crates/fastrand/fastrand-2.0.1.crate",
+      "version": "2.0.1"
+    },
+    {
+      "bytes": 11266,
+      "file": "fnv-1.0.7.crate",
+      "kind": "source",
+      "name": "crate:fnv",
+      "note": null,
+      "sha256": "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1",
+      "url": "https://static.crates.io/crates/fnv/fnv-1.0.7.crate",
+      "version": "1.0.7"
+    },
+    {
+      "bytes": 7504,
+      "file": "foreign-types-0.3.2.crate",
+      "kind": "source",
+      "name": "crate:foreign-types",
+      "note": null,
+      "sha256": "f6f339eb8adc052cd2ca78910fda869aefa38d22d5cb648e6485e4d3fc06f3b1",
+      "url": "https://static.crates.io/crates/foreign-types/foreign-types-0.3.2.crate",
+      "version": "0.3.2"
+    },
+    {
+      "bytes": 5672,
+      "file": "foreign-types-shared-0.1.1.crate",
+      "kind": "source",
+      "name": "crate:foreign-types-shared",
+      "note": null,
+      "sha256": "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b",
+      "url": "https://static.crates.io/crates/foreign-types-shared/foreign-types-shared-0.1.1.crate",
+      "version": "0.1.1"
+    },
+    {
+      "bytes": 8969,
+      "file": "form_urlencoded-1.2.1.crate",
+      "kind": "source",
+      "name": "crate:form_urlencoded",
+      "note": null,
+      "sha256": "e13624c2627564efccf4934284bdd98cbaa14e79b0b5a141218e507b3a823456",
+      "url": "https://static.crates.io/crates/form_urlencoded/form_urlencoded-1.2.1.crate",
+      "version": "1.2.1"
+    },
+    {
+      "bytes": 36185,
+      "file": "fs_at-0.1.10.crate",
+      "kind": "source",
+      "name": "crate:fs_at",
+      "note": null,
+      "sha256": "982f82cc75107eef84f417ad6c53ae89bf65b561937ca4a3b3b0fd04d0aa2425",
+      "url": "https://static.crates.io/crates/fs_at/fs_at-0.1.10.crate",
+      "version": "0.1.10"
+    },
+    {
+      "bytes": 31736,
+      "file": "futures-channel-0.3.30.crate",
+      "kind": "source",
+      "name": "crate:futures-channel",
+      "note": null,
+      "sha256": "eac8f7d7865dcb88bd4373ab671c8cf4508703796caa2b1985a9ca867b3fcb78",
+      "url": "https://static.crates.io/crates/futures-channel/futures-channel-0.3.30.crate",
+      "version": "0.3.30"
+    },
+    {
+      "bytes": 14071,
+      "file": "futures-core-0.3.30.crate",
+      "kind": "source",
+      "name": "crate:futures-core",
+      "note": null,
+      "sha256": "dfc6580bb841c5a68e9ef15c77ccc837b40a7504914d52e47b8b0e9bbda25a1d",
+      "url": "https://static.crates.io/crates/futures-core/futures-core-0.3.30.crate",
+      "version": "0.3.30"
+    },
+    {
+      "bytes": 8910,
+      "file": "futures-io-0.3.30.crate",
+      "kind": "source",
+      "name": "crate:futures-io",
+      "note": null,
+      "sha256": "a44623e20b9681a318efdd71c299b6b222ed6f231972bfe2f224ebad6311f0c1",
+      "url": "https://static.crates.io/crates/futures-io/futures-io-0.3.30.crate",
+      "version": "0.3.30"
+    },
+    {
+      "bytes": 7852,
+      "file": "futures-sink-0.3.30.crate",
+      "kind": "source",
+      "name": "crate:futures-sink",
+      "note": null,
+      "sha256": "9fb8e00e87438d937621c1c6269e53f536c14d3fbd6a042bb24879e57d474fb5",
+      "url": "https://static.crates.io/crates/futures-sink/futures-sink-0.3.30.crate",
+      "version": "0.3.30"
+    },
+    {
+      "bytes": 11126,
+      "file": "futures-task-0.3.30.crate",
+      "kind": "source",
+      "name": "crate:futures-task",
+      "note": null,
+      "sha256": "38d84fa142264698cdce1a9f9172cf383a0c82de1bddcf3092901442c4097004",
+      "url": "https://static.crates.io/crates/futures-task/futures-task-0.3.30.crate",
+      "version": "0.3.30"
+    },
+    {
+      "bytes": 159977,
+      "file": "futures-util-0.3.30.crate",
+      "kind": "source",
+      "name": "crate:futures-util",
+      "note": null,
+      "sha256": "3d6401deb83407ab3da39eba7e33987a73c3df0c82b4bb5813ee871c19c41d48",
+      "url": "https://static.crates.io/crates/futures-util/futures-util-0.3.30.crate",
+      "version": "0.3.30"
+    },
+    {
+      "bytes": 270497,
+      "file": "gimli-0.28.1.crate",
+      "kind": "source",
+      "name": "crate:gimli",
+      "note": null,
+      "sha256": "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253",
+      "url": "https://static.crates.io/crates/gimli/gimli-0.28.1.crate",
+      "version": "0.28.1"
+    },
+    {
+      "bytes": 166413,
+      "file": "h2-0.3.22.crate",
+      "kind": "source",
+      "name": "crate:h2",
+      "note": null,
+      "sha256": "4d6250322ef6e60f93f9a2162799302cd6f68f79f6e5d85c8c16f14d1d958178",
+      "url": "https://static.crates.io/crates/h2/h2-0.3.22.crate",
+      "version": "0.3.22"
+    },
+    {
+      "bytes": 141425,
+      "file": "hashbrown-0.14.3.crate",
+      "kind": "source",
+      "name": "crate:hashbrown",
+      "note": null,
+      "sha256": "290f1a1d9242c78d09ce40a5e87e7554ee637af1351968159f4952f028f75604",
+      "url": "https://static.crates.io/crates/hashbrown/hashbrown-0.14.3.crate",
+      "version": "0.14.3"
+    },
+    {
+      "bytes": 11517,
+      "file": "heck-0.5.0.crate",
+      "kind": "source",
+      "name": "crate:heck",
+      "note": null,
+      "sha256": "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea",
+      "url": "https://static.crates.io/crates/heck/heck-0.5.0.crate",
+      "version": "0.5.0"
+    },
+    {
+      "bytes": 14253,
+      "file": "hermit-abi-0.3.3.crate",
+      "kind": "source",
+      "name": "crate:hermit-abi",
+      "note": null,
+      "sha256": "d77f7ec81a6d05a3abb01ab6eb7590f6083d08449fe5a1c8b1e620283546ccb7",
+      "url": "https://static.crates.io/crates/hermit-abi/hermit-abi-0.3.3.crate",
+      "version": "0.3.3"
+    },
+    {
+      "bytes": 100478,
+      "file": "http-0.2.11.crate",
+      "kind": "source",
+      "name": "crate:http",
+      "note": null,
+      "sha256": "8947b1a6fad4393052c7ba1f4cd97bed3e953a95c79c92ad9b051a04611d9fbb",
+      "url": "https://static.crates.io/crates/http/http-0.2.11.crate",
+      "version": "0.2.11"
+    },
+    {
+      "bytes": 10773,
+      "file": "http-body-0.4.6.crate",
+      "kind": "source",
+      "name": "crate:http-body",
+      "note": null,
+      "sha256": "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2",
+      "url": "https://static.crates.io/crates/http-body/http-body-0.4.6.crate",
+      "version": "0.4.6"
+    },
+    {
+      "bytes": 29954,
+      "file": "httparse-1.8.0.crate",
+      "kind": "source",
+      "name": "crate:httparse",
+      "note": null,
+      "sha256": "d897f394bad6a705d5f4104762e116a75639e470d80901eed05a860a95cb1904",
+      "url": "https://static.crates.io/crates/httparse/httparse-1.8.0.crate",
+      "version": "1.8.0"
+    },
+    {
+      "bytes": 10639,
+      "file": "httpdate-1.0.3.crate",
+      "kind": "source",
+      "name": "crate:httpdate",
+      "note": null,
+      "sha256": "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9",
+      "url": "https://static.crates.io/crates/httpdate/httpdate-1.0.3.crate",
+      "version": "1.0.3"
+    },
+    {
+      "bytes": 197204,
+      "file": "hyper-0.14.28.crate",
+      "kind": "source",
+      "name": "crate:hyper",
+      "note": null,
+      "sha256": "bf96e135eb83a2a8ddf766e426a841d8ddd7449d5f00d34ea02b41d2f19eef80",
+      "url": "https://static.crates.io/crates/hyper/hyper-0.14.28.crate",
+      "version": "0.14.28"
+    },
+    {
+      "bytes": 13257,
+      "file": "hyper-tls-0.5.0.crate",
+      "kind": "source",
+      "name": "crate:hyper-tls",
+      "note": null,
+      "sha256": "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905",
+      "url": "https://static.crates.io/crates/hyper-tls/hyper-tls-0.5.0.crate",
+      "version": "0.5.0"
+    },
+    {
+      "bytes": 271940,
+      "file": "idna-0.5.0.crate",
+      "kind": "source",
+      "name": "crate:idna",
+      "note": null,
+      "sha256": "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6",
+      "url": "https://static.crates.io/crates/idna/idna-0.5.0.crate",
+      "version": "0.5.0"
+    },
+    {
+      "bytes": 68224,
+      "file": "indexmap-2.1.0.crate",
+      "kind": "source",
+      "name": "crate:indexmap",
+      "note": null,
+      "sha256": "d530e1a18b1cb4c484e6e34556a0d948706958449fca0cab753d649f2bce3d1f",
+      "url": "https://static.crates.io/crates/indexmap/indexmap-2.1.0.crate",
+      "version": "2.1.0"
+    },
+    {
+      "bytes": 27627,
+      "file": "ipnet-2.9.0.crate",
+      "kind": "source",
+      "name": "crate:ipnet",
+      "note": null,
+      "sha256": "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3",
+      "url": "https://static.crates.io/crates/ipnet/ipnet-2.9.0.crate",
+      "version": "2.9.0"
+    },
+    {
+      "bytes": 10534,
+      "file": "itoa-1.0.10.crate",
+      "kind": "source",
+      "name": "crate:itoa",
+      "note": null,
+      "sha256": "b1a46d1a171d865aa5f83f92695765caa047a9b4cbae2cbf37dbd613a793fd4c",
+      "url": "https://static.crates.io/crates/itoa/itoa-1.0.10.crate",
+      "version": "1.0.10"
+    },
+    {
+      "bytes": 80765,
+      "file": "js-sys-0.3.66.crate",
+      "kind": "source",
+      "name": "crate:js-sys",
+      "note": null,
+      "sha256": "cee9c64da59eae3b50095c18d3e74f8b73c0b86d2792824ff01bbce68ba229ca",
+      "url": "https://static.crates.io/crates/js-sys/js-sys-0.3.66.crate",
+      "version": "0.3.66"
+    },
+    {
+      "bytes": 10443,
+      "file": "lazy_static-1.4.0.crate",
+      "kind": "source",
+      "name": "crate:lazy_static",
+      "note": null,
+      "sha256": "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646",
+      "url": "https://static.crates.io/crates/lazy_static/lazy_static-1.4.0.crate",
+      "version": "1.4.0"
+    },
+    {
+      "bytes": 736640,
+      "file": "libc-0.2.151.crate",
+      "kind": "source",
+      "name": "crate:libc",
+      "note": null,
+      "sha256": "302d7ab3130588088d277783b1e2d2e10c9e9e4a16dd9050e6ec93fb3e7048f4",
+      "url": "https://static.crates.io/crates/libc/libc-0.2.151.crate",
+      "version": "0.2.151"
+    },
+    {
+      "bytes": 4595870,
+      "file": "libsodium-sys-0.2.7.crate",
+      "kind": "source",
+      "name": "crate:libsodium-sys",
+      "note": null,
+      "sha256": "6b779387cd56adfbc02ea4a668e704f729be8d6a6abd2c27ca5ee537849a92fd",
+      "url": "https://static.crates.io/crates/libsodium-sys/libsodium-sys-0.2.7.crate",
+      "version": "0.2.7"
+    },
+    {
+      "bytes": 1465800,
+      "file": "linux-raw-sys-0.4.12.crate",
+      "kind": "source",
+      "name": "crate:linux-raw-sys",
+      "note": null,
+      "sha256": "c4cd1a83af159aa67994778be9070f0ae1bd732942279cabb14f86f986a21456",
+      "url": "https://static.crates.io/crates/linux-raw-sys/linux-raw-sys-0.4.12.crate",
+      "version": "0.4.12"
+    },
+    {
+      "bytes": 38307,
+      "file": "log-0.4.20.crate",
+      "kind": "source",
+      "name": "crate:log",
+      "note": null,
+      "sha256": "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f",
+      "url": "https://static.crates.io/crates/log/log-0.4.20.crate",
+      "version": "0.4.20"
+    },
+    {
+      "bytes": 94439,
+      "file": "memchr-2.6.4.crate",
+      "kind": "source",
+      "name": "crate:memchr",
+      "note": null,
+      "sha256": "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167",
+      "url": "https://static.crates.io/crates/memchr/memchr-2.6.4.crate",
+      "version": "2.6.4"
+    },
+    {
+      "bytes": 15712,
+      "file": "mime-0.3.17.crate",
+      "kind": "source",
+      "name": "crate:mime",
+      "note": null,
+      "sha256": "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a",
+      "url": "https://static.crates.io/crates/mime/mime-0.3.17.crate",
+      "version": "0.3.17"
+    },
+    {
+      "bytes": 55194,
+      "file": "miniz_oxide-0.7.1.crate",
+      "kind": "source",
+      "name": "crate:miniz_oxide",
+      "note": null,
+      "sha256": "e7810e0be55b428ada41041c41f32c9f1a42817901b4ccf45fa3d4b6561e74c7",
+      "url": "https://static.crates.io/crates/miniz_oxide/miniz_oxide-0.7.1.crate",
+      "version": "0.7.1"
+    },
+    {
+      "bytes": 102345,
+      "file": "mio-0.8.10.crate",
+      "kind": "source",
+      "name": "crate:mio",
+      "note": null,
+      "sha256": "8f3d0b296e374a4e6f3c7b0a1f5a51d748a0d34c85e7dc48fc3fa9a87657fe09",
+      "url": "https://static.crates.io/crates/mio/mio-0.8.10.crate",
+      "version": "0.8.10"
+    },
+    {
+      "bytes": 29008,
+      "file": "native-tls-0.2.11.crate",
+      "kind": "source",
+      "name": "crate:native-tls",
+      "note": null,
+      "sha256": "07226173c32f2926027b63cce4bcd8076c3552846cbe7925f3aaffeac0a3b92e",
+      "url": "https://static.crates.io/crates/native-tls/native-tls-0.2.11.crate",
+      "version": "0.2.11"
+    },
+    {
+      "bytes": 279099,
+      "file": "nix-0.26.4.crate",
+      "kind": "source",
+      "name": "crate:nix",
+      "note": null,
+      "sha256": "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b",
+      "url": "https://static.crates.io/crates/nix/nix-0.26.4.crate",
+      "version": "0.26.4"
+    },
+    {
+      "bytes": 19786,
+      "file": "normpath-1.1.1.crate",
+      "kind": "source",
+      "name": "crate:normpath",
+      "note": null,
+      "sha256": "ec60c60a693226186f5d6edf073232bfb6464ed97eb22cf3b01c1e8198fd97f5",
+      "url": "https://static.crates.io/crates/normpath/normpath-1.1.1.crate",
+      "version": "1.1.1"
+    },
+    {
+      "bytes": 50190,
+      "file": "num-traits-0.2.17.crate",
+      "kind": "source",
+      "name": "crate:num-traits",
+      "note": null,
+      "sha256": "39e3200413f237f41ab11ad6d161bc7239c84dcb631773ccd7de3dfe4b5c267c",
+      "url": "https://static.crates.io/crates/num-traits/num-traits-0.2.17.crate",
+      "version": "0.2.17"
+    },
+    {
+      "bytes": 15713,
+      "file": "num_cpus-1.16.0.crate",
+      "kind": "source",
+      "name": "crate:num_cpus",
+      "note": null,
+      "sha256": "4161fcb6d602d4d2081af7c3a45852d875a03dd337a6bfdd6e06407b61342a43",
+      "url": "https://static.crates.io/crates/num_cpus/num_cpus-1.16.0.crate",
+      "version": "1.16.0"
+    },
+    {
+      "bytes": 286994,
+      "file": "object-0.32.2.crate",
+      "kind": "source",
+      "name": "crate:object",
+      "note": null,
+      "sha256": "a6a622008b6e321afc04970976f62ee297fdbaa6f95318ca343e3eebb9648441",
+      "url": "https://static.crates.io/crates/object/object-0.32.2.crate",
+      "version": "0.32.2"
+    },
+    {
+      "bytes": 35010,
+      "file": "once_cell-1.21.4.crate",
+      "kind": "source",
+      "name": "crate:once_cell",
+      "note": null,
+      "sha256": "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50",
+      "url": "https://static.crates.io/crates/once_cell/once_cell-1.21.4.crate",
+      "version": "1.21.4"
+    },
+    {
+      "bytes": 283852,
+      "file": "openssl-0.10.72.crate",
+      "kind": "source",
+      "name": "crate:openssl",
+      "note": null,
+      "sha256": "fedfea7d58a1f73118430a55da6a286e7b044961736ce96a16a17068ea25e5da",
+      "url": "https://static.crates.io/crates/openssl/openssl-0.10.72.crate",
+      "version": "0.10.72"
+    },
+    {
+      "bytes": 5601,
+      "file": "openssl-macros-0.1.1.crate",
+      "kind": "source",
+      "name": "crate:openssl-macros",
+      "note": null,
+      "sha256": "a948666b637a0f465e8564c73e89d4dde00d72d4d473cc972f390fc3dcee7d9c",
+      "url": "https://static.crates.io/crates/openssl-macros/openssl-macros-0.1.1.crate",
+      "version": "0.1.1"
+    },
+    {
+      "bytes": 7227,
+      "file": "openssl-probe-0.1.5.crate",
+      "kind": "source",
+      "name": "crate:openssl-probe",
+      "note": null,
+      "sha256": "ff011a302c396a5197692431fc1948019154afc178baf7d8e37367442a4601cf",
+      "url": "https://static.crates.io/crates/openssl-probe/openssl-probe-0.1.5.crate",
+      "version": "0.1.5"
+    },
+    {
+      "bytes": 9571211,
+      "file": "openssl-src-300.2.1+3.2.0.crate",
+      "kind": "source",
+      "name": "crate:openssl-src",
+      "note": null,
+      "sha256": "3fe476c29791a5ca0d1273c697e96085bbabbbea2ef7afd5617e78a4b40332d3",
+      "url": "https://static.crates.io/crates/openssl-src/openssl-src-300.2.1%2B3.2.0.crate",
+      "version": "300.2.1+3.2.0"
+    },
+    {
+      "bytes": 78190,
+      "file": "openssl-sys-0.9.108.crate",
+      "kind": "source",
+      "name": "crate:openssl-sys",
+      "note": null,
+      "sha256": "e145e1651e858e820e4860f7b9c5e169bc1d8ce1c86043be79fa7b7634821847",
+      "url": "https://static.crates.io/crates/openssl-sys/openssl-sys-0.9.108.crate",
+      "version": "0.9.108"
+    },
+    {
+      "bytes": 18157,
+      "file": "paste-1.0.14.crate",
+      "kind": "source",
+      "name": "crate:paste",
+      "note": null,
+      "sha256": "de3145af08024dea9fa9914f381a17b8fc6034dfb00f3a84013f7ff43f29ed4c",
+      "url": "https://static.crates.io/crates/paste/paste-1.0.14.crate",
+      "version": "1.0.14"
+    },
+    {
+      "bytes": 10235,
+      "file": "percent-encoding-2.3.1.crate",
+      "kind": "source",
+      "name": "crate:percent-encoding",
+      "note": null,
+      "sha256": "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e",
+      "url": "https://static.crates.io/crates/percent-encoding/percent-encoding-2.3.1.crate",
+      "version": "2.3.1"
+    },
+    {
+      "bytes": 29141,
+      "file": "pin-project-lite-0.2.13.crate",
+      "kind": "source",
+      "name": "crate:pin-project-lite",
+      "note": null,
+      "sha256": "8afb450f006bf6385ca15ef45d71d2288452bc3683ce2e2cacc0d18e4be60b58",
+      "url": "https://static.crates.io/crates/pin-project-lite/pin-project-lite-0.2.13.crate",
+      "version": "0.2.13"
+    },
+    {
+      "bytes": 7580,
+      "file": "pin-utils-0.1.0.crate",
+      "kind": "source",
+      "name": "crate:pin-utils",
+      "note": null,
+      "sha256": "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184",
+      "url": "https://static.crates.io/crates/pin-utils/pin-utils-0.1.0.crate",
+      "version": "0.1.0"
+    },
+    {
+      "bytes": 20330,
+      "file": "pkg-config-0.3.28.crate",
+      "kind": "source",
+      "name": "crate:pkg-config",
+      "note": null,
+      "sha256": "69d3587f8a9e599cc7ec2c00e331f71c4e69a5f9a4b8a6efd5b07466b9736f9a",
+      "url": "https://static.crates.io/crates/pkg-config/pkg-config-0.3.28.crate",
+      "version": "0.3.28"
+    },
+    {
+      "bytes": 202705,
+      "file": "portable-atomic-1.15.0.crate",
+      "kind": "source",
+      "name": "crate:portable-atomic",
+      "note": null,
+      "sha256": "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85",
+      "url": "https://static.crates.io/crates/portable-atomic/portable-atomic-1.15.0.crate",
+      "version": "1.15.0"
+    },
+    {
+      "bytes": 59588,
+      "file": "proc-macro2-1.0.107.crate",
+      "kind": "source",
+      "name": "crate:proc-macro2",
+      "note": null,
+      "sha256": "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9",
+      "url": "https://static.crates.io/crates/proc-macro2/proc-macro2-1.0.107.crate",
+      "version": "1.0.107"
+    },
+    {
+      "bytes": 1345706,
+      "file": "pyo3-0.30.1.crate",
+      "kind": "source",
+      "name": "crate:pyo3",
+      "note": null,
+      "sha256": "229ca13b8a15bb0d1487b81ab975bfcd97513416499a8312011b6036e42e0de4",
+      "url": "https://static.crates.io/crates/pyo3/pyo3-0.30.1.crate",
+      "version": "0.30.1"
+    },
+    {
+      "bytes": 42996,
+      "file": "pyo3-build-config-0.30.1.crate",
+      "kind": "source",
+      "name": "crate:pyo3-build-config",
+      "note": null,
+      "sha256": "70130e2b6dd1ee589a8788026a429561ca5c40fa7a2fa7914c2282eddae24700",
+      "url": "https://static.crates.io/crates/pyo3-build-config/pyo3-build-config-0.30.1.crate",
+      "version": "0.30.1"
+    },
+    {
+      "bytes": 93717,
+      "file": "pyo3-ffi-0.30.1.crate",
+      "kind": "source",
+      "name": "crate:pyo3-ffi",
+      "note": null,
+      "sha256": "5e7ff73c555c286d212d4ce7e5fbda845a973c4f61bd5f160f5f2c3c2a04d1c4",
+      "url": "https://static.crates.io/crates/pyo3-ffi/pyo3-ffi-0.30.1.crate",
+      "version": "0.30.1"
+    },
+    {
+      "bytes": 9055,
+      "file": "pyo3-macros-0.30.1.crate",
+      "kind": "source",
+      "name": "crate:pyo3-macros",
+      "note": null,
+      "sha256": "c46d2e5862c7bb8207e3b639f713dda3c499933444784154c11d013c5a691b60",
+      "url": "https://static.crates.io/crates/pyo3-macros/pyo3-macros-0.30.1.crate",
+      "version": "0.30.1"
+    },
+    {
+      "bytes": 97593,
+      "file": "pyo3-macros-backend-0.30.1.crate",
+      "kind": "source",
+      "name": "crate:pyo3-macros-backend",
+      "note": null,
+      "sha256": "38b89f066f2ae72a2aef52d1537ca2fcd104440ebfadee06e97aa90738a25b9b",
+      "url": "https://static.crates.io/crates/pyo3-macros-backend/pyo3-macros-backend-0.30.1.crate",
+      "version": "0.30.1"
+    },
+    {
+      "bytes": 31622,
+      "file": "quote-1.0.47.crate",
+      "kind": "source",
+      "name": "crate:quote",
+      "note": null,
+      "sha256": "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001",
+      "url": "https://static.crates.io/crates/quote/quote-1.0.47.crate",
+      "version": "1.0.47"
+    },
+    {
+      "bytes": 24858,
+      "file": "redox_syscall-0.4.1.crate",
+      "kind": "source",
+      "name": "crate:redox_syscall",
+      "note": null,
+      "sha256": "4722d768eff46b75989dd134e5c353f0d6296e5aaa3132e776cbdb56be7731aa",
+      "url": "https://static.crates.io/crates/redox_syscall/redox_syscall-0.4.1.crate",
+      "version": "0.4.1"
+    },
+    {
+      "bytes": 19074,
+      "file": "remove_dir_all-0.8.2.crate",
+      "kind": "source",
+      "name": "crate:remove_dir_all",
+      "note": null,
+      "sha256": "23895cfadc1917fed9c6ed76a8c2903615fa3704f7493ff82b364c6540acc02b",
+      "url": "https://static.crates.io/crates/remove_dir_all/remove_dir_all-0.8.2.crate",
+      "version": "0.8.2"
+    },
+    {
+      "bytes": 158448,
+      "file": "reqwest-0.11.23.crate",
+      "kind": "source",
+      "name": "crate:reqwest",
+      "note": null,
+      "sha256": "37b1ae8d9ac08420c66222fb9096fc5de435c3c48542bc5336c51892cffafb41",
+      "url": "https://static.crates.io/crates/reqwest/reqwest-0.11.23.crate",
+      "version": "0.11.23"
+    },
+    {
+      "bytes": 28844,
+      "file": "rmp-0.8.12.crate",
+      "kind": "source",
+      "name": "crate:rmp",
+      "note": null,
+      "sha256": "7f9860a6cc38ed1da53456442089b4dfa35e7cedaa326df63017af88385e6b20",
+      "url": "https://static.crates.io/crates/rmp/rmp-0.8.12.crate",
+      "version": "0.8.12"
+    },
+    {
+      "bytes": 30388,
+      "file": "rmp-serde-1.1.2.crate",
+      "kind": "source",
+      "name": "crate:rmp-serde",
+      "note": null,
+      "sha256": "bffea85eea980d8a74453e5d02a8d93028f3c34725de143085a844ebe953258a",
+      "url": "https://static.crates.io/crates/rmp-serde/rmp-serde-1.1.2.crate",
+      "version": "1.1.2"
+    },
+    {
+      "bytes": 28970,
+      "file": "rustc-demangle-0.1.23.crate",
+      "kind": "source",
+      "name": "crate:rustc-demangle",
+      "note": null,
+      "sha256": "d626bb9dae77e28219937af045c257c28bfd3f69333c512553507f5f9798cb76",
+      "url": "https://static.crates.io/crates/rustc-demangle/rustc-demangle-0.1.23.crate",
+      "version": "0.1.23"
+    },
+    {
+      "bytes": 365398,
+      "file": "rustix-0.38.28.crate",
+      "kind": "source",
+      "name": "crate:rustix",
+      "note": null,
+      "sha256": "72e572a5e8ca657d7366229cdde4bd14c4eb5499a9573d4d366fe1b599daa316",
+      "url": "https://static.crates.io/crates/rustix/rustix-0.38.28.crate",
+      "version": "0.38.28"
+    },
+    {
+      "bytes": 47351,
+      "file": "ryu-1.0.16.crate",
+      "kind": "source",
+      "name": "crate:ryu",
+      "note": null,
+      "sha256": "f98d2aa92eebf49b69786be48e4477826b256916e84a57ff2a4f21923b48eb4c",
+      "url": "https://static.crates.io/crates/ryu/ryu-1.0.16.crate",
+      "version": "1.0.16"
+    },
+    {
+      "bytes": 10183,
+      "file": "same-file-1.0.6.crate",
+      "kind": "source",
+      "name": "crate:same-file",
+      "note": null,
+      "sha256": "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502",
+      "url": "https://static.crates.io/crates/same-file/same-file-1.0.6.crate",
+      "version": "1.0.6"
+    },
+    {
+      "bytes": 41642,
+      "file": "schannel-0.1.22.crate",
+      "kind": "source",
+      "name": "crate:schannel",
+      "note": null,
+      "sha256": "0c3733bf4cf7ea0880754e19cb5a462007c4a8c1914bff372ccc95b464f1df88",
+      "url": "https://static.crates.io/crates/schannel/schannel-0.1.22.crate",
+      "version": "0.1.22"
+    },
+    {
+      "bytes": 79295,
+      "file": "security-framework-2.9.2.crate",
+      "kind": "source",
+      "name": "crate:security-framework",
+      "note": null,
+      "sha256": "05b64fb303737d99b81884b2c63433e9ae28abebe5eb5045dcdd175dc2ecf4de",
+      "url": "https://static.crates.io/crates/security-framework/security-framework-2.9.2.crate",
+      "version": "2.9.2"
+    },
+    {
+      "bytes": 18284,
+      "file": "security-framework-sys-2.9.1.crate",
+      "kind": "source",
+      "name": "crate:security-framework-sys",
+      "note": null,
+      "sha256": "e932934257d3b408ed8f30db49d85ea163bfe74961f017f405b025af298f0c7a",
+      "url": "https://static.crates.io/crates/security-framework-sys/security-framework-sys-2.9.1.crate",
+      "version": "2.9.1"
+    },
+    {
+      "bytes": 76863,
+      "file": "serde-1.0.193.crate",
+      "kind": "source",
+      "name": "crate:serde",
+      "note": null,
+      "sha256": "25dd9975e68d0cb5aa1120c288333fc98731bd1dd12f561e468ea4728c042b89",
+      "url": "https://static.crates.io/crates/serde/serde-1.0.193.crate",
+      "version": "1.0.193"
+    },
+    {
+      "bytes": 10910,
+      "file": "serde_bytes-0.11.12.crate",
+      "kind": "source",
+      "name": "crate:serde_bytes",
+      "note": null,
+      "sha256": "ab33ec92f677585af6d88c65593ae2375adde54efdbf16d597f2cbc7a6d368ff",
+      "url": "https://static.crates.io/crates/serde_bytes/serde_bytes-0.11.12.crate",
+      "version": "0.11.12"
+    },
+    {
+      "bytes": 55692,
+      "file": "serde_derive-1.0.193.crate",
+      "kind": "source",
+      "name": "crate:serde_derive",
+      "note": null,
+      "sha256": "43576ca501357b9b071ac53cdc7da8ef0cbd9493d8df094cd821777ea6e894d3",
+      "url": "https://static.crates.io/crates/serde_derive/serde_derive-1.0.193.crate",
+      "version": "1.0.193"
+    },
+    {
+      "bytes": 146476,
+      "file": "serde_json-1.0.108.crate",
+      "kind": "source",
+      "name": "crate:serde_json",
+      "note": null,
+      "sha256": "3d1c7e3eac408d115102c4c24ad393e0821bb3a5df4d506a80f85f7a742a526b",
+      "url": "https://static.crates.io/crates/serde_json/serde_json-1.0.108.crate",
+      "version": "1.0.108"
+    },
+    {
+      "bytes": 9971,
+      "file": "serde_repr-0.1.17.crate",
+      "kind": "source",
+      "name": "crate:serde_repr",
+      "note": null,
+      "sha256": "3081f5ffbb02284dda55132aa26daecedd7372a42417bbbab6f14ab7d6bb9145",
+      "url": "https://static.crates.io/crates/serde_repr/serde_repr-0.1.17.crate",
+      "version": "0.1.17"
+    },
+    {
+      "bytes": 12822,
+      "file": "serde_urlencoded-0.7.1.crate",
+      "kind": "source",
+      "name": "crate:serde_urlencoded",
+      "note": null,
+      "sha256": "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd",
+      "url": "https://static.crates.io/crates/serde_urlencoded/serde_urlencoded-0.7.1.crate",
+      "version": "0.7.1"
+    },
+    {
+      "bytes": 16012,
+      "file": "signature-1.6.4.crate",
+      "kind": "source",
+      "name": "crate:signature",
+      "note": null,
+      "sha256": "74233d3b3b2f6d4b006dc19dee745e73e2a6bfb6f93607cd3b02bd5b00797d7c",
+      "url": "https://static.crates.io/crates/signature/signature-1.6.4.crate",
+      "version": "1.6.4"
+    },
+    {
+      "bytes": 17108,
+      "file": "slab-0.4.9.crate",
+      "kind": "source",
+      "name": "crate:slab",
+      "note": null,
+      "sha256": "8f92a496fb766b417c996b9c5e57daf2f7ad3b0bebe1ccfca4856390e3d3bb67",
+      "url": "https://static.crates.io/crates/slab/slab-0.4.9.crate",
+      "version": "0.4.9"
+    },
+    {
+      "bytes": 54863,
+      "file": "socket2-0.5.5.crate",
+      "kind": "source",
+      "name": "crate:socket2",
+      "note": null,
+      "sha256": "7b5fac59a5cb5dd637972e5fca70daf0523c9067fcdc4842f053dae04a18f8e9",
+      "url": "https://static.crates.io/crates/socket2/socket2-0.5.5.crate",
+      "version": "0.5.5"
+    },
+    {
+      "bytes": 2127946,
+      "file": "sodiumoxide-0.2.7.crate",
+      "kind": "source",
+      "name": "crate:sodiumoxide",
+      "note": null,
+      "sha256": "e26be3acb6c2d9a7aac28482586a7856436af4cfe7100031d219de2d2ecb0028",
+      "url": "https://static.crates.io/crates/sodiumoxide/sodiumoxide-0.2.7.crate",
+      "version": "0.2.7"
+    },
+    {
+      "bytes": 8054,
+      "file": "stable_deref_trait-1.2.0.crate",
+      "kind": "source",
+      "name": "crate:stable_deref_trait",
+      "note": null,
+      "sha256": "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3",
+      "url": "https://static.crates.io/crates/stable_deref_trait/stable_deref_trait-1.2.0.crate",
+      "version": "1.2.0"
+    },
+    {
+      "bytes": 248363,
+      "file": "syn-2.0.43.crate",
+      "kind": "source",
+      "name": "crate:syn",
+      "note": null,
+      "sha256": "ee659fb5f3d355364e1f3e5bc10fb82068efbf824a1e9d1c9504244a6469ad53",
+      "url": "https://static.crates.io/crates/syn/syn-2.0.43.crate",
+      "version": "2.0.43"
+    },
+    {
+      "bytes": 313970,
+      "file": "syn-3.0.9.crate",
+      "kind": "source",
+      "name": "crate:syn",
+      "note": null,
+      "sha256": "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b",
+      "url": "https://static.crates.io/crates/syn/syn-3.0.9.crate",
+      "version": "3.0.9"
+    },
+    {
+      "bytes": 12618,
+      "file": "system-configuration-0.5.1.crate",
+      "kind": "source",
+      "name": "crate:system-configuration",
+      "note": null,
+      "sha256": "ba3a3adc5c275d719af8cb4272ea1c4a6d668a777f37e115f6d11ddbc1c8e0e7",
+      "url": "https://static.crates.io/crates/system-configuration/system-configuration-0.5.1.crate",
+      "version": "0.5.1"
+    },
+    {
+      "bytes": 6730,
+      "file": "system-configuration-sys-0.5.0.crate",
+      "kind": "source",
+      "name": "crate:system-configuration-sys",
+      "note": null,
+      "sha256": "a75fb188eb626b924683e3b95e3a48e63551fcfb51949de2f06a9d91dbee93c9",
+      "url": "https://static.crates.io/crates/system-configuration-sys/system-configuration-sys-0.5.0.crate",
+      "version": "0.5.0"
+    },
+    {
+      "bytes": 26928,
+      "file": "target-lexicon-0.13.5.crate",
+      "kind": "source",
+      "name": "crate:target-lexicon",
+      "note": null,
+      "sha256": "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca",
+      "url": "https://static.crates.io/crates/target-lexicon/target-lexicon-0.13.5.crate",
+      "version": "0.13.5"
+    },
+    {
+      "bytes": 32164,
+      "file": "tempfile-3.8.1.crate",
+      "kind": "source",
+      "name": "crate:tempfile",
+      "note": null,
+      "sha256": "7ef1adac450ad7f4b3c28589471ade84f25f731a7a0fe30d71dfa9f60fd808e5",
+      "url": "https://static.crates.io/crates/tempfile/tempfile-3.8.1.crate",
+      "version": "3.8.1"
+    },
+    {
+      "bytes": 45991,
+      "file": "tinyvec-1.6.0.crate",
+      "kind": "source",
+      "name": "crate:tinyvec",
+      "note": null,
+      "sha256": "87cc5ceb3875bb20c2890005a4e226a4651264a5c75edb2421b52861a0a0cb50",
+      "url": "https://static.crates.io/crates/tinyvec/tinyvec-1.6.0.crate",
+      "version": "1.6.0"
+    },
+    {
+      "bytes": 5865,
+      "file": "tinyvec_macros-0.1.1.crate",
+      "kind": "source",
+      "name": "crate:tinyvec_macros",
+      "note": null,
+      "sha256": "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20",
+      "url": "https://static.crates.io/crates/tinyvec_macros/tinyvec_macros-0.1.1.crate",
+      "version": "0.1.1"
+    },
+    {
+      "bytes": 744407,
+      "file": "tokio-1.35.1.crate",
+      "kind": "source",
+      "name": "crate:tokio",
+      "note": null,
+      "sha256": "c89b4efa943be685f629b149f53829423f8f5531ea21249408e8e2f8671ec104",
+      "url": "https://static.crates.io/crates/tokio/tokio-1.35.1.crate",
+      "version": "1.35.1"
+    },
+    {
+      "bytes": 20676,
+      "file": "tokio-native-tls-0.3.1.crate",
+      "kind": "source",
+      "name": "crate:tokio-native-tls",
+      "note": null,
+      "sha256": "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2",
+      "url": "https://static.crates.io/crates/tokio-native-tls/tokio-native-tls-0.3.1.crate",
+      "version": "0.3.1"
+    },
+    {
+      "bytes": 110508,
+      "file": "tokio-util-0.7.10.crate",
+      "kind": "source",
+      "name": "crate:tokio-util",
+      "note": null,
+      "sha256": "5419f34732d9eb6ee4c3578b7989078579b7f039cbbb9ca2c4da015749371e15",
+      "url": "https://static.crates.io/crates/tokio-util/tokio-util-0.7.10.crate",
+      "version": "0.7.10"
+    },
+    {
+      "bytes": 6847,
+      "file": "tower-service-0.3.2.crate",
+      "kind": "source",
+      "name": "crate:tower-service",
+      "note": null,
+      "sha256": "b6bc1c9ce2b5135ac7f93c72918fc37feb872bdc6a5533a8b85eb4b86bfdae52",
+      "url": "https://static.crates.io/crates/tower-service/tower-service-0.3.2.crate",
+      "version": "0.3.2"
+    },
+    {
+      "bytes": 79459,
+      "file": "tracing-0.1.40.crate",
+      "kind": "source",
+      "name": "crate:tracing",
+      "note": null,
+      "sha256": "c3523ab5a71916ccf420eebdf5521fcef02141234bbc0b8a49f2fdc4544364ef",
+      "url": "https://static.crates.io/crates/tracing/tracing-0.1.40.crate",
+      "version": "0.1.40"
+    },
+    {
+      "bytes": 61221,
+      "file": "tracing-core-0.1.32.crate",
+      "kind": "source",
+      "name": "crate:tracing-core",
+      "note": null,
+      "sha256": "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54",
+      "url": "https://static.crates.io/crates/tracing-core/tracing-core-0.1.32.crate",
+      "version": "0.1.32"
+    },
+    {
+      "bytes": 4314,
+      "file": "try-lock-0.2.5.crate",
+      "kind": "source",
+      "name": "crate:try-lock",
+      "note": null,
+      "sha256": "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b",
+      "url": "https://static.crates.io/crates/try-lock/try-lock-0.2.5.crate",
+      "version": "0.2.5"
+    },
+    {
+      "bytes": 56429,
+      "file": "unicode-bidi-0.3.14.crate",
+      "kind": "source",
+      "name": "crate:unicode-bidi",
+      "note": null,
+      "sha256": "6f2528f27a9eb2b21e69c95319b30bd0efd85d09c379741b0f78ea1d86be2416",
+      "url": "https://static.crates.io/crates/unicode-bidi/unicode-bidi-0.3.14.crate",
+      "version": "0.3.14"
+    },
+    {
+      "bytes": 42168,
+      "file": "unicode-ident-1.0.12.crate",
+      "kind": "source",
+      "name": "crate:unicode-ident",
+      "note": null,
+      "sha256": "3354b9ac3fae1ff6755cb6db53683adb661634f67557942dea4facebec0fee4b",
+      "url": "https://static.crates.io/crates/unicode-ident/unicode-ident-1.0.12.crate",
+      "version": "1.0.12"
+    },
+    {
+      "bytes": 122604,
+      "file": "unicode-normalization-0.1.22.crate",
+      "kind": "source",
+      "name": "crate:unicode-normalization",
+      "note": null,
+      "sha256": "5c5713f0fc4b5db668a2ac63cdb7bb4469d8c9fed047b1d0292cc7b0ce2ba921",
+      "url": "https://static.crates.io/crates/unicode-normalization/unicode-normalization-0.1.22.crate",
+      "version": "0.1.22"
+    },
+    {
+      "bytes": 78605,
+      "file": "url-2.5.0.crate",
+      "kind": "source",
+      "name": "crate:url",
+      "note": null,
+      "sha256": "31e6302e3bb753d46e83516cae55ae196fc0c309407cf11ab35cc51a4c2a4633",
+      "url": "https://static.crates.io/crates/url/url-2.5.0.crate",
+      "version": "2.5.0"
+    },
+    {
+      "bytes": 228735,
+      "file": "vcpkg-0.2.15.crate",
+      "kind": "source",
+      "name": "crate:vcpkg",
+      "note": null,
+      "sha256": "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426",
+      "url": "https://static.crates.io/crates/vcpkg/vcpkg-0.2.15.crate",
+      "version": "0.2.15"
+    },
+    {
+      "bytes": 23550,
+      "file": "walkdir-2.4.0.crate",
+      "kind": "source",
+      "name": "crate:walkdir",
+      "note": null,
+      "sha256": "d71d857dc86794ca4c280d616f7da00d2dbfd8cd788846559a6813e6aa4b54ee",
+      "url": "https://static.crates.io/crates/walkdir/walkdir-2.4.0.crate",
+      "version": "2.4.0"
+    },
+    {
+      "bytes": 6398,
+      "file": "want-0.3.1.crate",
+      "kind": "source",
+      "name": "crate:want",
+      "note": null,
+      "sha256": "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e",
+      "url": "https://static.crates.io/crates/want/want-0.3.1.crate",
+      "version": "0.3.1"
+    },
+    {
+      "bytes": 28131,
+      "file": "wasi-0.11.0+wasi-snapshot-preview1.crate",
+      "kind": "source",
+      "name": "crate:wasi",
+      "note": null,
+      "sha256": "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423",
+      "url": "https://static.crates.io/crates/wasi/wasi-0.11.0%2Bwasi-snapshot-preview1.crate",
+      "version": "0.11.0+wasi-snapshot-preview1"
+    },
+    {
+      "bytes": 181935,
+      "file": "wasm-bindgen-0.2.89.crate",
+      "kind": "source",
+      "name": "crate:wasm-bindgen",
+      "note": null,
+      "sha256": "0ed0d4f68a3015cc185aff4db9506a015f4b96f95303897bfa23f846db54064e",
+      "url": "https://static.crates.io/crates/wasm-bindgen/wasm-bindgen-0.2.89.crate",
+      "version": "0.2.89"
+    },
+    {
+      "bytes": 28205,
+      "file": "wasm-bindgen-backend-0.2.89.crate",
+      "kind": "source",
+      "name": "crate:wasm-bindgen-backend",
+      "note": null,
+      "sha256": "1b56f625e64f3a1084ded111c4d5f477df9f8c92df113852fa5a374dbda78826",
+      "url": "https://static.crates.io/crates/wasm-bindgen-backend/wasm-bindgen-backend-0.2.89.crate",
+      "version": "0.2.89"
+    },
+    {
+      "bytes": 15376,
+      "file": "wasm-bindgen-futures-0.4.39.crate",
+      "kind": "source",
+      "name": "crate:wasm-bindgen-futures",
+      "note": null,
+      "sha256": "ac36a15a220124ac510204aec1c3e5db8a22ab06fd6706d881dc6149f8ed9a12",
+      "url": "https://static.crates.io/crates/wasm-bindgen-futures/wasm-bindgen-futures-0.4.39.crate",
+      "version": "0.4.39"
+    },
+    {
+      "bytes": 13906,
+      "file": "wasm-bindgen-macro-0.2.89.crate",
+      "kind": "source",
+      "name": "crate:wasm-bindgen-macro",
+      "note": null,
+      "sha256": "0162dbf37223cd2afce98f3d0785506dcb8d266223983e4b5b525859e6e182b2",
+      "url": "https://static.crates.io/crates/wasm-bindgen-macro/wasm-bindgen-macro-0.2.89.crate",
+      "version": "0.2.89"
+    },
+    {
+      "bytes": 20008,
+      "file": "wasm-bindgen-macro-support-0.2.89.crate",
+      "kind": "source",
+      "name": "crate:wasm-bindgen-macro-support",
+      "note": null,
+      "sha256": "f0eb82fcb7930ae6219a7ecfd55b217f5f0893484b7a13022ebb2b2bf20b5283",
+      "url": "https://static.crates.io/crates/wasm-bindgen-macro-support/wasm-bindgen-macro-support-0.2.89.crate",
+      "version": "0.2.89"
+    },
+    {
+      "bytes": 7265,
+      "file": "wasm-bindgen-shared-0.2.89.crate",
+      "kind": "source",
+      "name": "crate:wasm-bindgen-shared",
+      "note": null,
+      "sha256": "7ab9b36309365056cd639da3134bf87fa8f3d86008abf99e612384a6eecd459f",
+      "url": "https://static.crates.io/crates/wasm-bindgen-shared/wasm-bindgen-shared-0.2.89.crate",
+      "version": "0.2.89"
+    },
+    {
+      "bytes": 733024,
+      "file": "web-sys-0.3.66.crate",
+      "kind": "source",
+      "name": "crate:web-sys",
+      "note": null,
+      "sha256": "50c24a44ec86bb68fbecd1b3efed7e85ea5621b39b35ef2766b66cd984f8010f",
+      "url": "https://static.crates.io/crates/web-sys/web-sys-0.3.66.crate",
+      "version": "0.3.66"
+    },
+    {
+      "bytes": 1200382,
+      "file": "winapi-0.3.9.crate",
+      "kind": "source",
+      "name": "crate:winapi",
+      "note": null,
+      "sha256": "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419",
+      "url": "https://static.crates.io/crates/winapi/winapi-0.3.9.crate",
+      "version": "0.3.9"
+    },
+    {
+      "bytes": 2918815,
+      "file": "winapi-i686-pc-windows-gnu-0.4.0.crate",
+      "kind": "source",
+      "name": "crate:winapi-i686-pc-windows-gnu",
+      "note": null,
+      "sha256": "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6",
+      "url": "https://static.crates.io/crates/winapi-i686-pc-windows-gnu/winapi-i686-pc-windows-gnu-0.4.0.crate",
+      "version": "0.4.0"
+    },
+    {
+      "bytes": 12234,
+      "file": "winapi-util-0.1.6.crate",
+      "kind": "source",
+      "name": "crate:winapi-util",
+      "note": null,
+      "sha256": "f29e6f9198ba0d26b4c9f07dbe6f9ed633e1f3d5b8b414090084349e46a52596",
+      "url": "https://static.crates.io/crates/winapi-util/winapi-util-0.1.6.crate",
+      "version": "0.1.6"
+    },
+    {
+      "bytes": 2947998,
+      "file": "winapi-x86_64-pc-windows-gnu-0.4.0.crate",
+      "kind": "source",
+      "name": "crate:winapi-x86_64-pc-windows-gnu",
+      "note": null,
+      "sha256": "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f",
+      "url": "https://static.crates.io/crates/winapi-x86_64-pc-windows-gnu/winapi-x86_64-pc-windows-gnu-0.4.0.crate",
+      "version": "0.4.0"
+    },
+    {
+      "bytes": 2568659,
+      "file": "windows-sys-0.45.0.crate",
+      "kind": "source",
+      "name": "crate:windows-sys",
+      "note": null,
+      "sha256": "75283be5efb2831d37ea142365f009c02ec203cd29a3ebecbc093d52315b66d0",
+      "url": "https://static.crates.io/crates/windows-sys/windows-sys-0.45.0.crate",
+      "version": "0.45.0"
+    },
+    {
+      "bytes": 2628884,
+      "file": "windows-sys-0.48.0.crate",
+      "kind": "source",
+      "name": "crate:windows-sys",
+      "note": null,
+      "sha256": "677d2418bec65e3338edb076e806bc1ec15693c5d0104683f2efe857f61056a9",
+      "url": "https://static.crates.io/crates/windows-sys/windows-sys-0.48.0.crate",
+      "version": "0.48.0"
+    },
+    {
+      "bytes": 2576877,
+      "file": "windows-sys-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows-sys",
+      "note": null,
+      "sha256": "282be5f36a8ce781fad8c8ae18fa3f9beff57ec1b52cb3de0789201425d9a33d",
+      "url": "https://static.crates.io/crates/windows-sys/windows-sys-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 5492,
+      "file": "windows-targets-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows-targets",
+      "note": null,
+      "sha256": "8e5180c00cd44c9b1c88adb3693291f1cd93605ded80c250a75d472756b4d071",
+      "url": "https://static.crates.io/crates/windows-targets/windows-targets-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 6904,
+      "file": "windows-targets-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows-targets",
+      "note": null,
+      "sha256": "9a2fa6e2155d7247be68c096456083145c183cbbbc2764150dda45a87197940c",
+      "url": "https://static.crates.io/crates/windows-targets/windows-targets-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 6229,
+      "file": "windows-targets-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows-targets",
+      "note": null,
+      "sha256": "8a18201040b24831fbb9e4eb208f8892e1f50a37feb53cc7ff887feb8f50e7cd",
+      "url": "https://static.crates.io/crates/windows-targets/windows-targets-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 364071,
+      "file": "windows_aarch64_gnullvm-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows_aarch64_gnullvm",
+      "note": null,
+      "sha256": "597a5118570b68bc08d8d59125332c54f1ba9d9adeedeef5b99b02ba2b0698f8",
+      "url": "https://static.crates.io/crates/windows_aarch64_gnullvm/windows_aarch64_gnullvm-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 418492,
+      "file": "windows_aarch64_gnullvm-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows_aarch64_gnullvm",
+      "note": null,
+      "sha256": "2b38e32f0abccf9987a4e3079dfb67dcd799fb61361e53e2882c3cbaf0d905d8",
+      "url": "https://static.crates.io/crates/windows_aarch64_gnullvm/windows_aarch64_gnullvm-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 430182,
+      "file": "windows_aarch64_gnullvm-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows_aarch64_gnullvm",
+      "note": null,
+      "sha256": "cb7764e35d4db8a7921e09562a0304bf2f93e0a51bfccee0bd0bb0b666b015ea",
+      "url": "https://static.crates.io/crates/windows_aarch64_gnullvm/windows_aarch64_gnullvm-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 666981,
+      "file": "windows_aarch64_msvc-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows_aarch64_msvc",
+      "note": null,
+      "sha256": "e08e8864a60f06ef0d0ff4ba04124db8b0fb3be5776a5cd47641e942e58c4d43",
+      "url": "https://static.crates.io/crates/windows_aarch64_msvc/windows_aarch64_msvc-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 798483,
+      "file": "windows_aarch64_msvc-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows_aarch64_msvc",
+      "note": null,
+      "sha256": "dc35310971f3b2dbbf3f0690a219f40e2d9afcf64f9ab7cc1be722937c26b4bc",
+      "url": "https://static.crates.io/crates/windows_aarch64_msvc/windows_aarch64_msvc-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 821663,
+      "file": "windows_aarch64_msvc-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows_aarch64_msvc",
+      "note": null,
+      "sha256": "bbaa0368d4f1d2aaefc55b6fcfee13f41544ddf36801e793edbbfd7d7df075ef",
+      "url": "https://static.crates.io/crates/windows_aarch64_msvc/windows_aarch64_msvc-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 736236,
+      "file": "windows_i686_gnu-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows_i686_gnu",
+      "note": null,
+      "sha256": "c61d927d8da41da96a81f029489353e68739737d3beca43145c8afec9a31a84f",
+      "url": "https://static.crates.io/crates/windows_i686_gnu/windows_i686_gnu-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 844891,
+      "file": "windows_i686_gnu-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows_i686_gnu",
+      "note": null,
+      "sha256": "a75915e7def60c94dcef72200b9a8e58e5091744960da64ec734a6c6e9b3743e",
+      "url": "https://static.crates.io/crates/windows_i686_gnu/windows_i686_gnu-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 870285,
+      "file": "windows_i686_gnu-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows_i686_gnu",
+      "note": null,
+      "sha256": "a28637cb1fa3560a16915793afb20081aba2c92ee8af57b4d5f28e4b3e7df313",
+      "url": "https://static.crates.io/crates/windows_i686_gnu/windows_i686_gnu-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 724951,
+      "file": "windows_i686_msvc-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows_i686_msvc",
+      "note": null,
+      "sha256": "44d840b6ec649f480a41c8d80f9c65108b92d89345dd94027bfe06ac444d1060",
+      "url": "https://static.crates.io/crates/windows_i686_msvc/windows_i686_msvc-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 864300,
+      "file": "windows_i686_msvc-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows_i686_msvc",
+      "note": null,
+      "sha256": "8f55c233f70c4b27f66c523580f78f1004e8b5a8b659e05a4eb49d4166cca406",
+      "url": "https://static.crates.io/crates/windows_i686_msvc/windows_i686_msvc-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 888693,
+      "file": "windows_i686_msvc-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows_i686_msvc",
+      "note": null,
+      "sha256": "ffe5e8e31046ce6230cc7215707b816e339ff4d4d67c65dffa206fd0f7aa7b9a",
+      "url": "https://static.crates.io/crates/windows_i686_msvc/windows_i686_msvc-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 699373,
+      "file": "windows_x86_64_gnu-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_gnu",
+      "note": null,
+      "sha256": "8de912b8b8feb55c064867cf047dda097f92d51efad5b491dfb98f6bbb70cb36",
+      "url": "https://static.crates.io/crates/windows_x86_64_gnu/windows_x86_64_gnu-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 801619,
+      "file": "windows_x86_64_gnu-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_gnu",
+      "note": null,
+      "sha256": "53d40abd2583d23e4718fddf1ebec84dbff8381c07cae67ff7768bbf19c6718e",
+      "url": "https://static.crates.io/crates/windows_x86_64_gnu/windows_x86_64_gnu-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 826213,
+      "file": "windows_x86_64_gnu-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_gnu",
+      "note": null,
+      "sha256": "3d6fa32db2bc4a2f5abeacf2b69f7992cd09dca97498da74a151a3132c26befd",
+      "url": "https://static.crates.io/crates/windows_x86_64_gnu/windows_x86_64_gnu-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 364068,
+      "file": "windows_x86_64_gnullvm-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_gnullvm",
+      "note": null,
+      "sha256": "26d41b46a36d453748aedef1486d5c7a85db22e56aff34643984ea85514e94a3",
+      "url": "https://static.crates.io/crates/windows_x86_64_gnullvm/windows_x86_64_gnullvm-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 418486,
+      "file": "windows_x86_64_gnullvm-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_gnullvm",
+      "note": null,
+      "sha256": "0b7b52767868a23d5bab768e390dc5f5c55825b6d30b86c844ff2dc7414044cc",
+      "url": "https://static.crates.io/crates/windows_x86_64_gnullvm/windows_x86_64_gnullvm-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 430165,
+      "file": "windows_x86_64_gnullvm-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_gnullvm",
+      "note": null,
+      "sha256": "1a657e1e9d3f514745a572a6846d3c7aa7dbe1658c056ed9c3344c4109a6949e",
+      "url": "https://static.crates.io/crates/windows_x86_64_gnullvm/windows_x86_64_gnullvm-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 666936,
+      "file": "windows_x86_64_msvc-0.42.2.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_msvc",
+      "note": null,
+      "sha256": "9aec5da331524158c6d1a4ac0ab1541149c0b9505fde06423b02f5ef0106b9f0",
+      "url": "https://static.crates.io/crates/windows_x86_64_msvc/windows_x86_64_msvc-0.42.2.crate",
+      "version": "0.42.2"
+    },
+    {
+      "bytes": 798412,
+      "file": "windows_x86_64_msvc-0.48.5.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_msvc",
+      "note": null,
+      "sha256": "ed94fce61571a4006852b7389a063ab983c02eb1bb37b47f8272ce92d06d9538",
+      "url": "https://static.crates.io/crates/windows_x86_64_msvc/windows_x86_64_msvc-0.48.5.crate",
+      "version": "0.48.5"
+    },
+    {
+      "bytes": 821600,
+      "file": "windows_x86_64_msvc-0.52.0.crate",
+      "kind": "source",
+      "name": "crate:windows_x86_64_msvc",
+      "note": null,
+      "sha256": "dff9641d1cd4be8d1a070daf9e3773c5f67e78b4d9d42263020c057706765c04",
+      "url": "https://static.crates.io/crates/windows_x86_64_msvc/windows_x86_64_msvc-0.52.0.crate",
+      "version": "0.52.0"
+    },
+    {
+      "bytes": 29703,
+      "file": "winreg-0.50.0.crate",
+      "kind": "source",
+      "name": "crate:winreg",
+      "note": null,
+      "sha256": "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1",
+      "url": "https://static.crates.io/crates/winreg/winreg-0.50.0.crate",
+      "version": "0.50.0"
+    },
+    {
+      "bytes": 5863216,
+      "file": "rust-src-1.99.1.tar.xz",
+      "kind": "source",
+      "name": "rust:rust-src:*",
+      "note": null,
+      "sha256": "e485a88c45db546b73571df7bebfcb4454ba4fb552c492e25fc5b00eeb5bf22d",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/rust-src-1.99.1.tar.xz",
+      "version": "1.99.1"
+    },
+    {
+      "bytes": 31563228,
+      "file": "rust-std-1.99.1-x86_64-unknown-linux-gnu.tar.xz",
+      "kind": "supplier-binary-not-source",
+      "name": "rust:rust-std:x86_64-unknown-linux-gnu",
+      "note": null,
+      "sha256": "109b074225bf5b9ea3820890876bfdf4ed161adbfaf94b2b4b5984c85ee5d958",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/rust-std-1.99.1-x86_64-unknown-linux-gnu.tar.xz",
+      "version": "1.99.1"
+    },
+    {
+      "bytes": 23619148,
+      "file": "rust-std-1.99.1-x86_64-pc-windows-msvc.tar.xz",
+      "kind": "supplier-binary-not-source",
+      "name": "rust:rust-std:x86_64-pc-windows-msvc",
+      "note": null,
+      "sha256": "4fe09430ded40b8b3092b49f0a651178eb1f8154ef4d1f1a73f2a3595b2d956f",
+      "url": "https://static.rust-lang.org/dist/2026-10-15/rust-std-1.99.1-x86_64-pc-windows-msvc.tar.xz",
+      "version": "1.99.1"
+    },
+    {
+      "bytes": 4437180,
+      "file": "pyinstaller-6.22.3.tar.gz",
+      "kind": "source",
+      "name": "pyinstaller",
+      "note": "bootloader source; GPL-2.0-or-later WITH Bootloader-exception, rthooks Apache-2.0",
+      "sha256": "05eb2f5615503e72939a7224d68b4aff572c6b0438ee4a17d0a4b481f399362d",
+      "url": "https://files.pythonhosted.org/packages/source/p/pyinstaller/pyinstaller-6.22.3.tar.gz",
+      "version": "6.22.3"
+    }
+  ],
+  "ubuntu_archive": {
+    "components": [
+      "main",
+      "restricted",
+      "universe",
+      "multiverse"
+    ],
+    "keyring": "/usr/share/keyrings/ubuntu-archive-keyring.gpg",
+    "snapshot": "20261101T000000Z",
+    "suites": [
+      "jammy",
+      "jammy-updates",
+      "jammy-security"
+    ]
+  },
+  "windows-x86_64": [
+    {
+      "bytes": 19640792,
+      "file": "Python-3.10.11.tar.xz",
+      "kind": "source",
+      "name": "cpython",
+      "note": "publisher Sigstore bundle; the packaging source job verifies the signature",
+      "sha256": "3c3bc3048303721c904a03eb8326b631e921f11cc3be2988456a42f115daf04c",
+      "sigstore": {
+        "bundle_url": "https://www.python.org/ftp/python/3.10.11/Python-3.10.11.tar.xz.sigstore",
+        "identity": "pablogsal@python.org",
+        "issuer": "https://accounts.google.com"
+      },
+      "url": "https://www.python.org/ftp/python/3.10.11/Python-3.10.11.tar.xz",
+      "version": "3.10.11"
+    },
+    {
+      "bytes": 136225,
+      "file": "certifi-2026.10.23.tar.gz",
+      "kind": "source",
+      "name": "certifi",
+      "note": "publisher sdist, digest verified",
+      "sha256": "a9895e6e2758b371e0545e321a3a8fd1fcfd9829ada8824a936dfb16aaaf36cd",
+      "url": "https://files.pythonhosted.org/packages/fd/11/b524cbd9bbdaca58608e4cf4053fd463417549e1959fa8d3aa18319f9555/certifi-2026.10.23.tar.gz",
+      "version": "2026.10.23"
+    },
+    {
+      "bytes": 131496,
+      "file": "radicale-3.2.3.tar.gz",
+      "kind": "source",
+      "name": "Radicale",
+      "note": "publisher sdist, digest verified",
+      "sha256": "12414266520b958e709165579654969c434909b6fa644b9e18e613400ca5fd1e",
+      "url": "https://files.pythonhosted.org/packages/08/c9/4c5beb7d6fc8d8dce2fd07d9c4209388270337a80be4c3907e513bec88c2/radicale-3.2.3.tar.gz",
+      "version": "3.2.3"
+    }
+  ]
+}

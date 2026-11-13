@@ -1,0 +1,91 @@
+Installation information
+Commit: {{GIT_SHA}}
+
+GPL-3 section 6 (LGPL-3 section 4(e) refers to the same rule) requires
+"Installation Information" only when two conditions are both met:
+- object code is conveyed in, with, or specifically for use in, a User
+  Product; and
+- the conveying is part of a transaction that transfers the right of
+  possession and use of that User Product to the recipient, for good or for
+  a fixed term.
+Installation Information means the methods, procedures, keys or other
+information needed to install and run modified versions in that product.
+(See GPL-3.0.txt in NOTICES, section 6.) This file sets out the facts of this
+one archive's delivery against that condition.
+
+
+Facts about this archive
+------------------------
+- Form: a portable archive holding the unchanged PyInstaller onedir folder,
+  with NOTICES, SOURCE.txt, README-dev-build.txt and BUILD-INFO.json beside
+  it. It's a tar.gz on Linux and a zip on Windows, built by
+  .github/workflows/build-bridge-desktop-dev.yml at the commit above.
+- No installer. The spec header says it "does not sign, notarize or install
+  anything", and the build sets codesign_identity=None. You extract the
+  archive anywhere and run the program from there.
+- Unsigned. The workflow that builds the archive has no signing step and
+  uses no secrets, and nothing in the archive depends on a signing key.
+  Those are facts about this build, not something that makes signing
+  technically impossible.
+- User data is separate. config.py takes the data directory from
+  SILENTSUITE_DATA_DIR, or an OS per-user default, and never from the
+  program folder. Replacing files in the bundle doesn't touch it.
+- Nothing in the application source checks a signature, key or vendor
+  authorization before the bundled Qt/PySide6 libraries are loaded. Before
+  upload, CI replaced one Qt library in an extracted copy of this archive
+  with a rebuilt one, and the program started with it (RELINKING.txt).
+- The desktop code does refuse to start when Qt WebEngine's sandbox is
+  disabled or remote debugging is enabled. That's a safety check in the
+  app's own source, which you can change and rebuild. It isn't a key or an
+  authorization barrier.
+- The app has a start-at-login option, which writes an OS start-at-login
+  entry for the program. It needs no key and installs nothing else.
+- Delivery: a standalone software download. The recipient runs it on a
+  computer they already have. No device, and no right to possess or use
+  one, is handed over as part of this delivery.
+
+
+Determination
+-------------
+For this delivery, the transaction condition in section 6 isn't met: the
+archive is a standalone download, and no right of possession or use of a
+User Product passes to the recipient with it. On that basis we think
+section 6 doesn't call for separate Installation Information for this
+archive. The basis is the delivery facts. The unsigned packaging and the
+absence of application keys aren't the test, and they don't decide it.
+
+Those technical facts still matter in practice. A user can install and run
+modified Qt, PySide6 or other LGPL libraries without any key or permission
+from us, either by replacing files in the extracted folder or by rebuilding
+it. What they need is the source and the steps in RELINKING.txt.
+
+This applies only to this unsigned development archive, delivered as a
+standalone download. A signed build, an installer, a store package or any
+device distribution needs a new determination.
+
+What this does not claim:
+- That no OS or outside restriction applies. OS policies, security software
+  or an administrator may block or warn about unsigned programs, and that's
+  outside our control.
+- Legal advice, certification or a written offer.
+- Anything about signing keys or credentials. None is disclosed here, and
+  this build doesn't use one.
+
+
+References
+----------
+SOURCE.txt               where the matching source archives and the git
+                         archive of {{GIT_SHA}} come from
+NOTICES                  licence texts and notices, including the Qt
+                         libraries and GPL-3.0.txt (section 6)
+BUILD-INFO.json          build identity and per-file hashes
+RELINKING.txt            how to replace libraries or rebuild the program
+README-dev-build.txt     what this build is and how to test it in isolation
+bridge/silentsuite-bridge-desktop.spec    the build definition, in the source
+
+
+Not covered
+-----------
+- Installers, signed builds, store packages and macOS: none of them is
+  part of this archive, and each would need its own determination.
+- Hands-on, clean-machine and installer testing of this build.

@@ -1,0 +1,23 @@
+The files in, and generated output documents from this OpenCL-Docs project are
+under a mix of copyright and license statements. Refer to the individual files
+for specific information. As a general guideline:
+
+* The asciidoctor sources for the OpenCL Specifications and other documention
+  are under the Creative Commons Attribution 4.0 International (CC BY 4.0)
+  license.  Details of the license are at:
+  https://creativecommons.org/licenses/by/4.0/
+
+* Source files for building the specification that have a Khronos copyright
+  header, such as Makefiles and some Asciidoctor scripts, are under the Apache
+  2.0 license.  Details of the license are at:
+  https://www.apache.org/licenses/LICENSE-2.0.html
+
+* Some additional Asciidoctor scripts included in the repository are under the
+  MIT license.  Detail of the license are at:
+  http://opensource.org/licenses/MIT.
+
+* The official Specification HTML and PDF output documents are posted in the
+  OpenCL Registry (https://www.khronos.org/registry/OpenCL). These
+  Specifications are placed under the proprietary Khronos specification
+  copyright and license.  Details of the license are at:
+  https://www.khronos.org/registry/speccopyright.html
