@@ -1611,10 +1611,18 @@ def _ubuntu_mutations():
         return release.replace(release.split()[3], _sha(lzma.compress(b"Package: x\n")))
 
     def tarball_differs_from_dsc(rows, directory, release):
+        # The signed Sources stanza is rebuilt to list the edited .dsc, so only the .dsc's own
+        # Checksums-Sha256 (which now names a different orig tarball) disagrees.
         dsc = directory / "libsynthetic_1.0-1.dsc"
         dsc.write_bytes(dsc.read_bytes().replace(_sha(ORIG).encode(), _sha(b"other").encode()))
         row = next(r for r in rows if r["file"].endswith(".dsc"))
         row["sha256"], row["bytes"] = _sha(dsc.read_bytes()), dsc.stat().st_size
+        files = {r["file"]: (r["sha256"], r["bytes"]) for r in rows if "launchpad" in r["url"]}
+        stanza = "Package: libsynthetic\nVersion: 1.0-1\nChecksums-Sha256:\n" + "".join(
+            f" {digest} {size} {name}\n" for name, (digest, size) in sorted(files.items()))
+        sources_xz = lzma.compress(stanza.encode("utf-8"))
+        (directory / "ubuntu-archive" / "jammy-updates" / "main-Sources.xz").write_bytes(sources_xz)
+        return release.replace(release.split()[3], _sha(sources_xz))
 
     def launchpad_row_outside_the_package(rows, directory, release):
         (directory / "stray.tar.xz").write_bytes(b"stray")
