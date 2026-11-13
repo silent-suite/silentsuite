@@ -129,7 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           dir="$RUNNER_TEMP/sources"
-          python -m pip install --disable-pip-version-check sigstore==3.6.1
+          python -m pip install --disable-pip-version-check sigstore==4.5.1
           python bridge/dev-build/source_materials.py verify --records bridge/dev-build/notices/source-archives.json \
             --platforms linux-x86_64,windows-x86_64 --dir "$dir" \
             --application "$dir/silentsuite-bridge-$GITHUB_SHA.tar.gz" --git-sha "$GITHUB_SHA" \

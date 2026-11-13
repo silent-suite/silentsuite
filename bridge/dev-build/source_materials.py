@@ -220,6 +220,8 @@ def sigstore_cli(file, bundle, identity, issuer) -> bool:
     done = subprocess.run([sys.executable, "-m", "sigstore", "verify", "identity", "--bundle", str(bundle),
                            "--cert-identity", identity, "--cert-oidc-issuer", issuer, str(file)],
                           capture_output=True, text=True, timeout=300)
+    if done.returncode != 0:
+        print(f"sigstore verify failed for {Path(file).name}: {(done.stderr or done.stdout)[-1500:]}", file=sys.stderr)
     return done.returncode == 0
 
 
