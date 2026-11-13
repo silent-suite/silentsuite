@@ -100,6 +100,8 @@ async def send_item_updates(
         queryset = await sync_to_async(get_item_queryset)(collection)
         response = await sync_to_async(item_list_common)(queryset, user, stoken, limit=50, prefetch="auto")
         done = response.done
+        # Continue the next page after this one, or the first page repeats forever.
+        stoken = response.stoken
         if len(response.data) > 0:
             await websocket.send_bytes(msgpack_encode(response.dict()))
 
@@ -121,31 +123,38 @@ async def redis_connector(websocket: WebSocket, ticket_model: TicketInner, user:
         await send_item_updates(websocket, collection, user, stoken)
 
         async def handle_message():
+            # redis-py returns a dict per message; the published payload is in "data".
             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=20)
-            message_raw = t.cast(t.Optional[t.Tuple[str, bytes]], msg)
-            if message_raw:
-                _, message = message_raw
-                await ws.send_bytes(message)
+            if msg is not None and msg["type"] == "message":
+                await ws.send_bytes(msg["data"])
 
+        # We wait on the websocket so we fail if web sockets fail or get data
+        receive = asyncio.create_task(websocket.receive())
+        message: t.Optional[asyncio.Task] = None
         try:
             while True:
-                # We wait on the websocket so we fail if web sockets fail or get data
-                receive = asyncio.create_task(websocket.receive())
-                done, pending = await asyncio.wait(
-                    {receive, handle_message()},
+                message = asyncio.create_task(handle_message())
+                done, _ = await asyncio.wait(
+                    {receive, message},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-                for task in pending:
-                    task.cancel()
                 if receive in done:
+                    if receive.result()["type"] == "websocket.disconnect":
+                        return
                     # Web socket should never receive any data
                     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                     return
+                # Re-raise errors from reading or forwarding the message.
+                message.result()
 
         except ConnectionError:
             await websocket.close(code=status.WS_1012_SERVICE_RESTART)
         except WebSocketDisconnect:
             pass
+        finally:
+            receive.cancel()
+            if message is not None:
+                message.cancel()
 
     redis = redisw.redis
     await producer_handler(redis, websocket)
