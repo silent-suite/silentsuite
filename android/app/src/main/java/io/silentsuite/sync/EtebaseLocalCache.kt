@@ -123,7 +123,18 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
     }
 
     fun collectionSet(colMgr: CollectionManager, collection: Collection) = writingCollection {
-        fsCache.collectionSet(colMgr, collection)
+        // A calendar's own content is its Birthdays marker, which the calendar provider's access
+        // level is read from after a cache reload, so calendars keep their content here. Every other
+        // type, and a collection whose type cannot be read, keeps the existing route.
+        val calendar = try {
+            collection.collectionType == Constants.ETEBASE_TYPE_CALENDAR
+        } catch (e: EtebaseException) {
+            false
+        }
+        if (calendar)
+            fsCache.collectionSetWithContent(colMgr, collection)
+        else
+            fsCache.collectionSet(colMgr, collection)
     }
 
     fun collectionUnset(colMgr: CollectionManager, colUid: String) = writingCollection {

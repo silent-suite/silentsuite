@@ -487,6 +487,8 @@
     <string name="create_addressbook">Create address book</string>
     <string name="create_addressbook_display_name_hint">My Address Book</string>
     <string name="create_calendar">Create calendar</string>
+    <string name="birthdays_turn_on">Turn on Birthdays calendar</string>
+    <string name="birthdays_turn_off">Turn off Birthdays calendar</string>
     <string name="create_calendar_display_name_hint">My Calendar</string>
     <string name="create_tasklist">Create task list</string>
     <string name="create_tasklist_display_name_hint">My Task List</string>
@@ -749,6 +751,8 @@
     <string name="settings_experimental_title">Experimental</string>
     <string name="settings_notes_enabled">Notes (experimental)</string>
     <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. There is no separate background schedule yet.</string>
+    <string name="settings_birthdays_enabled">Birthdays calendar (experimental)</string>
+    <string name="settings_birthdays_enabled_summary">Adds a Birthdays calendar made from your contacts. Turn it on from the Calendars menu.</string>
     <string name="create_notebook">Create notebook</string>
     <string name="create_notebook_display_name_hint">Notebook name</string>
     <string name="notes_open">Open notes</string>
