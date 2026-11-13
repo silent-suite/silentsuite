@@ -1385,3 +1385,61 @@ describe('useCalendarStore keeps unsupported event content (WEB-03)', () => {
     expect(etebaseMock.state.createItem).not.toHaveBeenCalled()
   })
 })
+
+describe('useCalendarStore keeps VTIMEZONE blocks and overrides of a series', () => {
+  const VTIMEZONE = [
+    'BEGIN:VTIMEZONE', 'TZID:Europe/Berlin',
+    'BEGIN:STANDARD', 'DTSTART:19701025T030000', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100', 'END:STANDARD',
+    'END:VTIMEZONE',
+  ]
+  const OVERRIDE = [
+    'BEGIN:VEVENT', 'UID:override-series',
+    'RECURRENCE-ID;TZID=Europe/Berlin:20270315T100000',
+    'DTSTART;TZID=Europe/Berlin:20270315T150000', 'DTEND;TZID=Europe/Berlin:20270315T160000',
+    'SUMMARY:Moved', 'END:VEVENT',
+  ]
+  const ITEM = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+    ...VTIMEZONE,
+    'BEGIN:VEVENT', 'UID:override-series',
+    'DTSTART;TZID=Europe/Berlin:20270301T100000', 'DTEND;TZID=Europe/Berlin:20270301T110000',
+    'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Weekly', 'END:VEVENT',
+    ...OVERRIDE,
+    'END:VCALENDAR',
+  ].join('\r\n')
+
+  beforeEach(() => {
+    resetStore()
+  })
+
+  it('a title edit uploads the VTIMEZONE and the override unchanged', async () => {
+    const event = seedRemote(ITEM)
+    await useCalendarStore.getState().updateEvent(event.id, { title: 'Weekly v2' })
+
+    const uploaded = lastUpdated()
+    expect(uploaded).toMatch(/^SUMMARY:Weekly v2$/m)
+    expect(uploaded).toContain(VTIMEZONE.join('\r\n'))
+    expect(uploaded).toContain(OVERRIDE.join('\r\n'))
+  })
+
+  it('control: an "all events" start-time edit drops the override that no longer names an occurrence', async () => {
+    const event = seedRemote(ITEM)
+    await useCalendarStore.getState().updateRecurringEvent(event.id, {
+      startDate: new Date('2027-03-01T10:00:00Z'),
+      endDate: new Date('2027-03-01T11:00:00Z'),
+    }, 'all', event.startDate)
+
+    const uploaded = lastUpdated()
+    expect(uploaded).toContain(VTIMEZONE.join('\r\n'))
+    expect(uploaded).not.toMatch(/^RECURRENCE-ID/m)
+    expect(uploaded.match(/^BEGIN:VEVENT$/gm)).toHaveLength(1)
+  })
+
+  it('a "this" copy does not carry the series\' overrides', async () => {
+    const master = seedRemote(ITEM)
+    await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2027-03-08T09:00:00Z'))
+
+    expect(lastCreated()).not.toMatch(/^RECURRENCE-ID/m)
+    expect(lastUpdated()).toContain(OVERRIDE.join('\r\n'))
+  })
+})

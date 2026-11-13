@@ -117,10 +117,16 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
 
 /**
  * A scoped copy is a new item with a new UID. The series' retained raw lines (RECURRENCE-ID,
- * attendees and the like) describe the original item, so the copy starts without them, as it
- * did before they were kept. A "this and future" split moves later RDATEs separately.
+ * attendees and the like) and its overrides describe the original item, so the copy starts
+ * without them, as it did before they were kept. A "this and future" split moves later RDATEs
+ * separately. VTIMEZONE blocks still describe the copy's TZID and stay.
  */
-const WITHOUT_RETAINED_CONTENT = { unknownProperties: undefined, unknownComponents: undefined } as const
+const WITHOUT_RETAINED_CONTENT = {
+  unknownProperties: undefined,
+  unknownComponents: undefined,
+  overrides: undefined,
+  overridesBasis: undefined,
+} as const
 
 /** Add an UNTIL value to an existing RRULE, replacing any existing UNTIL or COUNT */
 function addUntilToRRule(rrule: string, until: string): string {

@@ -1,4 +1,4 @@
-import { parseVEvent, generateVEvent, partitionRetainedRDates } from '../utils/ical-parser.js';
+import { parseVEvent, generateVEvent, partitionRetainedRDates, splitCalendarItem, topLevelProperty, generateRetainedComponent } from '../utils/ical-parser.js';
 import type { VEvent, VAlarm } from '../utils/ical-parser.js';
 import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
 import { expandRecurrence, occurrenceWallClock } from '../utils/recurrence.js';
@@ -44,6 +44,13 @@ export interface CalendarEvent {
    *  Revalidated when written. Omitted when there are none. */
   unknownProperties?: string[];
   unknownComponents?: string[][];
+  /** The item's VTIMEZONE blocks (unfolded lines), written back unchanged. Omitted when none. */
+  vtimezones?: string[][];
+  /** VEVENTs of the same UID with a RECURRENCE-ID (changed occurrences), as unfolded lines,
+   *  written back after the event. Omitted when none. See {@link serializeCalendarEvent}. */
+  overrides?: string[][];
+  /** The recurrence the overrides were read with (see `recurrenceBasis`). Set with `overrides`. */
+  overridesBasis?: string;
   created: Date;
   updated: Date;
 }
@@ -332,9 +339,21 @@ export function toVEvent(event: CalendarEvent): string {
 }
 
 /**
- * Parse an iCalendar VEVENT string into a CalendarEvent.
+ * Parse an iCalendar VEVENT string into a CalendarEvent. A VCALENDAR item is read from its series
+ * VEVENT; its VTIMEZONE blocks and same-UID RECURRENCE-ID overrides are kept for writing back.
  */
 export function fromVEvent(veventStr: string): CalendarEvent {
+  const item = splitCalendarItem(veventStr);
+  const event = readVEvent(item ? item.main : veventStr);
+  if (item && item.vtimezones.length > 0) event.vtimezones = item.vtimezones;
+  if (item && item.overrides.length > 0) {
+    event.overrides = item.overrides;
+    event.overridesBasis = recurrenceBasis(event);
+  }
+  return event;
+}
+
+function readVEvent(veventStr: string): CalendarEvent {
   const vevent = parseVEvent(veventStr);
 
   const isAllDay =
@@ -462,18 +481,72 @@ export function parseAlarmTriggerMinutes(trigger: string): number {
 }
 
 /**
+ * What decides which occurrences a series has: its start, anchor, RRULE, EXDATEs and RDATEs.
+ * Overrides are written back unchanged while this is unchanged.
+ */
+function recurrenceBasis(event: CalendarEvent): string {
+  return JSON.stringify([
+    event.startDate.getTime(),
+    event.allDay,
+    event.timezone ?? null,
+    event.floating === true,
+    event.recurrenceRule,
+    event.exceptions.map((d) => d.getTime()).sort((a, b) => a - b),
+    (event.unknownProperties ?? []).filter((line) => /^RDATE[;:]/i.test(line)),
+  ]);
+}
+
+/**
+ * Whether an override's RECURRENCE-ID names an occurrence of `event`: its start, an RRULE
+ * occurrence or an RDATE, and not an EXDATE. A value without TZID is read in the event's zone
+ * (host-local for all-day and floating events).
+ */
+function overrideNamesOccurrence(event: CalendarEvent, block: string[]): boolean {
+  const rid = topLevelProperty(block, 'RECURRENCE-ID');
+  if (!rid) return false;
+  const zoneOf = (value: string, params: Record<string, string>) => {
+    const isDate = (params['VALUE'] ?? '').toUpperCase() === 'DATE' || /^\d{8}$/.test(value);
+    return params['TZID'] ?? (isDate || event.allDay ? undefined : event.timezone);
+  };
+  const at = parseICalDateValue(rid.value, zoneOf(rid.value, rid.params)).date.getTime();
+  if (!Number.isFinite(at) || event.exceptions.some((d) => d.getTime() === at)) return false;
+  const rdate = partitionRetainedRDates(event.unknownProperties ?? [], (value, params) =>
+    parseICalDateValue(value, zoneOf(value, params)).date.getTime() === at,
+  ).from.length > 0;
+  if (rdate) return true;
+  if (!event.recurrenceRule) return false;
+  if (at === event.startDate.getTime()) return true;
+  const instant = new Date(at);
+  return expandEventRecurrence(event, { start: instant, end: instant }).some((d) => d.getTime() === at);
+}
+
+/**
  * Serialize a CalendarEvent to a string for Etebase item content.
  * Produces a complete VCALENDAR document (RFC 5545 compliant).
+ *
+ * The item's VTIMEZONE blocks are written back. Overrides are written back unchanged while the
+ * series' recurrence is the one they were read with (a title, description, location or end
+ * edit). Once the start, RRULE, EXDATEs or RDATEs change, only overrides whose RECURRENCE-ID
+ * still names an occurrence are kept; RFC 5545 requires that, and others would show up in other
+ * clients as stray extra events.
  */
 export function serializeCalendarEvent(event: CalendarEvent): string {
   const vevent = toVEvent(event);
+  const vtimezones = (event.vtimezones ?? []).map((block) => generateRetainedComponent(block, 'VTIMEZONE'));
+  const unchanged = event.overridesBasis !== undefined && event.overridesBasis === recurrenceBasis(event);
+  const overrides = (event.overrides ?? [])
+    .filter((block) => unchanged || overrideNamesOccurrence(event, block))
+    .filter((block) => topLevelProperty(block, 'UID')?.value === event.uid)
+    .map((block) => generateRetainedComponent(block, 'VEVENT'));
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//SilentSuite//EN',
+    ...vtimezones,
     vevent,
+    ...overrides,
     'END:VCALENDAR',
-  ].join('\r\n');
+  ].filter((part): part is string => part !== null).join('\r\n');
 }
 
 /**
