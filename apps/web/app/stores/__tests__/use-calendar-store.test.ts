@@ -1460,6 +1460,51 @@ describe('useCalendarStore keeps VTIMEZONE blocks and overrides of a series', ()
     expect(lastUpdated()).toContain(OVERRIDE.join('\r\n'))
   })
 
+  describe('after the series is converted from floating to a zone in the same session', () => {
+    const FLOATING = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Other Client//EN',
+      'BEGIN:VEVENT', 'UID:floating-series', 'DTSTART:20260706T100000', 'DTEND:20260706T110000',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Floating', 'END:VEVENT',
+      'BEGIN:VEVENT', 'UID:floating-series', 'RECURRENCE-ID:20260720T100000',
+      'DTSTART:20260720T140000', 'DTEND:20260720T150000', 'SUMMARY:Moved', 'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n')
+    // Floating times are host-local; the conversion keeps each instant.
+    const july = (day: number) => new Date(2026, 6, day, 10, 0, 0)
+
+    async function convert() {
+      const event = seedRemote(FLOATING)
+      await useCalendarStore.getState().updateRecurringEvent(event.id, { timezone: 'Europe/Vienna', floating: undefined }, 'all', event.startDate)
+      expect(lastUpdated()).toMatch(/^RECURRENCE-ID;TZID=Europe\/Vienna:/m)
+      return event
+    }
+
+    it('review repro: deleting the overridden occurrence removes its override', async () => {
+      const event = await convert()
+      await useCalendarStore.getState().deleteRecurringEvent(event.id, 'this', july(20))
+
+      expect(lastUpdated()).toMatch(/^EXDATE;TZID=Europe\/Vienna:/m)
+      expect(lastUpdated()).not.toMatch(/^RECURRENCE-ID/m)
+    })
+
+    it('review repro (split): a "this and future" cut at the overridden occurrence removes its override', async () => {
+      const event = await convert()
+      await useCalendarStore.getState().updateRecurringEvent(event.id, { title: 'Later' }, 'this_and_future', july(20))
+
+      const original = etebaseMock.state.updateItem.mock.calls.at(-1)![2] as string
+      expect(original).toMatch(/^RRULE:.*UNTIL=/m)
+      expect(original).not.toMatch(/^RECURRENCE-ID/m)
+    })
+
+    it('control: deleting another occurrence keeps the override in its new form', async () => {
+      const event = await convert()
+      await useCalendarStore.getState().deleteRecurringEvent(event.id, 'this', july(13))
+
+      expect(lastUpdated()).toMatch(/^RECURRENCE-ID;TZID=Europe\/Vienna:/m)
+      expect(useCalendarStore.getState().events[0]!.overridesForm).toBe('tzid')
+    })
+  })
+
   it('a "this" copy does not carry the series\' overrides', async () => {
     const master = seedRemote(ITEM)
     await useCalendarStore.getState().updateRecurringEvent(master.id, { title: 'Copy' }, 'this', new Date('2027-03-08T09:00:00Z'))

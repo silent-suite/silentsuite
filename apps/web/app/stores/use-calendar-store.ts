@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, overridesBefore, overridesWithout, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, overridesBefore, overridesInForm, overridesWithout, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -98,7 +98,8 @@ function mergeEventPatch(base: CalendarEvent, patch: Partial<CalendarEvent>): Ca
   ) {
     delete merged.startWallClock
   }
-  return merged
+  // Overrides follow a changed DTSTART form now, so the in-memory event holds them as written.
+  return { ...merged, ...overridesInForm(base, merged) }
 }
 
 /**
@@ -375,7 +376,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           ...master,
           exceptions: [...master.exceptions, instanceDate],
           // The removed occurrence's override would otherwise stay in the item.
-          overrides: overridesWithout(master, instanceDate),
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const newTempId = crypto.randomUUID()
@@ -425,7 +426,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             : null,
           unknownProperties: retainedDates.before,
           // Overrides of occurrences from the cut on leave the original with them.
-          overrides: overridesBefore(master, instanceDate),
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
 
@@ -509,7 +510,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           ...master,
           exceptions: [...master.exceptions, instanceDate],
           // The removed occurrence's override would otherwise stay in the item.
-          overrides: overridesWithout(master, instanceDate),
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const next = [...events]
@@ -533,7 +534,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             : null,
           unknownProperties: retainedDates.before,
           // Overrides of occurrences from the cut on leave the original with them.
-          overrides: overridesBefore(master, instanceDate),
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
         const next = [...events]

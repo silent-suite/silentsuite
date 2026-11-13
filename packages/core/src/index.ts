@@ -204,5 +204,6 @@ export {
   eventOccurrenceWallClock,
   overridesWithout,
   overridesBefore,
+  overridesInForm,
 } from './models/calendar-event.js';
 export type { StartForm } from './models/calendar-event.js';

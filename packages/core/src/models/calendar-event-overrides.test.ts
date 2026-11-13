@@ -183,7 +183,7 @@ describe('overrides when the series changes', () => {
     const saved = serializeCalendarEvent({
       ...event,
       exceptions: [new Date('2026-07-20T08:00:00Z')],
-      overrides: overridesWithout(event, new Date('2026-07-20T08:00:00Z')),
+      ...overridesWithout(event, new Date('2026-07-20T08:00:00Z')),
     });
 
     expect(overrideIds(saved)).toEqual([BOTH[1]]);
@@ -191,8 +191,8 @@ describe('overrides when the series changes', () => {
 
   it('overridesBefore keeps only overrides before the cut', () => {
     const event = deserializeCalendarEvent(source);
-    expect(overridesBefore(event, new Date('2026-07-27T08:00:00Z'))).toEqual([OVERRIDE]);
-    expect(overridesBefore(event, new Date('2026-07-20T08:00:00Z'))).toBeUndefined();
+    expect(overridesBefore(event, new Date('2026-07-27T08:00:00Z'))).toEqual({ overrides: [OVERRIDE], overridesForm: 'tzid' });
+    expect(overridesBefore(event, new Date('2026-07-20T08:00:00Z'))).toEqual({ overrides: undefined, overridesForm: undefined });
   });
 
   it('review repro: an EXDATE on a monthly BYDAY=1MO series keeps the other occurrence\'s override', () => {
@@ -211,7 +211,7 @@ describe('overrides when the series changes', () => {
     const saved = serializeCalendarEvent({
       ...event,
       exceptions: [removed],
-      overrides: overridesWithout(event, removed),
+      ...overridesWithout(event, removed),
     });
 
     expect(blocksOf(saved, 'VEVENT').slice(1)).toEqual([august]);
@@ -221,8 +221,8 @@ describe('overrides when the series changes', () => {
     const quoted = OVERRIDE.map((l) => (l.startsWith('RECURRENCE-ID') ? 'RECURRENCE-ID;TZID="Europe/Vienna":20260720T100000' : l));
     const event = deserializeCalendarEvent(item(MASTER, quoted));
 
-    expect(overridesWithout(event, new Date('2026-07-13T08:00:00Z'))).toEqual([quoted]);
-    expect(overridesWithout(event, new Date('2026-07-20T08:00:00Z'))).toBeUndefined();
+    expect(overridesWithout(event, new Date('2026-07-13T08:00:00Z')).overrides).toEqual([quoted]);
+    expect(overridesWithout(event, new Date('2026-07-20T08:00:00Z')).overrides).toBeUndefined();
     expect(blocksOf(save(item(MASTER, quoted), (e) => ({ ...e, exceptions: [new Date('2026-07-13T08:00:00Z')] })), 'VEVENT')[1]).toEqual(quoted);
   });
 
