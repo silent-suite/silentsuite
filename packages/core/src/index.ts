@@ -202,4 +202,7 @@ export {
   gapWallClock,
   validStartWallClock,
   eventOccurrenceWallClock,
+  overridesWithout,
+  overridesBefore,
 } from './models/calendar-event.js';
+export type { StartForm } from './models/calendar-event.js';

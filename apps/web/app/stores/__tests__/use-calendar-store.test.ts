@@ -1422,7 +1422,7 @@ describe('useCalendarStore keeps VTIMEZONE blocks and overrides of a series', ()
     expect(uploaded).toContain(OVERRIDE.join('\r\n'))
   })
 
-  it('control: an "all events" start-time edit drops the override that no longer names an occurrence', async () => {
+  it('an "all events" start-time edit keeps the override as it is', async () => {
     const event = seedRemote(ITEM)
     await useCalendarStore.getState().updateRecurringEvent(event.id, {
       startDate: new Date('2027-03-01T10:00:00Z'),
@@ -1431,8 +1431,33 @@ describe('useCalendarStore keeps VTIMEZONE blocks and overrides of a series', ()
 
     const uploaded = lastUpdated()
     expect(uploaded).toContain(VTIMEZONE.join('\r\n'))
-    expect(uploaded).not.toMatch(/^RECURRENCE-ID/m)
-    expect(uploaded.match(/^BEGIN:VEVENT$/gm)).toHaveLength(1)
+    expect(uploaded).toContain(OVERRIDE.join('\r\n'))
+  })
+
+  it('deleting the overridden occurrence ("this") removes its override; another occurrence keeps it', async () => {
+    const event = seedRemote(ITEM)
+    await useCalendarStore.getState().deleteRecurringEvent(event.id, 'this', new Date('2027-03-08T09:00:00Z'))
+    expect(lastUpdated()).toContain(OVERRIDE.join('\r\n'))
+
+    await useCalendarStore.getState().deleteRecurringEvent(event.id, 'this', new Date('2027-03-15T09:00:00Z'))
+    expect(lastUpdated()).not.toMatch(/^RECURRENCE-ID/m)
+  })
+
+  it.each(['edit', 'delete'] as const)('a "this and future" %s at or before the override removes it from the original', async (action) => {
+    const event = seedRemote(ITEM)
+    const cut = new Date('2027-03-15T09:00:00Z')
+    if (action === 'edit') await useCalendarStore.getState().updateRecurringEvent(event.id, { title: 'Later' }, 'this_and_future', cut)
+    else await useCalendarStore.getState().deleteRecurringEvent(event.id, 'this_and_future', cut)
+
+    expect(lastUpdated()).not.toMatch(/^RECURRENCE-ID/m)
+    expect(lastUpdated()).toContain(VTIMEZONE.join('\r\n'))
+  })
+
+  it('control: a "this and future" split after the override keeps it on the original', async () => {
+    const event = seedRemote(ITEM)
+    await useCalendarStore.getState().updateRecurringEvent(event.id, { title: 'Later' }, 'this_and_future', new Date('2027-03-22T09:00:00Z'))
+
+    expect(lastUpdated()).toContain(OVERRIDE.join('\r\n'))
   })
 
   it('a "this" copy does not carry the series\' overrides', async () => {

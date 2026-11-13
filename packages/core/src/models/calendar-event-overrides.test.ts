@@ -1,6 +1,6 @@
 // WEB-03 remainder: saving a series keeps its VTIMEZONE blocks and RECURRENCE-ID overrides.
 import { describe, it, expect } from 'vitest';
-import { deserializeCalendarEvent, serializeCalendarEvent } from './calendar-event.js';
+import { deserializeCalendarEvent, serializeCalendarEvent, overridesBefore, overridesWithout } from './calendar-event.js';
 import type { CalendarEvent } from './calendar-event.js';
 
 const CRLF = '\r\n';
@@ -153,85 +153,159 @@ describe('a series keeps its VTIMEZONE and overrides on save', () => {
   });
 });
 
-describe('overrides when the series recurrence changes', () => {
+describe('overrides when the series changes', () => {
   const source = item(VTIMEZONE, MASTER, OVERRIDE, OVERRIDE_27);
   const overrideIds = (ics: string) => blocksOf(ics, 'VEVENT').slice(1)
     .map((b) => b.find((l) => l.startsWith('RECURRENCE-ID'))!);
+  const BOTH = [
+    'RECURRENCE-ID;TZID=Europe/Vienna:20260720T100000',
+    'RECURRENCE-ID;TZID=Europe/Vienna:20260727T100000',
+  ];
 
-  it('a series start moved to another time drops overrides that no longer name an occurrence', () => {
-    const saved = save(source, (e) => ({
+  it.each([
+    ['a start moved by an hour', (e: CalendarEvent) => ({
       ...e,
       startDate: new Date(e.startDate.getTime() + 3_600_000),
       endDate: new Date(e.endDate.getTime() + 3_600_000),
-    }));
+    })],
+    ['a shorter COUNT', (e: CalendarEvent) => ({ ...e, recurrenceRule: 'FREQ=WEEKLY;COUNT=2' })],
+    ['an edited EXDATE list', (e: CalendarEvent) => ({ ...e, exceptions: [new Date('2026-07-13T08:00:00Z')] })],
+    ['a removed recurrence', (e: CalendarEvent) => ({ ...e, recurrenceRule: null })],
+  ] as const)('%s keeps every override as it is', (_name, edit) => {
+    const saved = save(source, edit);
 
-    expect(overrideIds(saved)).toEqual([]);
+    expect(blocksOf(saved, 'VEVENT').slice(1)).toEqual([OVERRIDE, OVERRIDE_27]);
     expect(blocksOf(saved, 'VTIMEZONE')).toEqual([VTIMEZONE]);
   });
 
-  it('a series start moved by whole weeks keeps overrides that still name an occurrence', () => {
-    const week = 7 * 86_400_000;
-    const saved = save(source, (e) => ({
-      ...e,
-      startDate: new Date(e.startDate.getTime() + week),
-      endDate: new Date(e.endDate.getTime() + week),
-    }));
+  it('overridesWithout drops only the override of the removed occurrence', () => {
+    const event = deserializeCalendarEvent(source);
+    const saved = serializeCalendarEvent({
+      ...event,
+      exceptions: [new Date('2026-07-20T08:00:00Z')],
+      overrides: overridesWithout(event, new Date('2026-07-20T08:00:00Z')),
+    });
 
-    expect(overrideIds(saved)).toEqual([
-      'RECURRENCE-ID;TZID=Europe/Vienna:20260720T100000',
-      'RECURRENCE-ID;TZID=Europe/Vienna:20260727T100000',
-    ]);
+    expect(overrideIds(saved)).toEqual([BOTH[1]]);
   });
 
-  it('a shorter COUNT drops overrides after the new end and keeps the ones before it', () => {
-    const saved = save(source, (e) => ({ ...e, recurrenceRule: 'FREQ=WEEKLY;COUNT=3' }));
-
-    expect(overrideIds(saved)).toEqual(['RECURRENCE-ID;TZID=Europe/Vienna:20260720T100000']);
+  it('overridesBefore keeps only overrides before the cut', () => {
+    const event = deserializeCalendarEvent(source);
+    expect(overridesBefore(event, new Date('2026-07-27T08:00:00Z'))).toEqual([OVERRIDE]);
+    expect(overridesBefore(event, new Date('2026-07-20T08:00:00Z'))).toBeUndefined();
   });
 
-  it('an UNTIL that ends the series before an override drops it (a "this and future" split)', () => {
-    const saved = save(source, (e) => ({ ...e, recurrenceRule: 'FREQ=WEEKLY;UNTIL=20260726T235959Z' }));
+  it('review repro: an EXDATE on a monthly BYDAY=1MO series keeps the other occurrence\'s override', () => {
+    const master = [
+      'BEGIN:VEVENT', 'UID:monthly-001',
+      'DTSTART;TZID=Europe/Vienna:20260706T100000', 'DTEND;TZID=Europe/Vienna:20260706T110000',
+      'RRULE:FREQ=MONTHLY;BYDAY=1MO;COUNT=5', 'SUMMARY:Monthly', 'END:VEVENT',
+    ];
+    const august = [
+      'BEGIN:VEVENT', 'UID:monthly-001', 'RECURRENCE-ID;TZID=Europe/Vienna:20260803T100000',
+      'DTSTART;TZID=Europe/Vienna:20260804T100000', 'DTEND;TZID=Europe/Vienna:20260804T110000',
+      'SUMMARY:Monthly (Tuesday)', 'END:VEVENT',
+    ];
+    const event = deserializeCalendarEvent(item(master, august));
+    const removed = new Date('2026-07-06T08:00:00Z');
+    const saved = serializeCalendarEvent({
+      ...event,
+      exceptions: [removed],
+      overrides: overridesWithout(event, removed),
+    });
 
-    expect(overrideIds(saved)).toEqual(['RECURRENCE-ID;TZID=Europe/Vienna:20260720T100000']);
+    expect(blocksOf(saved, 'VEVENT').slice(1)).toEqual([august]);
   });
 
-  it('an EXDATE on an overridden occurrence drops that override (a deleted occurrence)', () => {
-    const saved = save(source, (e) => ({ ...e, exceptions: [new Date('2026-07-20T08:00:00Z')] }));
+  it('review repro: a quoted TZID is read as that zone', () => {
+    const quoted = OVERRIDE.map((l) => (l.startsWith('RECURRENCE-ID') ? 'RECURRENCE-ID;TZID="Europe/Vienna":20260720T100000' : l));
+    const event = deserializeCalendarEvent(item(MASTER, quoted));
 
-    expect(overrideIds(saved)).toEqual(['RECURRENCE-ID;TZID=Europe/Vienna:20260727T100000']);
+    expect(overridesWithout(event, new Date('2026-07-13T08:00:00Z'))).toEqual([quoted]);
+    expect(overridesWithout(event, new Date('2026-07-20T08:00:00Z'))).toBeUndefined();
+    expect(blocksOf(save(item(MASTER, quoted), (e) => ({ ...e, exceptions: [new Date('2026-07-13T08:00:00Z')] })), 'VEVENT')[1]).toEqual(quoted);
   });
 
-  it('removing the recurrence drops every override', () => {
-    const saved = save(source, (e) => ({ ...e, recurrenceRule: null }));
+  it('review repro: a DST-gap wall clock change keeps the overrides as they are', () => {
+    const gapMaster = [
+      'BEGIN:VEVENT', 'UID:gap-001',
+      'DTSTART;TZID=America/New_York:20260308T023000', 'DTEND;TZID=America/New_York:20260308T033000',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:Gap', 'END:VEVENT',
+    ];
+    const gapOverride = [
+      'BEGIN:VEVENT', 'UID:gap-001', 'RECURRENCE-ID;TZID=America/New_York:20260315T023000',
+      'DTSTART;TZID=America/New_York:20260315T050000', 'SUMMARY:Gap moved', 'END:VEVENT',
+    ];
+    const saved = save(item(gapMaster, gapOverride), (e) => ({ ...e, startWallClock: undefined }));
 
+    expect(blocksOf(saved, 'VEVENT')[1]).toEqual(gapOverride);
+  });
+
+  it('review repro: a timed series made all-day drops its DATE-TIME overrides', () => {
+    const saved = save(source, (e) => ({ ...e, allDay: true, timezone: undefined }));
+
+    expect(linesOf(saved)).toContain('DTSTART;VALUE=DATE:20260706');
     expect(overrideIds(saved)).toEqual([]);
   });
 
-  it('control: an override that names no occurrence in the source is kept while the recurrence is unchanged', () => {
-    const stray = OVERRIDE.map((l) => (l.startsWith('RECURRENCE-ID') ? 'RECURRENCE-ID;TZID=Europe/Vienna:20260721T100000' : l));
-    const saved = save(item(MASTER, stray), (e) => ({ ...e, title: 'Renamed' }));
-
-    expect(blocksOf(saved, 'VEVENT')[1]).toEqual(stray);
-  });
-
-  it('a UTC RECURRENCE-ID is matched as an instant', () => {
-    const utc = OVERRIDE.map((l) => (l.startsWith('RECURRENCE-ID') ? 'RECURRENCE-ID:20260720T080000Z' : l));
-    const saved = save(item(MASTER, utc), (e) => ({ ...e, recurrenceRule: 'FREQ=WEEKLY;COUNT=5' }));
-
-    expect(blocksOf(saved, 'VEVENT')[1]).toEqual(utc);
-  });
-
-  it('an all-day series keeps a DATE override on an occurrence and drops one past the end', () => {
-    const allDay = (rid: string) => [
-      'BEGIN:VEVENT', 'UID:day-001', `RECURRENCE-ID;VALUE=DATE:${rid}`,
-      `DTSTART;VALUE=DATE:${rid}`, 'SUMMARY:Changed day', 'END:VEVENT',
-    ];
+  it('an all-day series made timed drops its DATE overrides', () => {
     const master = [
       'BEGIN:VEVENT', 'UID:day-001', 'DTSTART;VALUE=DATE:20260706', 'DTEND;VALUE=DATE:20260707',
       'RRULE:FREQ=DAILY;COUNT=5', 'SUMMARY:Daily', 'END:VEVENT',
     ];
-    const saved = save(item(master, allDay('20260707'), allDay('20260710')), (e) => ({ ...e, recurrenceRule: 'FREQ=DAILY;COUNT=3' }));
+    const dayOverride = [
+      'BEGIN:VEVENT', 'UID:day-001', 'RECURRENCE-ID;VALUE=DATE:20260707',
+      'DTSTART;VALUE=DATE:20260708', 'SUMMARY:Moved day', 'END:VEVENT',
+    ];
+    const saved = save(item(master, dayOverride), (e) => ({ ...e, allDay: false, timezone: 'Europe/Vienna' }));
 
-    expect(blocksOf(saved, 'VEVENT').slice(1)).toEqual([allDay('20260707')]);
+    expect(blocksOf(saved, 'VEVENT')).toHaveLength(1);
+  });
+
+  it('control: an all-day series keeps its DATE override on a title edit', () => {
+    const master = [
+      'BEGIN:VEVENT', 'UID:day-001', 'DTSTART;VALUE=DATE:20260706', 'DTEND;VALUE=DATE:20260707',
+      'RRULE:FREQ=DAILY;COUNT=5', 'SUMMARY:Daily', 'END:VEVENT',
+    ];
+    const dayOverride = [
+      'BEGIN:VEVENT', 'UID:day-001', 'RECURRENCE-ID;VALUE=DATE:20260707',
+      'DTSTART;VALUE=DATE:20260708', 'SUMMARY:Moved day', 'END:VEVENT',
+    ];
+    const saved = save(item(master, dayOverride), (e) => ({ ...e, title: 'Renamed' }));
+
+    expect(blocksOf(saved, 'VEVENT')[1]).toEqual(dayOverride);
+  });
+
+  it('review repro: a UTC series made floating rewrites the RECURRENCE-ID as floating', () => {
+    const utcMaster = [
+      'BEGIN:VEVENT', 'UID:utc-001', 'DTSTART:20260706T080000Z', 'DTEND:20260706T090000Z',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:UTC', 'END:VEVENT',
+    ];
+    const utcOverride = [
+      'BEGIN:VEVENT', 'UID:utc-001', 'RECURRENCE-ID;RANGE=THISANDFUTURE:20260720T080000Z',
+      'DTSTART:20260720T120000Z', 'SUMMARY:UTC moved', 'END:VEVENT',
+    ];
+    const saved = save(item(utcMaster, utcOverride), (e) => ({ ...e, floating: true }));
+    const local = new Date('2026-07-20T08:00:00Z');
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const wall = `${local.getFullYear()}${pad(local.getMonth() + 1)}${pad(local.getDate())}T${pad(local.getHours())}${pad(local.getMinutes())}00`;
+
+    expect(blocksOf(saved, 'VEVENT')[1]).toEqual(utcOverride.map((l) => (
+      l.startsWith('RECURRENCE-ID') ? `RECURRENCE-ID;RANGE=THISANDFUTURE:${wall}` : l
+    )));
+  });
+
+  it('a UTC series given a zone rewrites the RECURRENCE-ID in that zone', () => {
+    const utcMaster = [
+      'BEGIN:VEVENT', 'UID:utc-001', 'DTSTART:20260706T080000Z', 'DTEND:20260706T090000Z',
+      'RRULE:FREQ=WEEKLY;COUNT=4', 'SUMMARY:UTC', 'END:VEVENT',
+    ];
+    const utcOverride = [
+      'BEGIN:VEVENT', 'UID:utc-001', 'RECURRENCE-ID:20260720T080000Z',
+      'DTSTART:20260720T120000Z', 'SUMMARY:UTC moved', 'END:VEVENT',
+    ];
+    const saved = save(item(utcMaster, utcOverride), (e) => ({ ...e, timezone: 'Europe/Vienna' }));
+
+    expect(blocksOf(saved, 'VEVENT')[1]![2]).toBe('RECURRENCE-ID;TZID=Europe/Vienna:20260720T100000');
   });
 });

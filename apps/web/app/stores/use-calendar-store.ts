@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, overridesBefore, overridesWithout, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -125,7 +125,7 @@ const WITHOUT_RETAINED_CONTENT = {
   unknownProperties: undefined,
   unknownComponents: undefined,
   overrides: undefined,
-  overridesBasis: undefined,
+  overridesForm: undefined,
 } as const
 
 /** Add an UNTIL value to an existing RRULE, replacing any existing UNTIL or COUNT */
@@ -374,6 +374,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          overrides: overridesWithout(master, instanceDate),
           updated: now,
         }
         const newTempId = crypto.randomUUID()
@@ -422,6 +424,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          overrides: overridesBefore(master, instanceDate),
           updated: now,
         }
 
@@ -504,6 +508,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          overrides: overridesWithout(master, instanceDate),
           updated: now,
         }
         const next = [...events]
@@ -526,6 +532,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          overrides: overridesBefore(master, instanceDate),
           updated: now,
         }
         const next = [...events]
