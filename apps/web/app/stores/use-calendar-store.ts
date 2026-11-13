@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, recurrenceTimeZone, untilDateBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -115,13 +115,36 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
   return copy
 }
 
-/** Add a date-only UNTIL (YYYYMMDD) to an existing RRULE, replacing any existing UNTIL or COUNT */
-function addUntilToRRule(rrule: string, untilDate: string): string {
+/**
+ * A scoped copy is a new item with a new UID. The series' retained raw lines (RECURRENCE-ID,
+ * attendees and the like) describe the original item, so the copy starts without them, as it
+ * did before they were kept. A "this and future" split moves later RDATEs separately.
+ */
+const WITHOUT_RETAINED_CONTENT = { unknownProperties: undefined, unknownComponents: undefined } as const
+
+/** Add an UNTIL value to an existing RRULE, replacing any existing UNTIL or COUNT */
+function addUntilToRRule(rrule: string, until: string): string {
   const parts = rrule.split(';').filter(
     (p) => !p.startsWith('UNTIL=') && !p.startsWith('COUNT='),
   )
-  parts.push(`UNTIL=${untilDate}`)
+  parts.push(`UNTIL=${until}`)
   return parts.join(';')
+}
+
+/**
+ * The UNTIL that ends `master` before the occurrence at `instanceDate`. All-day series take the
+ * previous date (a DATE UNTIL). Zoned and UTC series take the UTC instant one second before the
+ * occurrence; floating series take 23:59:59 on the previous day. A date-only UNTIL on a timed
+ * series is read as that day's midnight and would also drop the previous day's occurrence.
+ */
+function untilBeforeOccurrence(master: CalendarEvent, instanceDate: Date): string {
+  const timeZone = recurrenceTimeZone(master)
+  if (master.allDay) return untilDateBefore(instanceDate, timeZone)
+  // A floating series uses the occurrence's own wall-clock date, which a host DST gap can move.
+  const wallClock = timeZone === undefined && master.recurrenceRule
+    ? occurrenceWallClock(master.recurrenceRule, master.startDate, instanceDate)
+    : undefined
+  return untilTimeBefore(instanceDate, timeZone, wallClock)
 }
 
 /** Sync a single event to Etebase (used by create/update helpers) */
@@ -347,16 +370,17 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           exceptions: [...master.exceptions, instanceDate],
           updated: now,
         }
-        const duration = master.endDate.getTime() - master.startDate.getTime()
         const newTempId = crypto.randomUUID()
         const standaloneBase = withOccurrenceWallClock({
           ...master,
           id: newTempId,
           uid: newTempId,
+          ...WITHOUT_RETAINED_CONTENT,
           recurrenceRule: null,
           exceptions: [],
           startDate: instanceDate,
-          endDate: new Date(instanceDate.getTime() + duration),
+          // A day or week DURATION keeps its wall-clock length at this occurrence.
+          endDate: occurrenceEnd(master, instanceDate),
         }, master, instanceDate)
         const standaloneEvent: CalendarEvent = {
           ...mergeEventPatch(standaloneBase, patch),
@@ -381,27 +405,32 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         break
       }
       case 'this_and_future': {
-        // Add UNTIL to master's RRULE (day before instanceDate)
-        // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
-        const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
+        // End the master's RRULE just before instanceDate
+        const until = untilBeforeOccurrence(master, instanceDate)
         const masterIndex = events.findIndex((e) => e.id === id)
+        // Retained RDATEs at or after the cut leave the original series with its RRULE.
+        const retainedDates = splitRetainedRecurrenceDates(master, instanceDate)
         const updatedMaster = {
           ...master,
           recurrenceRule: master.recurrenceRule
-            ? addUntilToRRule(master.recurrenceRule, dayBefore)
+            ? addUntilToRRule(master.recurrenceRule, until)
             : null,
+          unknownProperties: retainedDates.before,
           updated: now,
         }
 
         // Create new recurring event from instanceDate with the patch applied
-        const duration = master.endDate.getTime() - master.startDate.getTime()
         const newTempId = crypto.randomUUID()
         const newRecurringBase = withOccurrenceWallClock({
           ...master,
           id: newTempId,
           uid: newTempId,
+          ...WITHOUT_RETAINED_CONTENT,
+          // The new series takes over the original's later retained RDATEs.
+          unknownProperties: retainedDates.from,
           startDate: instanceDate,
-          endDate: new Date(instanceDate.getTime() + duration),
+          // A day or week DURATION keeps its wall-clock length at this occurrence.
+          endDate: occurrenceEnd(master, instanceDate),
           exceptions: [],
         }, master, instanceDate)
         const newRecurring: CalendarEvent = {
@@ -480,15 +509,17 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         break
       }
       case 'this_and_future': {
-        // Add UNTIL to master's RRULE (day before instanceDate)
-        // The previous day on the master's own calendar (its TZID, UTC, or host-local for floating/all-day)
-        const dayBefore = untilDateBefore(instanceDate, recurrenceTimeZone(master))
+        // End the master's RRULE just before instanceDate
+        const until = untilBeforeOccurrence(master, instanceDate)
         const masterIndex = events.findIndex((e) => e.id === id)
+        // Retained RDATEs at or after the cut leave the original series with its RRULE.
+        const retainedDates = splitRetainedRecurrenceDates(master, instanceDate)
         const updatedMaster = {
           ...master,
           recurrenceRule: master.recurrenceRule
-            ? addUntilToRRule(master.recurrenceRule, dayBefore)
+            ? addUntilToRRule(master.recurrenceRule, until)
             : null,
+          unknownProperties: retainedDates.before,
           updated: now,
         }
         const next = [...events]

@@ -161,7 +161,7 @@ function AccountFingerprintSection() {
           <Button
             type="button"
             variant="secondary"
-            size="sm"
+            size="sm" className="max-md:min-h-[44px]"
             disabled={!fingerprint}
             onClick={() => setRevealed((value) => !value)}
           >
@@ -170,7 +170,7 @@ function AccountFingerprintSection() {
           <Button
             type="button"
             variant="secondary"
-            size="sm"
+            size="sm" className="max-md:min-h-[44px]"
             disabled={!fingerprint || !revealed}
             onClick={copyFingerprint}
           >
@@ -213,7 +213,7 @@ function RestoreDiagnosticsSection() {
           {t('description')}
         </p>
       </div>
-      <Button type="button" variant="secondary" size="sm" onClick={copyDiagnostics}>
+      <Button type="button" variant="secondary" size="sm" className="max-md:min-h-[44px]" onClick={copyDiagnostics}>
         {copyStatus === 'copied' ? t('copied') : copyStatus === 'failed' ? t('copyFailed') : t('copy')}
       </Button>
     </section>
@@ -373,7 +373,7 @@ function ChangePasswordSection() {
         {apiError && <p className="text-xs text-red-400">{apiError}</p>}
         {success && <p className="text-xs text-[rgb(var(--primary))]">Password updated successfully. Other sessions have been signed out.</p>}
 
-        <Button type="submit" disabled={isSubmitting} size="sm">
+        <Button type="submit" disabled={isSubmitting} size="sm" className="max-md:min-h-[44px]">
           {isSubmitting ? 'Updating...' : 'Update password'}
         </Button>
       </form>
@@ -461,7 +461,7 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
         </p>
         <Button
           variant="destructive"
-          size="sm"
+          size="sm" className="max-md:min-h-[44px]"
           onClick={() => {
             ownerRef.current = captureAccountOwner()
             setDialogOpen(true)
@@ -472,7 +472,7 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
       </section>
 
       {dialogOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-sm rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--background))] p-6 shadow-xl space-y-4">
             <h3 className="text-sm font-semibold text-[rgb(var(--foreground))]">
               {isLocal ? 'Confirm sign out' : 'Confirm Account Deletion'}
@@ -493,7 +493,7 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
             <div className="flex justify-end gap-2">
               <Button
                 variant="ghost"
-                size="sm"
+                size="sm" className="max-md:min-h-[44px]"
                 onClick={() => {
                   setDialogOpen(false)
                   setConfirmText('')
@@ -504,7 +504,7 @@ function DeleteAccountSection({ mode }: { mode: 'hosted' | 'local' }) {
               </Button>
               <Button
                 variant="destructive"
-                size="sm"
+                size="sm" className="max-md:min-h-[44px]"
                 disabled={confirmText !== confirmToken || deleting}
                 onClick={handleDelete}
               >

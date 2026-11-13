@@ -38,6 +38,7 @@ const hostedLinks = [
   ['Mobile app', '/settings/mobile', 'Android install options'],
   ['Desktop bridge', '/settings/desktop', 'Use desktop calendar clients'],
   ['Experimental', '/settings/experimental', 'Optional features in development'],
+  ['Report a problem', '/settings/report', 'Problems & feature requests'],
 ]
 
 function settingsNav() {
@@ -115,6 +116,7 @@ describe('settings navigation', () => {
       'Data',
       'Get the apps',
       'Advanced',
+      'Help',
     ])
     const links = navLinks()
     expect(links.map((link) => link.getAttribute('href'))).toEqual(hostedLinks.map(([, href]) => href))
@@ -161,6 +163,18 @@ describe('settings navigation', () => {
     expect(within(nav).getByRole('link', { name: 'Security' })).toHaveAttribute('aria-current', 'page')
     expect(within(nav).getAllByRole('link').filter((link) => link.hasAttribute('aria-current'))).toHaveLength(1)
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
+  it('offers Report a problem in the overview and the rail, also when self-hosted', () => {
+    state.selfHosted = true
+    const view = render(<SettingsPage />)
+    expect(within(settingsNav()).getByRole('link', { name: /^Report a problem/ })).toHaveAttribute('href', '/settings/report')
+    view.unmount()
+
+    renderDetail('/settings/report')
+    const report = within(settingsNav()).getByRole('link', { name: 'Report a problem' })
+    expect(report).toHaveAttribute('href', '/settings/report')
+    expect(report).toHaveAttribute('aria-current', 'page')
   })
 
   it('marks nested paths active only on whole path segments', () => {

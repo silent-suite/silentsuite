@@ -201,6 +201,7 @@ a = Analysis(
         "silentsuite_bridge.radicale.server",
         "silentsuite_bridge.web",
         "silentsuite_bridge.web.__init__",
+        "silentsuite_bridge.web.report",
 
         # Bridge modules
         "silentsuite_bridge",

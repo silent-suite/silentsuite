@@ -220,7 +220,7 @@ If you're still working out which address to trust, use the log check in common 
 | `502`, timeout, or "connection refused" through NetBird | The server is still published on `127.0.0.1` only, the container didn't start after a reboot, the target port is wrong, a NetBird policy blocks the peer, or a proxy container forwards to `127.0.0.1` | Common step 2; `docker compose ps`; check target type/port; for a proxy container use `silentsuite-server:3735` (see B1); check NetBird policies and NetBird's [troubleshooting guide](https://docs.netbird.io/manage/reverse-proxy/troubleshooting) |
 | Website loads in a browser but the apps can't sign in or sync | NetBird SSO, password or PIN is enabled on the service, or the device isn't on the mesh with NetBird-Only Access | Turn off those login methods for the sync service; connect the device to NetBird |
 | NetBird-Only Access is greyed out | The service's base domain is on a cluster without the *Private* capability, such as NetBird Cloud's shared clusters | Run a private-capable proxy (Path A step 2) and choose its base domain for the service |
-| Apps reach the server but the account is refused | SilentSuite account issue, not NetBird: missing bootstrap token on first signup, or signups closed | See [Troubleshooting](./troubleshooting.md) and the first-admin steps in the Quick Start |
+| Apps reach the server but the account is refused | SilentSuite account issue, not NetBird: missing bootstrap token on first signup, or signups closed | See [Troubleshooting](./troubleshooting.md) and the first-signup steps in the Quick Start |
 
 ## NetBird references
 

@@ -304,6 +304,181 @@ jobs:
   # PR / main builds — unsigned, no signing secrets accessible.
   # Validates that the Android project compiles and assembles.
   # ─────────────────────────────────────────────────────────────────────
+  timezone-rules-jvm:
+    name: Time-zone rules (JVM)
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The time-zone tests need IANA 2026b or later (British Columbia's
+      # permanent UTC-07) in the JDK and fail instead of skipping without it.
+      - name: Set up JDK 17 with 2026 tz data
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17.0.21'
+          distribution: 'temurin'
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Run ical4android unit tests
+        working-directory: android
+        run: ./gradlew ical4android:testDebugUnitTest --no-daemon
+
+      - name: Assert time-zone patch tests executed
+        if: always()
+        run: |
+          python3 - <<'PY2'
+          import glob
+          import sys
+          import xml.etree.ElementTree as ET
+
+          expected = {
+              "io.silentsuite.ical4j.SystemZoneConversionTest": {
+                  "patchedClassesAreLoaded",
+                  "vancouverBeforeAndAfterThe2026Change",
+                  "systemRulesWinOverAnEmbeddedStaleDefinition",
+                  "customTzidKeepsItsDefinition",
+                  "gapsMoveForwardAndOverlapsTakeTheEarlierOffset",
+                  "utcAndFloatingValuesAreUnchanged",
+                  "parsingDoesNotDependOnTheDefaultZone",
+                  "everySystemZoneMatchesThePlatformRules",
+              },
+              "io.silentsuite.ical4j.SystemVTimeZonesTest": {
+                  "nonSystemIdsAreNotGenerated",
+                  "vancouverEndsOnPermanentMinusSeven",
+                  "ongoingRulesBecomeRrules",
+                  "onsetsInAGapOfTheDefaultZoneAreWrittenUnchanged",
+                  "generatedDefinitionsMatchThePlatformRules",
+              },
+          }
+          executed = {name: [] for name in expected}
+          problems = []
+          for path in glob.glob("android/ical4android/build/test-results/testDebugUnitTest/*.xml"):
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  cls = case.attrib.get("classname")
+                  if cls in executed:
+                      executed[cls].append(case.attrib.get("name", ""))
+                      if any(case.find(kind) is not None for kind in ("failure", "error", "skipped")):
+                          problems.append(f"{cls}.{case.attrib.get('name')}")
+          for cls, names in expected.items():
+              if sorted(executed[cls]) != sorted(names):
+                  problems.append(f"{cls}: executed {sorted(executed[cls])}")
+          if problems:
+              print("\n".join(problems), file=sys.stderr)
+              raise SystemExit(1)
+          print(f"verified {sum(len(n) for n in expected.values())} time-zone patch test methods")
+          PY2
+
+      - name: Upload ical4android unit test reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: timezone-rules-jvm-${{ github.sha }}
+          path: |
+            android/ical4android/build/test-results/testDebugUnitTest/
+            android/ical4android/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: error
+
+  timezone-rules-runtime:
+    name: Time-zone rules runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})
+    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api-level: '29'
+            arch: x86
+          - api-level: '36'
+            arch: x86_64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
+      - name: Enable KVM for the emulator
+        run: |
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm
+          fi
+
+      - name: Run time-zone runtime tests
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ matrix.api-level }}
+          arch: ${{ matrix.arch }}
+          target: google_apis
+          emulator-options: -no-window -no-audio -no-boot-anim -camera-back none -gpu swiftshader_indirect
+          disable-animations: true
+          script: >-
+            cd android &&
+            ./gradlew ical4android:connectedDebugAndroidTest --no-daemon
+            -Pandroid.testInstrumentationRunnerArguments.class=at.bitfire.ical4android.SystemTimeZoneRuntimeTest
+
+      - name: Assert time-zone runtime methods executed
+        if: always()
+        run: |
+          python3 - <<'PY2'
+          import glob
+          import sys
+          import xml.etree.ElementTree as ET
+
+          expected = {
+              "patchedIcal4jClassesAreLoaded",
+              "everySystemZoneMatchesTheDeviceRules",
+              "vancouverSeriesThroughCalendarProvider",
+              "writtenEventKeepsWallTimesAndAMatchingDefinition",
+              "pendingChangesIncludeExceptionRows",
+          }
+          records = []
+          for path in glob.glob(
+              "android/ical4android/build/outputs/androidTest-results/connected/**/*.xml",
+              recursive=True,
+          ):
+              for case in ET.parse(path).getroot().iter("testcase"):
+                  if case.attrib.get("classname") == "at.bitfire.ical4android.SystemTimeZoneRuntimeTest":
+                      records.append(case)
+          names = [case.attrib.get("name", "") for case in records]
+          errors = [
+              name
+              for case, name in zip(records, names)
+              if any(case.find(kind) is not None for kind in ("failure", "error", "skipped"))
+          ]
+          if set(names) != expected or len(names) != len(expected) or errors:
+              print(f"expected={sorted(expected)}", file=sys.stderr)
+              print(f"executed={sorted(names)}", file=sys.stderr)
+              print(f"failed_or_skipped={sorted(errors)}", file=sys.stderr)
+              raise SystemExit(1)
+          print(f"verified {len(names)} time-zone runtime methods")
+          PY2
+
+      - name: Upload time-zone runtime reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: timezone-rules-runtime-${{ matrix.api-level }}-${{ matrix.arch }}-${{ github.sha }}
+          path: |
+            android/ical4android/build/outputs/androidTest-results/connected/
+            android/ical4android/build/reports/androidTests/connected/
+          if-no-files-found: error
+
   build-pr:
     name: Build (unsigned, PR/main)
     needs: [static-contracts, conscrypt-r28, etebase-16kb]
@@ -444,14 +619,15 @@ jobs:
             -PrequireReproducibleJdk=true
 
       # The merged release R8 configuration, seeds and usage reports, kept as
-      # privacy evidence; no merged source may switch optimisation off globally.
+      # privacy evidence. Optimisation must stay off: in 0.5.18 it removed
+      # constructors that ez-vcard creates by reflection and crashed contact sync.
       - name: Inspect effective release R8 configuration
         run: |
           set -euo pipefail
           out=app/build/outputs/mapping/release
           for f in configuration.txt seeds.txt usage.txt; do test -s "$out/$f"; done
-          if sed 's/#.*//' "$out/configuration.txt" | grep -nE '(^|[[:space:]])-dontoptimize([[:space:]]|$)'; then
-            echo "::error::merged release R8 configuration contains -dontoptimize" >&2
+          if ! sed 's/#.*//' "$out/configuration.txt" | grep -nE '(^|[[:space:]])-dontoptimize([[:space:]]|$)'; then
+            echo "::error::merged release R8 configuration does not contain -dontoptimize" >&2
             exit 1
           fi
           mkdir -p build/privacy-evidence/r8-release
@@ -797,8 +973,8 @@ jobs:
             expected={pair for pair in canonical if pair[0] in owners}
           else:
             raise SystemExit(f'unsupported API/shard {key}')
-          expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':78,'29:sibling-routes':48,'35:all':186,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':78}
-          if len(canonical) != 186 or len(expected) != expected_sizes[key]:
+          expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':81,'29:sibling-routes':48,'35:all':189,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':81}
+          if len(canonical) != 189 or len(expected) != expected_sizes[key]:
             raise SystemExit(f'bad expected ledger size for {key}: canonical={len(canonical)} expected={len(expected)}')
           seen=[]
           for path in glob.glob('app/build/outputs/androidTest-results/connected/**/*.xml', recursive=True):

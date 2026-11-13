@@ -84,6 +84,63 @@ class AndroidTrackerScannerTest(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn("not allowlisted", result.stderr)
 
+    def test_report_endpoint_is_allowed_only_once_in_report_send(self):
+        checker = ROOT / "android/scripts/check-network-evidence.py"
+        allowlist = ROOT / "android/security/android-network-endpoints.txt"
+        report = '{"scenario":"%s","uid":10123,"host":"silentsuite.io","requests":%d}\n'
+        quiet = '{"scenario":"%s","uid":10123,"host":null,"requests":0}\n'
+        scenarios = ["clean_launch", "idle_5m", "account_setup", "login", "foreground_sync", "background_sync",
+                     "network_failure", "logout", "report_open", "report_toggle_diagnostics", "report_cancel",
+                     "report_background"]
+
+        def run(body, *extra):
+            with tempfile.TemporaryDirectory() as tmp:
+                evidence = Path(tmp) / "evidence.jsonl"
+                evidence.write_text(body, encoding="utf-8")
+                return subprocess.run([sys.executable, str(checker), "--allowlist", str(allowlist),
+                                       "--evidence", str(evidence), *extra], text=True, capture_output=True)
+
+        complete = "".join(quiet % name for name in scenarios)
+        result = run(complete + report % ("report_send", 1), "--require-complete")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for scenario in ("clean_launch", "login", "report_open", "report_toggle_diagnostics",
+                         "report_cancel", "report_background", "background_sync"):
+            with self.subTest(scenario=scenario):
+                result = run(report % (scenario, 1))
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("allowed only in report_send", result.stderr)
+        # Exact host only: subdomains are not admitted by the scoped rule, in report_send or anywhere else.
+        for host in ("server.silentsuite.io", "report.silentsuite.io", "app.silentsuite.io", "silentsuite.io.evil.example"):
+            for scenario in ("report_send", "login"):
+                with self.subTest(host=host, scenario=scenario):
+                    result = run('{"scenario":"%s","uid":10123,"host":"%s","requests":1}\n' % (scenario, host))
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("not allowlisted", result.stderr)
+        result = run(report % ("report_send", 2))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("exactly one request", result.stderr)
+        result = run(complete + quiet % "report_send", "--require-complete")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("exactly one request", result.stderr)
+        result = run(complete, "--require-complete")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("missing scenarios: report_send", result.stderr)
+
+    def test_endpoint_policy_rejects_malformed_scoped_rules(self):
+        checker = ROOT / "android/scripts/check-network-evidence.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence = Path(tmp) / "evidence.jsonl"
+            evidence.write_text('{"scenario":"clean_launch","uid":10123,"host":null,"requests":0}\n', encoding="utf-8")
+            allowlist = Path(tmp) / "endpoints.txt"
+            for rule in ("silentsuite.io scenario=unknown_scenario", "silentsuite.io report_send",
+                         "a.example b.example", "silentsuite.io\nsilentsuite.io scenario=report_send"):
+                with self.subTest(rule=rule):
+                    allowlist.write_text(rule + "\n", encoding="utf-8")
+                    result = subprocess.run([sys.executable, str(checker), "--allowlist", str(allowlist),
+                                             "--evidence", str(evidence)], text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 3, result.stdout + result.stderr)
+                    self.assertIn("invalid network evidence", result.stderr)
+
     def test_scoped_unexpired_exception_is_reviewable_but_expired_one_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "dependency-report.txt"

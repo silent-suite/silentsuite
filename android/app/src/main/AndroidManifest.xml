@@ -226,6 +226,12 @@
             android:label="@string/app_settings"
             android:parentActivityName=".ui.AccountActivity"/>
 
+        <activity
+            android:name=".ui.report.ReportProblemActivity"
+            android:exported="false"
+            android:label="@string/report_problem_title"
+            android:parentActivityName=".ui.AppSettingsActivity"/>
+
         <activity android:name=".ui.PermissionsActivity"
             android:exported="false"
                   android:label="@string/permissions_title"

@@ -1,0 +1,1 @@
+Sincronizzazione più affidabile: il rilevamento delle raccolte non blocca più gli altri dati dell'account, le tue modifiche vengono mantenute e un elenco incompleto viene riprovato invece di essere segnalato come completo. L'impaginazione bloccata di raccolte o elementi ora termina come errore temporaneo anziché andare in loop, e il successivo aggiornamento può ripristinarla.
