@@ -35,15 +35,14 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.URI
 import java.time.Instant
+import java.time.LocalDateTime
 import java.time.ZoneId
-import java.time.ZoneOffset
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -109,14 +108,14 @@ class CalendarTimeZoneReplayRuntimeTest {
     }
 
     @Test fun aCalendarWithoutTheMarkerIsReadAgainOnceAndOnlyAFinishedListingSetsIt() {
-        val correctStart = Instant.parse("2026-07-15T16:00:00Z").toEpochMilli()
-        // Mexico City has had no daylight saving time since tzdata 2022f; an older system image keeps -05:00.
-        assumeTrue("the device's time zone data predates Mexico's 2022 change",
-            ZoneId.of("America/Mexico_City").rules.getOffset(Instant.ofEpochMilli(correctStart)) == ZoneOffset.ofHours(-6))
-        val correctEnd = Instant.parse("2026-07-15T17:00:00Z").toEpochMilli()
-        // As ical4j's bundled 2020 rules converted 10:00 and 11:00 local time: summer time, -05:00.
-        val staleStart = Instant.parse("2026-07-15T15:00:00Z").toEpochMilli()
-        val staleEnd = Instant.parse("2026-07-15T16:00:00Z").toEpochMilli()
+        // Correct is whatever the device's own rules say (16:00Z/17:00Z with tzdata 2022f or newer; older
+        // system images such as API 29's still have summer time). Stale is an hour off, as ical4j's
+        // bundled 2020 rules converted 10:00 and 11:00 on current devices.
+        val mexicoCity = ZoneId.of("America/Mexico_City")
+        val correctStart = LocalDateTime.of(2026, 7, 15, 10, 0).atZone(mexicoCity).toInstant().toEpochMilli()
+        val correctEnd = LocalDateTime.of(2026, 7, 15, 11, 0).atZone(mexicoCity).toInstant().toEpochMilli()
+        val staleStart = correctStart - HOUR
+        val staleEnd = correctEnd - HOUR
 
         val f = seed("gen-tz-replay", listOf(MEXICO_CITY_EVENT, BERLIN_EVENT))
         val (staleUid, controlUid) = f.itemUids
