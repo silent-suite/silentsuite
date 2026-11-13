@@ -32,7 +32,7 @@ import { PasswordKeyAcknowledgement, StepCreateVault } from './components/step-c
 import { StepCreatePaidAccount, type PaidAccountFormData } from './components/step-create-paid-account'
 import { QRCodeSVG } from 'qrcode.react'
 import { createEmailLinkContinuation } from '@/app/lib/signup-email-continuation'
-import { trackCheckoutInitiated, trackPlanSelected } from './commercial-funnel-analytics'
+import { createSignupStepRecorder, signupStepFor, trackCheckoutInitiated, trackPlanSelected } from './commercial-funnel-analytics'
 import {
   activateAnnualCheckout,
   consumeSignupEmailOwnership,
@@ -840,6 +840,7 @@ function StepChoosePlan({
 
   const handleContinue = useCallback(() => {
     if (selectedTrial === '7day') {
+      trackPlanSelected(annualOfferDetails)
       onSelectFree()
     } else {
       setPaymentMethodError(null)
@@ -847,7 +848,7 @@ function StepChoosePlan({
       onChoosePaymentMethod()
       window.scrollTo({ top: 0, behavior: 'smooth' })
     }
-  }, [selectedTrial, onSelectFree, onChoosePaymentMethod, onClearError])
+  }, [annualOfferDetails, selectedTrial, onSelectFree, onChoosePaymentMethod, onClearError])
 
   // Choosing a method with its price and charge timing visible is the
   // affirmative step; the parent reserves the offer and opens the provider's
@@ -1475,6 +1476,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   const finalizePaidSignup = useAuthStore((s) => s.finalizePaidSignup)
   const completeSignup = useAuthStore((s) => s.completeSignup)
   const [step, setStep] = useState<Step>('account')
+  const [recordSignupStep] = useState(createSignupStepRecorder)
   const [serverUrl, setServerUrl] = useState('')
 
   // Scroll to top on main step changes
@@ -1579,6 +1581,10 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
     mountedRef.current = true
     return () => { mountedRef.current = false }
   }, [])
+
+  useEffect(() => {
+    recordSignupStep(signupStepFor({ step, awaitingEmailProof, usingSelfHostedServer }))
+  }, [awaitingEmailProof, recordSignupStep, step, usingSelfHostedServer])
 
   useEffect(() => {
     setReturnTo(normalizeSignupReturnTo(new URLSearchParams(window.location.search).get('return_to')))
@@ -2261,6 +2267,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
   }, [createAndFinalizePaidAccount])
 
   const handleVaultComplete = useCallback(() => {
+    if (!usingSelfHostedServer) recordSignupStep('completed')
     // Finalize authentication — only NOW does the user become authenticated.
     completeSignup()
     navigation.clear()
@@ -2273,7 +2280,7 @@ function SignupJourney({ initialPaymentRecovery = false }: { initialPaymentRecov
       return
     }
     router.push('/')
-  }, [completeSignup, navigation, returnTo, router])
+  }, [completeSignup, navigation, recordSignupStep, returnTo, router, usingSelfHostedServer])
 
   const email = formDataRef.current?.email || ''
 

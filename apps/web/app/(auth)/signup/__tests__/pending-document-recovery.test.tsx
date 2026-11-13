@@ -6,7 +6,7 @@ import PendingPaymentPage from '../pending-payment/page'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
 vi.mock('../components/step-create-paid-account', () => ({ StepCreatePaidAccount: () => <div>Recovered account continuation</div> }))
 vi.mock('@/app/lib/secure-storage', () => ({ secureGet: vi.fn(), secureSet: vi.fn(), secureRemove: vi.fn(), secureClear: vi.fn(), migrateFromLocalStorage: vi.fn() }))
 const key = 'silentsuite-signup-redirect-state'
