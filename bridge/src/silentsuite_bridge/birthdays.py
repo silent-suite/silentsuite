@@ -698,6 +698,8 @@ def reconcile_birthdays(account, username):
         reruns = 0
         restarts = 0
         while True:
+            if not _opted_in():
+                return _result("skipped", written, "experimental-off")
             state, reason = _read_state(col_mgr, username)
             if state is None:
                 return _result("skipped", written, reason)
@@ -837,6 +839,12 @@ def _release(username):
         _running_accounts.discard(username)
 
 
+def _opted_in():
+    """The experimental Birthdays setting, read fresh at each gate so turning it off stops a
+    waiting or running pass before its next server read or write."""
+    return getattr(config, "EXPERIMENTAL_BIRTHDAYS", False) is True
+
+
 def reconcile_after_sync(service):
     """Called by local_cache.Etebase.sync() after a cycle with no unresolved DAV conflicts.
 
@@ -845,7 +853,7 @@ def reconcile_after_sync(service):
     wrote. sync_collection never calls this hook, so the refresh cannot recurse. Never raises.
     Does nothing while the experimental Birthdays setting is off.
     """
-    if getattr(config, "EXPERIMENTAL_BIRTHDAYS", False) is not True:
+    if not _opted_in():
         return _result("skipped", set(), "experimental-off")
     username = getattr(service, "username", None)
     if not username:
@@ -891,6 +899,9 @@ def set_dashboard_birthdays(username, action):
                     service._assert_session_current()
                 except Exception:  # noqa: BLE001
                     return _result("skipped", set(), "session-replaced")
+                # The setting may have been turned off while this action waited for the account.
+                if not _opted_in():
+                    return _result("skipped", set(), "experimental-off")
                 if action == "on":
                     result = enable_birthdays(service.etebase, username)
                 else:

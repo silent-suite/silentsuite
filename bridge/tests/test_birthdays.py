@@ -855,6 +855,45 @@ def test_dashboard_turn_on_creates_a_private_marked_calendar_and_fills_it(monkey
     assert [(uid, _semantic_fields(item.content)["uid"]) for uid, item in account.created] == [(created[0].uid, ALEX_FIELDS["uid"])]
 
 
+def test_dashboard_turn_waiting_for_the_account_stops_if_the_setting_was_turned_off(monkeypatch):
+    """A turn that waited for the account's exclusive session checks the experimental setting
+    again once it has it: switched off meanwhile, it reads and writes nothing."""
+    from contextlib import contextmanager
+
+    import silentsuite_bridge.radicale.etesync_cache as etesync_cache
+    from silentsuite_bridge import config
+
+    calendar, account = _account()
+    _allow_calendar_creation(account)
+    service, _calls = _configured_account(monkeypatch, account)
+
+    @contextmanager
+    def switched_off_while_waiting(user, *, exclusive=True, timeout=None, read_only=True):
+        monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+        yield service, False
+
+    monkeypatch.setattr(etesync_cache, "etesync_for_user", switched_off_while_waiting)
+    account.get_collection_manager = MagicMock(side_effect=AssertionError("no server access while off"))
+
+    for action in ("on", "off"):
+        monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", True)
+        result = birthdays.set_dashboard_birthdays(USERNAME, action)
+        assert (result.get("status"), result.get("reason")) == ("skipped", "experimental-off")
+
+
+def test_a_reconcile_pass_stops_once_the_setting_is_off(monkeypatch):
+    """reconcile_birthdays checks the setting before each pass's server reads."""
+    from silentsuite_bridge import config
+
+    _calendar, account = _account()
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+
+    result = birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert (result.get("status"), result.get("reason")) == ("skipped", "experimental-off")
+    assert not result.get("written")
+
+
 def test_dashboard_turn_on_reuses_an_existing_qualifying_calendar(monkeypatch):
     """INTENDED-RED (done) with CONTROL (no second calendar is created)."""
     calendar, account = _account()
