@@ -84,8 +84,8 @@ def plan(records, platforms) -> list[dict]:
     return [rows[name] for name in sorted(rows)]
 
 
-def _download(url: str, target: Path) -> None:
-    for attempt in range(3):
+def _download(url: str, target: Path, attempts: int = 5) -> None:
+    for attempt in range(attempts):
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "silentsuite-bridge-dev-build"})
             with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as handle:
@@ -97,15 +97,23 @@ def _download(url: str, target: Path) -> None:
         except InputError:
             raise
         except OSError as exc:
-            if attempt == 2:
-                raise InputError(f"{url}: download failed ({type(exc).__name__})") from None
-            time.sleep(5 * (attempt + 1))
+            if attempt == attempts - 1:
+                status = getattr(exc, "code", None)
+                raise InputError(f"{url}: download failed ({type(exc).__name__}{f' {status}' if status else ''})") \
+                    from None
+            time.sleep(15 * (attempt + 1))
 
 
 def fetch(rows, directory: Path, archive=None) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     for row in rows:
-        _download(row["url"], directory / row["file"])
+        try:
+            _download(row["url"], directory / row["file"])
+        except InputError:
+            if not row.get("final_url"):
+                raise
+            # The recorded mirror of the same file; the SHA256 check in verify() still applies.
+            _download(_https(row["final_url"], row["file"]), directory / row["file"])
         if "sigstore" in row:
             _download(row["sigstore"]["bundle_url"], directory / _bundle_name(row))
     if archive and _ubuntu_rows(rows):
