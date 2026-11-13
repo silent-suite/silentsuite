@@ -7,7 +7,7 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => '/signup' }))
 vi.mock('next-themes', () => ({ useTheme: () => ({ resolvedTheme: 'dark', setTheme: vi.fn() }) }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null }))
 vi.mock('@/app/lib/secure-storage', () => ({ secureGet: vi.fn(), secureSet: vi.fn(), secureRemove: vi.fn(), secureClear: vi.fn(), migrateFromLocalStorage: vi.fn() }))
 const email = 'recovery@example.test'
 const requestKey = '5fd4d86d-34de-4b82-9a66-9598ddf6e02f'

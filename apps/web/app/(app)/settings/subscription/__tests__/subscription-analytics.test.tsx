@@ -11,7 +11,7 @@ describe('subscription analytics transport boundary', () => {
   it('uses fetch fallback with the fixed subscription key/value payload', () => {
     const fetcher = vi.fn()
     sendCommercialEvent(buildSubscriptionManagementEntryPayload(), undefined, fetcher, new URL('https://app.silentsuite.io/settings/subscription'), 'true')
-    expect(fetcher).toHaveBeenCalledWith('/api/event', expect.objectContaining({
+    expect(fetcher).toHaveBeenCalledWith('https://plausible.silentsuite.io/api/event', expect.objectContaining({
       method: 'POST', keepalive: true,
       body: JSON.stringify({ domain: 'app.silentsuite.io', name: 'Subscription Management Entry', url: 'https://app.silentsuite.io/settings/subscription', props: { surface: 'subscription_settings' } }),
     }))

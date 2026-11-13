@@ -48,7 +48,7 @@ describe('signup analytics transport boundary', () => {
     expect(beacon).toHaveBeenCalledTimes(1)
     expect(fetcher).not.toHaveBeenCalled()
     const [endpoint, body] = beacon.mock.calls[0]
-    expect(endpoint).toBe('/api/event')
+    expect(endpoint).toBe('https://plausible.silentsuite.io/api/event')
     expect(body).toBeInstanceOf(Blob)
     await expect((body as Blob).text()).resolves.toBe(JSON.stringify({
       domain: 'app.silentsuite.io',
@@ -80,7 +80,7 @@ describe('signup analytics transport boundary', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     await expect((beacon.mock.calls[0][1] as Blob).text()).resolves.toBe(expectedBody)
     expect(fetcher).toHaveBeenCalledWith(
-      '/api/event',
+      'https://plausible.silentsuite.io/api/event',
       expect.objectContaining({
         method: 'POST',
         body: expectedBody,
@@ -100,7 +100,7 @@ describe('signup analytics transport boundary', () => {
 
     expect(fetcher).toHaveBeenCalledTimes(1)
     expect(fetcher).toHaveBeenCalledWith(
-      '/api/event',
+      'https://plausible.silentsuite.io/api/event',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
