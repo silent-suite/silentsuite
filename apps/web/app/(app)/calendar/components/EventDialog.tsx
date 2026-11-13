@@ -501,6 +501,8 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const handleSave = useCallback(async () => {
+    // A generated birthday is read-only; its shown dates are the clicked occurrence, not edits.
+    if (isManagedEvent) return
     if (!title.trim() || saving) return
     if (startDateError || endDateError) return
 
@@ -594,6 +596,7 @@ export function EventDialog({
       setSaving(false)
     }
   }, [
+    isManagedEvent,
     title,
     description,
     location,
