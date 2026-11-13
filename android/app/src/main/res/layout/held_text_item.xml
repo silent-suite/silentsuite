@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One entry of Unsynced Notes. The body is not selectable: the only copy is the Copy button, which marks
+     the clip as sensitive. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="@dimen/spacing_16"
+    android:background="@color/semantic_surface_variant"
+    android:orientation="vertical"
+    android:padding="@dimen/spacing_16">
+
+    <TextView
+        android:id="@+id/held_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+        android:textColor="@color/semantic_on_surface"
+        tools:text="Shopping" />
+
+    <TextView
+        android:id="@+id/held_reason"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/spacing_8"
+        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+        android:textColor="@color/semantic_on_surface_variant"
+        tools:text="Its notebook is read-only for you." />
+
+    <TextView
+        android:id="@+id/held_body"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/spacing_8"
+        android:ellipsize="end"
+        android:maxLines="12"
+        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+        android:textColor="@color/semantic_on_surface"
+        tools:text="- milk\n- eggs" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/spacing_8"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/held_copy"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/notes_held_copy" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/held_try_again"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/notes_held_try_again" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/held_discard"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/notes_discard" />
+    </LinearLayout>
+</LinearLayout>

@@ -7,6 +7,68 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NotesLoaderTest {
+    private val loader by lazy {
+        java.io.File("src/main/java/io/silentsuite/sync/ui/notes/NotesLoader.kt").readText().replace("\r\n", "\n")
+    }
+
+    @Test fun `a load reads the pending store first, then the cache, and never both together`() {
+        // design 3.2: the pending lock is never held together with the cache monitor or the cache's write fence.
+        val load = loader.substringAfter("    private fun <P, T : Any> load(").substringBefore("\n    }\n")
+        val store = load.indexOf("readLocalChanges(appContext, account, creationId, readPending)")
+        assertTrue("the store is read in load", store > 0)
+        for (later in listOf("EtebaseLocalCache.getInstance(", "EtebaseLocalCache.getEtebase(", "synchronized(cache)")) {
+            assertTrue("the store is read before $later", load.indexOf(later) > store)
+        }
+        assertEquals("one cache monitor in the loader, the one in load", 1, loader.split("synchronized(").size - 1)
+        // The Unsynced Notes screen reads the store again after the cache, and decrypts there: outside the monitor,
+        // in a step that load() has returned from.
+        val held = loader.substringAfter("    private fun heldRows(plan: HeldPlan): HeldTexts {").substringBefore("\n    }\n")
+        assertTrue(held.contains("store.read(header.noteUid)"))
+        val step = loader.substringAfter("is NotesLoad.Loaded -> guarded(context, account, creationId) {").substringBefore("\n        }\n")
+        assertTrue("heldRows runs in the guarded step, after load() returned", step.contains("heldRows(held)"))
+        // No store call is made from a cache block: every one of them is in a readPending lambda or in heldRows.
+        for (call in listOf("store.snapshot {", "store.observe(", "store.notebook(")) {
+            assertTrue("$call is made", loader.contains(call))
+        }
+        assertFalse("the overlay's keep never touches the cache", Regex("snapshot \\{[^}]*cache").containsMatchIn(loader))
+    }
+
+    /** The text of one catch clause of [body]: from its brace to the next clause or the end of the try. */
+    private fun clause(body: String, catch: String): String {
+        val at = body.indexOf(catch)
+        assertTrue("caught: $catch", at >= 0)
+        return body.substring(at + catch.length).substringBefore("\n        }")
+    }
+
+    @Test fun `local changes that cannot be read, or that a stopped discard holds, never close or fail a screen`() {
+        // Every load reads the store through one function, which turns a store that cannot be opened, listed or
+        // read into Unreadable, and a store a discard closed into DiscardStopped or Cleared, never into a failure.
+        val read = loader.substringAfter("    private fun <P> readLocalChanges(").substringBefore("\n    }\n")
+        assertEquals("if (store.clearStopped()) Pending.DiscardStopped else Pending.Cleared",
+            clause(read, "} catch (_: PendingNotesStore.Cleared) {").trim())
+        assertTrue(clause(read, "} catch (e: IOException) {").trim().endsWith("Pending.Unreadable"))
+        assertTrue("opening the store is inside the same guard",
+            read.indexOf("PendingNotesStore.forIdentity(") in 0 until read.indexOf("return store to try {"))
+        val load = loader.substringAfter("    private fun <P, T : Any> load(").substringBefore("\n    }\n")
+        assertEquals("load reads the store only through it", 1,
+            load.split("readLocalChanges(appContext, account, creationId, readPending)").size - 1)
+        assertFalse("and closes no screen for a cleared store", load.contains("PendingNotesStore.Cleared"))
+        // Each screen shows the cached notes with the reason.
+        val notebooks = loader.substringAfter("    fun notebooks(").substringBefore("\n    }\n")
+        assertTrue(notebooks.contains("Pending.Unreadable -> NotebookOverview(rows, 0, failed, pendingUnreadable = true)"))
+        assertTrue(notebooks.contains("Pending.DiscardStopped -> NotebookOverview(rows, 0, failed, discardStopped = true)"))
+        val notebook = loader.substringAfter("    fun notebook(").substringBefore("\n    }\n")
+        assertTrue(notebook.contains("?: return@load NotebookContents(row, sortNotes(notes), unreadable.size, pending.unavailable())"))
+        val note = loader.substringAfter("    fun note(").substringBefore("\n    }\n")
+        assertTrue(note.contains("?: return@load cached?.copy(pending = pending.unavailable())"))
+        // An action on a store a discard closed closes the screen only once the account is gone.
+        val screen = java.io.File("src/main/java/io/silentsuite/sync/ui/notes/HeldTextFragment.kt").readText().replace("\r\n", "\n")
+        val withStore = screen.substringAfter("    private fun <T> withStore(").substringBefore("\n    }\n")
+        val cleared = clause(withStore, "} catch (_: PendingNotesStore.Cleared) {").trimStart()
+        assertTrue(cleared, cleared.startsWith(
+            "if (!current()) {\n                StoreCall.Stale\n            } else if (store?.clearStopped() == true) {\n                StoreCall.Stopped"))
+    }
+
     private fun hex(s: String) = s.replace(" ", "").chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 
     @Test fun `preview takes the first meaningful line without markdown markers`() {

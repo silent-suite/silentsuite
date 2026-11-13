@@ -2745,6 +2745,8 @@ class PendingNotesStoreTest {
         assertEquals(PendingNotesStore.SendStart.Refused(PendingNotesStore.Refusal.DISCARD_CONFIRMED), s.startSend("n2"))
         assertEquals("n2 is not touched", before, filesOf(dir))
         assertEquals(left, s.snapshot { false }.discardConfirmed)
+        assertTrue("the viewer's read says so too", s.observe("n2").discardConfirmed)
+        assertFalse("and not for what the count missed", s.observe("n3").discardConfirmed)
         assertTrue("what the count missed is sent", s.startSend("n3") is PendingNotesStore.SendStart.Ready)
     }
 
@@ -2765,6 +2767,7 @@ class PendingNotesStoreTest {
         assertNull("a damaged permit is none", permitsOf(next).read(dir.name))
         assertTrue(next.startSend("n1") is PendingNotesStore.SendStart.Ready)
         assertTrue(next.snapshot { false }.discardConfirmed.isEmpty())
+        assertFalse(next.observe("n1").discardConfirmed)
     }
 
     @Test fun `after a restart, a rebase or a conflict copy writes nothing while what the permit names is there, and a save still withdraws it`() {
@@ -6314,12 +6317,62 @@ class PendingNotesStoreTest {
         assertEquals(listOf(settings), callersOf("unregisterIfFinishedOnce"))
         // The Settings way out, and a notebook's leave or delete before it words a failure of its server call.
         val notebook = "io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"
-        assertEquals("only these ask whether a discard stopped", listOf(settings, notebook), callersOf("clearStopped"))
+        // The Notes screens ask too, to show the cached notes, not close, while a stopped discard keeps the store closed.
+        val heldScreen = "io/silentsuite/sync/ui/notes/HeldTextFragment.kt"
+        val loader = "io/silentsuite/sync/ui/notes/NotesLoader.kt"
+        assertEquals("only these ask whether a discard stopped", listOf(settings, notebook, heldScreen, loader), callersOf("clearStopped"))
         // The removal guard also reads from memory which stores stopped.
         val guard = "io/silentsuite/sync/ui/PendingNotesRemovalGuard.kt"
         assertEquals(listOf(guard, settings, notebook), callersOf("stoppedIn"))
         assertEquals("clearAll is for test teardown only", emptyList<String>(), callersOf("clearAll"))
         assertEquals("a notebook's leave or delete only",
             listOf("io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"), callersOf("discardNotebook"))
+    }
+
+    @Test fun `outside the store's package only the account's Unsynced text sends held text again or discards one note`() {
+        // Try again ([PendingNotesStore.release]) is the first write of an entry the app makes, and the per-note
+        // discard deletes text: each caller comes with a change and a review of its own. Both take a note uid, so a
+        // call with an argument is one of them; the calls of the same names with arguments on other objects are
+        // listed by their receivers, and no other is allowed.
+        // Read without comments, with calls whose receiver, name and argument run across lines, and method references.
+        // A call with no receiver, inside a scope function on the store, is not seen: local functions of the same
+        // names are common in main, so such a call is left to review.
+        val main = File("src/main/java")
+        val call = Regex("\\.\\s*(?:release|discard)\\s*\\(\\s*[^)\\s]|::\\s*(?:release|discard)\\b")
+        val others = listOf("NotebookLeaveOrDelete.discard(", "LoginFlowOwnerRegistry.release(", "UnsyncedNotesStores.discard(",
+            "hold::release")
+        val found = main.walk().filter { it.isFile && it.extension in setOf("kt", "java") }
+            .map { file ->
+                file.relativeTo(main).invariantSeparatorsPath to file.readText().replace("\r\n", "\n")
+                    .replace(Regex("(?s)/\\*.*?\\*/"), "").replace(Regex("//[^\n]*"), "")
+            }
+            .filterNot { (path, _) -> path.startsWith("io/silentsuite/sync/notes/edit/") }
+            .flatMap { (path, code) ->
+                call.findAll(code).map { match ->
+                    val line = code.substring(code.lastIndexOf('\n', match.range.first).let { if (it < 0) 0 else it + 1 })
+                        .substringBefore('\n').trim()
+                    path to line
+                }.filter { (_, line) -> others.none { line.contains(it) } }
+            }.toList()
+        val held = "io/silentsuite/sync/ui/notes/HeldTextFragment.kt"
+        assertEquals(listOf(held, held), found.map { it.first })
+        assertEquals("one Try again", 1, found.count { it.second.contains("it.release(uid)") })
+        assertEquals("one discard, checked against the version shown", 1, found.count { it.second.contains("it.discard(uid, shown)") })
+    }
+
+    @Test fun `no production code saves text into the store yet`() {
+        // The editor is the next change; until it lands nothing in the app can change held text between the
+        // Unsynced Notes screen's read and a Discard, and nothing writes a new pending entry but Try again.
+        val main = File("src/main/java")
+        val word = Regex("\\bsaveLocal\\b")
+        val callers = main.walk().filter { it.isFile && it.extension in setOf("kt", "java") }
+            .filter { file ->
+                file.readLines().any { line ->
+                    val code = line.trim()
+                    !code.startsWith("*") && !code.startsWith("/*") && !code.startsWith("//") && word.containsMatchIn(line)
+                }
+            }
+            .map { it.relativeTo(main).invariantSeparatorsPath }.sorted().toList()
+        assertEquals(listOf("io/silentsuite/sync/notes/edit/PendingNotesStore.kt"), callers)
     }
 }

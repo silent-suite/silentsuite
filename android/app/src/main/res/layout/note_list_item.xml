@@ -38,4 +38,13 @@
         android:textColor="@color/semantic_on_surface_variant"
         tools:text="Edited 2 hours ago" />
 
+    <TextView
+        android:id="@+id/note_sync"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@style/TextAppearance.Material3.LabelMedium"
+        android:textColor="@color/semantic_on_surface"
+        android:visibility="gone"
+        tools:text="Not synced yet" />
+
 </LinearLayout>

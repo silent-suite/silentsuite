@@ -236,7 +236,8 @@ internal class PendingNotesStore private constructor(
     )
 
     /** One note's entry and the store-wide sequence, read together. */
-    data class Observed(val read: Read, val sequence: Long)
+    /** [discardConfirmed]: the store's discard permit names this present entry, as [Snapshot.discardConfirmed] does. */
+    data class Observed(val read: Read, val sequence: Long, val discardConfirmed: Boolean = false)
 
     sealed class SaveOutcome {
         data class Saved(val version: Long) : SaveOutcome()
@@ -356,7 +357,11 @@ internal class PendingNotesStore private constructor(
      * One note's entry with the store-wide sequence at the same moment. A load carries the sequence, so
      * an editor can drop any load older than its last save whether or not an entry existed.
      */
-    fun observe(noteUid: String): Observed = locked { Observed(readEntry(noteUid), currentSequence(strict = false)) }
+    fun observe(noteUid: String): Observed = locked {
+        val read = readEntry(noteUid)
+        val confirmed = read is Read.Present && permitNames().let { it == null || noteFile(noteUid).name in it }
+        Observed(read, currentSequence(strict = false), confirmed)
+    }
 
     // ---- the one primitive every change goes through ----
 
