@@ -307,6 +307,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         tbCalDAV.inflateMenu(R.menu.caldav_actions)
         tbCalDAV.setOnMenuItemClickListener(this)
         tbCalDAV.setTitle(R.string.settings_caldav)
+        renderBirthdaysActions()
 
         // TaskDAV toolbar
         val tbTaskDAV = findViewById<View>(R.id.taskdav_menu) as Toolbar
@@ -496,6 +497,8 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
         accountInfo?.let { info ->
             if (info.notesEnabled != AccountSettings.notesEnabled(AccountManager.get(this), account)) model.loadAccount()
         }
+        // The experimental Birthdays toggle lives there too; it decides whether the Calendars menu offers its actions.
+        renderBirthdaysActions()
     }
 
     override fun onPause() {
@@ -1861,7 +1864,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
      * The Calendars menu's explicit Birthdays switch (plan3 §3). Each run qualifies everything fresh in
      * [BirthdayMaintenance.turn]; offering both actions claims nothing about the current state. While one
      * runs, both actions are disabled. After its IO work ended, and only while this exact generation is
-     * still current, the dashboard reloads; both actions are then enabled again.
+     * still current, the dashboard reloads; both actions are then enabled again. Both are offered only while
+     * the account has the experimental Birthdays calendar turned on ([renderBirthdaysActions]); the turn itself
+     * checks that again.
      */
     private fun switchBirthdays(on: Boolean) {
         if (birthdaysBusy || !exactAccountStillCurrent()) return
@@ -1884,6 +1889,16 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 }
             }
         }
+    }
+
+    /**
+     * The Calendars menu offers the Birthdays actions only while this account has the experimental Birthdays
+     * calendar turned on in Settings. Turning it off hides them and changes nothing on the server.
+     */
+    private fun renderBirthdaysActions() {
+        val visible = AccountSettings.birthdaysEnabled(AccountManager.get(this), account)
+        val menu = findViewById<Toolbar>(R.id.caldav_menu).menu
+        for (id in intArrayOf(R.id.birthdays_turn_on, R.id.birthdays_turn_off)) menu.findItem(id)?.isVisible = visible
     }
 
     private fun setBirthdaysActionsEnabled(enabled: Boolean) {

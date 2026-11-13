@@ -131,6 +131,8 @@ class BirthdayChildContactSyncRuntimeTest {
                 ContentResolver.getIsSyncable(main, App.addressBooksAuthority))
             AccountSettings.setUserData(manager, main, URI(fake.baseUrl), username)
             check(AccountSettings.writeVerified(manager, main, AccountSettings.KEY_CREATION_ID, generation))
+            // The experimental Birthdays calendar is a per-account opt-in, off by default.
+            check(AccountSettings.writeBirthdaysEnabled(manager, main, true))
             AccountSettings(context, main).etebaseSession = session
             assertEquals("the main account's stored username is the SDK user", username, AccountSettings(context, main).username())
 

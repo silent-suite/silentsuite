@@ -466,6 +466,16 @@ class AppSettingsActivity : BaseActivity() {
                     true
                 }
             }
+            requirePreference<SwitchPreferenceCompat>("birthdays_enabled").apply {
+                isEnabled = account != null
+                isChecked = account != null && AccountSettings.birthdaysEnabled(AccountManager.get(requireContext()), account)
+                setOnPreferenceChangeListener { _, value ->
+                    // Revalidate the retained generation immediately before the account-scoped write. Only the
+                    // opt-in is stored; turning it off leaves any Birthdays calendar on the server as it is.
+                    val exact = exactSelectedAccount() ?: return@setOnPreferenceChangeListener false
+                    AccountSettings.writeBirthdaysEnabled(AccountManager.get(requireContext().applicationContext), exact, value as Boolean)
+                }
+            }
         }
 
         private fun setupSync() {

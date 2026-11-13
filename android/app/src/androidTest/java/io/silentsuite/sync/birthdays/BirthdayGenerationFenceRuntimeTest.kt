@@ -108,6 +108,8 @@ class BirthdayGenerationFenceRuntimeTest {
             HttpClient.testInterceptor = fake
             check(manager.addAccountExplicitly(Account(name, type), null, Bundle().apply {
                 putString(AccountSettings.KEY_CREATION_ID, oldGeneration)
+                // The experimental Birthdays calendar is a per-account opt-in, off by default.
+                putString(AccountSettings.KEY_BIRTHDAYS_ENABLED, "true")
             }))
             val original = checkNotNull(currentRow(name, type)) { "the original row is listed" }
             assertEquals("the original row carries its generation from creation", oldGeneration,
@@ -152,6 +154,8 @@ class BirthdayGenerationFenceRuntimeTest {
             assertTrue("the original generation's row was removed", removeExactGeneration(name, type, oldGeneration))
             check(manager.addAccountExplicitly(Account(name, type), null, Bundle().apply {
                 putString(AccountSettings.KEY_CREATION_ID, newGeneration)
+                // The experimental Birthdays calendar is a per-account opt-in, off by default.
+                putString(AccountSettings.KEY_BIRTHDAYS_ENABLED, "true")
                 putString(AccountSettings.KEY_SETTINGS_VERSION, AccountSettings.CURRENT_VERSION.toString())
             }))
             val replacement = checkNotNull(currentRow(name, type)) { "the replacement row is listed" }
@@ -286,6 +290,8 @@ class BirthdayGenerationFenceRuntimeTest {
             HttpClient.testInterceptor = fake
             check(manager.addAccountExplicitly(Account(name, type), null, Bundle().apply {
                 putString(AccountSettings.KEY_CREATION_ID, generation)
+                // The experimental Birthdays calendar is a per-account opt-in, off by default.
+                putString(AccountSettings.KEY_BIRTHDAYS_ENABLED, "true")
             }))
             val row = checkNotNull(currentRow(name, type)) { "the account row is listed" }
             assertEquals("the row carries its generation from creation", generation,

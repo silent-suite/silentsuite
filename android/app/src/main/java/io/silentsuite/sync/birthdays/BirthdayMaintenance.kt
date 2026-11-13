@@ -69,9 +69,14 @@ internal object BirthdayMaintenance {
      * its own admitted identity, and returns at once; the running caller then runs exactly one more pass for all such
      * triggers before it finishes. Every pass is [runOnce], with its own ownership and gate checks. An interrupted
      * caller starts no further pass. The slot is released in the same locked step that finds nothing pending, so a
-     * trigger is never coalesced into a run that has already decided to stop.
+     * trigger is never coalesced into a run that has already decided to stop. Nothing runs while the account has the
+     * experimental Birthdays calendar turned off ([optedIn]).
      */
     fun run(context: Context, main: Account, admitted: SyncStatusStore.MainIdentity?, trigger: String) {
+        if (!optedIn(context, main)) {
+            Logger.log.info("Birthdays after the $trigger skipped (off)")
+            return
+        }
         val key = main.type to main.name
         val mine = Slot()
         lock.withLock {
@@ -116,6 +121,16 @@ internal object BirthdayMaintenance {
             mine.pending = false
             return mine.pendingAdmitted to mine.pendingTrigger
         }
+    }
+
+    /**
+     * Whether [main] has the experimental Birthdays calendar turned on (AccountSettings.birthdaysEnabled). Absent is
+     * off, and any failure to read it, including getting the account manager, is off.
+     */
+    private fun optedIn(context: Context, main: Account): Boolean = try {
+        AccountSettings.birthdaysEnabled(AccountManager.get(context), main)
+    } catch (e: Exception) {
+        false
     }
 
     /** Releases the slot of [key] if it is still [mine], and wakes any turn waiting for it. */
@@ -173,10 +188,15 @@ internal object BirthdayMaintenance {
      * The turn shares [run]'s one slot per main account in this process (plan2 §2 step 10). It is never coalesced
      * or dropped: it waits until the slot is free and checks its gate only after taking it. An interrupt while it
      * waits returns null without taking the slot. Maintenance triggers that arrive while it runs ask for one more
-     * pass, which runs as [runOnce] before the turn returns; the turn still returns its own result.
+     * pass, which runs as [runOnce] before the turn returns; the turn still returns its own result. While the account
+     * has the experimental Birthdays calendar turned off ([optedIn]), it returns null at once.
      */
     fun turn(context: Context, main: Account, creationId: String, on: Boolean, stillWanted: () -> Boolean): BirthdayReconciler.RunResult? {
         val action = if (on) "turn-on" else "turn-off"
+        if (!optedIn(context, main)) {
+            Logger.log.info("Birthdays $action skipped (off)")
+            return null
+        }
         val key = main.type to main.name
         val mine = Slot()
         try {

@@ -99,6 +99,8 @@ class BirthdayContactSyncRuntimeTest {
             ContentResolver.setIsSyncable(account, App.addressBooksAuthority, 1)
             AccountSettings.setUserData(manager, account, URI(fake.baseUrl), username)
             check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+            // The experimental Birthdays calendar is a per-account opt-in, off by default.
+            check(AccountSettings.writeBirthdaysEnabled(manager, account, true))
             AccountSettings(context, account).etebaseSession = session
             assertEquals("the account's stored username is the SDK user", username, AccountSettings(context, account).username())
             val requestsBefore = fake.requests.size

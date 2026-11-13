@@ -514,6 +514,16 @@ class BirthdayActivationRuntimeTest {
                 // Only requests from here on are this test's subject; whatever the fixture's setup dispatched is not.
                 dispatched.clear()
 
+                // Control: with the experimental opt-in turned off, a trigger and an explicit turn-on both stop at once;
+                // they write and request nothing. The opt-in is then turned back on for the rest of this test.
+                check(AccountSettings.writeBirthdaysEnabled(manager, account, false))
+                BirthdayMaintenance.run(context, account, store.identity(account, generation), "address-book sync")
+                assertNull("OPT_IN_OFF: a turn-on while the opt-in is off does not run",
+                    BirthdayMaintenance.turn(context, account, generation, true) { true })
+                assertEquals("OPT_IN_OFF: nothing is generated while the opt-in is off", 0, generatedLive())
+                assertTrue("OPT_IN_OFF: no sync is requested while the opt-in is off", dispatched.isEmpty())
+                check(AccountSettings.writeBirthdaysEnabled(manager, account, true))
+
                 // Control: a trigger admitted for another generation is skipped; it writes and requests nothing.
                 BirthdayMaintenance.run(context, account, store.identity(account, "not-$generation"), "stale trigger")
                 assertEquals("PREREQUISITE: a skipped run writes nothing", 0, generatedLive())
@@ -832,6 +842,8 @@ class BirthdayActivationRuntimeTest {
             }
             AccountSettings.setUserData(manager, account, URI(fake.baseUrl), username)
             check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+            // The experimental Birthdays calendar is a per-account opt-in, off by default.
+            check(AccountSettings.writeBirthdaysEnabled(manager, account, true))
             check(AccountSettings.writeSetupState(manager, account, PostLoginSetupState.COMPLETE))
             AccountSettings(context, account).etebaseSession = session
             check(AccountSettings.writeVerified(manager, other, AccountSettings.KEY_CREATION_ID, otherGeneration))
