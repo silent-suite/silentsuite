@@ -213,8 +213,10 @@ def _connect(client: TestClient, ticket: str) -> t.Tuple[t.Optional[int], t.Opti
         ws = session.__enter__()
     except WebSocketDisconnect as exc:
         return exc.code, None
-    with session:
+    try:
         return None, ws.receive_bytes()
+    finally:
+        session.__exit__(None, None, None)
 
 
 def _add_items(membership: Membership, count: int) -> t.Set[str]:
