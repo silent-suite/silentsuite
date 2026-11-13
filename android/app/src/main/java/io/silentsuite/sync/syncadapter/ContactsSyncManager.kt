@@ -34,11 +34,14 @@ import io.silentsuite.sync.resource.LocalContact
 import io.silentsuite.sync.resource.LocalGroup
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
 import okhttp3.Request
+import okio.Buffer
 import org.apache.commons.collections4.SetUtils
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.StringReader
+import java.util.concurrent.TimeUnit
 import java.util.logging.Level
 
 /**
@@ -556,23 +559,62 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                 return null
             }
 
-            val resourceClient = HttpClient.Builder(context).setForeground(false).build().okHttpClient
-
-            try {
-                val response = resourceClient.newCall(Request.Builder()
-                        .get()
-                        .url(httpUrl)
-                        .build()).execute()
-
-                val body = response.body
-                if (body != null) {
-                    return body.bytes()
-                }
-            } catch (e: IOException) {
-                Logger.log.log(Level.SEVERE, "Couldn't download external resource", e)
+            return HttpClient.Builder(context).setForeground(false).build().use { client ->
+                fetchBounded(client.okHttpClient, httpUrl)
             }
+        }
 
-            return null
+        companion object {
+            /** Largest external resource (contact photo) accepted; bigger bodies are dropped unread. */
+            const val MAX_RESOURCE_BYTES: Long = 5L * 1024 * 1024
+
+            /** Deadline for the whole call, including connecting and reading the body. */
+            const val CALL_TIMEOUT_SECONDS: Long = 30
+
+            private const val READ_CHUNK_BYTES: Long = 8 * 1024
+
+            /**
+             * Fetches [url] with [client] and returns the body only for a 2xx response no larger than
+             * [maxBytes], read within [callTimeoutMillis]. Anything else yields null.
+             */
+            @VisibleForTesting
+            internal fun fetchBounded(
+                    client: OkHttpClient,
+                    url: HttpUrl,
+                    maxBytes: Long = MAX_RESOURCE_BYTES,
+                    callTimeoutMillis: Long = TimeUnit.SECONDS.toMillis(CALL_TIMEOUT_SECONDS)
+            ): ByteArray? {
+                val boundedClient = client.newBuilder()
+                        .callTimeout(callTimeoutMillis, TimeUnit.MILLISECONDS)
+                        .build()
+                try {
+                    boundedClient.newCall(Request.Builder()
+                            .get()
+                            .url(url)
+                            .build()).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Logger.log.warning("External resource request failed with HTTP ${response.code}")
+                            return null
+                        }
+                        val body = response.body ?: return null
+                        if (body.contentLength() > maxBytes) {
+                            Logger.log.warning("External resource is too large (declared ${body.contentLength()} bytes), ignoring")
+                            return null
+                        }
+                        val source = body.source()
+                        val buffer = Buffer()
+                        while (buffer.size <= maxBytes) {
+                            if (source.read(buffer, READ_CHUNK_BYTES) == -1L)
+                                return buffer.readByteArray()
+                        }
+                        Logger.log.warning("External resource is larger than $maxBytes bytes, ignoring")
+                        return null
+                    }
+                } catch (e: IOException) {
+                    Logger.log.log(Level.SEVERE, "Couldn't download external resource", e)
+                }
+                return null
+            }
         }
     }
 
