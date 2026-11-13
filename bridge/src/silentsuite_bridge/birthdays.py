@@ -584,12 +584,25 @@ def _planner_calendars(state):
     } for uid, entry in state["calendars"].items()]
 
 
+class _OptedOut(Exception):
+    """The experimental Birthdays setting was turned off while a run was under way."""
+
+
+def _require_opted_in():
+    """Checked right before every server write, so a run that read while the setting was on
+    writes nothing once it is off."""
+    if not _opted_in():
+        raise _OptedOut()
+
+
 def _commit(item_mgr, items, root):
     for start in range(0, len(items), CHUNK):
+        _require_opted_in()
         item_mgr.transaction(items[start:start + CHUNK], [root])
 
 
 def _retire(col_mgr, entry, written):
+    _require_opted_in()
     collection = entry["collection"]
     collection.content = marker_content("retired")
     # Recorded before the write: an uncertain write still needs a cache refresh.
@@ -711,6 +724,8 @@ def reconcile_birthdays(account, username):
                 return _result("skipped", written, planned["reason"])
             try:
                 wrote = _apply(col_mgr, state, planned["plan"], written)
+            except _OptedOut:
+                return _result("skipped", written, "experimental-off")
             except Exception as exc:  # noqa: BLE001 - unknown outcome: re-read, never resend blindly
                 _logger.info("Birthdays write outcome unknown (%s)", bounded_exception_class(exc))
                 if restarts >= MAX_RESTARTS:
@@ -755,6 +770,8 @@ def disable_birthdays(account, username):
                 generated = [uid for uid, item in entry["items"].items()
                              if is_generated_birthday_uid((parse_birthday_event_fields(_read_content(item)) or {}).get("uid"))]
                 _delete_items(col_mgr, entry, sorted(generated), written)
+        except _OptedOut:
+            return _result("skipped", written, "experimental-off")
         except Exception as exc:  # noqa: BLE001 - unknown outcome; the next run repairs
             _logger.info("Birthdays turn-off outcome unknown (%s)", bounded_exception_class(exc))
             return _result("pending", written, "write-outcome-unknown")
@@ -783,6 +800,8 @@ def enable_birthdays(account, username):
         if state is None:
             return _result("failed", set(), reason, created=created)
         if not _qualifying_active(state):
+            if not _opted_in():
+                return _result("skipped", set(), "experimental-off", created=created)
             collection = col_mgr.create(CALENDAR_TYPE, {"name": BIRTHDAYS_CALENDAR_NAME}, marker_content("active"))
             try:
                 col_mgr.upload(collection)

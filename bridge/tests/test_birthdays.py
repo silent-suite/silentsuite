@@ -894,6 +894,52 @@ def test_a_reconcile_pass_stops_once_the_setting_is_off(monkeypatch):
     assert not result.get("written")
 
 
+def _switch_off_after_reads(monkeypatch):
+    """Turns the experimental setting off as soon as a run's server reads have returned."""
+    from silentsuite_bridge import config
+
+    real_read_state = birthdays._read_state
+
+    def read_then_switch_off(*args, **kwargs):
+        result = real_read_state(*args, **kwargs)
+        monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+        return result
+
+    monkeypatch.setattr(birthdays, "_read_state", read_then_switch_off)
+
+
+def test_a_reconcile_switched_off_during_its_reads_writes_nothing(monkeypatch):
+    """The setting is checked again right before each server write, not only before the reads."""
+    calendar, account = _account()
+    _switch_off_after_reads(monkeypatch)
+
+    result = birthdays.reconcile_birthdays(account, USERNAME)
+
+    assert (result.get("status"), result.get("reason")) == ("skipped", "experimental-off")
+    account._item_manager(calendar).transaction.assert_not_called()
+    account.col_mgr.transaction.assert_not_called()
+
+
+def test_turning_on_or_off_switched_off_during_the_reads_writes_nothing(monkeypatch):
+    """Turn-on uploads no calendar and turn-off retires nothing once the setting went off mid-run."""
+    from silentsuite_bridge import config
+
+    book = _sdk_collection(BOOK, "etebase.vcard")
+    empty = FakeAccount([book], {BOOK: [_sdk_item(CONTACT, ALEX_VCARD)]}, {BOOK: [USERNAME]})
+    _allow_calendar_creation(empty)
+    _switch_off_after_reads(monkeypatch)
+    on = birthdays.enable_birthdays(empty, USERNAME)
+    assert (on.get("status"), on.get("reason")) == ("skipped", "experimental-off")
+    empty.col_mgr.upload.assert_not_called()
+
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", True)
+    calendar, active = _account()
+    off = birthdays.disable_birthdays(active, USERNAME)
+    assert (off.get("status"), off.get("reason")) == ("skipped", "experimental-off")
+    active.col_mgr.transaction.assert_not_called()
+    assert calendar.content == ACTIVE
+
+
 def test_dashboard_turn_on_reuses_an_existing_qualifying_calendar(monkeypatch):
     """INTENDED-RED (done) with CONTROL (no second calendar is created)."""
     calendar, account = _account()
