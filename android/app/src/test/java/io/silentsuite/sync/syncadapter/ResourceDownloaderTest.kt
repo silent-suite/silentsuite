@@ -100,4 +100,20 @@ class ResourceDownloaderTest {
         val builder = File(main, "HttpClient.kt").readText()
         assertTrue(Regex("""CustomCertManager\(\s*context\s*,\s*interactiveCertificates\s*,""").containsMatchIn(builder))
     }
+
+    @Test
+    fun nonInteractiveCheckDoesNotJoinAPendingPrompt() {
+        // cert4android has no unit-test run in CI, so this checks its source: when a decision for the
+        // certificate is already pending, a non-interactive request leaves the lock with a rejection
+        // before it could be added to the waiters.
+        val service = File("../cert4android/src/main/java/at/bitfire/cert4android/CustomCertService.kt").readText()
+        val pendingBranch = Regex("""pendingDecisions\[cert]\?\.let \{ pending ->(.*?)\n\s*}\n""", RegexOption.DOT_MATCHES_ALL)
+                .find(service)?.groupValues?.get(1) ?: throw AssertionError("pending-decision branch not found")
+        val code = pendingBranch.replace(Regex("//[^\n]*"), "")
+        val reject = Regex("""if \(!interactive\)\s*return@synchronized false""").find(code)
+                ?: throw AssertionError("non-interactive request is not rejected in the pending branch")
+        val join = code.indexOf("pending.callbacks += callback")
+        assertTrue(join >= 0)
+        assertTrue(reject.range.first < join)
+    }
 }
