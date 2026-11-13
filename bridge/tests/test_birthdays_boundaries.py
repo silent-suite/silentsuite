@@ -30,6 +30,14 @@ from tests.test_macos_dav_discovery import USERNAME as DAV_USER
 from tests.test_macos_dav_discovery import _basic_auth
 from tests.test_web_dashboard import NODE, _extract_js_function, _reset_status
 
+
+
+@pytest.fixture(autouse=True)
+def experimental_birthdays_on(monkeypatch):
+    """Birthdays is an experimental opt-in; these boundary tests run with it turned on."""
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", True)
+
+
 ORDINARY_EVENT = (
     "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//EN\r\nBEGIN:VEVENT\r\n"
     "UID:dav-written-event\r\nDTSTAMP:20261031T120000Z\r\nDTSTART;VALUE=DATE:20261101\r\n"

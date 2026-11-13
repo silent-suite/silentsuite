@@ -44,6 +44,14 @@ RETIRED = b'{"type":"silentsuite.birthdays","v":1,"state":"retired"}'
 USERNAME = "alice@example.com"
 
 
+@pytest.fixture(autouse=True)
+def experimental_birthdays_on(monkeypatch):
+    """Birthdays is an experimental opt-in; these tests run with it turned on unless they say otherwise."""
+    from silentsuite_bridge import config
+
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", True)
+
+
 # ---------------------------------------------------------------------------
 # Shared contract vectors (pure helpers)
 # ---------------------------------------------------------------------------
@@ -1261,3 +1269,180 @@ def test_dashboard_birthdays_rejects_bad_requests(monkeypatch, body):
 
     assert status == 400
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Experimental opt-in: off by default, and off means the Bridge does no Birthdays work
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("stored", [None, False, "true", 1, {"on": True}], ids=["missing", "false", "string", "int", "object"])
+def test_experimental_birthdays_is_off_unless_settings_say_true(tmp_path, monkeypatch, stored):
+    from silentsuite_bridge import config
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({} if stored is None else {"experimentalBirthdays": stored}), encoding="utf-8")
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
+
+    config.load_settings()
+
+    assert config.EXPERIMENTAL_BIRTHDAYS is False
+
+
+def test_experimental_birthdays_loads_on_from_settings(tmp_path, monkeypatch):
+    from silentsuite_bridge import config
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"experimentalBirthdays": True}), encoding="utf-8")
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+
+    config.load_settings()
+
+    assert config.EXPERIMENTAL_BIRTHDAYS is True
+
+
+def test_experimental_birthdays_default_is_off(tmp_path):
+    """A fresh process with an empty data directory starts with Birthdays off."""
+    import os
+    import subprocess
+    import sys
+
+    from silentsuite_bridge import config
+
+    env = dict(os.environ, SILENTSUITE_DATA_DIR=str(tmp_path))
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(Path(config.__file__).parents[1]), env.get("PYTHONPATH")]))
+    code = "from silentsuite_bridge import config; config.load_settings(); print(config.EXPERIMENTAL_BIRTHDAYS)"
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True, check=True, timeout=60)
+
+    assert out.stdout.strip() == "False"
+
+
+def test_hook_does_nothing_while_experimental_birthdays_is_off(tmp_path, monkeypatch):
+    from silentsuite_bridge import config
+
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+    service = _hook_service(tmp_path, "hook-off")
+    calls = []
+    monkeypatch.setattr(birthdays, "reconcile_birthdays", lambda account, username: calls.append(username))
+    monkeypatch.setattr(birthdays, "_refresh_cache", lambda svc, written: calls.append("refresh"))
+
+    result = birthdays.reconcile_after_sync(service)
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "experimental-off"
+    assert calls == []
+
+
+def test_sync_runs_cleanly_with_experimental_birthdays_off(tmp_path, monkeypatch):
+    from silentsuite_bridge import config
+
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+    database = _database(tmp_path / "sync-off.sqlite")
+    user = models.User.create(username=USERNAME)
+    service = _service(database, user, MagicMock())
+    calls = []
+    monkeypatch.setattr(birthdays, "reconcile_birthdays", lambda account, username: calls.append(username))
+
+    service.sync()
+
+    assert calls == []
+
+
+def test_dashboard_birthdays_route_refuses_while_off(monkeypatch):
+    from silentsuite_bridge import config
+
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+    calls = []
+    monkeypatch.setattr(birthdays, "set_dashboard_birthdays", lambda username, act: calls.append((username, act)))
+
+    status, _headers, body = _post({"username": USERNAME, "action": "on"})
+    assert status == 404
+    assert "error" in json.loads(body)
+
+    # CSRF is still checked first.
+    status, _headers, body = _post({"username": USERNAME, "action": "on"}, csrf=False)
+    assert status == 403
+    assert json.loads(body)["error"] == "Invalid dashboard CSRF token"
+    assert calls == []
+
+
+def _render_with_account(tmp_path, monkeypatch):
+    from silentsuite_bridge import config
+    from silentsuite_bridge.radicale.creds import Credentials
+
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(web_module, "_account_fingerprint", lambda _creds, username: f"fingerprint for {username}")
+    creds = Credentials()
+    creds.set_etebase(USERNAME, "alice-session", "https://server-a.test")
+    creds.save()
+    return web_module._render_dashboard()
+
+
+def test_dashboard_hides_birthdays_buttons_while_off(tmp_path, monkeypatch):
+    from silentsuite_bridge import config
+
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+
+    html = _render_with_account(tmp_path, monkeypatch)
+
+    assert f'data-birthdays-account="{USERNAME}"' not in html
+    assert "Turn on Birthdays calendar" not in html
+    assert "Turn off Birthdays calendar" not in html
+    # The setting itself is offered, unticked, under Experimental.
+    assert "Experimental" in html
+    assert 'id="experimentalBirthdays"' in html
+    assert 'id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)">' in html
+    assert "Adds a Birthdays calendar made from your contacts. Turn it on per account on the dashboard." in html
+
+
+def test_dashboard_settings_checkbox_is_ticked_while_on(tmp_path, monkeypatch):
+    html = _render_with_account(tmp_path, monkeypatch)
+
+    assert 'id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)" checked>' in html
+    assert "Turn on Birthdays calendar" in html
+
+
+def _settings_post(body, csrf=True):
+    from tests.test_web_dashboard import _post_environ
+
+    raw = json.dumps(body).encode("utf-8")
+    environ = _post_environ(raw, csrf_token=_dashboard_csrf_token if csrf else None)
+    web = Web.__new__(Web)
+    return web.post(environ, "", "/.web/api/settings", None)
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_settings_route_saves_the_experimental_birthdays_setting(tmp_path, monkeypatch, enabled):
+    from silentsuite_bridge import config
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"syncInterval": 300}), encoding="utf-8")
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
+    monkeypatch.setattr(config, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", not enabled)
+
+    status, _headers, body = _settings_post({"experimentalBirthdays": enabled})
+
+    assert status == 200
+    assert json.loads(body)["experimentalBirthdays"] is enabled
+    assert config.EXPERIMENTAL_BIRTHDAYS is enabled
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {"syncInterval": 300, "experimentalBirthdays": enabled}
+
+
+def test_settings_route_rejects_a_malformed_birthdays_value_without_writing(tmp_path, monkeypatch):
+    from silentsuite_bridge import config
+
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text(json.dumps({"syncInterval": 300}), encoding="utf-8")
+    monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", False)
+
+    status, _headers, _body = _settings_post({"experimentalBirthdays": "yes", "syncInterval": 60})
+    assert status == 400
+    assert config.EXPERIMENTAL_BIRTHDAYS is False
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {"syncInterval": 300}
+
+    status, _headers, _body = _settings_post({"experimentalBirthdays": True}, csrf=False)
+    assert status == 403
+    assert config.EXPERIMENTAL_BIRTHDAYS is False

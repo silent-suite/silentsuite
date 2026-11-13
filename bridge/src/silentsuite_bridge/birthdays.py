@@ -21,6 +21,7 @@ from datetime import date, timedelta
 
 from etebase import CollectionAccessLevel, FetchOptions
 
+from . import config
 from .privacy_logging import bounded_exception_class
 
 MARKER_TYPE = "silentsuite.birthdays"
@@ -842,7 +843,10 @@ def reconcile_after_sync(service):
     Runs only for the service's current session, at most once at a time per account (a call
     made while that account's run is active is coalesced), and refreshes only the calendars it
     wrote. sync_collection never calls this hook, so the refresh cannot recurse. Never raises.
+    Does nothing while the experimental Birthdays setting is off.
     """
+    if getattr(config, "EXPERIMENTAL_BIRTHDAYS", False) is not True:
+        return _result("skipped", set(), "experimental-off")
     username = getattr(service, "username", None)
     if not username:
         return _result("skipped", set(), "no-account")
