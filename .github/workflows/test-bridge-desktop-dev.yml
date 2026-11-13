@@ -216,6 +216,25 @@ jobs:
             libxcb-xkb1 libegl1 libnss3 libxcomposite1 libxdamage1 libxrandr2 libxtst6 \
             libxkbfile1 libasound2
 
+      # Same admitted Ubuntu package versions as the caller's package job, so these facts
+      # describe the build that would ship.
+      - name: Install the admitted Ubuntu package versions (Linux)
+        if: ${{ steps.helper.outputs.present == 'true' && runner.os == 'Linux' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 bridge/dev-build/os_packages.py apt-source --records bridge/dev-build/notices/source-archives.json \
+            | sudo tee /etc/apt/sources.list.d/silentsuite-admitted-snapshot.list
+          mapfile -t pins < <(python3 bridge/dev-build/os_packages.py apt-pins \
+            --policy bridge/dev-build/notices/policy-linux-x86_64.json)
+          sudo apt-get update -qq
+          sudo apt-get install -y --allow-downgrades --no-install-recommends "${pins[@]}"
+          dpkg-query -W -f='${Package}:${Architecture}=${Version}\n' | sort > "$RUNNER_TEMP/installed.txt"
+          printf '%s\n' "${pins[@]}" | sort | comm -23 - "$RUNNER_TEMP/installed.txt" > "$RUNNER_TEMP/not-pinned.txt"
+          if [ -s "$RUNNER_TEMP/not-pinned.txt" ]; then
+            echo "not installed at the admitted version:"; cat "$RUNNER_TEMP/not-pinned.txt"; exit 1
+          fi
+
       - name: Install dependencies
         if: ${{ steps.helper.outputs.present == 'true' }}
         working-directory: bridge
