@@ -1,6 +1,6 @@
 {
   "name": "silentsuite",
-  "version": "0.5.18-beta.2",
+  "version": "0.5.19-beta",
   "private": true,
   "engines": {
     "node": ">=22.12.0"

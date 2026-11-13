@@ -123,11 +123,11 @@ async function postCheck(
 
 async function readSourceCheck(input: BirthdayRunInput, tokens: BirthdaySourceTokens): Promise<BirthdayPostCheck> {
   const incomplete = { complete: false, inventoryChanged: false, changedBooks: [] as string[] }
-  if (!tokens.inventoryToken || tokens.books.some((book) => !book.stoken) || !input.transport.checkSourceTokens) return incomplete
+  if (!tokens.inventoryToken || !input.transport.checkSourceTokens) return incomplete
   try {
     const check = await input.transport.checkSourceTokens({
       inventoryToken: tokens.inventoryToken,
-      books: tokens.books.flatMap((book) => book.stoken ? [{ bookUid: book.bookUid, stoken: book.stoken }] : []),
+      books: tokens.books.map((book) => ({ bookUid: book.bookUid, stoken: book.stoken })),
     })
     if (!check.complete) return incomplete
     return check

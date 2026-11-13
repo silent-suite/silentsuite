@@ -133,7 +133,7 @@ async function pageUntilDone<T>(
   gates: BirthdayGates,
   first: () => Promise<ListPage<T>>,
   next: (stoken: string) => Promise<ListPage<T>>,
-): Promise<{ complete: true; token: string; rows: T[] } | { complete: false }> {
+): Promise<{ complete: true; token: string | null; rows: T[] } | { complete: false }> {
   assertGate(gates)
   const seen = new Set<string>()
   let page = await first()
@@ -159,8 +159,11 @@ async function pageUntilDone<T>(
     assertGate(gates)
     take(page.data ?? [])
   }
-  if (!page.stoken) return { complete: false }
-  return { complete: true, token: page.stoken, rows: [...byKey.values()] }
+  // A finished listing of a collection with no items has no stoken: the server
+  // has nothing to anchor one to. Only an empty listing may end without one.
+  const token = page.stoken || null
+  if (token === null && byKey.size > 0) return { complete: false }
+  return { complete: true, token, rows: [...byKey.values()] }
 }
 
 export function createEtebaseBirthdayTransport(account: AccountLike, gates: BirthdayGates): BirthdayTransport {
@@ -315,7 +318,8 @@ export function createEtebaseBirthdayTransport(account: AccountLike, gates: Birt
         try {
           const listed = await pageUntilDone(
             gates,
-            () => manager.getItemManager(collection).list({ stoken: book.stoken }),
+            // A book that was empty at the read has no token: list it from the start.
+          () => manager.getItemManager(collection).list(book.stoken === null ? undefined : { stoken: book.stoken }),
             (stoken) => manager.getItemManager(collection).list({ stoken }),
           )
           if (!listed.complete) return { complete: false, inventoryChanged, changedBooks }

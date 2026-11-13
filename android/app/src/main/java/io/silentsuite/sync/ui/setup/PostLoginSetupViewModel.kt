@@ -385,62 +385,65 @@ class PostLoginSetupViewModel(application: Application) : AndroidViewModel(appli
         checkpoint()
         val cache = EtebaseLocalCache.getInstance(context, account.name)
         checkpoint()
-        val etebase = EtebaseLocalCache.getEtebase(
-            context,
-            HttpClient.sharedClient,
-            settings,
-        )
-        checkpoint()
-        val manager = etebase.collectionManager
-        val required = Constants.COLLECTION_TYPES.toList()
-        val reconciliation = CollectionReconciliation.reconcile(required,
-            refresh = {
+        // Same configured client as login (proxy, custom certificates, system-trust setting).
+        return HttpClient.Builder(context, settings).build().use { httpClient ->
+            val etebase = EtebaseLocalCache.getEtebase(
+                context,
+                httpClient.okHttpClient,
+                settings,
+            )
             checkpoint()
-            val byUid = linkedMapOf<String, CollectionEligibility.Collection>()
-            var stoken: String? = null
-            var done = false
-            var pages = 0
-            while (!done) {
+            val manager = etebase.collectionManager
+            val required = Constants.COLLECTION_TYPES.toList()
+            val reconciliation = CollectionReconciliation.reconcile(required,
+                refresh = {
                 checkpoint()
-                if (++pages > MAX_PAGES) throw IllegalStateException("Collection inventory page cap exceeded")
-                val previousToken = stoken
-                val chunk = manager.list(Constants.COLLECTION_TYPES, FetchOptions().stoken(previousToken).limit(PAGE_SIZE))
-                chunk.data.forEach {
-                    byUid[it.uid] = CollectionEligibility.Collection(
-                        type = it.collectionType,
-                        writable = it.accessLevel != CollectionAccessLevel.ReadOnly,
-                        removed = it.isDeleted,
-                        uid = it.uid
-                    )
+                val byUid = linkedMapOf<String, CollectionEligibility.Collection>()
+                var stoken: String? = null
+                var done = false
+                var pages = 0
+                while (!done) {
+                    checkpoint()
+                    if (++pages > MAX_PAGES) throw IllegalStateException("Collection inventory page cap exceeded")
+                    val previousToken = stoken
+                    val chunk = manager.list(Constants.COLLECTION_TYPES, FetchOptions().stoken(previousToken).limit(PAGE_SIZE))
+                    chunk.data.forEach {
+                        byUid[it.uid] = CollectionEligibility.Collection(
+                            type = it.collectionType,
+                            writable = it.accessLevel != CollectionAccessLevel.ReadOnly,
+                            removed = it.isDeleted,
+                            uid = it.uid
+                        )
+                    }
+                    stoken = chunk.stoken
+                    done = chunk.isDone
+                    if (!done && (stoken == null || stoken == previousToken))
+                        throw IllegalStateException("Collection inventory token did not progress")
                 }
-                stoken = chunk.stoken
-                done = chunk.isDone
-                if (!done && (stoken == null || stoken == previousToken))
-                    throw IllegalStateException("Collection inventory token did not progress")
-            }
-            byUid.values.toList().also { inventory ->
-                qualifyingCollectionTypes = CollectionEligibility.qualifyingTypes(inventory, required.toSet())
-                integrationCollectionTypes = CollectionEligibility.activeTypes(inventory, required.toSet())
-                inventoryLoaded = true
-            }
-        }, createAndCache = { type ->
+                byUid.values.toList().also { inventory ->
+                    qualifyingCollectionTypes = CollectionEligibility.qualifyingTypes(inventory, required.toSet())
+                    integrationCollectionTypes = CollectionEligibility.activeTypes(inventory, required.toSet())
+                    inventoryLoaded = true
+                }
+            }, createAndCache = { type ->
+                checkpoint()
+                val metadata = ItemMetadata().apply {
+                    name = defaultName(type)
+                    mtime = System.currentTimeMillis()
+                }
+                val created = manager.create(type, metadata, "")
+                checkpoint()
+                manager.upload(created)
+                // Cache failure is an uncertain result; the coordinator refreshes remotely before retrying.
+                checkpoint()
+                synchronized(cache) { cache.collectionSet(manager, created) }
+            })
             checkpoint()
-            val metadata = ItemMetadata().apply {
-                name = defaultName(type)
-                mtime = System.currentTimeMillis()
+            when (reconciliation) {
+                CollectionReconciliation.Result.Ready -> false
+                CollectionReconciliation.Result.Limited -> true
+                CollectionReconciliation.Result.Recovery -> throw IllegalStateException("No recoverable remote collection inventory")
             }
-            val created = manager.create(type, metadata, "")
-            checkpoint()
-            manager.upload(created)
-            // Cache failure is an uncertain result; the coordinator refreshes remotely before retrying.
-            checkpoint()
-            synchronized(cache) { cache.collectionSet(manager, created) }
-        })
-        checkpoint()
-        return when (reconciliation) {
-            CollectionReconciliation.Result.Ready -> false
-            CollectionReconciliation.Result.Limited -> true
-            CollectionReconciliation.Result.Recovery -> throw IllegalStateException("No recoverable remote collection inventory")
         }
     }
 

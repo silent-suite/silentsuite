@@ -99,6 +99,94 @@ describe('birthday reconcile tracer', () => {
     })
   })
 
+  it('fills a new, empty Birthdays calendar and accepts an empty address book, which have no stoken', async () => {
+    // The Etebase server returns stoken null for a finished listing of a collection with no items.
+    const writes: Parameters<BirthdayTransport['applyChanges']>[0][] = []
+    const book = (uid: string) => ({
+      uid,
+      kind: 'address-book' as const,
+      accessLevel: 'admin' as const,
+      content: '',
+      members: [],
+      membersComplete: true,
+      rootRevision: `${uid}-root`,
+      root: { uid },
+    })
+    const transport: BirthdayTransport = {
+      async listInventory() {
+        return {
+          complete: true,
+          inventoryToken: 'inv-1',
+          collections: [
+            book('book-1'),
+            book('book-empty'),
+            {
+              uid: 'cal-1',
+              kind: 'calendar',
+              accessLevel: 'admin',
+              content: birthdayMarkerContent('active'),
+              members: ['me'],
+              membersComplete: true,
+              rootRevision: 'root-etag-1',
+              root: ROOT,
+            },
+          ],
+        }
+      },
+      async listItems(collectionUid) {
+        if (collectionUid === 'book-1') {
+          return { complete: true, stoken: 'book-stoken-1', items: [{ itemUid: 'contact-1', content: VCARD, revision: 'c1' }] }
+        }
+        return { complete: true, stoken: null, items: [] }
+      },
+      async applyChanges(input) {
+        writes.push(input)
+        return 'saved'
+      },
+    }
+
+    const result = await reconcileBirthdays({ accountKey: 'acct-1', username: 'me', gates: openGates(), transport })
+
+    expect(result.status).toBe('done')
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.collectionUid).toBe('cal-1')
+    expect(writes[0]!.changes.map((change) => change.op)).toEqual(['create'])
+    expect(result.sourceTokens).toEqual({
+      inventoryToken: 'inv-1',
+      books: [{ bookUid: 'book-1', stoken: 'book-stoken-1' }, { bookUid: 'book-empty', stoken: null }],
+    })
+  })
+
+  it('does not write when an address book has items but no stoken', async () => {
+    const writes: unknown[] = []
+    const transport: BirthdayTransport = {
+      async listInventory() {
+        return {
+          complete: true,
+          inventoryToken: 'inv-1',
+          collections: [
+            { uid: 'book-1', kind: 'address-book', accessLevel: 'admin', content: '', members: [], membersComplete: true, rootRevision: 'b', root: { uid: 'book-1' } },
+            { uid: 'cal-1', kind: 'calendar', accessLevel: 'admin', content: birthdayMarkerContent('active'), members: ['me'], membersComplete: true, rootRevision: 'root-etag-1', root: ROOT },
+          ],
+        }
+      },
+      async listItems(collectionUid) {
+        if (collectionUid === 'book-1') return { complete: true, stoken: null, items: [{ itemUid: 'contact-1', content: VCARD, revision: 'c1' }] }
+        return { complete: true, stoken: null, items: [] }
+      },
+      async applyChanges(input) {
+        writes.push(input)
+        return 'saved'
+      },
+    }
+
+    const result = await reconcileBirthdays({ accountKey: 'acct-1', username: 'me', gates: openGates(), transport })
+
+    expect(writes).toEqual([])
+    expect(result.status).toBe('failed')
+    expect(result.reason).toBe('incomplete-book')
+  })
+
   it('does not write when an address-book page is incomplete', async () => {
     const writes: unknown[] = []
     const transport: BirthdayTransport = {
