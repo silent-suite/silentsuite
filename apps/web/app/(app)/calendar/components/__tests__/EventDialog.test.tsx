@@ -21,9 +21,9 @@ const mocks = vi.hoisted(() => ({
     dateFormat: 'system',
   },
   calendars: [
-    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true },
-    { id: 'cal-b', name: 'Family', color: '#ef4444', visible: true },
-  ],
+    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true, accessLevel: 2 },
+    { id: 'cal-b', name: 'Family', color: '#ef4444', visible: true, accessLevel: 1 },
+  ] as Array<{ id: string; name: string; color: string; visible: boolean; accessLevel?: number }>,
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
@@ -703,5 +703,65 @@ describe('EventDialog details fit narrow screens', () => {
     expect(grid.className).toContain('sm:grid-cols-[minmax(0,1fr)_auto]')
     // Below sm the single column is explicit and may shrink to the card width.
     expect(grid.className).toMatch(/(^|\s)(grid-cols-1|grid-cols-\[minmax\(0,1fr\)\])(\s|$)/)
+  })
+})
+
+describe('EventDialog in a calendar shared read-only', () => {
+  const sharedReadOnly = { id: 'cal-shared', name: 'Shared', color: '#3b82f6', visible: true, accessLevel: 0 }
+
+  beforeEach(() => {
+    mocks.createEvent.mockReset().mockResolvedValue(undefined)
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.deleteEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.calendars.push(sharedReadOnly)
+    return () => {
+      mocks.calendars.splice(mocks.calendars.indexOf(sharedReadOnly), 1)
+    }
+  })
+
+  it('opens the event read-only: no save, no delete, Enter does not save', () => {
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ calendarId: 'cal-shared' })} onClose={mocks.onClose} />)
+
+    const done = screen.getByRole('button', { name: 'Done' })
+    expect(done).toBeDisabled()
+    expect(done).toHaveAttribute('title', 'This calendar is read-only')
+    const title = screen.getByRole('textbox', { name: 'Event title' })
+    expect(title).toHaveAttribute('readonly')
+    expect(screen.queryByRole('button', { name: /Delete event/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: '+ Add' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Repeat frequency' })).toBeDisabled()
+
+    fireEvent.keyDown(title, { key: 'Enter' })
+    expect(mocks.updateEvent).not.toHaveBeenCalled()
+    expect(mocks.updateRecurringEvent).not.toHaveBeenCalled()
+  })
+
+  it('keeps an event in a writable calendar editable and does not offer the read-only calendar as a target', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ calendarId: 'cal-a' })} onClose={mocks.onClose} />)
+
+    expect(screen.getByRole('button', { name: /Delete event/ })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Event title' })).not.toHaveAttribute('readonly')
+    expect(screen.getByRole('combobox', { name: 'Repeat frequency' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Family' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Shared' })).toBeNull()
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Event title' }), { target: { value: 'Renamed' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledWith('event-item-1', expect.objectContaining({ title: 'Renamed' })))
+  })
+
+  it('does not create a new event in a read-only default calendar', async () => {
+    const original = mocks.calendars.splice(0, mocks.calendars.length)
+    mocks.calendars.push({ id: 'cal-a', name: 'Work', color: '#10b981', visible: true, accessLevel: 0 }, sharedReadOnly)
+    try {
+      renderWithIntl(<EventDialog mode="create" startDate={new Date('2026-06-01T14:00:00Z')} onClose={mocks.onClose} />)
+      fireEvent.change(screen.getByRole('textbox', { name: 'Event title' }), { target: { value: 'Planning' } })
+      expect(screen.getByRole('button', { name: 'Done' })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: 'Work' })).toBeNull()
+    } finally {
+      mocks.calendars.splice(0, mocks.calendars.length, ...original)
+    }
+    expect(mocks.createEvent).not.toHaveBeenCalled()
   })
 })

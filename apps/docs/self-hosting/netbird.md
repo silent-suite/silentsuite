@@ -87,6 +87,7 @@ Things to watch:
 
   With filtering in place, `curl` should time out or be refused. Any HTTP response, even a `301`, means the port is reachable without NetBird.
 - **Startup order.** Docker can only bind to the NetBird IP once NetBird has brought its interface up. If the server container fails to start after a reboot, check `docker compose ps`. Once `netbird status` shows the machine connected, start it again with `docker compose up -d server`.
+- **Remove `docker-gateway` from `TRUSTED_PROXY_IPS`** once the port is published on the NetBird IP, unless a proxy on this machine still needs it. Normally tunnel peers keep their own addresses, but on some Docker setups (rootless Docker, or Docker without its iptables rules) every published-port connection arrives from the gateway, and trusting it would then trust every peer. If you keep it, run the pre-trust log check in common step 3 from another peer first and confirm that peer's own address shows up.
 - **Future upgrades.** If you replace `docker-compose.yml` with a newer copy, make this edit again.
 
 ### 3. Tell SilentSuite which proxy to trust
@@ -104,7 +105,7 @@ Which address to trust depends on how the proxy connects:
 |---|---|
 | NetBird reverse proxy, Peer target (path A) | The NetBird proxy's NetBird IP |
 | Your proxy on another NetBird peer (B2) | That machine's NetBird IP |
-| Proxy installed on the SilentSuite host (B1) | `127.0.0.1`, or Docker's gateway address (see below) |
+| Proxy installed on the SilentSuite host (B1) | Docker's gateway address, covered by `docker-gateway` (see below) |
 | Proxy container on SilentSuite's Docker network (B1) | The proxy container's IP on that network |
 
 If the HTTPS check in [Check your setup](#check-your-setup) already returns `200`, the proxy is trusted and there's nothing to change. Otherwise, confirm the address in the server log, and read it at the right moment. The server only swaps the logged address for a forwarded one when the connection comes from an address already in `TRUSTED_PROXY_IPS`. So while the new proxy isn't trusted yet, the log shows where the connection really came from:
@@ -126,7 +127,7 @@ If the HTTPS check in [Check your setup](#check-your-setup) already returns `200
 
 Once the proxy is trusted, its log lines show the visitor's address instead, with or without a port number. So don't use later log lines to choose addresses to trust, and don't read too much into the port. Whether HTTPS is recognised shows up in the HTTPS check (`200` rather than `301`), not in the log.
 
-Trust one exact address. Don't use `*`. Don't use the whole NetBird range either: every peer on your network has an address in it, and any of them could then fake the header. A proxy installed on the same machine that connects through `127.0.0.1:3735` may show up as Docker's network gateway (often `172.x.0.1`) rather than `127.0.0.1`. If the log shows that address, trust it; with the loopback-only port mapping, only programs on this machine come in that way. If the proxy's address changes later, for example when a proxy container is recreated, the redirects come back; repeat the check.
+Trust one exact address. Don't use `*`. Don't use the whole NetBird range either: every peer on your network has an address in it, and any of them could then fake the header. A proxy installed on the same machine that connects through `127.0.0.1:3735` shows up as Docker's network gateway (often `172.x.0.1`), not `127.0.0.1`. The installer trusts it with the `docker-gateway` entry in `TRUSTED_PROXY_IPS`, which the server turns into the gateway address when it starts. That is safe with the loopback-only port mapping, because only programs on this machine come in that way. An install made by an older installer has only `127.0.0.1`; add `,docker-gateway` to that line, or the exact gateway address from the log. If the proxy's address changes later, for example when a proxy container is recreated, the redirects come back; repeat the check.
 
 Don't fix a redirect by turning HTTPS enforcement off. The apps expect `https://`, and the trusted address above is the safe fix.
 
@@ -171,7 +172,7 @@ Here NetBird is just the private network. Your usual Caddy, nginx or Traefik ter
   - **Installed on the host** (or a container using Docker's host networking): forward to `127.0.0.1:3735`, exactly as in the examples.
   - **In a Docker container on a normal bridge network**, such as Nginx Proxy Manager or Traefik in Compose: `127.0.0.1` inside the container is the container itself, so that upstream gives a `502`. Connect the proxy container to SilentSuite's Docker network and use `silentsuite-server:3735`, as described under "Nginx Proxy Manager or other Docker-based proxies" in the [Quick Start](./quick-start.md). Leave the server's port mapping on loopback; the proxy doesn't need it.
 - **Trust:**
-  - **Host-installed proxy:** usually the default `127.0.0.1`. If the HTTPS check still redirects, see the Docker gateway note in common step 3.
+  - **Host-installed proxy:** the installer's `127.0.0.1,docker-gateway` covers it. If the HTTPS check still redirects, see the Docker gateway note in common step 3.
   - **Proxy container:** the container's exact IP on SilentSuite's network. With the network name from the Quick Start command, this prints it:
 
     ```bash

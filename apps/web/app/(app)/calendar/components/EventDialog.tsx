@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
 import { useTranslations } from 'next-intl'
@@ -8,6 +8,7 @@ import { LabelEditor } from '@/app/components/LabelEditor'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/session'
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
 import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
@@ -15,6 +16,7 @@ import { buildAlarmTrigger, gapWallClock, parseAlarmTriggerMinutes, validStartWa
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
+import { canWriteCollection, findItemCollection } from '@/app/lib/collection-access'
 import { Globe } from 'lucide-react'
 import {
   formatDateForInputInZone,
@@ -276,7 +278,10 @@ export function EventDialog({
   const updateRecurringEvent = useCalendarStore((s) => s.updateRecurringEvent)
   const deleteRecurringEvent = useCalendarStore((s) => s.deleteRecurringEvent)
 
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
+  const managedCalendarIds = useManagedBirthdayCalendarIds()
+  // A generated birthday changes only through its contact, so its dialog is read-only.
+  const isManagedEvent = mode === 'edit' && Boolean(event?.calendarId && managedCalendarIds.includes(event.calendarId))
   const notifications = useNotifications()
   const t = useTranslations('Labels')
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
@@ -294,12 +299,20 @@ export function EventDialog({
   const isRecurring = isEdit && !!event.recurrenceRule
   const effectiveInstanceDate = instanceDate ?? event?.startDate ?? new Date()
 
-  const defaultStart = isEdit ? event.startDate : (initialStartDate ?? new Date())
+  // A generated birthday is read-only, so it shows the clicked occurrence rather than the
+  // series start (a fixed leap year that is neither the birth year nor this year).
+  const managedOccurrenceShift = isEdit && isManagedEvent && instanceDate
+    ? instanceDate.getTime() - event.startDate.getTime()
+    : 0
+  const defaultStart = isEdit
+    ? new Date(event.startDate.getTime() + managedOccurrenceShift)
+    : (initialStartDate ?? new Date())
+  const editEnd = isEdit ? new Date(event.endDate.getTime() + managedOccurrenceShift) : undefined
   // For all-day events, `event.endDate` follows iCal DTEND;VALUE=DATE convention
   // (exclusive — the day *after* the last day of the event). The form picker shows
   // the inclusive last day, so subtract one day before formatting.
-  const defaultEnd = isEdit
-    ? (event.allDay ? inclusiveAllDayEndDate(event.endDate) : event.endDate)
+  const defaultEnd = isEdit && editEnd
+    ? (event.allDay ? inclusiveAllDayEndDate(editEnd) : editEnd)
     : (initialEndDate ?? new Date(defaultStart.getTime() + 30 * 60 * 1000))
 
   // Initial all-day flag — needed before form state so we can pick the right
@@ -320,7 +333,7 @@ export function EventDialog({
   const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
   // A DST-gap start keeps its intended wall clock, which the instant alone would show shifted.
-  const startWallClock = isEdit ? validStartWallClock(event) : undefined
+  const startWallClock = isEdit && managedOccurrenceShift === 0 ? validStartWallClock(event) : undefined
   const initialStartTime = startWallClock
     ? `${startWallClock.slice(9, 11)}:${startWallClock.slice(11, 13)}`
     : formatTimeForInput(defaultStart, initialFormTz)
@@ -386,21 +399,40 @@ export function EventDialog({
   }, [dateFormat])
 
   // Calendar selection
-  const calendarLists = useCalendarListStore((s) => s.calendars)
+  const listedCalendars = useCalendarListStore((s) => s.calendars)
+  // Only ordinary calendars can be chosen (or defaulted to) for a user event.
+  const calendarLists = useMemo(
+    () => listedCalendars.filter((calendar) => !managedCalendarIds.includes(calendar.id)),
+    [listedCalendars, managedCalendarIds],
+  )
+  const managedCalendar = isManagedEvent
+    ? listedCalendars.find((calendar) => calendar.id === event?.calendarId)
+    : undefined
   const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
   const [selectedCalendarId, setSelectedCalendarId] = useState(
     isEdit ? (event.calendarId ?? defaultCalendarId) : defaultCalendarId,
   )
 
+  // Only calendars the account may write to are offered as targets; an edited
+  // event's own calendar stays listed so it always shows.
+  const writableCalendars = useMemo(() => calendarLists.filter(canWriteCollection), [calendarLists])
+  const eventCalendar = isEdit ? findItemCollection(calendarLists, event.calendarId) : undefined
+  const pickerCalendars = eventCalendar && !writableCalendars.includes(eventCalendar)
+    ? [eventCalendar, ...writableCalendars]
+    : writableCalendars
+  // An event in a calendar shared read-only opens read-only, as when the subscription has ended.
+  const calendarWritable = canWriteCollection(isEdit ? eventCalendar : findItemCollection(calendarLists, selectedCalendarId))
+  const canWrite = canWriteAccount && calendarWritable && !isManagedEvent
+
   useEffect(() => {
-    if (isEdit || calendarLists.length === 0) return
-    if (calendarLists.some((calendar) => calendar.id === selectedCalendarId)) return
+    if (isEdit || writableCalendars.length === 0) return
+    if (writableCalendars.some((calendar) => calendar.id === selectedCalendarId)) return
     setSelectedCalendarId(
-      calendarLists.some((calendar) => calendar.id === defaultCalendarId)
+      writableCalendars.some((calendar) => calendar.id === defaultCalendarId)
         ? defaultCalendarId
-        : calendarLists[0]!.id,
+        : writableCalendars[0]!.id,
     )
-  }, [calendarLists, defaultCalendarId, isEdit, selectedCalendarId])
+  }, [writableCalendars, defaultCalendarId, isEdit, selectedCalendarId])
 
   // Saving state to prevent double-submission
   const [saving, setSaving] = useState(false)
@@ -480,7 +512,9 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const handleSave = useCallback(async () => {
-    if (!title.trim() || saving) return
+    // A generated birthday is read-only; its shown dates are the clicked occurrence, not edits.
+    if (isManagedEvent) return
+    if (!canWrite || !title.trim() || saving) return
     if (startDateError || endDateError) return
 
     // For a DST-gap start, unchanged inputs keep the exact stored instants: the form rebuilds
@@ -573,6 +607,7 @@ export function EventDialog({
       setSaving(false)
     }
   }, [
+    isManagedEvent,
     title,
     description,
     location,
@@ -600,6 +635,7 @@ export function EventDialog({
     initialStartTime,
     initialEndDateIso,
     initialEndTime,
+    canWrite,
     createEvent,
     updateEvent,
     onClose,
@@ -610,7 +646,7 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const handleDelete = useCallback(() => {
-    if (!isEdit) return
+    if (!isEdit || !canWrite) return
 
     if (isRecurring) {
       setScopeDialog({ mode: 'delete' })
@@ -618,7 +654,7 @@ export function EventDialog({
       void deleteEvent(event.id)
       onClose()
     }
-  }, [isEdit, isRecurring, event, deleteEvent, onClose])
+  }, [isEdit, canWrite, isRecurring, event, deleteEvent, onClose])
 
   // ---------------------------------------------------------------------------
   // Scope dialog confirm / cancel
@@ -811,7 +847,7 @@ export function EventDialog({
         <div
           ref={dialogRef}
           role="dialog"
-          aria-label={isEdit ? 'Edit event' : 'New event'}
+          aria-label={isManagedEvent ? 'Birthday' : isEdit ? 'Edit event' : 'New event'}
           aria-modal="true"
           className="flex h-full w-full flex-col overflow-hidden bg-[rgb(var(--background))] text-[rgb(var(--foreground))] shadow-2xl shadow-black/25 pb-[env(safe-area-inset-bottom)] sm:h-auto sm:max-h-[88vh] sm:w-full sm:max-w-2xl sm:rounded-3xl sm:border sm:border-[rgb(var(--border))] dark:shadow-black/60"
         >
@@ -827,32 +863,41 @@ export function EventDialog({
                 onClick={onClose}
                 className={`shrink-0 rounded-full border border-transparent px-3 py-2 text-sm font-medium text-[rgb(var(--muted))] transition-colors hover:border-[rgb(var(--border))] hover:bg-[rgb(var(--surface))] hover:text-[rgb(var(--foreground))] ${focusRing}`}
               >
-                Cancel
+                {isManagedEvent ? 'Close' : 'Cancel'}
               </button>
 
               <div className="flex min-w-0 flex-1 flex-col items-center px-1 text-center">
                 <span className="text-base font-semibold tracking-tight text-[rgb(var(--foreground))]">
-                  {isEdit ? 'Edit event' : 'New event'}
+                  {isManagedEvent ? 'Birthday' : isEdit ? 'Edit event' : 'New event'}
                 </span>
                 <span className="mt-0.5 max-w-full truncate text-xs text-[rgb(var(--muted))] sm:text-sm">
                   {subtitle}
                 </span>
               </div>
 
+              {isManagedEvent ? (
+                <span className="w-[4.25rem] shrink-0" aria-hidden="true" />
+              ) : (
               <button
                 onClick={() => void handleSave()}
                 disabled={!canSave || saving || !canWrite}
                 className={`shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
-                title={!canWrite ? 'Subscription required' : undefined}
+                title={!canWriteAccount ? 'Subscription required' : !calendarWritable ? 'This calendar is read-only' : undefined}
               >
                 {saving ? 'Saving…' : 'Done'}
               </button>
+              )}
             </div>
           </div>
 
           {/* Body — scrollable */}
           <div className="flex-1 overflow-y-auto overscroll-contain">
             <div className="flex flex-col gap-4 px-4 py-5 sm:px-6 sm:py-6">
+              {isManagedEvent && (
+                <p className="rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2 text-sm text-[rgb(var(--muted))]">
+                  This birthday comes from your contacts. Edit the contact to change it.
+                </p>
+              )}
               {/* Details */}
               <section className={`${sectionClass} space-y-4`}>
                 <div className="flex items-center gap-2">
@@ -886,6 +931,7 @@ export function EventDialog({
                     />
                   </div>
 
+                  {!(isManagedEvent && categories.length === 0) && (
                   <div className="flex items-start gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-2.5 sm:min-w-[14rem]">
                     <Tag className={`${iconClass} mt-1`} />
                     <div className="min-w-0 flex-1">
@@ -898,16 +944,35 @@ export function EventDialog({
                       />
                     </div>
                   </div>
+                  )}
                 </div>
 
-                {calendarLists.length > 0 && (
+                {isManagedEvent && managedCalendar && (
                   <div className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-3">
                     <div className="flex items-center gap-2">
                       <CalendarDays className={iconClass} />
                       <span className="text-sm font-medium text-[rgb(var(--foreground))]">Calendar</span>
                     </div>
                     <div className="flex flex-wrap gap-2 pl-0 sm:pl-6">
-                      {calendarLists.map((cal) => (
+                      <span
+                        className="inline-flex min-h-9 items-center gap-2 rounded-full border border-transparent px-3 py-1.5 text-xs font-semibold text-white shadow-sm shadow-black/10"
+                        style={{ backgroundColor: managedCalendar.color }}
+                      >
+                        <span className="h-2.5 w-2.5 rounded-full ring-1 ring-white/40" style={{ backgroundColor: managedCalendar.color }} />
+                        {managedCalendar.name}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {!isManagedEvent && pickerCalendars.length > 0 && (
+                  <div className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-3">
+                    <div className="flex items-center gap-2">
+                      <CalendarDays className={iconClass} />
+                      <span className="text-sm font-medium text-[rgb(var(--foreground))]">Calendar</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pl-0 sm:pl-6">
+                      {pickerCalendars.map((cal) => (
                         <button
                           key={cal.id}
                           type="button"
@@ -1035,7 +1100,7 @@ export function EventDialog({
                 <div className="flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
                   <Repeat className={`${iconClass} mt-2`} />
                   <div className="min-w-0 flex-1">
-                    <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} />
+                    <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} disabled={!canWrite} />
                   </div>
                 </div>
 

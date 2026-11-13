@@ -15,7 +15,6 @@ import android.app.Service
 import android.content.*
 import android.database.sqlite.SQLiteException
 import android.net.ConnectivityManager
-import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -343,29 +342,31 @@ abstract class SyncAdapterService : Service() {
 }
 
 /** Wi-Fi-only sync restriction shared by the adapters and the in-app Notes job. */
-internal fun syncConditionsAllow(context: Context, settings: AccountSettings): Boolean {
-    if (settings.syncWifiOnly) {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetworkInfo
-        if (network == null) {
-            Logger.log.info("No network available, stopping")
-            return false
-        }
-        if (network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected) {
-            Logger.log.info("Not on connected WiFi, stopping")
-            return false
-        }
+internal fun syncConditionsAllow(context: Context, settings: AccountSettings): Boolean =
+    !settings.syncWifiOnly || wifiOnlySyncAllowed(settings.syncWifiOnlySSID) { onConnectedWifi(context) }
 
-        var onlySSID = settings.syncWifiOnlySSID
-        if (onlySSID != null) {
-            onlySSID = "\"" + onlySSID + "\""
-            val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            val info = wifi.connectionInfo
-            if (info == null || onlySSID != info.ssid) {
-                Logger.log.info("Connected to wrong WiFi network (" + info!!.ssid + ", required: " + onlySSID + "), ignoring")
-                return false
-            }
-        }
+/**
+ * Android hides the WiFi network name from apps without location access, which this app does not
+ * request, so a saved network name can never be matched (#971). It keeps automatic runs blocked,
+ * without reading the network, until the person removes it in Settings.
+ */
+internal fun wifiOnlySyncAllowed(savedNetworkName: String?, onConnectedWifi: () -> Boolean): Boolean {
+    if (savedNetworkName != null) {
+        Logger.log.info("A WiFi network name is saved and cannot be checked, stopping")
+        return false
+    }
+    return onConnectedWifi()
+}
+
+private fun onConnectedWifi(context: Context): Boolean {
+    val network = (context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)?.activeNetworkInfo
+    if (network == null) {
+        Logger.log.info("No network available, stopping")
+        return false
+    }
+    if (network.type != ConnectivityManager.TYPE_WIFI || !network.isConnected) {
+        Logger.log.info("Not on connected WiFi, stopping")
+        return false
     }
     return true
 }

@@ -23,22 +23,29 @@ export type SignupPageviewPayload = {
 export const SIGNUP_ANALYTICS_PATHS = ['/signup', '/signup/pending-payment', '/signup/success', '/signup/cancel'] as const
 type SignupAnalyticsPath = typeof SIGNUP_ANALYTICS_PATHS[number]
 
-type PaymentMethod = 'stripe' | 'btcpay' | 'unknown'
-type CheckoutOutcome = 'returned' | 'cancelled' | 'failed' | 'pending'
-export type CanonicalReferrer =
-  | 'https://www.google.com/'
-  | 'https://www.bing.com/'
-  | 'https://duckduckgo.com/'
-  | 'https://search.brave.com/'
-  | 'https://www.ecosia.org/'
-  | 'https://x.com/'
-  | 'https://www.reddit.com/'
-  | 'https://github.com/'
-  | 'https://mastodon.social/'
-  | 'https://bsky.app/'
-  | 'https://alternativeto.net/'
-  | 'https://www.privacyguides.org/'
-  | 'https://news.ycombinator.com/'
+export type PaymentMethod = 'stripe' | 'btcpay' | 'unknown'
+export type CheckoutOutcome = 'returned' | 'cancelled' | 'failed' | 'pending'
+export const CANONICAL_REFERRERS = [
+  'https://www.google.com/',
+  'https://www.bing.com/',
+  'https://duckduckgo.com/',
+  'https://search.brave.com/',
+  'https://www.ecosia.org/',
+  'https://x.com/',
+  'https://www.reddit.com/',
+  'https://github.com/',
+  'https://mastodon.social/',
+  'https://bsky.app/',
+  'https://alternativeto.net/',
+  'https://www.privacyguides.org/',
+  'https://news.ycombinator.com/',
+] as const
+export type CanonicalReferrer = typeof CANONICAL_REFERRERS[number]
+
+// Fixed hosted signup milestones, in funnel order. Values name a step only; they
+// never carry an email, an identifier, an error or a form value.
+export const SIGNUP_STEPS = ['verification_requested', 'email_verified', 'plan_shown', 'account_created', 'completed'] as const
+export type SignupStep = typeof SIGNUP_STEPS[number]
 type PlanSelectedPayload = {
   domain: 'app.silentsuite.io'
   name: 'Plan Selected'
@@ -63,7 +70,13 @@ type SubscriptionManagementEntryPayload = {
   url: 'https://app.silentsuite.io/settings/subscription'
   props: { surface: 'subscription_settings' }
 }
-export type CommercialEventPayload = PlanSelectedPayload | CheckoutInitiatedPayload | CheckoutReturnedPayload | SubscriptionManagementEntryPayload
+type SignupStepPayload = {
+  domain: 'app.silentsuite.io'
+  name: 'Signup Step'
+  url: 'https://app.silentsuite.io/signup'
+  props: { step: SignupStep }
+}
+export type CommercialEventPayload = PlanSelectedPayload | CheckoutInitiatedPayload | CheckoutReturnedPayload | SubscriptionManagementEntryPayload | SignupStepPayload
 
 const SOURCE_ALIASES: Readonly<Record<string, NonNullable<CampaignParams['utm_source']>>> = {
   google: 'search', bing: 'search', duckduckgo: 'search',
@@ -223,4 +236,8 @@ export function buildCheckoutReturnedPayload(outcome: CheckoutOutcome, paymentMe
 
 export function buildSubscriptionManagementEntryPayload(): SubscriptionManagementEntryPayload {
   return { domain: 'app.silentsuite.io', name: 'Subscription Management Entry', url: 'https://app.silentsuite.io/settings/subscription', props: { surface: 'subscription_settings' } }
+}
+
+export function buildSignupStepPayload(step: SignupStep): SignupStepPayload {
+  return { domain: 'app.silentsuite.io', name: 'Signup Step', url: 'https://app.silentsuite.io/signup', props: { step } }
 }
