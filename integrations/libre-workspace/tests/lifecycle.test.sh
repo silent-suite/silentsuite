@@ -574,6 +574,16 @@ check "setting left as written" one_match "$F/root/silentsuite-failed-*/silentsu
 check "value unchanged" grep -qx 'TRUSTED_PROXY_IPS=10.0.0.0/8' "$F"/root/silentsuite-failed-*/silentsuite-server/.env
 finish
 
+begin "the installer's docker-gateway entry is replaced by the pinned gateway"
+new_fixture gatewaytoken
+echo "127.0.0.1,docker-gateway" > "$F/state/installer-trusted"
+run setup_silentsuite.sh
+INSTALL="$F/root/silentsuite/silentsuite-server"
+check "exits 0" rc_zero
+check "trusts exactly loopback and the network gateway" grep -qx 'TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.1' "$INSTALL/.env"
+check "only one TRUSTED_PROXY_IPS line" [ "$(grep -c '^TRUSTED_PROXY_IPS=' "$INSTALL/.env")" = 1 ]
+finish
+
 # ── Remove refusals ─────────────────────────────────────────────────────
 
 begin "remove refuses an edited block, changing nothing"

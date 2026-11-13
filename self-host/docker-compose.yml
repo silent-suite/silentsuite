@@ -59,7 +59,10 @@ services:
       ETEBASE_BOOTSTRAP_ADMIN_TOKEN: ${ETEBASE_BOOTSTRAP_ADMIN_TOKEN:-}
       # Hide the advanced Django admin panel unless explicitly re-enabled.
       ETEBASE_DISABLE_DJANGO_ADMIN: ${ETEBASE_DISABLE_DJANGO_ADMIN:-true}
-      # Only these reverse proxy IPs may set X-Forwarded-* headers.
+      # Only these reverse proxy IPs may set X-Forwarded-* headers. The entry
+      # "docker-gateway" trusts this network's gateway, which is where a proxy
+      # on the host comes from through the 127.0.0.1 port above. install.sh
+      # writes it; drop it if the port is ever published beyond 127.0.0.1.
       TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:-127.0.0.1}
       # Largest accepted request body in bytes for sign-up, login and password
       # change (65536 to 1073741824), and for the app's other sync API requests

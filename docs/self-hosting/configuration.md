@@ -14,7 +14,7 @@ Compose and container runtime settings are environment variables in the `.env` f
 | `ETEBASE_DISABLE_SIGNUP` | No | `false` | `false` allows new registrations (needed for your first signup). `./close-signups.sh` sets it to `true`. |
 | `ETEBASE_BOOTSTRAP_ADMIN_TOKEN` | No | empty | One-time token the first signup must pass as `?bootstrap_token=...` in the server URL while the server has no users. The installer generates it; leaving it empty does not protect the first signup. |
 | `ETEBASE_DISABLE_DJANGO_ADMIN` | No | `true` | Hides the Django `/admin/` panel. Set to `false` to enable it; see [Admin Panel](./admin-dashboard.md) before exposing it. |
-| `TRUSTED_PROXY_IPS` | No | `127.0.0.1` | Comma-separated exact reverse proxy IPs allowed to set `X-Forwarded-*` headers. CIDR ranges are not supported. |
+| `TRUSTED_PROXY_IPS` | No | `127.0.0.1` | Comma-separated exact reverse proxy IPs allowed to set `X-Forwarded-*` headers. CIDR ranges are not supported. The installer writes `127.0.0.1,docker-gateway`: `docker-gateway` is the Docker network gateway a proxy on the host connects from through the `127.0.0.1` port, looked up each time the server starts. Remove it if you publish the port on any other address. |
 | `ETEBASE_MAX_AUTH_REQUEST_BYTES` | No | `65536` | Largest request body, in bytes, accepted for sign-up, login, password change and billing-link requests. Allowed range: `65536` to `1073741824`. |
 | `ETEBASE_MAX_REQUEST_BYTES` | No | `67108864` | Largest request body, in bytes, accepted for the app's other sync API requests (collections, items, members and invitations), including sync batches and attachment uploads. Allowed range: `1048576` to `1073741824`. |
 
