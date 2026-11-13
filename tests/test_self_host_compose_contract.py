@@ -163,6 +163,8 @@ def test_request_limit_doc_rows_match_across_mirrors():
 
 
 def test_server_port_stays_bound_to_host_loopback():
+    # install.sh trusts "docker-gateway" (the peer a host proxy arrives from
+    # through this port). That is only safe while the port is loopback-only.
     assert COMPOSE_DOCUMENT["services"]["server"]["ports"] == ["127.0.0.1:${SERVER_PORT:-3735}:3735"]
 
 

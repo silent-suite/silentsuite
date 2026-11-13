@@ -17,7 +17,10 @@ set -euo pipefail
 #   5. ETEBASE_BOOTSTRAP_ADMIN_TOKEN gates the first account;
 #   6. ETEBASE_DISABLE_DJANGO_ADMIN removes /admin/, and clearing it restores it;
 #   7. TRUSTED_PROXY_IPS is enforced: a forwarded scheme is honoured from the
-#      configured proxy address and ignored from any other address.
+#      configured proxy address and ignored from any other address;
+#   8. a proxy on the host that connects through the 127.0.0.1-published port
+#      arrives from the network gateway: 127.0.0.1 alone does not trust it,
+#      and the "docker-gateway" entry does, without trusting other containers.
 #
 # Usage:
 #   scripts/self-host-image-smoke.sh --image REF --platform linux/amd64 \
@@ -175,13 +178,19 @@ docker run --rm --network "$NETWORK" "${MOUNTS[@]}" "$IMAGE" \
   python manage.py migrate --check --noinput
 
 start_server() {
-  local disable_admin="$1"
+  local disable_admin="$1" trusted_ips="${2:-$TRUSTED_IP}"
+  local publish=()
+  # Like docker-compose.yml: published on host loopback only (any free port).
+  if [ "${3:-}" = "publish-loopback" ]; then
+    publish=(-p "127.0.0.1::3735")
+  fi
   docker rm -f "$SERVER" >/dev/null 2>&1 || true
   docker run -d --name "$SERVER" --network "$NETWORK" \
+    ${publish[@]+"${publish[@]}"} \
     -e ETEBASE_BOOTSTRAP_ADMIN_TOKEN="$BOOTSTRAP_TOKEN" \
     -e ETEBASE_DISABLE_DJANGO_ADMIN="$disable_admin" \
     -e ETEBASE_DISABLE_SIGNUP=false \
-    -e TRUSTED_PROXY_IPS="$TRUSTED_IP" \
+    -e TRUSTED_PROXY_IPS="$trusted_ips" \
     "${MOUNTS[@]}" \
     "$IMAGE" >/dev/null
 }
@@ -191,6 +200,19 @@ probe() {
   shift
   docker run --rm --network "$NETWORK" --ip "$ip" "${MOUNTS[@]}" "$IMAGE" \
     python "/smoke/$PROBE_NAME" --base "http://$SERVER:3735" "$@"
+}
+
+# A client in the host's network namespace, connecting to the published
+# 127.0.0.1 port the way a reverse proxy installed on the host does.
+host_probe() {
+  local port
+  port="$(docker port "$SERVER" 3735/tcp | sed -n 's/^127\.0\.0\.1:\([0-9][0-9]*\)$/\1/p' | head -n 1)"
+  if [ -z "$port" ]; then
+    echo "ERROR: the server port is not published on host loopback" >&2
+    exit 1
+  fi
+  docker run --rm --network host "${MOUNTS[@]}" "$IMAGE" \
+    python "/smoke/$PROBE_NAME" --base "http://localhost:$port" "$@"
 }
 
 echo "== Server behaviour (django admin disabled) =="
@@ -203,6 +225,15 @@ echo "== Server behaviour (django admin enabled) =="
 start_server false
 probe "$TRUSTED_IP" --mode wait
 probe "$TRUSTED_IP" --mode admin-enabled
+
+echo "== Host proxy through the loopback-published port =="
+start_server true "127.0.0.1" publish-loopback
+host_probe --mode wait
+host_probe --mode untrusted
+start_server true "127.0.0.1,docker-gateway" publish-loopback
+host_probe --mode wait
+host_probe --mode honoured
+probe "$UNTRUSTED_IP" --mode untrusted
 
 echo ""
 echo "Self-host image smoke contract passed for $PLATFORM ($IMAGE)"

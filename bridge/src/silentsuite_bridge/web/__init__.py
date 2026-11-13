@@ -527,6 +527,37 @@ def _account_mutation_response(action, result):
     })
 
 
+def _handle_birthdays_request(environ):
+    if config.EXPERIMENTAL_BIRTHDAYS is not True:
+        return _json_response(404, {"error": "The experimental Birthdays calendar is turned off in settings"})
+    data, error_response = _read_json_body(environ)
+    if error_response:
+        return error_response
+    if not isinstance(data, dict):
+        return _json_response(400, {"error": "A JSON object is required"})
+    username = data.get("username") if isinstance(data.get("username"), str) else ""
+    username = username.strip()
+    if not username:
+        return _json_response(400, {"error": "Account username is required"})
+    action = data.get("action")
+    if action not in ("on", "off"):
+        return _json_response(400, {"error": "Action must be on or off"})
+
+    try:
+        from .. import birthdays
+
+        outcome = birthdays.set_dashboard_birthdays(username, action)
+    except Exception as exc:  # noqa: BLE001 - never reveal account or request details
+        logger.warning("Birthdays dashboard action failed (%s)", bounded_exception_class(exc))
+        return _json_response(500, {"ok": False, "status": "failed"})
+
+    # Only "done" is completion; anything else (or nothing) is reported as not done.
+    status = outcome.get("status") if isinstance(outcome, dict) else None
+    if status not in ("done", "skipped", "pending"):
+        status = "failed"
+    return _json_response(200, {"ok": status == "done", "status": status})
+
+
 def _handle_account_mutation(environ, action):
     data, error_response = _read_json_body(environ)
     if error_response:
@@ -1069,6 +1100,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <span id="syncIntervalStatus" style="font-size:12px;color:#555;"></span>
             <span id="syncProgress" style="font-size:12px;color:#888;margin-left:auto;"></span>
         </div>
+
+        <div class="status-card">
+            <h3 style="font-size:14px;color:#888;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.5px;">Experimental</h3>
+            <label style="font-size:13px;color:#ccc;"><input type="checkbox" id="experimentalBirthdays" onchange="updateExperimentalBirthdays(this)"{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}> Birthdays calendar</label>
+            <span id="experimentalBirthdaysStatus" style="font-size:12px;color:#555;margin-left:8px;"></span>
+            <div class="fingerprint-help">Adds a Birthdays calendar made from your contacts. Turn it on per account on the dashboard.</div>
+        </div>
         <script>
             (function() {
                 var sel = document.getElementById('syncInterval');
@@ -1167,6 +1205,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     button,
                     'Remove {account}? This deletes local bridge credentials and that account\\'s local decrypted bridge cache on this computer. Other accounts are not affected.'
                 );
+            }
+            function setBirthdays(button) {
+                var account = button.getAttribute('data-birthdays-account');
+                var action = button.getAttribute('data-birthdays-action');
+                if (!account || (action !== 'on' && action !== 'off')) return;
+                if (action === 'off' && !confirm('Turn off the Birthdays calendar for ' + account + '? Generated birthdays are removed; your own events are kept.')) return;
+                button.disabled = true;
+                setAccountStatus('Updating the Birthdays calendar for ' + account + '...', false);
+                fetch('/.web/api/accounts/birthdays', {
+                    method:'POST',
+                    headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF},
+                    body: JSON.stringify({username: account, action: action})
+                })
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        if (data && data.ok === true && data.status === 'done') {
+                            setAccountStatus('Birthdays calendar turned ' + action + ' for ' + account + '.', false);
+                        } else {
+                            var status = (data && data.status) ? data.status : 'failed';
+                            setAccountStatus('Birthdays calendar for ' + account + ' was not changed yet (' + status + '). Try again after the next sync.', true);
+                        }
+                        button.disabled = false;
+                    })
+                    .catch(function(error) {
+                        setAccountStatus(error.message || ('Birthdays calendar update failed for ' + account + '.'), true);
+                        button.disabled = false;
+                    });
             }
             function toggleFingerprint(id, button) {
                 var el = document.getElementById(id);
@@ -1290,6 +1355,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                         }
                     });
                 return intervalSave.pending;
+            }
+            function updateExperimentalBirthdays(box) {
+                var st = document.getElementById('experimentalBirthdaysStatus');
+                var wanted = box.checked;
+                box.disabled = true;
+                st.textContent = 'Saving...';
+                st.style.color = '#555';
+                return fetch('/.web/api/settings', {method:'POST', headers:{'Content-Type':'application/json','X-SilentSuite-CSRF': window.SILENTSUITE_DASHBOARD_CSRF}, body: JSON.stringify({experimentalBirthdays: wanted})})
+                    .then(handleJsonResponse)
+                    .then(function(data) {
+                        box.checked = data.experimentalBirthdays === true;
+                        st.textContent = 'Saved';
+                        // Reload so the account cards show or hide the Birthdays buttons.
+                        setTimeout(function() { location.reload(); }, 750);
+                    })
+                    .catch(function(error) {
+                        box.checked = !wanted;
+                        box.disabled = false;
+                        st.textContent = 'Not saved: ' + ((error && error.message) || 'request failed');
+                        st.style.color = '#ff8a8a';
+                    });
             }
             // Live sync-status pill. Polls /api/progress every 2s so users see
             // a running sync without waiting for the 30s full-page refresh.
@@ -1633,6 +1719,14 @@ def _render_dashboard():
                 if config.SSL_ENABLED
                 else ""
             )
+            birthdays_buttons = (
+                f'<button class="account-action-btn" data-birthdays-account="{account_attr}" '
+                'data-birthdays-action="on" onclick="setBirthdays(this)">Turn on Birthdays calendar</button>'
+                f'<button class="account-action-btn" data-birthdays-account="{account_attr}" '
+                'data-birthdays-action="off" onclick="setBirthdays(this)">Turn off Birthdays calendar</button>'
+                if config.EXPERIMENTAL_BIRTHDAYS is True
+                else ""
+            )
             account_html += (
                 '<div class="account-card">'
                 f'<h4>{esc(user)}</h4>'
@@ -1645,6 +1739,7 @@ def _render_dashboard():
                 'onclick="logoutAccount(this)">Log out</button>'
                 f'<button class="account-action-btn danger" data-account="{account_attr}" '
                 'onclick="removeAccount(this)">Remove account</button>'
+                f'{birthdays_buttons}'
                 '</div>'
                 '</div>'
             )
@@ -1685,6 +1780,7 @@ def _render_dashboard():
     page = page.replace("{{SYNC_INTERVAL}}", str(interval))
     page = page.replace("{{SYNC_INTERVAL_DISPLAY}}", esc(interval_display))
     page = page.replace("{{NETWORK_CARD}}", _render_network_card())
+    page = page.replace("{{EXPERIMENTAL_BIRTHDAYS_CHECKED}}", " checked" if config.EXPERIMENTAL_BIRTHDAYS is True else "")
 
     return page
 
@@ -2245,7 +2341,7 @@ class Web(BaseWeb):
 
         # API endpoint for current settings
         if path == "/.web/api/settings":
-            data = {"syncInterval": config.SYNC_INTERVAL}
+            data = {"syncInterval": config.SYNC_INTERVAL, "experimentalBirthdays": config.EXPERIMENTAL_BIRTHDAYS is True}
             return (
                 200,
                 {"Content-Type": "application/json"},
@@ -2291,6 +2387,12 @@ class Web(BaseWeb):
                 return _csrf_error()
             return _handle_account_mutation(environ, "remove")
 
+        # Turn one account's Birthdays calendar on or off (#738)
+        if path == "/.web/api/accounts/birthdays":
+            if not _has_valid_csrf(environ):
+                return _csrf_error()
+            return _handle_birthdays_request(environ)
+
         # Report a problem: the only route that contacts the report relay.
         if path == "/.web/api/report":
             if not _has_valid_csrf(environ):
@@ -2304,6 +2406,9 @@ class Web(BaseWeb):
             data, error_response = _read_json_body(environ)
             if error_response:
                 return error_response
+            # Checked before any write so a bad value never leaves a half-applied update.
+            if "experimentalBirthdays" in data and not isinstance(data["experimentalBirthdays"], bool):
+                return _json_response(400, {"error": "experimentalBirthdays must be true or false"})
 
             if "syncInterval" in data:
                 new_interval = int(data["syncInterval"])
@@ -2346,10 +2451,37 @@ class Web(BaseWeb):
 
                 log_sync_event("info", f"Sync interval changed to {new_interval}s")
 
+            if "experimentalBirthdays" in data:
+                enabled = data["experimentalBirthdays"]
+                try:
+                    config.save_settings({"experimentalBirthdays": enabled})
+                except config.SettingsDurabilityError:
+                    return _json_response(
+                        500,
+                        {"error": "settings.json was replaced but not confirmed durable; retry to confirm the Birthdays setting"},
+                    )
+                except config.SettingsLockError:
+                    return _json_response(
+                        503,
+                        {"error": "Another bridge process is updating settings.json; the Birthdays setting was not changed, retry shortly"},
+                    )
+                except (config.SettingsFileError, OSError):
+                    return _json_response(
+                        500,
+                        {"error": "Could not write settings.json; the Birthdays setting was not changed"},
+                    )
+                # Turning off only stops the Bridge's own Birthdays work; calendars already on
+                # the server are left as they are.
+                config.EXPERIMENTAL_BIRTHDAYS = enabled
+                log_sync_event("info", f"Experimental Birthdays calendar turned {'on' if enabled else 'off'}")
+
+            saved = {"ok": True, "syncInterval": config.SYNC_INTERVAL}
+            if "experimentalBirthdays" in data:
+                saved["experimentalBirthdays"] = config.EXPERIMENTAL_BIRTHDAYS is True
             return (
                 200,
                 {"Content-Type": "application/json"},
-                json.dumps({"ok": True, "syncInterval": config.SYNC_INTERVAL}).encode(),
+                json.dumps(saved).encode(),
             )
 
         return (404, {}, b"Not found")

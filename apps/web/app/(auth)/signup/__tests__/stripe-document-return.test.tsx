@@ -8,7 +8,7 @@ import { paymentReturnUrl } from '@/app/lib/signup-return'
 
 const mocks = vi.hoisted(() => ({ session: null as string | null, signup: vi.fn(), proof: vi.fn(), push: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: mocks.push }), useSearchParams: () => new URLSearchParams(window.location.search) }))
-vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null }))
+vi.mock('../commercial-funnel-analytics', () => ({ CheckoutReturnAnalytics: () => null, createSignupStepRecorder: () => () => undefined, signupStepFor: () => null }))
 vi.mock('../components/step-create-vault', () => ({ StepCreateVault: ({ onComplete }: { onComplete: () => void }) => <button onClick={onComplete}>Complete vault</button> }))
 vi.mock('@/app/lib/secure-storage', () => ({
   secureGet: vi.fn(async () => mocks.session), secureSet: vi.fn(async (_key: string, value: string) => { mocks.session = value }),

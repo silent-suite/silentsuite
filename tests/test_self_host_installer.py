@@ -424,6 +424,10 @@ def test_a_valid_release_installs_and_pins_the_immutable_index_digest(workspace)
     environment = (target / ".env").read_text()
     assert f"SILENTSUITE_SERVER_IMAGE={SERVER_IMAGE}" in environment
     assert re.search(r"^SILENTSUITE_SERVER_IMAGE=\S+@sha256:[0-9a-f]{64}$", environment, re.MULTILINE)
+    # A host proxy reaches the loopback-published port from Docker's gateway.
+    assert re.findall(r"^TRUSTED_PROXY_IPS=.*$", environment, re.MULTILINE) == [
+        "TRUSTED_PROXY_IPS=127.0.0.1,docker-gateway"
+    ]
     for name in (
         "docker-compose.yml",
         "install.sh",
