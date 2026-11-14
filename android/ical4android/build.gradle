@@ -91,12 +91,12 @@ dependencies {
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:${rootProject.ext.desugarJdkLibsVersion}"
 
     // ical4j without the classes that src/main/java/net/fortuna/ical4j/model replaces (ICAL4J-PATCH.md),
-    // plus ical4j's own dependencies from its POM; javax.mail is replaced by android-mail below
+    // plus ical4j's own dependencies from its POM; javax.mail is replaced by android-mail below.
+    // The POM's commons-collections4 is left out: no ical4j 3.0.20 class references it.
     api files(strippedIcal4j)
     api 'org.slf4j:slf4j-api:1.7.25'
     api 'commons-codec:commons-codec:1.11'
     api 'org.apache.commons:commons-lang3:3.8.1'
-    api 'org.apache.commons:commons-collections4:4.1'
     // ical4j requires JavaMail API (e.g. for EMAIL parameter)
     implementation 'com.sun.mail:android-mail:1.6.5'
 
