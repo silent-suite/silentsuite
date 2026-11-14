@@ -176,7 +176,9 @@ class DeviceImportRuntimeTest {
         assertEquals(1L, retry.updated)
         val copied = rows(destination)
         assertEquals(2, copied.count { it.originalId == null })
-        val series = copied.single { it.uid == seriesUid }
+        // Exception rows carry their series' UID_2445 too (RFC 5545: one UID per series), so look at masters.
+        val series = copied.single { it.originalId == null && it.uid == seriesUid }
+        assertEquals("the series UID is on its master and its one exception row", 2, copied.count { it.uid == seriesUid })
         assertNotNull(series.exDate)
         assertEquals("Moved", copied.single { it.originalId == series.id }.title)
     }
@@ -275,7 +277,9 @@ class DeviceImportRuntimeTest {
     private fun assertCompleteCopy(destination: LocalCalendar) {
         val copied = rows(destination)
         assertEquals("three units, no duplicates: $copied", 3, copied.count { it.originalId == null })
-        val series = copied.single { it.uid == seriesUid }
+        // Exception rows carry their series' UID_2445 too (RFC 5545: one UID per series), so look at masters.
+        val series = copied.single { it.originalId == null && it.uid == seriesUid }
+        assertEquals("the series UID is on its master and its one exception row: $copied", 2, copied.count { it.uid == seriesUid })
         assertTrue(series.rrule.orEmpty().contains("FREQ=WEEKLY"))
         assertTrue(series.rrule.orEmpty().contains("COUNT=5"))
         assertEquals(berlin, series.timeZone)
