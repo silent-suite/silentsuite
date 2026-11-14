@@ -26,7 +26,7 @@
     "audit:security": "node scripts/braces-byte-preflight.mjs && pnpm run test:dependency-security && node scripts/audit-high-critical.mjs"
   },
   "devDependencies": {
-    "turbo": "^2.4.0"
+    "turbo": "^2.11.11"
   },
   "packageManager": "pnpm@10.34.9",
   "pnpm": {
