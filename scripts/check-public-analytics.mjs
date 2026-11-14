@@ -14,6 +14,13 @@ const generatedAuthRootArgument = process.argv.find((argument) => argument.start
 const generatedAuthRoot = generatedAuthRootArgument
   ? path.resolve(generatedAuthRootArgument.slice('--generated-auth-root='.length))
   : path.join(appsRoot, 'web/.next/static/chunks/app/(auth)')
+const generatedStaticRootArgument = process.argv.find((argument) => argument.startsWith('--generated-static-root='))
+// The browser telemetry artifact scan reads the whole emitted static tree. It runs
+// on the default build output, or on an explicit root; a run aimed only at other
+// generated roots (fixtures) skips it.
+const generatedStaticRoot = generatedStaticRootArgument
+  ? path.resolve(generatedStaticRootArgument.slice('--generated-static-root='.length))
+  : generatedAppRootArgument || generatedAuthRootArgument ? undefined : path.join(appsRoot, 'web/.next/static')
 const enabledGeneratedBuild = process.argv.includes('--enabled-generated-build') || process.env.PUBLIC_ANALYTICS_ENABLED_BUILD === 'true'
 const allowedAnalyticsFiles = new Set([
   path.join(appsRoot, 'web/app/(auth)/signup/signup-analytics.tsx'),
@@ -76,8 +83,13 @@ const requiredContracts = new Map([
     'INVENTORY.get(canonicalJson(parsed))',
     "headers.get('x-real-ip')",
     'X-Plausible-IP',
+    "process.env.WEB_VITALS_FORWARD === 'on'",
+    "entry.kind === 'vital' ? '' :",
   ]],
   ['apps/web/app/api/event/route.ts', ['relayAnalyticsEvent']],
+  // Public-page speed ratings: own default-off build gate (relay gate and header
+  // omission are pinned on the relay entry above).
+  ['apps/web/app/(auth)/public-web-vitals.tsx', ["process.env.NEXT_PUBLIC_WEB_VITALS_ENABLED === 'true'", 'webVitalsPageFor(win.location.pathname)']],
   ['Dockerfile.web', ['ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
   ['.github/workflows/deploy-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true']],
   ['.github/workflows/preview-web.yml', ['NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false']],
@@ -205,6 +217,43 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error
 }
+// Browser error reports and public-page speed ratings stay dormant until a later,
+// reviewed activation change: no workflow or image build may switch them on here.
+const dormantTelemetrySettings = /NEXT_PUBLIC_WEB_VITALS_ENABLED\s*[=:]\s*["']?true|WEB_VITALS_FORWARD|GLITCHTIP_|NEXT_PUBLIC_SENTRY_DSN/
+const workflowDirectory = path.resolve('.github/workflows')
+for (const file of [...(await readdir(workflowDirectory)).map((name) => path.join(workflowDirectory, name)), path.resolve('Dockerfile.web')]) {
+  if (!/\.ya?ml$|Dockerfile\.web$/.test(file)) continue
+  if (dormantTelemetrySettings.test(await readFile(file, 'utf8'))) {
+    violations.push(`${path.relative(process.cwd(), file)}: enables dormant browser telemetry (error reports or speed ratings)`)
+  }
+}
+
+// Emitted browser chunks: no tracing or session-replay code, no source maps, and
+// each telemetry sender present only when its build gate was given.
+if (generatedStaticRoot) {
+  try {
+    const sentryDsnBuild = Boolean(process.env.NEXT_PUBLIC_SENTRY_DSN)
+    const webVitalsBuild = process.env.NEXT_PUBLIC_WEB_VITALS_ENABLED === 'true'
+    async function scanStatic(directory) {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const fullPath = path.join(directory, entry.name)
+        const shown = path.relative(process.cwd(), fullPath)
+        if (entry.isDirectory()) await scanStatic(fullPath)
+        else if (entry.name.endsWith('.map')) violations.push(`${shown}: source map in served static output`)
+        else if (entry.name.endsWith('.js')) {
+          const source = await readFile(fullPath, 'utf8')
+          if (/rrweb|name:"Replay"|"BrowserTracing"/.test(source)) violations.push(`${shown}: tracing or session replay code in browser bundle`)
+          if (!sentryDsnBuild && source.includes('/api/error')) violations.push(`${shown}: error reporter present without NEXT_PUBLIC_SENTRY_DSN`)
+          if (!webVitalsBuild && source.includes('"Web Vital"')) violations.push(`${shown}: speed reporter present without NEXT_PUBLIC_WEB_VITALS_ENABLED=true`)
+        }
+      }
+    }
+    await scanStatic(generatedStaticRoot)
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+  }
+}
+
 if (violations.length) {
   console.error(violations.join('\n'))
   process.exit(1)
