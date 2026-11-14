@@ -56,6 +56,8 @@ class App : Application() {
 
         // Account-aware logging and all other process consumers share the migrated typed store.
         AppPreferences(this)
+        // After the account types are known: the oldest migrations look up accounts.
+        runUpgradeMigrations()
         reinitLogger()
 
         // Raw, synchronous bootstrap makes pre-existing rows safe before login can create one.
@@ -109,6 +111,21 @@ class App : Application() {
     private fun initPrefVersion() {
         val prefs = getSharedPreferences("app", Context.MODE_PRIVATE)
         if (prefs.getInt(PREF_VERSION, 0) == 0) {
+            prefs.edit().putInt(PREF_VERSION, BuildConfig.VERSION_CODE).apply()
+        }
+    }
+
+    /**
+     * Runs [update] once when the stored app version is older than this build, and then stores this
+     * build's version. It runs at every start and after an update, so an upgrade is migrated even when
+     * the platform's update broadcast doesn't arrive (Android 8 stopped sending PACKAGE_REPLACED to
+     * manifest receivers).
+     */
+    internal fun runUpgradeMigrations() {
+        val prefs = getSharedPreferences("app", Context.MODE_PRIVATE)
+        val fromVersion = prefs.getInt(PREF_VERSION, 0)
+        if (fromVersion in 1 until BuildConfig.VERSION_CODE) {
+            update(fromVersion)
             prefs.edit().putInt(PREF_VERSION, BuildConfig.VERSION_CODE).apply()
         }
     }
@@ -169,11 +186,7 @@ class App : Application() {
         override fun onReceive(context: Context, intent: Intent) {
             Logger.log.info("SilentSuite was updated, checking for app version")
 
-            val app = context.applicationContext as App
-            val prefs = app.getSharedPreferences("app", Context.MODE_PRIVATE)
-            val fromVersion = prefs.getInt(PREF_VERSION, 1)
-            app.update(fromVersion)
-            prefs.edit().putInt(PREF_VERSION, BuildConfig.VERSION_CODE).apply()
+            (context.applicationContext as App).runUpgradeMigrations()
         }
 
     }

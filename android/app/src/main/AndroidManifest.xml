@@ -64,8 +64,8 @@
             android:name=".App$AppUpdatedReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.PACKAGE_REPLACED" />
-                <data android:scheme="package" android:path="io.silentsuite.android" />
+                <!-- PACKAGE_REPLACED is no longer delivered to manifest receivers since Android 8. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
@@ -73,8 +73,8 @@
             android:name=".AccountSettings$AppUpdatedReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.PACKAGE_REPLACED" />
-                <data android:scheme="package" android:path="io.silentsuite.android" />
+                <!-- PACKAGE_REPLACED is no longer delivered to manifest receivers since Android 8. -->
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
