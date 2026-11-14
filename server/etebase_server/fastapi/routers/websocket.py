@@ -166,12 +166,13 @@ async def redis_connector(websocket: WebSocket, ticket_model: TicketInner, user:
 
             except ConnectionError:
                 await websocket.close(code=status.WS_1012_SERVICE_RESTART)
-            except WebSocketDisconnect:
-                pass
             finally:
                 receive.cancel()
                 if message is not None:
                     message.cancel()
+        except WebSocketDisconnect:
+            # The client went away, during catch-up or the live loop.
+            pass
         finally:
             await close_pubsub(pubsub)
 

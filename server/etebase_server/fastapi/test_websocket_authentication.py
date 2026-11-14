@@ -450,3 +450,32 @@ class TestWebsocketSubscriptionCleanup:
         assert closed.value.code == status.WS_1008_POLICY_VIOLATION
         assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
         assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]
+
+    def test_disconnect_during_catch_up_ends_quietly_and_closes_pubsub(self, fake_redis, membership):
+        from etebase_server.fastapi.routers.websocket import TicketInner, TicketRequest, redis_connector
+
+        class DisconnectedWebSocket:
+            """Stands in for a socket whose client left before catch-up was sent:
+            Starlette raises WebSocketDisconnect when sending to it."""
+
+            sent = 0
+
+            async def send_bytes(self, data):
+                self.sent += 1
+                raise WebSocketDisconnect(code=1006)
+
+            async def receive(self):  # pragma: no cover - never reached
+                raise AssertionError("live loop started after a failed catch-up")
+
+            async def close(self, code=1000):  # pragma: no cover - never reached
+                raise AssertionError("closed a socket that was already gone")
+
+        ws = DisconnectedWebSocket()
+        ticket_model = TicketInner(user=membership.user.id, req=TicketRequest(collection=membership.collection_uid))
+
+        # Returns without raising WebSocketDisconnect.
+        asyncio.run(redis_connector(ws, ticket_model, membership.user, None))
+
+        assert ws.sent == 1
+        assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
+        assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]
