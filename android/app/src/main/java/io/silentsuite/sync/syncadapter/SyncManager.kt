@@ -19,6 +19,8 @@ import at.bitfire.vcard4android.ContactsStorageException
 import com.etebase.client.*
 import com.etebase.client.exceptions.ConnectionException
 import com.etebase.client.exceptions.HttpException
+import com.etebase.client.exceptions.NotFoundException
+import com.etebase.client.exceptions.ServerErrorException
 import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
 import io.silentsuite.sync.*
@@ -420,11 +422,33 @@ constructor(protected val context: Context, protected val account: Account, prot
         item.meta = meta
     }
 
+    /**
+     * The server's copy of an item this device created but never cached, or null when the server
+     * does not have it. That happens when an upload reached the server but its answer was lost:
+     * creating the item again would leave two of it. A missing item gets a 404, or a 500 from
+     * servers whose item route has no 404 (this project's included). Every other error, a
+     * dropped connection or a 502-504 among them, fails the sync, so nothing is created twice.
+     */
+    private fun fetchUncachedItem(fileName: String): Item? =
+        try {
+            itemMgr.fetch(fileName)
+        } catch (e: NotFoundException) {
+            null
+        } catch (e: ServerErrorException) {
+            null
+        }
+
     private fun prepareLocalItemForUpload(colUid: String, local: T): Item {
-        val cacheItem = if (local.fileName != null) etebaseLocalCache.itemGet(itemMgr, colUid, local.fileName!!) else null
+        val fileName = local.fileName
+        val cacheItem = if (fileName != null) etebaseLocalCache.itemGet(itemMgr, colUid, fileName) else null
+        val uploaded = if (cacheItem == null && fileName != null) fetchUncachedItem(fileName) else null
         val item: Item
         if (cacheItem != null) {
             item = cacheItem.item
+            itemUpdateMtime(item)
+        } else if (uploaded != null) {
+            Logger.log.info("Reusing the server's copy of an uncached local ${resourceType(local)} resource")
+            item = uploaded
             itemUpdateMtime(item)
         } else {
             val uid = local.uuid ?: UUID.randomUUID().toString()
