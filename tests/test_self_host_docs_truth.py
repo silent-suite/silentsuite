@@ -172,3 +172,17 @@ def test_installer_names_the_real_server_admin():
     text = INSTALLER.read_text(encoding="utf-8")
     assert "The first app signup is an ordinary account, not a server admin." in text
     assert "(SUPER_USER and SUPER_PASS in .env), which is off by default." in text
+
+
+# ── Trusted proxy addresses ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "path", [*published_pages(), SELF_HOSTING], ids=lambda p: str(p.relative_to(ROOT))
+)
+def test_no_page_claims_trusted_proxy_subnets_are_unsupported(path: Path):
+    """The entrypoint hands TRUSTED_PROXY_IPS to Uvicorn, which accepts CIDR subnets."""
+
+    text = path.read_text(encoding="utf-8")
+    assert "CIDR ranges are not supported" not in text, path.name
+    assert "matches exact IPs here" not in text, path.name
