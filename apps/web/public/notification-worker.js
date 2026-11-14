@@ -65,11 +65,28 @@ async function scheduleAlarms(alarms) {
   await storeAlarms(alarms)
 }
 
+// Bumped by clearAllAlarms so a check that is already running stops showing
+// reminders it read before the clear.
+let clearGeneration = 0
+// Pending snooze re-shows: timer id -> resolve of its waitUntil promise.
+const snoozeTimers = new Map()
+
+async function clearAllAlarms() {
+  clearGeneration++
+  for (const [timer, resolve] of snoozeTimers) {
+    clearTimeout(timer)
+    resolve()
+  }
+  snoozeTimers.clear()
+  await storeAlarms([])
+}
+
 // ── Check and fire alarms (called from periodic sync or setInterval) ──
 
 async function checkAndFireAlarms() {
   const now = Date.now()
   const FIRE_WINDOW_MS = 2 * 60 * 1000 // 2-minute window
+  const generation = clearGeneration
 
   let alarms
   try {
@@ -79,6 +96,8 @@ async function checkAndFireAlarms() {
   }
 
   for (const alarm of alarms) {
+    // Reminders were cleared (logout) while this check was running.
+    if (generation !== clearGeneration) return
     // Fire if trigger time is in the past but within the fire window
     if (alarm.triggerAt <= now && alarm.triggerAt > now - FIRE_WINDOW_MS) {
       try {
@@ -114,6 +133,9 @@ self.addEventListener('message', (event) => {
     const { alarms } = event.data
     // alarms: Array<{ id, title, time, triggerAt, triggerLabel }>
     scheduleAlarms(alarms)
+  } else if (event.data && event.data.type === 'CLEAR_ALARMS') {
+    // Sent on logout: drop every stored and snoozed reminder.
+    clearAllAlarms()
   }
 })
 
@@ -137,7 +159,8 @@ self.addEventListener('notificationclick', (event) => {
 
     event.waitUntil(
       new Promise((resolve) => {
-        setTimeout(async () => {
+        const timer = setTimeout(async () => {
+          snoozeTimers.delete(timer)
           try {
             await self.registration.showNotification(event.notification.title, {
               body: event.notification.body,
@@ -154,6 +177,7 @@ self.addEventListener('notificationclick', (event) => {
           }
           resolve()
         }, snoozeDelay)
+        snoozeTimers.set(timer, resolve)
       })
     )
   } else if (event.action === 'dismiss') {

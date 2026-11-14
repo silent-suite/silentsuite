@@ -426,7 +426,8 @@ jobs:
         run: node scripts/zapstore/cli.mjs revalidate-manual --binding "$RUNNER_TEMP/publish/binding.json" --apk "$APK_PATH" --git-ancestry "$GITHUB_WORKSPACE"
 
       # The only step that can see signer credentials. It first resolves the
-      # signing account with a read-only NIP-46 handshake and refuses unless it
+      # signing account (local derivation for an nsec1 secret, read-only NIP-46
+      # handshake for a bunker URL) and refuses unless it
       # is the approved publisher; only then does the pinned publisher run. Raw
       # signer output stays in the runner temp directory; the client key is
       # written 0600 and removed in a finally block and again by the trap.
