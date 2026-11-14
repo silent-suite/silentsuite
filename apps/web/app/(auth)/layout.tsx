@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { Shield, ShieldCheck, Calendar, CheckSquare, Users, Sun, Moon, Lock, EyeOff, Globe } from 'lucide-react'
+import { PublicWebVitals } from './public-web-vitals'
 
 export default function AuthLayout({
   children,
@@ -26,6 +27,7 @@ export default function AuthLayout({
     <main className={`relative flex min-h-dvh justify-center overflow-x-hidden transition-colors duration-300 ${verticalAlignment} ${
       isDark ? 'bg-gradient-to-br from-navy-950 via-navy-900 to-emerald-950/20' : 'bg-gradient-to-br from-gray-50 via-white to-emerald-50/30'
     }`}>
+      <PublicWebVitals />
       {/* Subtle grid pattern background */}
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.03]"
