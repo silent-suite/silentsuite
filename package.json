@@ -58,7 +58,6 @@
       "@vue/shared": "3.5.42",
       "postcss": "^8.5.18",
       "sharp": "0.35.5",
-      "@babel/core@>=7.0.0 <7.29.6": "7.29.13",
       "@babel/plugin-transform-modules-systemjs": "^7.29.4",
       "ws": "^7.5.11",
       "vitepress>vite": "6.4.5",
