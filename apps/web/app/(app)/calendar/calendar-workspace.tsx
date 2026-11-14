@@ -23,6 +23,7 @@ import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store
 import { usePlanningDisposition, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
 import { showErrorToast, showSuccessToast } from '@/app/stores/use-toast-store'
 import { PlanningPanel } from './components/PlanningPanel'
+import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
 
 /** Snap a Date to the nearest 30-minute boundary */
@@ -191,8 +192,11 @@ function CalendarPageBody() {
     if (!effectivePlanCalendarId) return
     setArmedTaskId(null)
     setPendingTaskIds((ids) => new Set(ids).add(taskId))
+    const epoch = getAccountEpoch()
     try {
       const result = await planTask(taskId, start, effectivePlanCalendarId, planningDisposition)
+      // Results name the task: never show them after a sign-out or account switch.
+      if (!isCurrentAccountEpoch(epoch)) return
       if (result.kind === 'done') showSuccessToast(result.message)
       else showErrorToast(result.message)
     } finally {

@@ -10,7 +10,7 @@ import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import type { PlanningDisposition } from '@/app/stores/use-experimental-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
-import { useTaskStore } from '@/app/stores/use-task-store'
+import { useTaskStore, type TaskSyncOutcome } from '@/app/stores/use-task-store'
 
 /** Written as a task category; a fixed string so the filter works in every language. */
 export const SCHEDULED_LABEL = 'Scheduled'
@@ -54,24 +54,19 @@ export type PlanTaskResult =
 
 const inFlight = new Set<string>()
 
-function disposeTask(task: Task, disposition: PlanningDisposition): Promise<void> {
+function disposeTask(task: Task, disposition: PlanningDisposition): Promise<TaskSyncOutcome> {
   const tasks = useTaskStore.getState()
   if (disposition === 'delete') return tasks.deleteTask(task.id)
   if (disposition === 'complete') {
     return tasks.updateTask(task.id, { completed: true, status: 'completed', percent_complete: 100 })
   }
-  if (hasScheduledLabel(task)) return Promise.resolve()
+  if (hasScheduledLabel(task)) return Promise.resolve('remote')
   return tasks.updateTask(task.id, { categories: [...(task.categories ?? []), SCHEDULED_LABEL] })
 }
 
-function copiedFieldsUnchanged(copied: Task, current: Task): boolean {
-  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
-  return new Date(copied.updated_at).getTime() === new Date(current.updated_at).getTime()
-    && same(copied.title, current.title)
-    && same(copied.description, current.description)
-    && same(copied.url, current.url)
-    && same(copied.location, current.location)
-    && same(copied.categories, current.categories)
+/** The whole task, not just the copied fields: a sync can change any of them without touching LAST-MODIFIED. */
+function sameTask(copied: Task, current: Task): boolean {
+  return copied === current || JSON.stringify(copied) === JSON.stringify(current)
 }
 
 const DISPOSITION_DONE: Record<PlanningDisposition, string> = {
@@ -132,18 +127,23 @@ export async function planTask(
     if (!isCurrentAccountEpoch(epoch)) return { kind: 'error', message: 'The account changed; the task was not changed.' }
     // Re-check: the task or its list may have changed while the event was saving.
     const current = useTaskStore.getState().tasks.find((t) => t.id === taskId)
-    const unchanged = !!current && copiedFieldsUnchanged(task, current)
+    const unchanged = !!current && sameTask(task, current)
     // Labelling and completing act on the current task, so newer labels survive. Deleting would
     // lose anything edited since the event was copied, so it needs the task exactly as copied.
     if (!current || planBlockReason(current) || !useAuthStore.getState().canWrite() || (disposition === 'delete' && !unchanged)) {
       return { kind: 'done', message: `Added “${task.title}” to the calendar. The task was not changed because it was edited meanwhile.` }
     }
+    let outcome: TaskSyncOutcome
     try {
-      await disposeTask(current, disposition)
+      outcome = await disposeTask(current, disposition)
     } catch {
-      return { kind: 'error', message: `Added “${task.title}” to the calendar, but the task could not be updated.` }
+      outcome = false
     }
-    return { kind: 'done', message: `Added “${task.title}” to the calendar. ${DISPOSITION_DONE[disposition]}` }
+    if (outcome === false) {
+      return { kind: 'error', message: `Added \u201c${task.title}\u201d to the calendar, but the task could not be updated.` }
+    }
+    const pendingSync = outcome === 'queued' ? ' The task change will sync when you are back online.' : ''
+    return { kind: 'done', message: `Added \u201c${task.title}\u201d to the calendar. ${DISPOSITION_DONE[disposition]}${pendingSync}` }
   } finally {
     inFlight.delete(taskId)
   }

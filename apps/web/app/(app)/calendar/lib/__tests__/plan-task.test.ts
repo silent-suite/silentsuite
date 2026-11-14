@@ -32,8 +32,8 @@ function acknowledged(): Promise<CalendarEvent> {
 beforeEach(() => {
   auth.canWrite.mockReturnValue(true)
   createEvent.mockReset().mockImplementation(acknowledged)
-  updateTask.mockReset().mockResolvedValue(undefined)
-  deleteTask.mockReset().mockResolvedValue(undefined)
+  updateTask.mockReset().mockResolvedValue('remote')
+  deleteTask.mockReset().mockResolvedValue('remote')
   useTaskStore.setState({ tasks: [task()], updateTask, deleteTask })
   useCalendarStore.setState({ createEvent })
   useTaskListStore.setState({ lists: [{ id: 'list-a', name: 'Work', color: '#000', visible: true, accessLevel: 2 }] })
@@ -153,5 +153,28 @@ describe('planTask', () => {
     updateTask.mockRejectedValue(new Error('read-only'))
     const result = await planTask('task-1', START, 'cal-a', 'complete')
     expect(result).toMatchObject({ kind: 'error', message: expect.stringContaining('could not be updated') })
+  })
+
+  it('does not delete a task whose uncopied fields changed without a new LAST-MODIFIED', async () => {
+    let confirm!: (event: CalendarEvent) => void
+    createEvent.mockImplementation(() => new Promise((resolve) => { confirm = resolve }))
+    const pending = planTask('task-1', START, 'cal-a', 'delete')
+    useTaskStore.setState({ tasks: [task({ due_date: new Date('2026-11-20T00:00:00Z'), priority: 'low', unknownProperties: ['X-ALARM:1'] })] })
+    confirm({ id: 'server-item', uid: 'temp-uid' } as CalendarEvent)
+    expect((await pending).message).toContain('edited meanwhile')
+    expect(deleteTask).not.toHaveBeenCalled()
+  })
+
+  it.each(['label', 'complete', 'delete'] as const)('reports a refused task change as a failure (%s)', async (disposition) => {
+    updateTask.mockResolvedValue(false)
+    deleteTask.mockResolvedValue(false)
+    const result = await planTask('task-1', START, 'cal-a', disposition)
+    expect(result).toMatchObject({ kind: 'error', message: expect.stringContaining('could not be updated') })
+  })
+
+  it('says when the task change is only queued', async () => {
+    updateTask.mockResolvedValue('queued')
+    const result = await planTask('task-1', START, 'cal-a', 'complete')
+    expect(result).toMatchObject({ kind: 'done', message: expect.stringContaining('will sync when you are back online') })
   })
 })

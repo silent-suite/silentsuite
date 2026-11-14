@@ -8,6 +8,8 @@ import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
+import { useToastStore } from '@/app/stores/use-toast-store'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import type { SlotClickEvent } from '../components/CalendarGrid'
@@ -51,6 +53,7 @@ beforeEach(() => {
   grid.props = undefined
   plan.planTask.mockReset().mockResolvedValue({ kind: 'done', message: 'Added' })
   localStorage.clear()
+  useToastStore.setState({ toasts: [] })
   usePreferencesSyncStore.setState({ status: 'ready' })
   useEtebaseStore.setState({ accountFingerprint: 'account-a', domainLoadState: { ...useEtebaseStore.getState().domainLoadState, calendar: 'loaded' } })
   useExperimentalStore.setState({ hydrated: true, planningAccounts: [], planningDispositions: {} })
@@ -103,5 +106,24 @@ describe('Planning view', () => {
     act(() => grid.props!.onSlotClick!(slot))
     expect(screen.getByTestId('event-dialog-create')).toBeInTheDocument()
     expect(plan.planTask).toHaveBeenCalledTimes(2)
+  })
+
+  it('shows the result, but drops it after a sign-out or account switch', async () => {
+    useExperimentalStore.setState({ planningAccounts: ['account-a'] })
+    renderWithIntl(<CalendarPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Plan' }))
+    const drop = (id: string) => act(() => grid.props!.onExternalDrop!(new Date('2026-11-16T09:30:00Z'), { getData: () => id } as unknown as DataTransfer))
+
+    drop('open')
+    await waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({ message: 'Added', variant: 'success' })]))
+
+    useToastStore.setState({ toasts: [] })
+    let finish!: (value: unknown) => void
+    plan.planTask.mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    drop('open')
+    await waitFor(() => expect(plan.planTask).toHaveBeenCalledTimes(2))
+    bumpAccountEpoch()
+    await act(async () => { finish({ kind: 'done', message: 'Added Open task' }) })
+    expect(useToastStore.getState().toasts).toEqual([])
   })
 })
