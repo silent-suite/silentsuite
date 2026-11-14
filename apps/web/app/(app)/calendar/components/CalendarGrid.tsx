@@ -415,6 +415,11 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
     newEnd: Date
   } | null>(null)
 
+  // Schedule-X keeps the callbacks it was created with, so a slot click reads the latest handler
+  // through a ref (the planning view changes what a click does while the grid stays mounted).
+  const onSlotClickRef = useRef(onSlotClick)
+  onSlotClickRef.current = onSlotClick
+
   const handleClickDateTime = useCallback(
     (dateTime: Temporal.ZonedDateTime, e?: UIEvent) => {
       // If we just finished a drag (select or move), skip the click handler
@@ -430,9 +435,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
         ? { x: mouseEvent.clientX, y: mouseEvent.clientY }
         : { x: window.innerWidth / 2, y: window.innerHeight / 3 }
 
-      onSlotClick?.({ startDate: start, endDate: end, allDay: false, position })
+      onSlotClickRef.current?.({ startDate: start, endDate: end, allDay: false, position })
     },
-    [onSlotClick],
+    [],
   )
 
   const handleClickDate = useCallback(

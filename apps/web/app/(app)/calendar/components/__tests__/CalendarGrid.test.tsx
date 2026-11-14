@@ -514,6 +514,19 @@ describe('CalendarGrid timed-event integration', () => {
   })
 })
 
+describe('CalendarGrid slot clicks', () => {
+  it('calls the latest onSlotClick although Schedule-X keeps its first callbacks', () => {
+    const first = vi.fn()
+    const latest = vi.fn()
+    const { rerender } = render(<CalendarGrid events={[]} onSlotClick={first} />)
+    const createdWith = mocks.latestConfig!.callbacks.onClickDateTime as (dt: { epochMilliseconds: number }) => void
+    rerender(<CalendarGrid events={[]} onSlotClick={latest} />)
+    act(() => createdWith({ epochMilliseconds: Date.parse('2026-07-13T10:10:00.000Z') }))
+    expect(first).not.toHaveBeenCalled()
+    expect(latest).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ startDate: new Date('2026-07-13T10:00:00.000Z'), allDay: false }))
+  })
+})
+
 describe('CalendarGrid external drop (planning view)', () => {
   function dropHarness(props: { externalDragType?: string; onExternalDrop?: (start: Date, dataTransfer: DataTransfer) => void }) {
     render(<CalendarGrid events={[]} {...props} />)
