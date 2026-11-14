@@ -1,0 +1,11 @@
+# Inputs for requirements-etebase-build.txt. See that file for the full command.
+#
+# The macOS arm64 release build compiles etebase from the pinned etebase-py commit
+# c5afd1a546b8f030d1b97bcecfc5e8bf9799827b, because PyPI etebase 0.31.5 has no
+# wheel for that platform. These are that commit's build-system requirements.
+# They are installed only into a throwaway virtualenv that builds the etebase
+# wheel with --no-build-isolation, never into the environment PyInstaller
+# bundles, so the bridge binary keeps the runner's own setuptools.
+setuptools
+wheel
+setuptools-rust

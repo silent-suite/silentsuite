@@ -1,0 +1,50 @@
+name: Google Play Publication
+
+# Puts the newest published GitHub release of the Android app on the Google
+# Play production track. See runbooks/play-automation.md.
+#
+# Off until the repository variable PLAY_AUTOMATION_MODE is `validate` (upload,
+# validate and discard the Play edit) or `publish` (commit it, which sends the
+# release to Google's review). Scheduled and manual runs both load this file
+# from main; the job refuses any other ref, and the play-production environment
+# that holds the service-account key only admits main.
+
+on:
+  schedule:
+    - cron: '47 */3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: play-publish-io-silentsuite-android
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish the newest release to Google Play
+    if: github.ref == 'refs/heads/main' && (vars.PLAY_AUTOMATION_MODE == 'validate' || vars.PLAY_AUTOMATION_MODE == 'publish')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: play-production
+    permissions:
+      contents: read
+    steps:
+      # Full history so the release notes and versionCode are read from the
+      # released tag's own commit. Nothing from that commit is executed.
+      - name: Check out the main revision that supplied this definition
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: Publish to Google Play
+        env:
+          PLAY_AUTOMATION_MODE: ${{ vars.PLAY_AUTOMATION_MODE }}
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/play/cli.mjs run --workspace "$GITHUB_WORKSPACE"

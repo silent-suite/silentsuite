@@ -12,6 +12,10 @@ interface CollectionListItemProps {
   itemLabel: string
   defaultLabel: string
   deleteLabel: string
+  /** Number of items in the collection, shown after the name; omitted while unknown. */
+  count?: number
+  /** Screen-reader text for the count, e.g. "12 contacts". */
+  countLabel?: string
   onToggleVisibility: () => void
   onRename: (name: string) => void
   onSetDefault: () => void
@@ -28,6 +32,8 @@ export function CollectionListItem({
   itemLabel,
   defaultLabel,
   deleteLabel,
+  count,
+  countLabel,
   onToggleVisibility,
   onRename,
   onSetDefault,
@@ -161,10 +167,18 @@ export function CollectionListItem({
             onClick={onToggleVisibility}
             className="block w-full min-w-0 text-left focus:outline-none focus:ring-2 focus:ring-emerald-500"
           >
-            <span className={`block truncate text-xs ${
-              visible ? 'text-[rgb(var(--foreground))]' : 'text-[rgb(var(--muted))]'
-            }`}>
-              {name}
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span className={`truncate text-xs ${
+                visible ? 'text-[rgb(var(--foreground))]' : 'text-[rgb(var(--muted))]'
+              }`}>
+                {name}
+              </span>
+              {count !== undefined && (
+                <span className="ml-auto shrink-0 text-[10px] tabular-nums text-[rgb(var(--muted))]">
+                  <span aria-hidden="true">{count}</span>
+                  <span className="sr-only">{`, ${countLabel ?? count}`}</span>
+                </span>
+              )}
             </span>
           </button>
         )}

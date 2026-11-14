@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, recurrenceRuleFrom, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, overridesBefore, overridesInForm, overridesWithout, recurrenceRuleFrom, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -115,7 +115,8 @@ function mergeEventPatch(base: CalendarEvent, patch: Partial<CalendarEvent>): Ca
   ) {
     delete merged.startWallClock
   }
-  return merged
+  // Overrides follow a changed DTSTART form now, so the in-memory event holds them as written.
+  return { ...merged, ...overridesInForm(base, merged) }
 }
 
 /**
@@ -134,10 +135,16 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
 
 /**
  * A scoped copy is a new item with a new UID. The series' retained raw lines (RECURRENCE-ID,
- * attendees and the like) describe the original item, so the copy starts without them, as it
- * did before they were kept. A "this and future" split moves later RDATEs separately.
+ * attendees and the like) and its overrides describe the original item, so the copy starts
+ * without them, as it did before they were kept. A "this and future" split moves later RDATEs
+ * separately. VTIMEZONE blocks still describe the copy's TZID and stay.
  */
-const WITHOUT_RETAINED_CONTENT = { unknownProperties: undefined, unknownComponents: undefined } as const
+const WITHOUT_RETAINED_CONTENT = {
+  unknownProperties: undefined,
+  unknownComponents: undefined,
+  overrides: undefined,
+  overridesForm: undefined,
+} as const
 
 /** Add an UNTIL value to an existing RRULE, replacing any existing UNTIL or COUNT */
 function addUntilToRRule(rrule: string, until: string): string {
@@ -432,6 +439,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const newTempId = crypto.randomUUID()
@@ -480,6 +489,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
 
@@ -565,6 +576,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const next = [...events]
@@ -587,6 +600,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
         const next = [...events]

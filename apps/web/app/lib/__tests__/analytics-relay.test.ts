@@ -11,6 +11,7 @@ import {
   buildSubscriptionManagementEntryPayload,
   SIGNUP_STEPS,
 } from '../public-analytics'
+import { buildWebVitalPayload, WEB_VITAL_METRICS, WEB_VITAL_RATINGS, WEB_VITALS_PAGES } from '../web-vitals'
 
 const earlyOffer = {
   planId: 'early_annual' as const,
@@ -269,5 +270,56 @@ describe('relay client address', () => {
     expect(CLOUDFLARE_IP_RANGES).toHaveLength(22)
     expect(CLOUDFLARE_IP_RANGES).toContain('131.0.72.0/22')
     expect(CLOUDFLARE_IP_RANGES).toContain('2c0f:f248::/32')
+  })
+})
+
+describe('relay public-page speed ratings', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  it.each(WEB_VITALS_PAGES.flatMap((page) => WEB_VITAL_METRICS.flatMap((metric) => WEB_VITAL_RATINGS.map((rating) => [page, metric, rating] as const))))(
+    'forwards %s %s %s without User-Agent or client address when WEB_VITALS_FORWARD=on',
+    async (page, metric, rating) => {
+      hostedEnv('false')
+      vi.stubEnv('WEB_VITALS_FORWARD', 'on')
+      const fetcher = upstream()
+      const payload = buildWebVitalPayload(metric, rating, page)
+      expect((await relayAnalyticsEvent(relayRequest(payload), fetcher)).status).toBe(202)
+      const [, init] = fetcher.mock.calls[0]
+      expect(JSON.parse(String(init?.body))).toEqual(payload)
+      const headers = new Headers(init?.headers)
+      expect([...headers.keys()].sort()).toEqual(['content-type', 'user-agent'])
+      expect(headers.get('user-agent')).toBe('')
+      expect(String(init?.body)).not.toContain(VISITOR)
+    },
+  )
+
+  it.each([[undefined], ['off'], ['true'], ['ON']])('forwards nothing when WEB_VITALS_FORWARD is %s', async (flag) => {
+    hostedEnv('true')
+    vi.stubEnv('WEB_VITALS_FORWARD', flag)
+    const fetcher = upstream()
+    expect((await relayAnalyticsEvent(relayRequest(buildWebVitalPayload('LCP', 'good', '/login')), fetcher)).status).toBe(204)
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a logged-in page', { ...buildWebVitalPayload('LCP', 'good', '/login'), url: 'https://app.silentsuite.io/calendar', props: { metric: 'LCP', rating: 'good', page: '/calendar' } }],
+    ['mismatched page prop', { ...buildWebVitalPayload('LCP', 'good', '/login'), props: { metric: 'LCP', rating: 'good', page: '/signup' } }],
+    ['a raw value', { ...buildWebVitalPayload('LCP', 'good', '/login'), props: { metric: 'LCP', rating: 'good', page: '/login', value: 1234 } }],
+    ['an unlisted metric', { ...buildWebVitalPayload('LCP', 'good', '/login'), props: { metric: 'FCP', rating: 'good', page: '/login' } }],
+    ['an unknown rating', { ...buildWebVitalPayload('LCP', 'good', '/login'), props: { metric: 'LCP', rating: 'fast', page: '/login' } }],
+  ])('drops a Web Vital with %s', async (_label, body) => {
+    hostedEnv('true')
+    vi.stubEnv('WEB_VITALS_FORWARD', 'on')
+    const fetcher = upstream()
+    expect((await relayAnalyticsEvent(relayRequest(body), fetcher)).status).toBe(204)
+    expect(fetcher).not.toHaveBeenCalled()
+  })
+
+  it('forwards nothing in a self-hosted build', async () => {
+    vi.stubEnv('NEXT_PUBLIC_SELF_HOSTED', 'true')
+    vi.stubEnv('WEB_VITALS_FORWARD', 'on')
+    const fetcher = upstream()
+    expect((await relayAnalyticsEvent(relayRequest(buildWebVitalPayload('CLS', 'poor', '/signup')), fetcher)).status).toBe(204)
+    expect(fetcher).not.toHaveBeenCalled()
   })
 })
