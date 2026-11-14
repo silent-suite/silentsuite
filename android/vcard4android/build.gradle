@@ -1,11 +1,4 @@
 
-buildscript {
-    ext.versions = [
-        // latest Apache Commons versions that don't require Java 8 (Android 7)
-        commonsText: '1.3'
-    ]
-}
-
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
@@ -53,8 +46,6 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
 
     implementation "androidx.annotation:annotation:${androidX.annotation}"
-    // noinspection GradleDependency
-    implementation "org.apache.commons:commons-text:${versions.commonsText}"
 
     // ez-vcard to parse/generate vCards
     api('com.googlecode.ez-vcard:ez-vcard:0.11.2') {
