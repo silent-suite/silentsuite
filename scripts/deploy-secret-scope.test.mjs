@@ -37,6 +37,10 @@ function split(text) {
   const header = text.slice(0, marker + 1)
   const body = text.slice(marker + '\njobs:\n'.length)
   const heads = [...body.matchAll(/^ {2}([A-Za-z0-9_-]+):\n/gm)]
+  // Fail closed: every two-space line must be a plain job ID this splitter
+  // understands, so a quoted or flow-style job cannot hide from the scan.
+  const unsupported = body.split('\n').filter(line => /^ {2}\S/.test(line) && !/^ {2}#/.test(line) && !/^ {2}[A-Za-z0-9_-]+:$/.test(line))
+  assert.deepEqual(unsupported, [], 'jobs must use plain unquoted IDs on their own line')
   const jobs = new Map(heads.map((head, i) => [
     head[1],
     body.slice(head.index + head[0].length, i + 1 < heads.length ? heads[i + 1].index : body.length),
@@ -110,6 +114,14 @@ test('the preview jobs read no production deploy secret', () => {
     const job = split(read(name)).jobs.get(jobName)
     assert.ok(job, `${name} must keep ${jobName}`)
     assert.deepEqual(referenced(job, PRODUCTION_SECRETS), [], `${name}#${jobName}`)
+  }
+})
+
+test('the job splitter refuses job IDs it cannot scan', () => {
+  const unprotected = 'on: push\njobs:\n  JOB:\n    runs-on: ubuntu-latest\n    env:\n      K: ${{ secrets.VPS_SSH_KEY }}\n'
+  assert.ok(referenced(split(unprotected.replace('JOB', 'plain')).jobs.get('plain'), PRODUCTION_SECRETS).length === 1)
+  for (const id of ['"quoted"', "'single'", 'flow: { runs-on: x }', 'odd id']) {
+    assert.throws(() => split(unprotected.replace('JOB:', id.includes(':') ? id : `${id}:`)), /plain unquoted IDs/, id)
   }
 })
 
