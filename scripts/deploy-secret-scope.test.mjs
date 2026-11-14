@@ -41,6 +41,8 @@ function split(text) {
   // understands, so a quoted or flow-style job cannot hide from the scan.
   const unsupported = body.split('\n').filter(line => /^ {2}\S/.test(line) && !/^ {2}#/.test(line) && !/^ {2}[A-Za-z0-9_-]+:$/.test(line))
   assert.deepEqual(unsupported, [], 'jobs must use plain unquoted IDs on their own line')
+  const indents = body.split('\n').filter(line => line.trim() && !line.trim().startsWith('#')).map(line => line.match(/^ */)[0].length)
+  assert.equal(Math.min(...indents), 2, 'jobs must be indented by exactly two spaces')
   const jobs = new Map(heads.map((head, i) => [
     head[1],
     body.slice(head.index + head[0].length, i + 1 < heads.length ? heads[i + 1].index : body.length),
@@ -48,8 +50,9 @@ function split(text) {
   return { header, jobs }
 }
 
+// Expression contexts, property names and functions are case-insensitive.
 const referenced = (text, names) => names.filter(name =>
-  new RegExp(`secrets\\s*(?:\\.\\s*${name}\\b|\\[\\s*['"]${name}['"]\\s*\\])`).test(text))
+  new RegExp(`secrets\\s*(?:\\.\\s*${name}\\b|\\[\\s*['"]${name}['"]\\s*\\])`, 'i').test(text))
 
 function environment(job) {
   const lines = [...job.matchAll(/^ {4}environment:(.*)$/gm)]
@@ -64,7 +67,9 @@ const reusableCallee = job => job.match(/^ {4}uses: (\S+)$/m)?.[1] ?? null
 
 test('no workflow hands over the whole secrets context', () => {
   for (const name of workflowNames()) {
-    assert.doesNotMatch(read(name), /secrets:\s*inherit|toJSON\(\s*secrets\s*\)/, `${name} must map secrets by name`)
+    const text = read(name)
+    assert.doesNotMatch(text, /secrets:\s*inherit|tojson\(\s*secrets\s*\)/i, `${name} must map secrets by name`)
+    assert.doesNotMatch(text, /secrets\s*\[\s*[^'"\s]/i, `${name} must not index secrets dynamically`)
   }
 })
 
@@ -123,6 +128,7 @@ test('the job splitter refuses job IDs it cannot scan', () => {
   for (const id of ['"quoted"', "'single'", 'flow: { runs-on: x }', 'odd id']) {
     assert.throws(() => split(unprotected.replace('JOB:', id.includes(':') ? id : `${id}:`)), /plain unquoted IDs/, id)
   }
+  assert.throws(() => split(unprotected.replace(/^ {2}/gm, '    ').replace('JOB', 'deep')), /exactly two spaces/)
 })
 
 test('the scanner sees both dot and index secret syntax', () => {
@@ -130,4 +136,5 @@ test('the scanner sees both dot and index secret syntax', () => {
   assert.deepEqual(referenced("a: ${{ secrets['CLOUDFLARE_API_TOKEN'] }}", PRODUCTION_SECRETS), ['CLOUDFLARE_API_TOKEN'])
   assert.deepEqual(referenced("a: ${{ secrets.PREVIEW_VPS_SSH_KEY }}", PRODUCTION_SECRETS), [])
   assert.deepEqual(referenced("a: ${{ secrets.VPS_HOSTNAME }}", PRODUCTION_SECRETS), [])
+  assert.deepEqual(referenced("a: ${{ SECRETS.vps_ssh_key }}", PRODUCTION_SECRETS), ['VPS_SSH_KEY'])
 })
