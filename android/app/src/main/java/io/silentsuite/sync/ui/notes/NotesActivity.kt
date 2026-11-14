@@ -50,7 +50,8 @@ class NotesActivity : BaseActivity() {
                 replace(R.id.fragment_container, NotebookListFragment.newInstance(resolved, expectedCreationId))
             }
             // Opening the screen is one of the Notes sync triggers; rotation is not. It is not a
-            // user sync gesture, so it honors the account's Wi-Fi-only restriction.
+            // user sync gesture, so the run is automatic: it needs the automatic Notes network
+            // setting and the account's own Wi-Fi rule.
             NotesSyncCoordinator.request(applicationContext, resolved, expectedCreationId, NotesSyncPolicy.Trigger.SCREEN_OPEN)
         }
     }

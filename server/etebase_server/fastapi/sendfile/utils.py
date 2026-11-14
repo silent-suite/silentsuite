@@ -53,9 +53,9 @@ def _sanitize_path(filepath):
     try:
         filepath_abs.relative_to(path_root)
     except ValueError:
-        raise HttpError(
-            "generic", "{} wrt {} is impossible".format(filepath_abs, path_root), status_code=status.HTTP_404_NOT_FOUND
-        )
+        # Keep server paths out of the response; operators get them in the log.
+        logger.warning("sendfile: %s is outside SENDFILE_ROOT %s", filepath_abs, path_root)
+        raise HttpError("generic", "Not found.", status_code=status.HTTP_404_NOT_FOUND)
 
     return filepath_abs
 
@@ -76,7 +76,8 @@ def sendfile(filename, mimetype="application/octet-stream", encoding=None):
     _sendfile = _get_sendfile()
 
     if not filepath_obj.exists():
-        raise HttpError("does_not_exist", '"%s" does not exist' % filepath_obj, status_code=status.HTTP_404_NOT_FOUND)
+        logger.warning("sendfile: %s does not exist", filepath_obj)
+        raise HttpError("does_not_exist", "Not found.", status_code=status.HTTP_404_NOT_FOUND)
 
     response = _sendfile(filepath_obj, mimetype=mimetype)
 
