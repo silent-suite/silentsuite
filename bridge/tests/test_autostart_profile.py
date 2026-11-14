@@ -722,3 +722,42 @@ def test_macos_remove_retains_profile(env, capsys):
 # The production CLI journey (install -> clean-shell restart) lives in
 # test_autostart_clean_shell_cli.py so it also collects and runs against the
 # pre-fix base source as a behavioural RED proof.
+
+
+class _LingerOff(FakeServiceManager):
+    """systemd works; lingering is off and the named tools may be missing."""
+
+    def __call__(self, argv, **kwargs):
+        result = super().__call__(argv, **kwargs)
+        if argv[0] == "loginctl":
+            result.stdout = b"Linger=no"
+        return result
+
+
+@pytest.mark.parametrize("missing", ["loginctl", "sudo"])
+def test_linux_install_succeeds_when_linger_tools_are_missing(env, capsys, missing):
+    manager = _LingerOff()
+    manager.missing = {missing}
+    env.monkeypatch.setattr(autostart.subprocess, "run", manager)
+    env.monkeypatch.setenv("USER", "synthetic-user")
+
+    assert autostart.install_autostart() == 0
+
+    out = capsys.readouterr().out
+    assert "systemd accepted the enable/start request." in out
+    assert "sudo loginctl enable-linger synthetic-user" in out
+    assert env.unit.exists()
+
+
+def test_linux_linger_uses_login_name_when_user_is_unset(env, capsys):
+    manager = _LingerOff()
+    env.monkeypatch.setattr(autostart.subprocess, "run", manager)
+    env.monkeypatch.delenv("USER", raising=False)
+    env.monkeypatch.setattr(autostart.getpass, "getuser", lambda: "login-name")
+
+    assert autostart.install_autostart() == 0
+
+    linger_calls = [call for call in manager.calls if "loginctl" in call]
+    assert linger_calls
+    assert all("login-name" in call and "" not in call for call in linger_calls)
+    assert "Enabled linger for login-name" in capsys.readouterr().out

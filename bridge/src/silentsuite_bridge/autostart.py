@@ -18,6 +18,7 @@ Usage:
     silentsuite-bridge --remove-autostart
 """
 
+import getpass
 import logging
 import os
 import plistlib
@@ -244,24 +245,40 @@ def _enable_linger() -> None:
     # systemd user units don't survive reboot unless the user has lingering enabled.
     # Try it non-interactively with sudo -n; if that needs a password we just tell
     # the user how to run it themselves. This is best-effort — the service still
-    # works for the current session either way.
+    # works for the current session either way, so a missing loginctl or sudo
+    # (or an unknown user name) only changes the hint, never the result.
     user = os.environ.get("USER", "")
-    linger_check = subprocess.run(
-        ["loginctl", "show-user", user, "--property=Linger"],
-        check=False, capture_output=True,
-    )
-    if b"Linger=yes" in linger_check.stdout:
+    if not user:
+        try:
+            user = getpass.getuser()
+        except Exception:
+            user = ""
+    if not user:
+        _print_linger_hint("$USER")
         return
-    r = subprocess.run(
-        ["sudo", "-n", "loginctl", "enable-linger", user],
-        check=False, capture_output=True,
-    )
-    if r.returncode == 0:
+    try:
+        linger_check = subprocess.run(
+            ["loginctl", "show-user", user, "--property=Linger"],
+            check=False, capture_output=True,
+        )
+        if b"Linger=yes" in linger_check.stdout:
+            return
+        r = subprocess.run(
+            ["sudo", "-n", "loginctl", "enable-linger", user],
+            check=False, capture_output=True,
+        )
+    except OSError:
+        r = None
+    if r is not None and r.returncode == 0:
         print(f"Enabled linger for {user} so the bridge survives logout/reboot.")
     else:
-        print("")
-        print("Note: to keep the bridge running after logout/reboot, run:")
-        print(f"  sudo loginctl enable-linger {user}")
+        _print_linger_hint(user)
+
+
+def _print_linger_hint(user: str) -> None:
+    print("")
+    print("Note: to keep the bridge running after logout/reboot, run:")
+    print(f"  sudo loginctl enable-linger {user}")
 
 
 def remove_autostart_linux() -> int:
