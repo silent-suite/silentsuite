@@ -66,8 +66,47 @@ class TasksSyncManager(
         return localCollection as LocalTaskList
     }
 
+    /**
+     * A task list row that no complete listing has filled yet is listed from the start, as the
+     * collection's saved sync token may already be past entries this row never received.
+     */
+    override fun replayFromStart(): Boolean {
+        if (localTaskList().populated())
+            return false
+        Logger.log.info("Listing this task list from the start, as it isn't marked complete")
+        return true
+    }
+
+    override fun onReplayCompleted() {
+        localTaskList().markPopulated()
+    }
+
+    /** What this run does with [item] given a local change of it that isn't uploaded yet. */
+    private fun replayLocalChange(item: Item, local: LocalTask?): ReplayLocalChange {
+        val pending = replaying && local?.id?.let { localTaskList().hasPendingChange(it) } == true
+        return replayLocalChange(replaying, item.isDeleted, pending)
+    }
+
+    override fun keepsLocalChange(item: Item): Boolean {
+        if (!replaying || !item.isDeleted)
+            return false
+        val keep = replayLocalChange(item, localCollection!!.findByFilename(item.uid)) == ReplayLocalChange.SKIP_APPLY_AND_CACHE
+        if (keep)
+            Logger.log.info("Keeping a local change over a server deletion during this listing")
+        return keep
+    }
+
     override fun processItem(item: Item) {
         val local = localCollection!!.findByFilename(item.uid)
+
+        if (replayLocalChange(item, local) == ReplayLocalChange.SKIP_APPLY) {
+            Logger.log.info("Keeping a local change made during this listing for the next upload")
+            return
+        }
+        if (replayKeepsStoredRevision(replaying, item.isDeleted, local?.eTag, item.etag)) {
+            // A listing from the start fills in missing tasks; it doesn't rewrite ones already current.
+            return
+        }
 
         if (!item.isDeleted) {
             val inputReader = StringReader(String(item.content))
@@ -110,3 +149,10 @@ class TasksSyncManager(
         return localTask
     }
 }
+
+/**
+ * Whether a listing from the start leaves a local task alone because it already holds the listed
+ * revision. Outside such a listing every item is applied as before.
+ */
+internal fun replayKeepsStoredRevision(replaying: Boolean, remoteDeleted: Boolean, localETag: String?, remoteETag: String?): Boolean =
+    replaying && !remoteDeleted && localETag != null && localETag == remoteETag
