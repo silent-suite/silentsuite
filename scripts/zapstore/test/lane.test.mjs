@@ -442,7 +442,10 @@ test('zsp invocation is exact: pinned binary facts, flags, unsigned vs live, bun
   const npub = 'npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35'
   assert.equal(zspEnv({ mode: 'unsigned', npub, xdgConfigHome: '/w/xdg' }).SIGN_WITH, npub)
   assert.throws(() => zspEnv({ mode: 'live', signWith: undefined, xdgConfigHome: '/w/xdg' }), /missing; refusing/)
-  assert.throws(() => zspEnv({ mode: 'live', signWith: 'nsec1' + 'q'.repeat(58), xdgConfigHome: '/w/xdg' }), /must be a bunker:\/\/ URL/)
+  assert.equal(zspEnv({ mode: 'live', signWith: ` nsec1${'q'.repeat(58)}\n`, xdgConfigHome: '/w/xdg' }).SIGN_WITH, 'nsec1' + 'q'.repeat(58))
+  assert.throws(() => zspEnv({ mode: 'live', signWith: 'nsec1' + 'q'.repeat(10), xdgConfigHome: '/w/xdg' }), /bunker:\/\/ URL or the publisher nsec1 key/)
+  assert.throws(() => zspEnv({ mode: 'live', signWith: 'a'.repeat(64), xdgConfigHome: '/w/xdg' }), /bunker:\/\/ URL or the publisher nsec1 key/)
+  assert.throws(() => zspEnv({ mode: 'signed-offline', signWith: 'nsec1' + 'q'.repeat(58), xdgConfigHome: '/w/xdg' }), /signing rehearsal/)
   assert.equal(zspEnv({ mode: 'live', signWith: 'bunker://' + 'a'.repeat(64) + '?relay=wss://r&secret=s', xdgConfigHome: '/w/xdg' }).SIGN_WITH.startsWith('bunker://'), true)
   assert.throws(() => zspEnv({ mode: 'live', signWith: 'bunker://x', xdgConfigHome: '' }), /XDG_CONFIG_HOME/)
 })
@@ -1196,4 +1199,19 @@ test('read-back re-reads only while the relay may still be indexing, bounded, an
     assert.equal(result.assessment.outcome, outcome)
     assert.equal(readbackMaySettle({ outcome }), false, outcome)
   }
+})
+
+test('nsec preflight: derives the account locally, binds only the approved publisher and never echoes the key', async () => {
+  const { decodeNsec, requireNsecAccount } = await import('../lib/nsec.mjs')
+  const schnorr = await loadSchnorr()
+  // NIP-19 test vector.
+  const vector = 'nsec180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsgyumg0'
+  assert.equal(Buffer.from(decodeNsec(vector)).toString('hex'), '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d')
+  const expected = Buffer.from(schnorr.getPublicKey(decodeNsec(vector))).toString('hex')
+  assert.deepEqual(await requireNsecAccount({ nsec: vector, expectedPubkeyHex: expected, schnorr }), { accountPubkey: expected, remoteSigner: 'local nsec' })
+  await assert.rejects(requireNsecAccount({ nsec: vector, expectedPubkeyHex: 'b'.repeat(64), schnorr }), (error) => /not the approved publisher/.test(error.message) && !error.message.includes(vector))
+  const flipped = vector.slice(0, -1) + (vector.endsWith('0') ? '2' : '0')
+  assert.throws(() => decodeNsec(flipped), (error) => /checksum/.test(error.message) && !error.message.includes(flipped))
+  assert.throws(() => decodeNsec('npub1' + vector.slice(5)), /well-formed nsec1/)
+  assert.throws(() => decodeNsec('nsec1' + 'q'.repeat(10)), /well-formed nsec1/)
 })
