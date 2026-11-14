@@ -1086,6 +1086,7 @@ def test_every_workflow_action_is_pinned_to_an_immutable_commit():
 
 BRIDGE_BUILD_REQUIREMENTS = ROOT / "bridge" / "requirements-build.txt"
 BRIDGE_LOCK = ROOT / "bridge" / "requirements-lock.txt"
+BRIDGE_ETEBASE_BUILD_REQUIREMENTS = ROOT / "bridge" / "requirements-etebase-build.txt"
 BRIDGE_TEST_LINUX_WORKFLOW = WORKFLOW_DIR / "test-bridge-linux.yml"
 HASHED_BUILD_INSTALL = (
     "python -m pip install --disable-pip-version-check --require-hashes "
@@ -1130,14 +1131,17 @@ def assert_hash_locked_bridge_install(script: str) -> None:
     # No range resolution of the bridge's dependencies and no fallback.
     assert ".[" not in script
     assert "||" not in script
-    # Every install is either hash-checked from a file, or a local or pinned
-    # source build that resolves nothing: no dependencies and no isolated build
-    # environment, with its build requirements checked against what the lock
-    # already installed.
+    # Every install is hash-checked from a file, a source build that resolves
+    # nothing (no dependencies, no isolated build environment, build requirements
+    # checked against what is already installed), or a wheel this job just built.
+    source_build = ("--no-deps", "--no-build-isolation", "--check-build-dependencies")
     for line in script.splitlines():
-        if re.search(r"\bpip install\b", line):
-            source_build = ("--no-deps", "--no-build-isolation", "--check-build-dependencies")
-            assert "--require-hashes" in line or all(flag in line for flag in source_build), line
+        if re.search(r"\bpip (?:install|wheel)\b", line):
+            assert (
+                "--require-hashes" in line
+                or all(flag in line for flag in source_build)
+                or ("--no-deps" in line and "--no-index" in line and line.rstrip().endswith(".whl"))
+            ), line
 
 
 def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
@@ -1147,13 +1151,29 @@ def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
     for script in (native, qemu):
         assert_hash_locked_bridge_install(script)
 
-    # macOS arm64 builds etebase from a pinned upstream commit after the lock,
-    # without letting it resolve dependencies of its own.
-    etebase = native.index("git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b")
-    assert native.index(HASHED_LOCK_INSTALL) < etebase < native.index(BRIDGE_ONLY_INSTALL)
-    etebase_install = native[native.rindex("\n", 0, etebase) : etebase]
-    for flag in ("--no-deps", "--no-build-isolation", "--check-build-dependencies"):
-        assert flag in etebase_install
+    # macOS arm64 builds etebase from a pinned upstream commit, after the lock,
+    # into a wheel in a throwaway virtualenv that alone gets the hash-locked
+    # build tools; the PyInstaller environment only installs the built wheel.
+    venv_python = '"$ETEBASE_BUILD/venv/bin/python" -m pip'
+    build_venv = native.index('python -m venv "$ETEBASE_BUILD/venv"')
+    tools = native.index(
+        f"{venv_python} install --disable-pip-version-check --require-hashes "
+        "--only-binary=:all: -r requirements-etebase-build.txt"
+    )
+    wheel = native.index(
+        f"{venv_python} wheel --disable-pip-version-check --no-deps --no-build-isolation "
+        '--check-build-dependencies -w "$ETEBASE_BUILD/wheel" '
+        '"git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"'
+    )
+    install = native.index(
+        'python -m pip install --disable-pip-version-check --no-deps --no-index "$ETEBASE_BUILD"/wheel/etebase-*.whl'
+    )
+    assert native.index(HASHED_LOCK_INSTALL) < build_venv < tools < wheel < install < native.index(BRIDGE_ONLY_INSTALL)
+    assert native.count("requirements-etebase-build.txt") == 1
+    assert native.count("etesync/etebase-py.git") == 1
+    assert hashed_pin_names(BRIDGE_ETEBASE_BUILD_REQUIREMENTS) >= {"setuptools", "wheel", "setuptools-rust"}
+    # The newer setuptools those tools need never reaches the bundled environment.
+    assert not {"setuptools", "wheel", "setuptools-rust"} & hashed_pin_names(BRIDGE_LOCK)
 
     assert {"pip", "pyinstaller", "pyinstaller-hooks-contrib"} <= hashed_pin_names(BRIDGE_BUILD_REQUIREMENTS)
 

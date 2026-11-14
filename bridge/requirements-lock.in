@@ -8,13 +8,6 @@
 hatchling
 editables
 #
-# The macOS arm64 build compiles etebase from a pinned etebase-py commit (PyPI
-# has no wheel for it) with --no-build-isolation. These are that commit's
-# build-system requirements, locked for that platform only.
-setuptools ; sys_platform == 'darwin' and platform_machine == 'arm64'
-wheel ; sys_platform == 'darwin' and platform_machine == 'arm64'
-setuptools-rust ; sys_platform == 'darwin' and platform_machine == 'arm64'
-#
 # The pyproject.toml requirements this lock was compiled from, one per line as
 # "<section>: <requirement>". tests/test_requirements_lock.py compares them with
 # pyproject.toml, so a change there fails until the lock is regenerated with the

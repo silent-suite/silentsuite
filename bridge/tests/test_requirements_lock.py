@@ -29,6 +29,14 @@ PYPROJECT = BRIDGE_ROOT / "pyproject.toml"
 LOCK = BRIDGE_ROOT / "requirements-lock.txt"
 LOCK_INPUTS = BRIDGE_ROOT / "requirements-lock.in"
 LOCK_OVERRIDES = BRIDGE_ROOT / "requirements-lock-overrides.txt"
+ETEBASE_BUILD_LOCK = BRIDGE_ROOT / "requirements-etebase-build.txt"
+ETEBASE_BUILD_INPUTS = BRIDGE_ROOT / "requirements-etebase-build.in"
+# build-system.requires of etebase-py at the pinned commit c5afd1a546b8f030d1b97bcecfc5e8bf9799827b.
+ETEBASE_BUILD_SYSTEM = {"setuptools", "wheel", "setuptools-rust"}
+ETEBASE_BUILD_COMMAND = (
+    "uv pip compile requirements-etebase-build.in --python-platform aarch64-apple-darwin "
+    "--python-version 3.10 --only-binary :all: --generate-hashes -o requirements-etebase-build.txt"
+)
 
 PYPROJECT_SOURCE = "silentsuite-bridge (pyproject.toml)"
 INPUTS_SOURCE = "-r requirements-lock.in"
@@ -63,12 +71,12 @@ def lane_environment(lane: str) -> dict[str, str]:
     return environment
 
 
-def parse_lock() -> list[dict]:
+def parse_lock(path: Path = LOCK) -> list[dict]:
     """Return one entry per pinned line: name, version, marker, hashes, via sources."""
     entries: list[dict] = []
     current: dict | None = None
     in_via = False
-    for raw in LOCK.read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
+    for raw in path.read_text(encoding="utf-8").replace("\\\n", " ").splitlines():
         line = raw.strip()
         if not line:
             continue
@@ -248,5 +256,19 @@ def test_each_release_lane_gets_exactly_one_pin_per_applicable_requirement():
                 assert name not in selected
                 continue
             assert name in selected, (lane, name)
-        # Only the macOS arm64 lane builds etebase from source.
-        assert ("setuptools-rust" in selected) is (lane == "macos-arm64"), lane
+        # The etebase build tools, and the newer setuptools they need, live in their
+        # own lock and never reach the environment PyInstaller bundles.
+        assert not ETEBASE_BUILD_SYSTEM & set(selected), lane
+
+
+def test_etebase_build_lock_holds_exactly_the_pinned_commit_build_requirements():
+    assert ETEBASE_BUILD_COMMAND in ETEBASE_BUILD_LOCK.read_text(encoding="utf-8").splitlines()[1]
+    inputs = {canonicalize_name(r.name) for r in requirement_lines(ETEBASE_BUILD_INPUTS)}
+    assert inputs == ETEBASE_BUILD_SYSTEM
+    entries = parse_lock(ETEBASE_BUILD_LOCK)
+    assert {e["name"] for e in entries if "-r requirements-etebase-build.in" in e["via"]} == inputs
+    for entry in entries:
+        assert entry["marker"] is None, entry["name"]
+        assert entry["hashes"], entry["name"]
+        for item in entry["hashes"]:
+            assert re.fullmatch(r"--hash=sha256:[0-9a-f]{64}", item), (entry["name"], item)
