@@ -55,7 +55,8 @@
     "manageCalendars": "Gestisci calendari",
     "manageAddressBooks": "Gestisci rubriche",
     "manageTaskLists": "Gestisci elenchi attività",
-    "manageNotebooks": "Gestisci blocchi appunti"
+    "manageNotebooks": "Gestisci blocchi appunti",
+    "contactCount": "{count, plural, one {# contatto} other {# contatti}}"
   },
   "Notes": {
     "title": "Note",

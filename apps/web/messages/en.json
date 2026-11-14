@@ -55,7 +55,8 @@
     "manageCalendars": "Manage calendars",
     "manageAddressBooks": "Manage address books",
     "manageTaskLists": "Manage task lists",
-    "manageNotebooks": "Manage notebooks"
+    "manageNotebooks": "Manage notebooks",
+    "contactCount": "{count, plural, one {# contact} other {# contacts}}"
   },
   "Notes": {
     "title": "Notes",
