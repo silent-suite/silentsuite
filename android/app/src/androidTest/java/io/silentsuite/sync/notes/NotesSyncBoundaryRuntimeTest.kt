@@ -3302,11 +3302,11 @@ class NotesSyncBoundaryRuntimeTest {
     /**
      * A Discard confirmation answered after the notebook accepts writes again deletes nothing: the change then waits on
      * its notebook's row, where a run sends it, and is no longer listed under Unsynced text. The confirmation was
-     * opened for a change in a read-only notebook, which a run would never send.
+     * opened for a change in a read-only notebook, which a run would never send. No run starts here: a run would hold
+     * that change, and held text keeps Discard whatever its notebook allows, since only Try again sends it.
      */
     @Test fun aDiscardAnsweredAfterTheNotebookAcceptsWritesAgainDeletesNothing() {
         val account = newAccount("gen-reopen")
-        val identity = ExactAccountIdentity(account.type, account.name, "gen-reopen")
         val shared = uploadNotebook("Shared")
         val note = uploadNote(shared, "Plan", "Server text", mtime = 1_000L)
         fake.setAccessLevel(shared, 0L)
@@ -3319,10 +3319,10 @@ class NotesSyncBoundaryRuntimeTest {
         val writable = server.collectionManager.fetch(shared)
         fake.setAccessLevel(shared, 0L)
         HttpClient.testInterceptor = okhttp3.Interceptor { throw java.io.IOException("the server is stopped") }
+        NotesSyncCoordinator.runnerOverride = { _, _, _, _ -> }
         try {
             ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-reopen")).use { scenario ->
                 waitUntil("the Unsynced text row to show") { notebookList(scenario)?.renderedUnsyncedText == 1 }
-                awaitSettled(identity)
                 scenario.onActivity { it.findViewById<View>(R.id.notebooks_unsynced).performClick() }
                 waitUntil("the change to show") { heldText(scenario)?.renderedRows?.size == 1 }
                 assertTrue("a change in a read-only notebook offers Discard", heldText(scenario)!!.renderedRows!!.single().canDiscard)
@@ -3332,9 +3332,10 @@ class NotesSyncBoundaryRuntimeTest {
                 cache(account).let { cache -> synchronized(cache) { cache.collectionSet(server.collectionManager, writable) } }
                 scenario.onActivity { held(it).discardDialog!!.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick() }
                 waitUntil("the screen to list nothing") { heldText(scenario)?.renderedRows?.isEmpty() == true }
-                assertEquals("nothing was deleted", before, (store.read(note.uid) as PendingNotesStore.Read.Present).entry)
+                assertEquals("nothing was deleted", before, store.read(note.uid).let { (it as? PendingNotesStore.Read.Present)?.entry })
             }
         } finally {
+            NotesSyncCoordinator.runnerOverride = null
             HttpClient.testInterceptor = fake
         }
     }
