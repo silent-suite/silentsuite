@@ -232,6 +232,31 @@ export function publicationAction({ assessment, publishable }) {
   }
 }
 
+// The relay indexes newly accepted events asynchronously, so a read-back a few
+// seconds after `zsp` returns can still show the pre-publication state. Seen
+// live for v0.5.17-beta and v0.5.18-beta.2: events written at T, read-back at
+// T+6 s `absent`, `complete-match` minutes later. Read-back therefore re-reads
+// (read-only, never re-publishes) while the state can still be "not indexed
+// yet": `absent` or any `partial`. Every other outcome is final at once;
+// `incomplete` already carries its own transport retries in queryRelay.
+export const READBACK_SETTLE_READS = 6
+export const READBACK_SETTLE_DELAY_MS = 10000
+
+export function readbackMaySettle(assessment) {
+  return assessment.outcome === 'absent' || assessment.outcome === 'partial'
+}
+
+export async function settleReadback(read, { reads = READBACK_SETTLE_READS, delayMs = READBACK_SETTLE_DELAY_MS, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  let assessment = await read()
+  let count = 1
+  while (count < reads && readbackMaySettle(assessment)) {
+    await sleep(delayMs)
+    assessment = await read()
+    count += 1
+  }
+  return { assessment, reads: count }
+}
+
 export function requireReadbackComplete(assessment) {
   if (assessment.outcome !== 'complete-match') throw new Error(`read-back after publication is ${assessment.outcome}: ${assessment.detail}`)
   return true

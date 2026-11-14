@@ -81,9 +81,24 @@ def clamp_list_limit(limit: int) -> int:
     return max(1, min(limit, MAX_LIST_LIMIT))
 
 
-def get_user_username_email_kwargs(username: str):
-    field_name = User.EMAIL_FIELD if "@" in username else User.USERNAME_FIELD
-    return {field_name + "__iexact": username.lower()}
+def get_user_by_username_or_email(queryset: QuerySet[UserType], username: str) -> UserType:
+    """Find the one user a login or invitation name refers to.
+
+    A name containing '@' may be a username (SilentSuite clients use the email as
+    the username) or an email. An exact username match always wins. Email is not
+    unique, so when only emails match and more than one user has that email, this
+    raises User.DoesNotExist, the same as no match, instead of letting
+    MultipleObjectsReturned surface as a server error.
+    """
+    try:
+        try:
+            return queryset.get(**{User.USERNAME_FIELD + "__iexact": username.lower()})
+        except User.DoesNotExist:
+            if "@" not in username:
+                raise
+            return queryset.get(**{User.EMAIL_FIELD + "__iexact": username.lower()})
+    except User.MultipleObjectsReturned:
+        raise User.DoesNotExist("User matching query does not exist.")
 
 
 PERMISSIONS_READ = [Depends(x) for x in app_settings.API_PERMISSIONS_READ]

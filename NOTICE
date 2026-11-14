@@ -1,0 +1,11 @@
+SilentSuite
+Copyright (c) 2026 SilentSuite
+
+SPDX-License-Identifier: AGPL-3.0-only
+
+This repository is licensed under the GNU Affero General Public License,
+version 3 only, unless a file or directory says otherwise. The full text is
+in LICENSE.
+
+The Android app in android/ is licensed under the GNU General Public License,
+version 3, and keeps its upstream copyright notices. See android/LICENSE.

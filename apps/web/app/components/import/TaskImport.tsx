@@ -8,7 +8,7 @@ import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
 import { isCompletedVTodo } from './import-mappers'
-import { taskICalDateFromProperty } from '@silentsuite/core'
+import { isKnownTimeZone, parseTodoistDate, taskICalDateFromProperty } from '@silentsuite/core'
 import type { TaskICalDate } from '@silentsuite/core'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
@@ -94,6 +94,7 @@ function parseTodoistCsv(csv: string): VTodo[] {
   const descIdx = header.findIndex((h) => h.toUpperCase() === 'DESCRIPTION')
   const priorityIdx = header.findIndex((h) => h.toUpperCase() === 'PRIORITY')
   const dateIdx = header.findIndex((h) => h.toUpperCase() === 'DATE')
+  const timezoneIdx = header.findIndex((h) => h.toUpperCase() === 'TIMEZONE')
   const typeIdx = header.findIndex((h) => h.toUpperCase() === 'TYPE')
 
   if (contentIdx === -1) return []
@@ -128,7 +129,14 @@ function parseTodoistCsv(csv: string): VTodo[] {
 
     if (dateIdx !== -1 && cols[dateIdx]) {
       const d = cols[dateIdx]!.trim()
-      if (d) {
+      // A date with a time of day keeps the time, anchored in the export's TIMEZONE when that
+      // is a known zone and floating otherwise.
+      const due = d ? parseTodoistDate(d) : undefined
+      if (due) {
+        todo.due = due
+        const timezone = timezoneIdx !== -1 ? cols[timezoneIdx]?.trim() : undefined
+        if (due.includes('T') && timezone && isKnownTimeZone(timezone)) todo.dueParams = { TZID: timezone }
+      } else if (d) {
         // Convert to iCal date format YYYYMMDD
         const parsed = new Date(d)
         if (!isNaN(parsed.getTime())) {

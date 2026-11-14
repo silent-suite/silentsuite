@@ -22,7 +22,7 @@ import { generateConfig, loadTemplate, parseZapstoreYaml, resolveChangelog, stag
 import * as nostr from '../lib/nostr.mjs'
 import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, tagValues, verifyEvent } from '../lib/nostr.mjs'
 import { collectFailures, recordResult } from '../lib/results.mjs'
-import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, legacyChannelAccepted, publicationAction, requireReadbackComplete } from '../lib/reconcile.mjs'
+import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, legacyChannelAccepted, publicationAction, readbackMaySettle, requireReadbackComplete, settleReadback } from '../lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, zspArgs, zspEnv, ZSP } from '../lib/zsp.mjs'
 import { materializeClientKey } from '../lib/bunker-key.mjs'
 import { redact } from '../lib/redact.mjs'
@@ -442,7 +442,10 @@ test('zsp invocation is exact: pinned binary facts, flags, unsigned vs live, bun
   const npub = 'npub1zuusadlzq6vehhaqhqpup0mhnx70q9cnf9hs48t79g6qn4wpg2eqsy8m35'
   assert.equal(zspEnv({ mode: 'unsigned', npub, xdgConfigHome: '/w/xdg' }).SIGN_WITH, npub)
   assert.throws(() => zspEnv({ mode: 'live', signWith: undefined, xdgConfigHome: '/w/xdg' }), /missing; refusing/)
-  assert.throws(() => zspEnv({ mode: 'live', signWith: 'nsec1' + 'q'.repeat(58), xdgConfigHome: '/w/xdg' }), /must be a bunker:\/\/ URL/)
+  assert.equal(zspEnv({ mode: 'live', signWith: ` nsec1${'q'.repeat(58)}\n`, xdgConfigHome: '/w/xdg' }).SIGN_WITH, 'nsec1' + 'q'.repeat(58))
+  assert.throws(() => zspEnv({ mode: 'live', signWith: 'nsec1' + 'q'.repeat(10), xdgConfigHome: '/w/xdg' }), /bunker:\/\/ URL or the publisher nsec1 key/)
+  assert.throws(() => zspEnv({ mode: 'live', signWith: 'a'.repeat(64), xdgConfigHome: '/w/xdg' }), /bunker:\/\/ URL or the publisher nsec1 key/)
+  assert.throws(() => zspEnv({ mode: 'signed-offline', signWith: 'nsec1' + 'q'.repeat(58), xdgConfigHome: '/w/xdg' }), /signing rehearsal/)
   assert.equal(zspEnv({ mode: 'live', signWith: 'bunker://' + 'a'.repeat(64) + '?relay=wss://r&secret=s', xdgConfigHome: '/w/xdg' }).SIGN_WITH.startsWith('bunker://'), true)
   assert.throws(() => zspEnv({ mode: 'live', signWith: 'bunker://x', xdgConfigHome: '' }), /XDG_CONFIG_HOME/)
 })
@@ -1166,4 +1169,49 @@ test('cli publish refuses without signer credentials before touching any key mat
   assert.notEqual(noCreds.status, 0)
   const unknown = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'nope'], { env: { PATH: process.env.PATH }, encoding: 'utf8' })
   assert.equal(unknown.status, 2)
+})
+
+test('read-back re-reads only while the relay may still be indexing, bounded, and never past a final outcome', async () => {
+  const sequence = (outcomes) => {
+    const calls = { reads: 0, sleeps: [] }
+    const read = async () => ({ outcome: outcomes[Math.min(calls.reads++, outcomes.length - 1)], detail: 'test' })
+    const sleep = async (ms) => { calls.sleeps.push(ms) }
+    return { read, sleep, calls }
+  }
+  // Indexed after two re-reads: complete-match, three reads, two waits.
+  let s = sequence(['absent', 'partial', 'complete-match'])
+  let result = await settleReadback(s.read, { sleep: s.sleep })
+  assert.equal(result.assessment.outcome, 'complete-match')
+  assert.equal(result.reads, 3)
+  assert.deepEqual(s.calls.sleeps, [10000, 10000])
+  assert.ok(requireReadbackComplete(result.assessment))
+  // Never indexed: stops at the bound and still fails closed.
+  s = sequence(['absent'])
+  result = await settleReadback(s.read, { sleep: s.sleep })
+  assert.equal(result.reads, 6)
+  assert.equal(s.calls.sleeps.length, 5)
+  assert.throws(() => requireReadbackComplete(result.assessment), /read-back after publication is absent/)
+  // Final outcomes are not re-read.
+  for (const outcome of ['complete-match', 'conflict', 'incomplete', 'app-drift', 'superseded', 'legacy-complete']) {
+    s = sequence([outcome, 'complete-match'])
+    result = await settleReadback(s.read, { sleep: s.sleep })
+    assert.equal(result.reads, 1, outcome)
+    assert.equal(result.assessment.outcome, outcome)
+    assert.equal(readbackMaySettle({ outcome }), false, outcome)
+  }
+})
+
+test('nsec preflight: derives the account locally, binds only the approved publisher and never echoes the key', async () => {
+  const { decodeNsec, requireNsecAccount } = await import('../lib/nsec.mjs')
+  const schnorr = await loadSchnorr()
+  // NIP-19 test vector.
+  const vector = 'nsec180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsgyumg0'
+  assert.equal(Buffer.from(decodeNsec(vector)).toString('hex'), '3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d')
+  const expected = Buffer.from(schnorr.getPublicKey(decodeNsec(vector))).toString('hex')
+  assert.deepEqual(await requireNsecAccount({ nsec: vector, expectedPubkeyHex: expected, schnorr }), { accountPubkey: expected, remoteSigner: 'local nsec' })
+  await assert.rejects(requireNsecAccount({ nsec: vector, expectedPubkeyHex: 'b'.repeat(64), schnorr }), (error) => /not the approved publisher/.test(error.message) && !error.message.includes(vector))
+  const flipped = vector.slice(0, -1) + (vector.endsWith('0') ? '2' : '0')
+  assert.throws(() => decodeNsec(flipped), (error) => /checksum/.test(error.message) && !error.message.includes(flipped))
+  assert.throws(() => decodeNsec('npub1' + vector.slice(5)), /well-formed nsec1/)
+  assert.throws(() => decodeNsec('nsec1' + 'q'.repeat(10)), /well-formed nsec1/)
 })

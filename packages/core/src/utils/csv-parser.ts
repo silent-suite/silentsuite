@@ -97,7 +97,26 @@ function splitCsvRecords(text: string): string[] {
  * Parse a Todoist date string into an iCal date or datetime string.
  * Handles formats like: "Oct 15 2025", "2025-10-15", "Oct 15 2025 14:30"
  */
-function parseTodoistDate(dateStr: string): string | undefined {
+/** Whether a `YYYYMMDD` or `YYYYMMDDTHHMMSS` value names a real calendar date and time. */
+function isRealDateValue(value: string): boolean {
+  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2}))?$/.exec(value);
+  if (!m) return false;
+  const [y, mo, d, h, mi, s] = m.slice(1).map((part) => Number(part ?? 0)) as number[];
+  const c = new Date(Date.UTC(y!, mo! - 1, d!, h!, mi!, s!));
+  return c.getUTCFullYear() === y && c.getUTCMonth() === mo! - 1 && c.getUTCDate() === d
+    && c.getUTCHours() === h && c.getUTCMinutes() === mi && c.getUTCSeconds() === s;
+}
+
+/**
+ * A Todoist DATE value as an iCal date (`YYYYMMDD`) or floating date-time (`YYYYMMDDTHHMMSS`).
+ * Undefined for other shapes and for dates or times that do not exist.
+ */
+export function parseTodoistDate(dateStr: string): string | undefined {
+  const value = parseTodoistDateShape(dateStr);
+  return value !== undefined && isRealDateValue(value) ? value : undefined;
+}
+
+function parseTodoistDateShape(dateStr: string): string | undefined {
   const trimmed = dateStr.trim();
   if (!trimmed) return undefined;
 
