@@ -537,7 +537,10 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     )
     assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 245, 247)
     assert tuple(len(api36[key]) for key in api36) == (33, 20, 7, 134, 53)
-    assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
+    assert ledger["shards"]["36:sibling-routes"] == [
+        "io.silentsuite.sync.ui.SiblingRoutesRuntimeTest",
+        "io.silentsuite.sync.ui.importlocal.DeviceImportRuntimeTest",
+    ]
     # The launcher recovery class runs on its own fresh API 36 emulator (#898).
     assert ledger["shards"]["36:launcher-recovery"] == ["io.silentsuite.sync.ui.LauncherActiveAccountRuntimeTest"]
     assert all(
