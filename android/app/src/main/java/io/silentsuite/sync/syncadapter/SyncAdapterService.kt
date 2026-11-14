@@ -206,7 +206,6 @@ abstract class SyncAdapterService : Service() {
                 val detailsIntent = notificationManager.detailsIntent
                 notificationManager.setAccount(account, accountCreationId)
                 if (e !is UnauthorizedException) {
-                    detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                     detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
                 }
 

@@ -2,8 +2,10 @@
 
 import Link from 'next/link'
 import { useRef, useState } from 'react'
+import { useBirthdaysEnabled } from '@/app/hooks/use-birthdays-enabled'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useExperimentalStore } from '@/app/stores/use-experimental-store'
@@ -82,7 +84,51 @@ function ExperimentalSettings() {
         {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
         {enabled && <Link href="/notes" className="inline-block text-sm text-[rgb(var(--primary))] underline">Open Notes</Link>}
       </div>
+      <BirthdaysSetting />
       <LanguageSetting />
     </section>
+  )
+}
+
+function BirthdaysSetting() {
+  const enabled = useBirthdaysEnabled()
+  const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
+  const hydrated = useExperimentalStore((state) => state.hydrated)
+  const [error, setError] = useState('')
+
+  const toggle = () => {
+    if (!fingerprint || !hydrated) return
+    setError('')
+    try {
+      useExperimentalStore.getState().setBirthdaysEnabled(fingerprint, !enabled)
+    } catch {
+      setError('Could not save this setting. Check that browser storage is available and try again.')
+      return
+    }
+    // A Birthdays calendar already turned on elsewhere is maintained straight away.
+    if (!enabled) requestBirthdayReconcile(getAccountEpoch())
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="enable-birthdays" className="font-medium text-[rgb(var(--foreground))]">Birthdays calendar</label>
+        <input
+          id="enable-birthdays"
+          type="checkbox"
+          role="switch"
+          checked={enabled}
+          disabled={!fingerprint || !hydrated}
+          onChange={toggle}
+          aria-describedby="birthdays-experiment-description"
+          className="h-5 w-5 shrink-0 accent-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+        />
+      </div>
+      <p id="birthdays-experiment-description" className="text-sm text-[rgb(var(--muted))]">
+        Adds a Birthdays calendar made from your contacts&rsquo; birthdays. You can turn it on in the calendar list.
+        This choice is saved for this account in this browser, not synced to other devices.
+      </p>
+      {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
+    </div>
   )
 }

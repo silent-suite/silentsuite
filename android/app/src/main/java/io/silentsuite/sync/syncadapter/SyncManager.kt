@@ -252,7 +252,6 @@ constructor(protected val context: Context, protected val account: Account, prot
             val detailsIntent = notificationManager.detailsIntent
             notificationManager.setAccount(account, accountCreationId)
             if (e !is UnauthorizedException) {
-                detailsIntent.putExtra(DebugInfoActivity.KEY_AUTHORITY, authority)
                 detailsIntent.putExtra(DebugInfoActivity.KEY_PHASE, syncPhase)
             }
 
@@ -375,6 +374,8 @@ constructor(protected val context: Context, protected val account: Account, prot
 
                     for (item in items) {
                         etebaseLocalCache.itemSet(itemMgr, colUid, item)
+                        // Cached now, so the kept copy of a new item is no longer needed.
+                        etebaseLocalCache.pendingCreateRemove(colUid, item.uid)
                     }
                 }
 
@@ -422,10 +423,17 @@ constructor(protected val context: Context, protected val account: Account, prot
     }
 
     private fun prepareLocalItemForUpload(colUid: String, local: T): Item {
-        val cacheItem = if (local.fileName != null) etebaseLocalCache.itemGet(itemMgr, colUid, local.fileName!!) else null
+        val fileName = local.fileName
+        val cacheItem = if (fileName != null) etebaseLocalCache.itemGet(itemMgr, colUid, fileName) else null
+        // A new item whose upload was never confirmed: the server may have it or not. Uploading the
+        // same item again (a batch does not check revisions) updates it or creates it, never a second one.
+        val pending = if (cacheItem == null && fileName != null) etebaseLocalCache.pendingCreateLoad(colUid, fileName) else null
         val item: Item
         if (cacheItem != null) {
             item = cacheItem.item
+            itemUpdateMtime(item)
+        } else if (pending != null) {
+            item = itemMgr.cacheLoad(pending)
             itemUpdateMtime(item)
         } else {
             val uid = local.uuid ?: UUID.randomUUID().toString()
@@ -434,6 +442,8 @@ constructor(protected val context: Context, protected val account: Account, prot
             meta.mtime = System.currentTimeMillis()
             item = itemMgr.create(meta, "")
 
+            // Kept before the row names the item, so a row that names it always has it to upload again.
+            etebaseLocalCache.pendingCreateSave(colUid, item.uid, itemMgr.cacheSave(item))
             local.prepareForUpload(item.uid, uid)
         }
 
@@ -499,7 +509,7 @@ constructor(protected val context: Context, protected val account: Account, prot
         val localList = localCollection!!.findDeleted()
         val ret = ArrayList<T>(localList.size)
 
-        val readOnly = cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
+        val readOnly = discardsLocalChanges()
         if (readOnly) {
             for (local in localList) {
                 Logger.log.info("Restoring locally deleted ${resourceType(local)} resource on a read only collection")
@@ -525,7 +535,7 @@ constructor(protected val context: Context, protected val account: Account, prot
 
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     protected open fun prepareDirty() {
-        val readOnly = cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
+        val readOnly = discardsLocalChanges()
         if (readOnly) {
             for (local in localDirty) {
                 Logger.log.info("Restoring locally modified ${resourceType(local)} resource on a read only collection")
@@ -553,6 +563,14 @@ constructor(protected val context: Context, protected val account: Account, prot
      */
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     protected open fun restoreLocalFromRemote(local: T): String? = null
+
+    /**
+     * Whether local changes to this collection are discarded (deletions undone, edits restored
+     * through [restoreLocalFromRemote]) instead of uploaded. By default only a read-only
+     * collection's are; a manager may add collections of its own, never remove read-only ones.
+     */
+    protected open fun discardsLocalChanges(): Boolean =
+        cachedCollection.col.accessLevel == CollectionAccessLevel.ReadOnly
 
     /** Whether this run lists the collection from its start rather than from the saved cursor. */
     protected var replaying: Boolean = false

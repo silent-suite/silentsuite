@@ -244,6 +244,10 @@ class CustomCertService: Service() {
 
             val knownDecision = synchronized(decisionLock) {
                 pendingDecisions[cert]?.let { pending ->
+                    // A non-interactive caller is rejected (below, outside the lock) instead of
+                    // waiting on another caller's prompt; the pending interactive waiters are untouched.
+                    if (!interactive)
+                        return@synchronized false
                     pending.callbacks += callback
                     return
                 }

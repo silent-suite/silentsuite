@@ -3,6 +3,8 @@
 import { create } from 'zustand'
 import { BILLING_API_URL, ETEBASE_SERVER_URL } from '@/app/lib/config'
 import { normalizeServerUrl } from '@/app/lib/server-url'
+import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
+import { projectBirthdayMarkers, resetBirthdayMarkers } from '@/app/lib/birthday-calendar/markers'
 import type {
   CollectionAccessLevel,
   CollectionType,
@@ -1581,12 +1583,25 @@ async function hydrateListStores(
   ])
   assertCurrentAccountEpoch(accountEpoch)
 
+  // Mark active Birthdays calendars (from their encrypted content marker) before they
+  // are listed, so a managed calendar is never shown as editable. Never throws.
+  const fingerprint = useEtebaseStore.getState().accountFingerprint
+  if (fingerprint) {
+    await projectBirthdayMarkers({
+      epoch: accountEpoch,
+      fingerprint,
+      isCurrent: () => isCurrentAccountEpoch(accountEpoch) && useEtebaseStore.getState().accountFingerprint === fingerprint,
+    }, collections.calendar)
+    assertCurrentAccountEpoch(accountEpoch)
+  }
+
   calendarListStore.useCalendarListStore.getState().replaceCalendarsFromRemote(
     collections.calendar.map((collection, index) => ({
       id: collection.uid,
       name: getCollectionName(collection, index === 0 ? 'Personal' : `Calendar ${index + 1}`),
       color: getCollectionColor(collection) || calendarListStore.DEFAULT_CALENDAR_COLORS[index % calendarListStore.DEFAULT_CALENDAR_COLORS.length],
       visible: true,
+      accessLevel: getCollectionAccessLevel(collection),
     })),
   )
   taskListStore.useTaskListStore.getState().replaceListsFromRemote(
@@ -1595,6 +1610,7 @@ async function hydrateListStores(
       name: getCollectionName(collection, index === 0 ? 'My Tasks' : `Task List ${index + 1}`),
       color: getCollectionColor(collection) || taskListStore.DEFAULT_TASK_LIST_COLORS[index % taskListStore.DEFAULT_TASK_LIST_COLORS.length],
       visible: true,
+      accessLevel: getCollectionAccessLevel(collection),
     })),
   )
   contactListStore.useContactListStore.getState().replaceListsFromRemote(
@@ -1615,6 +1631,8 @@ async function hydrateListStores(
       accessLevel: getCollectionAccessLevel(collection),
     })),
   )
+  // A complete collection refresh (including the last address book going away) may change birthdays.
+  requestBirthdayReconcile(accountEpoch)
 }
 
 async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid: string, itemUids?: string[], accountEpoch?: number): Promise<number> {
@@ -4022,7 +4040,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
   },
 
   destroy: () => {
+    const leaving = getAccountEpoch()
     const epoch = bumpAccountEpoch()
+    resetBirthdayMarkers(leaving)
+    void import('@/app/lib/birthday-calendar/session').then(({ resetBirthdayProjection }) => {
+      resetBirthdayProjection(leaving)
+    }).catch(() => {
+      // The projection was already dropped above; a pending debounce re-checks its account.
+    })
     // The account goes with its generation; released first so the check below sees only this bump.
     releaseLogoutGeneration()
     // Any failure after the bump, including a nested teardown's typed error,

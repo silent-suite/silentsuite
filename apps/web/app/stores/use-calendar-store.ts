@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, overridesBefore, overridesInForm, overridesWithout, recurrenceRuleFrom, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -12,6 +12,8 @@ import { useAuthStore } from '@/app/stores/use-auth-store'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
+import { selectManagedBirthdayCalendarIds, useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
 import { assertOfflineQueueAccountGuard, captureOfflineQueueAccountGuard, isOfflineQueueBoundaryCancellation } from '@/app/lib/offline-queue-account'
 
 type CalendarView = 'week' | 'month'
@@ -44,7 +46,22 @@ interface CalendarState {
   searchQuery: string
 }
 
+/**
+ * A create that was not acknowledged and is not held in the offline queue. `unconfirmed` is false
+ * only when nothing was sent; otherwise the event may or may not exist remotely.
+ */
+export class CalendarSaveError extends Error {
+  constructor(readonly unconfirmed: boolean) {
+    super(unconfirmed ? 'Event save not confirmed' : 'Event not saved')
+    this.name = 'CalendarSaveError'
+  }
+}
+
 interface CalendarActions {
+  /**
+   * Resolves once the server acknowledged the event, or once the create is held in the offline
+   * queue; otherwise removes the temporary event and rejects with CalendarSaveError.
+   */
   createEvent: (event: NewCalendarEvent) => Promise<CalendarEvent>
   updateEvent: (id: string, patch: Partial<CalendarEvent>) => Promise<void>
   deleteEvent: (id: string) => Promise<void>
@@ -98,7 +115,8 @@ function mergeEventPatch(base: CalendarEvent, patch: Partial<CalendarEvent>): Ca
   ) {
     delete merged.startWallClock
   }
-  return merged
+  // Overrides follow a changed DTSTART form now, so the in-memory event holds them as written.
+  return { ...merged, ...overridesInForm(base, merged) }
 }
 
 /**
@@ -117,10 +135,16 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
 
 /**
  * A scoped copy is a new item with a new UID. The series' retained raw lines (RECURRENCE-ID,
- * attendees and the like) describe the original item, so the copy starts without them, as it
- * did before they were kept. A "this and future" split moves later RDATEs separately.
+ * attendees and the like) and its overrides describe the original item, so the copy starts
+ * without them, as it did before they were kept. A "this and future" split moves later RDATEs
+ * separately. VTIMEZONE blocks still describe the copy's TZID and stay.
  */
-const WITHOUT_RETAINED_CONTENT = { unknownProperties: undefined, unknownComponents: undefined } as const
+const WITHOUT_RETAINED_CONTENT = {
+  unknownProperties: undefined,
+  unknownComponents: undefined,
+  overrides: undefined,
+  overridesForm: undefined,
+} as const
 
 /** Add an UNTIL value to an existing RRULE, replacing any existing UNTIL or COUNT */
 function addUntilToRRule(rrule: string, until: string): string {
@@ -219,10 +243,29 @@ async function syncEventToEtebase(event: CalendarEvent, mode: 'create' | 'update
   }
 }
 
+const MANAGED_CALENDAR_MESSAGE = 'Birthdays calendar events come from your contacts. Edit the contact instead.'
+
+/** The current account's managed Birthdays calendars (generated, never user-written). */
+function managedCalendarIds(): readonly string[] {
+  return selectManagedBirthdayCalendarIds(
+    useBirthdayMarkerStore.getState().snapshot, getAccountEpoch(), useEtebaseStore.getState().accountFingerprint)
+}
+
+function assertUserWritableCalendar(calendarId: string | null | undefined): void {
+  if (calendarId && managedCalendarIds().includes(calendarId)) throw new Error(MANAGED_CALENDAR_MESSAGE)
+}
+
 function defaultCalendarId(): string {
   const { calendars, defaultCalendarId } = useCalendarListStore.getState()
-  if (calendars.some((calendar) => calendar.id === defaultCalendarId)) return defaultCalendarId
-  return calendars[0]?.id ?? 'default'
+  const managed = managedCalendarIds()
+  const writable = calendars.filter((calendar) => !managed.includes(calendar.id))
+  if (writable.some((calendar) => calendar.id === defaultCalendarId)) return defaultCalendarId
+  // Calendars exist but every one is managed: there is no ordinary target, so refuse rather
+  // than fall back to a phantom id.
+  if (calendars.length > 0 && writable.length === 0) {
+    throw new Error(`There is no calendar to add events to. ${MANAGED_CALENDAR_MESSAGE}`)
+  }
+  return writable[0]?.id ?? 'default'
 }
 
 export const useCalendarStore = create<CalendarState & CalendarActions>()((set, get) => ({
@@ -257,9 +300,21 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       created: now,
       updated: now,
     }
+    assertUserWritableCalendar(event.calendarId)
 
     // Optimistic local update
     set((state) => ({ events: [...state.events, event] }))
+    // An unacknowledged temp event would vanish on the next refresh; the dialog keeps the input.
+    const withdraw = (unconfirmed: boolean): never => {
+      set((state) => {
+        const remaining = state.events.filter((e) => e.id !== tempId)
+        return remaining.length === state.events.length ? state : { events: remaining }
+      })
+      throw new CalendarSaveError(unconfirmed)
+    }
+
+    const etebase = useEtebaseStore.getState()
+    if (!etebase.account) return withdraw(false)
 
     // Sync to Etebase (pass tempId for offline queue mapping)
     const itemUid = await syncEventToEtebase(event, 'create', tempId)
@@ -273,7 +328,19 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       return { ...event, id: itemUid }
     }
 
-    return event
+    // Not acknowledged. A create admitted to the offline queue is durable local custody awaiting
+    // replay, so the temp event stays; anything else may or may not exist remotely.
+    const guard = captureOfflineQueueAccountGuard(useEtebaseStore.getState())
+    if (guard) {
+      try {
+        const { readOutstanding } = await import('@/app/lib/offline-queue')
+        const outstanding = await readOutstanding({ collectionType: 'calendar', itemUid: tempId }, guard)
+        if (outstanding.some((entry) => entry.type === 'create')) return event
+      } catch {
+        // An unreadable queue proves nothing: the create stays unconfirmed.
+      }
+    }
+    return withdraw(true)
   },
 
   updateEvent: async (id: string, patch: Partial<CalendarEvent>) => {
@@ -281,6 +348,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     const { events } = get()
     const index = events.findIndex((e) => e.id === id)
     if (index === -1) return
+    assertUserWritableCalendar(events[index].calendarId)
+    assertUserWritableCalendar(patch.calendarId)
 
     // Optimistic update
     const updated = { ...mergeEventPatch(events[index]!, patch), updated: new Date() }
@@ -303,6 +372,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
   deleteEvent: async (id: string) => {
     if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     const eventToDelete = get().events.find((e) => e.id === id)
+    assertUserWritableCalendar(eventToDelete?.calendarId)
     // Optimistic update
     set((state) => ({ events: state.events.filter((e) => e.id !== id) }))
 
@@ -358,6 +428,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     const { events } = get()
     const master = events.find((e) => e.id === id)
     if (!master) return
+    assertUserWritableCalendar(master.calendarId)
 
     const now = new Date()
 
@@ -368,6 +439,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const newTempId = crypto.randomUUID()
@@ -416,6 +489,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
 
@@ -428,6 +503,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           ...WITHOUT_RETAINED_CONTENT,
           // The new series takes over the original's later retained RDATEs.
           unknownProperties: retainedDates.from,
+          // A COUNT keeps only the occurrences still to come, so the two series add up to the original.
+          recurrenceRule: recurrenceRuleFrom(master, instanceDate),
           startDate: instanceDate,
           // A day or week DURATION keeps its wall-clock length at this occurrence.
           endDate: occurrenceEnd(master, instanceDate),
@@ -488,6 +565,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
     const { events } = get()
     const master = events.find((e) => e.id === id)
     if (!master) return
+    assertUserWritableCalendar(master.calendarId)
 
     const now = new Date()
 
@@ -498,6 +576,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const next = [...events]
@@ -520,6 +600,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
         const next = [...events]
@@ -609,6 +691,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
   importEvents: async (newEvents: NewCalendarEvent[]) => {
     if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
     if (newEvents.length === 0) return 0
+    for (const newEvent of newEvents) assertUserWritableCalendar(newEvent.calendarId ?? defaultCalendarId())
 
     const now = new Date()
     const events: CalendarEvent[] = newEvents.map((ne) => {

@@ -17,6 +17,8 @@ interface RecurrencePickerProps {
   value: string | null
   /** Called with the new RRULE string, or null for no recurrence */
   onChange: (rrule: string | null) => void
+  /** Read-only: every control is disabled, as for the dialog's other fields. */
+  disabled?: boolean
 }
 
 function parseFrequency(rrule: string | null): Frequency {
@@ -64,7 +66,7 @@ function buildRRule(
   return parts.join(';')
 }
 
-export function RecurrencePicker({ value, onChange }: RecurrencePickerProps) {
+export function RecurrencePicker({ value, onChange, disabled = false }: RecurrencePickerProps) {
   const [showCustom, setShowCustom] = useState(false)
   const [freq, setFreq] = useState<Frequency>(() => parseFrequency(value))
   const [interval, setInterval] = useState(() => parseInterval(value))
@@ -124,13 +126,13 @@ export function RecurrencePicker({ value, onChange }: RecurrencePickerProps) {
   )
 
   return (
-    <div className="flex flex-col gap-2">
+    <fieldset disabled={disabled} className="flex min-w-0 flex-col gap-2">
       <div className="flex items-center gap-2">
         <select
           value={freq}
           onChange={(e) => handleFreqChange(e.target.value as Frequency)}
           aria-label="Repeat frequency"
-          className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="flex-1 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-2 py-1.5 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {(Object.keys(FREQUENCY_LABELS) as Frequency[]).map((f) => (
             <option key={f} value={f}>
@@ -221,7 +223,7 @@ export function RecurrencePicker({ value, onChange }: RecurrencePickerProps) {
           </div>
         </div>
       )}
-    </div>
+    </fieldset>
   )
 }
 

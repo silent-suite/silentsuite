@@ -607,6 +607,25 @@ describe('#744 the rendered contact detail saves only through its captured recor
       expect((await serverContact(account, collection, item.uid)).photoUrl ?? null).toBeNull()
     })
 
+    it('never saves a photo decoded after its address book turned read-only', async () => {
+      const { account, collection, item } = await seedContacts()
+      renderContactsPage()
+      openContact(BASE_GIVEN)
+      await settle()
+      choosePhoto()
+      await settle()
+      const sent = server.transactions.length
+      act(() => {
+        useContactListStore.setState((state) => ({ lists: state.lists.map((list) => ({ ...list, accessLevel: 0 })) }))
+      })
+
+      await decodeNext()
+
+      expect(server.transactions.length).toBe(sent)
+      expect(await queueRecords()).toHaveLength(0)
+      expect((await serverContact(account, collection, item.uid)).photoUrl ?? null).toBeNull()
+    })
+
     it('#744 refuses an ordinary photo against favorite custody, keeping its ciphertext and the draft Not saved', async () => {
       const { account, collection, item } = await seedContacts()
       server.offline = true

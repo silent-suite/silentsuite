@@ -219,6 +219,10 @@ jobs:
     if: needs.build-shared-preview-image.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Preview SSH credentials live only in the web-preview environment (main-only
+    # branch policy). They belong to a separate preview user whose key runs one
+    # fixed server-side redeploy command, never the production deploy key.
+    environment: web-preview
     concurrency:
       group: preview-web-shared-main
       cancel-in-progress: false
@@ -279,14 +283,19 @@ jobs:
           docker push "$exact_image"
           docker push "$shared_image"
 
+      # The server pins this key to a forced command that pulls the shared
+      # :preview tag and recreates web-preview; the script text below is only
+      # the name of that command, and the server ignores anything else sent.
       - name: Deploy preview to VPS
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1
         with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            docker pull ghcr.io/silent-suite/silentsuite-web:preview
-            cd ~/etebase
-            docker compose -f docker-compose.preview.yml up -d --force-recreate web-preview
-            echo "Preview deployed: https://previewapp.silentsuite.io (SHA: ${{ needs.resolve-trusted-target.outputs.target_sha }})"
+          host: ${{ secrets.PREVIEW_VPS_HOST }}
+          username: ${{ secrets.PREVIEW_VPS_USER }}
+          key: ${{ secrets.PREVIEW_VPS_SSH_KEY }}
+          script: silentsuite-web-preview-deploy
+
+      - name: Record preview deployment
+        env:
+          TARGET_SHA: ${{ needs.resolve-trusted-target.outputs.target_sha }}
+        run: |
+          echo "Preview deployed: https://previewapp.silentsuite.io (SHA: $TARGET_SHA)"

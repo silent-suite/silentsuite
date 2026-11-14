@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import { Plus } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useContactStore } from '@/app/stores/use-contact-store'
+import { isSnapshotApplied, useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
 
 export function ContactListPanel() {
@@ -14,6 +17,19 @@ export function ContactListPanel() {
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const isCreatingRef = useRef(false)
+  const t = useTranslations('Collections')
+  const contacts = useContactStore((s) => s.contacts)
+  // Counts show only once this account's loaded server contacts reached the store:
+  // a loading or failed load never reads as 0 or as a partial total.
+  const countsKnown = useDomainSnapshotStore((s) => isSnapshotApplied(s.appliedEpoch, 'contacts'))
+  const countsByList = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const contact of contacts) {
+      const listId = contact.listId ?? 'default'
+      counts.set(listId, (counts.get(listId) ?? 0) + 1)
+    }
+    return counts
+  }, [contacts])
 
   const handleAdd = useCallback(async () => {
     if (isCreatingRef.current) return
@@ -75,6 +91,8 @@ export function ContactListPanel() {
             itemLabel="address book"
             defaultLabel="Default address book"
             deleteLabel="Delete address book"
+            count={countsKnown ? countsByList.get(list.id) ?? 0 : undefined}
+            countLabel={t('contactCount', { count: countsByList.get(list.id) ?? 0 })}
             onToggleVisibility={() => toggleVisibility(list.id)}
             onRename={(name) => handleRename(list.id, name)}
             onSetDefault={() => handleSetDefault(list.id)}

@@ -72,7 +72,7 @@ describe('Report a problem page', () => {
     await previewText()
     expect(
       screen.getByText(
-        "Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We delete it 90 days after we've dealt with it; to have it deleted sooner, email support@silentsuite.io.",
+        "Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We keep it for as long as we need it to deal with your report; to have it deleted, email support@silentsuite.io.",
         { exact: false },
       ),
     ).toBeInTheDocument()

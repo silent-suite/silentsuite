@@ -22,6 +22,7 @@ import com.etebase.client.exceptions.NotFoundException
 import io.silentsuite.sync.CachedCollection
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.R
+import io.silentsuite.sync.birthdays.BirthdayCalendar
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.notes.edit.UnsyncedNotes
 import io.silentsuite.sync.resource.LocalCalendar
@@ -476,6 +477,13 @@ class AddMemberFragment : DialogFragment() {
                 dismissAllowingStateLoss()
                 return@launch
             }
+            // An active Birthdays calendar is never shared (plan2 §4, plan3 §1). A calendar whose content cannot be
+            // read is refused as well, so an unreadable marker is never treated as an ordinary calendar.
+            if (!invitable(cachedCollection)) {
+                clearAction()
+                dismissAllowingStateLoss()
+                return@launch
+            }
             val invitationManager = accountHolder.etebase.invitationManager
             try {
                 val applicationContext = requireContext().applicationContext
@@ -559,6 +567,20 @@ class AddMemberFragment : DialogFragment() {
     private fun clearAction() {
         arguments?.getString(ARG_ACTION_TOKEN)?.let(memberActions::remove)
         actionAvailable = false
+    }
+
+    /**
+     * Whether members may be invited to [cachedCollection]: anything but a calendar carrying the active Birthdays
+     * marker. A calendar whose content cannot be read is not invitable.
+     */
+    private fun invitable(cachedCollection: CachedCollection): Boolean {
+        if (cachedCollection.collectionType != Constants.ETEBASE_TYPE_CALENDAR) return true
+        val content = try {
+            cachedCollection.col.content
+        } catch (e: EtebaseException) {
+            return false
+        }
+        return BirthdayCalendar.markerState(content) != BirthdayCalendar.MarkerState.ACTIVE
     }
 
     companion object {

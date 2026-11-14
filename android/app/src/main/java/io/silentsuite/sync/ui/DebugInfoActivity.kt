@@ -20,7 +20,6 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.CalendarContract
 import android.provider.ContactsContract
-import android.text.TextUtils
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.TextView
@@ -33,12 +32,8 @@ import at.bitfire.ical4android.TaskProvider.ProviderName
 import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.*
 import io.silentsuite.sync.Constants.KEY_ACCOUNT
-import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalAddressBook
-// TODO(Phase2): Replace ACRA with Sentry for crash reporting
-import org.apache.commons.lang3.text.WordUtils
 import java.io.File
-import java.util.logging.Level
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,8 +70,6 @@ class DebugInfoActivity : BaseActivity() {
 
 
     fun onShare(item: MenuItem) {
-        // TODO(Phase2): Replace with Sentry crash reporting
-        // For now, share debug info via intent
         val sendIntent = Intent().apply {
             action = Intent.ACTION_SEND
             putExtra(Intent.EXTRA_TEXT, report)
@@ -101,18 +94,14 @@ class DebugInfoActivity : BaseActivity() {
         @SuppressLint("MissingPermission")
         private fun buildReport(extras: Bundle?): String {
             var throwable: Throwable? = null
-            var caller: String? = null
             var logs: String? = null
-            var authority: String? = null
             var account: Account? = null
             var phase: String? = null
 
             if (extras != null) {
                 throwable = extras.getSerializable(KEY_THROWABLE) as Throwable?
-                caller = extras.getString(KEY_CALLER)
                 logs = extras.getString(KEY_LOGS)
                 account = extras.getParcelable(KEY_ACCOUNT)
-                authority = extras.getString(KEY_AUTHORITY)
                 phase = if (extras.containsKey(KEY_PHASE)) getApplication<Application>().getString(extras.getInt(KEY_PHASE)) else null
             }
 
@@ -125,10 +114,6 @@ class DebugInfoActivity : BaseActivity() {
                 report.append("SYNCHRONIZATION INFO\nSynchronization phase: ").append(phase).append("\n")
             if (account != null)
                 report.append("Account: [redacted]\n")
-            if (authority != null)
-                report.append("Authority: ").append(authority).append("\n")
-            if (caller != null)
-                report.append("Debug activity source: ").append(caller).append("\n")
 
             if (throwable is com.etebase.client.exceptions.HttpException) {
                 report.append("\nHTTP ERROR:\n").append(throwable.javaClass.name).append("\n")
@@ -136,21 +121,12 @@ class DebugInfoActivity : BaseActivity() {
 
             if (throwable != null)
                 report.append("\nEXCEPTION:\n")
-                        .append(redactedStackTrace(throwable))
+                        .append(exceptionClassChain(throwable)).append("\n")
 
             if (logs != null)
                 report.append("\nLOGS:\n[redacted from shared debug report]\n")
 
-            try {
-                val pm = context.packageManager
-                var installedFrom = pm.getInstallerPackageName(BuildConfig.APPLICATION_ID)
-                if (TextUtils.isEmpty(installedFrom))
-                    installedFrom = "APK (directly)"
-                report.append("\nSOFTWARE INFORMATION\n" + "SilentSuite version: ").append(BuildConfig.VERSION_NAME).append(" (").append(BuildConfig.VERSION_CODE).append(") ").append("\n")
-                        .append("Installed from: ").append(installedFrom).append("\n")
-            } catch (ex: Exception) {
-                Logger.log.log(Level.SEVERE, "Couldn't get software information", ex)
-            }
+            report.append("\nSOFTWARE INFORMATION\n" + "SilentSuite version: ").append(BuildConfig.VERSION_NAME).append(" (").append(BuildConfig.VERSION_CODE).append(")\n")
 
             report.append("CONFIGURATION\n")
             // power saving
@@ -199,13 +175,7 @@ class DebugInfoActivity : BaseActivity() {
 
             // Legacy Requery database dump removed
 
-            try {
-                report.append(
-                        "SYSTEM INFORMATION\n" + "Android version: ").append(Build.VERSION.RELEASE).append(" (").append(Build.DISPLAY).append(")\n" + "Device: ").append(WordUtils.capitalize(Build.MANUFACTURER)).append(" ").append(Build.MODEL).append(" (").append(Build.DEVICE).append(")\n\n"
-                )
-            } catch (ex: Exception) {
-                Logger.log.log(Level.SEVERE, "Couldn't get system details", ex)
-            }
+            report.append("SYSTEM INFORMATION\n" + "Android version: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n\n")
 
             report.append("--- END DEBUG INFO ---\n")
             return report.toString()
@@ -218,23 +188,11 @@ class DebugInfoActivity : BaseActivity() {
             else
                 "—"
         }
-
-        private fun redactedStackTrace(throwable: Throwable): String {
-            val builder = StringBuilder(throwable.javaClass.name)
-            for (frame in throwable.stackTrace)
-                builder.append("\n\tat ").append(frame)
-            throwable.cause?.let { cause ->
-                builder.append("\nCaused by: ").append(redactedStackTrace(cause))
-            }
-            return builder.toString()
-        }
     }
 
     companion object {
-        val KEY_CALLER = "caller"
         val KEY_THROWABLE = "throwable"
         val KEY_LOGS = "logs"
-        val KEY_AUTHORITY = "authority"
         val KEY_PHASE = "phase"
 
         val KEY_SCHEDULING_ONLY = "schedulingOnly"
@@ -242,11 +200,22 @@ class DebugInfoActivity : BaseActivity() {
         fun newSchedulingIntent(context: Context?): Intent =
                 Intent(context, DebugInfoActivity::class.java).putExtra(KEY_SCHEDULING_ONLY, true)
 
-        fun newIntent(context: Context?, caller: String): Intent {
-            val intent = Intent(context, DebugInfoActivity::class.java)
-            intent.putExtra(KEY_CALLER, caller)
-            return intent
-        }
+        fun newIntent(context: Context?): Intent = Intent(context, DebugInfoActivity::class.java)
     }
 
+}
+
+/**
+ * Exception class names only, outermost first, joined by "Caused by:". Messages and stack frames
+ * stay out of the shareable report. The visited set stops on a cause cycle.
+ */
+internal fun exceptionClassChain(throwable: Throwable): String {
+    val seen = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Throwable, Boolean>())
+    val names = mutableListOf<String>()
+    var current: Throwable? = throwable
+    while (current != null && seen.add(current)) {
+        names += current.javaClass.name
+        current = current.cause
+    }
+    return names.joinToString("\nCaused by: ")
 }

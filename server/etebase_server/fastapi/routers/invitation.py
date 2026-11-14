@@ -16,8 +16,9 @@ from ..utils import (
     PERMISSIONS_READWRITE,
     BaseModel,
     Context,
+    clamp_list_limit,
     get_object_or_404,
-    get_user_username_email_kwargs,
+    get_user_by_username_or_email,
     is_collection_admin,
     permission_responses,
 )
@@ -105,6 +106,7 @@ def list_common(
     limit: int,
 ) -> InvitationListResponse:
     queryset = queryset.order_by("id")
+    limit = clamp_list_limit(limit)
 
     if iterator is not None:
         iterator_obj = get_object_or_404(queryset, uid=iterator)
@@ -195,6 +197,14 @@ def incoming_accept(
         invitation.delete()
 
 
+def get_user_or_404(request: Request, username: str) -> UserType:
+    user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
+    try:
+        return get_user_by_username_or_email(user_queryset, username)
+    except User.DoesNotExist as e:
+        raise HttpError("does_not_exist", str(e), status_code=status.HTTP_404_NOT_FOUND)
+
+
 @invitation_outgoing_router.post("/", status_code=status.HTTP_201_CREATED, dependencies=PERMISSIONS_READWRITE)
 def outgoing_create(
     data: CollectionInvitationIn,
@@ -202,8 +212,7 @@ def outgoing_create(
     user: UserType = Depends(get_authenticated_user),
 ):
     collection = get_object_or_404(models.Collection.objects, uid=data.collection)
-    kwargs = get_user_username_email_kwargs(data.username)
-    to_user = get_object_or_404(get_user_queryset(User.objects.all(), CallbackContext(request.path_params)), **kwargs)
+    to_user = get_user_or_404(request, data.username)
 
     context = Context(user, None)
     data.validate_db(context)
@@ -255,7 +264,6 @@ def outgoing_fetch_user_profile(
     request: Request,
     user: UserType = Depends(get_authenticated_user),
 ):
-    kwargs = get_user_username_email_kwargs(username)
-    user = get_object_or_404(get_user_queryset(User.objects.all(), CallbackContext(request.path_params)), **kwargs)
+    user = get_user_or_404(request, username)
     user_info = get_object_or_404(models.UserInfo.objects.all(), owner=user)
     return MsgpackResponse(UserInfoOut.from_orm(user_info))

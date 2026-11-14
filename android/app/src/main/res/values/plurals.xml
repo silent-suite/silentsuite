@@ -52,4 +52,8 @@
         <item quantity="one">You left the notebook. %d unsynced Notes change from it is still on this device. If you discard it, it is deleted from this device. This cannot be undone. If you keep it, it stays on this device and may no longer sync.</item>
         <item quantity="other">You left the notebook. %d unsynced Notes changes from it are still on this device. If you discard them, they are deleted from this device. This cannot be undone. If you keep them, they stay on this device and may no longer sync.</item>
     </plurals>
+    <plurals name="notes_items_unreadable">
+        <item quantity="one">%d item in this notebook could not be read</item>
+        <item quantity="other">%d items in this notebook could not be read</item>
+    </plurals>
 </resources>

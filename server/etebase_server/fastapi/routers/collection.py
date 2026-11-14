@@ -24,6 +24,7 @@ from ..utils import (
     Context,
     Prefetch,
     PrefetchQuery,
+    clamp_list_limit,
     get_object_or_404,
     is_collection_admin,
     msgpack_encode,
@@ -217,7 +218,10 @@ def collection_list_common(
     prefetch: Prefetch,
 ) -> CollectionListResponse:
     result, new_stoken_obj, done = filter_by_stoken_and_limit(
-        stoken, limit, queryset.filter(items__revisions__current=True), models.Collection.stoken_annotation
+        stoken,
+        clamp_list_limit(limit),
+        queryset.filter(items__revisions__current=True),
+        models.Collection.stoken_annotation,
     )
     new_stoken = new_stoken_obj and new_stoken_obj.uid
     context = Context(user, prefetch)
@@ -443,7 +447,10 @@ def item_list_common(
     prefetch: Prefetch,
 ) -> CollectionItemListResponse:
     result, new_stoken_obj, done = filter_by_stoken_and_limit(
-        stoken, limit, queryset.filter(revisions__current=True), models.CollectionItem.stoken_annotation
+        stoken,
+        clamp_list_limit(limit),
+        queryset.filter(revisions__current=True),
+        models.CollectionItem.stoken_annotation,
     )
     new_stoken = new_stoken_obj and new_stoken_obj.uid
     context = Context(user, prefetch)
@@ -523,6 +530,7 @@ def item_revisions(
     items: CollectionItemQuerySet = Depends(get_item_queryset),
 ):
     item = get_object_or_404(items, uid=item_uid)
+    limit = clamp_list_limit(limit)
 
     queryset = item.revisions.order_by("-id")
 

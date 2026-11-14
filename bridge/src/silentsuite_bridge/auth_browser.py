@@ -611,6 +611,26 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
     def _valid_csrf(provided, expected):
         return bool(provided) and bool(expected) and hmac.compare_digest(provided, expected)
 
+    def _expected_host(self):
+        host, port = self.server.server_address[:2]
+        return f"{host}:{port}"
+
+    def _trusted_request(self, state_changing=False):
+        """Accept only requests addressed to the exact loopback origin we bound.
+
+        A DNS-rebound name resolving to 127.0.0.1 still carries its own Host
+        header (and Origin on a POST), so checking both keeps another site
+        from reading this page or posting to it.
+        """
+        expected_host = self._expected_host()
+        if self.headers.get("Host") != expected_host:
+            return False
+        if state_changing:
+            origin = self.headers.get("Origin")
+            if origin is not None and origin != f"http://{expected_host}":
+                return False
+        return True
+
     def log_request(self, code="-", size="-"):
         method = self.command if self.command in {"GET", "POST"} else "OTHER"
         status = code if isinstance(code, int) else "unknown"
@@ -624,6 +644,9 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
         logger.debug("Auth server diagnostic suppressed")
 
     def do_GET(self):
+        if not self._trusted_request():
+            self.send_error(403)
+            return
         if self.path == "/" or self.path.startswith("/auth"):
             html = AUTH_PAGE_HTML.replace("SERVER_URL", html_mod.escape(config.ETEBASE_SERVER_URL))
             html = html.replace("CSRF_TOKEN", html_mod.escape(self.server.csrf_token))
@@ -710,6 +733,9 @@ class AuthCallbackHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
+        if not self._trusted_request(state_changing=True):
+            self.send_error(403)
+            return
         if self.path == "/auth":
             content_length = int(self.headers.get("Content-Length", 0))
             body = self.rfile.read(content_length).decode()

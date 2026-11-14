@@ -142,3 +142,36 @@ describe('LoginPage unlock route', () => {
     expect(replace).toHaveBeenCalledWith('/tasks')
   })
 })
+
+describe('LoginPage server selection', () => {
+  async function submit(serverUrl: string) {
+    render(<LoginPage />)
+    fireEvent.change(screen.getByLabelText(/Email address/i), { target: { value: 'user@example.com' } })
+    fireEvent.change(screen.getByLabelText(/^Password$/i), { target: { value: 'wrong-password' } })
+    if (serverUrl) {
+      const field = screen.getByPlaceholderText(/https:\/\//i)
+      fireEvent.change(field, { target: { value: serverUrl } })
+    }
+    fireEvent.submit(screen.getByRole('button', { name: /log in/i }))
+    await waitFor(() => expect(authState.login).toHaveBeenCalledTimes(1))
+  }
+
+  it('keeps the saved custom server when a login with a blank server field fails', async () => {
+    localStorage.setItem('silentsuite-server-url', 'https://dav.example.test')
+    authState.login.mockImplementationOnce(async () => { authState.error = 'Invalid email or password. Please try again.' })
+
+    await submit('')
+
+    expect(authState.login).toHaveBeenCalledWith('user@example.com', 'wrong-password', undefined, false)
+    expect(localStorage.getItem('silentsuite-server-url')).toBe('https://dav.example.test')
+  })
+
+  it('does not save a newly typed server before the login is verified', async () => {
+    authState.login.mockImplementationOnce(async () => { authState.error = 'Invalid email or password. Please try again.' })
+
+    await submit('https://other.example.test')
+
+    expect(authState.login).toHaveBeenCalledWith('user@example.com', 'wrong-password', 'https://other.example.test', false)
+    expect(localStorage.getItem('silentsuite-server-url')).toBeNull()
+  })
+})

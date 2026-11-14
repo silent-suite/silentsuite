@@ -190,7 +190,8 @@ export {
 export type { VCard, VCardName, VCardPhone, VCardEmail, VCardAddress } from './utils/vcard-parser.js';
 
 // Todoist CSV parser
-export { parseTodoistCsv } from './utils/csv-parser.js';
+export { parseTodoistCsv, parseTodoistDate } from './utils/csv-parser.js';
+export { isKnownTimeZone } from './utils/zoned-time.js';
 
 // Recurrence expansion
 export { expandRecurrence, untilDateBefore, untilTimeBefore, occurrenceWallClock } from './utils/recurrence.js';
@@ -202,4 +203,43 @@ export {
   gapWallClock,
   validStartWallClock,
   eventOccurrenceWallClock,
+  recurrenceRuleFrom,
+  overridesWithout,
+  overridesBefore,
+  overridesInForm,
 } from './models/calendar-event.js';
+export type { StartForm } from './models/calendar-event.js';
+
+// Generated Birthdays calendar (pure contract helpers; contracts/birthday-calendar)
+export {
+  BIRTHDAY_MARKER_TYPE,
+  BIRTHDAY_EVENT_UID_PREFIX,
+  BIRTHDAY_MAX_RERUNS,
+  parseBirthdayMarker,
+  birthdayMarkerContent,
+  normalizeBirthday,
+  birthdayFromVCard,
+  birthdayEventUid,
+  isGeneratedBirthdayUid,
+  birthdayEventFields,
+  birthdayEventContent,
+  parseBirthdayEventFields,
+  isCurrentBirthdayEvent,
+  birthdayEventsFromSource,
+  planBirthdayCalendar,
+  decideAfterBirthdayRun,
+} from './birthdays/birthday-calendar.js';
+export type {
+  BirthdayMarkerState,
+  MonthDay,
+  ContactBirthday,
+  BirthdayEvent,
+  BirthdayEventFields,
+  BirthdaySnapshotItem,
+  BirthdaySourceSnapshot,
+  BirthdaySourceResult,
+  BirthdayCalendarSnapshot,
+  BirthdayCalendarPlan,
+  BirthdayPlanResult,
+  BirthdayPostCheck,
+} from './birthdays/birthday-calendar.js';

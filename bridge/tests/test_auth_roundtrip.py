@@ -37,7 +37,7 @@ from silentsuite_bridge import config
 from silentsuite_bridge.accounts import store_authenticated_account
 from silentsuite_bridge.radicale import auth as auth_module
 from silentsuite_bridge.radicale.auth import Auth
-from silentsuite_bridge.radicale.creds import Credentials
+from silentsuite_bridge.radicale.creds import CREDENTIALS_LOCK, Credentials
 
 
 def _radicale_config_stub():
@@ -392,3 +392,59 @@ def test_password_rotation_cannot_commit_after_final_check_before_auth_returns(
     assert auth.login(USERNAME, PASSWORD) == USERNAME
     rotation_thread.join(2)
     assert rotation_completed.is_set()
+
+
+def _probe_lock_from_other_thread():
+    """Return True if another thread can take CREDENTIALS_LOCK right now."""
+    result = []
+
+    def probe():
+        acquired = CREDENTIALS_LOCK.acquire(blocking=False)
+        if acquired:
+            CREDENTIALS_LOCK.release()
+        result.append(acquired)
+
+    thread = threading.Thread(target=probe)
+    thread.start()
+    thread.join(5)
+    return result == [True]
+
+
+@pytest.mark.parametrize("seed", [_seed_pbkdf2_user, _seed_legacy_sha256_user])
+def test_pbkdf2_runs_without_holding_credentials_lock(creds_file, monkeypatch, seed):
+    seed(creds_file)
+    auth = Auth(_radicale_config_stub())
+    original_pbkdf2 = hashlib.pbkdf2_hmac
+    lock_free_during_hash = []
+
+    def probing_pbkdf2(*args, **kwargs):
+        lock_free_during_hash.append(_probe_lock_from_other_thread())
+        return original_pbkdf2(*args, **kwargs)
+
+    monkeypatch.setattr(auth_module.hashlib, "pbkdf2_hmac", probing_pbkdf2)
+
+    assert auth.login(USERNAME, PASSWORD) == USERNAME
+    assert lock_free_during_hash == [True]
+
+
+def test_pbkdf2_runs_once_per_login_and_never_for_unknown_users(
+    creds_file, monkeypatch,
+):
+    _seed_pbkdf2_user(creds_file)
+    auth = Auth(_radicale_config_stub())
+    original_pbkdf2 = hashlib.pbkdf2_hmac
+    calls = []
+
+    def counting_pbkdf2(*args, **kwargs):
+        calls.append(args[0])
+        return original_pbkdf2(*args, **kwargs)
+
+    monkeypatch.setattr(auth_module.hashlib, "pbkdf2_hmac", counting_pbkdf2)
+
+    assert auth.login("ghost@example.com", PASSWORD) == ""
+    assert calls == []
+
+    for _ in range(3):
+        assert auth.login(USERNAME, PASSWORD) == USERNAME
+    assert auth.login(USERNAME, "wrong-password") == ""
+    assert len(calls) == 4

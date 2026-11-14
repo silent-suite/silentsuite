@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const logIn = vi.fn()
 const saveSession = vi.fn()
+const getAccountFingerprint = vi.fn(() => 'account-fingerprint')
 
-vi.mock('@silentsuite/core', () => ({ logIn, saveSession }))
+vi.mock('@silentsuite/core', () => ({ logIn, saveSession, getAccountFingerprint }))
 
 const UMBREL_ONE = 'https://umbrel.local'
 const UMBREL_TWO = 'https://silentsuite-box.example.test:8443'

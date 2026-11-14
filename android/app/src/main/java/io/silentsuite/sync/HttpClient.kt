@@ -69,10 +69,18 @@ class HttpClient private constructor(
         certManager?.close()
     }
 
+    /**
+     * @param interactiveCertificates false: unknown certificates are rejected at once instead of
+     * waiting for the user's decision (custom-trusted certificates are still accepted)
+     * @param networkLogging false: never add the network logging interceptor, which in debug
+     * builds reads whole response bodies
+     */
     class Builder(
             val context: Context? = null,
             accountSettings: AccountSettings? = null,
-            val logger: java.util.logging.Logger = Logger.log
+            val logger: java.util.logging.Logger = Logger.log,
+            interactiveCertificates: Boolean = true,
+            networkLogging: Boolean = true
     ) {
         private var certManager: CustomCertManager? = null
         private var certificateAlias: String? = null
@@ -83,7 +91,7 @@ class HttpClient private constructor(
             testInterceptor?.let { orig.addInterceptor(it) }
 
             // add network logging, if requested
-            if (logger.isLoggable(Level.FINEST)) {
+            if (networkLogging && logger.isLoggable(Level.FINEST)) {
                 val loggingInterceptor = HttpLoggingInterceptor(object: HttpLoggingInterceptor.Logger {
                     override fun log(message: String) {
                         logger.finest(message)
@@ -116,7 +124,7 @@ class HttpClient private constructor(
                 }
 
                 //if (BuildConfig.customCerts)
-                    customCertManager(CustomCertManager(context, true,
+                    customCertManager(CustomCertManager(context, interactiveCertificates,
                             !prefs.distrustSystemCertificates, true))
             }
 

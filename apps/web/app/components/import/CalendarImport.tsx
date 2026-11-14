@@ -9,6 +9,7 @@ import ImportListSelector from './ImportListSelector'
 import { vEventToImportEvent } from './import-mappers'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { DEFAULT_CALENDAR_COLORS, useCalendarListStore } from '@/app/stores/use-calendar-list-store'
+import { useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/session'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import type { ImportIncompleteError } from '@/app/lib/import-outcome'
 
@@ -129,7 +130,13 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
   const importEvents = useCalendarStore((s) => s.importEvents)
-  const calendars = useCalendarListStore((s) => s.calendars)
+  const listedCalendars = useCalendarListStore((s) => s.calendars)
+  const managedCalendarIds = useManagedBirthdayCalendarIds()
+  // A managed Birthdays calendar is generated from contacts and is never an import target.
+  const calendars = useMemo(
+    () => listedCalendars.filter((calendar) => !managedCalendarIds.includes(calendar.id)),
+    [listedCalendars, managedCalendarIds],
+  )
   const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
   const [selectedCalendarId, setSelectedCalendarId] = useState(defaultCalendarId)
   const createCollection = useEtebaseStore((s) => s.createCollection)
@@ -144,7 +151,11 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
   )
 
   useEffect(() => {
-    if (calendars.length === 0) return
+    if (calendars.length === 0) {
+      // No eligible calendar: never keep a managed (or vanished) default selected.
+      if (selectedCalendarId !== '') setSelectedCalendarId('')
+      return
+    }
     const fallbackId = calendars.some((cal) => cal.id === defaultCalendarId)
       ? defaultCalendarId
       : calendars[0]!.id
@@ -269,6 +280,10 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
 
       const allEvents = groups.flatMap((group) => group.events)
       try {
+        if (!selectedCalendarId) {
+          setError('Choose or create a calendar to import into.')
+          return
+        }
         const count = await importEvents(allEvents.map((event) => vEventToImportEvent(event, selectedCalendarId)))
         setImportedCount(count)
         onImportComplete(count)

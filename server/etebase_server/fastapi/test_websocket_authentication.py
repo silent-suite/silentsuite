@@ -47,14 +47,18 @@ class FakeRedis:
     def __init__(self):
         self.store: dict[bytes, bytes] = {}
         self.subscriptions: list[str] = []
+        # Expiry (`ex`, seconds) passed with each SET; expiry itself is not modelled.
+        self.expiries: dict[bytes, t.Optional[int]] = {}
+        # Command names of each executed pipeline, with its transaction flag.
+        self.transactions: list[t.Tuple[bool, t.List[str]]] = []
 
     @staticmethod
     def _key(name) -> bytes:
         return name.encode() if isinstance(name, str) else bytes(name)
 
     async def set(self, name, value, ex=None):
-        # Ticket expiry is not under test here.
         self.store[self._key(name)] = value
+        self.expiries[self._key(name)] = ex
         return True
 
     async def get(self, name):
@@ -65,6 +69,42 @@ class FakeRedis:
 
     def pubsub(self):
         return FakePubSub(self)
+
+    def pipeline(self, transaction=True):
+        return FakePipeline(self, transaction)
+
+
+class FakePipeline:
+    """Queues commands and runs them back to back on `execute()`, like MULTI/EXEC.
+    Nothing else runs on the event loop in between, so the queued commands are
+    atomic with respect to other coroutines."""
+
+    def __init__(self, redis: FakeRedis, transaction: bool):
+        self._redis = redis
+        self._transaction = transaction
+        self._queue: list[t.Tuple[str, tuple]] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        self._queue = []
+
+    def get(self, name):
+        self._queue.append(("get", (name,)))
+        return self
+
+    def delete(self, *names):
+        self._queue.append(("delete", names))
+        return self
+
+    async def execute(self):
+        queue, self._queue = self._queue, []
+        self._redis.transactions.append((self._transaction, [command for command, _ in queue]))
+        results = []
+        for command, args in queue:
+            results.append(await getattr(self._redis, command)(*args))
+        return results
 
 
 class FakePubSub:
@@ -247,3 +287,40 @@ class TestWebsocketTicketUserState:
         assert payload["done"] is True
         assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
         assert fake_redis.store == {}
+
+
+@pytest.mark.django_db(transaction=True)
+class TestWebsocketTicketLifetime:
+    def test_ticket_expires_after_ten_seconds(self, ws_client, fake_redis, membership):
+        from etebase_server.fastapi.routers.websocket import TICKET_VALIDITY_SECONDS
+
+        ticket = _issue_ticket(ws_client, membership)
+
+        # Redis `ex` is in seconds: the ticket must live ten seconds, not ten
+        # thousand.
+        assert TICKET_VALIDITY_SECONDS == 10
+        assert fake_redis.expiries == {ticket.encode(): 10}
+
+    def test_ticket_is_redeemed_once_atomically(self, ws_client, fake_redis, membership):
+        ticket = _issue_ticket(ws_client, membership)
+
+        close_code, frame = _connect(ws_client, ticket)
+        assert close_code is None
+        assert frame is not None
+
+        # Read and delete ran together in one MULTI/EXEC transaction.
+        assert fake_redis.transactions == [(True, ["get", "delete"])]
+        assert fake_redis.store == {}
+
+        # A second connection with the same ticket is refused before accept.
+        close_code, frame = _connect(ws_client, ticket)
+        assert frame is None
+        assert close_code == status.WS_1008_POLICY_VIOLATION
+        assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
+
+    def test_unknown_ticket_is_refused(self, ws_client, fake_redis, membership):
+        close_code, frame = _connect(ws_client, _uid("never-issued"))
+
+        assert frame is None
+        assert close_code == status.WS_1008_POLICY_VIOLATION
+        assert fake_redis.subscriptions == []

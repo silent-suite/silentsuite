@@ -631,6 +631,101 @@ class CollectionRouteContractTests(TransactionTestCase):
         assert not models.CollectionItemRevision.objects.filter(uid=new_revision_uid).exists()
         self._assert_no_cross_collection_chunk_relations()
 
+    # --- the collection's root item as a same-collection write fence ---------
+    #
+    # Clients update a collection by sending its root item (uid == collection uid)
+    # through item/transaction/ (etebase-js CollectionManager.transaction). Generated
+    # birthday writes name that root item in `deps`, so a writer that read the
+    # collection before it was updated (e.g. retired) is rejected as a whole.
+
+    def _current_revision_uid(self, item: models.CollectionItem) -> str:
+        return models.CollectionItemRevision.objects.get(item=item, current=True).uid
+
+    def _revision_body(self, item_uid: str, revision_uid: str, etag, deleted: bool = False) -> dict:
+        body = self._item_body(item_uid, revision_uid)
+        body["etag"] = etag
+        body["content"]["deleted"] = deleted
+        return body
+
+    def _transaction(self, col: models.Collection, items: list, deps):
+        return self._post(
+            f"{COLLECTION_PREFIX}/{col.uid}/item/transaction/",
+            self.alice_token,
+            {"items": items, "deps": deps},
+        )
+
+    def _root_dep(self, col: models.Collection, etag: str) -> dict:
+        return {"uid": col.uid, "etag": etag}
+
+    def test_collection_root_item_belongs_to_the_collection_but_is_not_listed(self):
+        assert self.col_a.items.filter(uid=self.col_a.uid).exists()
+
+        response = self._get(f"{COLLECTION_PREFIX}/{self.col_a.uid}/item/", self.alice_token)
+        assert response.status_code == 200, response.content
+        listed = {item["uid"] for item in msgpack_decode(response.content)["data"]}
+        assert self.shared_item_uid in listed
+        assert self.col_a.uid not in listed
+
+    def test_transaction_depending_on_the_current_root_is_accepted(self):
+        root_etag = self._current_revision_uid(self.col_a.main_item)
+        new_uid = _uid("item-fenced-new")
+
+        response = self._transaction(
+            self.col_a,
+            [self._revision_body(new_uid, _uid("rev-fenced-new"), None)],
+            [self._root_dep(self.col_a, root_etag)],
+        )
+        assert response.status_code == 200, response.content
+        assert self.col_a.items.filter(uid=new_uid).exists()
+        assert self._current_revision_uid(self.col_a.main_item) == root_etag
+
+    def test_transaction_depending_on_an_updated_root_is_rejected_as_a_whole(self):
+        generated = _add_item(self.col_a, _uid("item-gen-aaaa"), _uid("rev-gen-aaaa"))
+        ordinary_revision = self._current_revision_uid(models.CollectionItem.objects.get(
+            collection=self.col_a, uid=self.shared_item_uid))
+        stale_root = self._current_revision_uid(self.col_a.main_item)
+
+        # Another client updates the collection itself (e.g. retires it).
+        retired_root = _uid("rev-main-retired")
+        response = self._transaction(
+            self.col_a, [self._revision_body(self.col_a.uid, retired_root, stale_root)], None)
+        assert response.status_code == 200, response.content
+        assert self._current_revision_uid(self.col_a.main_item) == retired_root
+
+        # A writer that read the collection before that update.
+        late_uid = _uid("item-late-new")
+        response = self._transaction(
+            self.col_a,
+            [
+                self._revision_body(late_uid, _uid("rev-late-new"), None),
+                self._revision_body(generated.uid, _uid("rev-gen-late"), _uid("rev-gen-aaaa")),
+            ],
+            [self._root_dep(self.col_a, stale_root)],
+        )
+        assert response.status_code == 409, response.content
+        assert msgpack_decode(response.content)["code"] == "dep_failed"
+        assert not self.col_a.items.filter(uid=late_uid).exists()
+        assert self._current_revision_uid(generated) == _uid("rev-gen-aaaa")
+        assert self._current_revision_uid(models.CollectionItem.objects.get(
+            collection=self.col_a, uid=self.shared_item_uid)) == ordinary_revision
+
+    def test_fenced_delete_of_a_generated_item_leaves_ordinary_items_unchanged(self):
+        generated = _add_item(self.col_a, _uid("item-gen-del"), _uid("rev-gen-del"))
+        ordinary = models.CollectionItem.objects.get(collection=self.col_a, uid=self.shared_item_uid)
+        root_etag = self._current_revision_uid(self.col_a.main_item)
+
+        response = self._transaction(
+            self.col_a,
+            [self._revision_body(generated.uid, _uid("rev-gen-del-tomb"), _uid("rev-gen-del"), deleted=True)],
+            [self._root_dep(self.col_a, root_etag)],
+        )
+        assert response.status_code == 200, response.content
+        tombstone = models.CollectionItemRevision.objects.get(item=generated, current=True)
+        assert tombstone.uid == _uid("rev-gen-del-tomb")
+        assert tombstone.deleted
+        assert self._current_revision_uid(ordinary) == self.rev_a
+        assert self._current_revision_uid(self.col_a.main_item) == root_etag
+
     # --- member_router: dependencies mounted under the same prefix ----------
 
     def test_member_list_uses_the_collection_from_the_prefix(self):

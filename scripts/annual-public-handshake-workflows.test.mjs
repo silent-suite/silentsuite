@@ -233,8 +233,7 @@ test('Stage B signs before upload, uses the exact pinned official artifact actio
   assert.match(workflow, /uses: actions\/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7\.0\.1/); assert.match(workflow, /path: \.annual-only\/public-served\/annual-only-public-served-attestation\.json/); assert.match(workflow, /artifact_id: \$\{\{ steps\.served-attestation-upload\.outputs\.artifact-id \}\}/); assert.match(workflow, /artifact_digest: \$\{\{ steps\.served-attestation-upload\.outputs\.artifact-digest \}\}/)
   assert.doesNotMatch(workflow, /publish-annual-public-served|ACTIONS_RUNTIME_TOKEN|ACTIONS_RESULTS_URL/); assert.match(workflow, /actions: read/); assert.match(workflow, /gh api "repos\/\$GITHUB_REPOSITORY\/actions\/artifacts\/\$ARTIFACT_ID"/); assert.match(workflow, /\.workflow_run\.head_sha/); assert.match(workflow, /\.expired/); assert.match(workflow, /\.digest/)
 })
-test('the correction branch is excluded only from the Docs preview push trigger', () => {
-  const text = source('.github/workflows/preview-docs.yml'); const branches = text.match(/branches-ignore:\n([\s\S]*?)\n\s*paths:/)?.[1] ?? ''
-  const entries = (branches.match(/^\s+- .+$/gm) ?? []).map(line => line.replace(/^\s+- /, '').trim())
-  assert.deepEqual(entries, ['main', 'fix/annual-finalized-artifact-20260905', 'fix/server-request-limits-audit-20261107']); assert.match(text, /push:/); assert.match(text, /paths:/)
+test('the Docs preview runs only for main pushes, so correction branches never deploy an incidental preview', () => {
+  const text = source('.github/workflows/preview-docs.yml')
+  assert.match(text, /^on:\n {2}push:\n {4}branches:\n {6}- main\n {4}paths:\n/m); assert.doesNotMatch(text, /branches-ignore|pull_request|workflow_dispatch/)
 })

@@ -5,7 +5,7 @@ import android.accounts.AccountManager
 import android.content.Context
 import com.etebase.client.CollectionAccessLevel
 import com.etebase.client.CollectionManager
-import com.etebase.client.ItemMetadata
+import com.etebase.client.exceptions.EtebaseException
 import io.silentsuite.sync.AccountSettings
 import io.silentsuite.sync.App
 import io.silentsuite.sync.Constants
@@ -13,6 +13,7 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.edit.NoteMetaCodec
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
@@ -32,7 +33,8 @@ data class NoteRow(val uid: String, val title: String, val preview: String, val 
 
 data class NoteContent(val uid: String, val title: String, val body: String, val editedAt: Long?)
 
-data class NotebookContents(val notebook: NotebookRow, val notes: List<NoteRow>)
+/** [unreadable] counts items the cache holds for this notebook that could not be decoded. */
+data class NotebookContents(val notebook: NotebookRow, val notes: List<NoteRow>, val unreadable: Int = 0)
 
 /** Every private read reports whether the exact account generation still owns the result. */
 sealed class NotesLoad<out T> {
@@ -45,6 +47,7 @@ sealed class NotesLoad<out T> {
 internal data class NotesRuntimeFixture(
     val notebooks: List<NotebookRow>,
     val notes: Map<String, List<NoteContent>>,
+    val unreadable: Map<String, Int> = emptyMap(),
 )
 
 @Volatile
@@ -67,21 +70,33 @@ internal object NotesLoader {
             val data = fixture(context, account, creationId) ?: return NotesLoad.Stale
             val row = data.notebooks.firstOrNull { it.uid == notebookUid } ?: return NotesLoad.Failed
             val notes = data.notes[notebookUid].orEmpty().map { NoteRow(it.uid, it.title, previewOf(it.body), it.editedAt) }
-            return NotesLoad.Loaded(NotebookContents(row, sortNotes(notes)))
+            return NotesLoad.Loaded(NotebookContents(row, sortNotes(notes), data.unreadable[notebookUid] ?: 0))
         }
         return load(context, account, creationId) { cache, colMgr ->
             val row = notebookRows(cache, colMgr).firstOrNull { it.uid == notebookUid } ?: return@load null
             val collection = cache.collectionGet(colMgr, notebookUid)
             val itemMgr = colMgr.getItemManager(collection.col)
-            // One note another app wrote in a shape this client cannot decode is left out, not
-            // allowed to fail the whole notebook.
-            val notes = cache.decodableItemList(itemMgr, notebookUid) { _, error ->
+            // One item another app wrote in a shape this client cannot decode is counted and left
+            // out, not allowed to fail the whole notebook.
+            val unreadable = HashSet<String>()
+            val notes = cache.decodableItemList(itemMgr, notebookUid) { uid, error ->
                 // The binding's message can quote a decrypted value; log only the exception class.
                 Logger.log.warning("Skipping a note that could not be decoded: ${error.javaClass.name}")
+                unreadable += uid
             }
                 .filter { isMarkdownNote(it.meta.itemType) }
-                .map { NoteRow(it.item.uid, titleOf(it.meta), previewOf(it.content), it.meta.mtime) }
-            NotebookContents(row, sortNotes(notes))
+                .mapNotNull { cached ->
+                    // The title comes from the raw bytes. Like any other read of one item, a failure is that item's alone.
+                    val title = try {
+                        titleOf(cached.item.metaRaw)
+                    } catch (e: EtebaseException) {
+                        Logger.log.warning("Skipping a note whose metadata could not be read: ${e.javaClass.name}")
+                        unreadable += cached.item.uid
+                        return@mapNotNull null
+                    }
+                    NoteRow(cached.item.uid, title, previewOf(cached.content), cached.meta.mtime)
+                }
+            NotebookContents(row, sortNotes(notes), unreadable.size)
         }
     }
 
@@ -95,7 +110,7 @@ internal object NotesLoader {
             val itemMgr = colMgr.getItemManager(collection.col)
             val cached = cache.itemGet(itemMgr, notebookUid, noteUid) ?: return@load null
             if (cached.item.isDeleted || !isMarkdownNote(cached.meta.itemType)) return@load null
-            NoteContent(cached.item.uid, titleOf(cached.meta), cached.content, cached.meta.mtime)
+            NoteContent(cached.item.uid, titleOf(cached.item.metaRaw), cached.content, cached.meta.mtime)
         }
     }
 
@@ -111,7 +126,17 @@ internal object NotesLoader {
      */
     internal fun isMarkdownNote(itemType: String?): Boolean = itemType.isNullOrEmpty()
 
-    internal fun titleOf(meta: ItemMetadata): String = meta.name?.trim().orEmpty()
+    /**
+     * A note's title from its raw metadata bytes through [NoteMetaCodec.peek], not the binding's typed
+     * name. This is the rule the push step reads a name back with (EtebasePushRemote), and it is close
+     * to how the web reads one (NoteMetaCodec). The typed decoder also takes a name under an integer
+     * or binary key, next to a key the web reads as the name, stored as binary data, or from input
+     * that is not exactly one map (trailing bytes, an array read by position); the device comparison
+     * in androidTest NoteMetaBindingComparison records these rows. peek trusts none of them.
+     * Blank, which the screens show as "Untitled", when the bytes are not one map or give no name this
+     * app can trust.
+     */
+    internal fun titleOf(metaRaw: ByteArray?): String = NoteMetaCodec.peek(metaRaw)?.name?.trim().orEmpty()
 
     /** First meaningful line of the Markdown body, without list or heading markers. */
     internal fun previewOf(body: String): String {
@@ -176,6 +201,10 @@ internal object NotesLoader {
         } catch (_: InvalidAccountException) {
             // The row vanished between the generation check and the settings read: stale, not an error.
             NotesLoad.Stale
+        } catch (e: OutOfMemoryError) {
+            // Very large notes: fail this screen, as the Notes runner does, rather than the app.
+            Logger.log.log(Level.WARNING, "Notes were too large to read", e)
+            if (exactGenerationStillCurrent()) NotesLoad.Failed else NotesLoad.Stale
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Logger.log.log(Level.WARNING, "Notes could not be read from the local cache", e)

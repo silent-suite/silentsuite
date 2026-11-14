@@ -710,8 +710,21 @@ describe('email-link seven-day no-card continuation', () => {
   })
 
   async function traverseHistory(direction: 'back' | 'forward') {
-    const observed = new Promise<void>((resolve) => window.addEventListener('popstate', () => resolve(), { once: true }))
-    await act(async () => { window.history[direction](); await observed })
+    // Bounded like Testing Library's ordinary waits: a traversal that never emits popstate rejects, which settles
+    // and exits the act scope instead of leaving it open for every later render. Cleaned up on every outcome.
+    let onPopState: (() => void) | undefined
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    const observed = new Promise<void>((resolve, reject) => {
+      onPopState = () => resolve()
+      window.addEventListener('popstate', onPopState, { once: true })
+      deadline = setTimeout(() => reject(new Error(`popstate for history.${direction}() never arrived`)), 1000)
+    })
+    try {
+      await act(async () => { window.history[direction](); await observed })
+    } finally {
+      clearTimeout(deadline)
+      if (onPopState) window.removeEventListener('popstate', onPopState)
+    }
   }
 
   /** Mount through a verified email link, choose the password once and reach plan selection. */
@@ -1598,5 +1611,22 @@ describe('email-link seven-day no-card continuation', () => {
     expect(screen.getByText('Standard Plan')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /bitcoin/i })).not.toBeInTheDocument()
     expect(authState.startAnnualSignupPayment).not.toHaveBeenCalled()
+  })
+
+  // HISTORY_ISOLATION_PROBE: fixture-isolation probes of the traverseHistory helper only. They are not product
+  // Back-navigation tests and do not reproduce a historical trigger. Kept last so a hang cannot reach older cases.
+  it('HISTORY_ISOLATION_PROBE rejects a traversal that emits no popstate with a bounded labeled error', async ({ onTestFinished }) => {
+    // Deterministic no-popstate condition: only this method is stubbed, and it neither traverses nor dispatches.
+    const back = vi.spyOn(window.history, 'back').mockImplementation(() => {})
+    // Runs after the test finishes on every outcome, including its ordinary timeout.
+    onTestFinished(() => back.mockRestore())
+    const traversal = traverseHistory('back')
+    expect(back).toHaveBeenCalledTimes(1)
+    await expect(traversal).rejects.toThrow('popstate for history.back() never arrived')
+  })
+
+  it('HISTORY_ISOLATION_PROBE commits an ordinary render after the preceding traversal probe', () => {
+    render(<p>HISTORY_ISOLATION_PROBE render committed</p>)
+    expect(screen.getByText('HISTORY_ISOLATION_PROBE render committed')).toBeInTheDocument()
   })
 })

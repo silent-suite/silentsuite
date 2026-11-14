@@ -69,7 +69,13 @@ allprojects {
             }
         }
         mavenCentral()
-        maven { url 'https://jitpack.io' }
+        // JitPack builds artifacts from GitHub on request, so it may serve only the
+        // one module that is not published to Maven Central or Google.
+        maven { url 'https://jitpack.io'
+            content {
+                includeModule("com.github.cachapa", "ExpandableLayout")
+            }
+        }
         google()
     }
 }

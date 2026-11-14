@@ -67,7 +67,7 @@ def test_auth_server_malformed_request_does_not_emit_traceback_or_header_value(
                 client.sendall(
                     (
                         "POST /auth HTTP/1.1\r\n"
-                        "Host: 127.0.0.1\r\n"
+                        f"Host: 127.0.0.1:{server.server_address[1]}\r\n"
                         f"Content-Length: {private_value}\r\n"
                         "Connection: close\r\n\r\n"
                     ).encode()
@@ -84,6 +84,126 @@ def test_auth_server_malformed_request_does_not_emit_traceback_or_header_value(
     assert private_value not in captured.out
     assert private_value not in captured.err
     assert "Traceback" not in captured.err
+
+
+def _raw_request(server, method, path, headers, body=b""):
+    lines = [f"{method} {path} HTTP/1.1"]
+    lines += [f"{name}: {value}" for name, value in headers.items()]
+    lines += [f"Content-Length: {len(body)}", "Connection: close", "", ""]
+    with socket.create_connection(server.server_address, timeout=5) as client:
+        client.sendall("\r\n".join(lines).encode() + body)
+        response = b""
+        while chunk := client.recv(4096):
+            response += chunk
+    status_line, _, rest = response.partition(b"\r\n")
+    return int(status_line.split()[1]), rest.decode(errors="replace")
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "rebound.example.invalid:{port}",
+        "localhost:{port}",
+        "127.0.0.1",
+        "127.0.0.1:1",
+        None,
+    ],
+)
+def test_auth_page_rejects_unexpected_host(host):
+    server, thread = _serve_one_auth_request()
+    port = server.server_address[1]
+    headers = {} if host is None else {"Host": host.format(port=port)}
+    try:
+        status, body = _raw_request(server, "GET", "/", headers)
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 403
+    assert "expected-token" not in body
+
+
+def test_auth_page_served_for_exact_loopback_host():
+    server, thread = _serve_one_auth_request()
+    port = server.server_address[1]
+    try:
+        status, body = _raw_request(server, "GET", "/", {"Host": f"127.0.0.1:{port}"})
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 200
+    assert "expected-token" in body
+
+
+def _auth_form_body():
+    return urllib.parse.urlencode({
+        "email": "alice@example.com",
+        "password": "secret",
+        "server_url": "https://server.silentsuite.io",
+        "csrf_token": "expected-token",
+    }).encode()
+
+
+@pytest.mark.parametrize(
+    "host, origin",
+    [
+        ("rebound.example.invalid:{port}", "http://rebound.example.invalid:{port}"),
+        ("127.0.0.1:{port}", "http://rebound.example.invalid:{port}"),
+        ("127.0.0.1:{port}", "http://localhost:{port}"),
+        ("127.0.0.1:{port}", "null"),
+    ],
+)
+def test_auth_post_rejects_unexpected_host_or_origin_before_login(host, origin):
+    server, thread = _serve_one_auth_request()
+    port = server.server_address[1]
+    try:
+        with patch("silentsuite_bridge.auth_browser.Account.login") as login:
+            status, _ = _raw_request(
+                server,
+                "POST",
+                "/auth",
+                {
+                    "Host": host.format(port=port),
+                    "Origin": origin.format(port=port),
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                _auth_form_body(),
+            )
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 403
+    assert not login.called
+
+
+def test_auth_post_with_matching_origin_reaches_login():
+    server, thread = _serve_one_auth_request()
+    port = server.server_address[1]
+    try:
+        with patch(
+            "silentsuite_bridge.auth_browser.Account.login",
+            side_effect=Exception("401 Unauthorized"),
+        ) as login:
+            status, body = _raw_request(
+                server,
+                "POST",
+                "/auth",
+                {
+                    "Host": f"127.0.0.1:{port}",
+                    "Origin": f"http://127.0.0.1:{port}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                _auth_form_body(),
+            )
+    finally:
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert status == 401
+    assert "Invalid email or password." in body
+    assert login.called
 
 
 def test_auth_page_contains_csrf_field():

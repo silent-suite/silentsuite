@@ -45,8 +45,56 @@ if username and password and not User.objects.filter(username=username).exists()
 PYEOF
 fi
 
-echo "[entrypoint] starting uvicorn..."
 TRUSTED_PROXY_IPS="${TRUSTED_PROXY_IPS:-127.0.0.1}"
+export TRUSTED_PROXY_IPS
+
+# A reverse proxy on the Docker host reaches a published port through Docker,
+# so the server sees the container's default gateway as the peer, not
+# 127.0.0.1. The entry "docker-gateway" stands for that address, read from the
+# routing table at every start so it follows the network if Compose recreates
+# it with another subnet. It is opt-in: trusting the gateway trusts whatever
+# reaches the container through it, which is only programs on this host while
+# the port is published on 127.0.0.1. If no IPv4 default route exists, the
+# entry is dropped and nothing extra is trusted.
+case "$TRUSTED_PROXY_IPS" in
+    *docker-gateway*)
+        TRUSTED_PROXY_IPS="$(python - <<'PYEOF'
+import os
+import socket
+import struct
+import sys
+
+gateway = ""
+try:
+    with open("/proc/net/route") as routes:
+        next(routes, None)
+        for line in routes:
+            fields = line.split()
+            # Destination 0.0.0.0 with RTF_UP and RTF_GATEWAY set.
+            if len(fields) > 3 and fields[1] == "00000000" and int(fields[3], 16) & 3 == 3:
+                gateway = socket.inet_ntoa(struct.pack("=L", int(fields[2], 16)))
+                break
+except (OSError, ValueError):
+    gateway = ""
+
+resolved = []
+for entry in os.environ.get("TRUSTED_PROXY_IPS", "").split(","):
+    entry = entry.strip()
+    if entry == "docker-gateway":
+        if not gateway:
+            print("[entrypoint] docker-gateway: no IPv4 default route; not trusting a gateway", file=sys.stderr)
+            continue
+        entry = gateway
+    if entry and entry not in resolved:
+        resolved.append(entry)
+print(",".join(resolved) or "127.0.0.1")
+PYEOF
+)"
+        ;;
+esac
+echo "[entrypoint] trusting X-Forwarded-* headers from: $TRUSTED_PROXY_IPS"
+
+echo "[entrypoint] starting uvicorn..."
 exec uvicorn etebase_server.asgi:application \
     --host 0.0.0.0 --port 3735 \
     --workers 2 --proxy-headers \

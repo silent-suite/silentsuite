@@ -61,10 +61,17 @@ vi.mock('@/app/components/MobileCollectionSheet', () => ({
   MobileCollectionSheet: ({ open }: { open: boolean }) => (open ? <div data-testid="collection-sheet" /> : null),
 }))
 
+// A new task needs a list the account may write to; a missing access level means read-only.
+function writableList() {
+  storeMock.taskListState.lists = [{ id: 'work', name: 'Work', color: '#3b82f6', visible: true, accessLevel: 2 }]
+  storeMock.taskListState.activeListId = 'all'
+}
+
 describe('TasksPage mobile reachability', () => {
   beforeEach(() => {
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     storeMock.taskState.tasks = []
+    writableList()
     storeMock.authState.canWrite.mockReturnValue(true)
   })
 
@@ -122,6 +129,7 @@ describe('C3b task drafts survive an unsaved or unconfirmed create', () => {
   beforeEach(() => {
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
     storeMock.taskState.tasks = []
+    writableList()
     storeMock.authState.canWrite.mockReturnValue(true)
     storeMock.taskState.createTask.mockReset()
   })
@@ -379,8 +387,8 @@ function taskFixture(overrides: Partial<Task> & { id: string; title: string }): 
 
 function visibleLists() {
   storeMock.taskListState.lists = [
-    { id: 'work', name: 'Work', color: '#3b82f6', visible: true },
-    { id: 'secret', name: 'Secret', color: '#ef4444', visible: false },
+    { id: 'work', name: 'Work', color: '#3b82f6', visible: true, accessLevel: 2 },
+    { id: 'secret', name: 'Secret', color: '#ef4444', visible: false, accessLevel: 2 },
   ]
   storeMock.taskListState.activeListId = 'work'
 }
@@ -769,8 +777,8 @@ describe('TasksPage mobile metadata line and dialog reachability', () => {
 
   it('keeps a long list pill inside the create dialog below md, with its full name and selection intact', async () => {
     storeMock.taskListState.lists = [
-      { id: 'work', name: 'Work', color: '#3b82f6', visible: true },
-      { id: 'long', name: longListName, color: '#2bb673', visible: true },
+      { id: 'work', name: 'Work', color: '#3b82f6', visible: true, accessLevel: 2 },
+      { id: 'long', name: longListName, color: '#2bb673', visible: true, accessLevel: 2 },
     ]
     storeMock.taskListState.activeListId = 'work'
     storeMock.taskState.createTask.mockResolvedValue({ id: 'created', title: 'Created' } as Task)
@@ -790,5 +798,137 @@ describe('TasksPage mobile metadata line and dialog reachability', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
     await waitFor(() => expect(storeMock.taskState.createTask).toHaveBeenCalledTimes(1))
     expect(storeMock.taskState.createTask).toHaveBeenCalledWith(expect.objectContaining({ title: 'Created', listId: 'long' }))
+  })
+})
+
+describe('TasksPage tasks in a list shared read-only', () => {
+  beforeEach(() => {
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    storeMock.taskListState.lists = [
+      { id: 'work', name: 'Work', color: '#3b82f6', visible: true, accessLevel: 2 },
+      { id: 'shared', name: 'Shared', color: '#ef4444', visible: true, accessLevel: 0 },
+    ]
+    storeMock.taskListState.activeListId = 'all'
+    storeMock.authState.canWrite.mockReturnValue(true)
+    storeMock.taskState.toggleComplete.mockReset()
+    storeMock.taskState.updateTask.mockReset()
+    storeMock.taskState.deleteTask.mockReset()
+  })
+
+  it('blocks toggling, editing and deleting a task in the read-only list', () => {
+    storeMock.taskState.tasks = [taskFixture({ id: 'ro', title: 'Shared task', description: 'Shared note', listId: 'shared' })]
+    renderWithIntl(<TasksPage />)
+
+    const toggle = screen.getByRole('button', { name: 'Mark complete' })
+    expect(toggle).toBeDisabled()
+    expect(toggle).toHaveAttribute('title', 'This task list is read-only')
+    fireEvent.click(toggle)
+    expect(storeMock.taskState.toggleComplete).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Delete task' })).toBeNull()
+    expect(screen.queryAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))).toBeUndefined()
+
+    fireEvent.doubleClick(screen.getByText('Shared task'))
+    expect(screen.queryByDisplayValue('Shared task')).toBeNull()
+
+    fireEvent.click(screen.getByText('Shared task'))
+    expect(screen.getByPlaceholderText('Add a description...')).toHaveAttribute('readonly')
+    expect(screen.getByLabelText('Task due date')).toHaveAttribute('readonly')
+    expect(storeMock.taskState.updateTask).not.toHaveBeenCalled()
+  })
+
+  it('keeps a task in a writable list editable', () => {
+    storeMock.taskState.tasks = [taskFixture({ id: 'rw', title: 'Own task', listId: 'work' })]
+    renderWithIntl(<TasksPage />)
+
+    const toggle = screen.getByRole('button', { name: 'Mark complete' })
+    expect(toggle).toBeEnabled()
+    fireEvent.click(toggle)
+    expect(storeMock.taskState.toggleComplete).toHaveBeenCalledWith('rw')
+    expect(screen.getByRole('button', { name: 'Delete task' })).toBeInTheDocument()
+  })
+
+  it('creates new tasks only in a writable list, even when the default list is read-only', async () => {
+    storeMock.taskListState.lists = [
+      { id: 'shared', name: 'Shared', color: '#ef4444', visible: true, accessLevel: 0 },
+      { id: 'work', name: 'Work', color: '#3b82f6', visible: true, accessLevel: 2 },
+    ]
+    storeMock.taskListState.activeListId = 'shared'
+    storeMock.taskState.tasks = []
+    storeMock.taskState.createTask.mockReset()
+    storeMock.taskState.createTask.mockResolvedValue({ id: 'created', title: 'Created' } as Task)
+    renderWithIntl(<TasksPage />)
+
+    fireEvent.change(screen.getByPlaceholderText('Add a task...'), { target: { value: 'Quick' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    await waitFor(() => expect(storeMock.taskState.createTask).toHaveBeenCalledWith({ title: 'Quick', listId: 'work' }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'New task' }))
+    const dialog = screen.getByRole('dialog', { name: 'New Task' })
+    expect(within(dialog).queryByRole('button', { name: 'Shared' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Work' })).toBeInTheDocument()
+    fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Full' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }))
+    await waitFor(() => expect(storeMock.taskState.createTask).toHaveBeenCalledTimes(2))
+    expect(storeMock.taskState.createTask).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Full', listId: 'work' }))
+  })
+
+  it('disables quick add and New task when every list is read-only', () => {
+    storeMock.taskListState.lists = [{ id: 'shared', name: 'Shared', color: '#ef4444', visible: true, accessLevel: 0 }]
+    storeMock.taskState.tasks = []
+    storeMock.taskState.createTask.mockReset()
+    renderWithIntl(<TasksPage />)
+
+    const input = screen.getByRole('textbox', { name: 'Add a task' })
+    expect(input).toBeDisabled()
+    expect(input).toHaveAttribute('title', 'This task list is read-only')
+    const add = screen.getByRole('button', { name: 'Add' })
+    expect(add).toBeDisabled()
+    expect(add).toHaveAttribute('title', 'This task list is read-only')
+    const create = screen.getByRole('button', { name: 'New task' })
+    expect(create).toBeDisabled()
+    expect(create).toHaveAttribute('title', 'This task list is read-only')
+    fireEvent.submit(input.closest('form')!)
+    expect(storeMock.taskState.createTask).not.toHaveBeenCalled()
+  })
+
+  it('saves nothing from an editor left open once its list turns read-only', () => {
+    storeMock.taskState.tasks = [taskFixture({ id: 'rw', title: 'Own task', description: 'Own note', listId: 'work' })]
+    const view = renderWithIntl(<TasksPage />)
+    const downgrade = () => {
+      storeMock.taskListState.lists = storeMock.taskListState.lists.map((list) => (list.id === 'work' ? { ...list, accessLevel: 0 } : list))
+      view.rerender(<TasksPage />)
+    }
+
+    // Inline title, description and delete confirmation opened while writable.
+    fireEvent.click(screen.getByText('Own task'))
+    const description = screen.getByPlaceholderText('Add a description...')
+    fireEvent.change(description, { target: { value: 'Changed note' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Delete task' }))
+    fireEvent.doubleClick(screen.getByText('Own task'))
+    fireEvent.change(screen.getByDisplayValue('Own task'), { target: { value: 'Renamed' } })
+    downgrade()
+    fireEvent.blur(screen.getByDisplayValue('Renamed'))
+    fireEvent.blur(description)
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete task?' })).getByRole('button', { name: 'Delete task' }))
+    expect(storeMock.taskState.updateTask).not.toHaveBeenCalled()
+    expect(storeMock.taskState.deleteTask).not.toHaveBeenCalled()
+  })
+
+  it('disables Save in the full editor once its list turns read-only', () => {
+    storeMock.taskState.tasks = [taskFixture({ id: 'rw', title: 'Own task', listId: 'work' })]
+    const view = renderWithIntl(<TasksPage />)
+    const mobileEdit = screen.getAllByRole('button', { name: 'Edit task' }).find((button) => button.className.includes('md:hidden'))
+    fireEvent.click(mobileEdit!)
+    const dialog = screen.getByRole('dialog', { name: 'Edit Task' })
+    fireEvent.change(within(dialog).getByPlaceholderText('Task title'), { target: { value: 'Renamed' } })
+
+    storeMock.taskListState.lists = storeMock.taskListState.lists.map((list) => (list.id === 'work' ? { ...list, accessLevel: 0 } : list))
+    view.rerender(<TasksPage />)
+
+    const save = within(screen.getByRole('dialog', { name: 'Edit Task' })).getByRole('button', { name: 'Save' })
+    expect(save).toBeDisabled()
+    expect(save).toHaveAttribute('title', 'This task list is read-only')
+    fireEvent.keyDown(within(screen.getByRole('dialog', { name: 'Edit Task' })).getByPlaceholderText('Task title'), { key: 'Enter' })
+    expect(storeMock.taskState.updateTask).not.toHaveBeenCalled()
   })
 })

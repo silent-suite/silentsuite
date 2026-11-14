@@ -579,6 +579,19 @@ def _get_attributes_from_path(path):
 
 # --- vCard compatibility ---
 
+# vobject has no NICKNAME behavior, so its default vCard text behavior keeps
+# only the text before the first unescaped comma. NICKNAME is a comma list
+# (RFC 2426 3.1.3, RFC 6350 6.2.3); parse and serialize it like CATEGORIES.
+# Radicale parses PUT bodies in this process, so this also covers uploads.
+class _VCardNicknameBehavior(vobject.icalendar.MultiTextBehavior):
+    # vCard properties may carry a group prefix (item1.NICKNAME), like the
+    # default vCard text behavior allows.
+    allowGroup = True
+
+
+vobject.base.registerBehavior(_VCardNicknameBehavior, "NICKNAME")
+vobject.vcard.VCard3_0.knownChildren.setdefault("NICKNAME", (0, None, None))
+
 VCARD_4_TO_3_PHOTO_URI_REGEX = re.compile(
     r"^(PHOTO|LOGO):http", re.MULTILINE
 )

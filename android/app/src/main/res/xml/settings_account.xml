@@ -12,5 +12,6 @@
     <Preference android:key="manage_account" android:title="@string/settings_account_dashboard" android:summary="@string/settings_account_dashboard_summary" android:persistent="false" />
     <PreferenceCategory android:title="@string/settings_experimental_title">
         <SwitchPreferenceCompat android:key="notes_enabled" android:title="@string/settings_notes_enabled" android:summary="@string/settings_notes_enabled_summary" android:persistent="false" />
+        <SwitchPreferenceCompat android:key="birthdays_enabled" android:title="@string/settings_birthdays_enabled" android:summary="@string/settings_birthdays_enabled_summary" android:persistent="false" />
     </PreferenceCategory>
 </PreferenceScreen>

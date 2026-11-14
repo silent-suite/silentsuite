@@ -51,16 +51,19 @@ async def get_ticket(
     uid = nacl.encoding.URLSafeBase64Encoder.encode(nacl.utils.random(32))
     ticket_model = TicketInner(user=user.id, req=ticket_request)
     ticket_raw = msgpack_encode(ticket_model.dict())
-    await redisw.redis.set(uid, ticket_raw, ex=TICKET_VALIDITY_SECONDS * 1000)
+    # `ex` is in seconds.
+    await redisw.redis.set(uid, ticket_raw, ex=TICKET_VALIDITY_SECONDS)
     return TicketOut(ticket=uid)
 
 
 async def load_websocket_ticket(websocket: WebSocket, ticket: str) -> t.Optional[TicketInner]:
-    content = await redisw.redis.get(ticket)
+    # Read and delete in one MULTI/EXEC transaction so a ticket can be redeemed
+    # only once. GETDEL would need Redis 6.2+; a transaction works on any version.
+    async with redisw.redis.pipeline(transaction=True) as pipe:
+        content, _ = await pipe.get(ticket).delete(ticket).execute()
     if content is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return None
-    await redisw.redis.delete(ticket)
     return TicketInner(**msgpack_decode(content))
 
 

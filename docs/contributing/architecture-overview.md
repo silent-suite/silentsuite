@@ -32,10 +32,14 @@ The repository is a pnpm monorepo managed by Turborepo:
 | Directory | Purpose |
 |---|---|
 | `apps/web/` | Main web application (Next.js) |
+| `apps/docs/` | Documentation website |
 | `packages/` | Shared packages used across apps |
+| `server/` | Etebase sync server |
 | `self-host/` | Docker Compose configuration for self-hosting |
 | `deploy/` | Deployment scripts, init scripts, runbooks |
 | `docs/` | Documentation |
+| `android/` | Android sync adapter (Kotlin) |
+| `bridge/` | CalDAV/CardDAV bridge daemon (Python) |
 
 ## Tech Stack
 

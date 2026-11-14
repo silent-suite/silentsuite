@@ -1084,6 +1084,129 @@ def test_every_workflow_action_is_pinned_to_an_immutable_commit():
     assert violations == []
 
 
+BRIDGE_BUILD_REQUIREMENTS = ROOT / "bridge" / "requirements-build.txt"
+BRIDGE_LOCK = ROOT / "bridge" / "requirements-lock.txt"
+BRIDGE_ETEBASE_BUILD_REQUIREMENTS = ROOT / "bridge" / "requirements-etebase-build.txt"
+BRIDGE_TEST_LINUX_WORKFLOW = WORKFLOW_DIR / "test-bridge-linux.yml"
+HASHED_BUILD_INSTALL = (
+    "python -m pip install --disable-pip-version-check --require-hashes "
+    "--only-binary=:all: -r requirements-build.txt"
+)
+HASHED_LOCK_INSTALL = (
+    "python -m pip install --disable-pip-version-check --require-hashes "
+    "--only-binary=:all: -r requirements-lock.txt"
+)
+BRIDGE_ONLY_INSTALL = "python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e ."
+DIGEST_PINNED_IMAGE = re.compile(r"^[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}$")
+
+
+def hashed_pin_names(path: Path) -> set[str]:
+    """Every requirement in the file is ==-pinned with sha256 hashes; return the names."""
+    lines = [
+        line
+        for line in path.read_text(encoding="utf-8").replace("\\\n", " ").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    names = set()
+    for line in lines:
+        requirement, _, options = line.partition("--hash=")
+        specifier = requirement.split(";")[0].strip()
+        assert re.fullmatch(r"[A-Za-z0-9._-]+==[A-Za-z0-9.]+", specifier), line
+        hashes = ("--hash=" + options).split()
+        assert hashes and all(re.fullmatch(r"--hash=sha256:[0-9a-f]{64}", item) for item in hashes), line
+        names.add(specifier.split("==")[0])
+    return names
+
+
+def assert_hash_locked_bridge_install(script: str) -> None:
+    # Build tools, then the locked dependencies, then the bridge itself with
+    # nothing left to resolve; pip check proves the result is complete.
+    build_tools = script.index(HASHED_BUILD_INSTALL)
+    lock = script.index(HASHED_LOCK_INSTALL)
+    bridge = script.index(BRIDGE_ONLY_INSTALL)
+    check = script.index("python -m pip check")
+    assert build_tools < lock < bridge < check
+    assert "pip install pyinstaller" not in script
+    assert "--upgrade pip" not in script
+    # No range resolution of the bridge's dependencies and no fallback.
+    assert ".[" not in script
+    assert "||" not in script
+    # Every install is hash-checked from a file, a source build that resolves
+    # nothing (no dependencies, no isolated build environment, build requirements
+    # checked against what is already installed), or a wheel this job just built.
+    source_build = ("--no-deps", "--no-build-isolation", "--check-build-dependencies")
+    for line in script.splitlines():
+        if re.search(r"\bpip (?:install|wheel)\b", line):
+            assert (
+                "--require-hashes" in line
+                or all(flag in line for flag in source_build)
+                or ("--no-deps" in line and "--no-index" in line and line.rstrip().endswith(".whl"))
+            ), line
+
+
+def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
+    build = load(BRIDGE_BUILD_WORKFLOW)["jobs"]["build"]
+    native = step_named(build, "Install dependencies (native)")["run"]
+    qemu = step_named(build, "Build + smoke test (QEMU arm64)")["with"]["run"]
+    for script in (native, qemu):
+        assert_hash_locked_bridge_install(script)
+
+    # macOS arm64 builds etebase from a pinned upstream commit, after the lock,
+    # into a wheel in a throwaway virtualenv that alone gets the hash-locked
+    # build tools; the PyInstaller environment only installs the built wheel.
+    venv_python = '"$ETEBASE_BUILD/venv/bin/python" -m pip'
+    build_venv = native.index('python -m venv "$ETEBASE_BUILD/venv"')
+    tools = native.index(
+        f"{venv_python} install --disable-pip-version-check --require-hashes "
+        "--only-binary=:all: -r requirements-etebase-build.txt"
+    )
+    wheel = native.index(
+        f"{venv_python} wheel --disable-pip-version-check --no-deps --no-build-isolation "
+        '--check-build-dependencies -w "$ETEBASE_BUILD/wheel" '
+        '"git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"'
+    )
+    install = native.index(
+        'python -m pip install --disable-pip-version-check --no-deps --no-index "$ETEBASE_BUILD"/wheel/etebase-*.whl'
+    )
+    assert native.index(HASHED_LOCK_INSTALL) < build_venv < tools < wheel < install < native.index(BRIDGE_ONLY_INSTALL)
+    assert native.count("requirements-etebase-build.txt") == 1
+    assert native.count("etesync/etebase-py.git") == 1
+    assert hashed_pin_names(BRIDGE_ETEBASE_BUILD_REQUIREMENTS) >= {"setuptools", "wheel", "setuptools-rust"}
+    # The newer setuptools those tools need never reaches the bundled environment.
+    assert not {"setuptools", "wheel", "setuptools-rust"} & hashed_pin_names(BRIDGE_LOCK)
+
+    assert {"pip", "pyinstaller", "pyinstaller-hooks-contrib"} <= hashed_pin_names(BRIDGE_BUILD_REQUIREMENTS)
+
+
+def test_bridge_dependencies_come_from_the_hash_locked_requirements():
+    names = hashed_pin_names(BRIDGE_LOCK)
+    # The runtime core, the tray extra and the build backend are all locked.
+    assert {"etebase", "radicale", "pystray", "pillow", "pytest", "hatchling", "editables"} <= names
+
+    # The Linux test build mirrors the release install, so a pull request that
+    # changes the lock also proves it installs.
+    linux_build = load(BRIDGE_TEST_LINUX_WORKFLOW)["jobs"]["build"]
+    assert_hash_locked_bridge_install(step_named(linux_build, "Install dependencies")["run"])
+
+
+def test_bridge_build_container_inputs_are_pinned_and_verified():
+    build = load(BRIDGE_BUILD_WORKFLOW)["jobs"]["build"]
+    qemu_setup = step_named(build, "Set up QEMU")["with"]
+    assert DIGEST_PINNED_IMAGE.match(qemu_setup.get("image", "")), qemu_setup
+    assert qemu_setup.get("cache-image") == "false"
+
+    container = step_named(build, "Build + smoke test (QEMU arm64)")["with"]
+    assert DIGEST_PINNED_IMAGE.match(container["image"]), container["image"]
+    script = container["run"]
+    assert "sh.rustup.rs" not in script
+    assert not re.search(r"curl[^\n|]*\|\s*(?:ba)?sh", script)
+    assert re.search(r"RUSTUP_INIT_SHA256=[0-9a-f]{64}\n", script)
+    download = script.index("-o /tmp/rustup-init")
+    verify = script.index('echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c -')
+    run = script.index("/tmp/rustup-init -y --default-toolchain 1.63.0")
+    assert download < verify < run
+
+
 ALLOWED_RELEASE_SECRETS = {
     "GITHUB_TOKEN",
     "ANDROID_KEYSTORE_BASE64",

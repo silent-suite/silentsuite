@@ -286,6 +286,226 @@ def test_malformed_proof_is_rejected_before_database_lookup(user_factory, monkey
     assert BillingLinkProof.objects.count() == 0
 
 
+# ---- Purpose-specific status proofs (plan v2 §4.2, §9.1 S-1). On a server without the
+# status-proof routes every new-route test fails on its first status code (404): that is
+# the genuine RED and also the mixed-version fail-closed behaviour Android and Billing rely
+# on. Tests marked "control" pass on the current server and must keep passing.
+
+STATUS_ISSUE = "/api/v1/billing/status-proof/"
+STATUS_CONSUME = "/api/v1/billing/status-proof/consume/"
+
+
+def issue_status(client):
+    response = client.post(STATUS_ISSUE)
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"statusProof"}
+    assert len(body["statusProof"]) == 43
+    return body["statusProof"]
+
+
+def consume_status(client, proof, key=MACHINE_KEY, field="statusProof"):
+    headers = {"X-Etebase-Billing-Key": key} if key is not None else {}
+    return client.post(STATUS_CONSUME, json={field: proof}, headers=headers)
+
+
+def test_status_proof_issue_returns_only_a_status_purpose_proof(user_factory):
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+
+    proof = issue_status(client)
+    stored = BillingLinkProof.objects.get()
+
+    assert stored.user == user
+    assert stored.audience == "billing_status"
+    assert stored.proof_hash == BillingLinkProof.digest(proof)
+    assert stored.consumed_at is None
+    assert stored.expires_at > timezone.now()
+
+
+def test_status_proof_issue_requires_authenticated_user():
+    _, client = make_client()
+
+    response = client.post(STATUS_ISSUE)
+
+    assert response.status_code in (401, 403)
+    assert BillingLinkProof.objects.count() == 0
+
+
+def test_status_proof_consume_returns_only_the_username(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    proof = issue_status(client)
+
+    response = consume_status(client, proof)
+
+    assert response.status_code == 200
+    assert response.json() == {"username": "proof-user"}
+    assert BillingLinkProof.objects.get().consumed_at is not None
+
+
+def test_status_proof_consume_requires_machine_key_without_burning_proof(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    proof = issue_status(client)
+
+    assert consume_status(client, proof, key=None).status_code == 401
+    assert consume_status(client, proof, key="wrong-machine-key").status_code == 401
+    assert BillingLinkProof.objects.get().consumed_at is None
+    assert consume_status(client, proof).status_code == 200
+
+
+def test_status_proof_is_one_time_and_expired_or_malformed_proofs_fail_closed(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    proof = issue_status(client)
+
+    assert consume_status(client, proof).status_code == 200
+    assert consume_status(client, proof).status_code == 401
+
+    expired = "x" * 43
+    BillingLinkProof.objects.create(
+        user=user,
+        proof_hash=BillingLinkProof.digest(expired),
+        audience="billing_status",
+        expires_at=timezone.now() - timedelta(seconds=1),
+    )
+    assert consume_status(client, expired).status_code == 401
+    assert BillingLinkProof.objects.get(proof_hash=BillingLinkProof.digest(expired)).consumed_at is None
+    assert consume_status(client, "too-short").status_code == 422
+
+
+def test_status_issue_does_not_disturb_an_outstanding_login_proof(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    login_proof = issue_proof(client)
+
+    # Issued within the login path's one-second interval: purposes do not share a rate budget.
+    issue_status(client)
+
+    assert BillingLinkProof.objects.filter(user=user, audience="billing", consumed_at__isnull=True).count() == 1
+    response = consume(client, login_proof)
+    assert response.status_code == 200
+    assert response.json() == {"username": "proof-user", "email": "proof@example.com"}
+
+
+def test_login_issue_is_not_rate_limited_by_a_fresh_status_proof(user_factory):
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    issue_status(client)
+
+    response = client.post("/api/v1/billing/link-proof/")
+
+    assert response.status_code == 200
+    assert BillingLinkProof.objects.filter(user=user, audience="billing_status", consumed_at__isnull=True).count() == 1
+
+
+def test_repeated_status_issue_is_rate_limited_within_its_own_purpose(user_factory):
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    login_proof = issue_proof(client)
+    first = issue_status(client)
+
+    repeated = client.post(STATUS_ISSUE)
+
+    assert repeated.status_code == 429
+    assert BillingLinkProof.objects.filter(user=user, audience="billing_status").count() == 1
+    assert BillingLinkProof.objects.get(user=user, audience="billing_status").proof_hash == BillingLinkProof.digest(first)
+    assert BillingLinkProof.objects.get(user=user, audience="billing").proof_hash == BillingLinkProof.digest(login_proof)
+
+
+def test_status_proof_cannot_be_consumed_as_a_login_proof(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    status_proof = issue_status(client)
+
+    assert consume(client, status_proof).status_code == 401
+    assert BillingLinkProof.objects.get(audience="billing_status").consumed_at is None
+    assert consume_status(client, status_proof).status_code == 200
+
+
+def test_login_proof_cannot_be_consumed_as_a_status_proof(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    login_proof = issue_proof(client)
+
+    assert consume_status(client, login_proof).status_code == 401
+    assert BillingLinkProof.objects.get(audience="billing").consumed_at is None
+    assert consume(client, login_proof).status_code == 200
+
+
+def test_status_consume_rejects_the_login_field_name_before_lookup(user_factory, monkeypatch):
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    status_proof = issue_status(client)
+
+    assert consume_status(client, status_proof, field="etebaseLinkProof").status_code == 422
+    assert BillingLinkProof.objects.get(audience="billing_status").consumed_at is None
+
+
+def test_control_legacy_issue_ignores_a_requested_purpose_and_still_issues_login_proofs(user_factory):
+    # Control (E4): the old issue route takes no body, which is why status proofs need their own path.
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+
+    response = client.post("/api/v1/billing/link-proof/", json={"audience": "billing_status"})
+
+    assert response.status_code == 200
+    assert BillingLinkProof.objects.get().audience == "billing"
+
+
+def test_control_legacy_consume_never_consumes_a_status_purpose_proof(user_factory, monkeypatch):
+    # Control: the old consume route refuses the status field (422) and a status-purpose row (401).
+    monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
+    user = user_factory(username="proof-user", email="proof@example.com")
+    _, client = make_client(user)
+    status_proof = "s" * 43
+    BillingLinkProof.objects.create(
+        user=user,
+        proof_hash=BillingLinkProof.digest(status_proof),
+        audience="billing_status",
+        expires_at=timezone.now() + timedelta(minutes=2),
+    )
+
+    assert client.post(
+        "/api/v1/billing/link-proof/consume/",
+        json={"statusProof": status_proof},
+        headers={"X-Etebase-Billing-Key": MACHINE_KEY},
+    ).status_code == 422
+    assert consume(client, status_proof).status_code == 401
+    assert BillingLinkProof.objects.get().consumed_at is None
+
+
+def test_control_cleanup_command_removes_stale_status_proofs(user_factory):
+    # Control: retention cleanup already covers every purpose.
+    user = user_factory(username="proof-user", email="proof@example.com")
+    now = timezone.now()
+    stale = BillingLinkProof.objects.create(
+        user=user,
+        proof_hash=BillingLinkProof.digest("t" * 43),
+        audience="billing_status",
+        expires_at=now - timedelta(minutes=6),
+    )
+    active = BillingLinkProof.objects.create(
+        user=user,
+        proof_hash=BillingLinkProof.digest("u" * 43),
+        audience="billing_status",
+        expires_at=now + timedelta(minutes=2),
+    )
+
+    call_command("cleanup_billing_link_proofs")
+
+    assert not BillingLinkProof.objects.filter(pk=stale.pk).exists()
+    assert BillingLinkProof.objects.filter(pk=active.pk).exists()
+
+
 def test_readiness_requires_machine_key(monkeypatch):
     monkeypatch.setenv("ETEBASE_BILLING_LINK_PROOF_MACHINE_KEY", MACHINE_KEY)
     _, client = make_client()

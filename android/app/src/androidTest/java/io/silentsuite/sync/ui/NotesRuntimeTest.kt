@@ -195,7 +195,11 @@ class NotesRuntimeTest {
         val loads = java.util.concurrent.atomic.AtomicInteger()
         notesFixtureOverride = { _, exact, creationId ->
             loads.incrementAndGet()
-            if (exact == account && creationId == generation) NotesRuntimeFixture(rows.get(), notes) else null
+            if (exact == account && creationId == generation) {
+                NotesRuntimeFixture(rows.get(), notes, unreadable = mapOf("nb-shared" to 1))
+            } else {
+                null
+            }
         }
         NotesSyncCoordinator.runnerOverride = { _, _, _, _ -> }
         val routes = mutableListOf<Intent>()
@@ -272,6 +276,9 @@ class NotesRuntimeTest {
                     assertEquals("item one", fragment.renderedNotes.first().preview)
                     assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.note_list_read_only).visibility)
                     assertEquals("Team notes", activity.title.toString())
+                    val unreadable = activity.findViewById<TextView>(R.id.notes_unreadable)
+                    assertEquals(View.VISIBLE, unreadable.visibility)
+                    assertEquals("1 item in this notebook could not be read", unreadable.text.toString())
                     val list = activity.findViewById<ListView>(R.id.notes_list)
                     list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
                 }
@@ -293,6 +300,17 @@ class NotesRuntimeTest {
                 scenario.onActivity { it.onSupportNavigateUp() }
                 waitUntil("notebooks rendered after going back") { notebookFragment(scenario)?.renderedNotebooks?.size == 62 }
                 waitUntil("notebook list position restored") { notebookListPosition(scenario) == 20 }
+
+                // A notebook with no unreadable items shows no count line.
+                scenario.onActivity { activity ->
+                    val list = activity.findViewById<ListView>(R.id.notebooks_list)
+                    list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
+                }
+                waitUntil("own notebook rendered") { noteListFragment(scenario)?.renderedEmptyState == NotesEmptyState.EMPTY }
+                scenario.onActivity { activity ->
+                    assertEquals("Personal Notes", activity.title.toString())
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.notes_unreadable).visibility)
+                }
             }
         } finally {
             notesFixtureOverride = null

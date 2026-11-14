@@ -199,14 +199,16 @@ ss_log "database and server are healthy."
 # redirects every HTTPS request back to itself. Trust exactly that gateway
 # (plus loopback), the way the self-host installer tells operators to trust a
 # proxy that is not on 127.0.0.1, and recreate only the server container.
+# Newer installers write "127.0.0.1,docker-gateway", which only server images
+# that know that entry resolve; the pinned literal works with every release.
 ss_server_gateway || ss_fail "$SS_GATEWAY_ERROR."
 GATEWAY="$SS_GATEWAY"
 if [ "$(grep -c '^TRUSTED_PROXY_IPS=' "$SS_INSTALL_DIR/.env" | tr -d ' ')" != "1" ] ||
-  ! grep -qx 'TRUSTED_PROXY_IPS=127\.0\.0\.1' "$SS_INSTALL_DIR/.env"; then
+  ! grep -Eqx 'TRUSTED_PROXY_IPS=127\.0\.0\.1(,docker-gateway)?' "$SS_INSTALL_DIR/.env"; then
   ss_fail "the installer wrote an unexpected TRUSTED_PROXY_IPS setting; refusing to change it."
 fi
 # Only this one line is rewritten; nothing from .env is printed.
-sed -i "s/^TRUSTED_PROXY_IPS=127\\.0\\.0\\.1\$/TRUSTED_PROXY_IPS=127.0.0.1,$GATEWAY/" "$SS_INSTALL_DIR/.env"
+sed -i -E "s/^TRUSTED_PROXY_IPS=127\\.0\\.0\\.1(,docker-gateway)?\$/TRUSTED_PROXY_IPS=127.0.0.1,$GATEWAY/" "$SS_INSTALL_DIR/.env"
 grep -qxF "TRUSTED_PROXY_IPS=127.0.0.1,$GATEWAY" "$SS_INSTALL_DIR/.env" ||
   ss_fail "could not record the trusted proxy address."
 printf 'trusted_proxy=%s\n' "$GATEWAY" >> "$SS_STATE_FILE"
