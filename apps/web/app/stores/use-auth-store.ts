@@ -10,6 +10,7 @@ import { COOKIE_MAX_AGE_SELF_HOSTED, COOKIE_MAX_AGE_HOSTED } from '@/app/lib/con
 import { secureGet, secureSet, secureRemove, secureRemoveIfEqual, secureClear, migrateFromLocalStorage } from '@/app/lib/secure-storage'
 import { clearAll as clearLocalDataCache } from '@/app/lib/data-cache'
 import { clearAll as clearOfflineQueue } from '@/app/lib/offline-queue'
+import { clearScheduledAlarms } from '@/app/lib/notification-alarms'
 import { createLoginSessionPersistenceDiagnostics } from '@/app/lib/sync-restore-diagnostics'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import {
@@ -1050,6 +1051,13 @@ async function clearLocalAuthMaterial(reason: 'logout' | 'invalid-hosted-auth', 
     await clearOfflineQueue()
   } catch (err) {
     logger.warn(`[auth-store] Failed to clear offline queue during ${reason}:`, err)
+  }
+
+  try {
+    if (!current()) return
+    await clearScheduledAlarms()
+  } catch (err) {
+    logger.warn(`[auth-store] Failed to clear scheduled reminders during ${reason}:`, err)
   }
 
   if (!current()) return
