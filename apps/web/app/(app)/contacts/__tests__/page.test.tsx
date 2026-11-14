@@ -55,7 +55,11 @@ vi.mock('@/app/stores/use-contact-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-contact-list-store', () => ({
-  useContactListStore: (selector: (state: typeof storeMock.contactListState) => unknown) => selector(storeMock.contactListState),
+  // getState: the contact detail rechecks the address book when a save is dispatched.
+  useContactListStore: Object.assign(
+    (selector: (state: typeof storeMock.contactListState) => unknown) => selector(storeMock.contactListState),
+    { getState: () => storeMock.contactListState },
+  ),
 }))
 
 vi.mock('@/app/stores/use-sync-store', () => ({
@@ -63,7 +67,10 @@ vi.mock('@/app/stores/use-sync-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-auth-store', () => ({
-  useAuthStore: (selector: (state: typeof storeMock.authState) => unknown) => selector(storeMock.authState),
+  useAuthStore: Object.assign(
+    (selector: (state: typeof storeMock.authState) => unknown) => selector(storeMock.authState),
+    { getState: () => storeMock.authState },
+  ),
 }))
 
 vi.mock('@/app/components/MobileCollectionSheet', () => ({
@@ -371,5 +378,97 @@ describe('ContactsPage overlays mount above the bottom nav', () => {
     expect(screen.queryByRole('dialog', { name: 'Delete contact?' })).not.toBeInTheDocument()
     await waitFor(() => expect(storeMock.contactState.deleteContact).toHaveBeenCalledTimes(1))
     expect(storeMock.contactState.deleteContact).toHaveBeenCalledWith('ada')
+  })
+})
+
+describe('ContactsPage address books shared read-only', () => {
+  const contactIn = (id: string, displayName: string, listId: string): Contact => ({
+    id,
+    uid: id,
+    displayName,
+    name: { prefix: '', given: displayName, family: '', suffix: '' },
+    phones: [{ type: 'cell', value: '111' }],
+    emails: [],
+    addresses: [],
+    organization: '',
+    title: '',
+    notes: '',
+    birthday: null,
+    photoUrl: null,
+    listId,
+    created_at: new Date(),
+    updated_at: new Date(),
+  })
+  const shared: ContactList = { id: 'shared', name: 'Shared', color: '#ef4444', visible: true, accessLevel: 0 }
+  const book: ContactList = { id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }
+
+  beforeEach(() => {
+    useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    storeMock.contactState.searchQuery = ''
+    storeMock.contactState.contacts = [contactIn('ro', 'Remote', 'shared'), contactIn('rw', 'Local', 'book')]
+    storeMock.contactListState.lists = [shared, book]
+    storeMock.contactListState.activeListId = 'all'
+    storeMock.authState.canWrite.mockReturnValue(true)
+    storeMock.contactState.createContact.mockReset()
+    storeMock.contactState.updateContact.mockReset()
+    storeMock.contactState.deleteContact.mockReset()
+  })
+
+  it('offers no edit or delete for a contact in the read-only address book, and keeps them for a writable one', () => {
+    renderWithIntl(<ContactsPage />)
+
+    fireEvent.click(screen.getByText('Remote'))
+    expect(screen.queryByRole('button', { name: 'Edit contact' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete contact' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Add photo' }))
+    expect(storeMock.contactState.updateContact).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('Local'))
+    expect(screen.getByRole('button', { name: 'Edit contact' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Delete contact' })).toBeInTheDocument()
+  })
+
+  it('creates a new contact only in a writable address book, even when the default one is read-only', async () => {
+    storeMock.contactListState.activeListId = 'shared'
+    storeMock.contactState.createContact.mockResolvedValue(contactIn('new', 'Grace', 'book'))
+    renderWithIntl(<ContactsPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    const form = screen.getByRole('dialog', { name: 'New Contact' })
+    expect(within(form).queryByRole('button', { name: 'Shared' })).toBeNull()
+    expect(within(form).getByRole('button', { name: 'Book' })).toBeInTheDocument()
+    fireEvent.change(within(form).getByRole('textbox', { name: 'Given name' }), { target: { value: 'Grace' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save Contact' }))
+    await waitFor(() => expect(storeMock.contactState.createContact).toHaveBeenCalledTimes(1))
+    expect(storeMock.contactState.createContact).toHaveBeenCalledWith(expect.objectContaining({ displayName: 'Grace', listId: 'book' }))
+  })
+
+  it('disables New Contact when every address book is read-only', () => {
+    storeMock.contactListState.lists = [shared]
+    storeMock.contactState.contacts = []
+    renderWithIntl(<ContactsPage />)
+
+    const create = screen.getByRole('button', { name: 'New Contact' })
+    expect(create).toBeDisabled()
+    expect(create).toHaveAttribute('title', 'This address book is read-only')
+    expect(screen.queryByRole('button', { name: 'Add Contact' })).toBeNull()
+  })
+
+  it('stops an open editor and a pending delete confirmation once the address book turns read-only', () => {
+    const view = renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByText('Local'))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit contact' }))
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete contact' }))
+    expect(screen.getByRole('dialog', { name: 'Delete contact?' })).toBeInTheDocument()
+
+    storeMock.contactListState.lists = [shared, { ...book, accessLevel: 0 }]
+    view.rerender(<ContactsPage />)
+
+    expect(screen.queryByRole('button', { name: 'Done' })).toBeNull()
+    expect(screen.queryByDisplayValue('111')).toBeNull()
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete contact?' })).getByRole('button', { name: 'Delete contact' }))
+    expect(storeMock.contactState.deleteContact).not.toHaveBeenCalled()
+    expect(storeMock.contactState.updateContact).not.toHaveBeenCalled()
   })
 })

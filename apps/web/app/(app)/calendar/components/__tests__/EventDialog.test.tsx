@@ -764,6 +764,27 @@ describe('EventDialog in a calendar shared read-only', () => {
     }
     expect(mocks.createEvent).not.toHaveBeenCalled()
   })
+
+  it('applies no recurring delete chosen after the calendar turned read-only', () => {
+    mocks.deleteRecurringEvent.mockReset()
+    const event = makeEvent({ calendarId: 'cal-a', recurrenceRule: 'FREQ=DAILY;COUNT=5' })
+    const instanceDate = new Date('2026-06-03T09:00:00Z')
+    const view = renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={instanceDate} onClose={mocks.onClose} />)
+    fireEvent.click(screen.getByRole('button', { name: /Delete event/ }))
+    expect(screen.getByRole('dialog', { name: 'Delete recurring event' })).toBeVisible()
+
+    // A store update replaces the list, as the list store does.
+    const original = mocks.calendars
+    mocks.calendars = original.map((calendar) => (calendar.id === 'cal-a' ? { ...calendar, accessLevel: 0 } : calendar))
+    try {
+      view.rerender(<EventDialog mode="edit" event={event} instanceDate={instanceDate} onClose={mocks.onClose} />)
+      fireEvent.click(screen.getByRole('button', { name: /This event/ }))
+    } finally {
+      mocks.calendars = original
+    }
+    expect(mocks.deleteRecurringEvent).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog', { name: 'Delete recurring event' })).toBeNull()
+  })
 })
 
 // WEB-01: an occurrence opened from the grid is edited at its own date and time.
