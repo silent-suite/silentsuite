@@ -26,9 +26,9 @@ type Alarm = { id: string; title: string; time: string; triggerAt: number; trigg
 type Listener = (event: any) => void
 
 /** Load the real worker script into a fake ServiceWorkerGlobalScope. */
-function loadWorker() {
+function loadWorker(timers: { setTimeout?: unknown; clearTimeout?: unknown } = {}) {
   const listeners: Record<string, Listener> = {}
-  const showNotification = vi.fn(async () => {})
+  const showNotification = vi.fn(async (_title: string, _options?: unknown) => {})
   const self = {
     addEventListener: (type: string, fn: Listener) => { listeners[type] = fn },
     registration: { showNotification },
@@ -36,8 +36,26 @@ function loadWorker() {
   }
   const src = readFileSync(path.resolve(__dirname, '../../../public/notification-worker.js'), 'utf8')
   // setInterval is stubbed so the 30 s fallback loop does not keep the test alive.
-  new Function('self', 'indexedDB', 'setInterval', src)(self, indexedDB, () => 0)
+  new Function('self', 'indexedDB', 'setInterval', 'setTimeout', 'clearTimeout', src)(
+    self, indexedDB, () => 0, timers.setTimeout ?? setTimeout, timers.clearTimeout ?? clearTimeout,
+  )
   return { listeners, showNotification }
+}
+
+/** Manual timers for the worker's 5-minute snooze. */
+function manualTimers() {
+  const pending = new Map<number, () => void>()
+  let next = 1
+  return {
+    setTimeout: (fn: () => void) => { const id = next++; pending.set(id, fn); return id },
+    clearTimeout: (id: number) => { pending.delete(id) },
+    runAll: async () => {
+      const due = [...pending.values()]
+      pending.clear()
+      for (const fn of due) await fn()
+    },
+    get size() { return pending.size },
+  }
 }
 
 function withAlarmStore<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest<T> | void): Promise<T | undefined> {
@@ -157,6 +175,65 @@ describe('logout clears service-worker reminders', () => {
 
     worker.listeners.message!({ data: { type: 'CLEAR_ALARMS' } })
     await waitFor(async () => (await readAlarmDb()).length === 0)
+  })
+
+  it('a check already running when CLEAR_ALARMS arrives stops before the next reminder', async () => {
+    const worker = loadWorker()
+    const now = Date.now()
+    worker.listeners.message!({ data: { type: 'SCHEDULE_ALARMS', alarms: [
+      { id: 'evt-6a', title: 'Synthetic: first', time: '08:00', triggerAt: now - 1000, triggerLabel: '-PT0M' },
+      { id: 'evt-6b', title: 'Synthetic: second', time: '08:00', triggerAt: now - 1000, triggerLabel: '-PT0M' },
+    ] } })
+    await waitFor(async () => (await readAlarmDb()).length === 2)
+
+    // Hold the first notification open while the clear happens.
+    let releaseFirst!: () => void
+    worker.showNotification.mockImplementationOnce(() => new Promise<void>(r => { releaseFirst = r }))
+    let done: Promise<unknown> = Promise.resolve()
+    worker.listeners.periodicsync!({ tag: 'check-alarms', waitUntil: (p: Promise<unknown>) => { done = p } })
+    await waitFor(async () => worker.showNotification.mock.calls.length === 1)
+
+    worker.listeners.message!({ data: { type: 'CLEAR_ALARMS' } })
+    await waitFor(async () => (await readAlarmDb()).length === 0)
+    releaseFirst()
+    await done
+
+    expect(worker.showNotification).toHaveBeenCalledTimes(1)
+  })
+
+  it('CLEAR_ALARMS cancels a pending snooze', async () => {
+    const timers = manualTimers()
+    const worker = loadWorker(timers)
+    let snoozeDone: Promise<unknown> = Promise.resolve()
+    worker.listeners.notificationclick!({
+      action: 'snooze',
+      notification: { title: 'Synthetic: snoozed', body: 'Synthetic: snoozed · 07:00', tag: 'evt-7', data: {}, close: () => {} },
+      waitUntil: (p: Promise<unknown>) => { snoozeDone = p },
+    })
+    expect(timers.size).toBe(1)
+
+    worker.listeners.message!({ data: { type: 'CLEAR_ALARMS' } })
+    await timers.runAll()
+    await snoozeDone
+
+    expect(worker.showNotification).not.toHaveBeenCalled()
+  })
+
+  it('a snooze still re-shows while signed in', async () => {
+    const timers = manualTimers()
+    const worker = loadWorker(timers)
+    let snoozeDone: Promise<unknown> = Promise.resolve()
+    worker.listeners.notificationclick!({
+      action: 'snooze',
+      notification: { title: 'Synthetic: snoozed', body: 'Synthetic: snoozed · 07:00', tag: 'evt-8', data: {}, close: () => {} },
+      waitUntil: (p: Promise<unknown>) => { snoozeDone = p },
+    })
+
+    await timers.runAll()
+    await snoozeDone
+
+    expect(worker.showNotification).toHaveBeenCalledTimes(1)
+    expect(worker.showNotification.mock.calls[0]?.[0]).toBe('Synthetic: snoozed')
   })
 
   it('still stores and fires reminders while signed in', async () => {
