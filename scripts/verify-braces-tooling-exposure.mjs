@@ -26,7 +26,7 @@ const signatures = ['exceeds max characters (', 'rangeLimit']
 // outside this exception), for build-time output tracing. Only this exact file and content is
 // tolerated; a changed bundle or any other file carrying the signatures fails the check.
 export const toleratedSignatureFiles = Object.freeze([Object.freeze({
-  file: 'apps/web/.next/standalone/node_modules/.pnpm/next@15.5.28_@babel+core@7.29.13_@opentelemetry+api@1.9.1_@types+node@20.19.37_babel-pl_8f763aa9e4222d1f3b7b4f235ba14d39/node_modules/next/dist/compiled/@vercel/nft/index.js',
+  file: 'apps/web/.next/standalone/node_modules/.pnpm/next@15.5.28_@babel+core@7.29.0_@opentelemetry+api@1.9.1_@types+node@20.19.37_babel-plu_1c2ef35023280d7d3bd3097f2312d346/node_modules/next/dist/compiled/@vercel/nft/index.js',
   sha256: '19e4e6ea76d56deed0da625b0d9cbe5f5a761cf87a1c502bbb09c9406a70527e',
 })])
 // The nft bundle and reviewed build/dev boundary modules that can load it.
