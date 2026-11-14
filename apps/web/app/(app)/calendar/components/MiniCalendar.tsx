@@ -74,8 +74,9 @@ function addEventDots(
   }
 
   const durationMs = Math.max(0, event.endDate.getTime() - event.startDate.getTime())
-  // A nominal day or week DURATION can be an hour longer across DST.
-  const lookbackMs = Math.max(durationMs + (event.duration ? 3_600_000 : 0), 86400000)
+  // A nominal day or week DURATION can be longer than the first occurrence across DST changes;
+  // a day's margin covers any zone's shift.
+  const lookbackMs = Math.max(durationMs, 86400000) + (event.duration ? 86400000 : 0)
   const expansionStart = new Date(rangeStart.getTime() - lookbackMs)
   const occurrences = expandEventRecurrence(event, { start: expansionStart, end: rangeEnd })
 

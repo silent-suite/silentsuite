@@ -80,9 +80,10 @@ function expandEvents(
       }
       let recurrenceRange = range
       if (gridSemantics) {
-        // A day or week DURATION is nominal: an occurrence across a DST change is up to an hour
-        // longer than the first one, so the lookback allows for that hour.
-        const lookbackMs = range.start.getTime() - duration - (event.duration ? 3_600_000 : 0)
+        // A day or week DURATION is nominal: across DST changes an occurrence can be longer than
+        // the first one (a 23-hour spring start and a 25-hour fall occurrence differ by two hours,
+        // and some zones shift by more). A day's margin covers any zone's shift.
+        const lookbackMs = range.start.getTime() - duration - (event.duration ? 86_400_000 : 0)
         const lookbackDate = new Date(lookbackMs)
         if (!Number.isFinite(lookbackMs) || !Number.isFinite(lookbackDate.getTime())) {
           droppedCount += 1

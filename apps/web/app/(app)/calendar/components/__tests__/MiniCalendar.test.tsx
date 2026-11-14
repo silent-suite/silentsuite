@@ -229,4 +229,30 @@ describe('MiniCalendar day and week DURATION occurrences across DST (WEB-03 foll
       expect(dotsFor(hostDayLabel(fixedLast))).toHaveLength(0)
     }
   })
+
+  it('review repro: a 25-hour October occurrence of a series that starts on a spring DST day marks the first grid day', async () => {
+    const { fromVEvent } = await vi.importActual<typeof import('@silentsuite/core')>('@silentsuite/core')
+    const { usePreferencesStore } = await import('@/app/stores/use-preferences-store')
+    const firstDayOfWeek = usePreferencesStore.getState().firstDayOfWeek
+    usePreferencesStore.setState({ firstDayOfWeek: 'monday' })
+    storeMock.calendarState.currentDate = new Date(2026, 10, 15, 12)
+    // Weekly from Sunday 29 March 2026, 01:30 Berlin (a 23-hour first day). The 25 October
+    // occurrence starts 24 Oct 23:30Z and ends 26 Oct 00:30Z (01:30 CET), 25 hours later.
+    storeMock.calendarState.events = [{
+      ...fromVEvent([
+        'BEGIN:VEVENT', 'UID:p1d-berlin', 'SUMMARY:Day long',
+        'DTSTART;TZID=Europe/Berlin:20260329T013000', 'DURATION:P1D',
+        'RRULE:FREQ=WEEKLY;COUNT=31',
+        'END:VEVENT',
+      ].join('\r\n')),
+      calendarId: 'green-cal',
+    }]
+    try {
+      render(<MiniCalendar />)
+
+      expect(dotsFor(hostDayLabel(new Date('2026-10-26T00:29:59Z')))[0]).toHaveStyle({ backgroundColor: '#10b981' })
+    } finally {
+      usePreferencesStore.setState({ firstDayOfWeek })
+    }
+  })
 })

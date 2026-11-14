@@ -628,3 +628,18 @@ describe('day and week DURATION occurrences across DST (WEB-03 follow-up)', () =
     ])
   })
 })
+
+describe('DURATION lookback from a 23-hour first occurrence (review repro)', () => {
+  it('grid: the 25-hour 31 October occurrence of a series that starts on a spring DST day still overlaps the range', () => {
+    const series = fromVEvent([
+      'BEGIN:VEVENT', 'UID:p1d-spring-seed', 'SUMMARY:Day long',
+      'DTSTART;TZID=America/New_York:20260307T100000', 'DURATION:P1D',
+      'RRULE:FREQ=WEEKLY;COUNT=40',
+      'END:VEVENT',
+    ].join('\r\n'))
+    const range = { start: new Date('2026-11-01T14:30:00Z'), end: new Date('2026-11-02T14:30:00Z') }
+
+    expect(expandGridEventsForRange([series], range).events.map((e) => [e.startDate.toISOString(), e.endDate.toISOString()]))
+      .toEqual([['2026-10-31T14:00:00.000Z', '2026-11-01T15:00:00.000Z']])
+  })
+})
