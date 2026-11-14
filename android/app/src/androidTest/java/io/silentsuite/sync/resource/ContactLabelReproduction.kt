@@ -113,6 +113,8 @@ internal object ContactLabelReproduction {
         "P6-group-vcard-coexistence" to this::groupVcardCoexistence,
         "P8-create-as-dirty" to this::createAsDirty,
         "P9-split-retry" to this::splitRetry,
+        "P10-label-rename" to this::labelRename,
+        "P11-label-delete" to this::labelDelete,
     )
 
     // ---- cases ----
@@ -252,6 +254,57 @@ internal object ContactLabelReproduction {
     // ---- production-path helpers ----
 
     private const val AMIS_ETE = "Amis été"
+
+    /** #936: a label group renamed in a contacts app reaches its members' uploads. */
+    private fun labelRename(ab: LocalAddressBook, c: Checks) {
+        val id = addCard(ab, "p10", card("p10", "CATEGORIES:Family"))
+        val group = unfiledGroups(ab).entries.single { it.value == "Family" }.key
+        fixture(rawInt(ab, id, RawContacts.DIRTY) == 0) { "the downloaded contact starts clean" }
+
+        fixture(ab.requireProvider().update(ContentUris.withAppendedId(Groups.CONTENT_URI, group),
+            ContentValues().apply { put(Groups.TITLE, "Relatives") }, null, null) == 1) { "contacts-app rename" }
+        // Provider behaviour the fix relies on (#936): only the group row is marked dirty, the member keeps its row.
+        c.expect(1, groupString(ab, group, Groups.DIRTY)?.toInt(), "provider marks the renamed group dirty")
+        c.expect(0, rawInt(ab, id, RawContacts.DIRTY), "provider leaves the member clean")
+        c.expect(listOf("Relatives"), unfiledTitles(ab, id), "the member stays in the renamed group")
+
+        c.expect(1, ab.propagateLabelGroupEdits(true) { _, _ -> false }, "contacts queued for upload")
+        c.expect(1, rawInt(ab, id, RawContacts.DIRTY), "the member is queued for upload")
+        c.expect(0, groupString(ab, group, Groups.DIRTY)?.toInt(), "the group is settled")
+        c.expect(listOf("Relatives"), uploadCategories(ab, id), "the upload carries the new name")
+        c.expect(0, ab.propagateLabelGroupEdits(true) { _, _ -> false }, "a second pass changes nothing")
+    }
+
+    /** #937: a label group deleted in a contacts app reaches its former members' uploads and its row is removed. */
+    private fun labelDelete(ab: LocalAddressBook, c: Checks) {
+        val member = addCard(ab, "p11a", card("p11a", "CATEGORIES:Family,Work"))
+        val other = addCard(ab, "p11b", card("p11b", "CATEGORIES:Work"))
+        val family = unfiledGroups(ab).entries.single { it.value == "Family" }.key
+
+        fixture(ab.requireProvider().delete(ContentUris.withAppendedId(Groups.CONTENT_URI, family), null, null) == 1) {
+            "contacts-app delete"
+        }
+        // Provider behaviour the fix relies on (#937): a deleted row stays behind and the memberships are gone,
+        // without marking the former member dirty.
+        c.expect(1, groupRows(ab, family), "provider keeps the deleted group row")
+        c.expect("1", groupString(ab, family, Groups.DELETED), "provider marks the group row deleted")
+        c.expect(listOf("Work"), unfiledTitles(ab, member), "provider removes the memberships")
+        c.expect(0, rawInt(ab, member, RawContacts.DIRTY), "provider leaves the former member clean")
+
+        val serverLabels = mapOf("p11a" to listOf("Family", "Work"), "p11b" to listOf("Work"))
+        val hadLabel = { contact: LocalContact, label: String -> label in serverLabels[contact.fileName].orEmpty() }
+        c.expect(1, ab.propagateLabelGroupEdits(true, hadLabel), "contacts queued for upload")
+        c.expect(1, rawInt(ab, member, RawContacts.DIRTY), "the former member is queued for upload")
+        c.expect(0, rawInt(ab, other, RawContacts.DIRTY), "a contact without the label is not")
+        c.expect(listOf("Work"), uploadCategories(ab, member), "the upload no longer carries the label")
+        c.expect(0, groupRows(ab, family), "the deleted group row is removed")
+        c.expect(listOf("Work"), unfiledGroups(ab).values.sorted(), "other label groups stay")
+        c.expect(0, ab.propagateLabelGroupEdits(true, hadLabel), "a second pass changes nothing")
+    }
+
+    private fun groupRows(ab: LocalAddressBook, groupId: Long): Int =
+        ab.requireProvider().query(ab.syncAdapterURI(Groups.CONTENT_URI), arrayOf(Groups._ID), "${Groups._ID}=?",
+            arrayOf(groupId.toString()), null)?.use { it.count } ?: throw IllegalStateException("FIXTURE #934: null groups cursor")
 
     private fun card(uid: String, vararg lines: String) =
         "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:clr934-$uid\r\nFN:Synthetic $uid\r\nN:$uid;Synthetic;;;\r\n" +

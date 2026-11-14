@@ -144,7 +144,32 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             }
             LocalGroup.applyPendingMemberships(localAddressBook(), keepLocalChanges = true)
         }
+        propagateLabelGroupEdits()
         super.prepareLocal()
+    }
+
+    /**
+     * A label group renamed or deleted in a contacts app reaches the server only through its contacts'
+     * CATEGORIES: their uploads are queued here, before this run collects its uploads. Which contacts the
+     * server still lists with a deleted label comes from their cached server copies.
+     */
+    private fun propagateLabelGroupEdits() {
+        val serverLabels = HashMap<String, List<String>>()
+        val marked = localAddressBook().propagateLabelGroupEdits(
+                markContacts = cachedCollection.col.accessLevel != CollectionAccessLevel.ReadOnly) hadLabel@{ contact, label ->
+            val fileName = contact.fileName ?: return@hadLabel false
+            val labels = serverLabels.getOrPut(fileName) {
+                val cached = synchronized(etebaseLocalCache) {
+                    etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, fileName)
+                }
+                cached?.takeIf { !it.item.isDeleted }
+                        ?.let { Contact.fromReader(StringReader(it.content), null).firstOrNull()?.categories?.toList() }
+                        ?: emptyList()
+            }
+            label in labels
+        }
+        if (marked > 0)
+            Logger.log.info("Queued $marked contact(s) for upload after a label group was renamed or deleted")
     }
 
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
