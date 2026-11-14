@@ -36,6 +36,7 @@ from ..local_cache import (
     is_safe_dav_href,
     opaque_dav_href,
     record_dav_change,
+    retire_settled_tombstone,
 )
 from ..local_cache.models import (
     CollectionEntity,
@@ -578,6 +579,19 @@ def _get_attributes_from_path(path):
 
 # --- vCard compatibility ---
 
+# vobject has no NICKNAME behavior, so its default vCard text behavior keeps
+# only the text before the first unescaped comma. NICKNAME is a comma list
+# (RFC 2426 3.1.3, RFC 6350 6.2.3); parse and serialize it like CATEGORIES.
+# Radicale parses PUT bodies in this process, so this also covers uploads.
+class _VCardNicknameBehavior(vobject.icalendar.MultiTextBehavior):
+    # vCard properties may carry a group prefix (item1.NICKNAME), like the
+    # default vCard text behavior allows.
+    allowGroup = True
+
+
+vobject.base.registerBehavior(_VCardNicknameBehavior, "NICKNAME")
+vobject.vcard.VCard3_0.knownChildren.setdefault("NICKNAME", (0, None, None))
+
 VCARD_4_TO_3_PHOTO_URI_REGEX = re.compile(
     r"^(PHOTO|LOGO):http", re.MULTILINE
 )
@@ -1028,6 +1042,23 @@ class Collection(BaseCollection):
                     vobject_item,
                     dav_href=href,
                 )
+                created_cache = etesync_item.cache_item
+                reused_ids = {created_cache.id}
+                if stale_mappers:
+                    reused_ids.add(stale_mappers[0].content.id)
+                uid_holders = list(
+                    ItemEntity.select().where(
+                        (ItemEntity.collection == cache_col)
+                        & (ItemEntity.uid == created_cache.uid)
+                    )
+                )
+                for holder in uid_holders:
+                    # A settled deletion at another href gives up its UID;
+                    # anything else keeps it and the upload is rejected.
+                    if holder.id not in reused_ids and not (
+                        retire_settled_tombstone(holder)
+                    ):
+                        raise ValueError("item UID is already in use")
                 if stale_mappers:
                     # Revive the row that already owns this collection-scoped
                     # href so retained DAV history never loses its identity.
