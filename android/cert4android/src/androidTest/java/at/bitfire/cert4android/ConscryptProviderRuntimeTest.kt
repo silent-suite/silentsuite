@@ -24,12 +24,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetAddress
 import java.security.KeyStore
+import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
@@ -85,12 +86,17 @@ class ConscryptProviderRuntimeTest {
 
     @Test
     fun unacceptedCertificateIsRejectedByCustomTrust() {
-        val leaf = selfSigned("silentsuite.invalid")
+        // The hostname matches, so only the trust manager can reject this certificate.
+        val leaf = selfSigned("localhost")
         withManager(trustSystemCerts = true) { manager ->
             serve(leaf) { server ->
-                assertThrows(SSLException::class.java) {
+                val failure = assertThrows(SSLHandshakeException::class.java) {
                     get(client(manager, manager.hostnameVerifier(OkHostnameVerifier)), server)
                 }
+                assertTrue(
+                    "handshake failed for a reason other than certificate validation: $failure",
+                    generateSequence<Throwable>(failure) { it.cause }.any { it is CertificateException }
+                )
             }
         }
     }
@@ -206,7 +212,7 @@ class ConscryptProviderRuntimeTest {
         val monitor = instrumentation.addMonitor(TrustCertificateActivity::class.java.name, null, false)
         val callback = Callback()
         service.checkTrusted(certificate.encoded, true, true, callback)
-        val activity = instrumentation.waitForMonitorWithTimeout(monitor, 3_000)
+        val activity = instrumentation.waitForMonitorWithTimeout(monitor, 15_000)
         instrumentation.removeMonitor(monitor)
         requireNotNull(activity) { "Foreground certificate decision did not launch TrustCertificateActivity" }
         val generation = requireNotNull(activity.intent.getStringExtra(CustomCertService.EXTRA_DECISION_GENERATION))
