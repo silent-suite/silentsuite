@@ -879,8 +879,7 @@
     <string name="report_problem_email_note">Only if you want an answer</string>
     <string name="report_problem_include_diagnostics">Include diagnostic info</string>
     <string name="report_problem_preview_label">This diagnostic info is sent exactly as shown:</string>
-    <string name="report_problem_retention">90 days after we\'ve dealt with it</string>
-    <string name="report_problem_disclosure">Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We delete it %1$s; to have it deleted sooner, email support@silentsuite.io.</string>
+    <string name="report_problem_disclosure">Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We keep it for as long as we need it to deal with your report; to have it deleted, email support@silentsuite.io.</string>
     <string name="report_problem_privacy_link">Privacy policy</string>
     <string name="report_problem_send">Send</string>
     <string name="report_problem_email_instead">Email instead</string>
