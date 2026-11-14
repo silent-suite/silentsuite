@@ -72,6 +72,7 @@ function installCalendarAccount(batches: ('ok' | 'offline-before-apply' | 'appli
   const plan = [...batches]
   const written: { collectionUid: string; contents: string[]; outcome: string }[] = []
   const server = new Map<string, { uid: string; content: string }[]>()
+  let contentUnreadable = false
   let collectionSequence = 0
   let itemSequence = 0
   const collection = (uid: string, meta: { name: string; color?: string }) => ({ uid, getMeta: () => meta })
@@ -90,7 +91,15 @@ function installCalendarAccount(batches: ('ok' | 'offline-before-apply' | 'appli
           if (outcome === 'applied-then-lost') throw new TypeError('Failed to fetch')
         },
         list: async () => ({
-          data: (server.get(target.uid) ?? []).map(({ uid, content }) => ({ uid, isDeleted: false, getContent: async () => content, getMeta: () => ({}) })),
+          data: (server.get(target.uid) ?? []).map(({ uid, content }) => ({
+            uid,
+            isDeleted: false,
+            getContent: async () => {
+              if (contentUnreadable) throw new Error('Decryption failed')
+              return content
+            },
+            getMeta: () => ({}),
+          })),
           stoken: null,
           done: true,
         }),
@@ -107,7 +116,8 @@ function installCalendarAccount(batches: ('ok' | 'offline-before-apply' | 'appli
     syncEngine: null,
   } as any)
   const copiesOnServer = () => [...server.values()].flat().map(({ content }) => importSourceKeyOf(deserializeCalendarEvent(content).unknownProperties))
-  return Object.assign(written, { copiesOnServer })
+  const breakContent = () => { contentUnreadable = true }
+  return Object.assign(written, { copiesOnServer, breakContent })
 }
 
 describe('Google calendar import: interrupt, retry, re-import', () => {
@@ -185,6 +195,23 @@ describe('Google calendar import: interrupt, retry, re-import', () => {
     const retry = screen.queryByRole('button', { name: 'Import 1 events' })
     if (retry) fireEvent.click(retry)
     expect(await screen.findByText('Everything listed was already imported.')).toBeInTheDocument()
+    expect(written.copiesOnServer()).toHaveLength(1)
+  })
+
+  it('writes nothing when a server item cannot be read, since it may be the unacknowledged save', async () => {
+    onlyPersonal = true
+    const written = installCalendarAccount(['applied-then-lost'])
+    renderWithIntl(<CalendarImport onImportComplete={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Google' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 events' }))
+    expect(await screen.findByText(/weren't confirmed as saved/)).toBeInTheDocument()
+
+    // The real refreshCollection skips the unreadable item and still marks the calendars loaded.
+    written.breakContent()
+    fireEvent.click(screen.getByRole('button', { name: 'Import 1 events' }))
+    expect(await screen.findByText(/Couldn't check what is already saved, so nothing was imported/)).toBeInTheDocument()
+    expect(useEtebaseStore.getState().domainLoadState.calendar).toBe('loaded')
+    expect(written).toHaveLength(1)
     expect(written.copiesOnServer()).toHaveLength(1)
   })
 

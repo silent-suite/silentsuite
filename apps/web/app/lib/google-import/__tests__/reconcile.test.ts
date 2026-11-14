@@ -29,13 +29,18 @@ describe('serverImportSourceKeys', () => {
       { content: 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:b\r\nEND:VEVENT\r\nEND:VCALENDAR' },
     ])
     expect(await serverImportSourceKeys('calendar')).toEqual(new Set([longKey]))
-    expect(etebase.state.refreshCollection).toHaveBeenCalledWith('calendar')
+    expect(etebase.state.refreshCollection).toHaveBeenCalledWith('calendar', undefined, { unreadable: 0 })
   })
 
   it('returns null when the server could not be read in full', async () => {
     etebase.state.refreshCollection.mockImplementation(async () => { etebase.state.domainLoadState.calendar = 'failed'; return [] })
     expect(await serverImportSourceKeys('calendar')).toBeNull()
     etebase.state.refreshCollection.mockRejectedValue(new Error('boundary'))
+    expect(await serverImportSourceKeys('calendar')).toBeNull()
+    etebase.state.refreshCollection.mockImplementation(async (_type: string, _uid: undefined, report: { unreadable: number }) => {
+      report.unreadable += 1
+      return []
+    })
     expect(await serverImportSourceKeys('calendar')).toBeNull()
     etebase.state.account = null
     expect(await serverImportSourceKeys('calendar')).toBeNull()
