@@ -46,7 +46,13 @@ UNCHANGED_JOBS = ("signing-policy", "conscrypt-r28", "conscrypt-runtime")
 # Jobs added later on their own, outside the speed refactor these fixtures pin: the patched
 # ical4j's time-zone tests (JVM, and on the API 29 and 36 emulators) and the Gradle wrapper
 # JAR validation. They build no Etebase.
-ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime", "gradle-wrapper-validation"}
+ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime", "gradle-wrapper-validation", "changes"}
+# The changes job decides whether this run touches an Android build input. The two native producers,
+# build-pr, the time-zone jobs and the wrapper validation wait for it and run only when it says so; the
+# jobs that need a producer skip with it. The static suite and the signing boundary never wait for it.
+CHANGES_JOB = "changes"
+ANDROID_CHANGED = "needs.changes.outputs.android == 'true'"
+PRODUCER_NEEDS = ["signing-policy", CHANGES_JOB]
 ARTIFACT = "etebase-16kb-${{ github.sha }}"
 STAGING = "${{ runner.temp }}/etebase-16kb-artifact"
 BUILD_SCRIPT = "scripts/build-etebase-client-16kb.sh"
@@ -104,9 +110,9 @@ STATIC_PROVISIONING_MARKERS = ("pip install", "python -m", "pytest", "PyYAML")
 # build-pr waits for the static job, and runs (unless the run is cancelled) even
 # when a dependency did not succeed, so that its first step fails it closed rather
 # than leaving a skipped job that a required check would count as passing.
-BUILD_PR_NEEDS = [STATIC_JOB, "conscrypt-r28", PRODUCER]
+BUILD_PR_NEEDS = [STATIC_JOB, "conscrypt-r28", PRODUCER, CHANGES_JOB]
 EVENT_CONDITION = "github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')"
-BUILD_PR_IF = f"${{{{ !cancelled() && ({EVENT_CONDITION}) }}}}"
+BUILD_PR_IF = f"${{{{ !cancelled() && {ANDROID_CHANGED} && ({EVENT_CONDITION}) }}}}"
 GATE_NAME = "Require successful static contracts and native producers"
 GATE_ENV = {
     "STATIC_RESULT": "${{ needs.static-contracts.result }}",
@@ -256,7 +262,8 @@ def ci_speed_violations(workflow: dict) -> list[str]:
         violations.append(f"{PRODUCER}: missing producer job")
     else:
         steps = producer.get("steps") or []
-        if producer.get("needs") != "signing-policy":
+        # The predecessors need only signing-policy; the candidate also waits for the changes job.
+        if _needs(producer) not in (["signing-policy"], PRODUCER_NEEDS):
             violations.append(f"{PRODUCER}: producer must need only signing-policy")
         if producer.get("permissions") != {"contents": "read"} or "environment" in producer:
             violations.append(f"{PRODUCER}: producer must be read-only")
@@ -298,6 +305,24 @@ def ci_speed_violations(workflow: dict) -> list[str]:
         if not any(NDK in _run(step) for step in steps[:first]):
             violations.append(f"{name}: NDK provisioning removed")
     return sorted(violations)
+
+
+def _without_android_change_gate(job: dict) -> dict:
+    """A candidate job minus only the changes-job gate: the `changes` need and the
+    android condition. Everything else must still match its predecessor."""
+    job = copy.deepcopy(job)
+    needs = [need for need in _needs(job) if need != CHANGES_JOB]
+    if CHANGES_JOB in _needs(job):
+        if needs:
+            job["needs"] = needs[0] if len(needs) == 1 else needs
+        else:
+            job.pop("needs")
+    condition = job.get("if")
+    if condition == ANDROID_CHANGED:
+        job.pop("if")
+    elif isinstance(condition, str) and condition.startswith(f"{ANDROID_CHANGED} && (") and condition.endswith(")"):
+        job["if"] = condition[len(ANDROID_CHANGED) + 5 : -1]
+    return job
 
 
 def _load(path: Path) -> dict:
@@ -525,7 +550,7 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
     assert _triggers(candidate) == _triggers(base)
     assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER} | ADDED_JOBS
     for name in UNCHANGED_JOBS:
-        assert candidate["jobs"][name] == base["jobs"][name], name
+        assert _without_android_change_gate(candidate["jobs"][name]) == base["jobs"][name], name
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
     # the admission steps: NDK, build-tools, JDKs, matrices, runtime scripts,
     # ledgers, producer manifests and every final gate are otherwise identical.
@@ -551,7 +576,7 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
         if name == RUNTIME_LEDGER_JOB:
             job = _with_approved_runtime_ledger_changes(job)
         if name != "build-pr":
-            assert candidate["jobs"][name] == job, name
+            assert _without_android_change_gate(candidate["jobs"][name]) == job, name
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
     assert _without_approved_r8_inspection(candidate["jobs"]["build-pr"]) == expected, (
         "build-pr may differ from 8cb81b42 only by needs, if, the dependency-result gate, "
@@ -805,7 +830,7 @@ def _mutation(workflow: dict, case: str) -> None:
     elif case == "upload-not-last":
         jobs[PRODUCER]["steps"].append({"name": "After upload", "run": "true"})
     elif case == "producer-needs-conscrypt":
-        jobs[PRODUCER]["needs"] = ["signing-policy", "conscrypt-r28"]
+        jobs[PRODUCER]["needs"] = ["signing-policy", CHANGES_JOB, "conscrypt-r28"]
     elif case == "static-job-waits":
         jobs[STATIC_JOB]["needs"] = "conscrypt-r28"
     elif case == "static-job-conditional":
@@ -913,3 +938,29 @@ def test_candidate_mutations_are_rejected(candidate, case, expected):
     mutated = copy.deepcopy(candidate)
     _mutation(mutated, case)
     assert expected in ci_speed_violations(mutated)
+
+
+def test_only_android_build_inputs_start_the_build_jobs(candidate):
+    """The trigger stays broad; the changes job decides whether anything builds."""
+    jobs = candidate["jobs"]
+    always = {STATIC_JOB, "signing-policy", CHANGES_JOB}
+    for name in always:
+        assert CHANGES_JOB not in _needs(jobs[name]) and "if" not in jobs[name], name
+    for name, job in jobs.items():
+        if name in always:
+            continue
+        needs = _needs(job)
+        if CHANGES_JOB in needs:
+            condition = job.get("if", "")
+            assert condition == ANDROID_CHANGED or condition.startswith(
+                (f"{ANDROID_CHANGED} && (", f"${{{{ !cancelled() && {ANDROID_CHANGED} && (")
+            ), name
+        else:
+            # Skips with a gated producer: no status function overrides the skip.
+            assert {"conscrypt-r28", PRODUCER} & set(needs), name
+            assert "always()" not in str(job.get("if", "")) and "cancelled()" not in str(job.get("if", "")), name
+
+    detect = next(step for step in jobs[CHANGES_JOB]["steps"] if step.get("id") == "detect")["run"]
+    assert "'^(android/|\\.github/workflows/build-android\\.yml$)'" in detect
+    assert jobs[CHANGES_JOB]["outputs"] == {"android": "${{ steps.detect.outputs.android }}"}
+    assert jobs[CHANGES_JOB]["permissions"] == {"contents": "read"}

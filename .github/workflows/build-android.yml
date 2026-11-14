@@ -68,6 +68,8 @@ jobs:
   # Every committed gradle-wrapper.jar must match a published Gradle release.
   gradle-wrapper-validation:
     name: Validate Gradle wrapper
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -105,9 +107,58 @@ jobs:
       - name: Enforce Android signing boundary
         run: python "$GITHUB_WORKSPACE/scripts/check-android-signing-boundary.py"
 
+  # The trigger stays broad so the static contracts and the signing boundary see
+  # every workflow change. Everything that builds or runs the app waits for this
+  # job and runs only when the change touches what those jobs read: android/**
+  # and this workflow. Jobs that need conscrypt-r28 or etebase-16kb skip with
+  # them. Manual dispatches, and pushes whose base cannot be read, build
+  # everything.
+  changes:
+    name: Detect Android build inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      android: ${{ steps.detect.outputs.android }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          filter: blob:none
+          sparse-checkout: .github
+          persist-credentials: false
+
+      - name: Detect changed Android build inputs
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          android=true
+          base=
+          if [ "$EVENT_NAME" = pull_request ]; then
+            # GitHub's test merge commit: its first parent is the base branch tip.
+            base=HEAD^1
+          elif [ "$EVENT_NAME" = push ] && [ -n "$BEFORE" ] && [ -n "${BEFORE//0/}" ] \
+            && git fetch --no-tags --depth=1 --filter=blob:none origin "$BEFORE"; then
+            base=$BEFORE
+          fi
+          if [ -n "$base" ]; then
+            changed="$(git diff --no-renames --name-only "$base" HEAD)"
+            printf '%s\n' "$changed"
+            if ! grep -qE '^(android/|\.github/workflows/build-android\.yml$)' <<<"$changed"; then
+              android=false
+            fi
+          fi
+          echo "android=$android" | tee -a "$GITHUB_OUTPUT"
+
   conscrypt-r28:
     name: Build Conscrypt with Android NDK r28
-    needs: signing-policy
+    needs: [signing-policy, changes]
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -160,7 +211,8 @@ jobs:
   # artifact; it is an availability setting, not a trust decision.
   etebase-16kb:
     name: Build Etebase 16 KB AAR once per run
-    needs: signing-policy
+    needs: [signing-policy, changes]
+    if: needs.changes.outputs.android == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -321,7 +373,8 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   timezone-rules-jvm:
     name: Time-zone rules (JVM)
-    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    needs: changes
+    if: needs.changes.outputs.android == 'true' && (github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -402,7 +455,8 @@ jobs:
 
   timezone-rules-runtime:
     name: Time-zone rules runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})
-    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')
+    needs: changes
+    if: needs.changes.outputs.android == 'true' && (github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -496,10 +550,11 @@ jobs:
 
   build-pr:
     name: Build (unsigned, PR/main)
-    needs: [static-contracts, conscrypt-r28, etebase-16kb]
+    needs: [static-contracts, conscrypt-r28, etebase-16kb, changes]
     # Runs unless the run is cancelled, so a failed or skipped dependency fails this
-    # job at its first step instead of leaving a skipped job behind.
-    if: ${{ !cancelled() && (github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')) }}
+    # job at its first step instead of leaving a skipped job behind. It does not run
+    # when the change touches no Android build input.
+    if: ${{ !cancelled() && needs.changes.outputs.android == 'true' && (github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
