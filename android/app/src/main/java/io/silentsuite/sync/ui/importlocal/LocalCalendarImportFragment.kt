@@ -122,7 +122,7 @@ class LocalCalendarImportFragment : ListFragment() {
 
         override fun getChild(groupPosition: Int, childPosititon: Int): Any {
             val calendar = calendarAccounts[groupPosition].getCalendars()[childPosititon]
-            return calendar.displayName ?: calendar.name ?: 
+            return calendar.displayName ?: calendar.name ?: ""
         }
 
         override fun getChildId(groupPosition: Int, childPosition: Int): Long {
