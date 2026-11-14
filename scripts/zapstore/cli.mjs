@@ -18,7 +18,7 @@ import { buildBinding, revalidateBinding, verifyApkHashes } from './lib/binding.
 import { parseApksignerOutput, requireSignedBy } from './lib/apksigner.mjs'
 import { generateConfig, loadTemplate, resolveChangelog, stageMedia } from './lib/metadata.mjs'
 import { eventId, KINDS, loadSchnorr, packageFilters, queryRelay, RELAY_URL } from './lib/nostr.mjs'
-import { assessRelayState, canonicalTags, expectedSet, publicationAction, requireReadbackComplete } from './lib/reconcile.mjs'
+import { assessRelayState, canonicalTags, expectedSet, publicationAction, requireReadbackComplete, settleReadback } from './lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, ZSP, zspArgs, zspEnv } from './lib/zsp.mjs'
 import { materializeClientKey } from './lib/bunker-key.mjs'
 import { redact, summarizeSignerRun } from './lib/redact.mjs'
@@ -328,20 +328,22 @@ const commands = {
     const schnorr = await loadSchnorr()
     const filters = packageFilters({ pubkeyHex: expected.apk.pubkey, packageId: expected.apk.tags.find((t) => t[0] === 'i')[1] })
     const publishable = opt('publishable', 'false') === 'true'
-    let assessment
-    try {
-      const { events } = await queryRelay({ url: RELAY_URL, filters })
-      assessment = assessRelayState({ expected, observed: events, schnorr })
-    } catch (error) {
-      assessment = { outcome: 'incomplete', detail: redact(error.message) }
+    const read = async () => {
+      try {
+        const { events } = await queryRelay({ url: RELAY_URL, filters })
+        return assessRelayState({ expected, observed: events, schnorr })
+      } catch (error) {
+        return { outcome: 'incomplete', detail: redact(error.message) }
+      }
     }
+    const { assessment, reads } = has('readback') ? await settleReadback(read) : { assessment: await read(), reads: 1 }
     const decision = publicationAction({ assessment, publishable })
     writeJson(opt('out'), { ...assessment, ...decision, publishable })
     output('outcome', assessment.outcome)
     output('action', decision.action)
     output('reason', decision.reason)
     output('verify_cdn', String(decision.verifyCdn))
-    summary(`### Relay reconciliation (${RELAY_URL})\n\nOutcome: **${assessment.outcome}** — ${assessment.detail}\nAction: **${decision.action}** (${decision.reason}; candidate ${publishable ? 'is' : 'is not'} the newest eligible release).`)
+    summary(`### Relay reconciliation (${RELAY_URL})\n\nOutcome: **${assessment.outcome}** — ${assessment.detail}\nAction: **${decision.action}** (${decision.reason}; candidate ${publishable ? 'is' : 'is not'} the newest eligible release).${has('readback') ? `\nRead-back reads: ${reads}.` : ''}`)
     if (has('readback')) requireReadbackComplete(assessment)
     else if (decision.action === 'fail') throw new Error(`reconciliation outcome ${assessment.outcome}; see runbook section 5`)
   },

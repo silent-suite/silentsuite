@@ -132,7 +132,7 @@ evidence that signing occurred. Do not approve or retry merely to clear the issu
 | S9 | Relay reconciliation | EOSE required; every event id and Schnorr signature verified; exact full-tuple comparison (1.4) | `lib/nostr.mjs`, `lib/reconcile.mjs` |
 | S10 | Signing account | NIP-46 `connect` + `get_public_key` with the job's client key; the returned **account** pubkey must equal the template `pubkeyHex` before any signature or upload authorisation | `lib/nip44.mjs`, `lib/nip46.mjs`, `lib/publish.mjs` |
 | S11 | Publisher | `zsp` 0.4.17 pinned by URL and SHA-256; `SIGN_WITH` must be `bunker://`; client key 0600 for one step | `lib/zsp.mjs`, `lib/bunker-key.mjs` |
-| S12 | Read-back and CDN | Read-back must be `complete-match`; APK, icon and six screenshots fetched by hash | `lib/reconcile.mjs`, `lib/cdn.mjs` |
+| S12 | Read-back and CDN | Read-back must be `complete-match`; while it is `absent` or `partial` (relay not indexed yet) it re-reads up to 6 times, 10 s apart, read-only; APK, icon and six screenshots fetched by hash | `lib/reconcile.mjs`, `lib/cdn.mjs` |
 | S13 | Evidence and notification | Per-candidate `assessment.json`/`result.json` with phase outcomes; failures and missing evidence only | `lib/results.mjs`, `lib/notify.mjs` |
 | S14 | Concurrency | One group for the whole app, never cancels | workflow |
 
