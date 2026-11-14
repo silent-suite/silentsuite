@@ -14,3 +14,18 @@ export function findItemCollection<T extends { id: string }>(lists: T[], id: str
   if (id && id !== 'default' && id !== 'all') return lists.find((list) => list.id === id)
   return lists[0]
 }
+
+/**
+ * Where a new item goes when none is chosen: the default list if writable, else
+ * the only visible writable list, else the first writable one. Undefined when no
+ * list accepts writes, so a read-only list is never the target.
+ */
+export function defaultWritableListId(
+  lists: Array<{ id: string; visible: boolean; accessLevel?: number }>,
+  activeListId: string | null | undefined,
+): string | undefined {
+  const writable = lists.filter(canWriteCollection)
+  if (activeListId && writable.some((list) => list.id === activeListId)) return activeListId
+  const visible = writable.filter((list) => list.visible)
+  return (visible.length === 1 ? visible[0] : writable[0])?.id
+}
