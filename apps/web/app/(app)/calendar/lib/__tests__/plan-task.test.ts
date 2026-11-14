@@ -177,4 +177,14 @@ describe('planTask', () => {
     const result = await planTask('task-1', START, 'cal-a', 'complete')
     expect(result).toMatchObject({ kind: 'done', message: expect.stringContaining('will sync when you are back online') })
   })
+
+  it.each([[10, '09:10'], [60, '10:00'], [95, '10:35']])('uses the chosen event length of %i minutes', async (minutes, end) => {
+    await planTask('task-1', START, 'cal-a', 'label', minutes)
+    expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ endDate: new Date(`2026-11-16T${end}:00Z`) }))
+  })
+
+  it('falls back to 30 minutes for an invalid length', async () => {
+    await planTask('task-1', START, 'cal-a', 'label', 0)
+    expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ endDate: new Date('2026-11-16T09:30:00Z') }))
+  })
 })

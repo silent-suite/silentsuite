@@ -7,14 +7,13 @@ import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { CalendarSaveError, useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
-import type { PlanningDisposition } from '@/app/stores/use-experimental-store'
+import { isValidPlanningDuration, PLANNING_DURATION_DEFAULT, type PlanningDisposition } from '@/app/stores/use-experimental-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useTaskStore, type TaskSyncOutcome } from '@/app/stores/use-task-store'
 
 /** Written as a task category; a fixed string so the filter works in every language. */
 export const SCHEDULED_LABEL = 'Scheduled'
-export const PLANNED_EVENT_MINUTES = 30
 /** MIME type carrying a task id while it is dragged onto the calendar. */
 export const TASK_DRAG_TYPE = 'application/x-silentsuite-task'
 
@@ -76,7 +75,7 @@ const DISPOSITION_DONE: Record<PlanningDisposition, string> = {
 }
 
 /**
- * Creates a 30-minute event for the task at `start`, then, only once the server has confirmed the
+ * Creates an event of `durationMinutes` for the task at `start`, then, only once the server has confirmed the
  * event, applies the chosen disposition to the task. Any failure or offline-only save leaves the
  * task untouched.
  */
@@ -85,7 +84,9 @@ export async function planTask(
   start: Date,
   calendarId: string,
   disposition: PlanningDisposition,
+  durationMinutes: number = PLANNING_DURATION_DEFAULT,
 ): Promise<PlanTaskResult> {
+  const minutes = isValidPlanningDuration(durationMinutes) ? durationMinutes : PLANNING_DURATION_DEFAULT
   if (inFlight.has(taskId)) return { kind: 'error', message: 'This task is already being added.' }
   const task = useTaskStore.getState().tasks.find((t) => t.id === taskId)
   if (!task) return { kind: 'error', message: 'This task no longer exists.' }
@@ -108,7 +109,7 @@ export async function planTask(
         location: task.location?.trim() || undefined,
         categories: (task.categories ?? []).filter((c) => c.toLowerCase() !== SCHEDULED_LABEL.toLowerCase()),
         startDate: start,
-        endDate: new Date(start.getTime() + PLANNED_EVENT_MINUTES * 60_000),
+        endDate: new Date(start.getTime() + minutes * 60_000),
         timezone: resolveUserTimezone(usePreferencesStore.getState().defaultTimezone),
         calendarId,
       })

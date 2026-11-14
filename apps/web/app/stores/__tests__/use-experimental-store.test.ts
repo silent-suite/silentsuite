@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isBirthdaysEnabledFor, planningDispositionFor, useExperimentalStore } from '../use-experimental-store'
+import { isBirthdaysEnabledFor, planningDispositionFor, planningDurationFor, useExperimentalStore } from '../use-experimental-store'
 
 const key = 'silentsuite-experimental-v1'
 const birthdaysKey = 'silentsuite-experimental-birthdays-v1'
@@ -103,5 +103,23 @@ describe('experimental preferences', () => {
     localStorage.setItem('silentsuite-experimental-planning-disposition-v1', value)
     useExperimentalStore.getState().hydrate()
     expect(planningDispositionFor(useExperimentalStore.getState(), 'account-a')).toBe('label')
+  })
+
+  it('keeps the planning event length per account, 30 minutes by default, and refuses invalid lengths', () => {
+    useExperimentalStore.getState().hydrate()
+    const state = () => useExperimentalStore.getState()
+    expect(planningDurationFor(state(), 'account-a')).toBe(30)
+    state().setPlanningDuration('account-a', 45)
+    for (const bad of [0, 4, 1441, 12.5, Number.NaN]) state().setPlanningDuration('account-a', bad)
+    useExperimentalStore.setState({ hydrated: false, planningDurations: {} })
+    state().hydrate()
+    expect(planningDurationFor(state(), 'account-a')).toBe(45)
+    expect(planningDurationFor(state(), 'account-b')).toBe(30)
+  })
+
+  it.each(['not-json', '[]', '{"account-a":0}', '{"account-a":"60"}', '{"account-a":2000}'])('falls back to 30 minutes for malformed length storage %s', (value) => {
+    localStorage.setItem('silentsuite-experimental-planning-duration-v1', value)
+    useExperimentalStore.getState().hydrate()
+    expect(planningDurationFor(useExperimentalStore.getState(), 'account-a')).toBe(30)
   })
 })

@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
-import { planningDispositionFor, useExperimentalStore, type PlanningDisposition } from '@/app/stores/use-experimental-store'
+import { planningDispositionFor, planningDurationFor, useExperimentalStore, type PlanningDisposition } from '@/app/stores/use-experimental-store'
 
 export function usePlanningEnabled(): boolean {
   const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
@@ -18,4 +18,10 @@ export function usePlanningEnabled(): boolean {
 export function usePlanningDisposition(): PlanningDisposition {
   const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
   return useExperimentalStore((state) => planningDispositionFor(state, fingerprint))
+}
+
+/** Minutes the event of a placed task lasts. */
+export function usePlanningDuration(): number {
+  const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
+  return useExperimentalStore((state) => planningDurationFor(state, fingerprint))
 }

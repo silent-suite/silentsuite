@@ -8,6 +8,16 @@ const PLANNING_DISPOSITION_STORAGE_KEY = 'silentsuite-experimental-planning-disp
 /** What the planning view does with a task once its calendar event is confirmed saved. */
 export type PlanningDisposition = 'label' | 'complete' | 'delete'
 const PLANNING_DISPOSITIONS: readonly PlanningDisposition[] = ['label', 'complete', 'delete']
+const PLANNING_DURATION_STORAGE_KEY = 'silentsuite-experimental-planning-duration-v1'
+
+/** Length of the event a placed task becomes, in whole minutes. */
+export const PLANNING_DURATION_DEFAULT = 30
+export const PLANNING_DURATION_MIN = 5
+export const PLANNING_DURATION_MAX = 1440
+export function isValidPlanningDuration(minutes: unknown): minutes is number {
+  return typeof minutes === 'number' && Number.isInteger(minutes)
+    && minutes >= PLANNING_DURATION_MIN && minutes <= PLANNING_DURATION_MAX
+}
 
 interface ExperimentalState {
   hydrated: boolean
@@ -19,11 +29,14 @@ interface ExperimentalState {
   planningAccounts: string[]
   /** Per account fingerprint; a missing entry means 'label'. */
   planningDispositions: Record<string, PlanningDisposition>
+  /** Per account fingerprint, in minutes; a missing entry means PLANNING_DURATION_DEFAULT. */
+  planningDurations: Record<string, number>
   hydrate: () => void
   setNotesEnabled: (accountFingerprint: string, enabled: boolean) => void
   setBirthdaysEnabled: (accountFingerprint: string, enabled: boolean) => void
   setPlanningEnabled: (accountFingerprint: string, enabled: boolean) => void
   setPlanningDisposition: (accountFingerprint: string, disposition: PlanningDisposition) => void
+  setPlanningDuration: (accountFingerprint: string, minutes: number) => void
 }
 
 function readAccounts(key: string): string[] {
@@ -54,6 +67,21 @@ function readDispositions(): Record<string, PlanningDisposition> {
   return result
 }
 
+function readDurations(): Record<string, number> {
+  const result: Record<string, number> = {}
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(PLANNING_DURATION_STORAGE_KEY) ?? 'null')
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+      for (const [account, value] of Object.entries(stored)) {
+        if (account && isValidPlanningDuration(value)) result[account] = value
+      }
+    }
+  } catch {
+    // Unavailable or malformed storage keeps the default.
+  }
+  return result
+}
+
 function updateAccounts(current: string[], accountFingerprint: string, enabled: boolean): string[] {
   const accounts = new Set(current)
   if (enabled) accounts.add(accountFingerprint)
@@ -67,6 +95,7 @@ export const useExperimentalStore = create<ExperimentalState>((set, get) => ({
   birthdayAccounts: [],
   planningAccounts: [],
   planningDispositions: {},
+  planningDurations: {},
   hydrate: () => {
     if (get().hydrated || typeof window === 'undefined') return
     set({
@@ -75,6 +104,7 @@ export const useExperimentalStore = create<ExperimentalState>((set, get) => ({
       birthdayAccounts: readAccounts(BIRTHDAYS_STORAGE_KEY),
       planningAccounts: readAccounts(PLANNING_STORAGE_KEY),
       planningDispositions: readDispositions(),
+      planningDurations: readDurations(),
     })
   },
   setNotesEnabled: (accountFingerprint, enabled) => {
@@ -102,7 +132,18 @@ export const useExperimentalStore = create<ExperimentalState>((set, get) => ({
     localStorage.setItem(PLANNING_DISPOSITION_STORAGE_KEY, JSON.stringify(planningDispositions))
     set({ planningDispositions })
   },
+  setPlanningDuration: (accountFingerprint, minutes) => {
+    if (!accountFingerprint || !get().hydrated || !isValidPlanningDuration(minutes)) return
+    const planningDurations = { ...get().planningDurations, [accountFingerprint]: minutes }
+    localStorage.setItem(PLANNING_DURATION_STORAGE_KEY, JSON.stringify(planningDurations))
+    set({ planningDurations })
+  },
 }))
+
+export function planningDurationFor(state: Pick<ExperimentalState, 'planningDurations'>, accountFingerprint: string | null | undefined): number {
+  const minutes = accountFingerprint ? state.planningDurations[accountFingerprint] : undefined
+  return isValidPlanningDuration(minutes) ? minutes : PLANNING_DURATION_DEFAULT
+}
 
 export function planningDispositionFor(state: Pick<ExperimentalState, 'planningDispositions'>, accountFingerprint: string | null | undefined): PlanningDisposition {
   return (accountFingerprint && state.planningDispositions[accountFingerprint]) || 'label'

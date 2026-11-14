@@ -528,7 +528,7 @@ describe('CalendarGrid slot clicks', () => {
 })
 
 describe('CalendarGrid external drop (planning view)', () => {
-  function dropHarness(props: { externalDragType?: string; onExternalDrop?: (start: Date, dataTransfer: DataTransfer) => void }) {
+  function dropHarness(props: { externalDragType?: string; onExternalDrop?: (start: Date, dataTransfer: DataTransfer) => void; externalDropMinutes?: number }) {
     render(<CalendarGrid events={[]} {...props} />)
     const grid = screen.getByTestId('time-grid')
     const wrapper = screen.getByTestId('schedule-x').parentElement as HTMLElement
@@ -554,10 +554,19 @@ describe('CalendarGrid external drop (planning view)', () => {
     const dataTransfer = transfer(['application/x-test-task'])
     // 16 displayed hours over 1600px: y=280 is 09:48, inside the 09:30 slot.
     drag('dragover', wrapper, 280, dataTransfer)
-    expect(screen.getByTestId('external-drop-preview')).toHaveTextContent('09:30')
+    expect(screen.getByTestId('external-drop-preview')).toHaveTextContent('09:30 \u2013 10:00')
     drag('drop', wrapper, 280, dataTransfer)
     expect(onExternalDrop).toHaveBeenCalledExactlyOnceWith(new Date('2026-07-13T09:30:00.000Z'), expect.anything())
     expect(screen.queryByTestId('external-drop-preview')).not.toBeInTheDocument()
+  })
+
+  it('sizes the preview to the event length', () => {
+    const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop: vi.fn(), externalDropMinutes: 60 })
+    drag('dragover', wrapper, 280, transfer(['application/x-test-task']))
+    const preview = screen.getByTestId('external-drop-preview')
+    expect(preview).toHaveTextContent('09:30 \u2013 10:30')
+    // 100px per hour in this harness.
+    expect(preview.style.height).toBe('100px')
   })
 
   it('clamps a drop at the bottom edge to the last slot of the day', () => {

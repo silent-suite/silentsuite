@@ -57,7 +57,7 @@ beforeEach(() => {
   useToastStore.setState({ toasts: [] })
   usePreferencesSyncStore.setState({ status: 'ready' })
   useEtebaseStore.setState({ accountFingerprint: 'account-a', domainLoadState: { ...useEtebaseStore.getState().domainLoadState, calendar: 'loaded' } })
-  useExperimentalStore.setState({ hydrated: true, planningAccounts: [], planningDispositions: {} })
+  useExperimentalStore.setState({ hydrated: true, planningAccounts: [], planningDispositions: {}, planningDurations: {} })
   useCalendarStore.setState({ events: [], currentView: 'week', currentDate: new Date('2026-11-16T12:00:00Z'), searchQuery: '' })
   useCalendarListStore.setState({ calendars: [{ id: 'cal-a', name: 'Personal', color: '#10b981', visible: true, accessLevel: 2 }], defaultCalendarId: 'cal-a' })
   useTaskListStore.setState({ lists: [
@@ -83,7 +83,7 @@ describe('Planning view', () => {
   })
 
   it('lists plannable open tasks beside the week grid and places dropped or armed tasks', async () => {
-    useExperimentalStore.setState({ planningAccounts: ['account-a'], planningDispositions: { 'account-a': 'complete' } })
+    useExperimentalStore.setState({ planningAccounts: ['account-a'], planningDispositions: { 'account-a': 'complete' }, planningDurations: { 'account-a': 60 } })
     renderWithIntl(<CalendarPage />)
     fireEvent.click(await screen.findByRole('button', { name: 'Show tasks sidebar' }))
     const panel = screen.getByRole('complementary', { name: 'Tasks to plan' })
@@ -96,12 +96,12 @@ describe('Planning view', () => {
 
     const start = new Date('2026-11-16T09:30:00Z')
     act(() => grid.props!.onExternalDrop!(start, { getData: () => 'open' } as unknown as DataTransfer))
-    await waitFor(() => expect(plan.planTask).toHaveBeenCalledWith('open', start, 'cal-a', 'complete'))
+    await waitFor(() => expect(plan.planTask).toHaveBeenCalledWith('open', start, 'cal-a', 'complete', 60))
 
     fireEvent.click(within(panel).getByRole('button', { name: 'Place Open task' }))
     const slot = { startDate: new Date('2026-11-17T14:00:00Z'), endDate: new Date('2026-11-17T15:00:00Z'), allDay: false, position: { x: 0, y: 0 } }
     act(() => grid.props!.onSlotClick!(slot))
-    await waitFor(() => expect(plan.planTask).toHaveBeenLastCalledWith('open', slot.startDate, 'cal-a', 'complete'))
+    await waitFor(() => expect(plan.planTask).toHaveBeenLastCalledWith('open', slot.startDate, 'cal-a', 'complete', 60))
     // An armed placement replaces the new-event dialog; the next click opens it again.
     expect(screen.queryByTestId('event-dialog-create')).not.toBeInTheDocument()
     act(() => grid.props!.onSlotClick!(slot))

@@ -226,9 +226,11 @@ interface CalendarGridProps {
   externalDragType?: string
   /** Called with the start of the 30-minute slot an external item was dropped on. */
   onExternalDrop?: (start: Date, dataTransfer: DataTransfer) => void
+  /** Length the dropped item will have, for the drop preview. Defaults to one 30-minute slot. */
+  externalDropMinutes?: number
 }
 
-export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, externalDragType, onExternalDrop }: CalendarGridProps) {
+export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, externalDragType, onExternalDrop, externalDropMinutes = 30 }: CalendarGridProps) {
   const { resolvedTheme } = useTheme()
   const canWrite = useAuthStore((s) => s.canWrite())
   const currentView = useCalendarStore((s) => s.currentView)
@@ -1573,6 +1575,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
       const slotHour = Math.floor(getTimeFromY(clientY, gridEl) * 2) / 2
       const hour = Math.max(displayDayStartHour, Math.min(slotHour, displayDayEndHour - 0.5))
       const start = buildDateFromHour(dayInfo.date, hour)
+      const formatTime = (date: Date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: use12h, timeZone: userTz })
       const pixelsPerHour = gridEl.scrollHeight / (displayDayEndHour - displayDayStartHour)
       const wrapperRect = wrapper.getBoundingClientRect()
       return {
@@ -1581,12 +1584,13 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
           left: dayInfo.rect.left - wrapperRect.left,
           top: (hour - displayDayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top,
           width: dayInfo.rect.width,
-          height: pixelsPerHour / 2,
-          timeLabel: start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: use12h, timeZone: userTz }),
+          // The preview shows the event's real length, kept inside the visible day.
+          height: Math.max(pixelsPerHour / 6, Math.min(externalDropMinutes / 60, displayDayEndHour - hour) * pixelsPerHour),
+          timeLabel: `${formatTime(start)} \u2013 ${formatTime(new Date(start.getTime() + externalDropMinutes * 60_000))}`,
         },
       }
     },
-    [getDayColumnInfo, getTimeFromY, buildDateFromHour, displayDayStartHour, displayDayEndHour, use12h, userTz],
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, displayDayStartHour, displayDayEndHour, use12h, userTz, externalDropMinutes],
   )
 
   const handleExternalDragOver = useCallback(

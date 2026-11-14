@@ -20,7 +20,7 @@ import { FloatingAddButton } from './components/FloatingAddButton'
 import { resolveUserTimezone } from '@/app/lib/tz'
 import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
-import { usePlanningDisposition, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
+import { usePlanningDisposition, usePlanningDuration, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
 import { showErrorToast, showSuccessToast } from '@/app/stores/use-toast-store'
 import { PlanningPanel } from './components/PlanningPanel'
 import { RightSidebarPortal } from '@/app/components/right-sidebar'
@@ -182,6 +182,7 @@ function CalendarPageBody() {
   // Experimental planning view (#286): tasks beside the desktop week grid.
   const planningEnabled = usePlanningEnabled()
   const planningDisposition = usePlanningDisposition()
+  const planningDuration = usePlanningDuration()
   const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
   const [planningOpen, setPlanningOpenState] = useState(false)
   // Read after mount so the server-rendered and first client render agree.
@@ -210,7 +211,7 @@ function CalendarPageBody() {
     setPendingTaskIds((ids) => new Set(ids).add(taskId))
     const epoch = getAccountEpoch()
     try {
-      const result = await planTask(taskId, start, effectivePlanCalendarId, planningDisposition)
+      const result = await planTask(taskId, start, effectivePlanCalendarId, planningDisposition, planningDuration)
       // Results name the task: never show them after a sign-out or account switch.
       if (!isCurrentAccountEpoch(epoch)) return
       if (result.kind === 'done') showSuccessToast(result.message)
@@ -222,7 +223,7 @@ function CalendarPageBody() {
         return next
       })
     }
-  }, [effectivePlanCalendarId, planningDisposition])
+  }, [effectivePlanCalendarId, planningDisposition, planningDuration])
 
   const handleTaskDrop = useCallback((start: Date, dataTransfer: DataTransfer) => {
     const taskId = dataTransfer.getData(TASK_DRAG_TYPE)
@@ -579,6 +580,7 @@ function CalendarPageBody() {
               onEventClick={handleEventClick}
               externalDragType={canPlace ? TASK_DRAG_TYPE : undefined}
               onExternalDrop={canPlace ? handleTaskDrop : undefined}
+              externalDropMinutes={planningDuration}
             />
             {planningEnabled && canWrite && (
               <RightSidebarPortal>

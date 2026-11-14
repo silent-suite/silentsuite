@@ -4,12 +4,12 @@ import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { useBirthdaysEnabled } from '@/app/hooks/use-birthdays-enabled'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
-import { usePlanningDisposition, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
+import { usePlanningDisposition, usePlanningDuration, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
-import { useExperimentalStore, type PlanningDisposition } from '@/app/stores/use-experimental-store'
+import { isValidPlanningDuration, PLANNING_DURATION_MAX, PLANNING_DURATION_MIN, useExperimentalStore, type PlanningDisposition } from '@/app/stores/use-experimental-store'
 import { LanguageSetting } from './language-setting'
 
 export default function ExperimentalSettingsPage() {
@@ -176,9 +176,10 @@ function PlanningSetting() {
       </div>
       <p id="planning-experiment-description" className="text-sm text-[rgb(var(--muted))]">
         Adds a tasks sidebar to the calendar on larger screens. Open it next to the calendar and drag a task into a time
-        slot in the week view to add a 30-minute event. These choices are saved for this account in this browser, not
+        slot in the week view to add it as an event. These choices are saved for this account in this browser, not
         synced to other devices.
       </p>
+      {enabled && <PlanningDurationSetting disabled={disabled} save={save} fingerprint={fingerprint} />}
       {enabled && (
         <fieldset className="space-y-2">
           <legend className="text-sm font-medium text-[rgb(var(--foreground))]">When a task is added to the calendar</legend>
@@ -210,5 +211,95 @@ function PlanningSetting() {
       )}
       {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
     </div>
+  )
+}
+
+const DURATION_PRESETS = [10, 30, 60] as const
+
+function PlanningDurationSetting({ disabled, save, fingerprint }: {
+  disabled: boolean
+  save: (change: () => void) => void
+  fingerprint: string | null | undefined
+}) {
+  const duration = usePlanningDuration()
+  const isPreset = (DURATION_PRESETS as readonly number[]).includes(duration)
+  // A saved length that is not a preset shows as Custom, also when settings load after the first render.
+  const [customChosen, setCustomChosen] = useState(false)
+  const custom = customChosen || !isPreset
+  const [customText, setCustomText] = useState<string | null>(null)
+  const [invalid, setInvalid] = useState(false)
+
+  const choosePreset = (minutes: number) => {
+    setCustomChosen(false)
+    setCustomText(null)
+    setInvalid(false)
+    save(() => useExperimentalStore.getState().setPlanningDuration(fingerprint!, minutes))
+  }
+  const saveCustom = (text: string) => {
+    setCustomText(text)
+    const minutes = Number(text)
+    const valid = text.trim() !== '' && isValidPlanningDuration(minutes)
+    setInvalid(!valid)
+    if (valid) save(() => useExperimentalStore.getState().setPlanningDuration(fingerprint!, minutes))
+  }
+
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-sm font-medium text-[rgb(var(--foreground))]">Event length</legend>
+      {DURATION_PRESETS.map((minutes) => (
+        <label key={minutes} className="flex items-center gap-2 text-sm text-[rgb(var(--foreground))]">
+          <input
+            type="radio"
+            name="planning-duration"
+            checked={!custom && duration === minutes}
+            disabled={disabled}
+            onChange={() => choosePreset(minutes)}
+            className="accent-emerald-600"
+          />
+          {minutes} minutes
+        </label>
+      ))}
+      <div className="flex flex-wrap items-center gap-2 text-sm text-[rgb(var(--foreground))]">
+        <label className="flex items-center gap-2">
+          <input
+            type="radio"
+            name="planning-duration"
+            checked={custom}
+            disabled={disabled}
+            onChange={() => {
+              setCustomChosen(true)
+              setInvalid(false)
+            }}
+            className="accent-emerald-600"
+          />
+          Custom
+        </label>
+        {custom && (
+          <>
+            <input
+              id="planning-duration-custom"
+              type="number"
+              inputMode="numeric"
+              min={PLANNING_DURATION_MIN}
+              max={PLANNING_DURATION_MAX}
+              step={5}
+              value={customText ?? String(duration)}
+              disabled={disabled}
+              onChange={(e) => saveCustom(e.target.value)}
+              aria-label="Custom event length in minutes"
+              aria-invalid={invalid}
+              aria-describedby={invalid ? 'planning-duration-error' : undefined}
+              className="w-24 rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-2 py-1 text-sm"
+            />
+            <span className="text-[rgb(var(--muted))]">minutes</span>
+          </>
+        )}
+      </div>
+      {custom && invalid && (
+        <p id="planning-duration-error" role="alert" className="text-sm text-[rgb(var(--foreground))]">
+          Enter a whole number of minutes from {PLANNING_DURATION_MIN} to {PLANNING_DURATION_MAX}. The last valid length is kept until then.
+        </p>
+      )}
+    </fieldset>
   )
 }
