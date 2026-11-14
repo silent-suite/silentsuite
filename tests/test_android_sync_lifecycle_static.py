@@ -516,7 +516,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
     ledger_size = sum(len(methods) for methods in ledger["classes"].values())
-    assert len(canonical) == len(runtime_methods) == ledger_size == 233
+    assert len(canonical) == len(runtime_methods) == ledger_size == 238
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["29:mixed"]}
@@ -535,8 +535,8 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 231, 233)
-    assert tuple(len(api36[key]) for key in api36) == (33, 20, 7, 125, 48)
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 236, 238)
+    assert tuple(len(api36[key]) for key in api36) == (33, 20, 7, 130, 48)
     assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
     # The launcher recovery class runs on its own fresh API 36 emulator (#898).
     assert ledger["shards"]["36:launcher-recovery"] == ["io.silentsuite.sync.ui.LauncherActiveAccountRuntimeTest"]
@@ -565,7 +565,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         "29:sibling-routes": api36["36:sibling-routes"],
     }
     assert requested <= api29["29:account-dashboard"]
-    assert tuple(len(part) for part in api29.values()) == (1, 39, 20, 125, 48)
+    assert tuple(len(part) for part in api29.values()) == (1, 39, 20, 130, 48)
     assert len(api29["29:account-dashboard"] - requested) == 38
     assert sum(len(part) for part in api29.values()) == len(set().union(*api29.values())) == len(canonical)
     assert set().union(*api29.values()) == canonical
@@ -628,7 +628,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
     assert "focused-runtime-ledger-v1.json" in assertion
     assert "object_pairs_hook=reject_duplicate_keys" in assertion
     assert "canonical={(class_name,method)" in assertion
-    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':125,'29:sibling-routes':48,'35:all':233,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':125}" in assertion
+    assert "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':130,'29:sibling-routes':48,'35:all':238,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':130}" in assertion
     assert "API 29 execution shards are not a disjoint cover of the canonical runtime ledger" in assertion
     assert "elif key == '29:remaining'" not in assertion
     assert '"29:account-dashboard": 38' in script and '"29:remaining":' not in script
