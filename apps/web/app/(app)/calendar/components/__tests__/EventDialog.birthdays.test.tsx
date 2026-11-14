@@ -10,8 +10,8 @@ const mocks = vi.hoisted(() => ({
   deleteEvent: vi.fn(),
   preferences: { defaultReminder: 'none', timeFormat: '24h', defaultTimezone: 'UTC', dateFormat: 'system' },
   calendars: [
-    { id: 'bday-1', name: 'Birthdays', color: '#f59e0b', visible: true },
-    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true },
+    { id: 'bday-1', name: 'Birthdays', color: '#f59e0b', visible: true, accessLevel: 1 },
+    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true, accessLevel: 2 },
   ],
 }))
 
@@ -84,11 +84,12 @@ describe('EventDialog with a managed Birthdays calendar (#738)', () => {
     expect(mocks.createEvent).not.toHaveBeenCalled()
   })
 
-  it('keeps the series start and normal header for an ordinary recurring event', () => {
+  it('keeps the normal header for an ordinary recurring event, opened at the clicked occurrence', () => {
     const ordinary = { ...birthday, id: 'ev-1', uid: 'ev-1', title: 'Standup', calendarId: 'cal-a' } as CalendarEvent
     renderWithIntl(<EventDialog mode="edit" event={ordinary} instanceDate={new Date(2027, 2, 15)} onClose={vi.fn()} />)
     expect(screen.getByText('Edit event')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Done' })).toBeTruthy()
-    expect(screen.queryByText(/2027/)).toBeNull()
+    // An occurrence opens at its own date (WEB-01), so the form shows the clicked 2027 date.
+    expect(screen.getAllByText(/2027/).length).toBeGreaterThan(0)
   })
 })

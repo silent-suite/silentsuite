@@ -92,7 +92,7 @@ describe('Mobile task editor keeps untouched dates (#295)', () => {
     useEtebaseStore.setState((state) => ({ domainLoadState: { ...state.domainLoadState, tasks: 'loaded' } }))
     useAuthStore.setState({ canWrite: () => true } as never)
     useTaskListStore.setState({
-      lists: [{ id: 'tasks-a', name: 'Work', color: '#3b82f6', visible: true }],
+      lists: [{ id: 'tasks-a', name: 'Work', color: '#3b82f6', visible: true, accessLevel: 2 }],
       activeListId: 'tasks-a',
     })
     useTaskStore.setState(useTaskStore.getInitialState(), true)

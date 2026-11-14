@@ -1601,6 +1601,7 @@ async function hydrateListStores(
       name: getCollectionName(collection, index === 0 ? 'Personal' : `Calendar ${index + 1}`),
       color: getCollectionColor(collection) || calendarListStore.DEFAULT_CALENDAR_COLORS[index % calendarListStore.DEFAULT_CALENDAR_COLORS.length],
       visible: true,
+      accessLevel: getCollectionAccessLevel(collection),
     })),
   )
   taskListStore.useTaskListStore.getState().replaceListsFromRemote(
@@ -1609,6 +1610,7 @@ async function hydrateListStores(
       name: getCollectionName(collection, index === 0 ? 'My Tasks' : `Task List ${index + 1}`),
       color: getCollectionColor(collection) || taskListStore.DEFAULT_TASK_LIST_COLORS[index % taskListStore.DEFAULT_TASK_LIST_COLORS.length],
       visible: true,
+      accessLevel: getCollectionAccessLevel(collection),
     })),
   )
   contactListStore.useContactListStore.getState().replaceListsFromRemote(

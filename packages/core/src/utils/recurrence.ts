@@ -387,6 +387,20 @@ export function occurrenceWallClock(
   return `${c.getUTCFullYear()}${pad(c.getUTCMonth() + 1)}${pad(c.getUTCDate())}T${pad(c.getUTCHours())}${pad(c.getUTCMinutes())}${pad(c.getUTCSeconds())}`;
 }
 
+/**
+ * How many RRULE occurrences the series generates before `instance`, counted the way COUNT counts
+ * them: EXDATEs do not reduce it, and a date the host skipped still counts once per candidate.
+ */
+export function occurrencesBefore(
+  rrule: string,
+  dtstart: Date,
+  instance: Date,
+  options?: RecurrenceOptions,
+): number {
+  if (instance.getTime() <= dtstart.getTime()) return 0;
+  return expandWithCivil(rrule, dtstart, { start: dtstart, end: new Date(instance.getTime() - 1) }, [], options).length;
+}
+
 /** Decode a `YYYYMMDDTHHMMSS` wall clock to civil ms, or undefined. */
 function parseWallClock(wall: string | undefined): number | undefined {
   if (!wall) return undefined;

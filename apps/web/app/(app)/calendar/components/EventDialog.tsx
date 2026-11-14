@@ -5,17 +5,18 @@ import { createPortal } from 'react-dom'
 import { Trash2, MapPin, Clock, AlignLeft, Repeat, Pencil, Bell, X, CalendarDays, Tag } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { LabelEditor } from '@/app/components/LabelEditor'
-import { useCalendarStore } from '@/app/stores/use-calendar-store'
+import { useCalendarStore, type CalendarSaveError } from '@/app/stores/use-calendar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/session'
 import { RecurrencePicker } from './RecurrencePicker'
 import { RecurrenceScopeDialog, type RecurrenceScope } from './RecurrenceScopeDialog'
 import type { CalendarEvent, DateFormat, VAlarm } from '@silentsuite/core'
-import { buildAlarmTrigger, gapWallClock, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
+import { buildAlarmTrigger, eventOccurrenceWallClock, gapWallClock, occurrenceEnd, parseAlarmTriggerMinutes, validStartWallClock } from '@silentsuite/core'
 import { useNotifications } from '@/app/providers/notification-provider'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate } from '@/app/lib/date'
+import { canWriteCollection, findItemCollection } from '@/app/lib/collection-access'
 import { Globe } from 'lucide-react'
 import {
   formatDateForInputInZone,
@@ -257,6 +258,75 @@ function formatDateForDisplay(date: Date, tz: string | undefined): string {
   return `${weekday} ${datePart}`
 }
 
+/** Date (YYYY-MM-DD) and time (HH:MM) inputs of the form's start and end. */
+interface WallInputs {
+  startDate: string
+  startTime: string
+  endDate: string
+  endTime: string
+}
+
+/** The inputs an existing event opens with, read in `tz` (all-day ends shown inclusive). */
+function editWallInputs(event: CalendarEvent, tz: string | undefined): WallInputs {
+  // A DST-gap start keeps its intended wall clock, which the instant alone would show shifted.
+  const wall = validStartWallClock(event)
+  const end = event.allDay ? inclusiveAllDayEndDate(event.endDate) : event.endDate
+  return {
+    startDate: wall ? `${wall.slice(0, 4)}-${wall.slice(4, 6)}-${wall.slice(6, 8)}` : formatDateForInput(event.startDate, tz),
+    startTime: wall ? `${wall.slice(9, 11)}:${wall.slice(11, 13)}` : formatTimeForInput(event.startDate, tz),
+    endDate: formatDateForInput(end, tz),
+    endTime: formatTimeForInput(end, tz),
+  }
+}
+
+/**
+ * The occurrence of `master` at `instance` as an event of its own: its start, its end and, for a
+ * start in a DST gap, the series' intended wall clock. The store seeds scoped copies the same way.
+ */
+function occurrenceOf(master: CalendarEvent, instance: Date): CalendarEvent {
+  const intended = eventOccurrenceWallClock(master, instance)
+  const wall = intended ? gapWallClock(master.timezone, intended) : undefined
+  const occurrence: CalendarEvent = { ...master, startDate: instance, endDate: occurrenceEnd(master, instance) }
+  if (wall) occurrence.startWallClock = wall
+  else delete occurrence.startWallClock
+  return occurrence
+}
+
+function civilOf(dateIso: string, time: string): number {
+  const [y, m, d] = dateIso.split('-').map(Number)
+  const [h, min] = time.split(':').map(Number)
+  return Date.UTC(y!, m! - 1, d!, h!, min!)
+}
+
+function civilInputs(civil: number): [string, string] {
+  const c = new Date(civil)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return [`${c.getUTCFullYear()}-${pad(c.getUTCMonth() + 1)}-${pad(c.getUTCDate())}`, `${pad(c.getUTCHours())}:${pad(c.getUTCMinutes())}`]
+}
+
+/**
+ * Apply the change made to an occurrence's inputs (`from` to `to`) to the series' own inputs, as
+ * wall-clock date and time arithmetic: moving one occurrence by an hour or a day moves the series
+ * start by the same hour or day.
+ */
+function shiftWallInputs(series: WallInputs, from: WallInputs, to: WallInputs): WallInputs {
+  const [startDate, startTime] = civilInputs(
+    civilOf(series.startDate, series.startTime) + civilOf(to.startDate, to.startTime) - civilOf(from.startDate, from.startTime),
+  )
+  const [endDate, endTime] = civilInputs(
+    civilOf(series.endDate, series.endTime) + civilOf(to.endDate, to.endTime) - civilOf(from.endDate, from.endTime),
+  )
+  return { startDate, startTime, endDate, endTime }
+}
+
+/** The message shown beside a kept draft. Only a create that was never sent is called unsaved. */
+function createFailureMessage(err: unknown): string | null {
+  if (!(err instanceof Error) || err.name !== 'CalendarSaveError') return null
+  return (err as CalendarSaveError).unconfirmed
+    ? "Couldn't confirm this event was saved. If it appears in your calendar after the next sync, don't add it again."
+    : 'Event not saved. Please try again.'
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -277,11 +347,10 @@ export function EventDialog({
   const updateRecurringEvent = useCalendarStore((s) => s.updateRecurringEvent)
   const deleteRecurringEvent = useCalendarStore((s) => s.deleteRecurringEvent)
 
-  const accountCanWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
   const managedCalendarIds = useManagedBirthdayCalendarIds()
   // A generated birthday changes only through its contact, so its dialog is read-only.
   const isManagedEvent = mode === 'edit' && Boolean(event?.calendarId && managedCalendarIds.includes(event.calendarId))
-  const canWrite = accountCanWrite && !isManagedEvent
   const notifications = useNotifications()
   const t = useTranslations('Labels')
   const defaultReminder = usePreferencesStore((s) => s.defaultReminder)
@@ -299,21 +368,24 @@ export function EventDialog({
   const isRecurring = isEdit && !!event.recurrenceRule
   const effectiveInstanceDate = instanceDate ?? event?.startDate ?? new Date()
 
-  // A generated birthday is read-only, so it shows the clicked occurrence rather than the
-  // series start (a fixed leap year that is neither the birth year nor this year).
-  const managedOccurrenceShift = isEdit && isManagedEvent && instanceDate
-    ? instanceDate.getTime() - event.startDate.getTime()
-    : 0
-  const defaultStart = isEdit
-    ? new Date(event.startDate.getTime() + managedOccurrenceShift)
-    : (initialStartDate ?? new Date())
-  const editEnd = isEdit ? new Date(event.endDate.getTime() + managedOccurrenceShift) : undefined
-  // For all-day events, `event.endDate` follows iCal DTEND;VALUE=DATE convention
-  // (exclusive — the day *after* the last day of the event). The form picker shows
-  // the inclusive last day, so subtract one day before formatting.
-  const defaultEnd = isEdit && editEnd
-    ? (event.allDay ? inclusiveAllDayEndDate(editEnd) : editEnd)
-    : (initialEndDate ?? new Date(defaultStart.getTime() + 30 * 60 * 1000))
+  // A later occurrence of a series opens at its own date and time, so the form shows what was
+  // clicked and "this" / "this and future" edits are made against that occurrence. A generated
+  // birthday is read-only, so it also shows the clicked occurrence rather than the series start
+  // (a fixed leap year that is neither the birth year nor this year).
+  const occurrence = useMemo(() => {
+    if (!isEdit || !instanceDate || instanceDate.getTime() === event.startDate.getTime()) return undefined
+    if (isRecurring) return occurrenceOf(event, instanceDate)
+    if (!isManagedEvent) return undefined
+    const shift = instanceDate.getTime() - event.startDate.getTime()
+    const shifted: CalendarEvent = {
+      ...event,
+      startDate: instanceDate,
+      endDate: new Date(event.endDate.getTime() + shift),
+    }
+    delete shifted.startWallClock
+    return shifted
+  }, [isEdit, isRecurring, isManagedEvent, event, instanceDate])
+  const formEvent = isEdit ? (occurrence ?? event) : undefined
 
   // Initial all-day flag — needed before form state so we can pick the right
   // TZ for formatting the initial date/time strings.
@@ -332,16 +404,23 @@ export function EventDialog({
   const [location, setLocation] = useState(isEdit ? (event.location || '') : '')
   const [description, setDescription] = useState(isEdit ? (event.description || '') : '')
   const [allDay, setAllDay] = useState(initialIsAllDay)
-  // A DST-gap start keeps its intended wall clock, which the instant alone would show shifted.
-  const startWallClock = isEdit && managedOccurrenceShift === 0 ? validStartWallClock(event) : undefined
-  const initialStartTime = startWallClock
-    ? `${startWallClock.slice(9, 11)}:${startWallClock.slice(11, 13)}`
-    : formatTimeForInput(defaultStart, initialFormTz)
-  const initialEndTime = formatTimeForInput(defaultEnd, initialFormTz)
-  const initialStartDateIso = startWallClock
-    ? `${startWallClock.slice(0, 4)}-${startWallClock.slice(4, 6)}-${startWallClock.slice(6, 8)}`
-    : formatDateForInput(defaultStart, initialFormTz)
-  const initialEndDateIso = formatDateForInput(defaultEnd, initialFormTz)
+  // For all-day events, `endDate` follows iCal DTEND;VALUE=DATE convention (exclusive — the day
+  // *after* the last day of the event); the form shows the inclusive last day.
+  const initialInputs = useMemo((): WallInputs => {
+    if (formEvent) return editWallInputs(formEvent, initialFormTz)
+    const defaultStart = initialStartDate ?? new Date()
+    const defaultEnd = initialEndDate ?? new Date(defaultStart.getTime() + 30 * 60 * 1000)
+    return {
+      startDate: formatDateForInput(defaultStart, initialFormTz),
+      startTime: formatTimeForInput(defaultStart, initialFormTz),
+      endDate: formatDateForInput(defaultEnd, initialFormTz),
+      endTime: formatTimeForInput(defaultEnd, initialFormTz),
+    }
+  }, [formEvent, initialFormTz, initialStartDate, initialEndDate])
+  const initialStartTime = initialInputs.startTime
+  const initialEndTime = initialInputs.endTime
+  const initialStartDateIso = initialInputs.startDate
+  const initialEndDateIso = initialInputs.endDate
   const [startDate, setStartDate] = useState(initialStartDateIso)
   const [startDateInput, setStartDateInput] = useState(() => formatEventDateInput(initialStartDateIso, dateFormat))
   const [startDateError, setStartDateError] = useState<string | null>(null)
@@ -413,23 +492,39 @@ export function EventDialog({
     isEdit ? (event.calendarId ?? defaultCalendarId) : defaultCalendarId,
   )
 
+  // Only calendars the account may write to are offered as targets; an edited
+  // event's own calendar stays listed so it always shows.
+  const writableCalendars = useMemo(() => calendarLists.filter(canWriteCollection), [calendarLists])
+  const eventCalendar = isEdit ? findItemCollection(calendarLists, event.calendarId) : undefined
+  const pickerCalendars = eventCalendar && !writableCalendars.includes(eventCalendar)
+    ? [eventCalendar, ...writableCalendars]
+    : writableCalendars
+  // An event in a calendar shared read-only opens read-only, as when the subscription has ended.
+  const calendarWritable = canWriteCollection(isEdit ? eventCalendar : findItemCollection(calendarLists, selectedCalendarId))
+  const canWrite = canWriteAccount && calendarWritable && !isManagedEvent
+
   useEffect(() => {
-    if (isEdit || calendarLists.length === 0) return
-    if (calendarLists.some((calendar) => calendar.id === selectedCalendarId)) return
+    if (isEdit || writableCalendars.length === 0) return
+    if (writableCalendars.some((calendar) => calendar.id === selectedCalendarId)) return
     setSelectedCalendarId(
-      calendarLists.some((calendar) => calendar.id === defaultCalendarId)
+      writableCalendars.some((calendar) => calendar.id === defaultCalendarId)
         ? defaultCalendarId
-        : calendarLists[0]!.id,
+        : writableCalendars[0]!.id,
     )
-  }, [calendarLists, defaultCalendarId, isEdit, selectedCalendarId])
+  }, [writableCalendars, defaultCalendarId, isEdit, selectedCalendarId])
 
   // Saving state to prevent double-submission
   const [saving, setSaving] = useState(false)
+  // Outcome of a create that was not saved; the dialog stays open with the input.
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // Scope dialog state (recurring edit/delete)
   const [scopeDialog, setScopeDialog] = useState<{
     mode: 'edit' | 'delete'
+    /** Changes to the occurrence shown, for "this" and "this and future". */
     pendingPatch?: Partial<CalendarEvent>
+    /** The same changes applied to the series itself, for "all events". */
+    seriesPatch?: Partial<CalendarEvent>
   } | null>(null)
 
   // Refs
@@ -473,28 +568,38 @@ export function EventDialog({
   // Build date objects from form state
   // ---------------------------------------------------------------------------
 
-  const buildStartDate = useCallback((): Date => {
-    const [y, m, d] = startDate.split('-').map(Number)
+  const startFromInputs = useCallback((dateIso: string, time: string): Date => {
+    const [y, m, d] = dateIso.split('-').map(Number)
     if (allDay) {
       // All-day events stored as browser-local midnight; matches how the
       // import path and core ical parser handle DATE-only DTSTART.
       return new Date(y, m - 1, d, 0, 0, 0, 0)
     }
-    const [h, min] = startTime.split(':').map(Number)
+    const [h, min] = time.split(':').map(Number)
     return instantFromWallClock(y, m, d, h, min, timezone)
-  }, [startDate, startTime, allDay, timezone])
+  }, [allDay, timezone])
 
-  const buildEndDate = useCallback((): Date => {
-    const [y, m, d] = endDate.split('-').map(Number)
+  const endFromInputs = useCallback((dateIso: string, time: string): Date => {
+    const [y, m, d] = dateIso.split('-').map(Number)
     if (allDay) {
       // RFC 5545: VALUE=DATE DTEND is exclusive — i.e. the day after the last day
       // of the event. Stored as the next day's local-midnight to match how the
       // ical parser surfaces DTEND for events synced from upstream.
       return new Date(y, m - 1, d + 1, 0, 0, 0, 0)
     }
-    const [h, min] = endTime.split(':').map(Number)
+    const [h, min] = time.split(':').map(Number)
     return instantFromWallClock(y, m, d, h, min, timezone)
-  }, [endDate, endTime, allDay, timezone])
+  }, [allDay, timezone])
+
+  const buildStartDate = useCallback(
+    (): Date => startFromInputs(startDate, startTime),
+    [startFromInputs, startDate, startTime],
+  )
+
+  const buildEndDate = useCallback(
+    (): Date => endFromInputs(endDate, endTime),
+    [endFromInputs, endDate, endTime],
+  )
 
   // ---------------------------------------------------------------------------
   // Save handler
@@ -503,23 +608,48 @@ export function EventDialog({
   const handleSave = useCallback(async () => {
     // A generated birthday is read-only; its shown dates are the clicked occurrence, not edits.
     if (isManagedEvent) return
-    if (!title.trim() || saving) return
+    if (!canWrite || !title.trim() || saving) return
     if (startDateError || endDateError) return
 
-    // For a DST-gap start, unchanged inputs keep the exact stored instants: the form rebuilds
-    // minutes only, which would drop seconds and the original wall clock.
     const kindAndZoneUnchanged = isEdit && allDay === event.allDay && timezone === (event.timezone ?? defaultTimezone)
-    const startInputsUnchanged = startDate === initialStartDateIso && startTime === initialStartTime
-    const endInputsUnchanged = endDate === initialEndDateIso && endTime === initialEndTime
-    const keepExactStart = !!startWallClock && kindAndZoneUnchanged && startInputsUnchanged
-    const keepExactEnd = !!startWallClock && kindAndZoneUnchanged && endInputsUnchanged
-    const newStart = keepExactStart ? event.startDate : buildStartDate()
-    const newEnd = keepExactEnd ? event.endDate : buildEndDate()
+    const typed: WallInputs = { startDate, startTime, endDate, endTime }
 
-    // Ensure end is after start
-    const effectiveEnd = newEnd > newStart ? newEnd : new Date(newStart.getTime() + 30 * 60 * 1000)
+    /**
+     * Start and end from `inputs`. For a DST-gap start, unchanged inputs keep the exact stored
+     * instants of `base`: the form rebuilds minutes only, which would drop seconds and the
+     * original wall clock.
+     */
+    const resolveTimes = (base: CalendarEvent | undefined, initial: WallInputs, inputs: WallInputs) => {
+      const gapStart = base ? validStartWallClock(base) : undefined
+      const keepExactStart = !!gapStart && kindAndZoneUnchanged
+        && inputs.startDate === initial.startDate && inputs.startTime === initial.startTime
+      const keepExactEnd = !!gapStart && kindAndZoneUnchanged
+        && inputs.endDate === initial.endDate && inputs.endTime === initial.endTime
+      const start = keepExactStart ? base!.startDate : startFromInputs(inputs.startDate, inputs.startTime)
+      const end = keepExactEnd ? base!.endDate : endFromInputs(inputs.endDate, inputs.endTime)
+      // Ensure end is after start
+      const effectiveEnd = end > start ? end : new Date(start.getTime() + 30 * 60 * 1000)
+      return { start, effectiveEnd, gapStart, keepExactStart }
+    }
+
+    /** The start, end and DST-gap wall clock changes of `base` for `inputs`. */
+    const timePatch = (base: CalendarEvent, initial: WallInputs, inputs: WallInputs): Partial<CalendarEvent> => {
+      const { start, effectiveEnd, gapStart, keepExactStart } = resolveTimes(base, initial, inputs)
+      const patch: Partial<CalendarEvent> = {}
+      if (start.getTime() !== base.startDate.getTime()) patch.startDate = start
+      if (effectiveEnd.getTime() !== base.endDate.getTime()) patch.endDate = effectiveEnd
+      // An edited start, zone or kind replaces a DST-gap wall clock with the typed one (kept only if
+      // it is itself in a gap).
+      if (gapStart && !keepExactStart) {
+        patch.startWallClock = allDay
+          ? undefined
+          : gapWallClock(timezone, `${inputs.startDate.replace(/-/g, '')}T${inputs.startTime.replace(':', '')}00`)
+      }
+      return patch
+    }
 
     setSaving(true)
+    setSaveError(null)
 
     try {
       if (isEdit) {
@@ -530,8 +660,6 @@ export function EventDialog({
           patch.description = description.trim()
         if ((location.trim() || '') !== (event.location || '')) patch.location = location.trim()
         if (allDay !== event.allDay) patch.allDay = allDay
-        if (newStart.getTime() !== event.startDate.getTime()) patch.startDate = newStart
-        if (effectiveEnd.getTime() !== event.endDate.getTime()) patch.endDate = effectiveEnd
         if (recurrenceRule !== event.recurrenceRule) patch.recurrenceRule = recurrenceRule
         if (JSON.stringify(categories) !== JSON.stringify(event.categories ?? [])) patch.categories = categories
         if (timezone !== (event.timezone ?? defaultTimezone)) patch.timezone = timezone
@@ -540,13 +668,6 @@ export function EventDialog({
         if (event.allDay && !allDay && !event.timezone) patch.timezone = timezone
         // An explicit zone change or an all-day switch replaces a floating start time.
         if (event.floating && (patch.timezone !== undefined || patch.allDay !== undefined)) patch.floating = undefined
-        // An edited start, zone or kind replaces a DST-gap wall clock with the typed one (kept only if
-        // it is itself in a gap).
-        if (startWallClock && !keepExactStart) {
-          patch.startWallClock = allDay
-            ? undefined
-            : gapWallClock(timezone, `${startDate.replace(/-/g, '')}T${startTime.replace(':', '')}00`)
-        }
         if (selectedCalendarId !== (event.calendarId ?? defaultCalendarId)) patch.calendarId = selectedCalendarId
 
         // Compare alarms
@@ -559,36 +680,53 @@ export function EventDialog({
           patch.alarms = eventAlarms
         }
 
-        if (Object.keys(patch).length === 0) {
+        // Times are compared with what the form opened with: the clicked occurrence, or the event.
+        const formPatch = { ...patch, ...timePatch(formEvent!, initialInputs, typed) }
+
+        if (Object.keys(formPatch).length === 0) {
           // No changes — just close
           onClose()
           return
         }
 
         if (isRecurring) {
+          // "All events" applies the same change to the series start, by the same days and time.
+          const seriesInitial = occurrence ? editWallInputs(event, initialFormTz) : initialInputs
+          const seriesPatch = occurrence
+            ? { ...patch, ...timePatch(event, seriesInitial, shiftWallInputs(seriesInitial, initialInputs, typed)) }
+            : formPatch
           // Show scope dialog for recurring events
-          setScopeDialog({ mode: 'edit', pendingPatch: patch })
+          setScopeDialog({ mode: 'edit', pendingPatch: formPatch, seriesPatch })
           setSaving(false)
           return
         }
 
-        await updateEvent(event.id, patch)
+        await updateEvent(event.id, formPatch)
       } else {
-        await createEvent({
-          title: title.trim(),
-          description: description.trim() || undefined,
-          location: location.trim() || undefined,
-          startDate: newStart,
-          endDate: effectiveEnd,
-          allDay,
-          recurrenceRule,
-          categories,
-          timezone,
-          calendarId: selectedCalendarId,
-          alarms: alarms
-            .map((a) => alarmToVAlarm(a, title))
-            .filter((a): a is VAlarm => a !== null),
-        })
+        const { start, effectiveEnd } = resolveTimes(undefined, initialInputs, typed)
+        try {
+          await createEvent({
+            title: title.trim(),
+            description: description.trim() || undefined,
+            location: location.trim() || undefined,
+            startDate: start,
+            endDate: effectiveEnd,
+            allDay,
+            recurrenceRule,
+            categories,
+            timezone,
+            calendarId: selectedCalendarId,
+            alarms: alarms
+              .map((a) => alarmToVAlarm(a, title))
+              .filter((a): a is VAlarm => a !== null),
+          })
+        } catch (err) {
+          // A create that was not saved keeps the dialog and its input, with the outcome shown.
+          const message = createFailureMessage(err)
+          if (message === null) throw err
+          setSaveError(message)
+          return
+        }
       }
 
       onClose()
@@ -607,23 +745,24 @@ export function EventDialog({
     selectedCalendarId,
     timezone,
     defaultTimezone,
+    defaultCalendarId,
     saving,
     startDateError,
     endDateError,
     isEdit,
     isRecurring,
     event,
-    buildStartDate,
-    buildEndDate,
-    startWallClock,
+    occurrence,
+    formEvent,
+    initialInputs,
+    initialFormTz,
+    startFromInputs,
+    endFromInputs,
     startDate,
     startTime,
     endDate,
     endTime,
-    initialStartDateIso,
-    initialStartTime,
-    initialEndDateIso,
-    initialEndTime,
+    canWrite,
     createEvent,
     updateEvent,
     onClose,
@@ -634,7 +773,7 @@ export function EventDialog({
   // ---------------------------------------------------------------------------
 
   const handleDelete = useCallback(() => {
-    if (!isEdit) return
+    if (!isEdit || !canWrite) return
 
     if (isRecurring) {
       setScopeDialog({ mode: 'delete' })
@@ -642,7 +781,7 @@ export function EventDialog({
       void deleteEvent(event.id)
       onClose()
     }
-  }, [isEdit, isRecurring, event, deleteEvent, onClose])
+  }, [isEdit, canWrite, isRecurring, event, deleteEvent, onClose])
 
   // ---------------------------------------------------------------------------
   // Scope dialog confirm / cancel
@@ -659,7 +798,7 @@ export function EventDialog({
       } else if (scopeDialog.mode === 'edit' && scopeDialog.pendingPatch) {
         void updateRecurringEvent(
           event.id,
-          scopeDialog.pendingPatch,
+          scope === 'all' ? (scopeDialog.seriesPatch ?? scopeDialog.pendingPatch) : scopeDialog.pendingPatch,
           scope,
           effectiveInstanceDate,
         )
@@ -870,12 +1009,17 @@ export function EventDialog({
                 onClick={() => void handleSave()}
                 disabled={!canSave || saving || !canWrite}
                 className={`shrink-0 rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-emerald-950/20 transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
-                title={!canWrite ? 'Subscription required' : undefined}
+                title={!canWriteAccount ? 'Subscription required' : !calendarWritable ? 'This calendar is read-only' : undefined}
               >
                 {saving ? 'Saving…' : 'Done'}
               </button>
               )}
             </div>
+            {saveError && (
+              <p className="mt-2 text-center text-xs text-red-500" role="alert">
+                {saveError}
+              </p>
+            )}
           </div>
 
           {/* Body — scrollable */}
@@ -953,14 +1097,14 @@ export function EventDialog({
                   </div>
                 )}
 
-                {!isManagedEvent && calendarLists.length > 0 && (
+                {!isManagedEvent && pickerCalendars.length > 0 && (
                   <div className="flex flex-col gap-2 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 px-3 py-3">
                     <div className="flex items-center gap-2">
                       <CalendarDays className={iconClass} />
                       <span className="text-sm font-medium text-[rgb(var(--foreground))]">Calendar</span>
                     </div>
                     <div className="flex flex-wrap gap-2 pl-0 sm:pl-6">
-                      {calendarLists.map((cal) => (
+                      {pickerCalendars.map((cal) => (
                         <button
                           key={cal.id}
                           type="button"
@@ -1088,7 +1232,7 @@ export function EventDialog({
                 <div className="flex items-start gap-3 rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--background))]/60 p-3">
                   <Repeat className={`${iconClass} mt-2`} />
                   <div className="min-w-0 flex-1">
-                    <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} />
+                    <RecurrencePicker value={recurrenceRule} onChange={setRecurrenceRule} disabled={!canWrite} />
                   </div>
                 </div>
 

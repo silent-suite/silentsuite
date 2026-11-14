@@ -2204,6 +2204,24 @@ describe('useEtebaseStore.updateCollectionMeta', () => {
     })
   })
 
+  it('carries each shared calendar and task list access level into the list stores', async () => {
+    const account = { id: 'account' }
+    const readOnlyCalendar = { ...mockCollection('cal-1', { name: 'Work', color: '#111111' }), accessLevel: 0 }
+    const updatedCalendar = { ...mockCollection('cal-1', { name: 'Work', color: '#ff0000' }), accessLevel: 0 }
+    const readWriteTasks = { ...mockCollection('tasks-1', { name: 'Work Tasks', color: '#222222' }), accessLevel: 2 }
+    coreMock.updateCollectionMeta.mockResolvedValue(updatedCalendar)
+    useEtebaseStore.setState({
+      account: account as any,
+      collections: { calendar: [readOnlyCalendar] as any[], tasks: [readWriteTasks] as any[], contacts: [], notes: [], preferences: [] },
+      isInitialized: true,
+    })
+
+    await expect(useEtebaseStore.getState().updateCollectionMeta('calendar', 'cal-1', { color: '#ff0000' })).resolves.toBe(true)
+
+    expect(useCalendarListStore.getState().calendars).toEqual([expect.objectContaining({ id: 'cal-1', accessLevel: 0 })])
+    expect(useTaskListStore.getState().lists).toEqual([expect.objectContaining({ id: 'tasks-1', accessLevel: 2 })])
+  })
+
   it('persists contact-list color through collection metadata while preserving existing metadata', async () => {
     const account = { id: 'account' }
     const collection = mockCollection('contacts-1', {

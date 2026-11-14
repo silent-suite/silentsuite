@@ -21,9 +21,9 @@ const mocks = vi.hoisted(() => ({
     dateFormat: 'system',
   },
   calendars: [
-    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true },
-    { id: 'cal-b', name: 'Family', color: '#ef4444', visible: true },
-  ],
+    { id: 'cal-a', name: 'Work', color: '#10b981', visible: true, accessLevel: 2 },
+    { id: 'cal-b', name: 'Family', color: '#ef4444', visible: true, accessLevel: 1 },
+  ] as Array<{ id: string; name: string; color: string; visible: boolean; accessLevel?: number }>,
 }))
 
 vi.mock('@/app/stores/use-calendar-store', () => ({
@@ -703,5 +703,215 @@ describe('EventDialog details fit narrow screens', () => {
     expect(grid.className).toContain('sm:grid-cols-[minmax(0,1fr)_auto]')
     // Below sm the single column is explicit and may shrink to the card width.
     expect(grid.className).toMatch(/(^|\s)(grid-cols-1|grid-cols-\[minmax\(0,1fr\)\])(\s|$)/)
+  })
+})
+
+describe('EventDialog in a calendar shared read-only', () => {
+  const sharedReadOnly = { id: 'cal-shared', name: 'Shared', color: '#3b82f6', visible: true, accessLevel: 0 }
+
+  beforeEach(() => {
+    mocks.createEvent.mockReset().mockResolvedValue(undefined)
+    mocks.updateEvent.mockReset().mockResolvedValue(undefined)
+    mocks.deleteEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.calendars.push(sharedReadOnly)
+    return () => {
+      mocks.calendars.splice(mocks.calendars.indexOf(sharedReadOnly), 1)
+    }
+  })
+
+  it('opens the event read-only: no save, no delete, Enter does not save', () => {
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ calendarId: 'cal-shared' })} onClose={mocks.onClose} />)
+
+    const done = screen.getByRole('button', { name: 'Done' })
+    expect(done).toBeDisabled()
+    expect(done).toHaveAttribute('title', 'This calendar is read-only')
+    const title = screen.getByRole('textbox', { name: 'Event title' })
+    expect(title).toHaveAttribute('readonly')
+    expect(screen.queryByRole('button', { name: /Delete event/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: '+ Add' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Repeat frequency' })).toBeDisabled()
+
+    fireEvent.keyDown(title, { key: 'Enter' })
+    expect(mocks.updateEvent).not.toHaveBeenCalled()
+    expect(mocks.updateRecurringEvent).not.toHaveBeenCalled()
+  })
+
+  it('keeps an event in a writable calendar editable and does not offer the read-only calendar as a target', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={makeEvent({ calendarId: 'cal-a' })} onClose={mocks.onClose} />)
+
+    expect(screen.getByRole('button', { name: /Delete event/ })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: 'Event title' })).not.toHaveAttribute('readonly')
+    expect(screen.getByRole('combobox', { name: 'Repeat frequency' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Family' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Shared' })).toBeNull()
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Event title' }), { target: { value: 'Renamed' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    await waitFor(() => expect(mocks.updateEvent).toHaveBeenCalledWith('event-item-1', expect.objectContaining({ title: 'Renamed' })))
+  })
+
+  it('does not create a new event in a read-only default calendar', async () => {
+    const original = mocks.calendars.splice(0, mocks.calendars.length)
+    mocks.calendars.push({ id: 'cal-a', name: 'Work', color: '#10b981', visible: true, accessLevel: 0 }, sharedReadOnly)
+    try {
+      renderWithIntl(<EventDialog mode="create" startDate={new Date('2026-06-01T14:00:00Z')} onClose={mocks.onClose} />)
+      fireEvent.change(screen.getByRole('textbox', { name: 'Event title' }), { target: { value: 'Planning' } })
+      expect(screen.getByRole('button', { name: 'Done' })).toBeDisabled()
+      expect(screen.queryByRole('button', { name: 'Work' })).toBeNull()
+    } finally {
+      mocks.calendars.splice(0, mocks.calendars.length, ...original)
+    }
+    expect(mocks.createEvent).not.toHaveBeenCalled()
+  })
+})
+
+// WEB-01: an occurrence opened from the grid is edited at its own date and time.
+describe('EventDialog edits a later occurrence at its own date (WEB-01)', () => {
+  beforeEach(() => {
+    mocks.updateRecurringEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  const weekly = () => makeEvent({
+    startDate: new Date('2026-06-01T09:00:00Z'),
+    endDate: new Date('2026-06-01T09:30:00Z'),
+    recurrenceRule: 'FREQ=WEEKLY;COUNT=5',
+  })
+  const occurrence = new Date('2026-06-15T09:00:00Z')
+
+  async function saveWithScope(scope: RegExp) {
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+    const scopeDialog = await screen.findByRole('dialog', { name: 'Edit recurring event' })
+    fireEvent.click(within(scopeDialog).getByRole('button', { name: scope }))
+    await waitFor(() => expect(mocks.updateRecurringEvent).toHaveBeenCalledTimes(1))
+    return mocks.updateRecurringEvent.mock.calls[0]! as [string, Partial<CalendarEvent>, string, Date]
+  }
+
+  it('shows the selected occurrence date and time, not the series start', () => {
+    renderWithIntl(<EventDialog mode="edit" event={weekly()} instanceDate={occurrence} onClose={mocks.onClose} />)
+
+    expect(screen.getByLabelText('Start date')).toHaveValue('2026-06-15')
+    expect(screen.getByLabelText('Start time')).toHaveValue('09:00')
+    expect(screen.getByLabelText('End date')).toHaveValue('2026-06-15')
+    expect(screen.getByLabelText('End time')).toHaveValue('09:30')
+  })
+
+  it.each([
+    [/This event/, 'this'],
+    [/This and all future/, 'this_and_future'],
+  ] as const)('a time change saved for %s is dated at the occurrence', async (scopeName, scope) => {
+    const event = weekly()
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={occurrence} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '10:00' } })
+
+    const [id, patch, chosenScope, instance] = await saveWithScope(scopeName)
+
+    expect([id, chosenScope, instance]).toEqual([event.id, scope, occurrence])
+    expect(patch.startDate).toEqual(new Date('2026-06-15T10:00:00Z'))
+    expect(patch.endDate).toEqual(new Date('2026-06-15T10:30:00Z'))
+  })
+
+  it('the same time change saved for all events moves the series start by the same amount', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={weekly()} instanceDate={occurrence} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Start time'), { target: { value: '10:00' } })
+
+    const [, patch, chosenScope] = await saveWithScope(/All events/)
+
+    expect(chosenScope).toBe('all')
+    expect(patch.startDate).toEqual(new Date('2026-06-01T10:00:00Z'))
+    expect(patch.endDate).toEqual(new Date('2026-06-01T10:30:00Z'))
+  })
+
+  it('a date change saved for all events shifts the series start by the same days', async () => {
+    renderWithIntl(<EventDialog mode="edit" event={weekly()} instanceDate={occurrence} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Start date'), { target: { value: '2026-06-16' } })
+    fireEvent.change(screen.getByLabelText('End date'), { target: { value: '2026-06-16' } })
+
+    const [, patch] = await saveWithScope(/All events/)
+
+    expect(patch.startDate).toEqual(new Date('2026-06-02T09:00:00Z'))
+    expect(patch.endDate).toEqual(new Date('2026-06-02T09:30:00Z'))
+  })
+
+  it.each([
+    [/This event/],
+    [/This and all future/],
+    [/All events/],
+  ] as const)('control: a title-only save for %s carries no dates', async (scopeName) => {
+    renderWithIntl(<EventDialog mode="edit" event={weekly()} instanceDate={occurrence} onClose={mocks.onClose} />)
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed' } })
+
+    const [, patch] = await saveWithScope(scopeName)
+
+    expect(patch).toEqual({ title: 'Renamed' })
+  })
+
+  it('control: an all-events save of a UTC series opened in summer keeps its start when only the title changes', async () => {
+    mocks.preferences.defaultTimezone = 'Europe/Berlin'
+    const event = makeEvent({
+      startDate: new Date('2026-01-05T09:00:00Z'),
+      endDate: new Date('2026-01-05T09:30:00Z'),
+      recurrenceRule: 'FREQ=WEEKLY',
+      timezone: undefined,
+    })
+    renderWithIntl(<EventDialog mode="edit" event={event} instanceDate={new Date('2026-07-06T09:00:00Z')} onClose={mocks.onClose} />)
+    expect(screen.getByLabelText('Start time')).toHaveValue('11:00')
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Renamed' } })
+
+    const [, patch] = await saveWithScope(/All events/)
+
+    expect(patch).toEqual({ title: 'Renamed' })
+  })
+})
+
+// WEB-04: a create that is not saved keeps the dialog and its input.
+describe('EventDialog create that is not saved (WEB-04)', () => {
+  beforeEach(() => {
+    mocks.createEvent.mockReset()
+    mocks.onClose.mockReset()
+    mocks.preferences.timeFormat = '24h'
+    mocks.preferences.defaultTimezone = 'UTC'
+    mocks.preferences.dateFormat = 'system'
+  })
+
+  function renderCreate() {
+    renderWithIntl(
+      <EventDialog
+        mode="create"
+        startDate={new Date('2026-06-01T14:00:00Z')}
+        endDate={new Date('2026-06-01T14:30:00Z')}
+        onClose={mocks.onClose}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Unsaved meeting' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+  }
+
+  function saveError(unconfirmed: boolean) {
+    return Object.assign(new Error('not saved'), { name: 'CalendarSaveError', unconfirmed })
+  }
+
+  it.each([
+    [false, 'Event not saved. Please try again.'],
+    [true, "Couldn't confirm this event was saved. If it appears in your calendar after the next sync, don't add it again."],
+  ] as const)('keeps the dialog open with the input when the create rejects (unconfirmed=%s)', async (unconfirmed, message) => {
+    mocks.createEvent.mockRejectedValue(saveError(unconfirmed))
+    renderCreate()
+
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(mocks.onClose).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Event title')).toHaveValue('Unsaved meeting')
+    expect(screen.getByRole('button', { name: 'Done' })).toBeEnabled()
+  })
+
+  it('control: a saved create closes the dialog', async () => {
+    mocks.createEvent.mockResolvedValue({})
+    renderCreate()
+
+    await waitFor(() => expect(mocks.onClose).toHaveBeenCalledTimes(1))
   })
 })
