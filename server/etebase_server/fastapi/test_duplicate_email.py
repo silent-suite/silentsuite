@@ -78,6 +78,21 @@ def test_signup_with_username_equal_to_another_users_email_is_refused(client):
     assert decode_response(other)["code"] == "user_exists"
 
 
+def test_signup_with_lookalike_username_of_another_users_email_is_refused(client):
+    # The username is stored NFKC-normalized, so a fullwidth '@' (U+FF20) would
+    # be saved as alice@example.com and win the username-first email lookup.
+    alice_key = nacl.signing.SigningKey.generate()
+    assert _signup(client, "alice", ALICE_EMAIL, alice_key).status_code in (200, 201)
+
+    other = _signup(client, "alice＠example.com", "other@example.com", nacl.signing.SigningKey.generate())
+
+    assert other.status_code == 409
+    assert decode_response(other)["code"] == "user_exists"
+    assert not User.objects.filter(username=ALICE_EMAIL).exists()
+    assert perform_login(client, username=ALICE_EMAIL, signing_key=alice_key).status_code == 200
+    assert get_user_or_404(_Request(), ALICE_EMAIL).username == "alice"
+
+
 def test_signup_with_email_equal_to_another_users_username_is_refused(client):
     assert _signup(client, ALICE_EMAIL, "contact@example.com", nacl.signing.SigningKey.generate()).status_code in (
         200,

@@ -266,9 +266,11 @@ def signup_identity_taken(user_queryset, user_data: UserSignup) -> bool:
     Logins and invitations look a name containing '@' up by username or by email,
     so a new account must not reuse another user's username, nor turn an existing
     email or username into an ambiguous lookup (all compared case-insensitively).
+    Both values are normalized the way create_user stores them (NFKC and lower
+    case for the username), so look-alike characters can't slip past the check.
     """
-    username = user_data.username.lower()
-    email = user_data.email
+    username = User.normalize_username(user_data.username)
+    email = User.objects.normalize_email(user_data.email)
     taken = Q(**{User.USERNAME_FIELD: username})
     if "@" in username:
         taken |= Q(**{User.EMAIL_FIELD + "__iexact": username})
