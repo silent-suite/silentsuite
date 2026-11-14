@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
 from packaging.markers import default_environment
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
@@ -101,12 +102,24 @@ def pyproject() -> dict:
     return tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
 
 
-def declared_requirements() -> list[Requirement]:
-    project = pyproject()["project"]
-    declared = list(project["dependencies"])
-    for extra in ("dev", "tray"):
-        declared += project["optional-dependencies"][extra]
-    return [Requirement(item) for item in declared]
+def declared_inputs(data: dict) -> list[tuple[str, Requirement]]:
+    """Every pyproject.toml requirement the lock is compiled from, with its section."""
+    project = data["project"]
+    declared = [("project", Requirement(item)) for item in project["dependencies"]]
+    for extra in ("tray", "dev"):
+        declared += [(f"extra {extra}", Requirement(item)) for item in project["optional-dependencies"][extra]]
+    declared += [("build-system", Requirement(item)) for item in data["build-system"]["requires"]]
+    return declared
+
+
+def recorded_inputs() -> list[tuple[str, Requirement]]:
+    """The "# compiled-from <section>: <requirement>" record in requirements-lock.in."""
+    recorded = []
+    for line in LOCK_INPUTS.read_text(encoding="utf-8").splitlines():
+        match = re.fullmatch(r"# compiled-from ([a-z -]+): (.+)", line.strip())
+        if match:
+            recorded.append((match.group(1), Requirement(match.group(2))))
+    return recorded
 
 
 def requirement_lines(path: Path) -> list[Requirement]:
@@ -115,6 +128,65 @@ def requirement_lines(path: Path) -> list[Requirement]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.split("#", 1)[0].strip()
     ]
+
+
+def same_requirements(left: list[tuple[str, Requirement]], right: list[tuple[str, Requirement]]) -> bool:
+    # packaging compares Requirement objects by name, extras, specifier, URL and marker.
+    unmatched = list(right)
+    for item in left:
+        if item not in unmatched:
+            return False
+        unmatched.remove(item)
+    return not unmatched
+
+
+def drift_problems(data: dict) -> list[str]:
+    """Ways the lock no longer matches the given pyproject.toml contents."""
+    problems = []
+    entries = parse_lock()
+    declared = declared_inputs(data)
+    if not same_requirements(declared, recorded_inputs()):
+        problems.append(
+            "pyproject.toml no longer matches the requirements the lock was compiled from; "
+            "regenerate requirements-lock.txt and update the compiled-from list in requirements-lock.in"
+        )
+
+    for section, requirement in declared:
+        name = canonicalize_name(requirement.name)
+        pins = [entry for entry in entries if entry["name"] == name]
+        if not pins:
+            problems.append(f"{section}: {requirement} has no pin in the lock")
+        for pin in pins:
+            if not requirement.specifier.contains(pin["version"], prereleases=True):
+                problems.append(f"{section}: locked {name}=={pin['version']} does not satisfy {requirement}")
+
+    direct = {canonicalize_name(r.name) for section, r in declared if section != "build-system"}
+    locked_direct = {entry["name"] for entry in entries if PYPROJECT_SOURCE in entry["via"]}
+    if locked_direct != direct:
+        problems.append(f"lock direct dependencies {sorted(locked_direct)} != pyproject {sorted(direct)}")
+
+    # The build backend goes into the lock through requirements-lock.in, exactly as declared.
+    lock_inputs = requirement_lines(LOCK_INPUTS)
+    for section, requirement in declared:
+        if section == "build-system" and requirement not in lock_inputs:
+            problems.append(f"build-system requirement {requirement} is not in requirements-lock.in as declared")
+
+    # The etebase override may only add the macOS arm64 exclusion.
+    (override,) = requirement_lines(LOCK_OVERRIDES)
+    etebase = [r for section, r in declared if section == "project" and canonicalize_name(r.name) == "etebase"]
+    if len(etebase) != 1:
+        problems.append("pyproject.toml must declare etebase exactly once")
+    else:
+        (etebase,) = etebase
+        if (
+            canonicalize_name(override.name) != "etebase"
+            or override.extras != etebase.extras
+            or override.specifier != etebase.specifier
+            or override.url != etebase.url
+            or etebase.marker is not None
+        ):
+            problems.append(f"requirements-lock-overrides.txt {override} does not keep pyproject's {etebase}")
+    return problems
 
 
 def test_lock_header_records_the_compile_command():
@@ -130,53 +202,51 @@ def test_every_locked_package_is_pinned_with_sha256_hashes():
             assert re.fullmatch(r"--hash=sha256:[0-9a-f]{64}", item), (entry["name"], item)
 
 
-def test_lock_direct_dependencies_match_pyproject():
-    entries = parse_lock()
-    declared = {canonicalize_name(requirement.name) for requirement in declared_requirements()}
-    locked_direct = {entry["name"] for entry in entries if PYPROJECT_SOURCE in entry["via"]}
-    assert locked_direct == declared
+def test_lock_matches_pyproject():
+    assert drift_problems(pyproject()) == []
 
 
-def test_every_locked_pin_satisfies_its_pyproject_range():
-    entries = parse_lock()
-    for requirement in declared_requirements():
-        name = canonicalize_name(requirement.name)
-        pins = [entry for entry in entries if entry["name"] == name]
-        assert pins, name
-        for pin in pins:
-            assert requirement.specifier.contains(pin["version"], prereleases=True), (name, pin["version"])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('"requests>=2.28.0"', '"requests[socks]>=2.28.0"'),
+        ('requires = ["hatchling"]', 'requires = ["hatchling>=2"]'),
+        ('"requests>=2.28.0",', '"requests>=2.28.0",\n    "click>=8",'),
+        ('"radicale==3.2.3"', '"radicale==3.2.4"'),
+        ('"etebase>=0.31.5,<0.32"', '"etebase>=0.31.6,<0.32"'),
+        ('"ruff>=0.1.0",', ""),
+        ('"pytest>=7.0"', "\"pytest>=7.0 ; sys_platform == 'linux'\""),
+    ],
+)
+def test_drift_check_catches_pyproject_changes(old, new):
+    text = PYPROJECT.read_text(encoding="utf-8")
+    assert text.count(old) == 1
+    assert drift_problems(tomllib.loads(text.replace(old, new)))
 
 
-def test_lock_inputs_are_the_build_backend_and_match_the_lock():
+def test_lock_inputs_match_the_lock():
     inputs = {canonicalize_name(requirement.name) for requirement in requirement_lines(LOCK_INPUTS)}
-    build_backend = {
-        canonicalize_name(Requirement(item).name) for item in pyproject()["build-system"]["requires"]
-    }
-    assert build_backend <= inputs
     locked_inputs = {entry["name"] for entry in parse_lock() if INPUTS_SOURCE in entry["via"]}
     assert locked_inputs == inputs
 
 
-def test_etebase_override_keeps_the_pyproject_range():
-    (override,) = requirement_lines(LOCK_OVERRIDES)
-    (declared,) = [r for r in declared_requirements() if canonicalize_name(r.name) == "etebase"]
-    assert canonicalize_name(override.name) == "etebase"
-    assert override.specifier == declared.specifier
-
-
-def test_each_release_lane_gets_exactly_one_pin_per_package():
+def test_each_release_lane_gets_exactly_one_pin_per_applicable_requirement():
     entries = parse_lock()
-    names = {entry["name"] for entry in entries}
+    required = [r for section, r in declared_inputs(pyproject())] + requirement_lines(LOCK_INPUTS)
     for lane in RELEASE_LANES:
         environment = lane_environment(lane)
         selected = [
-            entry["name"]
-            for entry in entries
-            if entry["marker"] is None or entry["marker"].evaluate(environment)
+            entry["name"] for entry in entries if entry["marker"] is None or entry["marker"].evaluate(environment)
         ]
         assert len(selected) == len(set(selected)), lane
-        # macOS arm64 builds etebase from a pinned upstream commit instead.
-        expected_etebase = lane != "macos-arm64"
-        assert ("etebase" in selected) is expected_etebase, lane
-        assert {"pystray", "pillow", "radicale", "pytest", "hatchling"} <= set(selected), lane
-    assert "etebase" in names
+        for requirement in required:
+            name = canonicalize_name(requirement.name)
+            if requirement.marker is not None and not requirement.marker.evaluate({**environment, "extra": ""}):
+                continue
+            if lane == "macos-arm64" and name == "etebase":
+                # Built from a pinned upstream commit on this lane instead.
+                assert name not in selected
+                continue
+            assert name in selected, (lane, name)
+        # Only the macOS arm64 lane builds etebase from source.
+        assert ("setuptools-rust" in selected) is (lane == "macos-arm64"), lane

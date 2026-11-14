@@ -182,11 +182,14 @@ jobs:
           # every platform this matrix builds. Nothing is resolved from a range.
           python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
           if [[ "${{ matrix.os-label }}" == "macos-arm64" ]]; then
-            # The lock leaves PyPI etebase out on this platform; its one
-            # dependency, msgpack, is already installed from the lock.
-            python -m pip install --disable-pip-version-check --no-deps "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+            # The lock leaves PyPI etebase out on this platform and instead
+            # carries this commit's build tools (setuptools, wheel,
+            # setuptools-rust), so it builds without an isolated environment
+            # fetching them unpinned. Its one dependency, msgpack, is already
+            # installed from the lock.
+            python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
           fi
-          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation -e .
+          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
           python -m pip check
           # The binary embeds etebase, the crypto core, so the release must use the
           # reviewed version, never whatever PyPI resolves on the day.
@@ -313,7 +316,7 @@ jobs:
             cd /workspace/bridge
             python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
             python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
-            python -m pip install --disable-pip-version-check --no-deps --no-build-isolation -e .
+            python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
             python -m pip check
             python -c "import importlib.metadata as m, sys; v = m.version('etebase'); print('etebase', v); sys.exit(0 if v == '${{ matrix.etebase-version }}' else 'ERROR: etebase ' + v + ' is not the reviewed ${{ matrix.etebase-version }}')"
             echo "=== Running PyInstaller ==="

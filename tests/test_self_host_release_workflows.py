@@ -1095,7 +1095,7 @@ HASHED_LOCK_INSTALL = (
     "python -m pip install --disable-pip-version-check --require-hashes "
     "--only-binary=:all: -r requirements-lock.txt"
 )
-BRIDGE_ONLY_INSTALL = "python -m pip install --disable-pip-version-check --no-deps --no-build-isolation -e ."
+BRIDGE_ONLY_INSTALL = "python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e ."
 DIGEST_PINNED_IMAGE = re.compile(r"^[^\s@]+:[^\s@]+@sha256:[0-9a-f]{64}$")
 
 
@@ -1130,9 +1130,14 @@ def assert_hash_locked_bridge_install(script: str) -> None:
     # No range resolution of the bridge's dependencies and no fallback.
     assert ".[" not in script
     assert "||" not in script
+    # Every install is either hash-checked from a file, or a local or pinned
+    # source build that resolves nothing: no dependencies and no isolated build
+    # environment, with its build requirements checked against what the lock
+    # already installed.
     for line in script.splitlines():
         if re.search(r"\bpip install\b", line):
-            assert "--require-hashes" in line or "--no-deps" in line, line
+            source_build = ("--no-deps", "--no-build-isolation", "--check-build-dependencies")
+            assert "--require-hashes" in line or all(flag in line for flag in source_build), line
 
 
 def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
@@ -1146,7 +1151,9 @@ def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
     # without letting it resolve dependencies of its own.
     etebase = native.index("git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b")
     assert native.index(HASHED_LOCK_INSTALL) < etebase < native.index(BRIDGE_ONLY_INSTALL)
-    assert "--no-deps" in native[native.rindex("\n", 0, etebase) : etebase]
+    etebase_install = native[native.rindex("\n", 0, etebase) : etebase]
+    for flag in ("--no-deps", "--no-build-isolation", "--check-build-dependencies"):
+        assert flag in etebase_install
 
     assert {"pip", "pyinstaller", "pyinstaller-hooks-contrib"} <= hashed_pin_names(BRIDGE_BUILD_REQUIREMENTS)
 

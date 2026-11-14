@@ -107,7 +107,7 @@ jobs:
         run: |
           python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
           python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
-          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation -e .
+          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
           python -m pip check
 
       - name: Build binary
