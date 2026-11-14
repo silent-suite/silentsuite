@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { isBirthdaysEnabledFor, useExperimentalStore } from '../use-experimental-store'
+import { isBirthdaysEnabledFor, planningDispositionFor, useExperimentalStore } from '../use-experimental-store'
 
 const key = 'silentsuite-experimental-v1'
 const birthdaysKey = 'silentsuite-experimental-birthdays-v1'
@@ -82,5 +82,26 @@ describe('experimental preferences', () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('blocked') })
     expect(() => useExperimentalStore.getState().setBirthdaysEnabled('account-a', true)).toThrow()
     expect(isBirthdaysEnabledFor('account-a')).toBe(false)
+  })
+
+  it('keeps the planning view off and its disposition non-destructive by default, per account', () => {
+    useExperimentalStore.getState().hydrate()
+    const state = () => useExperimentalStore.getState()
+    expect(state().planningAccounts).toEqual([])
+    expect(planningDispositionFor(state(), 'account-a')).toBe('label')
+    state().setPlanningEnabled('account-a', true)
+    state().setPlanningDisposition('account-a', 'delete')
+    useExperimentalStore.setState({ hydrated: false, planningAccounts: [], planningDispositions: {} })
+    state().hydrate()
+    expect(state().planningAccounts).toEqual(['account-a'])
+    expect(planningDispositionFor(state(), 'account-a')).toBe('delete')
+    expect(planningDispositionFor(state(), 'account-b')).toBe('label')
+    expect(state().notesAccounts).toEqual([])
+  })
+
+  it.each(['not-json', '[]', '{"account-a":"purge"}', '{"account-a":1}'])('falls back to labelling for malformed disposition storage %s', (value) => {
+    localStorage.setItem('silentsuite-experimental-planning-disposition-v1', value)
+    useExperimentalStore.getState().hydrate()
+    expect(planningDispositionFor(useExperimentalStore.getState(), 'account-a')).toBe('label')
   })
 })

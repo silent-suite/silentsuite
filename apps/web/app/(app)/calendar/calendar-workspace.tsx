@@ -20,6 +20,10 @@ import { FloatingAddButton } from './components/FloatingAddButton'
 import { resolveUserTimezone } from '@/app/lib/tz'
 import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
+import { usePlanningDisposition, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
+import { showErrorToast, showSuccessToast } from '@/app/stores/use-toast-store'
+import { PlanningPanel } from './components/PlanningPanel'
+import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
 
 /** Snap a Date to the nearest 30-minute boundary */
 function snapTo30Min(date: Date): Date {
@@ -166,6 +170,45 @@ function CalendarPageBody() {
   const [mobileCalendarMode, setMobileCalendarMode] = useState<MobileCalendarMode>('agenda')
   const firstContentPaintLoggedRef = useRef(false)
 
+  // Experimental planning view (#286): tasks beside the desktop week grid.
+  const planningEnabled = usePlanningEnabled()
+  const planningDisposition = usePlanningDisposition()
+  const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
+  const setCurrentView = useCalendarStore((s) => s.setCurrentView)
+  const [planningOpen, setPlanningOpen] = useState(false)
+  const [planCalendarId, setPlanCalendarId] = useState<string | undefined>(undefined)
+  const [armedTaskId, setArmedTaskId] = useState<string | null>(null)
+  const [pendingTaskIds, setPendingTaskIds] = useState<ReadonlySet<string>>(new Set())
+  const showPlanning = planningEnabled && planningOpen && currentView === 'week' && canWrite
+  const effectivePlanCalendarId = useMemo(() => {
+    if (!showPlanning) return undefined
+    const options = plannableCalendars()
+    if (planCalendarId && options.some((c) => c.id === planCalendarId)) return planCalendarId
+    return (options.find((c) => c.id === defaultCalendarId) ?? options[0])?.id
+  }, [showPlanning, planCalendarId, defaultCalendarId, calendars]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const placeTask = useCallback(async (taskId: string, start: Date) => {
+    if (!effectivePlanCalendarId) return
+    setArmedTaskId(null)
+    setPendingTaskIds((ids) => new Set(ids).add(taskId))
+    try {
+      const result = await planTask(taskId, start, effectivePlanCalendarId, planningDisposition)
+      if (result.kind === 'done') showSuccessToast(result.message)
+      else showErrorToast(result.message)
+    } finally {
+      setPendingTaskIds((ids) => {
+        const next = new Set(ids)
+        next.delete(taskId)
+        return next
+      })
+    }
+  }, [effectivePlanCalendarId, planningDisposition])
+
+  const handleTaskDrop = useCallback((start: Date, dataTransfer: DataTransfer) => {
+    const taskId = dataTransfer.getData(TASK_DRAG_TYPE)
+    if (taskId) void placeTask(taskId, start)
+  }, [placeTask])
+
   const dateLabel = useMemo(
     () => formatDateRange(currentDate, currentView, dateFormat, firstDayOfWeek),
     [currentDate, currentView, dateFormat, firstDayOfWeek],
@@ -246,12 +289,16 @@ function CalendarPageBody() {
 
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
     if (!canWrite) return
+    if (showPlanning && armedTaskId && !slot.allDay) {
+      void placeTask(armedTaskId, slot.startDate)
+      return
+    }
     setCreateDialog({
       startDate: slot.startDate,
       endDate: slot.endDate,
       allDay: slot.allDay,
     })
-  }, [canWrite])
+  }, [canWrite, showPlanning, armedTaskId, placeTask])
 
   const handleCreateDialogClose = useCallback(() => {
     setCreateDialog(null)
@@ -361,6 +408,22 @@ function CalendarPageBody() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {planningEnabled && canWrite && (
+            <button
+              type="button"
+              onClick={() => {
+                const next = !planningOpen
+                setPlanningOpen(next)
+                setArmedTaskId(null)
+                if (next) setCurrentView('week')
+              }}
+              aria-pressed={showPlanning}
+              className={`no-min-size rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${showPlanning ? 'border-emerald-500 bg-emerald-500/10 text-[rgb(var(--primary))]' : 'border-[rgb(var(--border))] text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))]'}`}
+              title="Experimental: plan your tasks in the week view"
+            >
+              Plan
+            </button>
+          )}
           <CalendarViewSwitcher />
           <button
             onClick={() => {
@@ -505,8 +568,23 @@ function CalendarPageBody() {
           </div>
 
           {/* Desktop: schedule-x grid */}
-          <div className="hidden md:flex md:flex-1 md:min-h-0">
-            <CalendarGrid events={visibleEvents} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
+          <div className="hidden md:flex md:flex-1 md:min-h-0 md:gap-3">
+            <CalendarGrid
+              events={visibleEvents}
+              onSlotClick={handleSlotClick}
+              onEventClick={handleEventClick}
+              externalDragType={showPlanning ? TASK_DRAG_TYPE : undefined}
+              onExternalDrop={showPlanning ? handleTaskDrop : undefined}
+            />
+            {showPlanning && (
+              <PlanningPanel
+                calendarId={effectivePlanCalendarId}
+                onCalendarChange={setPlanCalendarId}
+                armedTaskId={armedTaskId}
+                onArm={setArmedTaskId}
+                pendingTaskIds={pendingTaskIds}
+              />
+            )}
           </div>
 
           {/* Mobile: upcoming agenda list or multi-day grid */}
