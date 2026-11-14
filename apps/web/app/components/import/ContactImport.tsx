@@ -7,12 +7,30 @@ import type { VCard } from '@silentsuite/core/utils/vcard-parser'
 import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
+import GoogleImportButton from './GoogleImportButton'
+import { importSourceKeys } from '@/app/lib/google-import/source-key'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { normalizeLabels } from '@/app/components/LabelEditor'
 import type { ImportIncompleteError } from '@/app/lib/import-outcome'
+
+/**
+ * Contacts read from Google whose source is already in an address book are left out, so a
+ * re-import, or a retry after an unconfirmed save that has since synced, never adds one twice.
+ * File contacts pass through unchanged. People are never matched by name, phone or email.
+ */
+function withoutImported(contacts: VCard[]): { contacts: VCard[]; skipped: number } {
+  const keyOf = (contact: VCard) => (contact as VCard & { sourceKey?: string }).sourceKey
+  if (!contacts.some((contact) => keyOf(contact) !== undefined)) return { contacts, skipped: 0 }
+  const existing = importSourceKeys(useContactStore.getState().contacts)
+  const kept = contacts.filter((contact) => {
+    const key = keyOf(contact)
+    return key === undefined || !existing.has(key)
+  })
+  return { contacts: kept, skipped: contacts.length - kept.length }
+}
 
 function isImportIncomplete(err: unknown): err is ImportIncompleteError {
   return err instanceof Error && err.name === 'ImportIncompleteError'
@@ -82,6 +100,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
+  const [googleNotice, setGoogleNotice] = useState<string | null>(null)
   const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
   const activeListId = useContactListStore((s) => s.activeListId)
@@ -103,6 +122,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setError(null)
     setContacts([])
     setImportedCount(null)
+    setGoogleNotice(null)
 
     try {
       const allContacts: VCard[] = []
@@ -128,11 +148,29 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     }
   }, [])
 
+  const handleGoogleLoaded = useCallback((loaded: VCard[]) => {
+    setError(null)
+    setImportedCount(null)
+    const { contacts: pending, skipped } = withoutImported(loaded)
+    const notes: string[] = []
+    if (pending.length === 0) notes.push('Nothing new to import from Google.')
+    if (skipped > 0) notes.push(`${skipped} already imported ${skipped === 1 ? 'contact was' : 'contacts were'} skipped.`)
+    setGoogleNotice(notes.length > 0 ? notes.join(' ') : null)
+    setContacts(pending)
+  }, [])
+
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     setError(null)
+    const { contacts: toImport } = withoutImported(contacts)
+    if (toImport.length === 0) {
+      setContacts([])
+      setGoogleNotice('Everything listed was already imported.')
+      setIsImporting(false)
+      return
+    }
     try {
-      const newContacts = contacts.map((contact) => ({
+      const newContacts = toImport.map((contact) => ({
         displayName: contact.fn || 'Unnamed Contact',
         name: contact.n
           ? {
@@ -170,7 +208,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
       if (isImportIncomplete(err)) {
         // Keep only the original contacts that were not acknowledged, so a retry never resends saved ones.
         const unsaved = new Set(err.unsaved)
-        setContacts(contacts.filter((_, position) => unsaved.has(position)))
+        setContacts(toImport.filter((_, position) => unsaved.has(position)))
         setError(incompleteImportMessage(err.saved, err.unsaved.length, err.uncertain))
       } else {
         console.error('[contact-import] Import failed', getSafeErrorDetails(err))
@@ -190,6 +228,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setContacts([])
     setError(null)
     setImportedCount(null)
+    setGoogleNotice(null)
   }, [])
 
   return (
@@ -232,6 +271,12 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
       />
 
       <FileDropZone accept=".vcf" onFiles={handleFiles} disabled={isImporting} />
+
+      <GoogleImportButton kind="contacts" disabled={isImporting} onLoaded={handleGoogleLoaded} onError={setError} />
+
+      {googleNotice && (
+        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{googleNotice}</p>
+      )}
 
       {error && (
         <p className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>

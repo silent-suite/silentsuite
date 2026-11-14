@@ -114,10 +114,15 @@ export function googleAuthUrl(clientId: string, redirectUri: string, scopes: rea
   return url.toString()
 }
 
+export const GOOGLE_POPUP_NAME = 'silentsuite-google-import'
+export const GOOGLE_POPUP_FEATURES = 'popup,width=520,height=680'
+
 export interface GoogleSignInOptions {
   clientId: string
   scopes: readonly string[]
   win?: Window
+  /** A blank popup opened during the click, so loading this module cannot cost the user gesture. */
+  popup?: Window | null
   timeoutMs?: number
 }
 
@@ -125,7 +130,7 @@ export interface GoogleSignInOptions {
  * Opens the Google popup and resolves once a verified token is held in memory. Must be called
  * from a user gesture so the popup is not blocked. Rejects with GoogleAuthError.
  */
-export function signInWithGoogle({ clientId, scopes, win = window, timeoutMs = OAUTH_TIMEOUT_MS }: GoogleSignInOptions): Promise<void> {
+export function signInWithGoogle({ clientId, scopes, win = window, popup: opened, timeoutMs = OAUTH_TIMEOUT_MS }: GoogleSignInOptions): Promise<void> {
   clearGoogleAccessToken()
   const origin = win.location.origin
   const state = randomState()
@@ -137,11 +142,18 @@ export function signInWithGoogle({ clientId, scopes, win = window, timeoutMs = O
     return Promise.reject(new GoogleAuthError('invalid'))
   }
 
-  const popup = win.open(
-    googleAuthUrl(clientId, `${origin}${GOOGLE_CALLBACK_PATH}`, scopes, state),
-    'silentsuite-google-import',
-    'popup,width=520,height=680',
-  )
+  const url = googleAuthUrl(clientId, `${origin}${GOOGLE_CALLBACK_PATH}`, scopes, state)
+  let popup: Window | null = null
+  if (opened && !opened.closed) {
+    try {
+      opened.location.replace(url)
+      popup = opened
+    } catch {
+      popup = null
+    }
+  } else if (opened === undefined) {
+    popup = win.open(url, GOOGLE_POPUP_NAME, GOOGLE_POPUP_FEATURES)
+  }
   if (!popup) {
     try { win.localStorage.removeItem(OAUTH_STATE_KEY) } catch { /* nothing to undo */ }
     return Promise.reject(new GoogleAuthError('blocked'))

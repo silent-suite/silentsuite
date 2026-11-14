@@ -6,7 +6,10 @@ import { parseVCalendar, parseICalDateValue } from '@silentsuite/core'
 import type { VEvent } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportListSelector from './ImportListSelector'
-import { vEventToImportEvent } from './import-mappers'
+import GoogleImportButton from './GoogleImportButton'
+import { isProviderImportVEvent, vEventToImportEvent } from './import-mappers'
+import { importSourceKeys } from '@/app/lib/google-import/source-key'
+import type { GoogleCalendarImport } from '@/app/lib/google-import/importer'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { DEFAULT_CALENDAR_COLORS, useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { useManagedBirthdayCalendarIds } from '@/app/lib/birthday-calendar/session'
@@ -50,6 +53,27 @@ interface CalendarImportGroup {
   events: VEvent[]
   /** The calendar already created for this file, reused by a retry instead of creating another. */
   calendarId?: string
+  /** Read from a Google calendar rather than a file. */
+  fromGoogle?: true
+}
+
+/**
+ * Provider units whose source is already in a calendar are left out, so a re-import, or a
+ * retry after an unconfirmed save that has since synced, never writes one twice. File events
+ * pass through unchanged.
+ */
+function withoutImported(groups: CalendarImportGroup[]): { groups: CalendarImportGroup[]; skipped: number } {
+  if (!groups.some((group) => group.events.some(isProviderImportVEvent))) return { groups, skipped: 0 }
+  const existing = importSourceKeys(useCalendarStore.getState().events)
+  let skipped = 0
+  const kept = groups
+    .map((group) => {
+      const events = group.events.filter((event) => !(isProviderImportVEvent(event) && existing.has(event.sourceKey)))
+      skipped += group.events.length - events.length
+      return events.length === group.events.length ? group : { ...group, events }
+    })
+    .filter((group) => group.events.length > 0)
+  return { groups: kept, skipped }
 }
 
 type ImportMode = 'single' | 'separate'
@@ -126,6 +150,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
   const [importMode, setImportMode] = useState<ImportMode>('single')
   const [error, setError] = useState<string | null>(null)
   const [todoWarning, setTodoWarning] = useState<string | null>(null)
+  const [googleNotice, setGoogleNotice] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
@@ -169,6 +194,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     setGroups([])
     setImportedCount(null)
     setTodoWarning(null)
+    setGoogleNotice(null)
 
     try {
       const parsedGroups: CalendarImportGroup[] = []
@@ -216,6 +242,29 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     }
   }, [calendars])
 
+  const handleGoogleLoaded = useCallback((result: GoogleCalendarImport) => {
+    setError(null)
+    setImportedCount(null)
+    setTodoWarning(null)
+    const usedColors = new Set(calendars.map((calendar) => calendar.color))
+    const loaded: CalendarImportGroup[] = result.calendars.map((source, index) => {
+      const color = source.color
+        ?? DEFAULT_CALENDAR_COLORS.find((candidate) => !usedColors.has(candidate))
+        ?? DEFAULT_CALENDAR_COLORS[(calendars.length + index) % DEFAULT_CALENDAR_COLORS.length]
+        ?? '#10b981'
+      usedColors.add(color)
+      return { id: `google-${index}`, fileName: 'Google Calendar', name: source.name, color, events: source.units, fromGoogle: true }
+    })
+    const { groups: pending, skipped } = withoutImported(loaded)
+    const notes: string[] = []
+    if (skipped > 0) notes.push(`${skipped} already imported ${skipped === 1 ? 'entry was' : 'entries were'} skipped.`)
+    if (result.unreadable > 0) notes.push(`${result.unreadable} ${result.unreadable === 1 ? 'entry' : 'entries'} could not be read and will not be imported.`)
+    if (pending.length === 0) notes.unshift('Nothing new to import from Google.')
+    setGoogleNotice(notes.length > 0 ? notes.join(' ') : null)
+    setImportMode(pending.length > 1 ? 'separate' : 'single')
+    setGroups(pending)
+  }, [calendars])
+
   const updateGroup = useCallback((id: string, updates: Partial<Pick<CalendarImportGroup, 'name' | 'color'>>) => {
     setGroups((current) => current.map((group) => group.id === id ? { ...group, ...updates } : group))
   }, [])
@@ -224,6 +273,13 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     if (totalEvents === 0) return
     setIsImporting(true)
     setError(null)
+    const { groups: importGroups } = withoutImported(groups)
+    if (importGroups.length === 0) {
+      setGroups([])
+      setGoogleNotice('Everything listed was already imported.')
+      setIsImporting(false)
+      return
+    }
     try {
       if (importMode === 'separate') {
         // One calendar per file, even when a retry leaves a single file. Files are imported in
@@ -235,7 +291,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
         let unconfirmedCalendar: string | null = null
         let genericFailure = false
         const remaining: CalendarImportGroup[] = []
-        for (const group of groups) {
+        for (const group of importGroups) {
           if (remaining.length > 0) {
             remaining.push(group)
             unsaved += group.events.length
@@ -278,7 +334,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
         return
       }
 
-      const allEvents = groups.flatMap((group) => group.events)
+      const allEvents = importGroups.flatMap((group) => group.events)
       try {
         if (!selectedCalendarId) {
           setError('Choose or create a calendar to import into.')
@@ -292,7 +348,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
         // Keep only the original events that were not acknowledged, in their own files.
         const unsavedPositions = new Set(err.unsaved)
         let position = 0
-        const remaining = groups
+        const remaining = importGroups
           .map((group) => ({ ...group, events: group.events.filter(() => unsavedPositions.has(position++)) }))
           .filter((group) => group.events.length > 0)
         setGroups(remaining)
@@ -314,6 +370,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     setGroups([])
     setError(null)
     setImportedCount(null)
+    setGoogleNotice(null)
   }, [])
 
   return (
@@ -374,6 +431,12 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
 
       <FileDropZone accept=".ics" onFiles={handleFiles} disabled={isImporting} />
 
+      <GoogleImportButton kind="calendar" disabled={isImporting} onLoaded={handleGoogleLoaded} onError={setError} />
+
+      {googleNotice && (
+        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{googleNotice}</p>
+      )}
+
       {error && (
         <p className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-400">{error}</p>
       )}
@@ -396,7 +459,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
           <div className="space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))]/50 p-3">
             <div>
               <p className="text-sm font-medium text-[rgb(var(--foreground))]">
-                {totalEvents} events found in {groups.length} file{groups.length !== 1 ? 's' : ''}
+                {totalEvents} events found in {groups.length} {groups.every((group) => group.fromGoogle) ? 'Google calendar' : 'file'}{groups.length !== 1 ? 's' : ''}
               </p>
               <p className="mt-1 text-xs text-[rgb(var(--muted))]">
                 Review the destination before importing. You can delete or clear calendars later from this page.

@@ -21,6 +21,7 @@ export class GoogleImportError extends Error {
 export interface GoogleImportOptions extends GoogleRequestOptions {
   clientId: string
   win?: Window
+  popup?: Window | null
 }
 
 export interface GoogleCalendarSource {
@@ -46,10 +47,10 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new GoogleImportError('Google import was cancelled.')
 }
 
-export async function loadGoogleCalendars({ clientId, win, signal, fetcher }: GoogleImportOptions): Promise<GoogleCalendarImport> {
+export async function loadGoogleCalendars({ clientId, win, popup, signal, fetcher }: GoogleImportOptions): Promise<GoogleCalendarImport> {
   const request = { signal, fetcher }
   try {
-    await signInWithGoogle({ clientId, scopes: [GOOGLE_CALENDAR_SCOPE], win })
+    await signInWithGoogle({ clientId, scopes: [GOOGLE_CALENDAR_SCOPE], win, popup })
     throwIfAborted(signal)
     const listUrl = new URL(`${GOOGLE_CALENDAR_API}/users/me/calendarList`)
     listUrl.searchParams.set('maxResults', '250')
@@ -84,10 +85,10 @@ export async function loadGoogleCalendars({ clientId, win, signal, fetcher }: Go
   }
 }
 
-export async function loadGoogleContacts({ clientId, win, signal, fetcher }: GoogleImportOptions): Promise<ProviderImportVCard[]> {
+export async function loadGoogleContacts({ clientId, win, popup, signal, fetcher }: GoogleImportOptions): Promise<ProviderImportVCard[]> {
   const request = { signal, fetcher }
   try {
-    await signInWithGoogle({ clientId, scopes: [GOOGLE_CONTACTS_SCOPE], win })
+    await signInWithGoogle({ clientId, scopes: [GOOGLE_CONTACTS_SCOPE], win, popup })
     throwIfAborted(signal)
     // people/me names the signed-in account: the account part of each source key.
     const meUrl = new URL(`${GOOGLE_PEOPLE_API}/people/me`)
