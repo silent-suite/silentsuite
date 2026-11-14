@@ -1385,3 +1385,160 @@ describe('useCalendarStore keeps unsupported event content (WEB-03)', () => {
     expect(etebaseMock.state.createItem).not.toHaveBeenCalled()
   })
 })
+
+describe('useCalendarStore "this and future" split of a COUNT series (WEB-02)', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  const weekly = () => makeRecurringEvent({
+    startDate: new Date('2026-06-01T09:00:00Z'),
+    endDate: new Date('2026-06-01T09:30:00Z'),
+    recurrenceRule: 'FREQ=WEEKLY;COUNT=5',
+    timezone: 'Europe/Berlin',
+  })
+  const june = { start: new Date('2026-05-01T00:00:00Z'), end: new Date('2026-09-01T00:00:00Z') }
+  const startsOf = (events: CalendarEvent[]) => expandEventsForRange(events, june)
+    .map((e) => e.startDate.toISOString())
+    .sort()
+
+  async function splitAt(master: CalendarEvent, instance: Date, patch: Partial<CalendarEvent> = { title: 'Later' }) {
+    useCalendarStore.setState({ events: [master] })
+    await useCalendarStore.getState().updateRecurringEvent(master.id, patch, 'this_and_future', instance)
+    const events = useCalendarStore.getState().events
+    return {
+      original: events.find((e) => e.id === master.id)!,
+      series: events.find((e) => e.id !== master.id)!,
+    }
+  }
+
+  it('gives the new series only the occurrences that were still to come', async () => {
+    const master = weekly()
+    const { original, series } = await splitAt(master, new Date('2026-06-15T09:00:00Z'))
+
+    expect(original.recurrenceRule).toBe('FREQ=WEEKLY;UNTIL=20260615T085959Z')
+    expect(series.recurrenceRule).toBe('FREQ=WEEKLY;COUNT=3')
+    expect(startsOf([original, series])).toEqual(startsOf([master]))
+    expect(startsOf([original, series])).toHaveLength(5)
+  })
+
+  it('counts an excluded occurrence before the split, as COUNT does', async () => {
+    const master = weekly()
+    master.exceptions = [new Date('2026-06-08T09:00:00Z')]
+    const { original, series } = await splitAt(master, new Date('2026-06-22T09:00:00Z'))
+
+    expect(series.recurrenceRule).toBe('FREQ=WEEKLY;COUNT=2')
+    expect(startsOf([original, series])).toEqual(startsOf([master]))
+  })
+
+  it('control: a split at the first occurrence keeps the full COUNT', async () => {
+    const master = weekly()
+    const { original, series } = await splitAt(master, master.startDate)
+
+    expect(series.recurrenceRule).toBe('FREQ=WEEKLY;COUNT=5')
+    expect(startsOf([original, series])).toEqual(startsOf([master]))
+  })
+
+  it('control: an explicitly chosen new rule is kept as chosen', async () => {
+    const { series } = await splitAt(weekly(), new Date('2026-06-15T09:00:00Z'), { recurrenceRule: 'FREQ=DAILY;COUNT=4' })
+
+    expect(series.recurrenceRule).toBe('FREQ=DAILY;COUNT=4')
+  })
+
+  it('control: an open-ended or UNTIL series keeps its rule on the new series', async () => {
+    const open = await splitAt(makeRecurringEvent({ recurrenceRule: 'FREQ=WEEKLY', timezone: 'Europe/Berlin' }), new Date('2026-06-15T09:00:00Z'))
+    expect(open.series.recurrenceRule).toBe('FREQ=WEEKLY')
+
+    resetStore()
+    const until = await splitAt(
+      makeRecurringEvent({ recurrenceRule: 'FREQ=WEEKLY;UNTIL=20260630T090000Z', timezone: 'Europe/Berlin' }),
+      new Date('2026-06-15T09:00:00Z'),
+    )
+    expect(until.series.recurrenceRule).toBe('FREQ=WEEKLY;UNTIL=20260630T090000Z')
+  })
+})
+
+describe('useCalendarStore occurrence-scoped time edits (WEB-01)', () => {
+  beforeEach(() => {
+    resetStore()
+  })
+
+  const weekly = () => makeRecurringEvent({
+    startDate: new Date('2026-06-01T09:00:00Z'),
+    endDate: new Date('2026-06-01T09:30:00Z'),
+    recurrenceRule: 'FREQ=WEEKLY;COUNT=5',
+    timezone: 'UTC',
+  })
+  const june = { start: new Date('2026-05-01T00:00:00Z'), end: new Date('2026-09-01T00:00:00Z') }
+  const startsOf = (events: CalendarEvent[]) => expandEventsForRange(events, june)
+    .map((e) => e.startDate.toISOString())
+    .sort()
+
+  it.each(['this', 'this_and_future'] as const)('%s: an occurrence-dated time patch moves only that occurrence onward', async (scope) => {
+    const master = weekly()
+    useCalendarStore.setState({ events: [master] })
+    // The patch the edit dialog builds for the 15 June occurrence moved from 09:00 to 10:00.
+    await useCalendarStore.getState().updateRecurringEvent(master.id, {
+      startDate: new Date('2026-06-15T10:00:00Z'),
+      endDate: new Date('2026-06-15T10:30:00Z'),
+    }, scope, new Date('2026-06-15T09:00:00Z'))
+
+    const starts = startsOf(useCalendarStore.getState().events)
+    expect(starts).toEqual(scope === 'this'
+      ? ['2026-06-01T09:00:00.000Z', '2026-06-08T09:00:00.000Z', '2026-06-15T10:00:00.000Z', '2026-06-22T09:00:00.000Z', '2026-06-29T09:00:00.000Z']
+      : ['2026-06-01T09:00:00.000Z', '2026-06-08T09:00:00.000Z', '2026-06-15T10:00:00.000Z', '2026-06-22T10:00:00.000Z', '2026-06-29T10:00:00.000Z'])
+  })
+})
+
+describe('useCalendarStore.createEvent outcome (WEB-04)', () => {
+  beforeEach(() => {
+    resetStore()
+    toastMock.showErrorToast.mockReset()
+  })
+
+  const input = { title: 'New', startDate: new Date('2026-06-01T09:00:00Z'), endDate: new Date('2026-06-01T10:00:00Z'), calendarId: 'cal-1' }
+
+  it('without an account, rejects as never sent and lists nothing', async () => {
+    await expect(useCalendarStore.getState().createEvent(input)).rejects.toMatchObject({ name: 'CalendarSaveError', unconfirmed: false })
+    expect(useCalendarStore.getState().events).toEqual([])
+    expect(etebaseMock.state.createItem).not.toHaveBeenCalled()
+  })
+
+  it('when the create is refused or fails, rejects as unconfirmed and removes the temporary event', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.createItem.mockResolvedValue(null)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(useCalendarStore.getState().createEvent(input)).rejects.toMatchObject({ name: 'CalendarSaveError', unconfirmed: true })
+    expect(useCalendarStore.getState().events).toEqual([])
+    errorSpy.mockRestore()
+  })
+
+  it('when the create throws, rejects as unconfirmed and removes the temporary event', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.createItem.mockRejectedValue(new Error('boom'))
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    await expect(useCalendarStore.getState().createEvent(input)).rejects.toMatchObject({ name: 'CalendarSaveError', unconfirmed: true })
+    expect(useCalendarStore.getState().events).toEqual([])
+    errorSpy.mockRestore()
+  })
+
+  it('control: a confirmed create resolves and lists the event under its item id', async () => {
+    etebaseMock.state.account = {}
+    etebaseMock.state.createItem.mockResolvedValue('remote-1')
+
+    await expect(useCalendarStore.getState().createEvent(input)).resolves.toMatchObject({ id: 'remote-1', title: 'New' })
+    expect(useCalendarStore.getState().events.map((e) => e.id)).toEqual(['remote-1'])
+  })
+
+  it('control: a create held in the offline queue resolves and keeps the event listed', async () => {
+    await resetRealOfflineQueue()
+    offlineAccount()
+
+    const created = await useCalendarStore.getState().createEvent(input)
+
+    expect(useCalendarStore.getState().events.map((e) => e.id)).toEqual([created.id])
+    await expectOwnedQueueEntry('create', 'calendar')
+  })
+})
