@@ -19,9 +19,6 @@ const mockEtebaseState = {
   createCollection: vi.fn(),
   deleteCollection: vi.fn(),
   updateCollectionMeta,
-  domainLoadState: { contacts: 'ready' } as Record<string, string>,
-  isInitialized: true,
-  restoreBlocked: false,
 }
 
 const mockContactState = {
@@ -41,6 +38,8 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
 }))
 
 import { ContactListPanel } from '../ContactListPanel'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
 
 describe('ContactListPanel', () => {
   beforeEach(() => {
@@ -48,8 +47,8 @@ describe('ContactListPanel', () => {
     mockContactListState.toggleVisibility.mockClear()
     mockContactListState.setActiveList.mockClear()
     mockContactState.contacts = []
-    mockEtebaseState.domainLoadState = { contacts: 'ready' }
-    mockEtebaseState.isInitialized = true
+    // The account's loaded server contacts have reached the store.
+    useDomainSnapshotStore.setState({ appliedEpoch: { contacts: getAccountEpoch() } })
   })
 
   it('shows how many contacts each address book holds, including hidden ones', () => {
@@ -71,9 +70,16 @@ describe('ContactListPanel', () => {
     expect(screen.getByRole('button', { name: /^Work Contacts/ })).toHaveAccessibleName('Work Contacts, 0 contacts')
   })
 
-  it('shows no counts while contacts are still loading', () => {
-    mockEtebaseState.domainLoadState = { contacts: 'unknown' }
-    mockEtebaseState.isInitialized = false
+  it('shows no counts until the loaded contacts reach the store (loading, failed load, cache only)', () => {
+    // Cached contacts are painted, but no server snapshot was applied for this account.
+    mockContactState.contacts = [{ id: '1', listId: 'contacts-1' }]
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
+    renderWithIntl(<ContactListPanel />)
+    expect(screen.getByRole('button', { name: /^Work Contacts/ })).toHaveAccessibleName('Work Contacts')
+  })
+
+  it('shows no counts from a snapshot applied for an earlier account', () => {
+    useDomainSnapshotStore.setState({ appliedEpoch: { contacts: getAccountEpoch() - 1 } })
     renderWithIntl(<ContactListPanel />)
     expect(screen.getByRole('button', { name: /^Work Contacts/ })).toHaveAccessibleName('Work Contacts')
   })

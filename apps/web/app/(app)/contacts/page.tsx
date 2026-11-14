@@ -19,6 +19,7 @@ import {
 } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
+import { isSnapshotApplied, useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { ContactsEmptyState, SearchEmptyState, ContactDetailEmptyState } from '@/app/components/empty-state'
@@ -1251,6 +1252,9 @@ export default function ContactsPage() {
   const canWrite = canWriteAccount && hasWritableList
   const contacts = useContactStore((s) => s.contacts)
   const isLoading = useDomainInitializing('contacts') && contacts.length === 0
+  // The total shows only once this account's loaded server contacts reached the store,
+  // never while loading or after a failed load.
+  const contactCountKnown = useDomainSnapshotStore((s) => isSnapshotApplied(s.appliedEpoch, 'contacts'))
   const searchQuery = useContactStore((s) => s.searchQuery)
   const isOnline = useSyncStore((s) => s.isOnline)
   const contactLists = useContactListStore((s) => s.lists)
@@ -1301,7 +1305,7 @@ export default function ContactsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Contacts</h2>
-          {!isLoading && (
+          {contactCountKnown && (
             <span className="text-sm tabular-nums text-[rgb(var(--muted))]" data-testid="contact-total">
               {t('contactCount', { count: contacts.length })}
             </span>

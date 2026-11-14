@@ -6,7 +6,7 @@ import { useTranslations } from 'next-intl'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
-import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
+import { isSnapshotApplied, useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
 
 export function ContactListPanel() {
@@ -19,8 +19,9 @@ export function ContactListPanel() {
   const isCreatingRef = useRef(false)
   const t = useTranslations('Collections')
   const contacts = useContactStore((s) => s.contacts)
-  // Counts stay hidden until contacts are known, so a loading account never shows 0.
-  const countsUnknown = useDomainInitializing('contacts') && contacts.length === 0
+  // Counts show only once this account's loaded server contacts reached the store:
+  // a loading or failed load never reads as 0 or as a partial total.
+  const countsKnown = useDomainSnapshotStore((s) => isSnapshotApplied(s.appliedEpoch, 'contacts'))
   const countsByList = useMemo(() => {
     const counts = new Map<string, number>()
     for (const contact of contacts) {
@@ -90,7 +91,7 @@ export function ContactListPanel() {
             itemLabel="address book"
             defaultLabel="Default address book"
             deleteLabel="Delete address book"
-            count={countsUnknown ? undefined : countsByList.get(list.id) ?? 0}
+            count={countsKnown ? countsByList.get(list.id) ?? 0 : undefined}
             countLabel={t('contactCount', { count: countsByList.get(list.id) ?? 0 })}
             onToggleVisibility={() => toggleVisibility(list.id)}
             onRename={(name) => handleRename(list.id, name)}

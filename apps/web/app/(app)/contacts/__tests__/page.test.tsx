@@ -7,6 +7,8 @@ import type { Contact } from '@silentsuite/core'
 import type { ContactList } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useContactStore } from '@/app/stores/use-contact-store'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
 
 // Mobile reachability smoke test for the Contacts page (epic #295). jsdom does
 // not evaluate CSS media queries, so these assert that the primary create
@@ -80,6 +82,7 @@ vi.mock('@/app/components/MobileCollectionSheet', () => ({
 describe('ContactsPage mobile reachability', () => {
   beforeEach(() => {
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
     storeMock.contactState.searchQuery = ''
     storeMock.contactState.contacts = []
     storeMock.contactListState.lists = []
@@ -127,12 +130,20 @@ describe('ContactsPage mobile reachability', () => {
       { id: 'home', name: 'Home', color: '#000', visible: false, accessLevel: 2 },
     ]
     storeMock.contactState.contacts = [contact('1', 'work'), contact('2', 'work'), contact('3', 'home')]
+    useDomainSnapshotStore.setState({ appliedEpoch: { contacts: getAccountEpoch() } })
     const view = renderWithIntl(<ContactsPage />)
     expect(screen.getByTestId('contact-total')).toHaveTextContent('3 contacts')
 
     storeMock.contactState.contacts = [contact('1', 'work')]
     view.rerender(<ContactsPage />)
     expect(screen.getByTestId('contact-total')).toHaveTextContent('1 contact')
+  })
+
+  it('shows no total after a failed load, even though the empty list is final', () => {
+    useEtebaseStore.setState({ isInitialized: true, domainLoadState: { ...useEtebaseStore.getState().domainLoadState, contacts: 'failed' } })
+    renderWithIntl(<ContactsPage />)
+    expect(document.querySelector('.skeleton-shimmer')).toBeNull()
+    expect(screen.queryByTestId('contact-total')).not.toBeInTheDocument()
   })
 
   it('preserves imported custom and multiple types when editing a value', () => {
@@ -343,6 +354,7 @@ describe('ContactsPage overlays mount above the bottom nav', () => {
 
   beforeEach(() => {
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
     storeMock.contactState.searchQuery = ''
     storeMock.contactState.contacts = [ada]
     storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
@@ -421,6 +433,7 @@ describe('ContactsPage address books shared read-only', () => {
 
   beforeEach(() => {
     useEtebaseStore.setState(useEtebaseStore.getInitialState(), true)
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
     storeMock.contactState.searchQuery = ''
     storeMock.contactState.contacts = [contactIn('ro', 'Remote', 'shared'), contactIn('rw', 'Local', 'book')]
     storeMock.contactListState.lists = [shared, book]
