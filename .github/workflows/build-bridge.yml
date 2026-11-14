@@ -168,12 +168,14 @@ jobs:
             # its hash-locked build tool (maturin), so no isolated build
             # environment or build tool reaches the environment PyInstaller
             # bundles. --locked makes cargo use the sdist's Cargo.lock exactly.
+            # maturin's build backend runs the maturin program, so the venv's bin
+            # directory goes first on PATH for that one command.
             # OpenSSL is vendored by the sdist. Its one dependency, msgpack, is
             # already installed from the lock.
             ETEBASE_BUILD="$RUNNER_TEMP/etebase-build"
             python -m venv "$ETEBASE_BUILD/venv"
             "$ETEBASE_BUILD/venv/bin/python" -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-etebase-build.txt
-            MACOSX_DEPLOYMENT_TARGET=10.13 MATURIN_PEP517_ARGS="--locked" "$ETEBASE_BUILD/venv/bin/python" -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies --require-hashes --no-binary=etebase -w "$ETEBASE_BUILD/wheel" -r requirements-etebase-sdist.txt
+            PATH="$ETEBASE_BUILD/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=10.13 MATURIN_PEP517_ARGS="--locked" "$ETEBASE_BUILD/venv/bin/python" -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies --require-hashes --no-binary=etebase -w "$ETEBASE_BUILD/wheel" -r requirements-etebase-sdist.txt
             python -m pip install --disable-pip-version-check --no-deps --no-index "$ETEBASE_BUILD"/wheel/etebase-*.whl
           fi
           python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
