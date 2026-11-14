@@ -27,6 +27,7 @@ import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { useFocusTrap } from '@/app/lib/use-focus-trap'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import { canWriteCollection, defaultWritableListId } from '@/app/lib/collection-access'
 import type { Contact } from '@silentsuite/core'
 
 // ── Helpers ──
@@ -263,6 +264,7 @@ function ContactForm({
   onSaved: (id: string) => void
 }) {
   const createContact = useContactStore((s) => s.createContact)
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
   const contactLists = useContactListStore((s) => s.lists)
   const activeListId = useContactListStore((s) => s.activeListId)
   const photoInputRef = useRef<HTMLInputElement>(null)
@@ -282,13 +284,18 @@ function ContactForm({
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
 
-  const defaultListId = useMemo(() => {
-    if (activeListId !== 'all' && contactLists.some((list) => list.id === activeListId)) return activeListId
-    const visible = contactLists.filter(l => l.visible)
-    return visible.length === 1 ? visible[0]!.id : 'default'
-  }, [activeListId, contactLists])
+  // Only address books the account may write to are offered, and the default is one of them.
+  const writableLists = useMemo(() => contactLists.filter(canWriteCollection), [contactLists])
+  const defaultListId = useMemo(() => defaultWritableListId(contactLists, activeListId), [activeListId, contactLists])
 
   const [selectedListId, setSelectedListId] = useState(defaultListId)
+  const listWritable = writableLists.some((list) => list.id === selectedListId)
+  const canWrite = canWriteAccount && listWritable
+
+  useEffect(() => {
+    if (!defaultListId || writableLists.some((list) => list.id === selectedListId)) return
+    setSelectedListId(defaultListId)
+  }, [writableLists, defaultListId, selectedListId])
   const [given, setGiven] = useState('')
   const [family, setFamily] = useState('')
   const [prefix, setPrefix] = useState('')
@@ -323,6 +330,7 @@ function ContactForm({
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault()
+      if (!canWrite) return
       const displayName = [given, family].filter(Boolean).join(' ') || 'Unnamed Contact'
       let contact
       try {
@@ -347,7 +355,7 @@ function ContactForm({
       }
       onSaved(contact.id)
     },
-    [given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, categories, selectedListId, createContact, onSaved],
+    [canWrite, given, family, prefix, suffix, phones, emails, addresses, organization, title, birthday, notes, photoUrl, categories, selectedListId, createContact, onSaved],
   )
 
   // Validate name on blur — show error if both given and family are empty
@@ -526,7 +534,7 @@ function ContactForm({
             <div className="flex items-center gap-3">
               <BookUser className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
               <div className="flex flex-wrap gap-1.5">
-                {contactLists.map((list) => (
+                {writableLists.map((list) => (
                   <button
                     key={list.id}
                     type="button"
@@ -574,8 +582,9 @@ function ContactForm({
             </button>
             <button
               type="submit"
-              disabled={!given.trim() && !family.trim()}
+              disabled={(!given.trim() && !family.trim()) || !canWrite}
               className="flex-1 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors md:flex-initial"
+              title={!canWriteAccount ? 'Subscription required' : !listWritable ? 'This address book is read-only' : undefined}
             >
               Save Contact
             </button>
@@ -692,6 +701,16 @@ function EditableField({
 
 // ── ContactDetail (with edit + delete) ──
 
+/**
+ * Read from the stores when a save is dispatched, not from a render, so a save
+ * that completes after the address book turned read-only (a photo still being
+ * processed) is dropped.
+ */
+function canWriteContactBookNow(listId: string | undefined): boolean {
+  return useAuthStore.getState().canWrite()
+    && canWriteCollection(useContactListStore.getState().lists.find((list) => list.id === listId))
+}
+
 function ContactDetail({
   contact,
   onBack,
@@ -702,13 +721,21 @@ function ContactDetail({
   /** Called with the deleted contact's id, only once the server accepted the delete. */
   onDeleted: (id: string) => void
 }) {
-  const updateContact = useContactStore((s) => s.updateContact)
+  const saveContact = useContactStore((s) => s.updateContact)
   const deleteContact = useContactStore((s) => s.deleteContact)
   const setContactFavorite = useContactStore((s) => s.setContactFavorite)
   const canFavorite = useContactStore((s) => s.canWriteContact(contact))
   // A refused draft stays visible here, marked Not saved (#744 §10).
   const saveState = useContactStore((s) => s.contactSaveStates[contact.id])
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
+  // A contact in an address book shared read-only is read-only, as when the subscription has ended.
+  const bookWritable = useContactListStore((s) => canWriteCollection(s.lists.find((list) => list.id === contact.listId)))
+  const canWrite = canWriteAccount && bookWritable
+  // Every edit below goes through here, so an editor left open when the share turns read-only saves nothing.
+  const updateContact = useCallback(
+    (id: string, patch: Partial<Contact>) => (canWriteContactBookNow(contact.listId) ? saveContact(id, patch) : Promise.resolve(false)),
+    [contact.listId, saveContact],
+  )
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -779,6 +806,7 @@ function ContactDetail({
   // Not optimistic: the detail stays until the server accepts the delete.
   const handleDeleteConfirmed = useCallback(async () => {
     setConfirmDelete(false)
+    if (!canWrite) return
     let deleted = false
     try {
       deleted = await deleteContact(contact.id)
@@ -788,7 +816,7 @@ function ContactDetail({
     // A draft begun while the delete was in flight keeps its contact, so this detail stays open on it (#744).
     const kept = useContactStore.getState().contacts.some((entry) => entry.id === contact.id)
     if (deleted && mountedRef.current && !kept) onDeleted(contact.id)
-  }, [contact.id, deleteContact, onDeleted])
+  }, [canWrite, contact.id, deleteContact, onDeleted])
 
   const saveNotice = saveState === 'refused'
     ? <span role="status" className="px-1 text-xs text-amber-500">Not saved</span>
@@ -869,7 +897,7 @@ function ContactDetail({
   ) : null
 
   // ── Read-only view ──
-  if (!editing) {
+  if (!editing || !canWrite) {
     return (
       <div className="flex h-full flex-col overflow-y-auto">
         <div className="flex items-center justify-between md:justify-end">
@@ -1217,7 +1245,10 @@ function ContactSkeleton() {
 
 export default function ContactsPage() {
   const t = useTranslations('Collections')
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
+  // A new contact needs an address book the account may write to.
+  const hasWritableList = useContactListStore((s) => s.lists.some(canWriteCollection))
+  const canWrite = canWriteAccount && hasWritableList
   const contacts = useContactStore((s) => s.contacts)
   const isLoading = useDomainInitializing('contacts') && contacts.length === 0
   const searchQuery = useContactStore((s) => s.searchQuery)
@@ -1285,7 +1316,7 @@ export default function ContactsPage() {
             onClick={() => setShowNewForm(true)}
             disabled={!canWrite}
             className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-            title={!canWrite ? 'Subscription required' : undefined}
+            title={!canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This address book is read-only' : undefined}
           >
             <Plus className="h-4 w-4" />
             New Contact
