@@ -209,8 +209,10 @@ channel comparison.
    event exists, so every accepted event id is preserved.
 5. Signer custody (owner decision 2026-11-14, superseding "the identity key
    never enters CI"): for unattended publication the publisher `nsec1` key is
-   the `zapstore-production` environment secret `ZAPSTORE_SIGN_WITH`, readable
-   only by the main-only publish job; its master copy is the Proton Pass item
+   the `zapstore-production` environment secret `ZAPSTORE_SIGN_WITH`. The
+   environment is main-only and is bound by the scheduled and manual publish
+   jobs and by the manually dispatched signing rehearsal, which receives the
+   secret but refuses a non-bunker value before using it; its master copy is the Proton Pass item
    `Zapstore publisher key`. Accepted risk: a compromised publish job could
    copy the key. Rollback to the phone signer: set the secret back to the
    bunker URL (the client key secret is kept). The signing rehearsal stays
