@@ -19,8 +19,6 @@ import at.bitfire.vcard4android.ContactsStorageException
 import com.etebase.client.*
 import com.etebase.client.exceptions.ConnectionException
 import com.etebase.client.exceptions.HttpException
-import com.etebase.client.exceptions.NotFoundException
-import com.etebase.client.exceptions.ServerErrorException
 import com.etebase.client.exceptions.TemporaryServerErrorException
 import com.etebase.client.exceptions.UnauthorizedException
 import io.silentsuite.sync.*
@@ -376,6 +374,8 @@ constructor(protected val context: Context, protected val account: Account, prot
 
                     for (item in items) {
                         etebaseLocalCache.itemSet(itemMgr, colUid, item)
+                        // Cached now, so the kept copy of a new item is no longer needed.
+                        etebaseLocalCache.pendingCreateRemove(colUid, item.uid)
                     }
                 }
 
@@ -422,33 +422,18 @@ constructor(protected val context: Context, protected val account: Account, prot
         item.meta = meta
     }
 
-    /**
-     * The server's copy of an item this device created but never cached, or null when the server
-     * does not have it. That happens when an upload reached the server but its answer was lost:
-     * creating the item again would leave two of it. A missing item gets a 404, or a 500 from
-     * servers whose item route has no 404 (this project's included). Every other error, a
-     * dropped connection or a 502-504 among them, fails the sync, so nothing is created twice.
-     */
-    private fun fetchUncachedItem(fileName: String): Item? =
-        try {
-            itemMgr.fetch(fileName)
-        } catch (e: NotFoundException) {
-            null
-        } catch (e: ServerErrorException) {
-            null
-        }
-
     private fun prepareLocalItemForUpload(colUid: String, local: T): Item {
         val fileName = local.fileName
         val cacheItem = if (fileName != null) etebaseLocalCache.itemGet(itemMgr, colUid, fileName) else null
-        val uploaded = if (cacheItem == null && fileName != null) fetchUncachedItem(fileName) else null
+        // A new item whose upload was never confirmed: the server may have it or not. Uploading the
+        // same item again (a batch does not check revisions) updates it or creates it, never a second one.
+        val pending = if (cacheItem == null && fileName != null) etebaseLocalCache.pendingCreateLoad(colUid, fileName) else null
         val item: Item
         if (cacheItem != null) {
             item = cacheItem.item
             itemUpdateMtime(item)
-        } else if (uploaded != null) {
-            Logger.log.info("Reusing the server's copy of an uncached local ${resourceType(local)} resource")
-            item = uploaded
+        } else if (pending != null) {
+            item = itemMgr.cacheLoad(pending)
             itemUpdateMtime(item)
         } else {
             val uid = local.uuid ?: UUID.randomUUID().toString()
@@ -457,6 +442,8 @@ constructor(protected val context: Context, protected val account: Account, prot
             meta.mtime = System.currentTimeMillis()
             item = itemMgr.create(meta, "")
 
+            // Kept before the row names the item, so a row that names it always has it to upload again.
+            etebaseLocalCache.pendingCreateSave(colUid, item.uid, itemMgr.cacheSave(item))
             local.prepareForUpload(item.uid, uid)
         }
 

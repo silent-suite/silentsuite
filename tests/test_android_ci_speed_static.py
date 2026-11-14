@@ -345,7 +345,7 @@ def _without_admission(job: dict) -> dict:
 # final assertion are carried forward; every other byte must still match.
 # The count lines then grew from 233 to 247 for five synthetic Etebase token-capture feasibility methods and
 # nine subscription-notice dashboard methods, all in the API 36 account-dashboard shard (which API 29 runs
-# with its account-dashboard shard), then from 247 to 253 for six lost-upload-answer sync cases in the
+# with its account-dashboard shard), then from 247 to 252 for five lost-upload-answer sync cases in the
 # status-routes shard.
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
@@ -353,11 +353,11 @@ RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launch
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':53,'29:first-run-setup':20,'29:status-routes':131,'29:sibling-routes':48,'35:all':253,'36:account-dashboard':47,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':131}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':53,'29:first-run-setup':20,'29:status-routes':130,'29:sibling-routes':48,'35:all':252,'36:account-dashboard':47,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':130}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "if len(canonical) != 253 or len(expected) != expected_sizes[key]:\n",
+        "if len(canonical) != 252 or len(expected) != expected_sizes[key]:\n",
     ),
     (
         "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
@@ -607,7 +607,7 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
         ("'36:account-dashboard':47", "'36:account-dashboard':48"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) != 253 or", "if len(canonical) < 253 or"),
+        ("if len(canonical) != 252 or", "if len(canonical) < 252 or"),
         ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
     ):
         mutated = copy.deepcopy(current)

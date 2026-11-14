@@ -39,6 +39,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.io.File
 import java.net.URI
 import java.util.TimeZone
 import java.util.concurrent.CountDownLatch
@@ -54,9 +55,9 @@ import java.util.concurrent.TimeUnit
  * upload, and pushItems caches the item only after batch() returns. With the answer lost, A is on the
  * server but not in the cache, and the row stays dirty. The next run pushes before it lists. It used to
  * miss A in the cache and create a second item B, and the listing then brought A back as a second
- * event. Now it asks the server for A first and updates it; it creates a new item only when the server
- * does not have A (the stand-in answers a missing item with 500, as the project's server does), and a
- * failed lookup fails the run.
+ * event. Now a new item is kept on the device (EtebaseLocalCache.pendingCreateSave) until its upload is
+ * confirmed, and the next run uploads that same item A again: a batch updates A when the server has it
+ * and creates it when the server does not, so there is never a second item.
  */
 @RunWith(AndroidJUnit4::class)
 class LostBatchAnswerDuplicateRuntimeTest {
@@ -147,8 +148,9 @@ class LostBatchAnswerDuplicateRuntimeTest {
     /** A new event whose batch() answer is lost after the server applied it is not created twice. */
     @Test fun aNewEventWhoseBatchAnswerIsLostIsNotDuplicated() {
         val (account, remote, local) = syncedEmptyCalendar("lost-batch-create")
-        insertAsCalendarApp(local, "Dentist")
+        val id = insertAsCalendarApp(local, "Dentist")
         val committed = loseTheCreationAnswer(account, remote, local)
+        editAsCalendarApp(id, "Dentist (moved)")
 
         assertEquals(SyncManager.ProviderOutcome.SUCCESS, sync(account, local))
 
@@ -160,6 +162,9 @@ class LostBatchAnswerDuplicateRuntimeTest {
         assertEquals("the local event keeps item A", committed, rows.single().syncId)
         assertEquals("the local event is uploaded", 0L, rows.single().dirty)
         assertEquals("the server holds only item A", setOf(committed), fake.itemUids(remote.uid))
+        assertTrue("item A has the edit made after the loss",
+            serverContent(remote, committed).lineSequence().any { it.trim() == "SUMMARY:Dentist (moved)" })
+        assertTrue("the kept copy of A is gone once A is cached", committed !in pendingCreates())
     }
 
     /** A new event deleted on the device after its creation answer was lost is deleted on the server too. */
@@ -175,10 +180,11 @@ class LostBatchAnswerDuplicateRuntimeTest {
         assertEquals("no live server item", emptyList<String>(), liveServerItems(remote))
         assertEquals("item A itself was deleted, no other item made", setOf(committed), fake.itemUids(remote.uid))
         assertTrue("no local event: ${localRows(local)}", localRows(local).isEmpty())
+        assertTrue("the kept copy of A is gone once its deletion is uploaded", committed !in pendingCreates())
     }
 
-    /** CONTROL: a new event whose upload never reached the server is uploaded once on the next run. */
-    @Test fun controlANewEventWhoseUploadNeverArrivedIsUploadedOnce() {
+    /** A new event whose upload never reached the server is uploaded on the next run as the same item, once. */
+    @Test fun aNewEventWhoseUploadNeverArrivedIsUploadedOnce() {
         val (account, remote, local) = syncedEmptyCalendar("lost-batch-unsent")
         insertAsCalendarApp(local, "Dentist")
 
@@ -190,38 +196,13 @@ class LostBatchAnswerDuplicateRuntimeTest {
 
         assertEquals(SyncManager.ProviderOutcome.SUCCESS, sync(account, local))
 
-        assertTrue("the run asked the server for the unsent item first",
-            fake.requests.any { it.startsWith("GET ${itemPath(remote.uid, unsent)}") })
         val items = liveServerItems(remote)
         val rows = localRows(local)
-        assertEquals("one server item; items=$items", 1, items.size)
+        assertEquals("the same item was uploaded, once; items=$items", listOf(unsent), items)
         assertEquals("one local event; rows=$rows", 1, rows.size)
-        assertEquals("the local event names the uploaded item", items.single(), rows.single().syncId)
+        assertEquals("the local event names the uploaded item", unsent, rows.single().syncId)
         assertEquals("the local event is uploaded", 0L, rows.single().dirty)
-    }
-
-    /** A lookup of the uncached item that fails on the way fails the run and creates nothing. */
-    @Test fun aFailedLookupOfTheUncachedItemFailsTheRunAndCreatesNothing() {
-        val (account, remote, local) = syncedEmptyCalendar("lost-batch-lookup")
-        insertAsCalendarApp(local, "Dentist")
-        val committed = loseTheCreationAnswer(account, remote, local)
-        val lookup = Regex(Regex.escape(itemPath(remote.uid, committed)))
-
-        fake.answer("GET", lookup, code = null)
-        assertEquals("a dropped lookup fails the run", SyncManager.ProviderOutcome.FAILURE, sync(account, local))
-        assertEquals("the scripted drop was used", 0, fake.pendingAnswers())
-        fake.answer("GET", lookup, code = 503)
-        assertEquals("an unavailable server fails the run", SyncManager.ProviderOutcome.FAILURE, sync(account, local))
-        assertEquals("the scripted 503 was used", 0, fake.pendingAnswers())
-        assertEquals("nothing new was created", setOf(committed), fake.itemUids(remote.uid))
-        assertEquals("the row still names item A", committed, localRows(local).single().syncId)
-
-        assertEquals(SyncManager.ProviderOutcome.SUCCESS, sync(account, local))
-
-        assertEquals("still only item A", setOf(committed), fake.itemUids(remote.uid))
-        val row = localRows(local).single()
-        assertEquals("the local event keeps item A", committed, row.syncId)
-        assertEquals("the local event is uploaded", 0L, row.dirty)
+        assertTrue("the kept copy is gone once the item is cached", unsent !in pendingCreates())
     }
 
     // ---- fixture ----
@@ -236,10 +217,18 @@ class LostBatchAnswerDuplicateRuntimeTest {
         val afterLoss = localRows(local).single()
         assertEquals("the row already carries A as its file name", committed.single(), afterLoss.syncId)
         assertEquals("the row is still dirty", 1L, afterLoss.dirty)
+        assertTrue("A is kept on the device until its upload is confirmed", committed.single() in pendingCreates())
         return committed.single()
     }
 
-    private fun itemPath(calendarUid: String, itemUid: String) = "collection/$calendarUid/item/$itemUid/"
+    /** The item uids of every new item kept on the device until its upload is confirmed, all accounts. */
+    private fun pendingCreates(): List<String> =
+        File(context.noBackupFilesDir, "etebase-pending-creates").walkTopDown().filter { it.isFile }.map { it.name }.toList()
+
+    private fun serverContent(calendar: Collection, itemUid: String): String {
+        val itemMgr = server.collectionManager.getItemManager(server.collectionManager.fetch(calendar.uid))
+        return String(itemMgr.fetch(itemUid).content, Charsets.UTF_8)
+    }
 
     private data class Row(val id: Long, val syncId: String?, val title: String?, val dirty: Long)
 
