@@ -172,11 +172,11 @@ describe('YEARLY in a zone', () => {
     expect(out).toEqual(['2026-03-10T08:00:00.000Z', '2027-03-10T08:00:00.000Z']);
   });
 
-  it('characterizes the existing Feb 29 rollover in Australia/Sydney (Mar 1 in later years)', () => {
+  it('repeats a Feb 29 event in Australia/Sydney only in leap years', () => {
     const e = vevent('DTSTART;TZID=Australia/Sydney:20280229T090000', 'DTEND;TZID=Australia/Sydney:20280229T100000', 'RRULE:FREQ=YEARLY;COUNT=3');
-    const out = zoned(e, 'Australia/Sydney');
+    const out = zoned(e, 'Australia/Sydney', { start: WIDE.start, end: new Date('2037-01-01T00:00:00.000Z') });
     expect(out).toHaveLength(3);
-    expect(out).toEqual(['2028-02-28T22:00:00.000Z', '2029-02-28T22:00:00.000Z', '2030-02-28T22:00:00.000Z']);
+    expect(out).toEqual(['2028-02-28T22:00:00.000Z', '2032-02-28T22:00:00.000Z', '2036-02-28T22:00:00.000Z']);
   });
 });
 

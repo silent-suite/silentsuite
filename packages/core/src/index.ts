@@ -204,3 +204,37 @@ export {
   eventOccurrenceWallClock,
   recurrenceRuleFrom,
 } from './models/calendar-event.js';
+
+// Generated Birthdays calendar (pure contract helpers; contracts/birthday-calendar)
+export {
+  BIRTHDAY_MARKER_TYPE,
+  BIRTHDAY_EVENT_UID_PREFIX,
+  BIRTHDAY_MAX_RERUNS,
+  parseBirthdayMarker,
+  birthdayMarkerContent,
+  normalizeBirthday,
+  birthdayFromVCard,
+  birthdayEventUid,
+  isGeneratedBirthdayUid,
+  birthdayEventFields,
+  birthdayEventContent,
+  parseBirthdayEventFields,
+  isCurrentBirthdayEvent,
+  birthdayEventsFromSource,
+  planBirthdayCalendar,
+  decideAfterBirthdayRun,
+} from './birthdays/birthday-calendar.js';
+export type {
+  BirthdayMarkerState,
+  MonthDay,
+  ContactBirthday,
+  BirthdayEvent,
+  BirthdayEventFields,
+  BirthdaySnapshotItem,
+  BirthdaySourceSnapshot,
+  BirthdaySourceResult,
+  BirthdayCalendarSnapshot,
+  BirthdayCalendarPlan,
+  BirthdayPlanResult,
+  BirthdayPostCheck,
+} from './birthdays/birthday-calendar.js';

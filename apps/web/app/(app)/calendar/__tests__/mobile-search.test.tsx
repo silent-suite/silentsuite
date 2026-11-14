@@ -86,8 +86,8 @@ vi.mock('@/app/stores/use-calendar-store', () => {
 vi.mock('@/app/stores/use-calendar-list-store', () => {
   const listState = {
     calendars: [
-      { id: 'cal-a', name: 'Work', color: '#10b981', visible: true },
-      { id: 'cal-hidden', name: 'Archive', color: '#64748b', visible: false },
+      { id: 'cal-a', name: 'Work', color: '#10b981', visible: true, accessLevel: 2 },
+      { id: 'cal-hidden', name: 'Archive', color: '#64748b', visible: false, accessLevel: 2 },
     ],
     defaultCalendarId: 'cal-a',
   }

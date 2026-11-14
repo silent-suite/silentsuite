@@ -34,6 +34,7 @@ The repository is a pnpm monorepo managed by Turborepo:
 |---|---|
 | `apps/web/` | Main web application (Next.js) |
 | `packages/` | Shared packages used across apps |
+| `server/` | Etebase sync server |
 | `self-host/` | Docker Compose configuration for self-hosting |
 | `deploy/` | Deployment scripts, init scripts, runbooks |
 | `apps/docs/` | Documentation |

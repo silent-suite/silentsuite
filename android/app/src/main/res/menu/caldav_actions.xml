@@ -12,4 +12,10 @@
     <item android:id="@+id/create_calendar"
           android:title="@string/create_calendar"/>
 
+    <item android:id="@+id/birthdays_turn_on"
+          android:title="@string/birthdays_turn_on"/>
+
+    <item android:id="@+id/birthdays_turn_off"
+          android:title="@string/birthdays_turn_off"/>
+
 </menu>

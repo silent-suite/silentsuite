@@ -65,6 +65,22 @@ def b64decode(data: str):
     return base64.urlsafe_b64decode(data)
 
 
+# Largest page a list endpoint returns. Clients page on `done` and the
+# stoken/iterator, so a clamped page only means another request. Clients ask for
+# 100 at most (default 50).
+MAX_LIST_LIMIT = 500
+
+
+def clamp_list_limit(limit: int) -> int:
+    """Clamp a requested list `limit` to 1..MAX_LIST_LIMIT.
+
+    The upper bound keeps one request from loading every row. The lower bound
+    keeps zero from returning an empty page that is not done (the stoken would
+    not advance) and negative values from reaching queryset slicing.
+    """
+    return max(1, min(limit, MAX_LIST_LIMIT))
+
+
 def get_user_username_email_kwargs(username: str):
     field_name = User.EMAIL_FIELD if "@" in username else User.USERNAME_FIELD
     return {field_name + "__iexact": username.lower()}

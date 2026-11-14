@@ -124,11 +124,15 @@ jobs:
       # -----------------------------------------------------------------------
       # 2. Set up QEMU (arm64 Linux only)
       # -----------------------------------------------------------------------
+      # The binfmt image is pinned by digest (the action defaults to :latest).
+      # The Actions image cache is off so every run pulls exactly that digest.
       - name: Set up QEMU
         if: matrix.qemu
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
         with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           platforms: ${{ matrix.qemu-arch }}
+          cache-image: false
 
       # -----------------------------------------------------------------------
       # 3. Python 3.10
@@ -171,12 +175,13 @@ jobs:
         working-directory: bridge
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
+          # pip and PyInstaller come from the hash-pinned build requirements.
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
           if [[ "${{ matrix.os-label }}" == "macos-arm64" ]]; then
             pip install "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
           fi
-          pip install -e ".[dev,tray]" || pip install -e ".[tray]" || pip install -e .
+          # No fallback: a release build installs exactly these extras or fails.
+          pip install -e ".[dev,tray]"
           # The binary embeds etebase, the crypto core, so the release must use the
           # reviewed version, never whatever PyPI resolves on the day.
           python -c "import importlib.metadata as m, sys; v = m.version('etebase'); print('etebase', v); sys.exit(0 if v == '${{ matrix.etebase-version }}' else 'ERROR: etebase ' + v + ' is not the reviewed ${{ matrix.etebase-version }}')"
@@ -234,8 +239,8 @@ jobs:
           SILENTSUITE_PACKAGED_BINARY: ${{ github.workspace }}/bridge/dist/silentsuite-bridge
           SILENTSUITE_PACKAGED_ARCH: ${{ matrix.os-label == 'macos-arm64' && 'arm64' || 'x86_64' }}
         run: |
-          # The dev extra normally provides pytest; a tray-only fallback must
-          # fail closed here instead of silently skipping the packaged case.
+          # The dev extra provides pytest; fail closed here instead of silently
+          # skipping the packaged case if it is ever missing.
           if ! python -m pytest --version >/dev/null 2>&1; then
             echo "ERROR: pytest is not available in this build environment; packaged autostart acceptance cannot run." >&2
             exit 1
@@ -275,7 +280,7 @@ jobs:
         if: matrix.qemu
         uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 # v3
         with:
-          image: arm64v8/python:3.10-slim
+          image: arm64v8/python:3.10.22-slim-trixie@sha256:92479346bd9cc169c573d3f71b95978521189349051ef1edb56a907a6d8c6ea7
           options: >-
             --platform linux/arm64
             -v ${{ github.workspace }}:/workspace
@@ -287,13 +292,21 @@ jobs:
             apt-get install -y --no-install-recommends \
               curl build-essential pkg-config libssl-dev git
             echo "=== Installing Rust ==="
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.63.0
+            # Pinned rustup-init release, checked against its published sha256
+            # before it runs. rustup then verifies the 1.63.0 toolchain itself.
+            RUSTUP_VERSION=1.29.3
+            RUSTUP_INIT_SHA256=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282
+            curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init \
+              "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/aarch64-unknown-linux-gnu/rustup-init"
+            echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c -
+            chmod +x /tmp/rustup-init
+            /tmp/rustup-init -y --default-toolchain 1.63.0
+            rm -f /tmp/rustup-init
             . "$HOME/.cargo/env"
             echo "=== Installing Python deps ==="
-            python -m pip install --upgrade pip
-            pip install pyinstaller
             cd /workspace/bridge
-            pip install -e ".[dev,tray]" || pip install -e ".[tray]" || pip install -e .
+            python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
+            pip install -e ".[dev,tray]"
             python -c "import importlib.metadata as m, sys; v = m.version('etebase'); print('etebase', v); sys.exit(0 if v == '${{ matrix.etebase-version }}' else 'ERROR: etebase ' + v + ' is not the reviewed ${{ matrix.etebase-version }}')"
             echo "=== Running PyInstaller ==="
             pyinstaller silentsuite-bridge.spec --clean --noconfirm \
