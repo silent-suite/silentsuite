@@ -362,14 +362,15 @@ class AppSettingsActivity : BaseActivity() {
             return try {
                 val settings = AccountSettings(context, account)
                 val cache = io.silentsuite.sync.EtebaseLocalCache.getInstance(context, account.name)
-                val httpClient = io.silentsuite.sync.HttpClient.Builder(context).setForeground(true).build().okHttpClient
-                val colMgr = io.silentsuite.sync.EtebaseLocalCache.getEtebase(context, httpClient, settings).collectionManager
-                synchronized(cache) {
-                    cache.decodableCollectionList(colMgr, io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK) { _, error ->
-                        // The binding's message can quote a decrypted value; log only the exception class.
-                        io.silentsuite.sync.log.Logger.log.warning("Skipping an address book that could not be decoded: ${error.javaClass.name}")
-                    }
-                }.map { RecoveryAddressBook(it.col.uid, it.meta.name.orEmpty()) }
+                io.silentsuite.sync.HttpClient.Builder(context).setForeground(true).build().use { httpClient ->
+                    val colMgr = io.silentsuite.sync.EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings).collectionManager
+                    synchronized(cache) {
+                        cache.decodableCollectionList(colMgr, io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK) { _, error ->
+                            // The binding's message can quote a decrypted value; log only the exception class.
+                            io.silentsuite.sync.log.Logger.log.warning("Skipping an address book that could not be decoded: ${error.javaClass.name}")
+                        }
+                    }.map { RecoveryAddressBook(it.col.uid, it.meta.name.orEmpty()) }
+                }
             } catch (e: Exception) {
                 io.silentsuite.sync.log.Logger.log.warning("Could not list address books for recovery: ${e.javaClass.name}")
                 null

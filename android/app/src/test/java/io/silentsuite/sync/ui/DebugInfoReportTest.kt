@@ -2,6 +2,7 @@ package io.silentsuite.sync.ui
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 import java.io.IOException
@@ -61,5 +62,22 @@ class DebugInfoReportTest {
                 "KEY_AUTHORITY", "KEY_CALLER", "stackTrace", "Sentry",
         ))
             assertFalse("DebugInfoActivity must not use $forbidden", source.contains(forbidden))
+    }
+
+    @Test
+    fun screenTextDescribesWhatSharingDoes() {
+        // Sharing hands only the report text to an app the user picks: nothing goes to developers
+        // automatically and nothing is attached.
+        val share = File("src/main/java/io/silentsuite/sync/ui/DebugInfoActivity.kt").readText()
+                .substringAfter("fun onShare(").substringBefore("class ReportViewModel")
+        assertFalse(share.contains("EXTRA_STREAM"))
+        assertTrue(share.contains("Intent.createChooser("))
+
+        val strings = File("src/main/res/values/strings.xml").readText()
+        val text = Regex("""<string name="debug_info_more_data_shared">([^<]*)</string>""")
+                .find(strings)?.groupValues?.get(1) ?: throw AssertionError("debug_info_more_data_shared not found")
+        assertFalse(text.contains("developers"))
+        assertTrue(text.contains("Nothing else is attached"))
+        assertTrue(text.contains("app you choose"))
     }
 }
