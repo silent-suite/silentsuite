@@ -22,6 +22,7 @@ import java.net.URI
 import java.net.URISyntaxException
 import java.util.logging.Level
 import io.silentsuite.sync.ui.setup.PostLoginSetupState
+import io.silentsuite.sync.notes.NotesNetworkPolicy
 
 class AccountSettings
 @Throws(InvalidAccountException::class)
@@ -207,6 +208,8 @@ constructor(internal val context: Context, internal val account: Account) {
         const val KEY_NOTES_ENABLED = "notes_enabled_v1"
         const val KEY_BIRTHDAYS_ENABLED = "birthdays_enabled_v1"
         const val KEY_COLLECTION_LIST_TYPES = "collection_list_types_v1"
+        const val KEY_NOTES_AUTOMATIC_NETWORK = "notes_automatic_network_v1"
+        const val KEY_NOTES_SYNC_NOW_NETWORK = "notes_sync_now_network_v1"
         private const val MAX_INITIAL_SYNC_REQUEST_ID_LENGTH = 128
         private val CONTEXTUAL_PERMISSION_DENIAL_VALUES = setOf("CALENDAR", "CONTACTS", "TASKS")
         // sync on WiFi only (default: false)
@@ -317,6 +320,21 @@ constructor(internal val context: Context, internal val account: Account) {
         /** Stores an explicit value both ways; clearing user data with null is not verifiable everywhere. */
         fun writeNotesEnabled(accountManager: AccountManager, account: Account, enabled: Boolean): Boolean =
             writeVerified(accountManager, account, KEY_NOTES_ENABLED, if (enabled) "true" else "false")
+
+        /**
+         * The two Notes network settings (design 3.6), kept on the account row like the Notes opt-in, so
+         * a same-name account that replaces this one starts from the defaults. Absent or unknown means
+         * the default of that setting.
+         */
+        fun notesNetworkSettings(accountManager: AccountManager, account: Account): NotesNetworkPolicy.Settings =
+            NotesNetworkPolicy.Settings.fromStored(accountManager.getUserData(account, KEY_NOTES_AUTOMATIC_NETWORK),
+                accountManager.getUserData(account, KEY_NOTES_SYNC_NOW_NETWORK))
+
+        fun writeNotesAutomaticNetwork(accountManager: AccountManager, account: Account, allowed: NotesNetworkPolicy.Allowed): Boolean =
+            writeVerified(accountManager, account, KEY_NOTES_AUTOMATIC_NETWORK, allowed.name)
+
+        fun writeNotesSyncNowNetwork(accountManager: AccountManager, account: Account, allowed: NotesNetworkPolicy.Allowed): Boolean =
+            writeVerified(accountManager, account, KEY_NOTES_SYNC_NOW_NETWORK, allowed.name)
 
         /**
          * Per-account experimental Birthdays calendar opt-in. Absent means off, and so does a read that fails;
