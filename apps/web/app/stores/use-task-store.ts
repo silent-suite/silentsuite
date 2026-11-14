@@ -31,6 +31,8 @@ interface NewTask {
   listId?: string
 }
 
+export type TaskSyncOutcome = 'remote' | 'queued' | false
+
 interface TaskState {
   tasks: Task[]
   syncStatus: SyncStatus
@@ -53,8 +55,13 @@ interface TaskActions {
    * queue; otherwise removes the temp task and rejects with TaskSaveError.
    */
   createTask: (task: NewTask) => Promise<Task>
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>
-  deleteTask: (id: string) => Promise<void>
+  /**
+   * Resolve with the sync outcome: 'remote' once the server accepted the change, 'queued' when it
+   * is held in the offline queue, false when it was not saved (including a refusal). Existing
+   * callers may ignore it; the local copy is updated optimistically either way.
+   */
+  updateTask: (id: string, patch: Partial<Task>) => Promise<TaskSyncOutcome>
+  deleteTask: (id: string) => Promise<TaskSyncOutcome>
   toggleComplete: (id: string) => Promise<void>
   /** Resolves the requested count only when every task was acknowledged; otherwise rejects with ImportIncompleteError. */
   importTasks: (newTasks: NewTask[]) => Promise<number>
@@ -199,7 +206,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const { tasks } = get()
         const index = tasks.findIndex((t) => t.id === id)
-        if (index === -1) return
+        if (index === -1) return false
 
         const updated = applyTaskPatch(tasks[index]!, patch)
         const next = [...tasks]
@@ -211,7 +218,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         const accountEpoch = getAccountEpoch()
         const target = syncTargetId(id)
         const targetId = typeof target === 'string' ? target : await target
-        if (!isCurrentAccountEpoch(accountEpoch)) return
+        if (!isCurrentAccountEpoch(accountEpoch)) return false
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
@@ -220,15 +227,17 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             try {
               const { serializeTask } = await import('@silentsuite/core')
               const content = serializeTask(updated)
-              await etebase.updateItem('tasks', targetId, content)
+              const outcome = await etebase.updateItem('tasks', targetId, content)
               void useLabelSuggestionsStore.getState().recordUsage('tasks', updated.categories ?? [])
+              return outcome
             } catch (err) {
               console.error('[task-store] Failed to sync task update to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save task. Please try again.')
+              return false
             }
           } else {
             const guard = captureOfflineQueueAccountGuard(etebase)
-            if (!guard) return
+            if (!guard) return false
             // Item was created offline — enqueue update with tempId so compaction merges into create
             const { serializeTask } = await import('@silentsuite/core')
             assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
@@ -237,12 +246,14 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             try {
               await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id }, guard)
               assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              return 'queued'
             } catch (error) {
-              if (isOfflineQueueBoundaryCancellation(error)) return
+              if (isOfflineQueueBoundaryCancellation(error)) return false
               throw error
             }
           }
         }
+        return false
       },
 
       deleteTask: async (id: string) => {
@@ -255,7 +266,7 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         const accountEpoch = getAccountEpoch()
         const target = syncTargetId(id)
         const targetId = typeof target === 'string' ? target : await target
-        if (!isCurrentAccountEpoch(accountEpoch)) return
+        if (!isCurrentAccountEpoch(accountEpoch)) return false
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
@@ -263,25 +274,28 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           const itemInCache = etebase.itemCache.has(targetId)
           if (itemInCache) {
             try {
-              await etebase.deleteItem('tasks', targetId)
+              return await etebase.deleteItem('tasks', targetId)
             } catch (err) {
               console.error('[task-store] Failed to sync task deletion to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to delete task. Please try again.')
+              return false
             }
           } else {
             const guard = captureOfflineQueueAccountGuard(etebase)
-            if (!guard) return
+            if (!guard) return false
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
             try {
               assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
               await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: taskToDelete?.listId, tempId: id }, guard)
               assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              return 'queued'
             } catch (error) {
-              if (isOfflineQueueBoundaryCancellation(error)) return
+              if (isOfflineQueueBoundaryCancellation(error)) return false
               throw error
             }
           }
         }
+        return false
       },
 
       toggleComplete: async (id: string) => {

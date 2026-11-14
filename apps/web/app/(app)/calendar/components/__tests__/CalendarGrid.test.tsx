@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { StrictMode, useSyncExternalStore } from 'react'
@@ -511,5 +511,89 @@ describe('CalendarGrid timed-event integration', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('CalendarGrid slot clicks', () => {
+  it('calls the latest onSlotClick although Schedule-X keeps its first callbacks', () => {
+    const first = vi.fn()
+    const latest = vi.fn()
+    const { rerender } = render(<CalendarGrid events={[]} onSlotClick={first} />)
+    const createdWith = mocks.latestConfig!.callbacks.onClickDateTime as (dt: { epochMilliseconds: number }) => void
+    rerender(<CalendarGrid events={[]} onSlotClick={latest} />)
+    act(() => createdWith({ epochMilliseconds: Date.parse('2026-07-13T10:10:00.000Z') }))
+    expect(first).not.toHaveBeenCalled()
+    expect(latest).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ startDate: new Date('2026-07-13T10:00:00.000Z'), allDay: false }))
+  })
+})
+
+describe('CalendarGrid external drop (planning view)', () => {
+  function dropHarness(props: { externalDragType?: string; onExternalDrop?: (start: Date, dataTransfer: DataTransfer) => void; externalDropMinutes?: number }) {
+    render(<CalendarGrid events={[]} {...props} />)
+    const grid = screen.getByTestId('time-grid')
+    const wrapper = screen.getByTestId('schedule-x').parentElement as HTMLElement
+    vi.spyOn(grid, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    vi.spyOn(screen.getByTestId('day-column'), 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    vi.spyOn(wrapper, 'getBoundingClientRect').mockReturnValue(rect(0, 0, 200, 1600))
+    Object.defineProperty(grid, 'scrollHeight', { configurable: true, value: 1600 })
+    Object.defineProperty(grid, 'scrollTop', { configurable: true, value: 0, writable: true })
+    return { wrapper }
+  }
+  const transfer = (types: string[]) => ({ types, dropEffect: 'none', getData: vi.fn(() => 'task-1') })
+  // jsdom has no DragEvent: dispatch a MouseEvent carrying the pointer position and a DataTransfer stand-in.
+  function drag(type: 'dragover' | 'drop', target: HTMLElement, clientY: number, dataTransfer: ReturnType<typeof transfer>) {
+    const native = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: 50, clientY })
+    Object.defineProperty(native, 'dataTransfer', { value: dataTransfer })
+    act(() => { target.dispatchEvent(native) })
+    return native
+  }
+
+  it('drops into the 30-minute slot under the pointer, in the user timezone', () => {
+    const onExternalDrop = vi.fn()
+    const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop })
+    const dataTransfer = transfer(['application/x-test-task'])
+    // 16 displayed hours over 1600px: y=280 is 09:48, inside the 09:30 slot.
+    drag('dragover', wrapper, 280, dataTransfer)
+    expect(screen.getByTestId('external-drop-preview')).toHaveTextContent('09:30 \u2013 10:00')
+    drag('drop', wrapper, 280, dataTransfer)
+    expect(onExternalDrop).toHaveBeenCalledExactlyOnceWith(new Date('2026-07-13T09:30:00.000Z'), expect.anything())
+    expect(screen.queryByTestId('external-drop-preview')).not.toBeInTheDocument()
+  })
+
+  it('sizes the preview to the event length', () => {
+    const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop: vi.fn(), externalDropMinutes: 60 })
+    drag('dragover', wrapper, 280, transfer(['application/x-test-task']))
+    const preview = screen.getByTestId('external-drop-preview')
+    expect(preview).toHaveTextContent('09:30 \u2013 10:30')
+    // 100px per hour in this harness.
+    expect(preview.style.height).toBe('100px')
+  })
+
+  it('does not stretch a short event length in the preview', () => {
+    const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop: vi.fn(), externalDropMinutes: 6 })
+    drag('dragover', wrapper, 280, transfer(['application/x-test-task']))
+    expect(screen.getByTestId('external-drop-preview').style.height).toBe('10px')
+  })
+
+  it('clamps a drop at the bottom edge to the last slot of the day', () => {
+    const onExternalDrop = vi.fn()
+    const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop })
+    drag('drop', wrapper, 1599, transfer(['application/x-test-task']))
+    expect(onExternalDrop).toHaveBeenCalledExactlyOnceWith(new Date('2026-07-13T22:30:00.000Z'), expect.anything())
+  })
+
+  it('ignores other drag types, and all drops when not enabled or not in week view', () => {
+    const onExternalDrop = vi.fn()
+    const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop })
+    drag('drop', wrapper, 280, transfer(['text/plain']))
+    expect(onExternalDrop).not.toHaveBeenCalled()
+    cleanup()
+    const { wrapper: plain } = dropHarness({})
+    expect(drag('drop', plain, 280, transfer(['application/x-test-task'])).defaultPrevented).toBe(false)
+    cleanup()
+    mocks.calendarState.currentView = 'month' as never
+    const { wrapper: month } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop })
+    drag('drop', month, 280, transfer(['application/x-test-task']))
+    expect(onExternalDrop).not.toHaveBeenCalled()
   })
 })

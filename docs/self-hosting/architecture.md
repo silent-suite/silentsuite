@@ -49,6 +49,6 @@ The reverse proxy is **not** part of the stack — pick whatever you already run
 Self-hosters only need the sync server. Users access SilentSuite through:
 
 - **[app.silentsuite.io](https://app.silentsuite.io)** -- the hosted web app (works with any SilentSuite server)
-- **SilentSuite mobile app** -- available for Android. iOS is on the roadmap, coming soon, and is not currently supported.
+- **SilentSuite mobile app** -- available for Android. iOS is not supported yet; a native app is planned.
 
 The web and Android apps support entering a custom server URL in Advanced Settings during signup or login. This keeps the self-hosted stack minimal (two containers, a handful of env vars) while giving users the supported SilentSuite experience.
