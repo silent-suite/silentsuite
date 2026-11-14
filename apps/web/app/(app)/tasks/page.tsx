@@ -11,7 +11,7 @@ import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { formatDate } from '@/app/lib/date'
-import { canWriteCollection, findItemCollection } from '@/app/lib/collection-access'
+import { canWriteCollection, defaultWritableListId, findItemCollection } from '@/app/lib/collection-access'
 
 import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
@@ -138,21 +138,20 @@ function TaskQuickAdd() {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const createTask = useTaskStore((s) => s.createTask)
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
   const taskLists = useTaskListStore((s) => s.lists)
   const activeListId = useTaskListStore((s) => s.activeListId)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const defaultListId = useMemo(() => {
-    if (activeListId !== 'all' && taskLists.some((list) => list.id === activeListId)) return activeListId
-    const visible = taskLists.filter(l => l.visible)
-    return visible.length === 1 ? visible[0]!.id : 'default'
-  }, [activeListId, taskLists])
+  // A new task never goes to a list shared read-only.
+  const defaultListId = useMemo(() => defaultWritableListId(taskLists, activeListId), [activeListId, taskLists])
+  const canWrite = canWriteAccount && defaultListId !== undefined
+  const readOnlyTitle = !canWriteAccount ? 'Subscription required' : 'This task list is read-only'
 
   const handleSubmit = useCallback(
     async (e: React.FormEvent) => {
       e.preventDefault()
-      if (pending) return
+      if (pending || !canWrite) return
       const trimmed = title.trim()
       if (!trimmed) return
       setPending(true)
@@ -166,7 +165,7 @@ function TaskQuickAdd() {
         setPending(false)
       }
     },
-    [pending, title, createTask, defaultListId],
+    [pending, canWrite, title, createTask, defaultListId],
   )
 
   return (
@@ -182,13 +181,13 @@ function TaskQuickAdd() {
           disabled={!canWrite}
           readOnly={pending}
           className={`flex-1 max-md:min-w-0 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--foreground))] placeholder:text-[rgb(var(--muted))] focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent ${!canWrite ? 'opacity-50 cursor-not-allowed' : ''}`}
-          title={!canWrite ? 'Subscription required' : undefined}
+          title={!canWrite ? readOnlyTitle : undefined}
         />
         <button
           type="submit"
           disabled={!title.trim() || !canWrite || pending}
           className={`rounded-lg bg-emerald-600 px-4 py-2 max-md:min-h-[44px] text-sm font-medium text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${canWrite ? 'hover:bg-emerald-500' : ''}`}
-          title={!canWrite ? 'Subscription required' : undefined}
+          title={!canWrite ? readOnlyTitle : undefined}
         >
           Add
         </button>
@@ -220,6 +219,7 @@ function TaskDialog({
 }) {
   const createTask = useTaskStore((s) => s.createTask)
   const updateTask = useTaskStore((s) => s.updateTask)
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
   const taskLists = useTaskListStore((s) => s.lists)
   const activeListId = useTaskListStore((s) => s.activeListId)
   const titleRef = useRef<HTMLInputElement>(null)
@@ -229,11 +229,9 @@ function TaskDialog({
   // Focus trap: keep Tab cycling within the dialog
   useFocusTrap(dialogRef)
 
-  const defaultListId = useMemo(() => {
-    if (activeListId !== 'all' && taskLists.some((list) => list.id === activeListId)) return activeListId
-    const visible = taskLists.filter(l => l.visible)
-    return visible.length === 1 ? visible[0]!.id : 'default'
-  }, [activeListId, taskLists])
+  // Only lists the account may write to are offered for a new task, and the default is one of them.
+  const writableLists = useMemo(() => taskLists.filter(canWriteCollection), [taskLists])
+  const defaultListId = useMemo(() => defaultWritableListId(taskLists, activeListId), [activeListId, taskLists])
 
   const [title, setTitle] = useState(task?.title ?? '')
   const [description, setDescription] = useState(task?.description ?? '')
@@ -246,6 +244,18 @@ function TaskDialog({
   const [url, setUrl] = useState(task?.url ?? '')
   const [categories, setCategories] = useState<string[]>(task?.categories ?? [])
   const [selectedListId, setSelectedListId] = useState(task?.listId ?? defaultListId)
+  // An edit is checked against the task's own list; a create against the chosen one.
+  const listWritable = mode === 'edit'
+    ? canWriteCollection(findItemCollection(taskLists, task?.listId))
+    : writableLists.some((list) => list.id === selectedListId)
+  const canWrite = canWriteAccount && listWritable
+  const readOnlyTitle = !canWriteAccount ? 'Subscription required' : 'This task list is read-only'
+
+  useEffect(() => {
+    if (mode !== 'create' || !defaultListId) return
+    if (writableLists.some((list) => list.id === selectedListId)) return
+    setSelectedListId(defaultListId)
+  }, [mode, writableLists, defaultListId, selectedListId])
   // What each field held when the dialog opened. An edit sends only the fields the user changed, so
   // values synced from another device while the dialog is open are not overwritten by stale ones.
   const opened = useRef({
@@ -292,7 +302,7 @@ function TaskDialog({
 
   const handleSave = useCallback(async () => {
     const trimmed = title.trim()
-    if (!trimmed || creating) return
+    if (!trimmed || creating || !canWrite) return
 
     const parsedStart = parseDateInput(startDate)
     const parsedDue = parseDateInput(dueDate)
@@ -346,7 +356,7 @@ function TaskDialog({
       if (Object.keys(patch).length > 0) updateTask(task.id, patch)
     }
     onClose()
-  }, [title, creating, description, startDate, dueDate, priority, status, percentComplete, location, url, categories, selectedListId, mode, task, createTask, updateTask, onClose])
+  }, [title, creating, canWrite, description, startDate, dueDate, priority, status, percentComplete, location, url, categories, selectedListId, mode, task, createTask, updateTask, onClose])
 
   if (typeof document === 'undefined') return null
 
@@ -374,8 +384,9 @@ function TaskDialog({
             </span>
             <button
               onClick={handleSave}
-              disabled={!title.trim() || creating}
+              disabled={!title.trim() || creating || !canWrite}
               className="shrink-0 rounded-md bg-emerald-600 px-3 py-1 max-md:min-h-[44px] text-sm font-medium text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title={!canWrite ? readOnlyTitle : undefined}
             >
               {mode === 'create' ? 'Create' : 'Save'}
             </button>
@@ -520,7 +531,7 @@ function TaskDialog({
             <div className="flex items-center gap-3">
               <List className="h-4 w-4 shrink-0 text-[rgb(var(--muted))]" />
               <div className="flex flex-wrap gap-1.5 max-md:min-w-0">
-                {taskLists.map((list) => (
+                {writableLists.map((list) => (
                   <button
                     key={list.id}
                     type="button"
@@ -758,12 +769,12 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
   const handleTitleBlur = useCallback(() => {
     setEditingTitle(false)
     const trimmed = titleValue.trim()
-    if (trimmed && trimmed !== task.title) {
+    if (canWrite && trimmed && trimmed !== task.title) {
       updateTask(task.id, { title: trimmed })
     } else {
       setTitleValue(task.title)
     }
-  }, [titleValue, task.title, task.id, updateTask])
+  }, [canWrite, titleValue, task.title, task.id, updateTask])
 
   const handleTitleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -779,10 +790,10 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
   )
 
   const handleDescBlur = useCallback(() => {
-    if (descValue !== task.description) {
+    if (canWrite && descValue !== task.description) {
       updateTask(task.id, { description: descValue })
     }
-  }, [descValue, task.description, task.id, updateTask])
+  }, [canWrite, descValue, task.description, task.id, updateTask])
 
   return (
     <div className="group rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] transition-colors hover:border-[rgb(var(--muted))]/30">
@@ -949,7 +960,7 @@ function TaskItem({ task, onEdit }: { task: Task; onEdit: (task: Task) => void }
           title="Delete task?"
           message={`"${task.title}" will be permanently deleted. This cannot be undone.`}
           confirmLabel="Delete task"
-          onConfirm={() => { deleteTask(task.id); setConfirmDelete(false) }}
+          onConfirm={() => { if (canWrite) deleteTask(task.id); setConfirmDelete(false) }}
           onCancel={() => setConfirmDelete(false)}
         />,
         document.body,
@@ -980,7 +991,10 @@ function TaskSkeleton() {
 
 export default function TasksPage() {
   const t = useTranslations('Collections')
-  const canWrite = useAuthStore((s) => s.canWrite())
+  const canWriteAccount = useAuthStore((s) => s.canWrite())
+  // A new task needs a list the account may write to.
+  const hasWritableList = useTaskListStore((s) => s.lists.some(canWriteCollection))
+  const canWrite = canWriteAccount && hasWritableList
   const tasks = useTaskStore((s) => s.tasks)
   const isLoading = useDomainInitializing('tasks') && tasks.length === 0
   const isOnline = useSyncStore((s) => s.isOnline)
@@ -1037,7 +1051,7 @@ export default function TasksPage() {
             onClick={() => setShowDialog(true)}
             disabled={!canWrite}
             className={`flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 max-md:min-h-[44px] text-sm font-medium text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${!canWrite ? 'opacity-50 cursor-not-allowed' : 'hover:bg-emerald-500'}`}
-            title={!canWrite ? 'Subscription required' : undefined}
+            title={!canWriteAccount ? 'Subscription required' : !hasWritableList ? 'This task list is read-only' : undefined}
           >
             <Plus className="h-4 w-4" />
             New task

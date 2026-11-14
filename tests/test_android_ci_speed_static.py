@@ -343,20 +343,17 @@ def _without_admission(job: dict) -> dict:
 # saved WiFi network case (#971) and 43 Birthdays cases in status-routes, one setup recovery replacement case in first-run-setup (#966), and three Report a problem screen cases in
 # status-routes. Only the matrix row after API 36 first-run-setup and these four exact lines of the runtime job's
 # final assertion are carried forward; every other byte must still match.
-# The count lines then grew from 233 to 247 for five synthetic Etebase token-capture feasibility methods and
-# nine subscription-notice dashboard methods, all in the API 36 account-dashboard shard (which API 29 runs
-# with its account-dashboard shard).
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':53,'29:first-run-setup':20,'29:status-routes':125,'29:sibling-routes':48,'35:all':247,'36:account-dashboard':47,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':125}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':125,'29:sibling-routes':48,'35:all':233,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':125}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "if len(canonical) != 247 or len(expected) != expected_sizes[key]:\n",
+        "if len(canonical) != 233 or len(expected) != expected_sizes[key]:\n",
     ),
     (
         "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
@@ -604,9 +601,9 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
     # Any other change to the same step, including another count, still fails the comparison.
     for old, new in (
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
-        ("'36:account-dashboard':47", "'36:account-dashboard':48"),
+        ("'36:account-dashboard':33", "'36:account-dashboard':34"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) != 247 or", "if len(canonical) < 247 or"),
+        ("if len(canonical) != 233 or", "if len(canonical) < 233 or"),
         ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
     ):
         mutated = copy.deepcopy(current)

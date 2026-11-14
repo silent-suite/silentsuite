@@ -1,0 +1,7 @@
+# Overrides applied when compiling requirements-lock.txt.
+#
+# The macOS arm64 build installs etebase from a pinned upstream etebase-py commit,
+# because PyPI etebase 0.31.5 has no macOS arm64 wheel. The lock therefore leaves
+# PyPI etebase out on that platform only. Keep this range equal to the etebase
+# range in pyproject.toml; tests/test_requirements_lock.py checks that.
+etebase>=0.31.5,<0.32 ; sys_platform != 'darwin' or platform_machine != 'arm64'

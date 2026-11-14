@@ -1,0 +1,28 @@
+# Extra inputs for requirements-lock.txt, on top of pyproject.toml's dependencies
+# and its dev and tray extras. See requirements-lock.txt for the full command.
+#
+# hatchling is the bridge's build backend, and editables is what it asks for to
+# build an editable install. Release builds install the bridge with
+# --no-deps --no-build-isolation, so both come from the lock as well instead of
+# being fetched unpinned into an isolated build environment.
+hatchling
+editables
+#
+# The pyproject.toml requirements this lock was compiled from, one per line as
+# "<section>: <requirement>". tests/test_requirements_lock.py compares them with
+# pyproject.toml, so a change there fails until the lock is regenerated with the
+# command in requirements-lock.txt and this list is updated to match.
+#
+# compiled-from project: etebase>=0.31.5,<0.32
+# compiled-from project: radicale==3.2.3
+# compiled-from project: peewee>=3.14.0,<4.0.0
+# compiled-from project: msgpack>=1.0.0
+# compiled-from project: vobject>=0.9.6
+# compiled-from project: appdirs>=1.4.3
+# compiled-from project: requests>=2.28.0
+# compiled-from extra tray: pystray>=0.19.0
+# compiled-from extra tray: Pillow>=9.0.0
+# compiled-from extra dev: pytest>=7.0
+# compiled-from extra dev: ruff>=0.1.0
+# compiled-from extra dev: mypy>=1.0
+# compiled-from build-system: hatchling
