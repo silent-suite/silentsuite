@@ -11,13 +11,17 @@ import re
 import sys
 
 TEST_CLASS = "io.silentsuite.sync.AppUpgradeProcessBoundaryRuntimeTest"
-# The seed runs before the in-place reinstall and the check in the first process after it.
+# The seed runs before the permissions are revoked and the in-place reinstall; the revoked step in the
+# first process after it; the check after the permissions are granted again.
 EXPECTED_STEPS = (
-    ("seed", "seedsAnOlderAppVersionBeforeTheUpgrade"),
-    ("check", "upgradeMigrationHasRunInTheFirstProcessAfterTheReinstall"),
+    ("seed", "seedsAnOldAppVersionAndAnAccountBeforeTheUpgrade"),
+    ("revoked", "withoutCalendarAndContactsPermissionsTheAppStartsAndKeepsTheOldVersion"),
+    ("check", "afterTheGrantTheUpgradeMigrationCompletesInAFreshProcess"),
 )
 INSTALL_FILES = ("upgrade-before.txt", "upgrade-install.txt", "upgrade-after.txt")
 INSTALL_EXIT = "upgrade-install.exit"
+PERMISSION_FILES = ("revoke.txt", "grant.txt")
+PERMISSION_EXITS = ("revoke.exit", "grant.exit")
 INVENTORY = "inventory.json"
 
 
@@ -78,9 +82,10 @@ def evaluate(directory, api):
                       "problem": problem})
     texts = [(directory / name).read_text(encoding="utf-8", errors="replace") if (directory / name).is_file() else ""
              for name in INSTALL_FILES]
-    upgrade = exit_problem(directory / INSTALL_EXIT) or install_problem(*texts)
+    upgrade = exit_problem(directory / INSTALL_EXIT) or install_problem(*texts) or next(
+        (f"{name}: {problem}" for name in PERMISSION_EXITS if (problem := exit_problem(directory / name))), None)
     allowed = {f"{step}.{suffix}" for step, _ in EXPECTED_STEPS for suffix in ("txt", "exit")}
-    allowed |= set(INSTALL_FILES) | {INSTALL_EXIT, INVENTORY}
+    allowed |= set(INSTALL_FILES) | {INSTALL_EXIT, INVENTORY} | set(PERMISSION_FILES) | set(PERMISSION_EXITS)
     extra = sorted(path.name for path in directory.iterdir() if path.name not in allowed)
     passed = all(item["outcome"] == "PASS" for item in steps) and upgrade is None and not extra
     return {"api": api, "extraFiles": extra, "outcome": "PASS" if passed else "FAIL", "schema": 1, "steps": steps,

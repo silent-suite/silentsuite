@@ -159,8 +159,21 @@ run_step reinstall-read readerRecoversLegacyPaddedEveryPhaseInFreshProcess
 run_step malformed-write writerSeedsMalformedRegistryValue
 run_step malformed-read readerKeepsMalformedRegistryUnreadableAndUntouchedInFreshProcess
 
-# App upgrade: an older stored version, an in-place reinstall, then the first process after it.
-run_upgrade_step seed seedsAnOlderAppVersionBeforeTheUpgrade
+# App upgrade: an old stored version and an account, the calendar and contacts permissions revoked, an
+# in-place reinstall, the first process after it, then the permissions granted and a fresh process.
+run_upgrade_step seed seedsAnOldAppVersionAndAnAccountBeforeTheUpgrade
+upgrade_permissions="android.permission.READ_CALENDAR android.permission.WRITE_CALENDAR android.permission.READ_CONTACTS android.permission.WRITE_CONTACTS"
+# Granted first, so the revoke starts from a known state on every API level.
+set_upgrade_permissions() {
+  local action="$1" status=0 permission
+  for permission in ${upgrade_permissions}; do
+    timeout --signal=TERM --kill-after=10s 60s adb shell pm "${action}" "${package}" "${permission}" || status=$?
+  done
+  return "${status}"
+}
+permission_status=0
+{ set_upgrade_permissions grant && set_upgrade_permissions revoke; } > "${upgrade_output}/revoke.txt" 2>&1 || permission_status=$?
+printf '%s\n' "${permission_status}" > "${upgrade_output}/revoke.exit"
 upgrade_status=0
 terminate_app_process || upgrade_status=$?
 install_times > "${upgrade_output}/upgrade-before.txt"
@@ -168,4 +181,8 @@ sleep 2
 timeout --signal=TERM --kill-after=10s 300s adb install -r "${apk}" > "${upgrade_output}/upgrade-install.txt" 2>&1 || upgrade_status=$?
 printf '%s\n' "${upgrade_status}" > "${upgrade_output}/upgrade-install.exit"
 install_times > "${upgrade_output}/upgrade-after.txt"
-run_upgrade_step check upgradeMigrationHasRunInTheFirstProcessAfterTheReinstall
+run_upgrade_step revoked withoutCalendarAndContactsPermissionsTheAppStartsAndKeepsTheOldVersion
+permission_status=0
+set_upgrade_permissions grant > "${upgrade_output}/grant.txt" 2>&1 || permission_status=$?
+printf '%s\n' "${permission_status}" > "${upgrade_output}/grant.exit"
+run_upgrade_step check afterTheGrantTheUpgradeMigrationCompletesInAFreshProcess
