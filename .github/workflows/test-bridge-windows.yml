@@ -39,6 +39,13 @@ on:
       - 'tests/test_windows_installer_static.py'
       - '.github/workflows/test-bridge-windows.yml'
 
+# A newer push to the same pull request cancels its superseded run. Every other
+# event gets a group of its own run, so main pushes and manual dispatches are
+# never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   installer:
     name: Installer and docs checks
