@@ -1,7 +1,7 @@
 
 buildscript {
     ext.versions = [
-        conscrypt: '2.6.3'
+        conscrypt: '2.9.0'
     ]
 }
 

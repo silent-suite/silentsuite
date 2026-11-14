@@ -16,8 +16,8 @@ class ConscryptProviderRuntimeTest {
     fun providerLoadsAndCreatesTlsContext() {
         val version = Conscrypt.version()
         assertEquals(2, version.major())
-        assertEquals(6, version.minor())
-        assertEquals(3, version.patch())
+        assertEquals(9, version.minor())
+        assertEquals(0, version.patch())
 
         val provider = Conscrypt.newProvider()
         val context = SSLContext.getInstance("TLS", provider)
