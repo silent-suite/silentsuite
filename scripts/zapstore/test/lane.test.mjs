@@ -22,7 +22,7 @@ import { generateConfig, loadTemplate, parseZapstoreYaml, resolveChangelog, stag
 import * as nostr from '../lib/nostr.mjs'
 import { eventId, InvalidRelayEvent, loadSchnorr, queryRelay, RelayIncomplete, tagValues, verifyEvent } from '../lib/nostr.mjs'
 import { collectFailures, recordResult } from '../lib/results.mjs'
-import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, legacyChannelAccepted, publicationAction, requireReadbackComplete } from '../lib/reconcile.mjs'
+import { assessRelayState, canonicalTags, compareApk, compareApp, compareRelease, expectedSet, legacyChannelAccepted, publicationAction, readbackMaySettle, requireReadbackComplete, settleReadback } from '../lib/reconcile.mjs'
 import { apkFactsFromEvent, parseEventsJsonl, requireApkIdentity, zspArgs, zspEnv, ZSP } from '../lib/zsp.mjs'
 import { materializeClientKey } from '../lib/bunker-key.mjs'
 import { redact } from '../lib/redact.mjs'
@@ -1166,4 +1166,34 @@ test('cli publish refuses without signer credentials before touching any key mat
   assert.notEqual(noCreds.status, 0)
   const unknown = spawnSync(process.execPath, [join(here, '..', 'cli.mjs'), 'nope'], { env: { PATH: process.env.PATH }, encoding: 'utf8' })
   assert.equal(unknown.status, 2)
+})
+
+test('read-back re-reads only while the relay may still be indexing, bounded, and never past a final outcome', async () => {
+  const sequence = (outcomes) => {
+    const calls = { reads: 0, sleeps: [] }
+    const read = async () => ({ outcome: outcomes[Math.min(calls.reads++, outcomes.length - 1)], detail: 'test' })
+    const sleep = async (ms) => { calls.sleeps.push(ms) }
+    return { read, sleep, calls }
+  }
+  // Indexed after two re-reads: complete-match, three reads, two waits.
+  let s = sequence(['absent', 'partial', 'complete-match'])
+  let result = await settleReadback(s.read, { sleep: s.sleep })
+  assert.equal(result.assessment.outcome, 'complete-match')
+  assert.equal(result.reads, 3)
+  assert.deepEqual(s.calls.sleeps, [10000, 10000])
+  assert.ok(requireReadbackComplete(result.assessment))
+  // Never indexed: stops at the bound and still fails closed.
+  s = sequence(['absent'])
+  result = await settleReadback(s.read, { sleep: s.sleep })
+  assert.equal(result.reads, 6)
+  assert.equal(s.calls.sleeps.length, 5)
+  assert.throws(() => requireReadbackComplete(result.assessment), /read-back after publication is absent/)
+  // Final outcomes are not re-read.
+  for (const outcome of ['complete-match', 'conflict', 'incomplete', 'app-drift', 'superseded', 'legacy-complete']) {
+    s = sequence([outcome, 'complete-match'])
+    result = await settleReadback(s.read, { sleep: s.sleep })
+    assert.equal(result.reads, 1, outcome)
+    assert.equal(result.assessment.outcome, outcome)
+    assert.equal(readbackMaySettle({ outcome }), false, outcome)
+  }
 })
