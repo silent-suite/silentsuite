@@ -106,7 +106,8 @@ test('the web PR build reports to its job summary with read-only access and unch
 
 test('the docs preview reports its URL to the run summary with read-only access', () => {
   const { header, jobs } = split(read('preview-docs.yml'))
-  assert.match(header, /^ {2}push:\n {4}branches-ignore:\n {6}- main\n[\s\S]*^ {6}- fix\/annual-finalized-artifact-20260905\n[\s\S]*^ {6}- fix\/server-request-limits-audit-20261107\n {4}paths:\n/m)
+  assert.match(header, /^ {2}push:\n {4}branches:\n {6}- main\n {4}paths:\n/m)
+  assert.doesNotMatch(header, /branches-ignore|workflow_dispatch/)
   assert.doesNotMatch(header, /pull_request|^permissions:/m)
   assert.match(header, /^concurrency:\n {2}group: preview-docs-\$\{\{ github\.ref \}\}\n {2}cancel-in-progress: true\n/m)
   assert.deepEqual([...jobs.keys()], ['deploy-preview'])
