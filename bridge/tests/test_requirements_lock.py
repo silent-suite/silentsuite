@@ -260,12 +260,14 @@ def test_each_release_lane_gets_exactly_one_pin_per_applicable_requirement():
 
 
 def test_etebase_sdist_is_the_locked_etebase_version_pinned_by_hash():
-    (sdist,) = requirement_lines(ETEBASE_SDIST)
+    text = ETEBASE_SDIST.read_text(encoding="utf-8")
+    lines = [line for line in text.replace("\\\n", " ").splitlines() if line.strip() and not line.startswith("#")]
+    assert len(lines) == 1, lines
+    sdist = Requirement(lines[0].partition("--hash=")[0].strip())
     assert canonicalize_name(sdist.name) == "etebase" and sdist.marker is None
     (specifier,) = sdist.specifier
     assert specifier.operator == "=="
     assert {entry["version"] for entry in parse_lock() if entry["name"] == "etebase"} == {specifier.version}
-    text = ETEBASE_SDIST.read_text(encoding="utf-8")
     assert len(re.findall(r"--hash=sha256:[0-9a-f]{64}", text)) == 1
 
 
