@@ -222,9 +222,15 @@ interface CalendarGridProps {
   displayView?: CalendarGridDisplayView
   onSlotClick?: (event: SlotClickEvent) => void
   onEventClick?: (info: EventClickInfo) => void
+  /** Drag data type accepted from outside the grid (week view only), e.g. a task from the planning panel. */
+  externalDragType?: string
+  /** Called with the start of the 30-minute slot an external item was dropped on. */
+  onExternalDrop?: (start: Date, dataTransfer: DataTransfer) => void
+  /** Length the dropped item will have, for the drop preview. Defaults to one 30-minute slot. */
+  externalDropMinutes?: number
 }
 
-export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }: CalendarGridProps) {
+export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, externalDragType, onExternalDrop, externalDropMinutes = 30 }: CalendarGridProps) {
   const { resolvedTheme } = useTheme()
   const canWrite = useAuthStore((s) => s.canWrite())
   const currentView = useCalendarStore((s) => s.currentView)
@@ -411,6 +417,11 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     newEnd: Date
   } | null>(null)
 
+  // Schedule-X keeps the callbacks it was created with, so a slot click reads the latest handler
+  // through a ref (the planning view changes what a click does while the grid stays mounted).
+  const onSlotClickRef = useRef(onSlotClick)
+  onSlotClickRef.current = onSlotClick
+
   const handleClickDateTime = useCallback(
     (dateTime: Temporal.ZonedDateTime, e?: UIEvent) => {
       // If we just finished a drag (select or move), skip the click handler
@@ -426,9 +437,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         ? { x: mouseEvent.clientX, y: mouseEvent.clientY }
         : { x: window.innerWidth / 2, y: window.innerHeight / 3 }
 
-      onSlotClick?.({ startDate: start, endDate: end, allDay: false, position })
+      onSlotClickRef.current?.({ startDate: start, endDate: end, allDay: false, position })
     },
-    [onSlotClick],
+    [],
   )
 
   const handleClickDate = useCallback(
@@ -1539,6 +1550,80 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
     [completeDragMove],
   )
 
+  // External drop (planning view): the 30-minute slot under the pointer, in the user's timezone.
+  const [externalDropPreview, setExternalDropPreview] = useState<{
+    left: number
+    top: number
+    width: number
+    height: number
+    timeLabel: string
+  } | null>(null)
+
+  const acceptsExternalDrag = useCallback(
+    (e: React.DragEvent) => !!externalDragType && !!onExternalDrop && effectiveView === 'week'
+      && Array.from(e.dataTransfer.types).includes(externalDragType),
+    [externalDragType, onExternalDrop, effectiveView],
+  )
+
+  const getExternalDropSlot = useCallback(
+    (clientX: number, clientY: number, wrapper: HTMLElement) => {
+      const gridEl = wrapper.querySelector('.sx__week-grid, .sx__day-grid-wrapper, .sx__time-grid') as HTMLElement | null
+      const dayInfo = getDayColumnInfo(clientX, wrapper)
+      if (!gridEl || !dayInfo) return null
+      const gridRect = gridEl.getBoundingClientRect()
+      if (clientY < gridRect.top || clientY > gridRect.bottom) return null
+      const slotHour = Math.floor(getTimeFromY(clientY, gridEl) * 2) / 2
+      const hour = Math.max(displayDayStartHour, Math.min(slotHour, displayDayEndHour - 0.5))
+      const start = buildDateFromHour(dayInfo.date, hour)
+      const formatTime = (date: Date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: use12h, timeZone: userTz })
+      const pixelsPerHour = gridEl.scrollHeight / (displayDayEndHour - displayDayStartHour)
+      const wrapperRect = wrapper.getBoundingClientRect()
+      return {
+        start,
+        preview: {
+          left: dayInfo.rect.left - wrapperRect.left,
+          top: (hour - displayDayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top,
+          width: dayInfo.rect.width,
+          // The preview shows the event's real length, kept inside the visible day.
+          height: Math.min(externalDropMinutes / 60, displayDayEndHour - hour) * pixelsPerHour,
+          timeLabel: `${formatTime(start)} \u2013 ${formatTime(new Date(start.getTime() + externalDropMinutes * 60_000))}`,
+        },
+      }
+    },
+    [getDayColumnInfo, getTimeFromY, buildDateFromHour, displayDayStartHour, displayDayEndHour, use12h, userTz, externalDropMinutes],
+  )
+
+  const handleExternalDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!acceptsExternalDrag(e)) return
+      const slot = getExternalDropSlot(e.clientX, e.clientY, e.currentTarget)
+      if (!slot) {
+        setExternalDropPreview(null)
+        return
+      }
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      setExternalDropPreview(slot.preview)
+    },
+    [acceptsExternalDrag, getExternalDropSlot],
+  )
+
+  const handleExternalDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setExternalDropPreview(null)
+  }, [])
+
+  const handleExternalDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      setExternalDropPreview(null)
+      if (!acceptsExternalDrag(e)) return
+      const slot = getExternalDropSlot(e.clientX, e.clientY, e.currentTarget)
+      if (!slot) return
+      e.preventDefault()
+      onExternalDrop?.(slot.start, e.dataTransfer)
+    },
+    [acceptsExternalDrag, getExternalDropSlot, onExternalDrop],
+  )
+
   // Cleanup auto-scroll and timers on unmount
   useEffect(() => {
     return () => {
@@ -1560,6 +1645,9 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        onDragOver={handleExternalDragOver}
+        onDragLeave={handleExternalDragLeave}
+        onDrop={handleExternalDrop}
       >
         {/* Calendar color styles injected via useInsertionEffect above */}
         <ScheduleXCalendar calendarApp={calendar} />
@@ -1594,6 +1682,22 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick }:
                 </span>
               </>
             )}
+          </div>
+        )}
+        {externalDropPreview && (
+          <div
+            data-testid="external-drop-preview"
+            className="pointer-events-none absolute rounded-lg bg-emerald-500/20 border-2 border-emerald-500/60 z-20 px-2 py-0.5"
+            style={{
+              left: externalDropPreview.left,
+              top: externalDropPreview.top,
+              width: externalDropPreview.width,
+              height: externalDropPreview.height,
+            }}
+          >
+            <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 leading-none">
+              {externalDropPreview.timeLabel}
+            </span>
           </div>
         )}
         {/* Drag-to-move ghost */}

@@ -214,6 +214,78 @@ class AndroidTimeUtilsTest {
         assertEquals(1436023840000L, exDates[1].time)
     }
 
+    /** Runs [block] with [zoneId] as the default (device) time zone. */
+    private fun <T> withDefaultZone(zoneId: String, block: () -> T): T {
+        val saved = java.util.TimeZone.getDefault()
+        java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(zoneId))
+        try {
+            return block()
+        } finally {
+            java.util.TimeZone.setDefault(saved)
+        }
+    }
+
+    @Test
+    fun testAndroidStringToRecurrenceSets_NoTzidIsReadInDeviceZone() {
+        // Without a TZID and without a default time zone, local times depend on the device zone.
+        // OpenTasks stores RDATE/EXDATE like this (its time zone is in Tasks.TZ).
+        val inBerlin = withDefaultZone("Europe/Berlin") {
+            AndroidTimeUtils.androidStringToRecurrenceSet("20150103T113030", false) { ExDate(it) }.dates[0].time
+        }
+        val inToronto = withDefaultZone("America/Toronto") {
+            AndroidTimeUtils.androidStringToRecurrenceSet("20150103T113030", false) { ExDate(it) }.dates[0].time
+        }
+        assertEquals(1420281030000L, inBerlin)      // 11:30:30 Berlin [+1]
+        assertEquals(1420302630000L, inToronto)     // 11:30:30 Toronto [-5]
+    }
+
+    @Test
+    fun testAndroidStringToRecurrenceSets_NoTzidReadInDefaultTimeZone() {
+        // the device is in Berlin, the task in Toronto
+        val exDate = withDefaultZone("Europe/Berlin") {
+            AndroidTimeUtils.androidStringToRecurrenceSet("20150103T113030,20150704T113040", false, defaultTimeZone = tzToronto) { ExDate(it) }
+        }
+        assertEquals(tzToronto, exDate.timeZone)
+        val exDates = exDate.dates
+        assertEquals(Value.DATE_TIME, exDates.type)
+        assertEquals(2, exDates.size)
+        assertEquals(1420302630000L, exDates[0].time)
+        assertEquals(1436023840000L, exDates[1].time)
+    }
+
+    @Test
+    fun testAndroidStringToRecurrenceSets_NoTzidUtcTimesIgnoreDefaultTimeZone() {
+        val exDate = withDefaultZone("Europe/Berlin") {
+            AndroidTimeUtils.androidStringToRecurrenceSet("20150101T103010Z,20150702T103020Z", false, defaultTimeZone = tzToronto) { ExDate(it) }
+        }
+        assertEquals(1420108210000L, exDate.dates[0].time)
+        assertEquals(1435833020000L, exDate.dates[1].time)
+    }
+
+    @Test
+    fun testAndroidStringToRecurrenceSets_NoTzidUtcDefaultTimeZone() {
+        val tzUtc = DateUtils.ical4jTimeZone(TimeZones.UTC_ID)!!
+        val exDate = withDefaultZone("Europe/Berlin") {
+            AndroidTimeUtils.androidStringToRecurrenceSet("20150101T103010", false, defaultTimeZone = tzUtc) { ExDate(it) }
+        }
+        assertTrue(exDate.dates.isUtc)
+        assertEquals(1420108210000L, exDate.dates[0].time)
+    }
+
+    @Test
+    fun testOpenTasksRecurrenceRoundTripAcrossDeviceZones() {
+        // written while the device was in Toronto, read after it moved to Berlin
+        val written = withDefaultZone("America/Toronto") {
+            AndroidTimeUtils.recurrenceSetsToOpenTasksString(
+                listOf(RDate(DateList("20150103T113030", Value.DATE_TIME, tzToronto))), tzToronto)
+        }
+        assertEquals("20150103T113030", written)
+        val read = withDefaultZone("Europe/Berlin") {
+            AndroidTimeUtils.androidStringToRecurrenceSet(written, false, defaultTimeZone = tzToronto) { RDate(it) }
+        }
+        assertEquals(1420302630000L, read.dates[0].time)
+    }
+
     @Test
     fun testAndroidStringToRecurrenceSets_Dates() {
         // list of dates

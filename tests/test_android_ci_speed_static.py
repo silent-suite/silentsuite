@@ -344,17 +344,23 @@ def _without_admission(job: dict) -> dict:
 # status-routes. Only the matrix row after API 36 first-run-setup and these four exact lines of the runtime job's
 # final assertion are carried forward; every other byte must still match.
 # The count lines then grew from 233 to 238 for five lost-upload-answer sync cases in the status-routes shard.
+# They then grew from 238 to 241 for two Notes network cases and one Notes notice case in status-routes,
+# then to 242 for one read-only calendar restore case in status-routes (#932).
+# The size check then became a floor (242 and each shard's size as minimums), so a ledger can grow with its
+# tests while android/scripts/run-focused-runtime-tests.sh keeps the exact counts (#48 device import).
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':130,'29:sibling-routes':48,'35:all':238,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':130}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':134,'29:sibling-routes':48,'35:all':242,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':134}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "if len(canonical) != 238 or len(expected) != expected_sizes[key]:\n",
+        "# Floors, not exact sizes: new runtime tests can land in the same PR as their ledger entries,\n"
+        "# while a shrinking ledger still fails here. The runner script checks exact counts.\n"
+        "if len(canonical) < 242 or len(expected) < expected_sizes[key]:\n",
     ),
     (
         "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
@@ -663,7 +669,8 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
         ("'36:account-dashboard':33", "'36:account-dashboard':34"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) != 238 or", "if len(canonical) < 238 or"),
+        ("if len(canonical) < 242 or", "if len(canonical) < 241 or"),
+        ("or len(expected) < expected_sizes[key]", "or len(expected) < 0"),
         ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
     ):
         mutated = copy.deepcopy(current)

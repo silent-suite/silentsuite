@@ -19,7 +19,6 @@ editables
 # compiled-from project: msgpack>=1.0.0
 # compiled-from project: vobject>=0.9.6
 # compiled-from project: appdirs>=1.4.3
-# compiled-from project: requests>=2.28.0
 # compiled-from extra tray: pystray>=0.19.0
 # compiled-from extra tray: Pillow>=9.0.0
 # compiled-from extra dev: pytest>=7.0
