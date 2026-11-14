@@ -55,6 +55,15 @@ ANDROID_CHANGED = "needs.changes.outputs.android == 'true'"
 PRODUCER_NEEDS = ["signing-policy", CHANGES_JOB]
 # Every job that runs Gradle besides build-pr restores the Gradle cache build-pr saves, once, before its
 # first Gradle or emulator step, and never saves it.
+# Emulator jobs do not run on pushes to main; build-pr and the JVM jobs still do.
+NOT_PUSH = "github.event_name != 'push'"
+EMULATOR_JOBS = (
+    "conscrypt-runtime",
+    "timezone-rules-runtime",
+    "account-recreation-runtime",
+    "color-parity-evidence",
+    "registry-process-boundary",
+)
 GRADLE_RESTORE = {
     "name": "Restore Gradle cache",
     "uses": "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
@@ -328,8 +337,8 @@ def ci_speed_violations(workflow: dict) -> list[str]:
 
 def _without_android_change_gate(job: dict) -> dict:
     """A candidate job minus only the changes-job gate (the `changes` need and the
-    android condition) and the restore-only Gradle cache step. Everything else must
-    still match its predecessor."""
+    android condition), the main-push skip of emulator jobs and the restore-only
+    Gradle cache step. Everything else must still match its predecessor."""
     job = copy.deepcopy(job)
     if "steps" in job:
         job["steps"] = [step for step in job["steps"] if step != GRADLE_RESTORE]
@@ -342,8 +351,11 @@ def _without_android_change_gate(job: dict) -> dict:
     condition = job.get("if")
     if condition == ANDROID_CHANGED:
         job.pop("if")
-    elif isinstance(condition, str) and condition.startswith(f"{ANDROID_CHANGED} && (") and condition.endswith(")"):
-        job["if"] = condition[len(ANDROID_CHANGED) + 5 : -1]
+        return job
+    for prefix in (f"{ANDROID_CHANGED} && {NOT_PUSH} && (", f"{ANDROID_CHANGED} && (", f"{NOT_PUSH} && ("):
+        if isinstance(condition, str) and condition.startswith(prefix) and condition.endswith(")"):
+            job["if"] = condition[len(prefix) : -1]
+            break
     return job
 
 
@@ -975,7 +987,7 @@ def test_only_android_build_inputs_start_the_build_jobs(candidate):
         if CHANGES_JOB in needs:
             condition = job.get("if", "")
             assert condition == ANDROID_CHANGED or condition.startswith(
-                (f"{ANDROID_CHANGED} && (", f"${{{{ !cancelled() && {ANDROID_CHANGED} && (")
+                (f"{ANDROID_CHANGED} && ", f"${{{{ !cancelled() && {ANDROID_CHANGED} && (")
             ), name
         else:
             # Skips with a gated producer: no status function overrides the skip.
@@ -999,3 +1011,21 @@ def test_gradle_jobs_restore_but_never_save_the_gradle_cache(candidate):
             assert restores == [], name
         if name != "build-pr":
             assert not any(_uses(step).startswith(("actions/cache@", "actions/cache/save@")) for step in steps), name
+
+
+def test_emulator_jobs_skip_main_pushes_and_build_pr_does_not(candidate):
+    jobs = candidate["jobs"]
+    for name, job in jobs.items():
+        condition = str(job.get("if", ""))
+        if name in EMULATOR_JOBS:
+            assert f"{NOT_PUSH} && (" in condition and condition.endswith(f"({EVENT_CONDITION})"), name
+        else:
+            assert "github.event_name != 'push'" not in condition, name
+    assert any(
+        _uses(step).startswith("ReactiveCircus/android-emulator-runner@")
+        for name in EMULATOR_JOBS
+        for step in jobs[name]["steps"]
+    )
+    for name, job in jobs.items():
+        if name not in EMULATOR_JOBS:
+            assert not any(_uses(step).startswith("ReactiveCircus/android-emulator-runner@") for step in job.get("steps") or []), name
