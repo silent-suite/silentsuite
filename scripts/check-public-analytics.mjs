@@ -217,13 +217,21 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error
 }
-// Browser error reports and public-page speed ratings stay dormant until a later,
-// reviewed activation change: no workflow or image build may switch them on here.
+// Public-page speed ratings stay dormant until a later, reviewed activation change,
+// and relay settings (GLITCHTIP_*) belong to the server, never to a workflow or image.
+// Browser error reports are switched on only by the standalone production Web build,
+// from its protected secret, through an empty-by-default Dockerfile build argument.
 const dormantTelemetrySettings = /NEXT_PUBLIC_WEB_VITALS_ENABLED\s*[=:]\s*["']?true|WEB_VITALS_FORWARD|GLITCHTIP_|NEXT_PUBLIC_SENTRY_DSN/
+const allowedErrorReportSwitch = {
+  'deploy-web-standalone.yml': /^ {12}NEXT_PUBLIC_SENTRY_DSN=\$\{\{ secrets\.NEXT_PUBLIC_SENTRY_DSN \}\}$/gm,
+  'Dockerfile.web': /^ARG NEXT_PUBLIC_SENTRY_DSN=$/gm,
+}
 const workflowDirectory = path.resolve('.github/workflows')
 for (const file of [...(await readdir(workflowDirectory)).map((name) => path.join(workflowDirectory, name)), path.resolve('Dockerfile.web')]) {
   if (!/\.ya?ml$|Dockerfile\.web$/.test(file)) continue
-  if (dormantTelemetrySettings.test(await readFile(file, 'utf8'))) {
+  const allowed = allowedErrorReportSwitch[path.basename(file)]
+  const source = await readFile(file, 'utf8')
+  if (dormantTelemetrySettings.test(allowed ? source.replace(allowed, '') : source)) {
     violations.push(`${path.relative(process.cwd(), file)}: enables dormant browser telemetry (error reports or speed ratings)`)
   }
 }

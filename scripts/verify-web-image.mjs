@@ -97,6 +97,12 @@ export function standaloneIdentityFromEnvironment(env) {
 }
 
 // Validate the complete argument string actually supplied to the image build, in memory.
+// The error-report switch for hosted production: a GlitchTip DSN on errors.silentsuite.io.
+// The browser only uses it to turn the reporter on; reports go to the same-origin relay.
+export function isProductionErrorReportDsn(value) {
+  return typeof value === 'string' && /^https:\/\/[A-Za-z0-9]{16,64}@errors\.silentsuite\.io\/[0-9]{1,12}$/.test(value)
+}
+
 export function verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha, publishableKey } = {}) {
   try {
     assert.ok(typeof testedSha === 'string' && /^[a-f0-9]{40}$/.test(testedSha) && testedSha.length === 40)
@@ -107,6 +113,7 @@ export function verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha, pu
       NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: publishableKey,
       NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
       NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true',
+      NEXT_PUBLIC_SENTRY_DSN: undefined,
       NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
       NEXT_PUBLIC_SELF_HOSTED: 'false',
       NEXT_PUBLIC_OWNER_REGISTRATION: 'false',
@@ -119,10 +126,13 @@ export function verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha, pu
       const matches = actual.filter(arg => arg.name === name)
       assert.equal(matches.length, 1)
       // A boolean assertion cannot format either protected value on a mismatch.
-      assert.ok(matches[0].value === value)
+      if (name === 'NEXT_PUBLIC_SENTRY_DSN') assert.ok(isProductionErrorReportDsn(matches[0].value))
+      else assert.ok(matches[0].value === value)
       assert.equal(matches[0].stage, name === 'VCS_REF' ? 'runner' : 'builder')
     }
     const defaults = effectiveBuildArgs(dockerfile, '')
+    const dsnDefault = defaults.filter(arg => arg.name === 'NEXT_PUBLIC_SENTRY_DSN')
+    assert.ok(dsnDefault.length === 1 && dsnDefault[0].value === '' && dsnDefault[0].stage === 'builder')
     for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION']) {
       const matches = defaults.filter(arg => arg.name === name)
       assert.equal(matches.length, 1)
@@ -135,7 +145,7 @@ export function verifyStandaloneBuildArgs(dockerfile, overrides, { testedSha, pu
 }
 
 export function serializeImageReport(report, { standalone = false } = {}) {
-  const buildArgs = report.buildArgs.map(({ stage, name, value }) => name === 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY'
+  const buildArgs = report.buildArgs.map(({ stage, name, value }) => name === 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY' || name === 'NEXT_PUBLIC_SENTRY_DSN'
     ? { stage, name, binding: 'value omitted' } : { stage, name, value })
   // Production publishes only verification status and admitted identity/configuration metadata.
   const safeReport = standalone ? {

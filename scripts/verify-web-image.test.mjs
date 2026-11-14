@@ -155,11 +155,12 @@ test('characterization: actual hosted build arguments validate in memory and rep
   const { effectiveBuildArgs, verifyStandaloneBuildArgs, serializeImageReport } = await import('./verify-web-image.mjs')
   const dockerfile = readFileSync(new URL('../Dockerfile.web', import.meta.url), 'utf8')
   const sha = 'a'.repeat(40), canary = 'pk_live_SYNTHETIC_PROTECTED_BUILD_KEY_CANARY'
+  const dsn = 'https://SYNTHETICDSNCANARY0001@errors.silentsuite.io/1'
   const actual = {
     NEXT_PUBLIC_BILLING_API_URL: 'https://api.silentsuite.io',
     NEXT_PUBLIC_ETEBASE_SERVER_URL: 'https://server.silentsuite.io',
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: canary, NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
-    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
+    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_SENTRY_DSN: dsn, NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
     NEXT_PUBLIC_SELF_HOSTED: 'false', NEXT_PUBLIC_OWNER_REGISTRATION: 'false', VCS_REF: sha,
   }
   const overrides = Object.entries(actual).map(([name, value]) => `${name}=${value}`).join('\n')
@@ -169,6 +170,7 @@ test('characterization: actual hosted build arguments validate in memory and rep
     runnerImageEnv: [`PROTECTED=${canary}`], unreviewedMetadata: canary }
   const serialized = serializeImageReport(report, { standalone: true })
   assert.ok(!serialized.includes(canary))
+  assert.ok(!serialized.includes(dsn))
   assert.ok(!serialized.includes(overrides))
   const safe = JSON.parse(serialized)
   assert.equal(safe.verification, 'passed')
@@ -179,6 +181,10 @@ test('characterization: actual hosted build arguments validate in memory and rep
   assert.equal(safe.unreviewedMetadata, undefined)
   assert.deepEqual(safe.buildArgs.find(arg => arg.name === 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY'),
     { stage: 'builder', name: 'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY', binding: 'value omitted' })
+  assert.deepEqual(safe.buildArgs.find(arg => arg.name === 'NEXT_PUBLIC_SENTRY_DSN'),
+    { stage: 'builder', name: 'NEXT_PUBLIC_SENTRY_DSN', binding: 'value omitted' })
+  // Without the switch the Dockerfile default is empty, so other builds carry no error reporter.
+  assert.equal(effectiveBuildArgs(dockerfile, '').find(arg => arg.name === 'NEXT_PUBLIC_SENTRY_DSN').value, '')
   for (const name of ['NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'NEXT_PUBLIC_SELF_HOSTED', 'NEXT_PUBLIC_OWNER_REGISTRATION']) {
     assert.equal(safe.buildArgs.find(arg => arg.name === name).value, 'false')
   }
@@ -193,11 +199,12 @@ test('characterization: mismatched production argument vectors and key types fai
   const { verifyStandaloneBuildArgs } = await import('./verify-web-image.mjs')
   const dockerfile = readFileSync(new URL('../Dockerfile.web', import.meta.url), 'utf8')
   const sha = 'a'.repeat(40), canary = 'pk_live_SYNTHETIC_PROTECTED_BUILD_KEY_CANARY', otherKey = 'pk_live_OTHER_PROTECTED_CANARY'
+  const dsn = 'https://SYNTHETICDSNCANARY0001@errors.silentsuite.io/1'
   const actual = {
     NEXT_PUBLIC_BILLING_API_URL: 'https://api.silentsuite.io',
     NEXT_PUBLIC_ETEBASE_SERVER_URL: 'https://server.silentsuite.io',
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: canary, NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED: 'true',
-    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
+    NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED: 'true', NEXT_PUBLIC_SENTRY_DSN: dsn, NEXT_PUBLIC_LOCAL_CACHE_ENABLED: 'false',
     NEXT_PUBLIC_SELF_HOSTED: 'false', NEXT_PUBLIC_OWNER_REGISTRATION: 'false', VCS_REF: sha,
   }
   const encode = values => Object.entries(values).map(([name, value]) => `${name}=${value}`).join('\n')
@@ -216,6 +223,11 @@ test('characterization: mismatched production argument vectors and key types fai
   }
   cases.push([dockerfile, overrides + '\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=' + otherKey, proof])
   cases.push([dockerfile, overrides + '\nUNDECLARED=' + canary, proof])
+  for (const otherDsn of ['', 'https://SYNTHETICDSNCANARY0001@errors.example.com/1', 'http://SYNTHETICDSNCANARY0001@errors.silentsuite.io/1',
+    'https://SYNTHETICDSNCANARY0001:secret@errors.silentsuite.io/1', 'https://SYNTHETICDSNCANARY0001@errors.silentsuite.io/1?x=1', 'https://short@errors.silentsuite.io/1']) {
+    cases.push([dockerfile, encode({ ...actual, NEXT_PUBLIC_SENTRY_DSN: otherDsn }), proof])
+  }
+  cases.push([dockerfile.replace('ARG NEXT_PUBLIC_SENTRY_DSN=\n', `ARG NEXT_PUBLIC_SENTRY_DSN=${dsn}\n`), overrides, proof])
   cases.push([dockerfile, overrides + '\n' + canary, proof])
   cases.push([dockerfile, overrides, { ...proof, testedSha: sha + '\n' }])
   cases.push([dockerfile, null, proof])
@@ -226,6 +238,7 @@ test('characterization: mismatched production argument vectors and key types fai
       for (const rendered of [String(error), error.stack, JSON.stringify(error)]) {
         assert.ok(!rendered.includes(canary))
         assert.ok(!rendered.includes(otherKey))
+        assert.ok(!rendered.includes(dsn))
         assert.ok(!rendered.includes(overrides))
       }
       return true
