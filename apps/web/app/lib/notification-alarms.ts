@@ -6,15 +6,36 @@ const ALARM_STORE = 'alarms'
 /**
  * Drop every reminder the service worker holds. Used on logout.
  *
- * The worker is told first, so it clears after any SCHEDULE_ALARMS message
- * still queued behind it. The store is also emptied from the page, which covers
- * a page without a controlling worker. The page empties the store instead of
- * deleting the database because the worker keeps its connections open, which
- * would leave deleteDatabase blocked.
+ * The controlling worker is told first, so it clears after any SCHEDULE_ALARMS
+ * message still queued behind it. A page can be uncontrolled (first load, hard
+ * reload) while a registered worker is running with a reminder check or a
+ * snooze pending, so every worker of the origin's registrations is told too,
+ * each once. The store is also emptied from the page, which covers a worker
+ * that is not running. The page empties the store instead of deleting the
+ * database because the worker keeps its connections open, which would leave
+ * deleteDatabase blocked.
  */
 export async function clearScheduledAlarms(): Promise<void> {
+  const container = typeof navigator === 'undefined' ? undefined : navigator.serviceWorker
+  const notified = new Set<ServiceWorker>()
+  const notify = (worker: ServiceWorker | null | undefined) => {
+    if (!worker || notified.has(worker)) return
+    notified.add(worker)
+    try {
+      worker.postMessage({ type: 'CLEAR_ALARMS' })
+    } catch {
+      // The direct clear below still runs.
+    }
+  }
+  notify(container?.controller)
   try {
-    navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_ALARMS' })
+    // getRegistrations resolves with [] when nothing is registered, unlike `ready`.
+    const registrations = typeof container?.getRegistrations === 'function' ? await container.getRegistrations() : []
+    for (const registration of registrations) {
+      notify(registration.active)
+      notify(registration.waiting)
+      notify(registration.installing)
+    }
   } catch {
     // The direct clear below still runs.
   }

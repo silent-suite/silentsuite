@@ -154,7 +154,12 @@ describe('logout clears service-worker reminders', () => {
   it('tells the controlling service worker to drop its reminders', async () => {
     const worker = loadWorker()
     const postMessage = vi.fn((data: unknown) => worker.listeners.message!({ data }))
-    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: { controller: { postMessage } } })
+    const controller = { postMessage }
+    // The controller is also the registration's active worker; it is told once.
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: {
+      controller,
+      getRegistrations: async () => [{ active: controller, waiting: null, installing: null }],
+    } })
     await scheduleOne(worker, {
       id: 'evt-4', title: 'Synthetic: lunch', time: '12:30',
       triggerAt: Date.now() + 60 * 60 * 1000, triggerLabel: '-PT15M',
@@ -162,8 +167,45 @@ describe('logout clears service-worker reminders', () => {
 
     await useAuthStore.getState().logout()
 
+    expect(postMessage).toHaveBeenCalledTimes(1)
     expect(postMessage).toHaveBeenCalledWith({ type: 'CLEAR_ALARMS' })
     expect(await readAlarmDb()).toEqual([])
+  })
+
+  it('tells a registered worker to drop a pending snooze when the page is not controlled', async () => {
+    const timers = manualTimers()
+    const worker = loadWorker(timers)
+    const postMessage = vi.fn((data: unknown) => worker.listeners.message!({ data }))
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: {
+      controller: null,
+      getRegistrations: async () => [{ active: { postMessage }, waiting: null, installing: null }],
+    } })
+    let snoozeDone: Promise<unknown> = Promise.resolve()
+    worker.listeners.notificationclick!({
+      action: 'snooze',
+      notification: { title: 'Synthetic: snoozed', body: 'Synthetic: snoozed · 07:00', tag: 'evt-9', data: {}, close: () => {} },
+      waitUntil: (p: Promise<unknown>) => { snoozeDone = p },
+    })
+
+    await useAuthStore.getState().logout()
+    await timers.runAll()
+    await snoozeDone
+
+    expect(postMessage).toHaveBeenCalledWith({ type: 'CLEAR_ALARMS' })
+    expect(worker.showNotification).not.toHaveBeenCalled()
+  })
+
+  it('logout does not wait for a service worker when none is registered', async () => {
+    const ready = new Promise<never>(() => {})
+    Object.defineProperty(navigator, 'serviceWorker', { configurable: true, value: {
+      controller: null,
+      ready,
+      getRegistrations: async () => [],
+    } })
+
+    await useAuthStore.getState().logout()
+
+    expect(useAuthStore.getState().user).toBeNull()
   })
 
   it('worker drops all reminders on CLEAR_ALARMS', async () => {
