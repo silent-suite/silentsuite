@@ -1972,8 +1972,9 @@ class PendingNotesStoreTest {
     @Test fun `a sign-out clear returns only once the store directory is shown gone`() {
         store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
         // The deletion works, but no directory above the store can be listed, so it cannot be shown gone.
-        PendingNotesStore.listFilesForTesting = { null }
+        PendingNotesStore.listFilesForTesting = { d -> if (d.path == store.dir.path) d.listFiles() else null }
         assertThrows(java.io.IOException::class.java) { store.clearAll() }
+        assertFalse("the deletion went through", dir.exists())
         // A listing above that still shows the directory is no proof either.
         val above = store.dir.parentFile!!
         PendingNotesStore.listFilesForTesting = { d -> if (d.path == above.path) arrayOf(store.dir) else d.listFiles() }
@@ -3367,9 +3368,9 @@ class PendingNotesStoreTest {
         steps.clear()
         s.clearAll()
         assertFalse(s.dir.exists())
-        assertEquals("the removal of the directory is synced last", "sync notes-pending", steps.last())
-        assertTrue("each file's removal is synced before the directory goes: $steps",
-            steps.indexOf("sync ${s.dir.name}") in 0 until steps.indexOf("sync notes-pending"))
+        // One sync of the store's directory for each committed file (the note, the notebook copy, the counter), then
+        // the removal of the directory.
+        assertEquals(List(3) { "sync ${s.dir.name}" } + "sync notes-pending", steps)
         assertTrue(s.clearedInFull())
     }
 
@@ -3780,7 +3781,9 @@ class PendingNotesStoreTest {
         assertNull(permitsOf(s).acknowledgement(s.dir.name))
         assertEquals(DiscardOutcome.Acknowledged, s.discardStore(s.unsynced()))
         // A clear withdraws it before anything goes, also when the store cannot be listed and so nothing goes.
+        val before = filesOf(s.dir)
         assertThrows(java.io.IOException::class.java) { s.clearAll() }
+        assertEquals("nothing was deleted", before, filesOf(s.dir))
         assertFalse("a clear", s.acknowledged())
         assertNull(permitsOf(s).acknowledgement(s.dir.name))
         PendingNotesStore.listFilesForTesting = null
