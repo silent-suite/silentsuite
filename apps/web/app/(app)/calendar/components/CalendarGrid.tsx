@@ -1585,7 +1585,7 @@ export function CalendarGrid({ events, displayView, onSlotClick, onEventClick, e
           top: (hour - displayDayStartHour) * pixelsPerHour - gridEl.scrollTop + gridRect.top - wrapperRect.top,
           width: dayInfo.rect.width,
           // The preview shows the event's real length, kept inside the visible day.
-          height: Math.max(pixelsPerHour / 6, Math.min(externalDropMinutes / 60, displayDayEndHour - hour) * pixelsPerHour),
+          height: Math.min(externalDropMinutes / 60, displayDayEndHour - hour) * pixelsPerHour,
           timeLabel: `${formatTime(start)} \u2013 ${formatTime(new Date(start.getTime() + externalDropMinutes * 60_000))}`,
         },
       }

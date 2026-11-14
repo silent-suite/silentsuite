@@ -282,7 +282,7 @@ function PlanningDurationSetting({ disabled, save, fingerprint }: {
               inputMode="numeric"
               min={PLANNING_DURATION_MIN}
               max={PLANNING_DURATION_MAX}
-              step={5}
+              step={1}
               value={customText ?? String(duration)}
               disabled={disabled}
               onChange={(e) => saveCustom(e.target.value)}

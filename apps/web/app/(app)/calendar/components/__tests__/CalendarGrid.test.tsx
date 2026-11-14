@@ -569,6 +569,12 @@ describe('CalendarGrid external drop (planning view)', () => {
     expect(preview.style.height).toBe('100px')
   })
 
+  it('does not stretch a short event length in the preview', () => {
+    const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop: vi.fn(), externalDropMinutes: 6 })
+    drag('dragover', wrapper, 280, transfer(['application/x-test-task']))
+    expect(screen.getByTestId('external-drop-preview').style.height).toBe('10px')
+  })
+
   it('clamps a drop at the bottom edge to the last slot of the day', () => {
     const onExternalDrop = vi.fn()
     const { wrapper } = dropHarness({ externalDragType: 'application/x-test-task', onExternalDrop })
