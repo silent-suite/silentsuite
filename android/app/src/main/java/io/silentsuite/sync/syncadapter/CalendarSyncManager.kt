@@ -76,29 +76,28 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
     override fun discardsLocalChanges(): Boolean = birthdaysActive || super.discardsLocalChanges()
 
     /**
-     * For the active Birthdays calendar, reapplies the cached server event (already downloaded by
-     * an earlier sync) over a discarded local change, keeping its file name, so the provider shows
-     * the server's content again before the dirty flag is cleared. Other calendars keep the default.
+     * For a calendar whose local changes are discarded (read-only, or the active Birthdays
+     * calendar), reapplies the cached server event (already downloaded by an earlier sync) over a
+     * discarded local change, keeping its file name, so the provider shows the server's content
+     * again before the dirty flag is cleared.
      */
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
     override fun restoreLocalFromRemote(local: LocalEvent): String? {
-        if (!birthdaysActive)
-            return super.restoreLocalFromRemote(local)
         // The Etebase cache is keyed by the item/file UID, not the iCalendar UID.
         val itemUid = local.fileName
-            ?: throw CalendarStorageException("Cannot restore a Birthdays event without its cached item UID")
+            ?: throw CalendarStorageException("Cannot restore an event without its cached item UID")
 
         val cached = synchronized(etebaseLocalCache) {
             etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, itemUid)
         }
         if (cached == null || cached.item.isDeleted)
-            throw CalendarStorageException("The server copy of a Birthdays event is unavailable")
+            throw CalendarStorageException("The server copy of a read-only event is unavailable")
 
         val remote = Event.eventsFromReader(StringReader(cached.content))
         if (remote.isEmpty())
-            throw CalendarStorageException("The server copy of a Birthdays event is invalid")
+            throw CalendarStorageException("The server copy of a read-only event is invalid")
 
-        Logger.log.info("Reapplying the server's Birthdays event over a discarded local change")
+        Logger.log.info("Reapplying the server's event over a discarded local change")
         local.eTag = cached.item.etag
         local.update(remote[0])
         return cached.item.etag
