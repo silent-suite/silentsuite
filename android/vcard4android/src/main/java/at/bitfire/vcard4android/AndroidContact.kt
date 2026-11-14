@@ -29,7 +29,6 @@ import androidx.annotation.CallSuper
 import ezvcard.parameter.*
 import ezvcard.property.*
 import ezvcard.util.PartialDate
-import org.apache.commons.io.IOUtils
 import org.apache.commons.lang3.StringUtils
 import org.apache.commons.lang3.builder.ToStringBuilder
 import org.apache.commons.text.WordUtils
@@ -298,7 +297,7 @@ open class AndroidContact(
                     RawContacts.DisplayPhoto.CONTENT_DIRECTORY)
             try {
                 addressBook.requireProvider().openAssetFile(photoUri, "r")?.let { afd ->
-                    afd.createInputStream().use { contact.photo = IOUtils.toByteArray(it) }
+                    afd.createInputStream().use { contact.photo = it.readBytes() }
                 }
             } catch(e: IOException) {
                 Constants.log.log(Level.WARNING, "Couldn't read local contact photo file", e)
