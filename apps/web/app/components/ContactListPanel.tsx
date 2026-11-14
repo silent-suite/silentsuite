@@ -1,9 +1,12 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useMemo, useRef } from 'react'
 import { Plus } from 'lucide-react'
+import { useTranslations } from 'next-intl'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
+import { useContactStore } from '@/app/stores/use-contact-store'
+import { useDomainInitializing } from '@/app/hooks/use-domain-initializing'
 import { CollectionListItem } from '@/app/components/CollectionListItem'
 
 export function ContactListPanel() {
@@ -14,6 +17,18 @@ export function ContactListPanel() {
   const [isAdding, setIsAdding] = useState(false)
   const [newName, setNewName] = useState('')
   const isCreatingRef = useRef(false)
+  const t = useTranslations('Collections')
+  const contacts = useContactStore((s) => s.contacts)
+  // Counts stay hidden until contacts are known, so a loading account never shows 0.
+  const countsUnknown = useDomainInitializing('contacts') && contacts.length === 0
+  const countsByList = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const contact of contacts) {
+      const listId = contact.listId ?? 'default'
+      counts.set(listId, (counts.get(listId) ?? 0) + 1)
+    }
+    return counts
+  }, [contacts])
 
   const handleAdd = useCallback(async () => {
     if (isCreatingRef.current) return
@@ -75,6 +90,8 @@ export function ContactListPanel() {
             itemLabel="address book"
             defaultLabel="Default address book"
             deleteLabel="Delete address book"
+            count={countsUnknown ? undefined : countsByList.get(list.id) ?? 0}
+            countLabel={t('contactCount', { count: countsByList.get(list.id) ?? 0 })}
             onToggleVisibility={() => toggleVisibility(list.id)}
             onRename={(name) => handleRename(list.id, name)}
             onSetDefault={() => handleSetDefault(list.id)}

@@ -1301,6 +1301,11 @@ export default function ContactsPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-[rgb(var(--foreground))]">Contacts</h2>
+          {!isLoading && (
+            <span className="text-sm tabular-nums text-[rgb(var(--muted))]" data-testid="contact-total">
+              {t('contactCount', { count: contacts.length })}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button

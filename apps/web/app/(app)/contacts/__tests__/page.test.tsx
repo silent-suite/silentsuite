@@ -90,6 +90,8 @@ describe('ContactsPage mobile reachability', () => {
     const hasSkeleton = () => document.querySelector('.skeleton-shimmer') !== null
     const view = renderWithIntl(<ContactsPage />)
     expect(hasSkeleton()).toBe(true)
+    // No total while contacts are still unknown, so a loading account never reads "0 contacts".
+    expect(screen.queryByTestId('contact-total')).not.toBeInTheDocument()
 
     storeMock.contactListState.lists = [{ id: 'book', name: 'Book', color: '#fff', visible: true, accessLevel: 2 }]
     storeMock.contactState.contacts = [{ id: 'c', uid: 'c', displayName: 'Cached', name: { prefix: '', given: 'Cached', family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId: 'book', created_at: new Date(), updated_at: new Date() }]
@@ -116,6 +118,21 @@ describe('ContactsPage mobile reachability', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Favorites' }))
     expect(screen.getByText('Ada')).toBeInTheDocument()
     expect(screen.queryByText('Bob')).not.toBeInTheDocument()
+  })
+
+  it('shows the account total, including contacts in hidden address books', () => {
+    const contact = (id: string, listId: string): Contact => ({ id, uid: id, displayName: `Person ${id}`, name: { prefix: '', given: id, family: '', suffix: '' }, phones: [], emails: [], addresses: [], organization: '', title: '', notes: '', birthday: null, photoUrl: null, listId, created_at: new Date(), updated_at: new Date() })
+    storeMock.contactListState.lists = [
+      { id: 'work', name: 'Work', color: '#fff', visible: true, accessLevel: 2 },
+      { id: 'home', name: 'Home', color: '#000', visible: false, accessLevel: 2 },
+    ]
+    storeMock.contactState.contacts = [contact('1', 'work'), contact('2', 'work'), contact('3', 'home')]
+    const view = renderWithIntl(<ContactsPage />)
+    expect(screen.getByTestId('contact-total')).toHaveTextContent('3 contacts')
+
+    storeMock.contactState.contacts = [contact('1', 'work')]
+    view.rerender(<ContactsPage />)
+    expect(screen.getByTestId('contact-total')).toHaveTextContent('1 contact')
   })
 
   it('preserves imported custom and multiple types when editing a value', () => {
