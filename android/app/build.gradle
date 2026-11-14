@@ -205,7 +205,7 @@ dependencies {
     // Requery ORM removed — Etebase uses EtebaseLocalCache for data persistence
     implementation 'com.google.code.findbugs:jsr305:3.0.2'
 
-    def okhttp3Version = "4.8.1"
+    def okhttp3Version = "4.12.0"
     implementation "com.squareup.okhttp3:okhttp:$okhttp3Version"
     implementation "com.squareup.okhttp3:logging-interceptor:$okhttp3Version"
 
