@@ -30,6 +30,10 @@ ARG NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io
 ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51TAx8aPZr2w1sOdtvpdnjDy7I4P6zKxthjFpbdjwyxQA5HJaOCyIKA6Zg4nGG0ffjqnvtD9MdBut281pIqcyaBtt00WOqXFXWL
 ARG NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=false
 ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
+# Browser error reports (hosted production only). Empty by default, so every build
+# that is not given it ships without the error reporter. Build stage only: the
+# value is read by next.config.js at build time and is not kept in the runtime image.
+ARG NEXT_PUBLIC_SENTRY_DSN=
 # Durable encrypted local caching. Default-off: every build that does not pass
 # this argument explicitly, production included, ships with the flag disabled.
 ARG NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false
