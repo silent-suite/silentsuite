@@ -219,6 +219,16 @@ jobs:
               exit 1
               ;;
           esac
+          # Load the native etebase module inside the frozen binary (offline,
+          # throwaway data directory), and check the bundled extension is the
+          # one this environment installed and the SDK continuity lanes test.
+          OUT="$(SILENTSUITE_DATA_DIR="$(mktemp -d)" "$BINARY" --list-accounts)"
+          echo "$OUT"
+          if [[ "$OUT" != *"No accounts configured."* ]]; then
+            echo "ERROR: frozen binary could not list accounts (etebase did not load)" >&2
+            exit 1
+          fi
+          python scripts/check_frozen_etebase.py "$BINARY"
           echo "Smoke test passed."
 
       # -----------------------------------------------------------------------
@@ -315,6 +325,13 @@ jobs:
                 exit 1
                 ;;
             esac
+            OUT="$(SILENTSUITE_DATA_DIR="$(mktemp -d)" dist/silentsuite-bridge --list-accounts)"
+            echo "$OUT"
+            if ! printf '%s' "$OUT" | grep -F "No accounts configured." >/dev/null; then
+              echo "ERROR: frozen binary could not list accounts (etebase did not load)" >&2
+              exit 1
+            fi
+            python scripts/check_frozen_etebase.py dist/silentsuite-bridge
             echo "=== Rename + checksum (inside container to avoid permission issues) ==="
             mv dist/silentsuite-bridge dist/${{ matrix.asset-name }}
             (cd dist && sha256sum "${{ matrix.asset-name }}" > "${{ matrix.asset-name }}.sha256")
