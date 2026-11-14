@@ -250,7 +250,14 @@ describe('MiniCalendar day and week DURATION occurrences across DST (WEB-03 foll
     try {
       render(<MiniCalendar />)
 
-      expect(dotsFor(hostDayLabel(new Date('2026-10-26T00:29:59Z')))[0]).toHaveStyle({ backgroundColor: '#10b981' })
+      // The first cell of the Monday-first November 2026 grid is Monday 26 October, host-local.
+      // The occurrence reaches into it only where host midnight is before 26 Oct 00:30Z (UTC and
+      // zones east of it); further west it ends the day before and the cell has no dot.
+      const firstCell = new Date(2026, 9, 26)
+      const occurrenceEnd = new Date('2026-10-26T00:30:00Z')
+      const dots = dotsFor(hostDayLabel(firstCell))
+      if (occurrenceEnd > firstCell) expect(dots[0]).toHaveStyle({ backgroundColor: '#10b981' })
+      else expect(dots).toHaveLength(0)
     } finally {
       usePreferencesStore.setState({ firstDayOfWeek })
     }
