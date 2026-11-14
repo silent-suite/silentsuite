@@ -114,6 +114,9 @@ self.addEventListener('message', (event) => {
     const { alarms } = event.data
     // alarms: Array<{ id, title, time, triggerAt, triggerLabel }>
     scheduleAlarms(alarms)
+  } else if (event.data && event.data.type === 'CLEAR_ALARMS') {
+    // Sent on logout: drop every stored reminder.
+    scheduleAlarms([])
   }
 })
 
