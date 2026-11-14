@@ -229,10 +229,10 @@ abstract class AndroidTask(
         }
 
         values.getAsString(Tasks.RDATE)?.let {
-            task.rDates += AndroidTimeUtils.androidStringToRecurrenceSet(it, allDay) { dates -> RDate(dates) }
+            task.rDates += AndroidTimeUtils.androidStringToRecurrenceSet(it, allDay, defaultTimeZone = tz) { dates -> RDate(dates) }
         }
         values.getAsString(Tasks.EXDATE)?.let {
-            task.exDates += AndroidTimeUtils.androidStringToRecurrenceSet(it, allDay) { dates -> ExDate(dates) }
+            task.exDates += AndroidTimeUtils.androidStringToRecurrenceSet(it, allDay, defaultTimeZone = tz) { dates -> ExDate(dates) }
         }
 
         values.getAsString(Tasks.RRULE)?.let { task.rRule = RRule(it) }
