@@ -255,11 +255,21 @@ internal object ContactLabelReproduction {
 
     private const val AMIS_ETE = "Amis été"
 
-    /** #936: a label group renamed in a contacts app reaches its members' uploads. */
+    /** #936: a label group renamed in a contacts app reaches its members' uploads; other group edits upload nothing. */
     private fun labelRename(ab: LocalAddressBook, c: Checks) {
         val id = addCard(ab, "p10", card("p10", "CATEGORIES:Family"))
         val group = unfiledGroups(ab).entries.single { it.value == "Family" }.key
         fixture(rawInt(ab, id, RawContacts.DIRTY) == 0) { "the downloaded contact starts clean" }
+        // The server's copy of the contact still lists the label under its old name.
+        val hadLabel = { _: LocalContact, label: String -> label == "Family" }
+
+        // Control: a visibility choice also marks the group dirty, but changes no label.
+        fixture(ab.requireProvider().update(ContentUris.withAppendedId(Groups.CONTENT_URI, group),
+            ContentValues().apply { put(Groups.GROUP_VISIBLE, 0) }, null, null) == 1) { "contacts-app visibility change" }
+        c.expect(1, groupString(ab, group, Groups.DIRTY)?.toInt(), "provider marks a group dirty on a visibility change")
+        c.expect(0, ab.propagateLabelGroupEdits(true, hadLabel), "a visibility change queues no upload")
+        c.expect(0, rawInt(ab, id, RawContacts.DIRTY), "the member stays clean after a visibility change")
+        c.expect(0, groupString(ab, group, Groups.DIRTY)?.toInt(), "the group is settled after a visibility change")
 
         fixture(ab.requireProvider().update(ContentUris.withAppendedId(Groups.CONTENT_URI, group),
             ContentValues().apply { put(Groups.TITLE, "Relatives") }, null, null) == 1) { "contacts-app rename" }
@@ -268,11 +278,11 @@ internal object ContactLabelReproduction {
         c.expect(0, rawInt(ab, id, RawContacts.DIRTY), "provider leaves the member clean")
         c.expect(listOf("Relatives"), unfiledTitles(ab, id), "the member stays in the renamed group")
 
-        c.expect(1, ab.propagateLabelGroupEdits(true) { _, _ -> false }, "contacts queued for upload")
+        c.expect(1, ab.propagateLabelGroupEdits(true, hadLabel), "contacts queued for upload")
         c.expect(1, rawInt(ab, id, RawContacts.DIRTY), "the member is queued for upload")
         c.expect(0, groupString(ab, group, Groups.DIRTY)?.toInt(), "the group is settled")
         c.expect(listOf("Relatives"), uploadCategories(ab, id), "the upload carries the new name")
-        c.expect(0, ab.propagateLabelGroupEdits(true) { _, _ -> false }, "a second pass changes nothing")
+        c.expect(0, ab.propagateLabelGroupEdits(true, hadLabel), "a second pass changes nothing")
     }
 
     /** #937: a label group deleted in a contacts app reaches its former members' uploads and its row is removed. */
