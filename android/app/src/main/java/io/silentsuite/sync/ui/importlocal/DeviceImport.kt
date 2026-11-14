@@ -53,10 +53,10 @@ object DeviceImport {
      * also reads its exceptions (modified occurrences as exceptions, cancelled ones as EXDATE), so a
      * series is written and replaced as one unit.
      */
-    val SOURCE_EVENT_SELECTION = "${Events.ORIGINAL_ID} IS NULL AND ${Events.DELETED}=0"
+    const val SOURCE_EVENT_SELECTION = "${Events.ORIGINAL_ID} IS NULL AND ${Events.DELETED}=0"
 
     /** The copy of a series in the destination: its master row, found by the import UID. */
-    val DESTINATION_SERIES_SELECTION = "${Events.UID_2445}=? AND ${Events.ORIGINAL_ID} IS NULL"
+    const val DESTINATION_SERIES_SELECTION = "${Events.UID_2445}=? AND ${Events.ORIGINAL_ID} IS NULL"
 
     /**
      * The UID of the copy. A calendar event keeps its own iCalendar UID (CalendarContract's UID_2445).
