@@ -42,6 +42,7 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.StringReader
 import java.net.InetAddress
+import java.net.Proxy
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.logging.Level
@@ -594,6 +595,17 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                     Logger.log.warning("External resource host is a local address, ignoring")
                     return null
                 }
+                // Through a proxy, OkHttp looks up only the proxy's name and the proxy resolves this
+                // host itself. Best effort: resolve it here first and refuse it unless every address
+                // is public. The proxy can still resolve it differently (split DNS, rebinding).
+                if (publicAddressesOnly && goesThroughProxy(client, url)) {
+                    try {
+                        PublicAddressDns(url.host, client.dns).lookup(url.host)
+                    } catch (e: UnknownHostException) {
+                        Logger.log.warning("External resource host is local or could not be resolved, ignoring")
+                        return null
+                    }
+                }
                 val boundedClient = client.newBuilder()
                         .callTimeout(callTimeoutMillis, TimeUnit.MILLISECONDS)
                         .followRedirects(false)
@@ -627,6 +639,14 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                     Logger.log.log(Level.SEVERE, "Couldn't download external resource", e)
                 }
                 return null
+            }
+
+            /** True unless [client] connects to [url] directly. */
+            private fun goesThroughProxy(client: OkHttpClient, url: HttpUrl): Boolean {
+                val proxies = client.proxy?.let { listOf(it) }
+                        ?: try { client.proxySelector.select(url.toUri()) } catch (e: Exception) { null }
+                        ?: return true
+                return proxies.any { it.type() != Proxy.Type.DIRECT }
             }
 
             private val IPV4_LITERAL = Regex("""\d{1,3}(\.\d{1,3}){3}""")

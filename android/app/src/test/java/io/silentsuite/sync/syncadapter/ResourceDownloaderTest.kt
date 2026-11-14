@@ -2,6 +2,8 @@ package io.silentsuite.sync.syncadapter
 
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.syncadapter.ContactsSyncManager.ResourceDownloader
+import okhttp3.Dns
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import okhttp3.mockwebserver.MockResponse
@@ -16,6 +18,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
+import java.net.InetAddress
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -50,6 +54,30 @@ class ResourceDownloaderTest {
         val literal = server.url("/photo.jpg").newBuilder().host("127.0.0.1").build()
         assertNull(ResourceDownloader.fetchBounded(client, literal))
         assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun throughAProxyTheHostIsResolvedAndCheckedFirst() {
+        // The test server acts as the user's HTTP proxy, which resolves photo hosts itself.
+        val dns = object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> = when (hostname) {
+                "photos.example" -> listOf(InetAddress.getByName("93.184.216.34"))
+                "local.example" -> listOf(InetAddress.getByName("10.0.0.1"))
+                "mixed.example" -> listOf(InetAddress.getByName("93.184.216.34"), InetAddress.getByName("::1"))
+                "unknown.example" -> throw UnknownHostException(hostname)
+                else -> Dns.SYSTEM.lookup(hostname)
+            }
+        }
+        val proxied = client.newBuilder().proxy(server.toProxyAddress()).dns(dns).build()
+
+        for (host in listOf("local.example", "mixed.example", "unknown.example"))
+            assertNull(host, ResourceDownloader.fetchBounded(proxied, "http://$host/photo.jpg".toHttpUrl()))
+        assertEquals(0, server.requestCount)
+
+        val photo = bytes(64)
+        server.enqueue(MockResponse().setBody(Buffer().write(photo)))
+        assertArrayEquals(photo, ResourceDownloader.fetchBounded(proxied, "http://photos.example/photo.jpg".toHttpUrl()))
+        assertEquals("GET http://photos.example/photo.jpg HTTP/1.1", server.takeRequest().requestLine)
     }
 
     @Test
