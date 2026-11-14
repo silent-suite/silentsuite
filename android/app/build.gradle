@@ -209,7 +209,6 @@ dependencies {
     implementation "com.squareup.okhttp3:okhttp:$okhttp3Version"
     implementation "com.squareup.okhttp3:logging-interceptor:$okhttp3Version"
 
-    implementation 'com.google.code.gson:gson:1.7.2'
     implementation 'org.apache.commons:commons-collections4:4.1'
     implementation 'org.apache.commons:commons-lang3:3.8.1'
 
@@ -229,6 +228,8 @@ dependencies {
     androidTestImplementation "androidx.test.espresso:espresso-core:${androidX.espresso}"
     androidTestImplementation 'net.sf.kxml:kxml2:2.3.0'
     testImplementation 'junit:junit:4.13.2'
+    // JSON parser for ProblemReport assertions only; nothing in the APK uses Gson.
+    testImplementation 'com.google.code.gson:gson:2.13.2'
     testImplementation "com.squareup.okhttp3:mockwebserver:$okhttp3Version"
     // Comparison oracle for NoteMetaCodec, unit tests only: not in the APK and not on the app or androidTest classpaths.
     // Two advisories were published against 0.9.12 when this was added (CVE-2026-90472, unpackValue;
