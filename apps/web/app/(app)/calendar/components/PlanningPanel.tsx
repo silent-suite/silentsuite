@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { PanelRightClose } from 'lucide-react'
 import type { Task } from '@silentsuite/core'
 import { findItemCollection } from '@/app/lib/collection-access'
 import { useBirthdayMarkerStore } from '@/app/lib/birthday-calendar/markers'
@@ -26,10 +27,13 @@ interface PlanningPanelProps {
   armedTaskId: string | null
   onArm: (taskId: string | null) => void
   pendingTaskIds: ReadonlySet<string>
+  /** False outside the week view: tasks are listed but cannot be placed. */
+  canPlace: boolean
+  onClose: () => void
 }
 
 /** Open tasks that can be dragged onto the week grid, or armed and placed with a slot click. */
-export function PlanningPanel({ calendarId, onCalendarChange, armedTaskId, onArm, pendingTaskIds }: PlanningPanelProps) {
+export function PlanningPanel({ calendarId, onCalendarChange, armedTaskId, onArm, pendingTaskIds, canPlace, onClose }: PlanningPanelProps) {
   const tasks = useTaskStore((s) => s.tasks)
   const taskLists = useTaskListStore((s) => s.lists)
   const calendarLists = useCalendarListStore((s) => s.calendars)
@@ -55,11 +59,26 @@ export function PlanningPanel({ calendarId, onCalendarChange, armedTaskId, onArm
   }, [armedTaskId, onArm])
 
   return (
-    <aside aria-label="Tasks to plan" className="flex w-72 shrink-0 flex-col gap-3 overflow-hidden rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3">
+    <aside id="planning-sidebar" aria-label="Tasks to plan" className="flex w-72 shrink-0 flex-col gap-3 overflow-hidden rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3">
       <div className="space-y-1">
-        <h3 className="text-sm font-semibold text-[rgb(var(--foreground))]">Tasks</h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-[rgb(var(--foreground))]">Tasks</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Hide tasks sidebar"
+            aria-expanded={true}
+            aria-controls="planning-sidebar"
+            title="Hide tasks"
+            className="no-min-size rounded p-1 text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+          >
+            <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
         <p className="text-xs text-[rgb(var(--muted))]">
-          Drag a task into a time slot, or choose Place and then click a slot.
+          {canPlace
+            ? 'Drag a task into a time slot, or choose Place and then click a slot.'
+            : 'Switch to the week view to place tasks in a time slot.'}
         </p>
       </div>
       <label className="flex flex-col gap-1 text-xs text-[rgb(var(--muted))]">
@@ -86,7 +105,7 @@ export function PlanningPanel({ calendarId, onCalendarChange, armedTaskId, onArm
           const reason = planBlockReason(task)
           const pending = pendingTaskIds.has(task.id)
           const armed = armedTaskId === task.id
-          const usable = !reason && !pending && !!calendarId
+          const usable = canPlace && !reason && !pending && !!calendarId
           return (
             <li
               key={task.id}

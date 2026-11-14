@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronLeft, ChevronRight, Plus, Folder, Search as SearchIcon } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Folder, PanelRightOpen, Search as SearchIcon } from 'lucide-react'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate, startOfWeek, getWeekNumber } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
@@ -25,6 +25,13 @@ import { showErrorToast, showSuccessToast } from '@/app/stores/use-toast-store'
 import { PlanningPanel } from './components/PlanningPanel'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
+
+const PLANNING_SIDEBAR_KEY = 'silentsuite-planning-sidebar-open-v1'
+
+/** Whether the task sidebar was left open in this browser; closed when unknown. */
+function readPlanningSidebarOpen(): boolean {
+  try { return localStorage.getItem(PLANNING_SIDEBAR_KEY) === '1' } catch { return false }
+}
 
 /** Snap a Date to the nearest 30-minute boundary */
 function snapTo30Min(date: Date): Date {
@@ -175,12 +182,20 @@ function CalendarPageBody() {
   const planningEnabled = usePlanningEnabled()
   const planningDisposition = usePlanningDisposition()
   const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
-  const setCurrentView = useCalendarStore((s) => s.setCurrentView)
-  const [planningOpen, setPlanningOpen] = useState(false)
+  const [planningOpen, setPlanningOpenState] = useState(false)
+  // Read after mount so the server-rendered and first client render agree.
+  useEffect(() => { setPlanningOpenState(readPlanningSidebarOpen()) }, [])
   const [planCalendarId, setPlanCalendarId] = useState<string | undefined>(undefined)
   const [armedTaskId, setArmedTaskId] = useState<string | null>(null)
   const [pendingTaskIds, setPendingTaskIds] = useState<ReadonlySet<string>>(new Set())
-  const showPlanning = planningEnabled && planningOpen && currentView === 'week' && canWrite
+  const showPlanning = planningEnabled && planningOpen && canWrite
+  // Tasks land in a time slot, so placing works only in the week view; the sidebar stays open in month view.
+  const canPlace = showPlanning && currentView === 'week'
+  const setPlanningOpen = useCallback((open: boolean) => {
+    setPlanningOpenState(open)
+    setArmedTaskId(null)
+    try { localStorage.setItem(PLANNING_SIDEBAR_KEY, open ? '1' : '0') } catch { /* this browser only; not saving is harmless */ }
+  }, [])
   const effectivePlanCalendarId = useMemo(() => {
     if (!showPlanning) return undefined
     const options = plannableCalendars()
@@ -293,7 +308,7 @@ function CalendarPageBody() {
 
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
     if (!canWrite) return
-    if (showPlanning && armedTaskId && !slot.allDay) {
+    if (canPlace && armedTaskId && !slot.allDay) {
       void placeTask(armedTaskId, slot.startDate)
       return
     }
@@ -302,7 +317,7 @@ function CalendarPageBody() {
       endDate: slot.endDate,
       allDay: slot.allDay,
     })
-  }, [canWrite, showPlanning, armedTaskId, placeTask])
+  }, [canWrite, canPlace, armedTaskId, placeTask])
 
   const handleCreateDialogClose = useCallback(() => {
     setCreateDialog(null)
@@ -412,22 +427,6 @@ function CalendarPageBody() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          {planningEnabled && canWrite && (
-            <button
-              type="button"
-              onClick={() => {
-                const next = !planningOpen
-                setPlanningOpen(next)
-                setArmedTaskId(null)
-                if (next) setCurrentView('week')
-              }}
-              aria-pressed={showPlanning}
-              className={`no-min-size rounded-md border px-3 py-1.5 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${showPlanning ? 'border-emerald-500 bg-emerald-500/10 text-[rgb(var(--primary))]' : 'border-[rgb(var(--border))] text-[rgb(var(--foreground))] hover:bg-[rgb(var(--surface))]'}`}
-              title="Experimental: plan your tasks in the week view"
-            >
-              Plan
-            </button>
-          )}
           <CalendarViewSwitcher />
           <button
             onClick={() => {
@@ -577,8 +576,8 @@ function CalendarPageBody() {
               events={visibleEvents}
               onSlotClick={handleSlotClick}
               onEventClick={handleEventClick}
-              externalDragType={showPlanning ? TASK_DRAG_TYPE : undefined}
-              onExternalDrop={showPlanning ? handleTaskDrop : undefined}
+              externalDragType={canPlace ? TASK_DRAG_TYPE : undefined}
+              onExternalDrop={canPlace ? handleTaskDrop : undefined}
             />
             {showPlanning && (
               <PlanningPanel
@@ -587,7 +586,22 @@ function CalendarPageBody() {
                 armedTaskId={armedTaskId}
                 onArm={setArmedTaskId}
                 pendingTaskIds={pendingTaskIds}
+                canPlace={canPlace}
+                onClose={() => setPlanningOpen(false)}
               />
+            )}
+            {planningEnabled && canWrite && !planningOpen && (
+              <button
+                type="button"
+                onClick={() => setPlanningOpen(true)}
+                aria-expanded={false}
+                aria-label="Show tasks sidebar"
+                title="Show tasks"
+                className="no-min-size flex w-9 shrink-0 flex-col items-center gap-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3 text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+              >
+                <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
+                <span className="text-xs font-medium [writing-mode:vertical-rl]">Tasks</span>
+              </button>
             )}
           </div>
 

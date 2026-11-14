@@ -175,9 +175,9 @@ function PlanningSetting() {
         />
       </div>
       <p id="planning-experiment-description" className="text-sm text-[rgb(var(--muted))]">
-        Adds a Plan button to the week view on larger screens. It shows your open tasks next to the calendar, and you can
-        drag a task into a time slot to add a 30-minute event. These choices are saved for this account in this browser,
-        not synced to other devices.
+        Adds a tasks sidebar to the calendar on larger screens. Open it next to the calendar and drag a task into a time
+        slot in the week view to add a 30-minute event. These choices are saved for this account in this browser, not
+        synced to other devices.
       </p>
       {enabled && (
         <fieldset className="space-y-2">
