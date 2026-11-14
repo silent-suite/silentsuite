@@ -67,29 +67,47 @@ class DeviceImportTest {
 
     @Test fun `an event keeps its own iCalendar UID`() {
         assertEquals("series@example.com",
-            DeviceImport.importUid("series@example.com", "event", "com.google", "me@example.com", "cal", "sync-1", 7))
+            DeviceImport.eventImportUid("series@example.com", "com.google", "me@example.com", 10, "sync-1", 7))
     }
 
     @Test fun `a row without its own UID gets the same derived UID on every import`() {
-        val first = DeviceImport.importUid(null, "contact", "com.google", "me@example.com", "", "source-1", 7)
-        val again = DeviceImport.importUid(null, "contact", "com.google", "me@example.com", "", "source-1", 7)
-        val blankOwn = DeviceImport.importUid(" ", "contact", "com.google", "me@example.com", "", "source-1", 7)
-        assertEquals(first, again)
-        assertEquals(first, blankOwn)
+        val first = DeviceImport.contactImportUid("com.google", "me@example.com", "source-1", 7)
+        assertEquals(first, DeviceImport.contactImportUid("com.google", "me@example.com", "source-1", 7))
         // The source ID identifies the row; its row ID only stands in when there is none.
-        assertEquals(first, DeviceImport.importUid(null, "contact", "com.google", "me@example.com", "", "source-1", 99))
+        assertEquals(first, DeviceImport.contactImportUid("com.google", "me@example.com", "source-1", 99))
+        val event = DeviceImport.eventImportUid(null, "com.google", "me@example.com", 10, "event-1", 7)
+        assertEquals(event, DeviceImport.eventImportUid(null, "com.google", "me@example.com", 10, "event-1", 7))
+        assertEquals(event, DeviceImport.eventImportUid(" ", "com.google", "me@example.com", 10, "event-1", 7))
     }
 
-    @Test fun `derived UIDs differ by account, container, kind and row`() {
-        val base = DeviceImport.importUid(null, "event", "com.google", "me@example.com", "cal-a", null, 7)
+    @Test fun `two calendars sharing a NAME and an event sync ID get different UIDs`() {
+        // Same account, calendar rows 10 and 20 both named "work", each with an event _SYNC_ID event-1 and no UID_2445.
+        val inTen = DeviceImport.eventImportUid(null, "com.google", "me@example.com", 10, "event-1", 1)
+        val inTwenty = DeviceImport.eventImportUid(null, "com.google", "me@example.com", 20, "event-1", 2)
+        assertNotEquals(inTen, inTwenty)
+    }
+
+    @Test fun `derived UIDs differ by account, calendar, kind and row`() {
+        val base = DeviceImport.eventImportUid(null, "com.google", "me@example.com", 10, null, 7)
         listOf(
-            DeviceImport.importUid(null, "event", "com.google", "me@example.com", "cal-a", null, 8),
-            DeviceImport.importUid(null, "event", "com.google", "me@example.com", "cal-b", null, 7),
-            DeviceImport.importUid(null, "event", "com.google", "other@example.com", "cal-a", null, 7),
-            DeviceImport.importUid(null, "event", "com.example.other", "me@example.com", "cal-a", null, 7),
-            DeviceImport.importUid(null, "contact", "com.google", "me@example.com", "cal-a", null, 7),
-            DeviceImport.importUid(null, "event", "com.google", "me@example.com", "cal-a", "sync-7", 7),
+            DeviceImport.eventImportUid(null, "com.google", "me@example.com", 10, null, 8),
+            DeviceImport.eventImportUid(null, "com.google", "me@example.com", 11, null, 7),
+            DeviceImport.eventImportUid(null, "com.google", "other@example.com", 10, null, 7),
+            DeviceImport.eventImportUid(null, "com.example.other", "me@example.com", 10, null, 7),
+            DeviceImport.eventImportUid(null, "com.google", "me@example.com", 10, "sync-7", 7),
+            DeviceImport.contactImportUid("com.google", "me@example.com", null, 7),
         ).forEach { assertNotEquals(base, it) }
+        assertNotEquals(DeviceImport.contactImportUid("com.google", "me@example.com", "a", 1),
+            DeviceImport.contactImportUid("com.google", "other@example.com", "a", 1))
+    }
+
+    @Test fun `the event key has no calendar NAME input, so renaming a calendar keeps the key`() {
+        val parameters = DeviceImport::class.java.declaredMethods.single { it.name == "eventImportUid" }.parameterTypes
+        assertEquals(listOf(String::class.java, String::class.java, String::class.java, Long::class.javaPrimitiveType,
+            String::class.java, java.lang.Long::class.java), parameters.toList())
+        val importer = File("src/main/java/io/silentsuite/sync/ui/importlocal/DeviceImporter.kt").readText()
+        assertTrue(importer.contains("source.id, sourceRow.fileName, sourceRow.id)"))
+        assertFalse(importer.contains("source.name"))
     }
 
     @Test fun `source groups become labels next to the contact's own categories`() {

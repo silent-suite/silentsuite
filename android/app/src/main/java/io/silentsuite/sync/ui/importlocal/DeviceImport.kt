@@ -59,12 +59,25 @@ object DeviceImport {
     const val DESTINATION_SERIES_SELECTION = "${Events.UID_2445}=? AND ${Events.ORIGINAL_ID} IS NULL"
 
     /**
-     * The UID of the copy. A calendar event keeps its own iCalendar UID (CalendarContract's UID_2445).
-     * Otherwise the UID is derived from where the row comes from (account, container and the row's
-     * source ID, or its row ID when the other app has not set one), so importing the same source again
-     * finds and replaces the earlier copy instead of adding a second one.
+     * The UID of a copied event. It keeps its own iCalendar UID (CalendarContract's UID_2445). Otherwise
+     * the UID is derived from where the row comes from, so importing the same source again finds and
+     * replaces the earlier copy instead of adding a second one. The container is the calendar's provider
+     * row ID within the account, not its NAME: several calendars of one account can share a NAME (and an
+     * event _SYNC_ID), and a NAME can change.
      */
-    fun importUid(
+    fun eventImportUid(ownUid: String?, accountType: String, accountName: String, calendarId: Long,
+                       syncId: String?, rowId: Long?): String =
+        importUid(ownUid, "event", accountType, accountName, "calendar-id:$calendarId", syncId, rowId)
+
+    /**
+     * The UID of a copied contact, always derived: RawContacts.SYNC1 is the other sync adapter's private
+     * column. Android keeps one contact store per account, so the account is the container and
+     * RawContacts.SOURCE_ID (unique within its account) or else the row ID identifies the contact.
+     */
+    fun contactImportUid(accountType: String, accountName: String, sourceId: String?, rowId: Long?): String =
+        importUid(null, "contact", accountType, accountName, "contacts", sourceId, rowId)
+
+    private fun importUid(
         ownUid: String?,
         kind: String,
         accountType: String,

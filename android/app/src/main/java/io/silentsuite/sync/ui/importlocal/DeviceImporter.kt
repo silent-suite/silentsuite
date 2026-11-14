@@ -58,13 +58,12 @@ internal object DeviceImporter {
         val result = ResultFragment.ImportResult()
         val series = source.queryEvents(DeviceImport.SOURCE_EVENT_SELECTION, null)
         result.total = series.size.toLong()
-        val container = source.name ?: "calendar:${source.id}"
         series.forEachIndexed { index, sourceRow ->
             if (!stillCurrent()) throw StaleRoute()
             try {
                 val event = requireNotNull(sourceRow.event)
-                val uid = DeviceImport.importUid(event.uid, "event", source.account.type, source.account.name,
-                    container, sourceRow.fileName, sourceRow.id)
+                val uid = DeviceImport.eventImportUid(event.uid, source.account.type, source.account.name,
+                    source.id, sourceRow.fileName, sourceRow.id)
                 event.uid = uid
                 val existing = destination.queryEvents(DeviceImport.DESTINATION_SERIES_SELECTION, arrayOf(uid)).firstOrNull()
                 if (existing != null) {
@@ -104,8 +103,8 @@ internal object DeviceImporter {
             try {
                 val contact = requireNotNull(sourceRow.contact)
                 // Never the other app's RawContacts.SYNC1: it is that sync adapter's private column.
-                val uid = DeviceImport.importUid(null, "contact", source.account.type, source.account.name,
-                    "", sourceRow.fileName, sourceRow.id)
+                val uid = DeviceImport.contactImportUid(source.account.type, source.account.name,
+                    sourceRow.fileName, sourceRow.id)
                 contact.uid = uid
                 val labels = DeviceImport.labels(contact.categories, sourceRow.getGroupMemberships(), groupTitles)
                 contact.categories.clear()
