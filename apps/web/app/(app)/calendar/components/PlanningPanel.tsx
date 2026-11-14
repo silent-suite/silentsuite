@@ -59,7 +59,7 @@ export function PlanningPanel({ calendarId, onCalendarChange, armedTaskId, onArm
   }, [armedTaskId, onArm])
 
   return (
-    <aside id="planning-sidebar" aria-label="Tasks to plan" className="flex w-72 shrink-0 flex-col gap-3 overflow-hidden rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3">
+    <aside id="planning-sidebar" aria-label="Tasks to plan" className="flex w-72 shrink-0 flex-col gap-3 overflow-hidden border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-3">
       <div className="space-y-1">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-[rgb(var(--foreground))]">Tasks</h3>

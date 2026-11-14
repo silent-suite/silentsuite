@@ -13,6 +13,7 @@ import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useTaskStore } from '@/app/stores/use-task-store'
 import type { SlotClickEvent } from '../components/CalendarGrid'
+import { RightSidebarSlot } from '@/app/components/right-sidebar'
 
 const grid = vi.hoisted(() => ({ props: undefined as undefined | {
   onSlotClick?: (slot: SlotClickEvent) => void
@@ -84,7 +85,7 @@ describe('Planning view', () => {
   it('lists plannable open tasks beside the week grid and places dropped or armed tasks', async () => {
     useExperimentalStore.setState({ planningAccounts: ['account-a'], planningDispositions: { 'account-a': 'complete' } })
     renderWithIntl(<CalendarPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'Show tasks sidebar' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show tasks sidebar' }))
     const panel = screen.getByRole('complementary', { name: 'Tasks to plan' })
     expect(within(panel).getByText('Open task')).toBeInTheDocument()
     for (const hidden of ['Done task', 'Scheduled task', 'Hidden-list task']) expect(within(panel).queryByText(hidden)).not.toBeInTheDocument()
@@ -111,7 +112,7 @@ describe('Planning view', () => {
   it('shows the result, but drops it after a sign-out or account switch', async () => {
     useExperimentalStore.setState({ planningAccounts: ['account-a'] })
     renderWithIntl(<CalendarPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'Show tasks sidebar' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show tasks sidebar' }))
     const drop = (id: string) => act(() => grid.props!.onExternalDrop!(new Date('2026-11-16T09:30:00Z'), { getData: () => id } as unknown as DataTransfer))
 
     drop('open')
@@ -130,7 +131,7 @@ describe('Planning view', () => {
   it('remembers whether the sidebar is open, and lists but does not place tasks in month view', async () => {
     useExperimentalStore.setState({ planningAccounts: ['account-a'] })
     const first = renderWithIntl(<CalendarPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'Show tasks sidebar' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show tasks sidebar' }))
     expect(localStorage.getItem('silentsuite-planning-sidebar-open-v1')).toBe('1')
     first.unmount()
 
@@ -144,5 +145,14 @@ describe('Planning view', () => {
     fireEvent.click(within(panel).getByRole('button', { name: 'Hide tasks sidebar' }))
     expect(screen.queryByRole('complementary', { name: 'Tasks to plan' })).not.toBeInTheDocument()
     expect(localStorage.getItem('silentsuite-planning-sidebar-open-v1')).toBe('0')
+  })
+
+  it('renders into the shell\'s full-height right column when it exists', async () => {
+    useExperimentalStore.setState({ planningAccounts: ['account-a'] })
+    renderWithIntl(<><CalendarPage /><RightSidebarSlot /></>)
+    const show = await screen.findByRole('button', { name: 'Show tasks sidebar' })
+    expect(show.closest('#app-right-sidebar')).not.toBeNull()
+    fireEvent.click(show)
+    expect(screen.getByRole('complementary', { name: 'Tasks to plan' }).parentElement?.id).toBe('app-right-sidebar')
   })
 })

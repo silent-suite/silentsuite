@@ -23,6 +23,7 @@ import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store
 import { usePlanningDisposition, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
 import { showErrorToast, showSuccessToast } from '@/app/stores/use-toast-store'
 import { PlanningPanel } from './components/PlanningPanel'
+import { RightSidebarPortal } from '@/app/components/right-sidebar'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
 
@@ -571,7 +572,7 @@ function CalendarPageBody() {
           </div>
 
           {/* Desktop: schedule-x grid */}
-          <div className="hidden md:flex md:flex-1 md:min-h-0 md:gap-3">
+          <div className="hidden md:flex md:flex-1 md:min-h-0">
             <CalendarGrid
               events={visibleEvents}
               onSlotClick={handleSlotClick}
@@ -579,29 +580,34 @@ function CalendarPageBody() {
               externalDragType={canPlace ? TASK_DRAG_TYPE : undefined}
               onExternalDrop={canPlace ? handleTaskDrop : undefined}
             />
-            {showPlanning && (
-              <PlanningPanel
-                calendarId={effectivePlanCalendarId}
-                onCalendarChange={setPlanCalendarId}
-                armedTaskId={armedTaskId}
-                onArm={setArmedTaskId}
-                pendingTaskIds={pendingTaskIds}
-                canPlace={canPlace}
-                onClose={() => setPlanningOpen(false)}
-              />
-            )}
-            {planningEnabled && canWrite && !planningOpen && (
-              <button
-                type="button"
-                onClick={() => setPlanningOpen(true)}
-                aria-expanded={false}
-                aria-label="Show tasks sidebar"
-                title="Show tasks"
-                className="no-min-size flex w-9 shrink-0 flex-col items-center gap-2 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3 text-[rgb(var(--muted))] transition-colors hover:text-[rgb(var(--foreground))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-              >
-                <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
-                <span className="text-xs font-medium [writing-mode:vertical-rl]">Tasks</span>
-              </button>
+            {planningEnabled && canWrite && (
+              <RightSidebarPortal>
+                {showPlanning ? (
+                  <PlanningPanel
+                    calendarId={effectivePlanCalendarId}
+                    onCalendarChange={setPlanCalendarId}
+                    armedTaskId={armedTaskId}
+                    onArm={setArmedTaskId}
+                    pendingTaskIds={pendingTaskIds}
+                    canPlace={canPlace}
+                    onClose={() => setPlanningOpen(false)}
+                  />
+                ) : (
+                  <div className="flex w-14 shrink-0 flex-col items-center border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3">
+                    <button
+                      type="button"
+                      onClick={() => setPlanningOpen(true)}
+                      aria-expanded={false}
+                      aria-label="Show tasks sidebar"
+                      title="Show tasks"
+                      className="no-min-size flex flex-col items-center gap-2 rounded-md px-2 py-2 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      <PanelRightOpen className="h-5 w-5" aria-hidden="true" />
+                      <span className="text-xs font-medium [writing-mode:vertical-rl]">Tasks</span>
+                    </button>
+                  </div>
+                )}
+              </RightSidebarPortal>
             )}
           </div>
 
