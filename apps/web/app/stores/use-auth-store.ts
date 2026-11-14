@@ -1733,6 +1733,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       if (isSelfHosted || isCustomServer(serverUrl)) {
         if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
+        else localStorage.removeItem('silentsuite-server-url')
         syncAdminCookie(true)
         set({
           user: { id: 'self-hosted', email, planId: 'self-hosted', isAdmin: true, onboardedAt: null },
@@ -1802,6 +1803,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       // This is same-account recovery, not an account switch. Preserve queued
       // offline work while restoring the missing encrypted session blob.
       await secureSet('etebase_session', savedSession)
+      // Save the server selection only now that it has been verified.
+      if (serverUrl) localStorage.setItem('silentsuite-server-url', serverUrl)
+      else localStorage.removeItem('silentsuite-server-url')
       set({ isLoading: false })
     } catch (err) {
       const message = authErrorMessage(err)
