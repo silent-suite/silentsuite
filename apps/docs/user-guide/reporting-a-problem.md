@@ -42,7 +42,7 @@ Diagnostic info never includes:
 
 ## What happens when you press Send
 
-Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We delete it 90 days after we've dealt with it. To have it deleted sooner, email [support@silentsuite.io](mailto:support@silentsuite.io). See the [privacy policy](https://silentsuite.io/privacy#problem-reports).
+Your report is sent through Cloudflare and delivered by email (via Resend) to the SilentSuite support inbox. It is not end-to-end encrypted and not linked to your account. We keep it for as long as we need it to deal with your report. To have it deleted, email [support@silentsuite.io](mailto:support@silentsuite.io). See the [privacy policy](https://silentsuite.io/privacy#problem-reports).
 
 If the report goes through, you see "Thanks, your report was sent." If the app can't confirm it (for example, the connection dropped or timed out), it says so and does not try again by itself, because the report may already have arrived. Use **Email instead** or **Copy** from there.
 

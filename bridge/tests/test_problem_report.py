@@ -163,13 +163,12 @@ def test_error_code_table_matches_bounded_codes_and_schema_enum():
     assert set(schema["properties"]["diagnostics"]["properties"]) == set(report._DIAGNOSTIC_KEYS)
 
 
-def test_disclosure_states_retention_once_from_the_constant():
-    assert report.REPORT_RETENTION_DAYS == 90
+def test_disclosure_states_retention_and_deletion_on_request():
     assert report.DISCLOSURE_TEXT == (
         "Your report is sent through Cloudflare and delivered by email (via Resend) "
         "to the SilentSuite support inbox. It is not end-to-end encrypted and not "
-        "linked to your account. We delete it 90 days after we've dealt with it; "
-        "to have it deleted sooner, email support@silentsuite.io."
+        "linked to your account. We keep it for as long as we need it to deal with "
+        "your report; to have it deleted, email support@silentsuite.io."
     )
     assert "support@silentsuite.io" in report.DISCLOSURE_TEXT
 

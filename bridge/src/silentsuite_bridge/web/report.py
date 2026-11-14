@@ -23,13 +23,11 @@ _USER_AGENT = "SilentSuite-Bridge-Report"
 
 SUPPORT_EMAIL = "support@silentsuite.io"
 PRIVACY_URL = "https://silentsuite.io/privacy#problem-reports"
-# One constant for the retention period shown in the disclosure.
-REPORT_RETENTION_DAYS = 90
 DISCLOSURE_TEXT = (
     "Your report is sent through Cloudflare and delivered by email (via Resend) "
     "to the SilentSuite support inbox. It is not end-to-end encrypted and not "
-    f"linked to your account. We delete it {REPORT_RETENTION_DAYS} days after "
-    "we've dealt with it; to have it deleted sooner, email "
+    "linked to your account. We keep it for as long as we need it to deal "
+    "with your report; to have it deleted, email "
     f"{SUPPORT_EMAIL}."
 )
 

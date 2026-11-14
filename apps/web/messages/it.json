@@ -129,7 +129,7 @@
     "includeDiagnostics": "Includi informazioni diagnostiche",
     "previewLabel": "Informazioni diagnostiche che verranno inviate",
     "previewHint": "Questo è esattamente ciò che verrà inviato con la segnalazione. Non contiene dati dell'account, indirizzi del server né contenuti.",
-    "disclosure": "La segnalazione viene inviata tramite Cloudflare e recapitata via email (tramite Resend) alla casella di supporto di SilentSuite. Non è cifrata end-to-end e non è collegata al tuo account. La eliminiamo {days} giorni dopo averla gestita; per farla eliminare prima scrivi a {email}.",
+    "disclosure": "La segnalazione viene inviata tramite Cloudflare e recapitata via email (tramite Resend) alla casella di supporto di SilentSuite. Non è cifrata end-to-end e non è collegata al tuo account. La conserviamo finché serve per gestire la segnalazione; per farla eliminare scrivi a {email}.",
     "privacyLink": "Informativa sulla privacy",
     "send": "Invia",
     "sending": "Invio in corso\u2026",
