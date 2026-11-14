@@ -790,6 +790,11 @@ export function EventDialog({
   const handleScopeConfirm = useCallback(
     (scope: RecurrenceScope) => {
       if (!scopeDialog || !isEdit) return
+      // The calendar may have turned read-only while the scope choice was open.
+      if (!canWrite) {
+        setScopeDialog(null)
+        return
+      }
 
       if (scopeDialog.mode === 'delete') {
         void deleteRecurringEvent(event.id, scope, effectiveInstanceDate)
@@ -809,6 +814,7 @@ export function EventDialog({
     [
       scopeDialog,
       isEdit,
+      canWrite,
       event,
       effectiveInstanceDate,
       updateRecurringEvent,
