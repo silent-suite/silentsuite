@@ -412,21 +412,34 @@ const commands = {
     const binding = readJson(opt('binding'))
     const workDir = opt('work-dir')
     const zspPath = verifyZspBinary(opt('zsp'))
-    const signWith = process.env.ZAPSTORE_SIGN_WITH
+    const signWith = process.env.ZAPSTORE_SIGN_WITH?.trim()
     const clientKey = process.env.ZAPSTORE_BUNKER_CLIENT_KEY
-    if (!signWith || !clientKey) throw new Error('signer credentials are missing from the environment; refusing to publish')
+    // Two signer forms (runbook section 6): the publisher nsec held as an
+    // environment secret (unattended, preflight is local key derivation), or a
+    // NIP-46 bunker URL plus client key (preflight is a read-only handshake).
+    const useNsec = signWith?.startsWith('nsec1') === true
+    if (!signWith || (!useNsec && !clientKey)) throw new Error('signer credentials are missing from the environment; refusing to publish')
     const { publishWithPreflight } = await import('./lib/publish.mjs')
     const xdg = join(workDir, 'xdg')
     mkdirSync(xdg, { recursive: true, mode: 0o700 })
-    const key = materializeClientKey({ xdgConfigHome: xdg, bunkerUrl: signWith, clientKey })
+    let key = { cleanup() {} }
+    let preflight
+    if (useNsec) {
+      const { requireNsecAccount } = await import('./lib/nsec.mjs')
+      const schnorr = await loadSchnorr()
+      preflight = ({ expectedPubkeyHex }) => requireNsecAccount({ nsec: signWith, expectedPubkeyHex, schnorr })
+    } else {
+      key = materializeClientKey({ xdgConfigHome: xdg, bunkerUrl: signWith, clientKey })
+    }
     let outcome
     try {
       outcome = await publishWithPreflight({
-        bunkerUrl: signWith,
-        clientKeyHex: clientKey.trim(),
+        bunkerUrl: useNsec ? undefined : signWith,
+        clientKeyHex: useNsec ? undefined : clientKey.trim(),
         expectedPubkeyHex: template.pubkeyHex,
+        ...(preflight ? { preflight } : {}),
         runPublisher: (account) => {
-          summary(`Signing account verified: ${account.accountPubkey} is the approved publisher (remote signer ${account.remoteSigner}). Running the pinned publisher.`)
+          summary(`Signing account verified: ${account.accountPubkey} is the approved publisher (signer: ${useNsec ? 'environment nsec' : `remote signer ${account.remoteSigner}`}). Running the pinned publisher.`)
           return runZsp({ zspPath, mode: 'live', configPath: opt('config'), commit: binding.sourceSha, workDir })
         },
       })
