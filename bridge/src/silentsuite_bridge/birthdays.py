@@ -417,7 +417,7 @@ def decide_after_birthday_run(check, reruns_so_far):
     return "rerun" if reruns_so_far < MAX_RERUNS else "pending"
 
 
-# ── SDK engine (pinned etebase 0.31.5) ──
+# ── SDK engine (pinned etebase, see pyproject.toml) ──
 #
 # Every run reads everything fresh and completely, plans with the pure helpers, and writes
 # each calendar's changes in transactions whose only dependency is that calendar's root
