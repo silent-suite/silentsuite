@@ -3,6 +3,8 @@ import { ETEBASE_SERVER_URL } from '@/app/lib/config'
 interface EtebaseAuthResult {
   authToken: string
   savedSession: string
+  /** Public-key fingerprint of the verified account; absent if it could not be read. */
+  accountFingerprint?: string
 }
 
 /** Mint immediately before a Billing request. The proof is never persisted. */
@@ -153,9 +155,15 @@ export async function etebaseLogIn(
   serverUrl?: string,
 ): Promise<EtebaseAuthResult> {
   await new Promise((r) => setTimeout(r, 50))
-  const { logIn, saveSession } = await import('@silentsuite/core')
+  const { logIn, saveSession, getAccountFingerprint } = await import('@silentsuite/core')
   const account = await logIn(serverUrl || ETEBASE_SERVER_URL, email, password)
   const authToken = (account as any).authToken as string
   const savedSession = await saveSession(account)
-  return { authToken, savedSession }
+  let accountFingerprint: string | undefined
+  try {
+    accountFingerprint = getAccountFingerprint(account) || undefined
+  } catch {
+    // Callers treat a missing fingerprint as an unknown account.
+  }
+  return accountFingerprint ? { authToken, savedSession, accountFingerprint } : { authToken, savedSession }
 }
