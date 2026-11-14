@@ -55,7 +55,11 @@ vi.mock('@/app/stores/use-contact-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-contact-list-store', () => ({
-  useContactListStore: (selector: (state: typeof storeMock.contactListState) => unknown) => selector(storeMock.contactListState),
+  // getState: the contact detail rechecks the address book when a save is dispatched.
+  useContactListStore: Object.assign(
+    (selector: (state: typeof storeMock.contactListState) => unknown) => selector(storeMock.contactListState),
+    { getState: () => storeMock.contactListState },
+  ),
 }))
 
 vi.mock('@/app/stores/use-sync-store', () => ({
@@ -63,7 +67,10 @@ vi.mock('@/app/stores/use-sync-store', () => ({
 }))
 
 vi.mock('@/app/stores/use-auth-store', () => ({
-  useAuthStore: (selector: (state: typeof storeMock.authState) => unknown) => selector(storeMock.authState),
+  useAuthStore: Object.assign(
+    (selector: (state: typeof storeMock.authState) => unknown) => selector(storeMock.authState),
+    { getState: () => storeMock.authState },
+  ),
 }))
 
 vi.mock('@/app/components/MobileCollectionSheet', () => ({

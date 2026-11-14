@@ -701,6 +701,16 @@ function EditableField({
 
 // ── ContactDetail (with edit + delete) ──
 
+/**
+ * Read from the stores when a save is dispatched, not from a render, so a save
+ * that completes after the address book turned read-only (a photo still being
+ * processed) is dropped.
+ */
+function canWriteContactBookNow(listId: string | undefined): boolean {
+  return useAuthStore.getState().canWrite()
+    && canWriteCollection(useContactListStore.getState().lists.find((list) => list.id === listId))
+}
+
 function ContactDetail({
   contact,
   onBack,
@@ -723,8 +733,8 @@ function ContactDetail({
   const canWrite = canWriteAccount && bookWritable
   // Every edit below goes through here, so an editor left open when the share turns read-only saves nothing.
   const updateContact = useCallback(
-    (id: string, patch: Partial<Contact>) => (canWrite ? saveContact(id, patch) : Promise.resolve(false)),
-    [canWrite, saveContact],
+    (id: string, patch: Partial<Contact>) => (canWriteContactBookNow(contact.listId) ? saveContact(id, patch) : Promise.resolve(false)),
+    [contact.listId, saveContact],
   )
   const photoInputRef = useRef<HTMLInputElement>(null)
   const [editing, setEditing] = useState(false)
