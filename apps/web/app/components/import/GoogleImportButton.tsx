@@ -16,6 +16,9 @@ export function googleImportEnabled(clientId: string = GOOGLE_IMPORT_CLIENT_ID):
   return clientId.trim().length > 0
 }
 
+/** Where a user removes the permission at Google; ending the import does not revoke it. */
+export const GOOGLE_CONNECTIONS_URL = 'https://myaccount.google.com/connections'
+
 /** Name and features shared with app/lib/google-import/oauth.ts, which navigates this popup. */
 const POPUP_NAME = 'silentsuite-google-import'
 const POPUP_FEATURES = 'popup,width=520,height=680'
@@ -86,21 +89,35 @@ export default function GoogleImportButton(props: Props) {
   if (!googleImportEnabled()) return null
 
   return (
-    <div className="flex items-center gap-3">
-      <button
-        type="button"
-        onClick={start}
-        disabled={busy || props.disabled}
-        className="inline-flex items-center gap-2 rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface))] disabled:opacity-50"
-      >
-        {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-        {busy ? 'Reading from Google...' : 'Import from Google'}
-      </button>
-      {busy && (
-        <button type="button" onClick={cancel} className="text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]">
-          Cancel
+    <div className="space-y-1">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={start}
+          disabled={busy || props.disabled}
+          className="inline-flex items-center gap-2 rounded-lg border border-[rgb(var(--border))] px-4 py-2 text-sm font-medium text-[rgb(var(--foreground))] transition-colors hover:bg-[rgb(var(--surface))] disabled:opacity-50"
+        >
+          {busy && <Loader2 className="h-4 w-4 animate-spin" />}
+          {busy ? 'Reading from Google...' : 'Import from Google'}
         </button>
-      )}
+        {busy && (
+          <button type="button" onClick={cancel} className="text-sm text-[rgb(var(--muted))] hover:text-[rgb(var(--foreground))]">
+            Cancel
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-[rgb(var(--muted))]">
+        After the import, SilentSuite keeps no access to your Google account. Google still lists the permission until you remove it under{' '}
+        <a
+          href={GOOGLE_CONNECTIONS_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-emerald-500 hover:text-emerald-400"
+        >
+          third-party connections
+        </a>
+        .
+      </p>
     </div>
   )
 }

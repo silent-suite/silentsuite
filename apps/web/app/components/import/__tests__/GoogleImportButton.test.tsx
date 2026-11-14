@@ -33,6 +33,14 @@ describe('Import from Google button', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  it('says no access is kept and links to where the Google permission is removed', () => {
+    render(<GoogleImportButton kind="contacts" onLoaded={vi.fn()} onError={vi.fn()} />)
+    expect(screen.getByText(/After the import, SilentSuite keeps no access to your Google account\./)).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: 'third-party connections' })
+    expect(link).toHaveAttribute('href', 'https://myaccount.google.com/connections')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
   it('loads the importer only when clicked, opening the popup inside the click', async () => {
     const onLoaded = vi.fn()
     const result = { calendars: [], unreadable: 0 }
