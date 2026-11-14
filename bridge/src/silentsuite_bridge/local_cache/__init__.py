@@ -553,6 +553,30 @@ def ensure_dav_href(
         return models.HrefMapper.get(models.HrefMapper.content == cache_item)
 
 
+def retire_settled_tombstone(cache_item):
+    """Drop a settled tombstone so a new item may reuse its local name.
+
+    Only a deletion with no pending local intent and no attached quarantine
+    qualifies. Its DAV deletion stays in the change ledger; the caller must
+    run inside its writer transaction and record the replacement there, so
+    retained tokens see one revision covering both writes. Returns whether
+    the row was removed.
+    """
+    if not cache_item.deleted or cache_item.dirty or cache_item.new:
+        return False
+    if models.DavUnresolvedItem.select().where(
+        models.DavUnresolvedItem.local_item == cache_item
+    ).exists():
+        return False
+    models.HrefMapper.delete().where(
+        models.HrefMapper.content == cache_item
+    ).execute()
+    models.ItemEntity.delete().where(
+        models.ItemEntity.id == cache_item.id
+    ).execute()
+    return True
+
+
 @_bounded_integrity("CacheRevisionIntegrityError")
 def record_dav_change(
     cache_col, href, *, previous_state_hash, etag=None, deleted=False
@@ -1170,7 +1194,12 @@ class Etebase:
                         & (models.ItemEntity.uid == local_uid)
                         & (models.ItemEntity.remote_uid.is_null(False))
                     )
-                    if identity_bound_collision is not None:
+                    if identity_bound_collision is not None and not (
+                        # A new remote item reusing the name of an item that
+                        # was deleted remotely replaces the settled tombstone.
+                        item.deleted is False
+                        and retire_settled_tombstone(identity_bound_collision)
+                    ):
                         if quarantine:
                             self._quarantine_unresolved_item(
                                 cache_col, item_mgr, item
@@ -1259,6 +1288,56 @@ class Etebase:
                 ).execute()
             return True
 
+    def _capped_item_blocked_by_settled_tombstone(
+        self, cache_col, item_mgr, unresolved
+    ):
+        """Return whether a capped live quarantine is now retryable.
+
+        Older releases quarantined a live remote item whose name matched a
+        settled tombstone, and the retry cap then froze it. Such a row is
+        retried normally so the tombstone can be retired. Read-only; the
+        envelope is parsed outside any writer transaction.
+        """
+        settled_tombstones = models.ItemEntity.select().where(
+            (models.ItemEntity.collection == cache_col)
+            & models.ItemEntity.remote_uid.is_null(False)
+            & (models.ItemEntity.remote_uid != unresolved.remote_uid)
+            & (models.ItemEntity.deleted == True)  # noqa: E712
+            & (models.ItemEntity.dirty == False)  # noqa: E712
+            & (models.ItemEntity.new == False)  # noqa: E712
+            & ~(
+                models.ItemEntity.id
+                << models.DavUnresolvedItem.select(
+                    models.DavUnresolvedItem.local_item
+                ).where(models.DavUnresolvedItem.local_item.is_null(False))
+            )
+        )
+        if (
+            unresolved.reason != "remote_unresolved"
+            or unresolved.local_item_id is not None
+            or unresolved.deleted is not False
+            # Exhausted rows are not parsed unless a candidate blocker exists.
+            or not settled_tombstones.exists()
+        ):
+            return False
+        try:
+            capped_item = item_mgr.cache_load(unresolved.eb_item)
+            capped_metadata = capped_item.meta
+            capped_uid = capped_item.uid
+            capped_deleted = capped_item.deleted
+        except Exception:
+            return False
+        if (
+            not isinstance(capped_metadata, dict)
+            or capped_uid != unresolved.remote_uid
+            or capped_deleted is not False
+        ):
+            return False
+        local_uid = capped_metadata.get("name") or capped_uid
+        return settled_tombstones.where(
+            models.ItemEntity.uid == local_uid
+        ).exists()
+
     @_bounded_integrity("CacheUnresolvedRetryIntegrityError")
     def _retry_unresolved_items(self, cache_col, col, item_mgr):
         unresolved_items = list(
@@ -1301,6 +1380,9 @@ class Etebase:
             if (
                 unresolved.attempts >= DAV_UNRESOLVED_RETRY_LIMIT
                 and not preserves_local_intent
+                and not self._capped_item_blocked_by_settled_tombstone(
+                    cache_col, item_mgr, unresolved
+                )
             ):
                 # Settlement only: an exhausted row is never applied, and every
                 # non-settling outcome leaves it byte-identical.
