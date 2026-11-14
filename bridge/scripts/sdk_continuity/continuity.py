@@ -19,6 +19,7 @@ Commands:
   mutate   offline: pending DAV create, edit and delete plus a collection meta edit
   push     online: sync, prove the server holds the local state, re-record expected.json
   session  write a new stored session (re-save of the restored one, or a fresh sign-in)
+  datadir  the default per-OS data directory, resolved without overrides (read-only)
 
 It deliberately lives outside bridge/tests: the unit suite replaces etebase with a mock,
 and this check must load the real native module (asserted on every command).
@@ -198,13 +199,20 @@ def dav_view(b, service):
     return view
 
 
-def record(b, service, fixture):
-    """Write expected.json from the current state, with one current DAV token per collection."""
+def record(b, service, fixture, intents=()):
+    """Write expected.json from the current state, with one current DAV token per collection.
+
+    ``intents`` lists the pending local changes not yet pushed, so push can check the
+    result against what was meant rather than against whatever the sync converged to.
+    """
     view = dav_view(b, service)
     for uid, col in view.items():
         token, _ = dav(b, service, uid).sync()
         col["token"] = token
-    write_json(fixture / "expected.json", {"view": view, "tables": tables(b, service)})
+    write_json(
+        fixture / "expected.json",
+        {"view": view, "tables": tables(b, service), "intents": list(intents)},
+    )
     pending = len(tables(b, service)["pending"])
     print(f"recorded {len(view)} collections, {sum(len(c['items']) for c in view.values())} items, {pending} pending")
 
@@ -291,6 +299,7 @@ def cmd_mutate(args):
     b = bridge(fixture)
     service = open_service(b, fixture)
     before = len([row for row in tables(b, service)["pending"] if row[1] != "collection"])
+    intents = read_json(fixture / "expected.json").get("intents", [])
     view = dav_view(b, service)
     for uid, col in view.items():
         collection = dav(b, service, uid)
@@ -302,55 +311,113 @@ def cmd_mutate(args):
             collection.upload(href, radicale.item.Item(collection_path=collection.path, vobject_item=vobj))
 
         kind = col["type"].split(".")[1]
-        put(f"continuity-{args.tag}-new{suffix}", f"continuity-{kind}-{args.tag}-new", f"{args.tag}-new")
+        new_href = f"continuity-{args.tag}-new{suffix}"
+        put(new_href, f"continuity-{kind}-{args.tag}-new", f"{args.tag}-new")
         edit_href = by_marker[f"seed-{args.edit}"]
         edited = collection._get(edit_href)
         put(edit_href, edited.uid, f"{args.tag}-edit")
-        collection.delete(by_marker[f"seed-{args.delete}"])
+        delete_href = by_marker[f"seed-{args.delete}"]
+        collection.delete(delete_href)
         service.get(uid).update_meta({"description": f"cm-{args.tag}"})
+        intents.append({
+            "collection": uid,
+            "created": [new_href, f"{args.tag}-new"],
+            "edited": [edit_href, f"{args.tag}-edit"],
+            "deleted": [delete_href, f"seed-{args.delete}"],
+            "description": f"cm-{args.tag}",
+        })
     pending = tables(b, service)["pending"]
     after = len([row for row in pending if row[1] != "collection"])
     if after != before + 6:
         fail(f"expected 6 new pending item intents, found {after - before}")
     if sorted(row[0] for row in pending if row[1] == "collection") != sorted(view):
         fail("collection metadata edits are not pending")
-    record(b, service, fixture)
+    record(b, service, fixture, intents)
     close(b)
+
+
+def server_view(etebase, service, uid):
+    """The collection as the server holds it: description and live item markers."""
+    col_mgr = service.etebase.get_collection_manager()
+    remote_col = col_mgr.fetch(uid, None)
+    item_mgr = col_mgr.get_item_manager(remote_col)
+    markers, stoken, done = [], None, False
+    while not done:
+        page = item_mgr.list(etebase.FetchOptions().stoken(stoken))
+        markers += [marker_of(i.content) for i in page.data if not i.deleted]
+        stoken, done = page.stoken, page.done
+    return {"deleted": remote_col.deleted, "description": remote_col.meta.get("description"), "markers": sorted(markers)}
 
 
 def cmd_push(args):
     etebase = real_sdk(args.sdk)
     fixture = Path(args.fixture)
     expected = read_json(fixture / "expected.json")
+    # The intended state: the pre-push DAV view, which already shows the pending local
+    # create/edit/delete and metadata edits. Each account has a single writer, so after
+    # the push both the Bridge and the server must equal it exactly.
+    intended = {uid: {k: v for k, v in col.items() if k != "token"} for uid, col in expected["view"].items()}
+    for intent in expected.get("intents", []):
+        col = intended.get(intent["collection"]) or fail("an intent names a collection the fixture lacks")
+        for kind in ("created", "edited"):
+            href, marker = intent[kind]
+            if col["items"].get(href) != marker:
+                fail(f"the {kind} item is not in the intended state")
+        href, marker = intent["deleted"]
+        if href in col["items"] or marker in col["items"].values():
+            fail("the deleted item is still in the intended state")
+        if col["description"] != intent["description"]:
+            fail("the collection metadata edit is not in the intended state")
     b = bridge(fixture)
     service = open_service(b, fixture)
     service.sync()
     if tables(b, service)["pending"]:
         fail("pending intents left after sync")
-    view = dav_view(b, service)
-    col_mgr = service.etebase.get_collection_manager()
-    for uid, col in view.items():
-        remote_col = col_mgr.fetch(uid, None)
-        if remote_col.meta.get("description") != col["description"]:
-            fail("collection metadata on the server differs from the Bridge")
-        item_mgr = col_mgr.get_item_manager(remote_col)
-        remote, stoken, done = [], None, False
-        while not done:
-            page = item_mgr.list(etebase.FetchOptions().stoken(stoken))
-            remote += [marker_of(i.content) for i in page.data if not i.deleted]
-            stoken, done = page.stoken, page.done
-        compare("server items vs Bridge DAV view", sorted(remote), sorted(col["items"].values()))
-        old = expected["view"].get(uid)
-        if old:
-            # The token issued before the upgrade must still be honoured after the push.
-            _, changed = dav(b, service, uid).sync(old["token"])
-            print(f"pre-push DAV token still valid; delta {len(changed)} hrefs")
-            for href, marker in old["items"].items():
-                if marker in col["items"].values() and col["items"].get(href) != marker:
-                    fail("an item kept its content but moved to a different href")
+    # This fixture never deletes a collection, so every intended one must still exist
+    # (and nothing else may appear); items keep their hrefs.
+    compare("Bridge DAV view after push", dav_view(b, service), intended)
+    for uid, want in intended.items():
+        compare(
+            "server state after push",
+            server_view(etebase, service, uid),
+            {"deleted": False, "description": want["description"], "markers": sorted(want["items"].values())},
+        )
+        # The token issued before the push must still be honoured after it.
+        _, changed = dav(b, service, uid).sync(expected["view"][uid]["token"])
+        print(f"pre-push DAV token still valid; delta {len(changed)} hrefs")
+    print(f"push passed: {len(expected.get('intents', []))} collections' intents landed; Bridge and server equal the intended state")
     record(b, service, fixture)
     close(b)
-    print("push passed: no pending intents, server matches the Bridge")
+
+
+def cmd_datadir(args):
+    """Default data directory, resolved by the Bridge without overrides; read-only."""
+    for var in ("SILENTSUITE_DATA_DIR", "SILENTSUITE_DATABASE_FILE", "XDG_DATA_HOME"):
+        if var in os.environ:
+            fail(f"{var} is set; the default path cannot be checked")
+    system = platform.system()
+    if system == "Windows":
+        want = os.path.join(os.environ["LOCALAPPDATA"], "silentsuite", "silentsuite-bridge")
+    elif system == "Darwin":
+        want = str(Path.home() / "Library" / "Application Support" / "silentsuite-bridge")
+    else:
+        want = str(Path.home() / ".local" / "share" / "silentsuite-bridge")
+    existed = os.path.exists(want)
+    from silentsuite_bridge import config
+
+    data_dir = config.DATA_DIR
+    print(f"default data dir under python {platform.python_version()}: {data_dir}")
+    if os.path.normcase(os.path.normpath(data_dir)) != os.path.normcase(os.path.normpath(want)):
+        fail(f"default data dir is not the expected {system} location {want}")
+    if not existed and os.path.exists(want):
+        fail("resolving the data dir created it")
+    record_file = Path(args.file)
+    if args.compare:
+        if record_file.read_text(encoding="utf-8").strip() != data_dir:
+            fail("old and new stacks resolve different default data dirs")
+        print("old and new stacks resolve the same default data dir")
+    else:
+        record_file.write_text(data_dir, encoding="utf-8")
 
 
 def cmd_session(args):
@@ -376,6 +443,9 @@ def main():
         p = sub.add_parser(name)
         p.add_argument("fixture")
         p.add_argument("--sdk", required=True, help="exact etebase version this stack must load")
+    p = sub.add_parser("datadir")
+    p.add_argument("file", help="records the new stack's result; --compare checks against it")
+    p.add_argument("--compare", action="store_true")
     sub.choices["seed"].add_argument("--server", required=True)
     sub.choices["seed"].add_argument("--username", required=True)
     sub.choices["check"].add_argument("--session", help="stored session file to restore instead of session.txt")

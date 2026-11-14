@@ -15,6 +15,8 @@
 #                     (incl. new stored sessions), then the old stack restores and pushes
 #   offline           every release lane with the SDK it ships: restore and cache_load
 #                     every fixture blob, write with the new SDK, read back with the old
+#                     (also roundtrip's 0.32.0 writes and sessions); the default per-OS
+#                     data directory is the same under both stacks
 #
 # No secrets, no production servers, nothing releasable.
 name: Bridge SDK continuity
@@ -69,11 +71,16 @@ jobs:
           set -euo pipefail
           c=bridge/scripts/sdk_continuity/continuity.py
           fx="$RUNNER_TEMP/fx/linux-old"
-          CONTINUITY_PASSWORD="Ci$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" \
-            "$OLD_PY" "$c" seed "$fx" --sdk "$OLD_SDK" --server http://127.0.0.1:8000 --username "continuity$(date +%s)"
-          "$OLD_PY" "$c" init "$fx" --sdk "$OLD_SDK"
-          "$OLD_PY" "$c" check "$fx" --sdk "$OLD_SDK"
-          cp -R "$fx" "$RUNNER_TEMP/fx-init"
+          # Two accounts, one per fixture, so each has a single writer and a push can be
+          # checked against exactly what that fixture meant to change. fx-init is the
+          # starting point the macOS arm64 0.31.9 build writes into.
+          ts="$(date +%s)"
+          for d in "$fx:a" "$RUNNER_TEMP/fx-init:b"; do
+            CONTINUITY_PASSWORD="Ci$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" \
+              "$OLD_PY" "$c" seed "${d%:*}" --sdk "$OLD_SDK" --server http://127.0.0.1:8000 --username "continuity${d##*:}$ts"
+            "$OLD_PY" "$c" init "${d%:*}" --sdk "$OLD_SDK"
+            "$OLD_PY" "$c" check "${d%:*}" --sdk "$OLD_SDK"
+          done
           "$OLD_PY" "$c" mutate "$fx" --sdk "$OLD_SDK" --tag oldlinux --edit 1 --delete 2
           "$OLD_PY" "$c" check "$fx" --sdk "$OLD_SDK"
       - name: Stop the server
@@ -213,19 +220,30 @@ jobs:
             "$NEW_PY" "$c" session "$d" --sdk "$NEW_SDK" --out "$d/session.txt"
             "$NEW_PY" "$c" session "$d" --sdk "$NEW_SDK" --login --out "$d/session-login.txt"
             "$NEW_PY" "$c" check "$d" --sdk "$NEW_SDK"
+            # 0.32.0-written state (blobs, re-saved and fresh-sign-in sessions) for the
+            # offline lanes' old SDKs, 0.31.9 on macOS arm64 included.
+            mkdir -p "$RUNNER_TEMP/rt" && cp -R "$d" "$RUNNER_TEMP/rt/$fx-new"
             echo "=== $fx: old stack back on the same directory (rollback) ==="
             "$OLD_PY" "$c" check "$d" --sdk "$OLD_SDK" --session "$d/session-login.txt"
             "$OLD_PY" "$c" check "$d" --sdk "$OLD_SDK"
             "$OLD_PY" "$c" push "$d" --sdk "$OLD_SDK"
             "$OLD_PY" "$c" check "$d" --sdk "$OLD_SDK"
           done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: continuity-fx-roundtrip-new
+          path: ${{ runner.temp }}/rt
+          if-no-files-found: error
+          retention-days: 1
       - name: Stop the server
         if: always()
         run: docker stop ss-server || true
 
   offline:
     name: Offline restore on ${{ matrix.lane }}
-    needs: [old-linux, old-macos-arm64]
+    # 0.31.9 is checked here offline on 0.32.0-written data; an online 0.31.9 push stays
+    # deferred (macOS runners can't reach the Linux server; same etebase-rs 0.6.1 core as 0.32.0).
+    needs: [old-linux, old-macos-arm64, roundtrip]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -263,6 +281,10 @@ jobs:
         with:
           name: continuity-fx-macos-arm64-old
           path: work/macos-arm64-old
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: continuity-fx-roundtrip-new
+          path: work-rt
 
       # --- native lanes ---
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -306,10 +328,10 @@ jobs:
           if [ "${{ matrix.lane }}" = macos-arm64 ]; then echo "LANE_OLD_SDK=$OLD_ARM64_SDK" >> "$GITHUB_ENV"; else echo "LANE_OLD_SDK=$OLD_SDK" >> "$GITHUB_ENV"; fi
       - name: New stack reads the old fixtures, then writes (native)
         if: '!matrix.qemu'
-        run: bash bridge/scripts/sdk_continuity/offline.sh new "$NEW_PY" work
+        run: bash bridge/scripts/sdk_continuity/offline.sh new "$NEW_PY"
       - name: Old stack reads back what the new stack wrote (native)
         if: '!matrix.qemu'
-        run: bash bridge/scripts/sdk_continuity/offline.sh old "$OLD_PY" work "$LANE_OLD_SDK"
+        run: bash bridge/scripts/sdk_continuity/offline.sh old "$OLD_PY" "$LANE_OLD_SDK"
 
       # --- Linux arm64 in the release lane's QEMU containers ---
       - name: Set up QEMU
@@ -326,7 +348,7 @@ jobs:
           # New: build-bridge.yml's container. Old: OLD_REF's build-bridge.yml container.
           docker run --rm --platform linux/arm64 -v "$PWD:/w" -w /w -e NEW_SDK \
             arm64v8/python:3.12.16-slim-trixie@sha256:b2d51a2cc64ddc1b9acdab76aaac1708f1c80fded8ad2e4b76638ec0bc403565 \
-            sh -c 'bash bridge/scripts/sdk_continuity/stack.sh NEW_PY /tmp/venv-new python bridge && bash bridge/scripts/sdk_continuity/offline.sh new /tmp/venv-new/bin/python work'
+            sh -c 'bash bridge/scripts/sdk_continuity/stack.sh NEW_PY /tmp/venv-new python bridge && bash bridge/scripts/sdk_continuity/offline.sh new /tmp/venv-new/bin/python'
           docker run --rm --platform linux/arm64 -v "$PWD:/w" -w /w \
             arm64v8/python:3.10.22-slim-trixie@sha256:92479346bd9cc169c573d3f71b95978521189349051ef1edb56a907a6d8c6ea7 \
-            sh -c "bash bridge/scripts/sdk_continuity/stack.sh OLD_PY /tmp/venv-old python old/bridge && bash bridge/scripts/sdk_continuity/offline.sh old /tmp/venv-old/bin/python work $OLD_SDK"
+            sh -c "bash bridge/scripts/sdk_continuity/stack.sh OLD_PY /tmp/venv-old python old/bridge && bash bridge/scripts/sdk_continuity/offline.sh old /tmp/venv-old/bin/python $OLD_SDK"
