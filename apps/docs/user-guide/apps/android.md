@@ -131,13 +131,16 @@ For tasks, use:
 The app can show your encrypted [notes](../notes.md) read-only. It is off by default and is turned on per account:
 
 1. Open **Settings**, then **Account**.
-2. Under **Experimental**, turn on **Notes (experimental)**. The app syncs your notebooks right away.
+2. Under **Experimental**, turn on **Notes (experimental)**. The app tries to sync your notebooks right away.
 3. Open **Notes** from the navigation drawer. Tap a notebook to read its notes; touch and hold a notebook to manage sharing, or to rename or delete it.
 
 What to expect in this version:
 
 - Notes are read-only on Android. Create and edit notes in the web app; they appear here after the next sync.
-- Notes sync when you open the Notes screen, when you tap **Sync now** or pull to refresh, and after a calendar, contact, or task sync finishes. There is no separate background schedule for notes yet, so if the other services do not sync on this device, notes only refresh when you open them.
+- Notes sync when you tap **Sync now** or pull to refresh, on any connection. They also sync by themselves when you open the Notes screen and after a calendar, contact, or task sync finishes, on Wi-Fi only. A wired (Ethernet) connection does not count as Wi-Fi. A sync you start from Android's own account settings counts as a calendar, contact, or task sync here, so notes follow it on Wi-Fi only. Coming back onto Wi-Fi does not sync notes on its own.
+- Two settings under **Settings**, **Account**, **Experimental** change which connections notes use: **Automatic Notes sync** and **Sync now for Notes**. If **Sync over WiFi only** (under **Settings**, **Sync**) is on for the account, notes sync by themselves only on Wi-Fi. If a network name is also saved there under **Saved WiFi network**, notes do not sync by themselves until you remove it, because Android does not give the app network names.
+- When notes are not syncing by themselves on the connection Android reports, the notebook list says so, names the setting behind it, and says whether pulling down will try a sync.
+- There is no separate background schedule for notes yet. If the other services do not sync on this device, notes refresh when you open the Notes screen (on Wi-Fi), pull to refresh, or tap **Sync now**. Off Wi-Fi, use pull to refresh or **Sync now**.
 - Shared notebooks appear with the same shared and read-only markers as other collections. You can accept notebook invitations and manage members like any other collection.
 - No notebook is created for you. Use **New notebook** if your account has none yet.
 - Notebooks are left out of the export options for now.

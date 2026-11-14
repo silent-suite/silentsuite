@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronLeft, ChevronRight, Plus, Folder, Search as SearchIcon } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus, Folder, PanelRightOpen, Search as SearchIcon } from 'lucide-react'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
 import { formatDate, startOfWeek, getWeekNumber } from '@/app/lib/date'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
@@ -20,6 +20,19 @@ import { FloatingAddButton } from './components/FloatingAddButton'
 import { resolveUserTimezone } from '@/app/lib/tz'
 import { logCalendarPaintTiming } from '@/app/lib/sync-timing'
 import { usePreferencesSyncStore } from '@/app/stores/use-preferences-sync-store'
+import { usePlanningDisposition, usePlanningDuration, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
+import { showErrorToast, showSuccessToast } from '@/app/stores/use-toast-store'
+import { PlanningPanel } from './components/PlanningPanel'
+import { RightSidebarPortal } from '@/app/components/right-sidebar'
+import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
+import { planTask, plannableCalendars, TASK_DRAG_TYPE } from './lib/plan-task'
+
+const PLANNING_SIDEBAR_KEY = 'silentsuite-planning-sidebar-open-v1'
+
+/** Whether the task sidebar was left open in this browser; closed when unknown. */
+function readPlanningSidebarOpen(): boolean {
+  try { return localStorage.getItem(PLANNING_SIDEBAR_KEY) === '1' } catch { return false }
+}
 
 /** Snap a Date to the nearest 30-minute boundary */
 function snapTo30Min(date: Date): Date {
@@ -166,6 +179,57 @@ function CalendarPageBody() {
   const [mobileCalendarMode, setMobileCalendarMode] = useState<MobileCalendarMode>('agenda')
   const firstContentPaintLoggedRef = useRef(false)
 
+  // Experimental planning view (#286): tasks beside the desktop week grid.
+  const planningEnabled = usePlanningEnabled()
+  const planningDisposition = usePlanningDisposition()
+  const planningDuration = usePlanningDuration()
+  const defaultCalendarId = useCalendarListStore((s) => s.defaultCalendarId)
+  const [planningOpen, setPlanningOpenState] = useState(false)
+  // Read after mount so the server-rendered and first client render agree.
+  useEffect(() => { setPlanningOpenState(readPlanningSidebarOpen()) }, [])
+  const [planCalendarId, setPlanCalendarId] = useState<string | undefined>(undefined)
+  const [armedTaskId, setArmedTaskId] = useState<string | null>(null)
+  const [pendingTaskIds, setPendingTaskIds] = useState<ReadonlySet<string>>(new Set())
+  const showPlanning = planningEnabled && planningOpen && canWrite
+  // Tasks land in a time slot, so placing works only in the week view; the sidebar stays open in month view.
+  const canPlace = showPlanning && currentView === 'week'
+  const setPlanningOpen = useCallback((open: boolean) => {
+    setPlanningOpenState(open)
+    setArmedTaskId(null)
+    try { localStorage.setItem(PLANNING_SIDEBAR_KEY, open ? '1' : '0') } catch { /* this browser only; not saving is harmless */ }
+  }, [])
+  const effectivePlanCalendarId = useMemo(() => {
+    if (!showPlanning) return undefined
+    const options = plannableCalendars()
+    if (planCalendarId && options.some((c) => c.id === planCalendarId)) return planCalendarId
+    return (options.find((c) => c.id === defaultCalendarId) ?? options[0])?.id
+  }, [showPlanning, planCalendarId, defaultCalendarId, calendars]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const placeTask = useCallback(async (taskId: string, start: Date) => {
+    if (!effectivePlanCalendarId) return
+    setArmedTaskId(null)
+    setPendingTaskIds((ids) => new Set(ids).add(taskId))
+    const epoch = getAccountEpoch()
+    try {
+      const result = await planTask(taskId, start, effectivePlanCalendarId, planningDisposition, planningDuration)
+      // Results name the task: never show them after a sign-out or account switch.
+      if (!isCurrentAccountEpoch(epoch)) return
+      if (result.kind === 'done') showSuccessToast(result.message)
+      else showErrorToast(result.message)
+    } finally {
+      setPendingTaskIds((ids) => {
+        const next = new Set(ids)
+        next.delete(taskId)
+        return next
+      })
+    }
+  }, [effectivePlanCalendarId, planningDisposition, planningDuration])
+
+  const handleTaskDrop = useCallback((start: Date, dataTransfer: DataTransfer) => {
+    const taskId = dataTransfer.getData(TASK_DRAG_TYPE)
+    if (taskId) void placeTask(taskId, start)
+  }, [placeTask])
+
   const dateLabel = useMemo(
     () => formatDateRange(currentDate, currentView, dateFormat, firstDayOfWeek),
     [currentDate, currentView, dateFormat, firstDayOfWeek],
@@ -246,12 +310,16 @@ function CalendarPageBody() {
 
   const handleSlotClick = useCallback((slot: SlotClickEvent) => {
     if (!canWrite) return
+    if (canPlace && armedTaskId && !slot.allDay) {
+      void placeTask(armedTaskId, slot.startDate)
+      return
+    }
     setCreateDialog({
       startDate: slot.startDate,
       endDate: slot.endDate,
       allDay: slot.allDay,
     })
-  }, [canWrite])
+  }, [canWrite, canPlace, armedTaskId, placeTask])
 
   const handleCreateDialogClose = useCallback(() => {
     setCreateDialog(null)
@@ -506,7 +574,43 @@ function CalendarPageBody() {
 
           {/* Desktop: schedule-x grid */}
           <div className="hidden md:flex md:flex-1 md:min-h-0">
-            <CalendarGrid events={visibleEvents} onSlotClick={handleSlotClick} onEventClick={handleEventClick} />
+            <CalendarGrid
+              events={visibleEvents}
+              onSlotClick={handleSlotClick}
+              onEventClick={handleEventClick}
+              externalDragType={canPlace ? TASK_DRAG_TYPE : undefined}
+              onExternalDrop={canPlace ? handleTaskDrop : undefined}
+              externalDropMinutes={planningDuration}
+            />
+            {planningEnabled && canWrite && (
+              <RightSidebarPortal>
+                {showPlanning ? (
+                  <PlanningPanel
+                    calendarId={effectivePlanCalendarId}
+                    onCalendarChange={setPlanCalendarId}
+                    armedTaskId={armedTaskId}
+                    onArm={setArmedTaskId}
+                    pendingTaskIds={pendingTaskIds}
+                    canPlace={canPlace}
+                    onClose={() => setPlanningOpen(false)}
+                  />
+                ) : (
+                  <div className="flex w-14 shrink-0 flex-col items-center border-l border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-3">
+                    <button
+                      type="button"
+                      onClick={() => setPlanningOpen(true)}
+                      aria-expanded={false}
+                      aria-label="Show tasks sidebar"
+                      title="Show tasks"
+                      className="no-min-size flex flex-col items-center gap-2 rounded-md px-2 py-2 text-[rgb(var(--muted))] transition-colors hover:bg-[rgb(var(--background))] hover:text-[rgb(var(--foreground))] focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                    >
+                      <PanelRightOpen className="h-5 w-5" aria-hidden="true" />
+                      <span className="text-xs font-medium [writing-mode:vertical-rl]">Tasks</span>
+                    </button>
+                  </div>
+                )}
+              </RightSidebarPortal>
+            )}
           </div>
 
           {/* Mobile: upcoming agenda list or multi-day grid */}

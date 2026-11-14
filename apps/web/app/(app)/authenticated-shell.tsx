@@ -2,6 +2,7 @@
 
 import { useTranslations } from 'next-intl'
 import { Sidebar } from '@/app/components/sidebar'
+import { RightSidebarSlot } from '@/app/components/right-sidebar'
 import { Header } from '@/app/components/header'
 import { BottomNav } from '@/app/components/bottom-nav'
 import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-overlay'
@@ -49,6 +50,7 @@ export default function AuthenticatedShell({ children }: { children: React.React
                 {children}
               </main>
             </div>
+            <RightSidebarSlot />
             <BottomNav />
             <OfflineToast />
             <ToastContainer />
