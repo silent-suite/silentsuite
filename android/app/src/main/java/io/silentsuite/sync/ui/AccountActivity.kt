@@ -1571,6 +1571,17 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
             ) != null
 
         private fun doLoad(): AccountActivity.AccountInfo? {
+            // The Etebase account built on this client lives only for one load, so the client
+            // (and the certificate service binding it holds) is closed when the load ends.
+            var httpClient: HttpClient? = null
+            try {
+                return loadWith { HttpClient.Builder(context).build().also { httpClient = it } }
+            } finally {
+                httpClient?.close()
+            }
+        }
+
+        private fun loadWith(newHttpClient: () -> HttpClient): AccountActivity.AccountInfo? {
             // Status maintenance must not depend on cache/session loading or its test seam.
             // A no-event deadline can therefore expire durable evidence after an unrelated load fails.
             maintainLifecycle()
@@ -1593,7 +1604,7 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
                 if (!exactGenerationStillCurrent()) return null
                 etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
                 if (!exactGenerationStillCurrent()) return null
-                val httpClient = HttpClient.Builder(context).build().okHttpClient
+                val httpClient = newHttpClient().okHttpClient
                 // Issue #119: getEtebase throws IllegalStateException when userData hasn't yet
                 // propagated (first-login race) or when the persisted session is genuinely
                 // missing. Previously this propagated to viewModelScope.launch and crashed the

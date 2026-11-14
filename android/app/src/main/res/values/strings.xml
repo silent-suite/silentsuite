@@ -536,7 +536,7 @@
     <!-- sync errors and DebugInfoActivity -->
     <string name="authority_log_provider" translatable="false">io.silentsuite.android.log</string>
     <string name="debug_info_title">Debug info</string>
-    <string name="debug_info_more_data_shared">Clicking share will send developers the data below, as well as some additional debug information, attached. Please note that it may contain some private information.</string>
+    <string name="debug_info_more_data_shared">The share button sends the text below to the app you choose. Nothing else is attached. The text may include private information, so read it before you share it.</string>
     <string name="sync_error_permissions">SilentSuite permissions</string>
     <string name="sync_error_permissions_text">Additional permissions required</string>
     <string name="sync_error_generic">Sync failed (%s)</string>
