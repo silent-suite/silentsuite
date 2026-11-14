@@ -10,6 +10,11 @@
 # The same boundary first gates the Notes account-removal allowance, which lives only in the app
 # process that made it: a slot minted in one process is refused in the next. Its steps have their
 # own test class, output and exact inventory, run before the registry's, and end with a cleanup step.
+#
+# Last, the app upgrade migrations get their own in-place reinstall of the same APK: an older app
+# version is stored, the APK is installed over the existing data, and the first app process after it
+# must find the migration done (own class, output and inventory). They run after the registry steps
+# so no extra app start falls between the registry's legacy writer and its reader.
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,16 +29,19 @@ test_class="io.silentsuite.sync.ui.setup.RegistryProcessBoundaryRuntimeTest"
 output="app/build/outputs/androidTest-results/registry-process-boundary"
 notes_class="io.silentsuite.sync.ui.NotesRemovalProcessBoundaryRuntimeTest"
 notes_output="app/build/outputs/androidTest-results/notes-removal-process-boundary"
+upgrade_class="io.silentsuite.sync.AppUpgradeProcessBoundaryRuntimeTest"
+upgrade_output="app/build/outputs/androidTest-results/app-upgrade-boundary"
 
 command -v timeout >/dev/null 2>&1
-rm -rf -- "${output}" "${notes_output}"
-mkdir -p -- "${output}" "${notes_output}"
+rm -rf -- "${output}" "${notes_output}" "${upgrade_output}"
+mkdir -p -- "${output}" "${notes_output}" "${upgrade_output}"
 
 # The inventories are written on every exit path, so an early failure is recorded, not absent.
 write_inventory() {
   status=$?
   trap - EXIT
   python3 "${script_dir}/check-notes-removal-process-boundary.py" "${notes_output}" "${api_level}" || status=1
+  python3 "${script_dir}/check-app-upgrade-boundary.py" "${upgrade_output}" "${api_level}" || status=1
   python3 "${script_dir}/check-registry-process-boundary.py" "${output}" "${api_level}" || status=1
   exit "${status}"
 }
@@ -90,6 +98,19 @@ run_notes_step() {
   tr -d '\r' < "${notes_output}/${step}.txt" | tail -n 5
 }
 
+# An app upgrade step: the same separate invocation in a terminated app process, recorded for its own
+# checker. A failure there fails the lane through the inventory, never the steps after it.
+run_upgrade_step() {
+  local step="$1" method="$2" command_status=0
+  terminate_app_process || command_status=$?
+  timeout --signal=TERM --kill-after=10s 300s \
+    adb shell am instrument -w -r \
+      -e class "${upgrade_class}#${method}" \
+      "${component}" > "${upgrade_output}/${step}.txt" 2>&1 || command_status=$?
+  printf '%s\n' "${command_status}" > "${upgrade_output}/${step}.exit"
+  tr -d '\r' < "${upgrade_output}/${step}.txt" | tail -n 5
+}
+
 install_times() {
   adb shell dumpsys package "${package}" | tr -d '\r' | grep -E '^\s*(firstInstallTime|lastUpdateTime)=' | sed 's/^\s*//'
 }
@@ -137,3 +158,31 @@ run_step reinstall-read readerRecoversLegacyPaddedEveryPhaseInFreshProcess
 # restart. It runs after every other step so no later writer can inherit that state.
 run_step malformed-write writerSeedsMalformedRegistryValue
 run_step malformed-read readerKeepsMalformedRegistryUnreadableAndUntouchedInFreshProcess
+
+# App upgrade: an old stored version and an account, the calendar and contacts permissions revoked, an
+# in-place reinstall, the first process after it, then the permissions granted and a fresh process.
+run_upgrade_step seed seedsAnOldAppVersionAndAnAccountBeforeTheUpgrade
+upgrade_permissions="android.permission.READ_CALENDAR android.permission.WRITE_CALENDAR android.permission.READ_CONTACTS android.permission.WRITE_CONTACTS"
+# Granted first, so the revoke starts from a known state on every API level.
+set_upgrade_permissions() {
+  local action="$1" status=0 permission
+  for permission in ${upgrade_permissions}; do
+    timeout --signal=TERM --kill-after=10s 60s adb shell pm "${action}" "${package}" "${permission}" || status=$?
+  done
+  return "${status}"
+}
+permission_status=0
+{ set_upgrade_permissions grant && set_upgrade_permissions revoke; } > "${upgrade_output}/revoke.txt" 2>&1 || permission_status=$?
+printf '%s\n' "${permission_status}" > "${upgrade_output}/revoke.exit"
+upgrade_status=0
+terminate_app_process || upgrade_status=$?
+install_times > "${upgrade_output}/upgrade-before.txt"
+sleep 2
+timeout --signal=TERM --kill-after=10s 300s adb install -r "${apk}" > "${upgrade_output}/upgrade-install.txt" 2>&1 || upgrade_status=$?
+printf '%s\n' "${upgrade_status}" > "${upgrade_output}/upgrade-install.exit"
+install_times > "${upgrade_output}/upgrade-after.txt"
+run_upgrade_step revoked withoutCalendarAndContactsPermissionsTheAppStartsAndKeepsTheOldVersion
+permission_status=0
+set_upgrade_permissions grant > "${upgrade_output}/grant.txt" 2>&1 || permission_status=$?
+printf '%s\n' "${permission_status}" > "${upgrade_output}/grant.exit"
+run_upgrade_step check afterTheGrantTheUpgradeMigrationCompletesInAFreshProcess

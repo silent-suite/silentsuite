@@ -9,9 +9,11 @@
 package io.silentsuite.sync
 
 import android.accounts.AccountManager
+import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Application
 import android.content.*
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.os.StrictMode
@@ -56,6 +58,8 @@ class App : Application() {
 
         // Account-aware logging and all other process consumers share the migrated typed store.
         AppPreferences(this)
+        // After the account types are known: the oldest migrations look up accounts.
+        runUpgradeMigrations()
         reinitLogger()
 
         // Raw, synchronous bootstrap makes pre-existing rows safe before login can create one.
@@ -113,13 +117,51 @@ class App : Application() {
         }
     }
 
-    private fun update(fromVersion: Int) {
+    /**
+     * Runs [update] once when the stored app version is older than this build, and then stores this
+     * build's version. It runs at every start and after an update, so an upgrade is migrated even when
+     * the platform's update broadcast doesn't arrive (Android 8 stopped sending PACKAGE_REPLACED to
+     * manifest receivers).
+     */
+    internal fun runUpgradeMigrations() {
+        val prefs = getSharedPreferences("app", Context.MODE_PRIVATE)
+        val fromVersion = prefs.getInt(PREF_VERSION, 0)
+        if (fromVersion !in 1 until BuildConfig.VERSION_CODE)
+            return
+        // A migration never stops the app from starting; one that couldn't finish runs again at a later start.
+        val complete = try {
+            update(fromVersion)
+        } catch (e: RuntimeException) {
+            Logger.log.warning("Upgrade migration from version $fromVersion failed (${e.javaClass.name}); it runs again at a later start")
+            false
+        }
+        if (complete)
+            prefs.edit().putInt(PREF_VERSION, BuildConfig.VERSION_CODE).apply()
+        else
+            Logger.log.info("Upgrade migration from version $fromVersion isn't complete; it runs again at a later start")
+    }
+
+    private fun granted(vararg permissions: String) =
+        permissions.all { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
+
+    /**
+     * Migrates stored data written by app version [fromVersion]. Returns false when provider work had to
+     * wait (the calendar or contacts permission isn't granted), so the stored version isn't advanced.
+     */
+    private fun update(fromVersion: Int): Boolean {
         Logger.log.info("Updating from version " + fromVersion + " to " + BuildConfig.VERSION_CODE)
 
+        var complete = true
         if (fromVersion < 7) {
             /* Fix all of the etags to be non-null */
             val am = AccountManager.get(this)
-            for (account in am.getAccountsByType(App.accountType)) {
+            val accounts = am.getAccountsByType(App.accountType)
+            val addressBooks = am.getAccountsByType(App.addressBookAccountType)
+            val calendarsAllowed = granted(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
+            val contactsAllowed = granted(Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS)
+            if ((accounts.isNotEmpty() && !calendarsAllowed) || (addressBooks.isNotEmpty() && !contactsAllowed))
+                complete = false
+            for (account in if (calendarsAllowed) accounts else emptyArray()) {
                 try {
                     // Generate account settings to make sure account is migrated.
                     AccountSettings(this, account)
@@ -143,7 +185,7 @@ class App : Application() {
 
             }
 
-            for (account in am.getAccountsByType(App.addressBookAccountType)) {
+            for (account in if (contactsAllowed) addressBooks else emptyArray()) {
                 val contactsProvider = this.contentResolver.acquireContentProviderClient(ContactsContract.Contacts.CONTENT_URI)
                         ?: continue
                 try {
@@ -161,6 +203,7 @@ class App : Application() {
         if (fromVersion < 10) {
             HintManager.setHintSeen(this, "AddAccount", true)
         }
+        return complete
     }
 
     class AppUpdatedReceiver : BroadcastReceiver() {
@@ -169,11 +212,7 @@ class App : Application() {
         override fun onReceive(context: Context, intent: Intent) {
             Logger.log.info("SilentSuite was updated, checking for app version")
 
-            val app = context.applicationContext as App
-            val prefs = app.getSharedPreferences("app", Context.MODE_PRIVATE)
-            val fromVersion = prefs.getInt(PREF_VERSION, 1)
-            app.update(fromVersion)
-            prefs.edit().putInt(PREF_VERSION, BuildConfig.VERSION_CODE).apply()
+            (context.applicationContext as App).runUpgradeMigrations()
         }
 
     }
