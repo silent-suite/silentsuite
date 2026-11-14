@@ -153,11 +153,17 @@ jobs:
             base=$BEFORE
           fi
           if [ -n "$base" ]; then
-            changed="$(git diff --no-renames --name-only "$base" HEAD)"
-            printf '%s\n' "$changed"
-            if ! grep -qE '^(android/|\.github/workflows/build-android\.yml$)' <<<"$changed"; then
-              android=false
-            fi
+            git -c core.quotePath=false diff --no-renames --name-only "$base" HEAD
+            # Git matches the pathspec itself, so no path text is parsed here and
+            # quoted names (non-ASCII, quotes, control characters) cannot slip
+            # through. Exit 1: an Android input changed; 0: none did; other: fail.
+            status=0
+            git diff --quiet --no-renames "$base" HEAD -- android .github/workflows/build-android.yml || status=$?
+            case "$status" in
+              0) android=false ;;
+              1) ;;
+              *) exit "$status" ;;
+            esac
           fi
           echo "android=$android" | tee -a "$GITHUB_OUTPUT"
 

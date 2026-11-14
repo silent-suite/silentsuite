@@ -995,9 +995,52 @@ def test_only_android_build_inputs_start_the_build_jobs(candidate):
             assert "always()" not in str(job.get("if", "")) and "cancelled()" not in str(job.get("if", "")), name
 
     detect = next(step for step in jobs[CHANGES_JOB]["steps"] if step.get("id") == "detect")["run"]
-    assert "'^(android/|\\.github/workflows/build-android\\.yml$)'" in detect
+    assert "-- android .github/workflows/build-android.yml" in detect
     assert jobs[CHANGES_JOB]["outputs"] == {"android": "${{ steps.detect.outputs.android }}"}
     assert jobs[CHANGES_JOB]["permissions"] == {"contents": "read"}
+
+
+@pytest.mark.parametrize(
+    ("changed", "expected"),
+    [
+        ("android/app/src/main/java/example/Caf\u00e9.kt", "true"),
+        ('android/app/src/main/res/raw/quote"name.txt', "true"),
+        ("android/build.gradle.kts", "true"),
+        (".github/workflows/build-android.yml", "true"),
+        ("apps/web/app/globals.css", "false"),
+        ("docs/android/notes.md", "false"),
+        (".github/workflows/ci.yml", "false"),
+    ],
+)
+def test_change_detector_matches_android_paths_git_would_quote(candidate, tmp_path, changed, expected):
+    """Runs the real detect step against a pull-request-shaped history."""
+    if shutil.which("git") is None or shutil.which("bash") is None:
+        pytest.skip("git and bash are required")
+    detect = next(step for step in candidate["jobs"][CHANGES_JOB]["steps"] if step.get("id") == "detect")["run"]
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid", "GIT_CONFIG_GLOBAL": os.devnull}
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, env=env, check=True, capture_output=True)
+
+    git("init", "-q")
+    (repo / "README.md").write_text("base\n")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+    target = repo / changed
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("change\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-qm", "change")
+    output = tmp_path / "output"
+    result = subprocess.run(
+        ["bash", "-c", detect], cwd=repo, capture_output=True, text=True,
+        env={**env, "EVENT_NAME": "pull_request", "BEFORE": "", "GITHUB_OUTPUT": str(output)},
+    )
+    assert result.returncode == 0, result.stderr
+    assert output.read_text() == f"android={expected}\n"
 
 
 def test_gradle_jobs_restore_but_never_save_the_gradle_cache(candidate):
