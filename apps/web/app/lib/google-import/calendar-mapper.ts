@@ -170,7 +170,8 @@ function baseVEvent(event: GoogleEvent, uid: string): VEvent | null {
 
 export interface MappedGoogleCalendar {
   units: ProviderImportVEvent[]
-  /** Entries that could not be read (no usable start) and were left out. */
+  /** Entries left out because they (or another part of their series) could not be read.
+   *  None of them is marked imported, so a later import tries them again. */
   unreadable: number
 }
 
@@ -229,17 +230,23 @@ export function mapGoogleCalendarEvents(
         if (exdate) exdates.push(exdate)
       }
     }
+    const instances = instancesOf.get(master.id) ?? []
+    // A series is imported whole or not at all: one unreadable occurrence leaves the whole series
+    // out, unmarked, so a later import can bring it in complete instead of skipping it forever.
+    const seriesFailed = () => { unreadable += 1 + instances.length }
+    let broken = false
     const overrides: VEvent[] = []
-    for (const instance of instancesOf.get(master.id) ?? []) {
+    for (const instance of instances) {
       const rid = instance.originalStartTime ? inForm(instance.originalStartTime, form) : null
-      if (!rid) { unreadable += 1; continue }
+      if (!rid) { broken = true; break }
       if (instance.status === 'cancelled') { exdates.push(rid.value); continue }
       const override = baseVEvent(instance, uid)
-      if (!override) { unreadable += 1; continue }
+      if (!override) { broken = true; break }
       const ridParams = rid.params ? Object.entries(rid.params).map(([k, v]) => `;${k}=${v}`).join('') : ''
       const alarms = alarmsFor(instance, calendar)
       overrides.push({ ...override, ...(alarms ? { valarms: alarms } : {}), unknownProperties: [`RECURRENCE-ID${ridParams}:${rid.value}`] })
     }
+    if (broken) { seriesFailed(); continue }
     const alarms = alarmsFor(master, calendar)
     const vevent: VEvent = {
       ...base,
@@ -250,7 +257,7 @@ export function mapGoogleCalendarEvents(
     }
     // Overrides are kept exactly as the shared core reader keeps them from a synced item.
     const kept = overrides.length > 0 ? splitCalendarItem(generateVCalendar([vevent, ...overrides]))?.overrides ?? [] : []
-    unreadable += overrides.length - kept.length
+    if (kept.length !== overrides.length) { seriesFailed(); continue }
     push({ ...vevent, sourceKey, ...(kept.length > 0 ? { overrides: kept } : {}) })
   }
 

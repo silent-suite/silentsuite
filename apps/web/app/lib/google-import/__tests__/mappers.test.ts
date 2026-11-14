@@ -3,7 +3,7 @@ import { deserializeCalendarEvent, serializeCalendarEvent, type CalendarEvent } 
 import { vEventToImportEvent } from '@/app/components/import/import-mappers'
 import { mapGoogleCalendarEvents, type GoogleCalendar, type GoogleEvent } from '../calendar-mapper'
 import { mapGooglePeople } from '../contact-mapper'
-import { IMPORT_SOURCE_PROPERTY, importSourceKey, importSourceKeyOf } from '../source-key'
+import { IMPORT_SOURCE_PROPERTY, importSourceKey, importSourceKeyOf, importSourceKeys } from '../source-key'
 
 const calendar: GoogleCalendar = { id: 'me@example.com', primary: true, timeZone: 'Europe/Berlin', defaultReminders: [{ method: 'popup', minutes: 10 }] }
 let uidSeq = 0
@@ -119,6 +119,29 @@ describe('Google Calendar mapping', () => {
     ], newUid)
     expect(units).toEqual([])
     expect(unreadable).toBe(1)
+  })
+
+  it('leaves a series out whole, unmarked, when one occurrence cannot be read; corrected data imports it', () => {
+    const malformed = { ...seriesFixture[2]!, originalStartTime: { dateTime: 'not-a-date' } }
+    const first = mapGoogleCalendarEvents('me@example.com', calendar, [seriesFixture[0]!, seriesFixture[1]!, malformed], newUid)
+    expect(first.units).toEqual([])
+    expect(first.unreadable).toBe(3)
+    // Nothing of the series was written, so nothing carries its source key.
+    const keysAfterFirstRun = importSourceKeys(first.units)
+
+    const retry = mapGoogleCalendarEvents('me@example.com', calendar, seriesFixture, newUid)
+    expect(retry.unreadable).toBe(0)
+    expect(retry.units).toHaveLength(1)
+    expect(keysAfterFirstRun.has(retry.units[0]!.sourceKey)).toBe(false)
+    expect(retry.units[0]!.exdate).toEqual(['20260615T090000', '20260622T090000'])
+    expect(retry.units[0]!.overrides).toHaveLength(1)
+  })
+
+  it('leaves a series out when a changed occurrence has no usable start', () => {
+    const broken = { ...seriesFixture[1]!, start: { dateTime: 'garbage' } }
+    const { units, unreadable } = mapGoogleCalendarEvents('me@example.com', calendar, [seriesFixture[0]!, broken, seriesFixture[2]!], newUid)
+    expect(units).toEqual([])
+    expect(unreadable).toBe(3)
   })
 
   it('never lets a provider recurrence line add a property', () => {

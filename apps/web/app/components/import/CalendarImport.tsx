@@ -258,7 +258,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     const { groups: pending, skipped } = withoutImported(loaded)
     const notes: string[] = []
     if (skipped > 0) notes.push(`${skipped} already imported ${skipped === 1 ? 'entry was' : 'entries were'} skipped.`)
-    if (result.unreadable > 0) notes.push(`${result.unreadable} ${result.unreadable === 1 ? 'entry' : 'entries'} could not be read and will not be imported.`)
+    if (result.unreadable > 0) notes.push(`${result.unreadable} ${result.unreadable === 1 ? 'entry' : 'entries'} could not be read and ${result.unreadable === 1 ? 'was' : 'were'} not imported; importing from Google again will retry ${result.unreadable === 1 ? 'it' : 'them'}.`)
     if (pending.length === 0) notes.unshift('Nothing new to import from Google.')
     setGoogleNotice(notes.length > 0 ? notes.join(' ') : null)
     setImportMode(pending.length > 1 ? 'separate' : 'single')
