@@ -410,8 +410,8 @@ test('Vite 8 web and core consumers resolve the patched 8.1.6 release in every p
   const core = resolve(import.meta.dirname, '..', 'packages/core')
   assertViteConsumers([
     ['apps/web', web],
-    ['apps/web > vitest', installedPackageDir(web, 'vitest'), '4.1.0'],
-    ['packages/core > vitest', installedPackageDir(core, 'vitest'), '4.1.0'],
+    ['apps/web > vitest', installedPackageDir(web, 'vitest'), '4.1.12'],
+    ['packages/core > vitest', installedPackageDir(core, 'vitest'), '4.1.12'],
     ['apps/web > @vitejs/plugin-react', installedPackageDir(web, '@vitejs/plugin-react'), '6.0.2'],
   ], '8.1.6')
 })
