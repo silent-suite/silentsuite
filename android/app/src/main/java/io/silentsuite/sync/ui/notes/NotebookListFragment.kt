@@ -25,6 +25,7 @@ import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.etebase.CollectionActivity
 import io.silentsuite.sync.Constants
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -41,6 +42,7 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private var loaded = false
     private var lastLoadFailed = false
     private var everSynced = false
+    private var loadJob: Job? = null
 
     /** Last rendered rows; process-only observation point for runtime tests. */
     internal var renderedNotebooks: List<NotebookRow> = emptyList()
@@ -175,7 +177,9 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private fun reload() {
         val host = host() ?: return
         val appContext = host.applicationContext
-        viewLifecycleOwner.lifecycleScope.launch {
+        // A newer load replaces an older one, so an older result can never render last.
+        loadJob?.cancel()
+        loadJob = viewLifecycleOwner.lifecycleScope.launch {
             val (result, synced) = withContext(Dispatchers.IO) {
                 NotesLoader.notebooks(appContext, account, creationId) to NotesLoader.everSynced(appContext, account, creationId)
             }

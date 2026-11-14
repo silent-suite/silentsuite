@@ -16,6 +16,18 @@
         android:textColor="@color/semantic_on_surface"
         android:visibility="gone" />
 
+    <TextView
+        android:id="@+id/notes_unreadable"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="@dimen/spacing_16"
+        android:paddingEnd="@dimen/spacing_16"
+        android:paddingTop="@dimen/spacing_8"
+        android:paddingBottom="@dimen/spacing_8"
+        android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+        android:textColor="@color/semantic_on_surface_variant"
+        android:visibility="gone" />
+
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/notes_refresh_layout"
         android:layout_width="match_parent"
