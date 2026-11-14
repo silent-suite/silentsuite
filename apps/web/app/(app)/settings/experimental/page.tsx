@@ -4,11 +4,12 @@ import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { useBirthdaysEnabled } from '@/app/hooks/use-birthdays-enabled'
 import { useNotesEnabled } from '@/app/hooks/use-notes-enabled'
+import { usePlanningDisposition, usePlanningEnabled } from '@/app/hooks/use-planning-enabled'
 import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 import { requestBirthdayReconcile } from '@/app/lib/birthday-calendar/trigger'
 import { useAuthStore } from '@/app/stores/use-auth-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
-import { useExperimentalStore } from '@/app/stores/use-experimental-store'
+import { useExperimentalStore, type PlanningDisposition } from '@/app/stores/use-experimental-store'
 import { LanguageSetting } from './language-setting'
 
 export default function ExperimentalSettingsPage() {
@@ -85,6 +86,7 @@ function ExperimentalSettings() {
         {enabled && <Link href="/notes" className="inline-block text-sm text-[rgb(var(--primary))] underline">Open Notes</Link>}
       </div>
       <BirthdaysSetting />
+      <PlanningSetting />
       <LanguageSetting />
     </section>
   )
@@ -128,6 +130,84 @@ function BirthdaysSetting() {
         Adds a Birthdays calendar made from your contacts&rsquo; birthdays. You can turn it on in the calendar list.
         This choice is saved for this account in this browser, not synced to other devices.
       </p>
+      {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
+    </div>
+  )
+}
+
+const PLANNING_CHOICES: Array<{ value: PlanningDisposition; label: string }> = [
+  { value: 'label', label: 'Keep it open and add the label \u201cScheduled\u201d' },
+  { value: 'complete', label: 'Mark it completed' },
+  { value: 'delete', label: 'Delete the task' },
+]
+
+function PlanningSetting() {
+  const enabled = usePlanningEnabled()
+  const disposition = usePlanningDisposition()
+  const fingerprint = useEtebaseStore((state) => state.accountFingerprint)
+  const hydrated = useExperimentalStore((state) => state.hydrated)
+  const [error, setError] = useState('')
+  const disabled = !fingerprint || !hydrated
+
+  const save = (change: () => void) => {
+    if (disabled) return
+    setError('')
+    try {
+      change()
+    } catch {
+      setError('Could not save this setting. Check that browser storage is available and try again.')
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))] p-4">
+      <div className="flex items-center justify-between gap-4">
+        <label htmlFor="enable-planning" className="font-medium text-[rgb(var(--foreground))]">Planning view</label>
+        <input
+          id="enable-planning"
+          type="checkbox"
+          role="switch"
+          checked={enabled}
+          disabled={disabled}
+          onChange={() => save(() => useExperimentalStore.getState().setPlanningEnabled(fingerprint!, !enabled))}
+          aria-describedby="planning-experiment-description"
+          className="h-5 w-5 shrink-0 accent-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+        />
+      </div>
+      <p id="planning-experiment-description" className="text-sm text-[rgb(var(--muted))]">
+        Adds a Plan button to the week view on larger screens. It shows your open tasks next to the calendar, and you can
+        drag a task into a time slot to add a 30-minute event. These choices are saved for this account in this browser,
+        not synced to other devices.
+      </p>
+      {enabled && (
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-[rgb(var(--foreground))]">When a task is added to the calendar</legend>
+          {PLANNING_CHOICES.map(({ value, label }) => (
+            <label key={value} className="flex items-center gap-2 text-sm text-[rgb(var(--foreground))]">
+              <input
+                type="radio"
+                name="planning-disposition"
+                value={value}
+                checked={disposition === value}
+                disabled={disabled}
+                onChange={() => save(() => useExperimentalStore.getState().setPlanningDisposition(fingerprint!, value))}
+                className="accent-emerald-600"
+              />
+              {label}
+            </label>
+          ))}
+          <p className="text-sm text-[rgb(var(--muted))]">
+            The task is only changed after the event is saved to the server. If you are offline, the event is saved for
+            later and the task is left as it is. Changes to the task sync to your other devices.
+          </p>
+          {disposition === 'delete' && (
+            <p role="note" className="text-sm text-[rgb(var(--foreground))]">
+              Deleting cannot be undone. The event keeps the task&rsquo;s title, notes, link, location and labels, but not
+              its list, priority, due date, progress or reminders.
+            </p>
+          )}
+        </fieldset>
+      )}
       {error && <p role="alert" className="text-sm text-[rgb(var(--foreground))]">{error}</p>}
     </div>
   )

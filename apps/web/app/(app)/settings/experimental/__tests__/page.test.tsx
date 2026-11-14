@@ -26,7 +26,7 @@ function renderSettings() {
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
-  useExperimentalStore.setState({ hydrated: false, notesAccounts: [], birthdayAccounts: [] })
+  useExperimentalStore.setState({ hydrated: false, notesAccounts: [], birthdayAccounts: [], planningAccounts: [], planningDispositions: {} })
   calls.reconcile.mockReset()
   useEtebaseStore.setState({ accountFingerprint: 'account-a', isInitialized: true, restoreBlocked: false, collections: { calendar: [], tasks: [], contacts: [], notes: [], preferences: [] }, domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' } })
   calls.canWrite.mockReturnValue(true)
@@ -157,5 +157,24 @@ describe('Experimental Birthdays calendar opt-in', () => {
     await screen.findByRole('alert')
     expect(birthdaysSwitch()).not.toBeChecked()
     expect(calls.reconcile).not.toHaveBeenCalled()
+  })
+})
+
+describe('Experimental planning view', () => {
+  it('is off by default; enabling offers the three task choices with label as default and warns before deleting', async () => {
+    renderSettings()
+    const toggle = screen.getByRole('switch', { name: 'Planning view' })
+    await waitFor(() => expect(toggle).not.toBeDisabled())
+    expect(toggle).not.toBeChecked()
+    expect(screen.queryByRole('radio', { name: 'Delete the task' })).not.toBeInTheDocument()
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+    expect(screen.getByRole('radio', { name: /label .Scheduled./ })).toBeChecked()
+    expect(screen.queryByText(/Deleting cannot be undone/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('radio', { name: 'Delete the task' }))
+    expect(screen.getByText(/Deleting cannot be undone/)).toBeInTheDocument()
+    expect(useExperimentalStore.getState()).toMatchObject({ planningAccounts: ['account-a'], planningDispositions: { 'account-a': 'delete' } })
+    fireEvent.click(screen.getByRole('radio', { name: 'Mark it completed' }))
+    expect(useExperimentalStore.getState().planningDispositions['account-a']).toBe('complete')
   })
 })
