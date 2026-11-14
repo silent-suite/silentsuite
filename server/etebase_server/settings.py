@@ -232,7 +232,8 @@ if any(os.path.isfile(x) for x in config_locations):
 
 # Efficient file streaming (for large files)
 SENDFILE_BACKEND = "etebase_server.fastapi.sendfile.backends.simple"
-SENDFILE_ROOT = MEDIA_ROOT
+# SENDFILE_ROOT defaults to the final MEDIA_ROOT; it is set at the end of this
+# file, after every MEDIA_ROOT override has been applied.
 
 if "DJANGO_STATIC_ROOT" in os.environ:
     STATIC_ROOT = os.environ["DJANGO_STATIC_ROOT"]
@@ -273,6 +274,12 @@ try:
     from etebase_server_settings import *  # noqa: F403
 except ImportError:
     pass
+
+# Downloads are only served from inside SENDFILE_ROOT, so it has to follow
+# MEDIA_ROOT wherever that ended up (INI, DJANGO_MEDIA_ROOT or the settings
+# module), unless the settings module set it explicitly.
+if "SENDFILE_ROOT" not in locals():
+    SENDFILE_ROOT = MEDIA_ROOT
 
 if "SECRET_KEY" not in locals():
     SECRET_KEY = get_secret_from_file(SECRET_FILE)
