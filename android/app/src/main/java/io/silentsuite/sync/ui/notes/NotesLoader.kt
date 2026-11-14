@@ -13,6 +13,8 @@ import io.silentsuite.sync.EtebaseLocalCache
 import io.silentsuite.sync.HttpClient
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.NotesNetwork
+import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
@@ -40,6 +42,17 @@ sealed class NotesLoad<out T> {
     object Stale : NotesLoad<Nothing>()
     object Failed : NotesLoad<Nothing>()
 }
+
+/**
+ * What the notebook list's network line is decided on: the account's two Notes network settings,
+ * the account's own Wi-Fi rule, and one reading of the network the device reports. Not a data class
+ * on purpose: the account rule holds the saved network name, and nothing should print it.
+ */
+internal class NotesNetworkState(
+    val settings: NotesNetworkPolicy.Settings,
+    val account: NotesNetworkPolicy.AccountRule,
+    val reading: NotesNetworkPolicy.Reading,
+)
 
 /** Process-local presentation data used by runtime tests; never persisted. */
 internal data class NotesRuntimeFixture(
@@ -103,6 +116,29 @@ internal object NotesLoader {
     fun everSynced(context: Context, account: Account, creationId: String): Boolean {
         val store = SyncStatusStore(context.applicationContext)
         return store.status(store.identity(account, creationId), SyncStatusStore.Service.NOTES).lastSuccessAt != null
+    }
+
+    /**
+     * What the notebook list's network line is decided on (NotesNetworkPolicy.notice), or null when
+     * the account row is gone or the platform's answer could not be read; the list then shows no
+     * line. Reads account data and asks the platform which network it reports: call off the main
+     * thread. It sends nothing. The account data is read by account name, so the caller keeps the
+     * result only for the exact account generation it has checked itself. The Wi-Fi name is never
+     * read, as in a run (NotesNetwork.read).
+     */
+    fun network(context: Context, account: Account): NotesNetworkState? = try {
+        val appContext = context.applicationContext
+        val accountSettings = AccountSettings(appContext, account)
+        val rule = NotesNetworkPolicy.AccountRule(accountSettings.syncWifiOnly, accountSettings.syncWifiOnlySSID)
+        NotesNetworkState(AccountSettings.notesNetworkSettings(AccountManager.get(appContext), account), rule,
+            NotesNetwork.read(appContext))
+    } catch (_: InvalidAccountException) {
+        // The account row is gone. The load made with this reading ends as stale.
+        null
+    } catch (e: RuntimeException) {
+        // The class only: a platform message could name a network.
+        Logger.log.warning("The network could not be read for the notebook list: ${e.javaClass.name}")
+        null
     }
 
     /**

@@ -827,9 +827,9 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
      * Sync now from the count dialog. While this screen's generation still has its account and Notes
      * is on for it, a request is recorded under the exact generation and the Notes job is asked for
      * a run the user started, as turning the Notes switch on does. The dashboard's own Sync now is
-     * not used: it also asks for the calendar, contact and task syncs, asks for nothing while one of
-     * them runs, and needs the screen's account, which the retained sign-out screen never sets. With
-     * Notes off only a message is shown. When the generation no longer has its account, nothing is
+     * not used: it also asks for the calendar, contact and task syncs, asks only for Notes while one
+     * of them runs, and needs the screen's account, which the retained sign-out screen never sets.
+     * With Notes off only a message is shown. When the generation no longer has its account, nothing is
      * asked and no message is shown. The run is an attempt that can be skipped or fail, and neither
      * message says that anything was sent. However this ends, the dialog is reported as ended without
      * a sign-out.
@@ -1933,9 +1933,14 @@ class AccountActivity : BaseActivity(), Toolbar.OnMenuItemClickListener, PopupMe
 
     private fun requestSync() {
         if (!exactAccountStillCurrent()) return
-        // Only adapter activity blocks a new request: the in-app Notes job coalesces a manual
-        // request into a follow-up run on its own, so it must not turn Sync now into a no-op.
-        if (isAdapterSyncActive()) return        // don't stack a duplicate concurrent sync
+        // Only adapter activity blocks a new adapter request: the in-app Notes job coalesces a manual
+        // request into a follow-up run on its own, so it must not turn Sync now into a no-op. Notes is
+        // still asked for while an adapter sync runs: the run after a sync nobody requested is automatic,
+        // and the automatic Notes setting can refuse it where Sync now for Notes may run.
+        if (isAdapterSyncActive()) {        // don't stack a duplicate concurrent sync
+            requestSync(applicationContext, account, notesOnly = true)
+            return
+        }
         syncRequestOverride?.invoke(applicationContext, account)
             ?: requestSync(applicationContext, account)
         model.loadAccount()
