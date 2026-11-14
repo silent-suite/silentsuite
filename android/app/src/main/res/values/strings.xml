@@ -433,7 +433,18 @@
     <string name="import_dialog_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d</string>
     <string name="import_dialog_partial_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d\nFailed: %5$d\n\nSome entries could not be imported.</string>
     <string name="import_permission_required">Reading storage permission is required for import.</string>
-    <string name="import_account_top_notice">Please choose an account to import all of its entries from.</string>
+    <string name="import_account_top_notice">Choose what to copy into this collection. Only accounts that share their data with Android are listed, so some setups, such as some Outlook accounts, may be missing.</string>
+    <string name="import_device_permission_calendar">To copy events from another account on this phone, SilentSuite needs to read and write calendars.</string>
+    <string name="import_device_permission_contacts">To copy contacts from another account on this phone, SilentSuite needs to read and write contacts.</string>
+    <string name="import_device_permission_settings">Android won\'t ask again. Allow the permission in SilentSuite\'s app settings, then come back.</string>
+    <string name="import_device_permission_open_settings">Open settings</string>
+    <string name="import_device_access_missing">SilentSuite no longer has access. Go back and choose this option again to allow it.</string>
+    <string name="import_device_access_removed">Access was removed during the import. Entries copied before that are kept and will sync. Import again to copy the rest; nothing is copied twice.</string>
+    <string name="import_device_destination_missing">This collection isn\'t on this phone yet. Wait for SilentSuite to finish syncing, then try again.</string>
+    <plurals name="import_device_phone_only_contacts">
+        <item quantity="one">%d contact is saved only on this phone, not in an account, so it can\'t be copied here. Export it as a .vcf file from your contacts app and use Import from file.</item>
+        <item quantity="other">%d contacts are saved only on this phone, not in an account, so they can\'t be copied here. Export them as a .vcf file from your contacts app and use Import from file.</item>
+    </plurals>
     <string name="choose_file">Choose file</string>
 
     <!-- AccountSettingsActivity -->
@@ -590,7 +601,7 @@
 
     <!-- Import Activity -->
     <string name="import_button_file">From File</string>
-    <string name="import_button_local">From Account</string>
+    <string name="import_button_local">From an account on this phone</string>
     <string name="import_select_account">Select Account</string>
 
     <!-- Event (from Etar) -->

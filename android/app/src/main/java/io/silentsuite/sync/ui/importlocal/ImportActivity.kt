@@ -22,6 +22,15 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
     private lateinit var account: Account
     private lateinit var identity: CollectionLifecycleIdentity
     protected lateinit var info: CollectionInfo
+    private val deviceAccess = DeviceImportAccess(
+        this,
+        permissions = { if (::identity.isInitialized) DeviceImport.permissionsFor(identity.collectionType) else emptyList() },
+        explanation = {
+            if (identity.collectionType == Constants.ETEBASE_TYPE_ADDRESS_BOOK) R.string.import_device_permission_contacts
+            else R.string.import_device_permission_calendar
+        },
+        onGranted = { showAccountPicker() },
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,6 +67,7 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
             finish()
             return
         }
+        deviceAccess.onCreate(savedInstanceState)
 
         if (savedInstanceState == null)
             supportFragmentManager.beginTransaction()
@@ -73,6 +83,22 @@ class ImportActivity : BaseActivity(), SelectImportMethod, DialogInterface {
     }
 
     override fun importAccount() {
+        // READ+WRITE access first; the picker opens once it is granted.
+        if (identity.validate(this)) deviceAccess.start() else finish()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::identity.isInitialized) deviceAccess.onResume()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        deviceAccess.onSaveInstanceState(outState)
+    }
+
+    private fun showAccountPicker() {
+        if (!::identity.isInitialized || isFinishing || isDestroyed || supportFragmentManager.isStateSaved) return
         if (info.enumType == CollectionInfo.Type.CALENDAR) {
             supportFragmentManager.beginTransaction()
                     .replace(android.R.id.content,
