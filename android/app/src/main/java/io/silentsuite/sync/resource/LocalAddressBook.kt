@@ -449,62 +449,72 @@ class LocalAddressBook(
      * as each contact's CATEGORIES, and the provider changes only the group row: it marks neither the members
      * of a renamed group nor the former members of a deleted one dirty, so the change would never upload.
      *
-     * [hadLabel] says whether the server's copy of a contact lists a label. A dirty live label group marks
-     * those members dirty whose server copy lacks its title (it was renamed), so they upload the new name;
-     * other edits of the group row, such as its visibility, upload nothing. The group is then marked clean.
-     * A deleted label group has already lost its memberships, so the contacts whose server copy still lists
-     * its title, but which no longer have it here, are marked dirty and upload without it. Its row is then
-     * removed. With [markContacts] false (a read-only address book) no contact is
-     * marked; the group rows are still settled. Each step can run again after an interruption.
+     * [serverLabels] gives the labels the server's copy of a contact lists, or null when unknown. A clean
+     * contact with a certified label projection whose labels here differ from its server copy is marked
+     * dirty, so it uploads its current labels: for a dirty live label group its members are checked (other
+     * edits of the group row, such as its visibility, change no labels and upload nothing), and for a deleted
+     * one, whose memberships are already gone, every such contact is. The groups are then marked clean and
+     * deleted rows removed. With [markContacts] false (a read-only address book) no contact is marked; the
+     * group rows are still settled. Each step can run again after an interruption.
      *
      * @return the number of contacts marked dirty
      */
-    fun propagateLabelGroupEdits(markContacts: Boolean, hadLabel: (LocalContact, String) -> Boolean): Int {
+    fun propagateLabelGroupEdits(markContacts: Boolean, serverLabels: (LocalContact) -> Collection<String>?): Int {
         val provider = provider!!
-        val renamed = LinkedHashMap<Long, String>()
-        val deleted = LinkedHashMap<Long, String>()
+        val renamed = ArrayList<Long>()
+        val deleted = ArrayList<Long>()
         // Unknown is not unchanged: without this list a rename or deletion would be dropped silently.
-        provider.query(syncAdapterURI(Groups.CONTENT_URI), arrayOf(Groups._ID, Groups.TITLE, Groups.DELETED),
+        provider.query(syncAdapterURI(Groups.CONTENT_URI), arrayOf(Groups._ID, Groups.DELETED),
                 "${Groups.ACCOUNT_NAME}=? AND ${Groups.ACCOUNT_TYPE}=? AND $CATEGORY_GROUP_COLUMN=? AND " +
                         "(${Groups.DELETED}!=0 OR ${Groups.DIRTY}!=0)",
                 arrayOf(account.name, account.type, CATEGORY_GROUP_MARKER), null)?.use {
             while (it.moveToNext())
-                if (it.getInt(2) != 0) deleted[it.getLong(0)] = it.getString(1).orEmpty()
-                else renamed[it.getLong(0)] = it.getString(1).orEmpty()
+                if (it.getInt(1) != 0) deleted += it.getLong(0) else renamed += it.getLong(0)
         } ?: throw ContactsStorageException("Couldn't read changed label groups")
+        if (renamed.isEmpty() && deleted.isEmpty())
+            return 0
 
         val marked = HashSet<Long>()
-        for ((group, title) in renamed) {
-            if (!markContacts)
-                continue
-            val members = ArrayList<Long>()
-            provider.query(syncAdapterURI(ContactsContract.Data.CONTENT_URI), arrayOf(GroupMembership.RAW_CONTACT_ID),
-                    "${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID}=?",
-                    arrayOf(GroupMembership.CONTENT_ITEM_TYPE, group.toString()), null)?.use {
+        if (markContacts) {
+            // Clean rows whose label projection is certified: an uncertified one may be incomplete, and a dirty
+            // one uploads anyway.
+            val settled = HashSet<Long>()
+            provider.query(syncAdapterURI(RawContacts.CONTENT_URI), arrayOf(RawContacts._ID),
+                    "${RawContacts.DELETED}=0 AND ${RawContacts.DIRTY}=0 AND ${LocalContact.COLUMN_CATEGORIES}=?",
+                    arrayOf(LocalContact.CATEGORIES_CERTIFIED), null)?.use {
                 while (it.moveToNext())
-                    members += it.getLong(0)
-            } ?: throw ContactsStorageException("Couldn't read label group members")
-            for (member in members)
-                if (!hadLabel(findContactByID(member), title))
-                    marked += member
-        }
-        if (markContacts && deleted.isNotEmpty())
-            for (contact in findAllContacts()) {
-                val current = contact.contact?.categories ?: continue
-                if (deleted.values.any { label -> label !in current && hadLabel(contact, label) })
-                    contact.id?.let { marked += it }
+                    settled += it.getLong(0)
+            } ?: throw ContactsStorageException("Couldn't read contacts with certified labels")
+
+            val candidates = if (deleted.isNotEmpty()) settled else HashSet<Long>().also { members ->
+                provider.query(syncAdapterURI(ContactsContract.Data.CONTENT_URI), arrayOf(GroupMembership.RAW_CONTACT_ID),
+                        "${GroupMembership.MIMETYPE}=? AND ${GroupMembership.GROUP_ROW_ID} IN (${renamed.joinToString(",")})",
+                        arrayOf(GroupMembership.CONTENT_ITEM_TYPE), null)?.use {
+                    while (it.moveToNext())
+                        it.getLong(0).takeIf { id -> id in settled }?.let { id -> members += id }
+                } ?: throw ContactsStorageException("Couldn't read label group members")
             }
+            for (id in candidates) {
+                val contact = findContactByID(id)
+                val server = serverLabels(contact) ?: continue
+                val current = contact.contact?.categories ?: continue
+                if (labelSet(server) != labelSet(current))
+                    marked += id
+            }
+        }
 
         for (id in marked)
             provider.update(syncAdapterURI(ContentUris.withAppendedId(RawContacts.CONTENT_URI, id)),
                     ContentValues(1).apply { put(RawContacts.DIRTY, 1) }, null, null)
-        for (group in renamed.keys)
+        for (group in renamed)
             provider.update(syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, group)),
                     ContentValues(1).apply { put(Groups.DIRTY, 0) }, null, null)
-        for (group in deleted.keys)
+        for (group in deleted)
             provider.delete(syncAdapterURI(ContentUris.withAppendedId(Groups.CONTENT_URI, group)), null, null)
         return marked.size
     }
+
+    private fun labelSet(labels: Collection<String>) = labels.filter { it.isNotBlank() }.toSet()
 
     /** Deletes this account's label groups that no contact belongs to; ordinary groups are never touched. */
     fun removeEmptyCategoryGroups(): Int {
