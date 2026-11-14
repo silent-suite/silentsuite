@@ -264,7 +264,7 @@ function sshHostVerificationViolations(parsed: ParsedWorkflow): string[] {
 }
 
 // Complete parsed-object binding and separately readable effective controls for standalone Web.
-const standaloneWebWorkflowDigest = '5f4cb2a3ccd053b88a5490223d5c42104732caa2cb2923839877d694f1ea7c18'
+const standaloneWebWorkflowDigest = '15740ad00d3475046878d4c9954e2d45593c7261d030ed30a1f98bbf42fe5155'
 const standaloneWebAuthorizationDigest = 'b7eb5ce5bef0fba7ece1736fee05cbf1b4cfd86b27d3a88ef6320c130774a069'
 const standaloneWebPredicates = {
   "build": "needs.admission.result == 'success' && github.event_name == 'workflow_dispatch' && github.repository == 'silent-suite/silentsuite' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_sha && github.workflow_sha == inputs.expected_sha && vars.WEB_STANDALONE_DEPLOY_APPROVED_SHA == inputs.expected_sha",
@@ -388,7 +388,7 @@ const standaloneWebControls = {
           "name": "Validate production arguments before build",
           "shell": "bash",
           "env": {
-            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}",
+            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}",
             "NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY": "${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}",
             "EXPECTED_SHA": "${{ inputs.expected_sha }}"
           },
@@ -403,7 +403,7 @@ const standaloneWebControls = {
           "id": "image",
           "uses": "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a",
           "env": {
-            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}"
+            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}"
           },
           "with": {
             "context": ".",
@@ -421,7 +421,7 @@ const standaloneWebControls = {
           "name": "Verify exact production image before publication",
           "shell": "bash",
           "env": {
-            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}",
+            "WEB_BUILD_ARGS": "NEXT_PUBLIC_BILLING_API_URL=https://api.silentsuite.io\nNEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io\nNEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}\nNEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=true\nNEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=true\nNEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}\nNEXT_PUBLIC_LOCAL_CACHE_ENABLED=false\nNEXT_PUBLIC_SELF_HOSTED=false\nNEXT_PUBLIC_OWNER_REGISTRATION=false\nVCS_REF=${{ inputs.expected_sha }}",
             "NEXT_PUBLIC_APP_STRIPE_PUBLISHABLE_KEY": "${{ secrets.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY }}",
             "TESTED_SHA": "${{ inputs.expected_sha }}",
             "PR_HEAD_SHA": "",
