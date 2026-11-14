@@ -192,3 +192,41 @@ describe('MiniCalendar recurring dots use the event zone (#886)', () => {
     expect(dotsFor('Tuesday, May 12, 2026')[0]).toHaveStyle({ backgroundColor: '#10b981' })
   })
 })
+
+describe('MiniCalendar day and week DURATION occurrences across DST (WEB-03 follow-up)', () => {
+  beforeEach(() => {
+    storeMock.calendarState.currentDate = new Date(2026, 2, 15, 12)
+    storeMock.calendarListState.calendars = [
+      { id: 'green-cal', name: 'Green', color: '#10b981', visible: true },
+    ]
+  })
+
+  function hostDayLabel(instant: Date): string {
+    return instant.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+  }
+
+  it('ends the 23-hour occurrence on its own day, not an hour later', async () => {
+    const { fromVEvent } = await vi.importActual<typeof import('@silentsuite/core')>('@silentsuite/core')
+    // Weekly from Saturday 28 Feb 2026, 19:30 New York, one nominal day long. The 7 March
+    // occurrence (8 March 00:30Z) ends on 8 March 19:30 EDT (23:30Z), 23 hours later.
+    storeMock.calendarState.events = [{
+      ...fromVEvent([
+        'BEGIN:VEVENT', 'UID:p1d-mini', 'SUMMARY:Day long',
+        'DTSTART;TZID=America/New_York:20260228T193000', 'DURATION:P1D',
+        'RRULE:FREQ=WEEKLY;COUNT=2',
+        'END:VEVENT',
+      ].join('\r\n')),
+      calendarId: 'green-cal',
+    }]
+
+    render(<MiniCalendar />)
+
+    const nominalLast = new Date('2026-03-08T23:29:59Z')
+    const fixedLast = new Date('2026-03-09T00:29:59Z')
+    expect(dotsFor(hostDayLabel(nominalLast))[0]).toHaveStyle({ backgroundColor: '#10b981' })
+    // Only on hosts where the extra hour would reach another day (UTC, for example).
+    if (hostDayLabel(fixedLast) !== hostDayLabel(nominalLast)) {
+      expect(dotsFor(hostDayLabel(fixedLast))).toHaveLength(0)
+    }
+  })
+})
