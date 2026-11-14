@@ -1,0 +1,332 @@
+# Etebase SDK continuity for existing Bridge installs (plan bridge-py312 §4).
+#
+# An installed Bridge keeps an Account.save() session and cache_save() collection/item
+# blobs in its SQLite cache. This proves that data written by the previous stack (Python
+# 3.10 with etebase 0.31.5, or the 0.31.9 git build on macOS arm64) works under this
+# commit's stack (Python 3.12, etebase 0.32.0), and that the previous stack still works
+# on the same data afterwards (rollback). Everything runs through the Bridge's own cache
+# and DAV storage code (bridge/scripts/sdk_continuity/continuity.py) against a throwaway
+# self-host server built from this commit's Dockerfile.server, with a synthetic account.
+#
+#   old-linux         old stack: sign up, first sync, DAV listing, pending local intents
+#   old-macos-arm64   the macOS arm64 0.31.9 build re-writes a copy of that fixture
+#                     (session, pending intents, collection meta) offline
+#   roundtrip         same data directory, no reset: new stack restores, pushes and writes
+#                     (incl. new stored sessions), then the old stack restores and pushes
+#   offline           every release lane with the SDK it ships: restore and cache_load
+#                     every fixture blob, write with the new SDK, read back with the old
+#
+# No secrets, no production servers, nothing releasable.
+name: Bridge SDK continuity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'bridge/**'
+      - '.github/workflows/bridge-sdk-continuity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bridge-sdk-continuity-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The last main before the Python 3.12 / etebase 0.32.0 move: the stack existing
+  # installs run today and the source a rollback release would ship.
+  OLD_REF: 6bd0ab5bff9c82e25660855ebf3308092a3def78
+  OLD_SDK: '0.31.5'
+  OLD_ARM64_SDK: '0.31.9'
+  NEW_SDK: '0.32.0'
+
+jobs:
+  old-linux:
+    name: Old stack fixture (etebase 0.31.5, Linux)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.OLD_REF }}
+          path: old
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: py310
+        with:
+          python-version: '3.10'
+      - name: Old stack
+        run: bash bridge/scripts/sdk_continuity/stack.sh OLD_PY "$RUNNER_TEMP/venv-old" "${{ steps.py310.outputs.python-path }}" old/bridge
+      - name: Start the self-host server
+        run: bash bridge/scripts/sdk_continuity/server.sh start "$RUNNER_TEMP/server"
+      - name: Synthetic account, first sync, then pending intents
+        run: |
+          set -euo pipefail
+          c=bridge/scripts/sdk_continuity/continuity.py
+          fx="$RUNNER_TEMP/fx/linux-old"
+          CONTINUITY_PASSWORD="Ci$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')" \
+            "$OLD_PY" "$c" seed "$fx" --sdk "$OLD_SDK" --server http://127.0.0.1:8000 --username "continuity$(date +%s)"
+          "$OLD_PY" "$c" init "$fx" --sdk "$OLD_SDK"
+          "$OLD_PY" "$c" check "$fx" --sdk "$OLD_SDK"
+          cp -R "$fx" "$RUNNER_TEMP/fx-init"
+          "$OLD_PY" "$c" mutate "$fx" --sdk "$OLD_SDK" --tag oldlinux --edit 1 --delete 2
+          "$OLD_PY" "$c" check "$fx" --sdk "$OLD_SDK"
+      - name: Stop the server
+        run: bash bridge/scripts/sdk_continuity/server.sh stop "$RUNNER_TEMP/server"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: continuity-server-state
+          path: ${{ runner.temp }}/server
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: continuity-fx-linux-old
+          path: ${{ runner.temp }}/fx/linux-old
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: continuity-fx-init
+          path: ${{ runner.temp }}/fx-init
+          if-no-files-found: error
+          retention-days: 1
+
+  old-macos-arm64:
+    name: Old stack fixture (etebase 0.31.9 git build, macOS arm64)
+    needs: old-linux
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.OLD_REF }}
+          path: old
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: py310
+        with:
+          python-version: '3.10'
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: '1.96.0'
+      # Exactly the macOS arm64 etebase build of the previous release lane (OLD_REF's
+      # build-bridge.yml): the pinned etebase-py commit, built in a throwaway venv that
+      # holds only its hash-locked build tools.
+      - name: Build the previous macOS arm64 etebase (c5afd1a)
+        working-directory: old/bridge
+        run: |
+          set -euo pipefail
+          ETEBASE_BUILD="$RUNNER_TEMP/etebase-build"
+          "${{ steps.py310.outputs.python-path }}" -m venv "$ETEBASE_BUILD/venv"
+          "$ETEBASE_BUILD/venv/bin/python" -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-etebase-build.txt
+          "$ETEBASE_BUILD/venv/bin/python" -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -w "$RUNNER_TEMP/old-wheel" "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+          ls "$RUNNER_TEMP/old-wheel"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: continuity-old-macos-arm64-wheel
+          path: ${{ runner.temp }}/old-wheel
+          if-no-files-found: error
+          retention-days: 1
+      - name: Old stack
+        run: bash bridge/scripts/sdk_continuity/stack.sh OLD_PY "$RUNNER_TEMP/venv-old" "${{ steps.py310.outputs.python-path }}" old/bridge "$(ls "$RUNNER_TEMP"/old-wheel/etebase-*.whl)"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: continuity-fx-init
+          path: ${{ runner.temp }}/fx/macos-arm64-old
+      - name: Re-write the fixture with the 0.31.9 build (offline)
+        run: |
+          set -euo pipefail
+          c=bridge/scripts/sdk_continuity/continuity.py
+          fx="$RUNNER_TEMP/fx/macos-arm64-old"
+          "$OLD_PY" "$c" check "$fx" --sdk "$OLD_ARM64_SDK"
+          "$OLD_PY" "$c" mutate "$fx" --sdk "$OLD_ARM64_SDK" --tag oldarm --edit 5 --delete 6
+          "$OLD_PY" "$c" session "$fx" --sdk "$OLD_ARM64_SDK" --out "$fx/session.txt"
+          "$OLD_PY" "$c" check "$fx" --sdk "$OLD_ARM64_SDK"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: continuity-fx-macos-arm64-old
+          path: ${{ runner.temp }}/fx/macos-arm64-old
+          if-no-files-found: error
+          retention-days: 1
+
+  roundtrip:
+    name: Old -> new -> old on the same data (Linux, online)
+    needs: [old-linux, old-macos-arm64]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.OLD_REF }}
+          path: old
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: py310
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: py312
+        with:
+          python-version: '3.12'
+      - name: Old and new stacks
+        run: |
+          bash bridge/scripts/sdk_continuity/stack.sh OLD_PY "$RUNNER_TEMP/venv-old" "${{ steps.py310.outputs.python-path }}" old/bridge
+          bash bridge/scripts/sdk_continuity/stack.sh NEW_PY "$RUNNER_TEMP/venv-new" "${{ steps.py312.outputs.python-path }}" bridge
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: continuity-server-state
+          path: ${{ runner.temp }}/server
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: continuity-fx-linux-old
+          path: ${{ runner.temp }}/fx/linux-old
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: continuity-fx-macos-arm64-old
+          path: ${{ runner.temp }}/fx/macos-arm64-old
+      - name: Start the self-host server on the old-linux job's state
+        run: bash bridge/scripts/sdk_continuity/server.sh start "$RUNNER_TEMP/server"
+      - name: Old -> new -> old
+        run: |
+          set -euo pipefail
+          c=bridge/scripts/sdk_continuity/continuity.py
+          for name in linux-old:3:4 macos-arm64-old:7:8; do
+            IFS=: read -r fx edit delete <<< "$name"
+            d="$RUNNER_TEMP/fx/$fx"
+            echo "=== $fx: new stack on the old data directory ==="
+            "$NEW_PY" "$c" check "$d" --sdk "$NEW_SDK"
+            "$NEW_PY" "$c" push "$d" --sdk "$NEW_SDK"
+            "$NEW_PY" "$c" check "$d" --sdk "$NEW_SDK"
+            "$NEW_PY" "$c" mutate "$d" --sdk "$NEW_SDK" --tag "new$edit" --edit "$edit" --delete "$delete"
+            "$NEW_PY" "$c" session "$d" --sdk "$NEW_SDK" --out "$d/session.txt"
+            "$NEW_PY" "$c" session "$d" --sdk "$NEW_SDK" --login --out "$d/session-login.txt"
+            "$NEW_PY" "$c" check "$d" --sdk "$NEW_SDK"
+            echo "=== $fx: old stack back on the same directory (rollback) ==="
+            "$OLD_PY" "$c" check "$d" --sdk "$OLD_SDK" --session "$d/session-login.txt"
+            "$OLD_PY" "$c" check "$d" --sdk "$OLD_SDK"
+            "$OLD_PY" "$c" push "$d" --sdk "$OLD_SDK"
+            "$OLD_PY" "$c" check "$d" --sdk "$OLD_SDK"
+          done
+      - name: Stop the server
+        if: always()
+        run: docker stop ss-server || true
+
+  offline:
+    name: Offline restore on ${{ matrix.lane }}
+    needs: [old-linux, old-macos-arm64]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: linux-x86_64
+            runner: ubuntu-22.04
+          - lane: linux-arm64
+            runner: ubuntu-22.04
+            qemu: true
+          - lane: macos-x86_64
+            runner: macos-15-intel
+          - lane: macos-arm64
+            runner: macos-15
+          - lane: windows-x86_64
+            runner: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.OLD_REF }}
+          path: old
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: continuity-fx-linux-old
+          path: work/linux-old
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        with:
+          name: continuity-fx-macos-arm64-old
+          path: work/macos-arm64-old
+
+      # --- native lanes ---
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: '!matrix.qemu'
+        id: py310
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: '!matrix.qemu'
+        id: py312
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        if: matrix.lane == 'macos-x86_64'
+        with:
+          toolchain: '1.96.0'
+      # Same sdist build as build-bridge.yml's macOS x86_64 lane.
+      - name: Build etebase 0.32.0 from the pinned sdist (macOS x86_64)
+        if: matrix.lane == 'macos-x86_64'
+        working-directory: bridge
+        run: |
+          set -euo pipefail
+          ETEBASE_BUILD="$RUNNER_TEMP/etebase-build"
+          "${{ steps.py312.outputs.python-path }}" -m venv "$ETEBASE_BUILD/venv"
+          "$ETEBASE_BUILD/venv/bin/python" -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-etebase-build.txt
+          # maturin's build backend runs the maturin executable from PATH.
+          PATH="$ETEBASE_BUILD/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=10.13 MATURIN_PEP517_ARGS="--locked" "$ETEBASE_BUILD/venv/bin/python" -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies --require-hashes --no-binary=etebase -w "$RUNNER_TEMP/new-wheel" -r requirements-etebase-sdist.txt
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v7.0.1
+        if: matrix.lane == 'macos-arm64'
+        with:
+          name: continuity-old-macos-arm64-wheel
+          path: ${{ runner.temp }}/old-wheel
+      - name: Old and new stacks (native)
+        if: '!matrix.qemu'
+        run: |
+          set -euo pipefail
+          new_wheel="$(ls "$RUNNER_TEMP"/new-wheel/etebase-*.whl 2>/dev/null || true)"
+          old_wheel="$(ls "$RUNNER_TEMP"/old-wheel/etebase-*.whl 2>/dev/null || true)"
+          bash bridge/scripts/sdk_continuity/stack.sh NEW_PY "$RUNNER_TEMP/venv-new" "${{ steps.py312.outputs.python-path }}" bridge "$new_wheel"
+          bash bridge/scripts/sdk_continuity/stack.sh OLD_PY "$RUNNER_TEMP/venv-old" "${{ steps.py310.outputs.python-path }}" old/bridge "$old_wheel"
+          if [ "${{ matrix.lane }}" = macos-arm64 ]; then echo "LANE_OLD_SDK=$OLD_ARM64_SDK" >> "$GITHUB_ENV"; else echo "LANE_OLD_SDK=$OLD_SDK" >> "$GITHUB_ENV"; fi
+      - name: New stack reads the old fixtures, then writes (native)
+        if: '!matrix.qemu'
+        run: bash bridge/scripts/sdk_continuity/offline.sh new "$NEW_PY" work
+      - name: Old stack reads back what the new stack wrote (native)
+        if: '!matrix.qemu'
+        run: bash bridge/scripts/sdk_continuity/offline.sh old "$OLD_PY" work "$LANE_OLD_SDK"
+
+      # --- Linux arm64 in the release lane's QEMU containers ---
+      - name: Set up QEMU
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3-68@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: aarch64
+          cache-image: false
+      - name: New and old stacks in the arm64 release containers
+        if: matrix.qemu
+        run: |
+          set -euo pipefail
+          # New: build-bridge.yml's container. Old: OLD_REF's build-bridge.yml container.
+          docker run --rm --platform linux/arm64 -v "$PWD:/w" -w /w -e NEW_SDK \
+            arm64v8/python:3.12.16-slim-trixie@sha256:b2d51a2cc64ddc1b9acdab76aaac1708f1c80fded8ad2e4b76638ec0bc403565 \
+            sh -c 'bash bridge/scripts/sdk_continuity/stack.sh NEW_PY /tmp/venv-new python bridge && bash bridge/scripts/sdk_continuity/offline.sh new /tmp/venv-new/bin/python work'
+          docker run --rm --platform linux/arm64 -v "$PWD:/w" -w /w \
+            arm64v8/python:3.10.22-slim-trixie@sha256:92479346bd9cc169c573d3f71b95978521189349051ef1edb56a907a6d8c6ea7 \
+            sh -c "bash bridge/scripts/sdk_continuity/stack.sh OLD_PY /tmp/venv-old python old/bridge && bash bridge/scripts/sdk_continuity/offline.sh old /tmp/venv-old/bin/python work $OLD_SDK"
