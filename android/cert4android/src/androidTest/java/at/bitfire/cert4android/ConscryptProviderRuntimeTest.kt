@@ -1,5 +1,7 @@
 package at.bitfire.cert4android
 
+import android.app.Activity
+import android.app.Instrumentation
 import android.content.Intent
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -27,6 +29,7 @@ import java.security.KeyStore
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.SSLContext
@@ -207,17 +210,31 @@ class ConscryptProviderRuntimeTest {
         }
     }
 
-    /** Accepts [certificate] through the same foreground decision and service command as the app. */
+    /**
+     * Accepts [certificate] through the same foreground decision and service command as the app.
+     * The decision screen itself is intercepted rather than shown: this library's test APK has no
+     * AppCompat theme, and only the generation the service puts into its intent is needed.
+     */
     private fun accept(certificate: X509Certificate) {
-        val monitor = instrumentation.addMonitor(TrustCertificateActivity::class.java.name, null, false)
+        val launched = LinkedBlockingQueue<Intent>()
+        val monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? =
+                if (intent.component?.className == TrustCertificateActivity::class.java.name) {
+                    launched.add(intent)
+                    Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null)
+                } else
+                    null
+        }
+        instrumentation.addMonitor(monitor)
         val callback = Callback()
-        service.checkTrusted(certificate.encoded, true, true, callback)
-        val activity = instrumentation.waitForMonitorWithTimeout(monitor, 15_000)
-        instrumentation.removeMonitor(monitor)
-        requireNotNull(activity) { "Foreground certificate decision did not launch TrustCertificateActivity" }
-        val generation = requireNotNull(activity.intent.getStringExtra(CustomCertService.EXTRA_DECISION_GENERATION))
-        activity.finish()
-        instrumentation.waitForIdleSync()
+        val intent = try {
+            service.checkTrusted(certificate.encoded, true, true, callback)
+            launched.poll(15, TimeUnit.SECONDS)
+        } finally {
+            instrumentation.removeMonitor(monitor)
+        }
+        requireNotNull(intent) { "Foreground certificate decision did not start TrustCertificateActivity" }
+        val generation = requireNotNull(intent.getStringExtra(CustomCertService.EXTRA_DECISION_GENERATION))
         context.startService(Intent(context, CustomCertService::class.java).apply {
             action = CustomCertService.CMD_CERTIFICATION_DECISION
             putExtra(CustomCertService.EXTRA_CERTIFICATE, certificate.encoded)
