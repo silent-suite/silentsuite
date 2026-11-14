@@ -1011,7 +1011,7 @@ class TestSyncLogic:
                     .execute()
                 )
 
-            mock_item_mgr.batch.side_effect = concurrent_local_write
+            mock_item_mgr.transaction.side_effect = concurrent_local_write
             with patch.object(mem_db, "close", return_value=False):
                 with caplog.at_level(logging.INFO, logger="silentsuite-bridge.cache"):
                     etebase.push_collection("private-push-collection-uid")
@@ -1806,6 +1806,7 @@ def test_deleted_dirty_new_legacy_duplicate_resolves_without_remote_write(
     assert list(etebase._collection_dirty_get(cache_col)) == []
     item_mgr.create.assert_not_called()
     item_mgr.batch.assert_not_called()
+    item_mgr.transaction.assert_not_called()
 
 
 def test_unresolved_retry_preserves_concurrent_local_item_mutation(mem_db, user):
