@@ -281,6 +281,10 @@ jobs:
 
           expected = {
               "providerLoadsAndCreatesTlsContext",
+              "unacceptedCertificateIsRejectedByCustomTrust",
+              "acceptedCertificateConnectsDespiteHostnameMismatch",
+              "trustedChainWithMatchingHostnameConnects",
+              "trustedChainWithOtherHostnameIsRejectedWithoutAcceptance",
           }
           records = []
           for path in glob.glob(

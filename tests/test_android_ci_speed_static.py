@@ -435,6 +435,34 @@ def _with_approved_conscrypt_version(job: dict) -> dict:
     return job
 
 
+# The same Conscrypt update adds four TLS composition tests to ConscryptProviderRuntimeTest, so the
+# conscrypt-runtime ledger expects their names. Only those lines, added exactly once after the existing
+# method, are carried forward; every other conscrypt-runtime byte must still match.
+CONSCRYPT_RUNTIME_LEDGER_ANCHOR = '    "providerLoadsAndCreatesTlsContext",\n'
+CONSCRYPT_RUNTIME_LEDGER_ADDED = (
+    '    "unacceptedCertificateIsRejectedByCustomTrust",\n'
+    '    "acceptedCertificateConnectsDespiteHostnameMismatch",\n'
+    '    "trustedChainWithMatchingHostnameConnects",\n'
+    '    "trustedChainWithOtherHostnameIsRejectedWithoutAcceptance",\n'
+)
+
+
+def _with_approved_conscrypt_runtime_ledger(job: dict) -> dict:
+    """A predecessor conscrypt-runtime job with only the four TLS composition methods added to its ledger."""
+    job = copy.deepcopy(job)
+    owners = [
+        step for step in job.get("steps") or []
+        if isinstance(step.get("run"), str) and CONSCRYPT_RUNTIME_LEDGER_ANCHOR in step["run"]
+    ]
+    assert len(owners) == 1, "exactly one predecessor step must own the Conscrypt runtime ledger"
+    run = owners[0]["run"]
+    assert run.count(CONSCRYPT_RUNTIME_LEDGER_ANCHOR) == 1 and CONSCRYPT_RUNTIME_LEDGER_ADDED not in run
+    owners[0]["run"] = run.replace(
+        CONSCRYPT_RUNTIME_LEDGER_ANCHOR, CONSCRYPT_RUNTIME_LEDGER_ANCHOR + CONSCRYPT_RUNTIME_LEDGER_ADDED
+    )
+    return job
+
+
 # The second approved build-pr change since both predecessors: one step that inspects the merged release
 # R8 configuration directly after the unsigned build. Only that step, present exactly once in exactly that
 # place, is set aside before the comparisons; every other build-pr byte must still match. Its content and
@@ -550,6 +578,8 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
         original = base["jobs"][name]
         if name == "conscrypt-r28":
             original = _with_approved_conscrypt_version(original)
+        if name == "conscrypt-runtime":
+            original = _with_approved_conscrypt_runtime_ledger(original)
         assert candidate["jobs"][name] == original, name
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
     # the admission steps: NDK, build-tools, JDKs, matrices, runtime scripts,
@@ -577,6 +607,8 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
             job = _with_approved_runtime_ledger_changes(job)
         if name == "conscrypt-r28":
             job = _with_approved_conscrypt_version(job)
+        if name == "conscrypt-runtime":
+            job = _with_approved_conscrypt_runtime_ledger(job)
         if name != "build-pr":
             assert candidate["jobs"][name] == job, name
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
