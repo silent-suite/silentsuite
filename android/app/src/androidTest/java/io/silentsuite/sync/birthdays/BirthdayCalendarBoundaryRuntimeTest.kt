@@ -225,6 +225,33 @@ class BirthdayCalendarBoundaryRuntimeTest {
         assertEquals(0L, eventRow(account, local, itemUid)?.dirty)
     }
 
+    /**
+     * The same restore covers a calendar shared with this account read-only, which is not a Birthdays
+     * calendar: before, its local edit was only marked clean and stayed in the provider.
+     */
+    @Test fun anEditOfAnEventInAReadOnlySharedCalendarIsRestoredFromTheServerWithoutAnUpload() {
+        val account = newAccount("gen-readonly-edit")
+        val calendar = uploadCalendar("Shared", "")
+        val itemUid = uploadEvent(calendar, "readonly-event-1", "Team offsite")
+        fake.setAccessLevel(calendar.uid, 0L)
+        val local = syncedLocal(account, "gen-readonly-edit", calendar)
+        assertEquals("a read-only collection is read-only in the calendar provider", Calendars.CAL_ACCESS_READ, accessLevel(local))
+        val row = checkNotNull(eventRow(account, local, itemUid)) { "the server's event reached the provider" }
+        assertEquals("Team offsite", row.title)
+
+        assertEquals("the edit reached the provider", 1, editAsCalendarApp(row.id, EDITED))
+        assertEquals("a calendar app's edit marks the event dirty", 1L, eventRow(account, local, itemUid)?.dirty)
+
+        val since = fake.requests.size
+        val outcome = sync(account, local)
+        assertEquals("an edit in a read-only calendar uploads nothing", emptyList<String>(), uploadsTo(calendar.uid, since))
+        val restored = checkNotNull(eventRow(account, local, itemUid)) { "the event is still in the provider" }
+        assertEquals("FEATURE: the server's content is back in the provider", "Team offsite", restored.title)
+        assertEquals("FEATURE: the restored event is no longer dirty", 0L, restored.dirty)
+        assertEquals(SyncManager.ProviderOutcome.SUCCESS, outcome)
+        assertTrue("the server copy is unchanged", serverEvent(calendar, itemUid).contains("SUMMARY:Team offsite"))
+    }
+
     // ---- (d) the root fence ----
 
     /**

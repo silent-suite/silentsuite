@@ -12,6 +12,7 @@ import android.accounts.Account
 import android.content.Context
 import android.content.SyncResult
 import android.os.Bundle
+import at.bitfire.ical4android.CalendarStorageException
 import at.bitfire.ical4android.Task
 import com.etebase.client.Item
 import io.silentsuite.sync.AccountSettings
@@ -66,8 +67,74 @@ class TasksSyncManager(
         return localCollection as LocalTaskList
     }
 
+    /**
+     * A task list row that no complete listing has filled yet is listed from the start, as the
+     * collection's saved sync token may already be past entries this row never received.
+     */
+    override fun replayFromStart(): Boolean {
+        if (localTaskList().populated())
+            return false
+        Logger.log.info("Listing this task list from the start, as it isn't marked complete")
+        return true
+    }
+
+    override fun onReplayCompleted() {
+        localTaskList().markPopulated()
+    }
+
+    /** What this run does with [item] given a local change of it that isn't uploaded yet. */
+    private fun replayLocalChange(item: Item, local: LocalTask?): ReplayLocalChange {
+        val pending = replaying && local?.id?.let { localTaskList().hasPendingChange(it) } == true
+        return replayLocalChange(replaying, item.isDeleted, pending)
+    }
+
+    override fun keepsLocalChange(item: Item): Boolean {
+        if (!replaying || !item.isDeleted)
+            return false
+        val keep = replayLocalChange(item, localCollection!!.findByFilename(item.uid)) == ReplayLocalChange.SKIP_APPLY_AND_CACHE
+        if (keep)
+            Logger.log.info("Keeping a local change over a server deletion during this listing")
+        return keep
+    }
+
+    /**
+     * On a read-only task list, reapplies the cached server task (already downloaded by an earlier
+     * sync) over a discarded local change, so the tasks app shows the server's content again
+     * before the dirty flag is cleared.
+     */
+    @Throws(CalendarStorageException::class)
+    override fun restoreLocalFromRemote(local: LocalTask): String? {
+        // The Etebase cache is keyed by the item/file UID, not the iCalendar UID.
+        val itemUid = local.fileName
+            ?: throw CalendarStorageException("Cannot restore a task without its cached item UID")
+
+        val cached = synchronized(etebaseLocalCache) {
+            etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, itemUid)
+        }
+        if (cached == null || cached.item.isDeleted)
+            throw CalendarStorageException("The server copy of a read-only task is unavailable")
+
+        val remote = Task.tasksFromReader(StringReader(cached.content))
+        if (remote.isEmpty())
+            throw CalendarStorageException("The server copy of a read-only task is invalid")
+
+        Logger.log.info("Reapplying the server's task over a discarded local change")
+        local.eTag = cached.item.etag
+        local.update(remote[0])
+        return cached.item.etag
+    }
+
     override fun processItem(item: Item) {
         val local = localCollection!!.findByFilename(item.uid)
+
+        if (replayLocalChange(item, local) == ReplayLocalChange.SKIP_APPLY) {
+            Logger.log.info("Keeping a local change made during this listing for the next upload")
+            return
+        }
+        if (replayKeepsStoredRevision(replaying, item.isDeleted, local?.eTag, item.etag)) {
+            // A listing from the start fills in missing tasks; it doesn't rewrite ones already current.
+            return
+        }
 
         if (!item.isDeleted) {
             val inputReader = StringReader(String(item.content))
@@ -110,3 +177,10 @@ class TasksSyncManager(
         return localTask
     }
 }
+
+/**
+ * Whether a listing from the start leaves a local task alone because it already holds the listed
+ * revision. Outside such a listing every item is applied as before.
+ */
+internal fun replayKeepsStoredRevision(replaying: Boolean, remoteDeleted: Boolean, localETag: String?, remoteETag: String?): Boolean =
+    replaying && !remoteDeleted && localETag != null && localETag == remoteETag
