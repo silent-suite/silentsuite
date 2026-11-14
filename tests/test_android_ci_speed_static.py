@@ -53,6 +53,25 @@ ADDED_JOBS = {"timezone-rules-jvm", "timezone-rules-runtime", "gradle-wrapper-va
 CHANGES_JOB = "changes"
 ANDROID_CHANGED = "needs.changes.outputs.android == 'true'"
 PRODUCER_NEEDS = ["signing-policy", CHANGES_JOB]
+# Every job that runs Gradle besides build-pr restores the Gradle cache build-pr saves, once, before its
+# first Gradle or emulator step, and never saves it.
+GRADLE_RESTORE = {
+    "name": "Restore Gradle cache",
+    "uses": "actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    "with": {
+        "path": "~/.gradle/caches\n~/.gradle/wrapper\n",
+        "key": "gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}",
+        "restore-keys": "gradle-",
+    },
+}
+GRADLE_RESTORE_JOBS = (
+    "conscrypt-runtime",
+    "timezone-rules-jvm",
+    "timezone-rules-runtime",
+    "account-recreation-runtime",
+    "color-parity-evidence",
+    "registry-process-boundary",
+)
 ARTIFACT = "etebase-16kb-${{ github.sha }}"
 STAGING = "${{ runner.temp }}/etebase-16kb-artifact"
 BUILD_SCRIPT = "scripts/build-etebase-client-16kb.sh"
@@ -308,9 +327,12 @@ def ci_speed_violations(workflow: dict) -> list[str]:
 
 
 def _without_android_change_gate(job: dict) -> dict:
-    """A candidate job minus only the changes-job gate: the `changes` need and the
-    android condition. Everything else must still match its predecessor."""
+    """A candidate job minus only the changes-job gate (the `changes` need and the
+    android condition) and the restore-only Gradle cache step. Everything else must
+    still match its predecessor."""
     job = copy.deepcopy(job)
+    if "steps" in job:
+        job["steps"] = [step for step in job["steps"] if step != GRADLE_RESTORE]
     needs = [need for need in _needs(job) if need != CHANGES_JOB]
     if CHANGES_JOB in _needs(job):
         if needs:
@@ -557,7 +579,7 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
     # build-pr additionally differs only by its static-suite gating and by dropping
     # the suite's Python setup and install.
     for name in CONSUMERS:
-        current = _without_admission(candidate["jobs"][name])
+        current = _without_admission(_without_android_change_gate(candidate["jobs"][name]))
         original = _without_native_compile(base["jobs"][name])
         if name == RUNTIME_LEDGER_JOB:
             original = _with_approved_runtime_ledger_changes(original)
@@ -619,7 +641,7 @@ def test_r8_inspection_normalization_admits_only_the_one_placed_step(predecessor
 
 def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecessor, candidate):
     carried = _with_approved_runtime_ledger_changes(predecessor["jobs"][RUNTIME_LEDGER_JOB])
-    current = candidate["jobs"][RUNTIME_LEDGER_JOB]
+    current = _without_android_change_gate(candidate["jobs"][RUNTIME_LEDGER_JOB])
     assert carried == current
     # The transport applies once, to the old lines only.
     with pytest.raises(AssertionError):
@@ -964,3 +986,16 @@ def test_only_android_build_inputs_start_the_build_jobs(candidate):
     assert "'^(android/|\\.github/workflows/build-android\\.yml$)'" in detect
     assert jobs[CHANGES_JOB]["outputs"] == {"android": "${{ steps.detect.outputs.android }}"}
     assert jobs[CHANGES_JOB]["permissions"] == {"contents": "read"}
+
+
+def test_gradle_jobs_restore_but_never_save_the_gradle_cache(candidate):
+    jobs = candidate["jobs"]
+    for name, job in jobs.items():
+        steps = job.get("steps") or []
+        restores = [index for index, step in enumerate(steps) if step == GRADLE_RESTORE]
+        if name in GRADLE_RESTORE_JOBS:
+            assert len(restores) == 1 and restores[0] < _first_build(steps), name
+        else:
+            assert restores == [], name
+        if name != "build-pr":
+            assert not any(_uses(step).startswith(("actions/cache@", "actions/cache/save@")) for step in steps), name

@@ -299,6 +299,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Restore Gradle cache
+        # Restore only: build-pr saves this cache, these jobs only read it.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
@@ -391,6 +401,16 @@ jobs:
           java-version: '17.0.21'
           distribution: 'temurin'
 
+      - name: Restore Gradle cache
+        # Restore only: build-pr saves this cache, these jobs only read it.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
@@ -478,6 +498,16 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+
+      - name: Restore Gradle cache
+        # Restore only: build-pr saves this cache, these jobs only read it.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
@@ -896,6 +926,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Restore Gradle cache
+        # Restore only: build-pr saves this cache, these jobs only read it.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
       - name: Install Android NDK r28
         run: |
           SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
@@ -1149,6 +1189,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Restore Gradle cache
+        # Restore only: build-pr saves this cache, these jobs only read it.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
       - name: Install Android NDK r28
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358"
@@ -1283,6 +1333,16 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
+
+      - name: Restore Gradle cache
+        # Restore only: build-pr saves this cache, these jobs only read it.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('android/**/*.gradle', 'android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-
 
       - name: Install Android NDK r28
         if: steps.image.outputs.available == 'true'
