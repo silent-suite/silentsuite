@@ -217,9 +217,9 @@ def test_lock_matches_pyproject():
 @pytest.mark.parametrize(
     ("old", "new"),
     [
-        ('"requests>=2.28.0"', '"requests[socks]>=2.28.0"'),
+        ('"vobject>=0.9.6"', '"vobject[extra]>=0.9.6"'),
         ('requires = ["hatchling"]', 'requires = ["hatchling>=2"]'),
-        ('"requests>=2.28.0",', '"requests>=2.28.0",\n    "click>=8",'),
+        ('"appdirs>=1.4.3",', '"appdirs>=1.4.3",\n    "click>=8",'),
         ('"radicale==3.2.3"', '"radicale==3.2.4"'),
         ('"etebase>=0.31.5,<0.32"', '"etebase>=0.31.6,<0.32"'),
         ('"ruff>=0.1.0",', ""),
