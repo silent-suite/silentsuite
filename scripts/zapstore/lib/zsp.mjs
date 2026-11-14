@@ -33,7 +33,7 @@ export function zspArgs({ configPath, commit, channel = 'main', mode }) {
 }
 
 // Unsigned mode signs nothing: SIGN_WITH is the public npub, so zsp emits
-// unsigned events with the correct pubkey. Live mode requires a bunker URL.
+// unsigned events with the correct pubkey. Live mode takes the publisher nsec or a bunker URL.
 // Signed-offline mode (signing rehearsal only) also requires the bunker: the
 // signer signs the real events, which zsp prints to stdout and never uploads
 // or publishes. Those events are publishable by anyone who holds them.
@@ -46,9 +46,14 @@ export function zspEnv({ mode, npub, signWith, xdgConfigHome }) {
     return env
   }
   if (mode === 'live' || mode === 'signed-offline') {
-    if (typeof signWith !== 'string' || signWith === '') throw new Error('ZAPSTORE_SIGN_WITH is missing; refusing to publish')
-    if (!signWith.startsWith('bunker://')) throw new Error('ZAPSTORE_SIGN_WITH must be a bunker:// URL; private keys are never accepted')
-    env.SIGN_WITH = signWith
+    const value = typeof signWith === 'string' ? signWith.trim() : ''
+    if (value === '') throw new Error('ZAPSTORE_SIGN_WITH is missing; refusing to publish')
+    // Live publication accepts the publisher nsec (environment secret, owner
+    // decision 2026-11-14) or a bunker URL. The signing rehearsal stays
+    // bunker-only: it exists to exercise the NIP-46 path.
+    const nsecAllowed = mode === 'live' && /^nsec1[02-9ac-hj-np-z]{58}$/.test(value)
+    if (!value.startsWith('bunker://') && !nsecAllowed) throw new Error(mode === 'live' ? 'ZAPSTORE_SIGN_WITH must be a bunker:// URL or the publisher nsec1 key' : 'ZAPSTORE_SIGN_WITH must be a bunker:// URL for the signing rehearsal')
+    env.SIGN_WITH = value
     return env
   }
   throw new Error(`unknown zsp mode ${String(mode)}`)

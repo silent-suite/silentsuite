@@ -8,6 +8,8 @@ import com.etebase.client.exceptions.UrlParseException
 import io.silentsuite.sync.log.Logger
 import okhttp3.OkHttpClient
 import java.io.File
+import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.*
 import java.util.concurrent.atomic.AtomicLong
 
@@ -21,6 +23,13 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
     }
     private val filesDir: File = File(context.filesDir, username)
     private val colsDir: File = File(filesDir, "cols")
+
+    /**
+     * Items this device created whose upload is not confirmed yet, one file per item, kept apart
+     * from the cache above so nothing reads them as the server's copy. The folder is named by a hash
+     * of the username, so no username can point it elsewhere.
+     */
+    private val pendingCreatesDir: File = File(File(context.noBackupFilesDir, PENDING_CREATES), sha256Hex(username))
 
     private fun getCollectionItemsDir(colUid: String): File {
         val colsDir = File(filesDir, "cols")
@@ -68,6 +77,7 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
     private fun clearUserCache() {
         synchronized(writeFence) {
             fsCache.clearUserCache()
+            pendingCreatesDir.deleteRecursively()
         }
     }
 
@@ -143,6 +153,7 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
         } catch (e: UrlParseException) {
             // Ignore, as it just means the file doesn't exist
         }
+        if (isUid(colUid)) File(pendingCreatesDir, colUid).deleteRecursively()
     }
 
     fun itemList(itemMgr: ItemManager, colUid: String, withDeleted: Boolean = false): List<CachedItem> {
@@ -197,7 +208,44 @@ class EtebaseLocalCache private constructor(context: Context, username: String) 
         fsCache.itemUnset(itemMgr, colUid, itemUid)
     }
 
+    private fun pendingCreateFile(colUid: String, itemUid: String): File? =
+        if (isUid(colUid) && isUid(itemUid)) File(File(pendingCreatesDir, colUid), itemUid) else null
+
+    /**
+     * Keeps a new item, as [ItemManager.cacheSave] wrote it, until its upload is confirmed. Written
+     * to a temporary file, synced and then renamed, so a crash leaves the old state or the new one.
+     */
+    fun pendingCreateSave(colUid: String, itemUid: String, cached: ByteArray) {
+        val file = pendingCreateFile(colUid, itemUid) ?: return
+        file.parentFile?.mkdirs()
+        val temp = File(file.parentFile, "${file.name}.tmp")
+        FileOutputStream(temp).use {
+            it.write(cached)
+            it.fd.sync()
+        }
+        if (!temp.renameTo(file)) {
+            temp.delete()
+            throw java.io.IOException("Could not keep a new item until its upload is confirmed")
+        }
+    }
+
+    /** The new item kept by [pendingCreateSave], or null when there is none. */
+    fun pendingCreateLoad(colUid: String, itemUid: String): ByteArray? =
+        pendingCreateFile(colUid, itemUid)?.takeIf { it.isFile }?.readBytes()
+
+    fun pendingCreateRemove(colUid: String, itemUid: String) {
+        pendingCreateFile(colUid, itemUid)?.delete()
+    }
+
     companion object {
+        private const val PENDING_CREATES = "etebase-pending-creates"
+        private val UID = Regex("[A-Za-z0-9_-]+")
+
+        private fun isUid(value: String) = UID.matches(value)
+
+        private fun sha256Hex(value: String): String = MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+
         private val localCacheCache: HashMap<String, EtebaseLocalCache> = HashMap()
 
         fun getInstance(context: Context, username: String): EtebaseLocalCache {

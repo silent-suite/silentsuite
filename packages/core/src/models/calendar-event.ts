@@ -1,4 +1,4 @@
-import { parseVEvent, generateVEvent, partitionRetainedRDates } from '../utils/ical-parser.js';
+import { parseVEvent, generateVEvent, partitionRetainedRDates, splitCalendarItem, topLevelProperty, generateRetainedComponent } from '../utils/ical-parser.js';
 import type { VEvent, VAlarm } from '../utils/ical-parser.js';
 import { isKnownTimeZone, wallTimeInZone, wallTimeToInstant } from '../utils/zoned-time.js';
 import { expandRecurrence, occurrenceWallClock, occurrencesBefore } from '../utils/recurrence.js';
@@ -44,6 +44,14 @@ export interface CalendarEvent {
    *  Revalidated when written. Omitted when there are none. */
   unknownProperties?: string[];
   unknownComponents?: string[][];
+  /** The item's VTIMEZONE blocks (unfolded lines), written back unchanged. Omitted when none. */
+  vtimezones?: string[][];
+  /** VEVENTs of the same UID with a RECURRENCE-ID (changed occurrences), as unfolded lines,
+   *  written back after the event. Omitted when none. See {@link serializeCalendarEvent}. */
+  overrides?: string[][];
+  /** The DTSTART form (`date`, `utc`, `floating` or `tzid`) the overrides were read with. Set
+   *  with `overrides`. */
+  overridesForm?: StartForm;
   created: Date;
   updated: Date;
 }
@@ -353,9 +361,21 @@ export function toVEvent(event: CalendarEvent): string {
 }
 
 /**
- * Parse an iCalendar VEVENT string into a CalendarEvent.
+ * Parse an iCalendar VEVENT string into a CalendarEvent. A VCALENDAR item is read from its series
+ * VEVENT; its VTIMEZONE blocks and same-UID RECURRENCE-ID overrides are kept for writing back.
  */
 export function fromVEvent(veventStr: string): CalendarEvent {
+  const item = splitCalendarItem(veventStr);
+  const event = readVEvent(item ? item.main : veventStr);
+  if (item && item.vtimezones.length > 0) event.vtimezones = item.vtimezones;
+  if (item && item.overrides.length > 0) {
+    event.overrides = item.overrides;
+    event.overridesForm = startForm(event);
+  }
+  return event;
+}
+
+function readVEvent(veventStr: string): CalendarEvent {
   const vevent = parseVEvent(veventStr);
 
   const isAllDay =
@@ -482,19 +502,158 @@ export function parseAlarmTriggerMinutes(trigger: string): number {
   return 0;
 }
 
+/** The form of an event's DTSTART value, which RECURRENCE-ID values of its overrides share. */
+export type StartForm = 'date' | 'utc' | 'floating' | 'tzid';
+
+function startForm(event: Pick<CalendarEvent, 'allDay' | 'timezone' | 'floating'>): StartForm {
+  if (event.allDay) return 'date';
+  if (event.timezone) return 'tzid';
+  return event.floating === true ? 'floating' : 'utc';
+}
+
+/** A parameter value without its surrounding DQUOTEs (RFC 5545 allows quoting any parameter). */
+function unquote(value: string | undefined): string | undefined {
+  return value !== undefined && /^".*"$/.test(value) ? value.slice(1, -1) : value;
+}
+
+/** The index of a component's own RECURRENCE-ID line, or -1. */
+function recurrenceIdIndex(block: readonly string[]): number {
+  let depth = 0;
+  for (let i = 0; i < block.length; i++) {
+    const line = block[i]!;
+    if (/^BEGIN:/i.test(line)) { depth++; continue; }
+    if (/^END:/i.test(line)) { depth--; continue; }
+    if (depth === 1 && /^RECURRENCE-ID[;:]/i.test(line)) return i;
+  }
+  return -1;
+}
+
+/**
+ * The instant an override's RECURRENCE-ID names: with its own TZID, else in `zone` for a
+ * floating value (host-local when undefined); a DATE is host-local midnight. Null if unreadable.
+ */
+function overrideInstant(block: readonly string[], zone: string | undefined): number | null {
+  const rid = topLevelProperty(block, 'RECURRENCE-ID');
+  if (!rid) return null;
+  const isDate = (rid.params['VALUE'] ?? '').toUpperCase() === 'DATE' || /^\d{8}$/.test(rid.value);
+  const tzid = unquote(rid.params['TZID']) ?? (isDate ? undefined : zone);
+  const at = parseICalDateValue(rid.value, tzid).date.getTime();
+  return Number.isFinite(at) ? at : null;
+}
+
+/** The zone a floating RECURRENCE-ID of `event`'s overrides is read in (host-local when undefined). */
+function overrideZone(event: Pick<CalendarEvent, 'allDay' | 'timezone'>): string | undefined {
+  return event.allDay ? undefined : event.timezone;
+}
+
+/** Overrides as {@link serializeCalendarEvent} writes them: same UID, in the event's DTSTART form. */
+function writtenOverrides(event: CalendarEvent): string[][] {
+  const form = event.overridesForm ?? startForm(event);
+  return (event.overrides ?? [])
+    .filter((block) => topLevelProperty(block, 'UID')?.value === event.uid)
+    .map((block) => overrideInForm(block, form, event, undefined))
+    .filter((block): block is string[] => block !== null);
+}
+
+type OverrideFields = Pick<CalendarEvent, 'overrides' | 'overridesForm'>;
+
+function overrideFields(overrides: string[][], event: CalendarEvent): OverrideFields {
+  return overrides.length > 0
+    ? { overrides, overridesForm: startForm(event) }
+    : { overrides: undefined, overridesForm: undefined };
+}
+
+/** The written overrides whose RECURRENCE-ID passes `keep`, read the way they are written. */
+function keepOverrides(event: CalendarEvent, keep: (at: number | null) => boolean): OverrideFields {
+  const zone = overrideZone(event);
+  return overrideFields(writtenOverrides(event).filter((block) => keep(overrideInstant(block, zone))), event);
+}
+
+/**
+ * The event's overrides without the one for the occurrence at `instance`, for a web action that
+ * removes that occurrence from the series (an EXDATE): its override would otherwise remain.
+ */
+export function overridesWithout(event: CalendarEvent, instance: Date): OverrideFields {
+  return keepOverrides(event, (at) => at !== instance.getTime());
+}
+
+/**
+ * The event's overrides for occurrences before `cutoff`, for ending the series there (a "this and
+ * future" split or delete). An override whose RECURRENCE-ID cannot be read is kept.
+ */
+export function overridesBefore(event: CalendarEvent, cutoff: Date): OverrideFields {
+  return keepOverrides(event, (at) => at === null || at < cutoff.getTime());
+}
+
+/**
+ * `before`'s overrides for `after`, an edit of it: each RECURRENCE-ID is read as `before` reads it
+ * and written in `after`'s DTSTART form, so the edited event holds them in its own form. Empty
+ * when `before` has no overrides.
+ */
+export function overridesInForm(before: CalendarEvent, after: CalendarEvent): Partial<OverrideFields> {
+  if (!before.overrides) return {};
+  const form = before.overridesForm ?? startForm(before);
+  const zone = overrideZone(before);
+  const converted = before.overrides
+    .map((block) => overrideInForm(block, form, after, zone))
+    .filter((block): block is string[] => block !== null);
+  return overrideFields(converted, after);
+}
+
+/**
+ * An override written for an event whose DTSTART form changed since it was read. RFC 5545 makes a
+ * RECURRENCE-ID take DTSTART's form. Between timed forms the value names one instant (a floating
+ * value read in `zone`, host-local when undefined), so it is rewritten to the new form.
+ * Between a date and a time there is no single matching occurrence, so the override is dropped.
+ */
+function overrideInForm(block: string[], from: StartForm, event: CalendarEvent, zone: string | undefined): string[] | null {
+  const to = startForm(event);
+  if (from === to) return block;
+  if (from === 'date' || to === 'date') return null;
+  if (to === 'tzid' && !isKnownTimeZone(event.timezone!)) return null;
+  const index = recurrenceIdIndex(block);
+  const at = overrideInstant(block, zone);
+  if (index === -1 || at === null) return null;
+  const date = new Date(at);
+  const rid = topLevelProperty(block, 'RECURRENCE-ID')!;
+  const params = Object.entries(rid.params)
+    .filter(([name]) => name !== 'TZID' && name !== 'VALUE')
+    .map(([name, value]) => `;${name}=${value}`);
+  const value = to === 'tzid'
+    ? formatICalDateTimeLocal(date, event.timezone!)
+    : to === 'floating'
+      ? formatICalDateTimeFloating(date)
+      : formatICalDateTime(date);
+  if (to === 'tzid') params.push(`;TZID=${event.timezone}`);
+  const next = [...block];
+  next[index] = `RECURRENCE-ID${params.join('')}:${value}`;
+  return next;
+}
+
 /**
  * Serialize a CalendarEvent to a string for Etebase item content.
  * Produces a complete VCALENDAR document (RFC 5545 compliant).
+ *
+ * The item's VTIMEZONE blocks and same-UID overrides are written back. Overrides are not checked
+ * against the series' occurrences: a changed start or RRULE keeps them as they are, since losing
+ * another client's changes is worse than an override that names no occurrence. Web actions that
+ * remove occurrences drop the matching overrides themselves ({@link overridesWithout},
+ * {@link overridesBefore}). Only a changed DTSTART form rewrites or drops them (see
+ * `overrideInForm`).
  */
 export function serializeCalendarEvent(event: CalendarEvent): string {
   const vevent = toVEvent(event);
+  const vtimezones = (event.vtimezones ?? []).map((block) => generateRetainedComponent(block, 'VTIMEZONE'));
+  const overrides = writtenOverrides(event).map((block) => generateRetainedComponent(block, 'VEVENT'));
   return [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//SilentSuite//EN',
+    ...vtimezones,
     vevent,
+    ...overrides,
     'END:VCALENDAR',
-  ].join('\r\n');
+  ].filter((part): part is string => part !== null).join('\r\n');
 }
 
 /**

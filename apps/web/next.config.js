@@ -2,6 +2,7 @@ const path = require('path')
 const createNextIntlPlugin = require('next-intl/plugin')
 const withPWA = require('@ducanh2912/next-pwa').default
 const { withSentryConfig } = require('@sentry/nextjs')
+const { glitchtipSourceMapUpload } = require('./sentry-build-options')
 
 const withNextIntl = createNextIntlPlugin('./i18n/request.ts')
 // `https:` lets users reach their own Etebase server on any host, port or base path.
@@ -27,6 +28,12 @@ function resolveEtebase() {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  // Both browser telemetry gates are inlined as literals, so a build without
+  // them carries neither the error reporter nor the speed reporter.
+  env: {
+    NEXT_PUBLIC_SENTRY_DSN: process.env.NEXT_PUBLIC_SENTRY_DSN ?? '',
+    NEXT_PUBLIC_WEB_VITALS_ENABLED: process.env.NEXT_PUBLIC_WEB_VITALS_ENABLED === 'true' ? 'true' : 'false',
+  },
   eslint: {
     // ESLint runs as a separate CI step; skip during builds
     ignoreDuringBuilds: true,
@@ -76,13 +83,21 @@ const pwaConfig = withPWA({
 })(withNextIntl(nextConfig))
 
 module.exports = withSentryConfig(pwaConfig, {
-  // Suppresses source map upload logs during build
   silent: true,
-  // Upload source maps only when DSN is configured
-  disableServerWebpackPlugin: !process.env.NEXT_PUBLIC_SENTRY_DSN,
-  disableClientWebpackPlugin: !process.env.NEXT_PUBLIC_SENTRY_DSN,
-  // Hides source maps from generated client bundles
-  hideSourceMaps: true,
-  // Automatically tree-shake Sentry logger statements
-  disableLogger: true,
+  // The build plugin sends no usage data of its own.
+  telemetry: false,
+  ...glitchtipSourceMapUpload(),
+  webpack: {
+    // Browser error reports only: no server, middleware or component wrapping.
+    autoInstrumentServerFunctions: false,
+    autoInstrumentMiddleware: false,
+    autoInstrumentAppDirectory: false,
+    treeshake: {
+      removeDebugLogging: true,
+      removeTracing: true,
+      excludeReplayIframe: true,
+      excludeReplayShadowDOM: true,
+      excludeReplayCompressionWorker: true,
+    },
+  },
 })

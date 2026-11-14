@@ -28,7 +28,6 @@ dependencies = [
     "msgpack>=1.0.0",
     "vobject>=0.9.6",
     "appdirs>=1.4.3",
-    "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
