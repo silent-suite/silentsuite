@@ -28,7 +28,7 @@
   "devDependencies": {
     "turbo": "^2.4.0"
   },
-  "packageManager": "pnpm@10.6.5",
+  "packageManager": "pnpm@10.34.9",
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild",
