@@ -361,7 +361,7 @@ test('CI loads its one built image and passes provenance through env without gra
   assert.doesNotMatch(build, /permissions:|secrets:|push: true|workflow_dispatch:/)
   const dockerfile = readFileSync(new URL('../Dockerfile.web', import.meta.url), 'utf8')
   assert.ok(dockerfile.includes('VERIFIED_WEB_BUILD_SENTRY_VERSION='), 'SDK version must be asserted in its real builder resolution context')
-  const omitted = dockerfile.slice(dockerfile.indexOf('RUN rm ./apps/web/public/sw.js.map'), dockerfile.indexOf('# ---- Production stage ----'))
+  const omitted = dockerfile.slice(dockerfile.indexOf('RUN rm -f ./apps/web/public/sw.js.map'), dockerfile.indexOf('# ---- Production stage ----'))
   for (const name of ['sw.js.map', 'workbox-5194662c.js.map', 'fallback-ce627215c0e4a9af.js.map']) {
     assert.ok(omitted.includes(`./apps/web/public/${name}`), 'PWA debug maps must be omitted before copying any runtime-image layer')
   }

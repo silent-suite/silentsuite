@@ -100,12 +100,15 @@ jobs:
         with:
           toolchain: "1.63.0"
 
+      # Same hash-locked install as the release build, so a pull request that
+      # changes the lock also proves it installs.
       - name: Install dependencies
         working-directory: bridge
         run: |
-          python -m pip install --upgrade pip
-          pip install pyinstaller
-          pip install -e ".[dev,tray]" || pip install -e ".[tray]" || pip install -e .
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
+          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
+          python -m pip check
 
       - name: Build binary
         working-directory: bridge

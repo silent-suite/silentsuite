@@ -226,7 +226,7 @@ class Contact {
                     is Photo ->
                         c.photo = prop.data ?: prop.url?.let { url ->
                             downloader?.let {
-                                Constants.log.info("Downloading photo from $url")
+                                Constants.log.info("Downloading photo")  // not the URL: it comes from the contact
                                 it.download(url, "image/*")
                             }
                         }

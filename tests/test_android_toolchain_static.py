@@ -76,6 +76,31 @@ def test_root_gradle_distribution_is_checksum_pinned():
     )
 
 
+def test_nested_standalone_wrapper_distributions_are_checksum_pinned():
+    # CI never runs these standalone wrappers (every Gradle call goes through
+    # android/gradlew), but a local run of one must still get the exact
+    # distribution. Official sha256 values from services.gradle.org.
+    expected = {
+        "android/cert4android/gradle/wrapper/gradle-wrapper.properties": (
+            "gradle-6.3-all.zip",
+            "0f316a67b971b7b571dac7215dcf2591a30994b3450e0629925ffcfe2c68cc5c",
+        ),
+        "android/ical4android/gradle/wrapper/gradle-wrapper.properties": (
+            "gradle-6.6.1-all.zip",
+            "11657af6356b7587bfb37287b5992e94a9686d5c8a0a1b60b87b9928a2decde5",
+        ),
+        "android/vcard4android/gradle/wrapper/gradle-wrapper.properties": (
+            "gradle-6.6.1-all.zip",
+            "11657af6356b7587bfb37287b5992e94a9686d5c8a0a1b60b87b9928a2decde5",
+        ),
+    }
+
+    for path, (distribution, sha256) in expected.items():
+        lines = read(path).splitlines()
+        assert f"distributionUrl=https\\://services.gradle.org/distributions/{distribution}" in lines, path
+        assert f"distributionSha256Sum={sha256}" in lines, path
+
+
 def test_jitpack_serves_only_the_module_missing_from_maven_central():
     build = read("android/build.gradle")
 

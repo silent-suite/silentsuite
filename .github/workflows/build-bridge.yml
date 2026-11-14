@@ -177,11 +177,25 @@ jobs:
         run: |
           # pip and PyInstaller come from the hash-pinned build requirements.
           python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
+          # The bridge's dependencies (dev and tray extras included) and its build
+          # backend come from the hash-locked requirements-lock.txt, which covers
+          # every platform this matrix builds. Nothing is resolved from a range.
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
           if [[ "${{ matrix.os-label }}" == "macos-arm64" ]]; then
-            pip install "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+            # The lock leaves PyPI etebase out on this platform. The pinned
+            # upstream commit is built into a wheel in a throwaway virtualenv
+            # holding only its hash-locked build tools, so neither an isolated
+            # build environment nor the newer setuptools it needs reaches the
+            # environment PyInstaller bundles. Its one dependency, msgpack, is
+            # already installed from the lock.
+            ETEBASE_BUILD="$RUNNER_TEMP/etebase-build"
+            python -m venv "$ETEBASE_BUILD/venv"
+            "$ETEBASE_BUILD/venv/bin/python" -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-etebase-build.txt
+            "$ETEBASE_BUILD/venv/bin/python" -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -w "$ETEBASE_BUILD/wheel" "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+            python -m pip install --disable-pip-version-check --no-deps --no-index "$ETEBASE_BUILD"/wheel/etebase-*.whl
           fi
-          # No fallback: a release build installs exactly these extras or fails.
-          pip install -e ".[dev,tray]"
+          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
+          python -m pip check
           # The binary embeds etebase, the crypto core, so the release must use the
           # reviewed version, never whatever PyPI resolves on the day.
           python -c "import importlib.metadata as m, sys; v = m.version('etebase'); print('etebase', v); sys.exit(0 if v == '${{ matrix.etebase-version }}' else 'ERROR: etebase ' + v + ' is not the reviewed ${{ matrix.etebase-version }}')"
@@ -306,7 +320,9 @@ jobs:
             echo "=== Installing Python deps ==="
             cd /workspace/bridge
             python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
-            pip install -e ".[dev,tray]"
+            python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
+            python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
+            python -m pip check
             python -c "import importlib.metadata as m, sys; v = m.version('etebase'); print('etebase', v); sys.exit(0 if v == '${{ matrix.etebase-version }}' else 'ERROR: etebase ' + v + ' is not the reviewed ${{ matrix.etebase-version }}')"
             echo "=== Running PyInstaller ==="
             pyinstaller silentsuite-bridge.spec --clean --noconfirm \

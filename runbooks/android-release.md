@@ -39,6 +39,9 @@ Etebase payloads. The job fails closed if the ZIP is missing, malformed, or
 missing those required entries, or if any symbol-bearing entry's bytes do not
 match the byte-identical copy packaged in the AAB (SHA-256 comparison).
 
+When the Google Play publication lane is on (`runbooks/play-automation.md`),
+it performs steps 1 and 2 below; steps 3 and 4 remain manual checks.
+
 For every Play Console release, the operator must:
 
 1. Download from the same draft GitHub release, for the same tag:

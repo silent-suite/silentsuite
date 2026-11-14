@@ -86,23 +86,23 @@ open class ChangeEncryptionPasswordActivity : BaseActivity() {
                             AccountManager.get(applicationContext)) == null)
                         return@withContext false
                     passwordChangeOverride?.let { return@withContext it(this@ChangeEncryptionPasswordActivity, old_password, new_password) }
-                    val httpClient = HttpClient.Builder(this@ChangeEncryptionPasswordActivity).setForeground(true).build().okHttpClient
+                    HttpClient.Builder(this@ChangeEncryptionPasswordActivity).setForeground(true).build().use { httpClient ->
+                        Logger.log.info("Loging in with old password")
+                        val client = Client.create(httpClient.okHttpClient, settings.uri?.toString())
+                        val etebase = com.etebase.client.Account.login(client, account.name, old_password)
+                        Logger.log.info("Login successful")
 
-                    Logger.log.info("Loging in with old password")
-                    val client = Client.create(httpClient, settings.uri?.toString())
-                    val etebase = com.etebase.client.Account.login(client, account.name, old_password)
-                    Logger.log.info("Login successful")
+                        if (ExactAccountRouting.validate(account, accountCreationId, io.silentsuite.sync.App.accountType,
+                                AccountManager.get(applicationContext)) == null)
+                            return@withContext false
+                        etebase.changePassword(new_password)
 
-                    if (ExactAccountRouting.validate(account, accountCreationId, io.silentsuite.sync.App.accountType,
-                            AccountManager.get(applicationContext)) == null)
-                        return@withContext false
-                    etebase.changePassword(new_password)
-
-                    if (ExactAccountRouting.validate(account, accountCreationId, io.silentsuite.sync.App.accountType,
-                            AccountManager.get(applicationContext)) == null)
-                        return@withContext false
-                    settings.etebaseSession = etebase.save(null)
-                    true
+                        if (ExactAccountRouting.validate(account, accountCreationId, io.silentsuite.sync.App.accountType,
+                                AccountManager.get(applicationContext)) == null)
+                            return@withContext false
+                        settings.etebaseSession = etebase.save(null)
+                        true
+                    }
                 }
 
                 if (!changed) {

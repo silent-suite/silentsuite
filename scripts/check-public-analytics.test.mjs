@@ -207,3 +207,49 @@ test('enabled generated app scan still fails when no chunk the subscription rout
     assert.match(await checkGeneratedAppTree(appRoot), /subscription route chunk: expected analytics endpoint absent/)
   })
 })
+
+async function checkGeneratedStaticTree(root, env = {}) {
+  try {
+    await execFileAsync(process.execPath, [
+      'scripts/check-public-analytics.mjs',
+      `--generated-app-root=${path.join(root, 'absent-app-root')}`,
+      `--generated-auth-root=${path.join(root, 'absent-auth-root')}`,
+      `--generated-static-root=${root}`,
+    ], { env: { ...process.env, NEXT_PUBLIC_SENTRY_DSN: '', NEXT_PUBLIC_WEB_VITALS_ENABLED: '', ...env } })
+    return ''
+  } catch (error) {
+    return `${error.stdout}\n${error.stderr}`
+  }
+}
+
+test('static scan rejects telemetry senders in a build without their gates', async () => {
+  await withGeneratedAppTree({
+    'chunks/main-app-1.js': 'fetch("/api/error",{keepalive:!0})',
+    'chunks/app/(auth)/layout-1.js': 'name:"Web Vital",url:"https://app.silentsuite.io/login"',
+  }, async (root) => {
+    const output = await checkGeneratedStaticTree(root)
+    assert.match(output, /main-app-1\.js: error reporter present without NEXT_PUBLIC_SENTRY_DSN/)
+    assert.match(output, /layout-1\.js: speed reporter present without NEXT_PUBLIC_WEB_VITALS_ENABLED=true/)
+  })
+})
+
+test('static scan permits telemetry senders when their build gates are given', async () => {
+  await withGeneratedAppTree({
+    'chunks/main-app-1.js': 'fetch("/api/error",{keepalive:!0})',
+    'chunks/app/(auth)/layout-1.js': 'name:"Web Vital"',
+  }, async (root) => {
+    assert.equal(await checkGeneratedStaticTree(root, { NEXT_PUBLIC_SENTRY_DSN: 'https://k@errors.example/1', NEXT_PUBLIC_WEB_VITALS_ENABLED: 'true' }), '')
+  })
+})
+
+test('static scan rejects tracing, session replay and served source maps in every build', async () => {
+  for (const marker of ['rrweb', 'name:"Replay"', '"BrowserTracing"']) {
+    await withGeneratedAppTree({ 'chunks/1.js': `x(${marker})` }, async (root) => {
+      const output = await checkGeneratedStaticTree(root, { NEXT_PUBLIC_SENTRY_DSN: 'https://k@errors.example/1' })
+      assert.match(output, /tracing or session replay code in browser bundle/, marker)
+    })
+  }
+  await withGeneratedAppTree({ 'chunks/1.js': 'ok', 'chunks/1.js.map': '{}' }, async (root) => {
+    assert.match(await checkGeneratedStaticTree(root), /source map in served static output/)
+  })
+})
