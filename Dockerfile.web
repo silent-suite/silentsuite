@@ -59,8 +59,9 @@ RUN node -e "const app = require('node:module').createRequire(process.cwd() + '/
     pnpm --filter @silentsuite/web build
 
 # Omit debug maps before copying public assets into any runtime-image layer.
-# Their executable workers remain unchanged.
-RUN rm ./apps/web/public/sw.js.map \
+# Their executable workers remain unchanged. -f: a build without a GlitchTip
+# source map upload generates none of them.
+RUN rm -f ./apps/web/public/sw.js.map \
     ./apps/web/public/workbox-5194662c.js.map \
     ./apps/web/public/fallback-ce627215c0e4a9af.js.map
 

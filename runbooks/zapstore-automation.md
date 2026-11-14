@@ -105,7 +105,7 @@ not an arbitrary-release or historical-release trigger.
 | `enumerate` | `contents: read` | Lists published releases by exact id (bounded pages), classifies eligibility, always keeps the **single newest** eligible tag as the one `publishable` candidate, keeps verify-only history inside the 45-day window, omits owner-retired historical releases by exact id+tag with that reason even when that is the newest eligible tag (then no publishable candidate is chosen); uploads `candidates.json`. |
 | `assess` (matrix, `max-parallel: 1`, `fail-fast: false`) | `contents: read`, no environment, no secrets | Per candidate: bind exact release/tag commit/assets, identity helper, download APK and check three digests, `apksigner`, unsigned offline `zsp` expected events, relay reconciliation, CDN verification when the relay set is complete. Records `assessment.json` and uploads `zapstore-assessment-<id>`. |
 | `plan` | `{}` | Downloads all assessments, requires one per enumerated candidate, emits the publish matrix (candidates whose action is `publish`; at most the newest). |
-| `publish` (matrix over the plan) | `contents: read`, environment `zapstore-production` | Fresh runner: repeats bind, digests, `apksigner`, prepare and reconciliation, checks nothing drifted from the assessment, revalidates identity, then one secret step: NIP-46 read-only account preflight, then `zsp` live. Read-back and CDN verification follow every attempt. Records `result.json`, uploads `zapstore-result-<id>`. |
+| `publish` (matrix over the plan) | `contents: read`, environment `zapstore-production` | Fresh runner: repeats bind, digests, `apksigner`, prepare and reconciliation, checks nothing drifted from the assessment, revalidates identity, then one secret step: signing-account preflight (local key derivation for an `nsec1` secret, read-only NIP-46 handshake for a bunker URL), then `zsp` live. Read-back and CDN verification follow every attempt. Records `result.json`, uploads `zapstore-result-<id>`. |
 | `notify` | `issues: write` | Downloads candidates, assessments and results; opens one issue per candidate whose recorded status is a failure or whose evidence is missing. Successes are never reported. Retired historical evidence (exact id+tag, even when stale evidence still marks it publishable) is reported in the summary but opens no issue, so a closed historical failure is not recreated. |
 
 Only the `publish` job binds the environment, so the owner is asked to approve
@@ -130,9 +130,9 @@ evidence that signing occurred. Do not approve or retry merely to clear the issu
 | S7 | APK verification | Three digests, `apksigner verify --print-certs -v` with only the direct-release certificate, identity facts from official `zsp` offline output, `versionName`/`versionCode` literals from the tag's `build.gradle` | `lib/apksigner.mjs`, `lib/zsp.mjs`, `lib/source-metadata.mjs` |
 | S8 | Store metadata | Trusted template at the protected revision; media bytes hashed; six approved screenshots in order; copy byte-identical to `zapstore.yaml` | `release-template.json`, `lib/metadata.mjs` |
 | S9 | Relay reconciliation | EOSE required; every event id and Schnorr signature verified; exact full-tuple comparison (1.4) | `lib/nostr.mjs`, `lib/reconcile.mjs` |
-| S10 | Signing account | NIP-46 `connect` + `get_public_key` with the job's client key; the returned **account** pubkey must equal the template `pubkeyHex` before any signature or upload authorisation | `lib/nip44.mjs`, `lib/nip46.mjs`, `lib/publish.mjs` |
-| S11 | Publisher | `zsp` 0.4.17 pinned by URL and SHA-256; `SIGN_WITH` must be `bunker://`; client key 0600 for one step | `lib/zsp.mjs`, `lib/bunker-key.mjs` |
-| S12 | Read-back and CDN | Read-back must be `complete-match`; APK, icon and six screenshots fetched by hash | `lib/reconcile.mjs`, `lib/cdn.mjs` |
+| S10 | Signing account | `nsec1` secret: strict bech32 decode and local public-key derivation; bunker URL: NIP-46 `connect` + `get_public_key` with the job's client key. Either way the **account** pubkey must equal the template `pubkeyHex` before any signature or upload authorisation | `lib/nsec.mjs`, `lib/nip44.mjs`, `lib/nip46.mjs`, `lib/publish.mjs` |
+| S11 | Publisher | `zsp` 0.4.17 pinned by URL and SHA-256; `SIGN_WITH` must be the publisher `nsec1` key (live only) or `bunker://`; bunker client key 0600 for one step | `lib/zsp.mjs`, `lib/bunker-key.mjs` |
+| S12 | Read-back and CDN | Read-back must be `complete-match`; while it is `absent` or `partial` (relay not indexed yet) it re-reads up to 6 times, 10 s apart, read-only; APK, icon and six screenshots fetched by hash | `lib/reconcile.mjs`, `lib/cdn.mjs` |
 | S13 | Evidence and notification | Per-candidate `assessment.json`/`result.json` with phase outcomes; failures and missing evidence only | `lib/results.mjs`, `lib/notify.mjs` |
 | S14 | Concurrency | One group for the whole app, never cancels | workflow |
 
@@ -207,8 +207,16 @@ channel comparison.
    regenerated when the relay already holds an APK event for that version
    (complete, legacy, partial or conflicting). Recovery runs only when no such
    event exists, so every accepted event id is preserved.
-5. The identity private key never enters CI; only a `bunker://` URL and a
-   NIP-46 client key do.
+5. Signer custody (owner decision 2026-11-14, superseding "the identity key
+   never enters CI"): for unattended publication the publisher `nsec1` key is
+   the `zapstore-production` environment secret `ZAPSTORE_SIGN_WITH`. The
+   environment is main-only and is bound by the scheduled and manual publish
+   jobs and by the manually dispatched signing rehearsal, which receives the
+   secret but refuses a non-bunker value before using it; its master copy is the Proton Pass item
+   `Zapstore publisher key`. Accepted risk: a compromised publish job could
+   copy the key. Rollback to the phone signer: set the secret back to the
+   bunker URL (the client key secret is kept). The signing rehearsal stays
+   bunker-only.
 6. Successes are silent; every failure and every missing piece of evidence is an
    issue with the exact phase — except the owner-retired historical tuples
    (1.1), which are reported as suppressed and never open an issue.
@@ -385,12 +393,14 @@ not fix them and a hand-run publisher would make them worse.
 
 - [ ] Create environment `zapstore-production`: required reviewer (owner),
       deployment branch policy `main` only.
-- [ ] Environment secret `ZAPSTORE_SIGN_WITH`: a `bunker://` URL. Never a key.
+- [ ] Environment secret `ZAPSTORE_SIGN_WITH`: the publisher `nsec1` key from
+      Proton Pass (unattended), or a `bunker://` URL (phone signer).
 - [ ] Environment secret `ZAPSTORE_BUNKER_CLIENT_KEY`: the 64-hex NIP-46 client
       key already authorised by the signer for kinds `32267`, `30063`, `3063`,
       `24242` and the `get_public_key` method. No blanket allow.
-- [ ] Signer availability: unattended approval has not been verified; a
-      dedicated always-on signer with the grant above is recommended.
+- [ ] Signer availability: with the `nsec1` secret no signer needs to be
+      online. Remove the required reviewer only after one supervised live
+      publication with the key succeeded (separate owner approval).
 - [ ] Replay verification (open caveat in 1.1): on a rehearsal or first live
       run with a transient failure, use "Re-run failed jobs" and confirm from
       the run log that the replayed job carries the same release id and

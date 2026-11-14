@@ -1,5 +1,5 @@
 import type { CalendarEventExternal } from '@schedule-x/calendar'
-import { expandEventRecurrence } from '@silentsuite/core'
+import { expandEventRecurrence, occurrenceEnd } from '@silentsuite/core'
 import type { CalendarEvent, DateRange } from '@silentsuite/core'
 import { dateToPlainDate, isMultiDayTimedRange, toAllDayEndPlainDate, toTimedMonthEndPlainDate } from './all-day'
 
@@ -80,7 +80,10 @@ function expandEvents(
       }
       let recurrenceRange = range
       if (gridSemantics) {
-        const lookbackMs = range.start.getTime() - duration
+        // A day or week DURATION is nominal: across DST changes an occurrence can be longer than
+        // the first one (a 23-hour spring start and a 25-hour fall occurrence differ by two hours,
+        // and some zones shift by more). A day's margin covers any zone's shift.
+        const lookbackMs = range.start.getTime() - duration - (event.duration ? 86_400_000 : 0)
         const lookbackDate = new Date(lookbackMs)
         if (!Number.isFinite(lookbackMs) || !Number.isFinite(lookbackDate.getTime())) {
           droppedCount += 1
@@ -95,7 +98,8 @@ function expandEvents(
       const occurrences = expandEventRecurrence(event, recurrenceRange)
 
       for (const occDate of occurrences) {
-        const occEnd = new Date(occDate.getTime() + duration)
+        // Each occurrence takes its own end: a day or week DURATION keeps its wall clock across DST.
+        const occEnd = occurrenceEnd(event, occDate)
         if (gridSemantics && !(occDate < range.end && occEnd > range.start)) continue
         result.push({
           id: `${event.id}__${occDate.getTime()}`,

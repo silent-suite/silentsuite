@@ -6,6 +6,7 @@ import { deserializeTask, taskICalDateFromProperty } from '@silentsuite/core'
 import { useTaskStore } from '../use-task-store'
 import { useEtebaseStore } from '../use-etebase-store'
 import { useAuthStore } from '../use-auth-store'
+import { bumpAccountEpoch } from '@/app/lib/account-epoch'
 import { _setEncryptedQueuePersistenceAvailableForTests, getAll } from '@/app/lib/offline-queue'
 import { TEST_FINGERPRINT, bumpEpochWhenQueuePutRuns, enqueueCreateFromStore, expectOwnedQueueEntry, expectQuietQueueCommitCancellation, queueGuard, replayOwnedEntry, resetRealOfflineQueue } from './offline-queue-store-test-utils'
 import { EtebaseRequest, ReferenceServer, makeSavedNote } from './web744-sdk-fixture'
@@ -136,6 +137,143 @@ describe('useTaskStore', () => {
     await useTaskStore.getState().toggleComplete(task.id)
     ;({ tasks } = useTaskStore.getState())
     expect(tasks[0]!.completed).toBe(false)
+  })
+
+  describe('edits while the create is still being saved', () => {
+    function deferredCreate() {
+      let finish!: () => void
+      const gate = new Promise<void>((resolve) => { finish = resolve })
+      const createItem = vi.fn(async () => {
+        await gate
+        useEtebaseStore.setState({ itemCache: new Map([...useEtebaseStore.getState().itemCache, ['remote-task', {}]]) } as any)
+        return 'remote-task'
+      })
+      const updateItem = vi.fn(async () => true)
+      const deleteItem = vi.fn(async () => true)
+      useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map(), createItem, updateItem, deleteItem } as any)
+      return { finish, createItem, updateItem, deleteItem }
+    }
+
+    beforeEach(async () => {
+      await resetRealOfflineQueue()
+      resetStore()
+      // Production has no encrypted queue content store.
+      _setEncryptedQueuePersistenceAvailableForTests(false)
+      toastMock.showErrorToast.mockReset()
+    })
+    afterEach(() => _setEncryptedQueuePersistenceAvailableForTests(true))
+
+    it('uploads a completion toggled before the create was acknowledged', async () => {
+      const { finish, updateItem } = deferredCreate()
+      const creating = useTaskStore.getState().createTask({ title: 'Quick' })
+      const tempId = useTaskStore.getState().tasks[0]!.id
+
+      const toggling = useTaskStore.getState().toggleComplete(tempId)
+      finish()
+      await creating
+      await toggling
+
+      expect(useTaskStore.getState().tasks[0]).toMatchObject({ id: 'remote-task', completed: true })
+      expect(updateItem).toHaveBeenCalledTimes(1)
+      expect(updateItem.mock.calls[0]![1]).toBe('remote-task')
+      expect(updateItem.mock.calls[0]![2]).toContain('STATUS:COMPLETED')
+      expect(await getAll()).toHaveLength(0)
+    })
+
+    it('uploads an edit made before the create was acknowledged', async () => {
+      const { finish, updateItem } = deferredCreate()
+      const creating = useTaskStore.getState().createTask({ title: 'Quick' })
+      const tempId = useTaskStore.getState().tasks[0]!.id
+
+      const editing = useTaskStore.getState().updateTask(tempId, { title: 'Renamed' })
+      finish()
+      await creating
+      await editing
+
+      expect(updateItem).toHaveBeenCalledTimes(1)
+      expect(updateItem.mock.calls[0]![1]).toBe('remote-task')
+      expect(updateItem.mock.calls[0]![2]).toContain('SUMMARY:Renamed')
+    })
+
+    it('deletes on the server a task removed before the create was acknowledged', async () => {
+      const { finish, deleteItem } = deferredCreate()
+      const creating = useTaskStore.getState().createTask({ title: 'Quick' })
+      const tempId = useTaskStore.getState().tasks[0]!.id
+
+      const deleting = useTaskStore.getState().deleteTask(tempId)
+      finish()
+      await creating
+      await deleting
+
+      expect(useTaskStore.getState().tasks).toHaveLength(0)
+      expect(deleteItem).toHaveBeenCalledWith('tasks', 'remote-task')
+    })
+
+    /** Another account takes over this browser, as a sign-in reset does. */
+    function switchToAccountB() {
+      bumpAccountEpoch()
+      useEtebaseStore.setState({ account: {}, accountFingerprint: 'account-b', itemCache: new Map() } as any)
+    }
+
+    it('drops an edit whose pending create finishes after the account changed', async () => {
+      const { finish, updateItem } = deferredCreate()
+      const creating = useTaskStore.getState().createTask({ title: 'Quick' })
+      const tempId = useTaskStore.getState().tasks[0]!.id
+
+      const toggling = useTaskStore.getState().toggleComplete(tempId)
+      switchToAccountB()
+      finish()
+      await creating.catch(() => {})
+      await toggling
+
+      expect(updateItem).not.toHaveBeenCalled()
+      expect(await getAll()).toHaveLength(0)
+    })
+
+    it.each([
+      ['toggleComplete', (id: string) => useTaskStore.getState().toggleComplete(id)],
+      ['updateTask', (id: string) => useTaskStore.getState().updateTask(id, { title: 'Renamed' })],
+      ['deleteTask', (id: string) => useTaskStore.getState().deleteTask(id)],
+    ])('never queues %s for an account that took over just after the create finished', async (_name, run) => {
+      _setEncryptedQueuePersistenceAvailableForTests(true)
+      const { finish, updateItem, deleteItem } = deferredCreate()
+      const creating = useTaskStore.getState().createTask({ title: 'Quick' })
+      const tempId = useTaskStore.getState().tasks[0]!.id
+      const operation = run(tempId)
+      // The edit's own local update already ran, so the next task-store update is the create's
+      // rename, which settles its pending entry with no await in between. Two microtask hops from
+      // there land the switch after the pending-create wait resolved but before the edit resumes.
+      const unsubscribe = useTaskStore.subscribe(() => {
+        unsubscribe()
+        queueMicrotask(() => queueMicrotask(switchToAccountB))
+      })
+
+      finish()
+      await creating.catch(() => {})
+      await operation.catch(() => {})
+
+      expect(useEtebaseStore.getState().accountFingerprint).toBe('account-b')
+      expect(updateItem).not.toHaveBeenCalled()
+      expect(deleteItem).not.toHaveBeenCalled()
+      expect((await getAll()).filter((entry) => entry.accountFingerprint === 'account-b')).toHaveLength(0)
+    })
+
+    it.each([
+      ['toggleComplete', () => useTaskStore.getState().toggleComplete('temp-task')],
+      ['updateTask', () => useTaskStore.getState().updateTask('temp-task', { title: 'Renamed' })],
+      ['deleteTask', () => useTaskStore.getState().deleteTask('temp-task')],
+    ])('never queues %s for the next account when no create is pending', async (_name, run) => {
+      // Content-bearing updates must reach the queue for this check, as with an encrypted store.
+      _setEncryptedQueuePersistenceAvailableForTests(true)
+      useEtebaseStore.setState({ account: {}, accountFingerprint: TEST_FINGERPRINT, itemCache: new Map() } as any)
+      useTaskStore.setState({ tasks: [queuedTask()] })
+
+      const operation = run()
+      switchToAccountB()
+      await operation.catch(() => {})
+
+      expect((await getAll()).filter((entry) => entry.accountFingerprint === 'account-b')).toHaveLength(0)
+    })
   })
 
   it('keeps the VTODO UID stable after replacing the local id with the Etebase item id', async () => {

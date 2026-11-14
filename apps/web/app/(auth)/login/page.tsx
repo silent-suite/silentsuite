@@ -62,11 +62,8 @@ export default function LoginPage() {
   const onSubmit = async (data: LoginFormData) => {
     const useHostedBilling = !serverUrl.trim()
     const normalizedUrl = useHostedBilling ? undefined : normalizeServerUrl(serverUrl)
-    if (normalizedUrl) {
-      localStorage.setItem('silentsuite-server-url', normalizedUrl)
-    } else {
-      localStorage.removeItem('silentsuite-server-url')
-    }
+    // The store saves this server selection only after the credentials are
+    // verified, so a failed attempt keeps the previous setting.
     if (isUnlock && isAuthenticated) {
       await unlockEtebaseSession(data.email, data.password, normalizedUrl)
     } else {

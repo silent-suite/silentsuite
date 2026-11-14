@@ -3,7 +3,7 @@
 import { create } from 'zustand'
 
 import type { CalendarEvent, SyncStatus, VAlarm } from '@silentsuite/core'
-import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
+import { eventOccurrenceWallClock, gapWallClock, occurrenceEnd, occurrenceWallClock, overridesBefore, overridesInForm, overridesWithout, recurrenceRuleFrom, recurrenceTimeZone, splitRetainedRecurrenceDates, untilDateBefore, untilTimeBefore } from '@silentsuite/core'
 import type { RecurrenceScope } from '@/app/(app)/calendar/components/RecurrenceScopeDialog'
 import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { ImportIncompleteError } from '@/app/lib/import-outcome'
@@ -46,7 +46,22 @@ interface CalendarState {
   searchQuery: string
 }
 
+/**
+ * A create that was not acknowledged and is not held in the offline queue. `unconfirmed` is false
+ * only when nothing was sent; otherwise the event may or may not exist remotely.
+ */
+export class CalendarSaveError extends Error {
+  constructor(readonly unconfirmed: boolean) {
+    super(unconfirmed ? 'Event save not confirmed' : 'Event not saved')
+    this.name = 'CalendarSaveError'
+  }
+}
+
 interface CalendarActions {
+  /**
+   * Resolves once the server acknowledged the event, or once the create is held in the offline
+   * queue; otherwise removes the temporary event and rejects with CalendarSaveError.
+   */
   createEvent: (event: NewCalendarEvent) => Promise<CalendarEvent>
   updateEvent: (id: string, patch: Partial<CalendarEvent>) => Promise<void>
   deleteEvent: (id: string) => Promise<void>
@@ -100,7 +115,8 @@ function mergeEventPatch(base: CalendarEvent, patch: Partial<CalendarEvent>): Ca
   ) {
     delete merged.startWallClock
   }
-  return merged
+  // Overrides follow a changed DTSTART form now, so the in-memory event holds them as written.
+  return { ...merged, ...overridesInForm(base, merged) }
 }
 
 /**
@@ -119,10 +135,16 @@ function withOccurrenceWallClock(base: CalendarEvent, master: CalendarEvent, ins
 
 /**
  * A scoped copy is a new item with a new UID. The series' retained raw lines (RECURRENCE-ID,
- * attendees and the like) describe the original item, so the copy starts without them, as it
- * did before they were kept. A "this and future" split moves later RDATEs separately.
+ * attendees and the like) and its overrides describe the original item, so the copy starts
+ * without them, as it did before they were kept. A "this and future" split moves later RDATEs
+ * separately. VTIMEZONE blocks still describe the copy's TZID and stay.
  */
-const WITHOUT_RETAINED_CONTENT = { unknownProperties: undefined, unknownComponents: undefined } as const
+const WITHOUT_RETAINED_CONTENT = {
+  unknownProperties: undefined,
+  unknownComponents: undefined,
+  overrides: undefined,
+  overridesForm: undefined,
+} as const
 
 /** Add an UNTIL value to an existing RRULE, replacing any existing UNTIL or COUNT */
 function addUntilToRRule(rrule: string, until: string): string {
@@ -282,6 +304,17 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
 
     // Optimistic local update
     set((state) => ({ events: [...state.events, event] }))
+    // An unacknowledged temp event would vanish on the next refresh; the dialog keeps the input.
+    const withdraw = (unconfirmed: boolean): never => {
+      set((state) => {
+        const remaining = state.events.filter((e) => e.id !== tempId)
+        return remaining.length === state.events.length ? state : { events: remaining }
+      })
+      throw new CalendarSaveError(unconfirmed)
+    }
+
+    const etebase = useEtebaseStore.getState()
+    if (!etebase.account) return withdraw(false)
 
     // Sync to Etebase (pass tempId for offline queue mapping)
     const itemUid = await syncEventToEtebase(event, 'create', tempId)
@@ -295,7 +328,19 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       return { ...event, id: itemUid }
     }
 
-    return event
+    // Not acknowledged. A create admitted to the offline queue is durable local custody awaiting
+    // replay, so the temp event stays; anything else may or may not exist remotely.
+    const guard = captureOfflineQueueAccountGuard(useEtebaseStore.getState())
+    if (guard) {
+      try {
+        const { readOutstanding } = await import('@/app/lib/offline-queue')
+        const outstanding = await readOutstanding({ collectionType: 'calendar', itemUid: tempId }, guard)
+        if (outstanding.some((entry) => entry.type === 'create')) return event
+      } catch {
+        // An unreadable queue proves nothing: the create stays unconfirmed.
+      }
+    }
+    return withdraw(true)
   },
 
   updateEvent: async (id: string, patch: Partial<CalendarEvent>) => {
@@ -394,6 +439,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const newTempId = crypto.randomUUID()
@@ -442,6 +489,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
 
@@ -454,6 +503,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
           ...WITHOUT_RETAINED_CONTENT,
           // The new series takes over the original's later retained RDATEs.
           unknownProperties: retainedDates.from,
+          // A COUNT keeps only the occurrences still to come, so the two series add up to the original.
+          recurrenceRule: recurrenceRuleFrom(master, instanceDate),
           startDate: instanceDate,
           // A day or week DURATION keeps its wall-clock length at this occurrence.
           endDate: occurrenceEnd(master, instanceDate),
@@ -525,6 +576,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         const updatedMaster = {
           ...master,
           exceptions: [...master.exceptions, instanceDate],
+          // The removed occurrence's override would otherwise stay in the item.
+          ...overridesWithout(master, instanceDate),
           updated: now,
         }
         const next = [...events]
@@ -547,6 +600,8 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
             ? addUntilToRRule(master.recurrenceRule, until)
             : null,
           unknownProperties: retainedDates.before,
+          // Overrides of occurrences from the cut on leave the original with them.
+          ...overridesBefore(master, instanceDate),
           updated: now,
         }
         const next = [...events]
