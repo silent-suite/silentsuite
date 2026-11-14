@@ -827,6 +827,8 @@
     <string name="notes_held_discarded">Deleted from this device.</string>
     <string name="notes_held_discard_missing">This text was no longer on this screen, so nothing was deleted. It may have synced, or moved to a copy.</string>
     <string name="notes_held_may_still_sync">This text may still sync, so it can\'t be discarded here. You can copy it.</string>
+    <string name="notes_held_may_still_sync_unreadable">This text may still sync, so it can\'t be discarded here.</string>
+    <string name="notes_held_discard_not_offered">This text may sync now, so nothing was deleted.</string>
     <string name="notes_held_store_discarded">All of this account\'s unsynced Notes were discarded, so this text is gone.</string>
     <string name="notes_held_discard_failed">The discard did not finish. The text is still on this device.</string>
     <!-- Sign-out while Notes changes have not synced: the count, the separate discard confirmation, what Sync now says, and the message when the account stays after its Notes changes were cleared, a clear of them stopped, or nothing was deleted because the store could not be listed. -->

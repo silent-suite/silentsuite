@@ -3299,6 +3299,46 @@ class NotesSyncBoundaryRuntimeTest {
         }
     }
 
+    /**
+     * A Discard confirmation answered after the notebook accepts writes again deletes nothing: the change then waits on
+     * its notebook's row, where a run sends it, and is no longer listed under Unsynced text. The confirmation was
+     * opened for a change in a read-only notebook, which a run would never send.
+     */
+    @Test fun aDiscardAnsweredAfterTheNotebookAcceptsWritesAgainDeletesNothing() {
+        val account = newAccount("gen-reopen")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-reopen")
+        val shared = uploadNotebook("Shared")
+        val note = uploadNote(shared, "Plan", "Server text", mtime = 1_000L)
+        fake.setAccessLevel(shared, 0L)
+        syncNow(account, "gen-reopen")
+        editLocally(account, "gen-reopen", shared, note.uid, "Plan", "Local text", mtime = 2_000L)
+        val store = pending(account, "gen-reopen")
+        val before = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+        // The notebook as the server will show it once access is back, read before the server stops.
+        fake.setAccessLevel(shared, 1L)
+        val writable = server.collectionManager.fetch(shared)
+        fake.setAccessLevel(shared, 0L)
+        HttpClient.testInterceptor = okhttp3.Interceptor { throw java.io.IOException("the server is stopped") }
+        try {
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-reopen")).use { scenario ->
+                waitUntil("the Unsynced text row to show") { notebookList(scenario)?.renderedUnsyncedText == 1 }
+                awaitSettled(identity)
+                scenario.onActivity { it.findViewById<View>(R.id.notebooks_unsynced).performClick() }
+                waitUntil("the change to show") { heldText(scenario)?.renderedRows?.size == 1 }
+                assertTrue("a change in a read-only notebook offers Discard", heldText(scenario)!!.renderedRows!!.single().canDiscard)
+                scenario.onActivity { it.findViewById<View>(R.id.held_discard).performClick() }
+                waitUntil("the confirmation to show") { heldText(scenario)?.discardDialog?.isShowing == true }
+                // Access comes back while the confirmation shows, as a run would cache it.
+                cache(account).let { cache -> synchronized(cache) { cache.collectionSet(server.collectionManager, writable) } }
+                scenario.onActivity { held(it).discardDialog!!.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick() }
+                waitUntil("the screen to list nothing") { heldText(scenario)?.renderedRows?.isEmpty() == true }
+                assertEquals("nothing was deleted", before, (store.read(note.uid) as PendingNotesStore.Read.Present).entry)
+            }
+        } finally {
+            HttpClient.testInterceptor = fake
+        }
+    }
+
     // ---- helpers ----
 
     /** An account row for the stand-in server; with no [generation], a row whose creation id was never written. */

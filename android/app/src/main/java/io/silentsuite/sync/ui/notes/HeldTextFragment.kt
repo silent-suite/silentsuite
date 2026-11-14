@@ -156,7 +156,7 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
             row.version == null && !row.canDiscard -> getString(R.string.notes_held_unreadable_whole_store)
             row.version == null -> null
             row.discardConfirmed -> getString(R.string.notes_held_discard_confirmed)
-            row.mayStillSync -> getString(R.string.notes_held_may_still_sync)
+            row.mayStillSync -> getString(if (row.body != null) R.string.notes_held_may_still_sync else R.string.notes_held_may_still_sync_unreadable)
             row.held == null -> getString(R.string.notes_held_not_writable)
             else -> getString(reasonText(row.held))
         }
@@ -255,9 +255,35 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
         if (!host.exactAccountStillCurrent()) { host.finish(); return }
         val appContext = host.applicationContext
         viewLifecycleOwner.lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) { withStore(appContext) { it.discard(uid, shown) } }
+            val outcome = withContext(Dispatchers.IO) {
+                // The confirmation can outlive the rows it was opened from (it survives a recreation), and a notebook
+                // can accept writes again meanwhile: text a run may now send is not discarded. A newer version of the
+                // text is the store's own check (Changed below).
+                when (val now = NotesLoader.heldText(appContext, account, creationId)) {
+                    NotesLoad.Stale -> StoreCall.Stale
+                    NotesLoad.Failed -> StoreCall.Failed
+                    is NotesLoad.Loaded -> {
+                        val row = now.value.rows.firstOrNull { it.noteUid == uid }
+                        when {
+                            row?.canDiscard == true -> withStore(appContext) { it.discard(uid, shown) }
+                            row != null -> null
+                            // Not listed any more: sent, moved to a copy, or now waiting on its notebook's row, where a
+                            // run sends it. Only the first two are gone; text that is still there is not discarded.
+                            else -> when (val read = withStore(appContext) { it.read(uid) }) {
+                                is StoreCall.Done ->
+                                    if (read.value == PendingNotesStore.Read.Missing) StoreCall.Done(PendingNotesStore.NoteDiscard.Missing) else null
+                                StoreCall.Stale -> StoreCall.Stale
+                                StoreCall.Failed -> StoreCall.Failed
+                                StoreCall.Stopped -> StoreCall.Stopped
+                                StoreCall.StoreDiscarded -> StoreCall.StoreDiscarded
+                            }
+                        }
+                    }
+                }
+            }
             val current = host() ?: return@launch
             when (outcome) {
+                null -> Toast.makeText(current, R.string.notes_held_discard_not_offered, Toast.LENGTH_LONG).show()
                 StoreCall.Stale -> { current.finish(); return@launch }
                 StoreCall.Stopped -> Toast.makeText(current, R.string.notes_pending_discard_stopped, Toast.LENGTH_LONG).show()
                 StoreCall.StoreDiscarded -> Toast.makeText(current, R.string.notes_held_store_discarded, Toast.LENGTH_LONG).show()

@@ -503,9 +503,13 @@ internal object NotesLoader {
                 val copy = copies.getOrPut(entry.notebookUid) { notebookCopy(store, entry.notebookUid) }
                 decrypt(notebookSource(colMgr, copy, plan.live[entry.notebookUid], entry.notebookUid), entry, keepBody = true)
             }
+            // A save between the snapshot and this read withdrew the permit and wrote a new version: the snapshot's
+            // confirmation holds only for the version it saw.
+            val confirmed = entry.noteUid in snapshot.discardConfirmed && entry.version == header.version
             rows += HeldTextRow("${entry.noteUid}.note", entry.noteUid, entry.notebookUid, plan.names[entry.notebookUid],
-                entry.version, entry.held?.reason, text?.title, text?.body, discardConfirmed = entry.noteUid in snapshot.discardConfirmed,
-                mayStillSync = NotesOverlay.mayStillSync(entry.state, entry.noteUid, entry.notebookUid, plan.writable, snapshot.discardConfirmed))
+                entry.version, entry.held?.reason, text?.title, text?.body, discardConfirmed = confirmed,
+                mayStillSync = NotesOverlay.mayStillSync(entry.state, entry.noteUid, entry.notebookUid, plan.writable,
+                    if (confirmed) setOf(entry.noteUid) else emptySet()))
         }
         // Entry files that cannot be read, one row per note as the list counts them ([NotesOverlay.unreadableEntries]).
         // The row names the note's own file when that is one of them, since only that file can go on its own.

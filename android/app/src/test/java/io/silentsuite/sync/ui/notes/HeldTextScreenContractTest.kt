@@ -37,9 +37,19 @@ class HeldTextScreenContractTest {
             assertFalse("no $banned", screen.contains(banned))
         }
         assertEquals("the store is opened in one place", 1, count("PendingNotesStore.forIdentity("))
-        assertEquals("by one helper", 2, count("withStore(appContext)"))
-        assertEquals("each call runs on the IO dispatcher", 2, count("withContext(Dispatchers.IO) { withStore(appContext)"))
+        assertEquals("by one helper", 3, count("withStore(appContext)"))
+        assertEquals("Try again's call runs on the IO dispatcher", 1, count("withContext(Dispatchers.IO) { withStore(appContext)"))
         assertEquals("the load as well", 1, count("withContext(Dispatchers.IO) { NotesLoader.heldText(appContext, account, creationId) }"))
+        // Discard reads the rows again and calls the store in one block on the IO dispatcher.
+        val discard = screen.substringAfter("    private fun discardNote(uid: String, shown: Long?) {").substringBefore("\n    }\n")
+        val block = discard.substringAfter("val outcome = withContext(Dispatchers.IO) {").substringBefore("\n            }\n")
+        assertTrue("the block is there", block.length < discard.length)
+        val load = block.indexOf("NotesLoader.heldText(appContext, account, creationId)")
+        val call = block.indexOf("withStore(appContext) { it.discard(uid, shown) }")
+        assertTrue("the rows are read first, then the store is called, both in the block", load >= 0 && call > load)
+        assertTrue("only a row still offered for discard is discarded", block.contains("row?.canDiscard == true -> withStore(appContext) { it.discard(uid, shown) }"))
+        assertTrue("a listed row that is not, nothing", block.contains("row != null -> null"))
+        assertTrue("a row no longer listed only reads the store", block.contains("else -> when (val read = withStore(appContext) { it.read(uid) })"))
     }
 
     @Test fun `text reaches the clipboard only through the sensitive clip`() {
