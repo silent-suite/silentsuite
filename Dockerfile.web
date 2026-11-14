@@ -31,8 +31,9 @@ ARG NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_51TAx8aPZr2w1sOdtvpdnjDy7I4P6zKxt
 ARG NEXT_PUBLIC_BTCPAY_CHECKOUT_ENABLED=false
 ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
 # Browser error reports (hosted production only). Empty by default, so every build
-# that is not given it ships without the error reporter. Build stage only: the
-# value is read by next.config.js at build time and is not kept in the runtime image.
+# that is not given it ships without the error reporter. Not set as a runtime ENV,
+# but Next inlines the value into the browser bundle and server.js; that is intended:
+# a DSN key is public, and the ingestion endpoint accepts only the web server.
 ARG NEXT_PUBLIC_SENTRY_DSN=
 # Durable encrypted local caching. Default-off: every build that does not pass
 # this argument explicitly, production included, ships with the flag disabled.
