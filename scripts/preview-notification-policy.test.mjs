@@ -100,7 +100,8 @@ test('the web PR build reports to its job summary with read-only access and unch
   const deploy = jobs.get('publish-and-deploy-preview')
   assert.deepEqual(permissions(deploy, 4), ['contents: read', 'packages: write', 'pull-requests: read'])
   assert.match(deploy, /group: preview-web-shared-main\n {6}cancel-in-progress: false/)
-  assert.match(deploy, /key: \$\{\{ secrets\.VPS_SSH_KEY \}\}/)
+  assert.match(deploy, /^ {4}environment: web-preview$/m)
+  assert.match(deploy, /key: \$\{\{ secrets\.PREVIEW_VPS_SSH_KEY \}\}/)
 })
 
 test('the docs preview reports its URL to the run summary with read-only access', () => {
@@ -120,7 +121,8 @@ test('the docs preview reports its URL to the run summary with read-only access'
   ])
   const [deploy, summary] = jobSteps.slice(-2)
   assert.match(deploy, /command: deploy --config wrangler\.preview\.jsonc/)
-  assert.match(deploy, /apiToken: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/)
+  assert.match(job, /^ {4}environment: docs-preview$/m)
+  assert.match(deploy, /apiToken: \$\{\{ secrets\.PREVIEW_CLOUDFLARE_API_TOKEN \}\}/)
   assert.match(summary, /\*\*Docs preview deployed\*\* to https:\/\/silentsuite-docs-preview\.workers\.dev/)
   assert.match(summary, />> "\$GITHUB_STEP_SUMMARY"/)
   assert.doesNotMatch(summary, /\$\{\{/, 'the summary must not interpolate expressions into the shell')
