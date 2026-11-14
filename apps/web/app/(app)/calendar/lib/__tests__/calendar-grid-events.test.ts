@@ -574,3 +574,72 @@ describe('hourly projection contracts', () => {
     ) > 0)).toBe(true)
   })
 })
+
+describe('day and week DURATION occurrences across DST (WEB-03 follow-up)', () => {
+  // Weekly from Saturday 28 Feb 2026, 10:00 New York, one nominal day long. New York springs
+  // forward on Sunday 8 March, so the 7 March occurrence is 23 hours.
+  const series = () => fromVEvent([
+    'BEGIN:VEVENT', 'UID:p1d-weekly', 'SUMMARY:Day long',
+    'DTSTART;TZID=America/New_York:20260228T100000', 'DURATION:P1D',
+    'RRULE:FREQ=WEEKLY;COUNT=4',
+    'END:VEVENT',
+  ].join('\r\n'))
+  // From 2 March, so the 28 February occurrence (ending 1 March) is outside the range.
+  const march = { start: new Date('2026-03-02T00:00:00Z'), end: new Date('2026-03-31T00:00:00Z') }
+  const ends = (events: DisplayEvent[]) => events.map((e) => [e.startDate.toISOString(), e.endDate.toISOString()])
+
+  it.each([
+    ['grid', (events: CalendarEvent[]) => expandGridEventsForRange(events, march).events],
+    ['agenda', (events: CalendarEvent[]) => expandEventsForRange(events, march)],
+  ] as const)('%s: each occurrence ends at the same wall clock the next day', (_name, expand) => {
+    expect(ends(expand([series()]))).toEqual([
+      ['2026-03-07T15:00:00.000Z', '2026-03-08T14:00:00.000Z'],
+      ['2026-03-14T14:00:00.000Z', '2026-03-15T14:00:00.000Z'],
+      ['2026-03-21T14:00:00.000Z', '2026-03-22T14:00:00.000Z'],
+    ])
+  })
+
+  it('grid: a 25-hour occurrence that starts before the range still overlaps it', () => {
+    // Weekly from Saturday 24 Oct 2026, 10:00 New York, P1D; the 31 Oct occurrence ends on
+    // 1 Nov 10:00 EST (15:00Z), 25 hours later, after New York falls back.
+    const fall = fromVEvent([
+      'BEGIN:VEVENT', 'UID:p1d-fall', 'SUMMARY:Day long',
+      'DTSTART;TZID=America/New_York:20261024T100000', 'DURATION:P1D',
+      'RRULE:FREQ=WEEKLY;COUNT=3',
+      'END:VEVENT',
+    ].join('\r\n'))
+    const range = { start: new Date('2026-11-01T14:30:00Z'), end: new Date('2026-11-02T00:00:00Z') }
+
+    expect(ends(expandGridEventsForRange([fall], range).events)).toEqual([
+      ['2026-10-31T14:00:00.000Z', '2026-11-01T15:00:00.000Z'],
+    ])
+  })
+
+  it('control: an event with DTEND keeps its exact length', () => {
+    const fixed = fromVEvent([
+      'BEGIN:VEVENT', 'UID:dtend-weekly', 'SUMMARY:Fixed',
+      'DTSTART;TZID=America/New_York:20260228T100000', 'DTEND;TZID=America/New_York:20260301T100000',
+      'RRULE:FREQ=WEEKLY;COUNT=2',
+      'END:VEVENT',
+    ].join('\r\n'))
+
+    expect(ends(expandGridEventsForRange([fixed], march).events)).toEqual([
+      ['2026-03-07T15:00:00.000Z', '2026-03-08T15:00:00.000Z'],
+    ])
+  })
+})
+
+describe('DURATION lookback from a 23-hour first occurrence (review repro)', () => {
+  it('grid: the 25-hour 31 October occurrence of a series that starts on a spring DST day still overlaps the range', () => {
+    const series = fromVEvent([
+      'BEGIN:VEVENT', 'UID:p1d-spring-seed', 'SUMMARY:Day long',
+      'DTSTART;TZID=America/New_York:20260307T100000', 'DURATION:P1D',
+      'RRULE:FREQ=WEEKLY;COUNT=40',
+      'END:VEVENT',
+    ].join('\r\n'))
+    const range = { start: new Date('2026-11-01T14:30:00Z'), end: new Date('2026-11-02T14:30:00Z') }
+
+    expect(expandGridEventsForRange([series], range).events.map((e) => [e.startDate.toISOString(), e.endDate.toISOString()]))
+      .toEqual([['2026-10-31T14:00:00.000Z', '2026-11-01T15:00:00.000Z']])
+  })
+})

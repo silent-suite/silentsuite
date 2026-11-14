@@ -14,6 +14,7 @@ vi.stubGlobal('fetch', vi.fn())
 const {
   dataCacheClearAll,
   offlineQueueClearAll,
+  offlineQueueClearOtherAccounts,
   calendarSetState,
   taskSetState,
   contactSetState,
@@ -31,6 +32,7 @@ const {
 } = vi.hoisted(() => ({
   dataCacheClearAll: vi.fn(async () => {}),
   offlineQueueClearAll: vi.fn(async () => {}),
+  offlineQueueClearOtherAccounts: vi.fn(async (_fingerprint: string) => {}),
   calendarSetState: vi.fn(),
   taskSetState: vi.fn(),
   contactSetState: vi.fn(),
@@ -51,6 +53,7 @@ vi.mock('@/app/lib/data-cache', () => ({
 }))
 vi.mock('@/app/lib/offline-queue', () => ({
   clearAll: offlineQueueClearAll,
+  clearOtherAccounts: offlineQueueClearOtherAccounts,
 }))
 
 // In-memory store for secure storage mock
@@ -222,6 +225,7 @@ describe('useAuthStore', () => {
     vi.mocked(fetch).mockReset()
     dataCacheClearAll.mockClear()
     offlineQueueClearAll.mockClear()
+    offlineQueueClearOtherAccounts.mockClear()
     calendarSetState.mockClear()
     taskSetState.mockClear()
     contactSetState.mockClear()
@@ -1538,6 +1542,87 @@ describe('useAuthStore', () => {
       vi.mocked(secureSet).mock.invocationCallOrder[0],
     )
     expect(secureStore.etebase_session).toBe('mock-saved-session')
+  })
+
+  it('login keeps the signing-in account\'s offline queue and drops other accounts\' work before storing the session', async () => {
+    const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+    const { secureSet } = await import('@/app/lib/secure-storage')
+    vi.mocked(secureSet).mockClear()
+    vi.mocked(etebaseLogIn).mockResolvedValueOnce({
+      authToken: 'mock-auth-token',
+      savedSession: 'mock-saved-session',
+      accountFingerprint: 'account-a-fingerprint',
+    })
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false }),
+    } as Response)
+
+    await useAuthStore.getState().login('test@example.com', 'password123')
+
+    expect(offlineQueueClearAll).not.toHaveBeenCalled()
+    expect(offlineQueueClearOtherAccounts).toHaveBeenCalledTimes(1)
+    expect(offlineQueueClearOtherAccounts).toHaveBeenCalledWith('account-a-fingerprint')
+    expect(offlineQueueClearOtherAccounts.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(secureSet).mock.invocationCallOrder[0],
+    )
+    expect(useAuthStore.getState().isAuthenticated).toBe(true)
+  })
+
+  describe('server selection is saved only after the credentials are verified', () => {
+    const KEY = 'silentsuite-server-url'
+    const customUrl = 'https://dav.example.test'
+    const signedIn = () => useAuthStore.setState({
+      user: { id: 'user-1', email: 'test@example.com', planId: 'pro', isAdmin: false, onboardedAt: null },
+      isAuthenticated: true,
+    })
+
+    it('a failed login leaves the saved server untouched', async () => {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('unauthorized'))
+      localStorage.setItem(KEY, customUrl)
+
+      await useAuthStore.getState().login('test@example.com', 'wrong', undefined)
+
+      expect(localStorage.getItem(KEY)).toBe(customUrl)
+    })
+
+    it('a verified self-hosted login with a blank server field drops a stale custom server', async () => {
+      selfHostedMode.enabled = true
+      try {
+        localStorage.setItem(KEY, customUrl)
+        await useAuthStore.getState().login('test@example.com', 'password123', undefined)
+        expect(useAuthStore.getState().isAuthenticated).toBe(true)
+        expect(localStorage.getItem(KEY)).toBeNull()
+      } finally {
+        selfHostedMode.enabled = false
+      }
+    })
+
+    it('a verified unlock saves the server it was verified against', async () => {
+      signedIn()
+      await useAuthStore.getState().unlockEtebaseSession('test@example.com', 'password123', customUrl)
+      expect(localStorage.getItem(KEY)).toBe(customUrl)
+    })
+
+    it('a verified unlock with a blank server field drops a stale custom server', async () => {
+      signedIn()
+      localStorage.setItem(KEY, customUrl)
+      await useAuthStore.getState().unlockEtebaseSession('test@example.com', 'password123', undefined)
+      expect(localStorage.getItem(KEY)).toBeNull()
+    })
+
+    it('a failed unlock leaves the saved server untouched', async () => {
+      const { etebaseLogIn } = await import('@/app/lib/etebase-auth')
+      vi.mocked(etebaseLogIn).mockRejectedValueOnce(new Error('unauthorized'))
+      signedIn()
+      localStorage.setItem(KEY, customUrl)
+
+      await useAuthStore.getState().unlockEtebaseSession('test@example.com', 'wrong', undefined)
+
+      expect(localStorage.getItem(KEY)).toBe(customUrl)
+    })
   })
 
   it('login records a redacted Etebase session persistence diagnostic after storing the session', async () => {
