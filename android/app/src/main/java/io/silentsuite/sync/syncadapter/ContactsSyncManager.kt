@@ -32,6 +32,7 @@ import io.silentsuite.sync.resource.LocalAddress
 import io.silentsuite.sync.resource.LocalAddressBook
 import io.silentsuite.sync.resource.LocalContact
 import io.silentsuite.sync.resource.LocalGroup
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -44,7 +45,11 @@ import java.io.StringReader
 import java.net.InetAddress
 import java.net.Proxy
 import java.net.UnknownHostException
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.logging.Level
 
 /**
@@ -570,14 +575,14 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             /** Largest external resource (contact photo) accepted; bigger bodies are dropped unread. */
             const val MAX_RESOURCE_BYTES: Long = 5L * 1024 * 1024
 
-            /** Deadline for the whole call, including connecting and reading the body. */
+            /** Deadline for the whole fetch, including any host check, connecting and reading the body. */
             const val CALL_TIMEOUT_SECONDS: Long = 30
 
             private const val READ_CHUNK_BYTES: Long = 8 * 1024
 
             /**
              * Fetches [url] with [client] and returns the body only for a 2xx response no larger than
-             * [maxBytes], read within [callTimeoutMillis]. Anything else yields null.
+             * [maxBytes], fetched (host check included) within [callTimeoutMillis]. Anything else yields null.
              *
              * Unless [publicAddressesOnly] is false (tests against a local server only), the host must
              * be public: see [PublicAddressDns]. Redirects are not followed, so no other host is reached.
@@ -590,6 +595,7 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                     callTimeoutMillis: Long = TimeUnit.SECONDS.toMillis(CALL_TIMEOUT_SECONDS),
                     publicAddressesOnly: Boolean = true
             ): ByteArray? {
+                val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(callTimeoutMillis)
                 // A literal address is checked here too, because through a proxy no lookup happens.
                 if (publicAddressesOnly && isLocalLiteral(url.host)) {
                     Logger.log.warning("External resource host is a local address, ignoring")
@@ -598,16 +604,19 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                 // Through a proxy, OkHttp looks up only the proxy's name and the proxy resolves this
                 // host itself. Best effort: resolve it here first and refuse it unless every address
                 // is public. The proxy can still resolve it differently (split DNS, rebinding).
-                if (publicAddressesOnly && goesThroughProxy(client, url)) {
-                    try {
-                        PublicAddressDns(url.host, client.dns).lookup(url.host)
-                    } catch (e: UnknownHostException) {
-                        Logger.log.warning("External resource host is local or could not be resolved, ignoring")
-                        return null
-                    }
+                if (publicAddressesOnly && goesThroughProxy(client, url) &&
+                        !resolvesToPublicOnly(client.dns, url.host, callTimeoutMillis)) {
+                    Logger.log.warning("External resource host is local or could not be resolved in time, ignoring")
+                    return null
+                }
+                // The call gets only what is left of the budget.
+                val remainingMillis = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())
+                if (remainingMillis <= 0) {
+                    Logger.log.warning("External resource fetch ran out of time, ignoring")
+                    return null
                 }
                 val boundedClient = client.newBuilder()
-                        .callTimeout(callTimeoutMillis, TimeUnit.MILLISECONDS)
+                        .callTimeout(remainingMillis, TimeUnit.MILLISECONDS)
                         .followRedirects(false)
                         .followSslRedirects(false)
                         .apply { if (publicAddressesOnly) dns(PublicAddressDns(url.host, client.dns)) }
@@ -639,6 +648,27 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                     Logger.log.log(Level.SEVERE, "Couldn't download external resource", e)
                 }
                 return null
+            }
+
+            /**
+             * True when [host] resolves through [dns], within [timeoutMillis], to public addresses
+             * only. A lookup that is still running then is left to finish on its own thread.
+             */
+            private fun resolvesToPublicOnly(dns: Dns, host: String, timeoutMillis: Long): Boolean {
+                val lookup = FutureTask(Callable { PublicAddressDns(host, dns).lookup(host) })
+                Thread(lookup, "external-resource-lookup").apply { isDaemon = true }.start()
+                return try {
+                    lookup.get(timeoutMillis, TimeUnit.MILLISECONDS)
+                    true
+                } catch (e: TimeoutException) {
+                    lookup.cancel(true)
+                    false
+                } catch (e: ExecutionException) {   // not public, or not resolvable
+                    false
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    false
+                }
             }
 
             /** True unless [client] connects to [url] directly. */

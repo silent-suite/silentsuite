@@ -80,6 +80,44 @@ class ResourceDownloaderTest {
         assertEquals("GET http://photos.example/photo.jpg HTTP/1.1", server.takeRequest().requestLine)
     }
 
+    /** Resolves every photo host to a public address after [delayMillis]; other names normally. */
+    private fun slowDns(delayMillis: Long) = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            if (hostname != "photos.example")
+                return Dns.SYSTEM.lookup(hostname)
+            Thread.sleep(delayMillis)
+            return listOf(InetAddress.getByName("93.184.216.34"))
+        }
+    }
+
+    @Test
+    fun aSlowProxiedHostCheckIsCutOffByTheDeadline() {
+        val proxied = client.newBuilder().proxy(server.toProxyAddress()).dns(slowDns(10_000)).build()
+        val started = System.nanoTime()
+        assertNull(ResourceDownloader.fetchBounded(proxied, "http://photos.example/photo.jpg".toHttpUrl(),
+                callTimeoutMillis = 500))
+        val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+        assertTrue("took $elapsedMillis ms", elapsedMillis < 3_000)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun theHostCheckUsesUpPartOfTheCallBudget() {
+        var callTimeoutMillis = -1L
+        val proxied = client.newBuilder()
+                .proxy(server.toProxyAddress())
+                .dns(slowDns(1_000))
+                .addInterceptor { chain ->
+                    callTimeoutMillis = TimeUnit.NANOSECONDS.toMillis(chain.call().timeout().timeoutNanos())
+                    chain.proceed(chain.request())
+                }
+                .build()
+        server.enqueue(MockResponse().setBody(Buffer().write(bytes(64))))
+        assertArrayEquals(bytes(64), ResourceDownloader.fetchBounded(proxied, "http://photos.example/photo.jpg".toHttpUrl(),
+                callTimeoutMillis = 10_000))
+        assertTrue("call timeout $callTimeoutMillis ms", callTimeoutMillis in 1..9_000)
+    }
+
     @Test
     fun localLiteralsAreRecognisedWithoutALookup() {
         for (host in listOf("127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.1.1",
