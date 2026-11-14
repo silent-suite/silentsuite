@@ -37,7 +37,7 @@
       "workerd"
     ],
     "overrides": {
-      "serialize-javascript": "^7.0.3",
+      "serialize-javascript": "^7.1.4",
       "flatted": "^3.4.2",
       "picomatch": "^4.0.4",
       "undici@>=7.0.0 <7.30.1": "7.30.1",
