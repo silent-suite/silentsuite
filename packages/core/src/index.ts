@@ -202,6 +202,7 @@ export {
   gapWallClock,
   validStartWallClock,
   eventOccurrenceWallClock,
+  recurrenceRuleFrom,
 } from './models/calendar-event.js';
 
 // Generated Birthdays calendar (pure contract helpers; contracts/birthday-calendar)
