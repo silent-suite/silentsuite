@@ -203,7 +203,11 @@ export {
   validStartWallClock,
   eventOccurrenceWallClock,
   recurrenceRuleFrom,
+  overridesWithout,
+  overridesBefore,
+  overridesInForm,
 } from './models/calendar-event.js';
+export type { StartForm } from './models/calendar-event.js';
 
 // Generated Birthdays calendar (pure contract helpers; contracts/birthday-calendar)
 export {
