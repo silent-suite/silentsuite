@@ -1,0 +1,9 @@
+# Extra inputs for requirements-lock.txt, on top of pyproject.toml's dependencies
+# and its dev and tray extras. See requirements-lock.txt for the full command.
+#
+# hatchling is the bridge's build backend, and editables is what it asks for to
+# build an editable install. Release builds install the bridge with
+# --no-deps --no-build-isolation, so both come from the lock as well instead of
+# being fetched unpinned into an isolated build environment.
+hatchling
+editables
