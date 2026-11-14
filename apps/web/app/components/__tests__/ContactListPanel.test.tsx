@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { screen, fireEvent, within } from '@testing-library/react'
+import { renderWithIntl } from '@/src/__tests__/render-with-intl'
 
 const updateCollectionMeta = vi.fn()
 
@@ -20,8 +21,16 @@ const mockEtebaseState = {
   updateCollectionMeta,
 }
 
+const mockContactState = {
+  contacts: [] as Array<{ id: string; listId?: string }>,
+}
+
 vi.mock('@/app/stores/use-contact-list-store', () => ({
   useContactListStore: () => mockContactListState,
+}))
+
+vi.mock('@/app/stores/use-contact-store', () => ({
+  useContactStore: <T,>(selector: (s: typeof mockContactState) => T) => selector(mockContactState),
 }))
 
 vi.mock('@/app/stores/use-etebase-store', () => ({
@@ -29,16 +38,54 @@ vi.mock('@/app/stores/use-etebase-store', () => ({
 }))
 
 import { ContactListPanel } from '../ContactListPanel'
+import { useDomainSnapshotStore } from '@/app/stores/use-domain-snapshot-store'
+import { getAccountEpoch } from '@/app/lib/account-epoch'
 
 describe('ContactListPanel', () => {
   beforeEach(() => {
     updateCollectionMeta.mockClear()
     mockContactListState.toggleVisibility.mockClear()
     mockContactListState.setActiveList.mockClear()
+    mockContactState.contacts = []
+    // The account's loaded server contacts have reached the store.
+    useDomainSnapshotStore.setState({ appliedEpoch: { contacts: getAccountEpoch() } })
+  })
+
+  it('shows how many contacts each address book holds, including hidden ones', () => {
+    mockContactState.contacts = [
+      { id: '1', listId: 'contacts-1' },
+      { id: '2', listId: 'contacts-1' },
+      { id: '3', listId: 'contacts-2' },
+    ]
+    renderWithIntl(<ContactListPanel />)
+
+    const work = screen.getByRole('button', { name: /^Work Contacts/ })
+    expect(work).toHaveAccessibleName('Work Contacts, 2 contacts')
+    expect(within(work).getByText('2', { selector: '[aria-hidden="true"]' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Home Contacts/ })).toHaveAccessibleName('Home Contacts, 1 contact')
+  })
+
+  it('shows 0 for an empty address book once contacts are loaded', () => {
+    renderWithIntl(<ContactListPanel />)
+    expect(screen.getByRole('button', { name: /^Work Contacts/ })).toHaveAccessibleName('Work Contacts, 0 contacts')
+  })
+
+  it('shows no counts until the loaded contacts reach the store (loading, failed load, cache only)', () => {
+    // Cached contacts are painted, but no server snapshot was applied for this account.
+    mockContactState.contacts = [{ id: '1', listId: 'contacts-1' }]
+    useDomainSnapshotStore.setState({ appliedEpoch: {} })
+    renderWithIntl(<ContactListPanel />)
+    expect(screen.getByRole('button', { name: /^Work Contacts/ })).toHaveAccessibleName('Work Contacts')
+  })
+
+  it('shows no counts from a snapshot applied for an earlier account', () => {
+    useDomainSnapshotStore.setState({ appliedEpoch: { contacts: getAccountEpoch() - 1 } })
+    renderWithIntl(<ContactListPanel />)
+    expect(screen.getByRole('button', { name: /^Work Contacts/ })).toHaveAccessibleName('Work Contacts')
   })
 
   it('persists address-book color changes through collection metadata', () => {
-    render(<ContactListPanel />)
+    renderWithIntl(<ContactListPanel />)
 
     fireEvent.click(screen.getByLabelText('Open Work Contacts actions'))
     const colorInput = screen.getByLabelText('Change Work Contacts color')
@@ -50,7 +97,7 @@ describe('ContactListPanel', () => {
   })
 
   it('renames address books through collection metadata', () => {
-    render(<ContactListPanel />)
+    renderWithIntl(<ContactListPanel />)
 
     fireEvent.click(screen.getByLabelText('Open Work Contacts actions'))
     fireEvent.click(screen.getByText('Rename'))
@@ -63,7 +110,7 @@ describe('ContactListPanel', () => {
   })
 
   it('sets hidden address books as default and makes them visible', () => {
-    render(<ContactListPanel />)
+    renderWithIntl(<ContactListPanel />)
 
     fireEvent.click(screen.getByLabelText('Open Home Contacts actions'))
     fireEvent.click(screen.getByText('Set as default'))
@@ -73,7 +120,7 @@ describe('ContactListPanel', () => {
   })
 
   it('gives the add button a mobile-only 44px hit area', () => {
-    render(<ContactListPanel />)
+    renderWithIntl(<ContactListPanel />)
     const add = screen.getByRole('button', { name: 'Add address book' })
     expect(add.className).toContain('max-md:min-h-[44px]')
     expect(add.className).toContain('max-md:min-w-[44px]')

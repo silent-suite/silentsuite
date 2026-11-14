@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseTodoistCsv } from './csv-parser.js';
+import { parseTodoistCsv, parseTodoistDate } from './csv-parser.js';
 
 const HEADER = 'TYPE,CONTENT,DESCRIPTION,PRIORITY,INDENT,AUTHOR,RESPONSIBLE,DATE,DATE_LANG,TIMEZONE,DURATION,DURATION_UNIT';
 
@@ -250,5 +250,20 @@ describe('parseTodoistCsv', () => {
 
     expect(todos[2].summary).toBe('→ Pack bags');
     expect(todos[2].status).toBe('COMPLETED');
+  });
+});
+
+describe('parseTodoistDate', () => {
+  it.each([
+    ['2026-12-05', '20261205'],
+    ['2026-12-05 14:30', '20261205T143000'],
+    ['2026-12-05T14:30:15', '20261205T143000'],
+    ['Dec 5 2026 9:05', '20261205T090500'],
+  ])('reads %s', (input, expected) => {
+    expect(parseTodoistDate(input)).toBe(expected);
+  });
+
+  it.each(['2026-13-05', '2026-02-30', '2026-12-05 25:00', 'Dec 32 2026', 'every day'])('rejects %s', (input) => {
+    expect(parseTodoistDate(input)).toBeUndefined();
   });
 });

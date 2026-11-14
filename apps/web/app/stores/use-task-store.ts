@@ -11,6 +11,7 @@ import { ImportIncompleteError } from '@/app/lib/import-outcome'
 import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useTaskListStore } from '@/app/stores/use-task-list-store'
 import { useLabelSuggestionsStore } from '@/app/stores/use-label-suggestions-store'
+import { getAccountEpoch, isCurrentAccountEpoch } from '@/app/lib/account-epoch'
 
 interface NewTask {
   title: string
@@ -29,6 +30,8 @@ interface NewTask {
   categories?: string[]
   listId?: string
 }
+
+export type TaskSyncOutcome = 'remote' | 'queued' | false
 
 interface TaskState {
   tasks: Task[]
@@ -52,8 +55,13 @@ interface TaskActions {
    * queue; otherwise removes the temp task and rejects with TaskSaveError.
    */
   createTask: (task: NewTask) => Promise<Task>
-  updateTask: (id: string, patch: Partial<Task>) => Promise<void>
-  deleteTask: (id: string) => Promise<void>
+  /**
+   * Resolve with the sync outcome: 'remote' once the server accepted the change, 'queued' when it
+   * is held in the offline queue, false when it was not saved (including a refusal). Existing
+   * callers may ignore it; the local copy is updated optimistically either way.
+   */
+  updateTask: (id: string, patch: Partial<Task>) => Promise<TaskSyncOutcome>
+  deleteTask: (id: string) => Promise<TaskSyncOutcome>
   toggleComplete: (id: string) => Promise<void>
   /** Resolves the requested count only when every task was acknowledged; otherwise rejects with ImportIncompleteError. */
   importTasks: (newTasks: NewTask[]) => Promise<number>
@@ -80,6 +88,28 @@ function defaultTaskListId(): string | undefined {
   const { lists, activeListId } = useTaskListStore.getState()
   if (activeListId !== 'all' && lists.some((list) => list.id === activeListId)) return activeListId
   return lists[0]?.id
+}
+
+/**
+ * Creates still waiting for the server, keyed by the temporary local id. Each
+ * resolves to the acknowledged item UID, or null when the create was not
+ * acknowledged (queued offline or failed).
+ */
+const savingCreates = new Map<string, Promise<string | null>>()
+
+/**
+ * The id to sync an edit or delete under. A task edited while its create is
+ * still in flight has only a temporary id with no Etebase item behind it yet,
+ * so wait for the create and use the item UID it was given (the temporary id
+ * if the create was not acknowledged). Without a pending create this returns
+ * the id synchronously: the caller must not yield before capturing its
+ * account. After a wait, the caller must still check that its account epoch
+ * is current before reading any account state.
+ */
+function syncTargetId(id: string): string | Promise<string> {
+  const saving = savingCreates.get(id)
+  if (!saving) return id
+  return saving.then((itemUid) => itemUid ?? id)
 }
 
 export const useTaskStore = create<TaskState & TaskActions>()(
@@ -123,74 +153,91 @@ export const useTaskStore = create<TaskState & TaskActions>()(
           throw new TaskSaveError(unconfirmed)
         }
 
-        // Sync to Etebase
-        const etebase = useEtebaseStore.getState()
-        if (!etebase.account) return withdraw(false)
-        let dispatched = false
+        let settleCreate!: (itemUid: string | null) => void
+        savingCreates.set(tempId, new Promise((resolve) => { settleCreate = resolve }))
+        let acknowledgedUid: string | null = null
         try {
-          const { serializeTask } = await import('@silentsuite/core')
-          const content = serializeTask(task)
-          dispatched = true
-          const itemUid = await etebase.createItem('tasks', content, tempId, task.listId)
-          if (itemUid) {
-            void useLabelSuggestionsStore.getState().recordUsage('tasks', task.categories ?? [])
-            // Replace temp id with real Etebase item UID
-            set((state) => ({
-              tasks: state.tasks.map((t) =>
-                t.id === tempId ? { ...t, id: itemUid } : t,
-              ),
-            }))
-            return { ...task, id: itemUid }
+          // Sync to Etebase
+          const etebase = useEtebaseStore.getState()
+          if (!etebase.account) return withdraw(false)
+          let dispatched = false
+          try {
+            const { serializeTask } = await import('@silentsuite/core')
+            const content = serializeTask(task)
+            dispatched = true
+            const itemUid = await etebase.createItem('tasks', content, tempId, task.listId)
+            if (itemUid) {
+              void useLabelSuggestionsStore.getState().recordUsage('tasks', task.categories ?? [])
+              // Replace temp id with real Etebase item UID
+              set((state) => ({
+                tasks: state.tasks.map((t) =>
+                  t.id === tempId ? { ...t, id: itemUid } : t,
+                ),
+              }))
+              acknowledgedUid = itemUid
+              return { ...task, id: itemUid }
+            }
+          } catch (err) {
+            console.error('[task-store] Failed to sync new task to Etebase', getSafeErrorDetails(err))
+            showErrorToast('Failed to save task. Please try again.')
           }
-        } catch (err) {
-          console.error('[task-store] Failed to sync new task to Etebase', getSafeErrorDetails(err))
-          showErrorToast('Failed to save task. Please try again.')
-        }
 
-        // Not acknowledged. A create admitted to the offline queue is durable local custody
-        // awaiting replay, so the temp task stays; anything else may or may not exist remotely.
-        if (dispatched) {
-          const guard = captureOfflineQueueAccountGuard(etebase)
-          if (guard) {
-            try {
-              const outstanding = await readOutstanding({ collectionType: 'tasks', itemUid: tempId }, guard)
-              if (outstanding.some((entry) => entry.type === 'create')) return task
-            } catch {
-              // An unreadable queue proves nothing: the create stays unconfirmed.
+          // Not acknowledged. A create admitted to the offline queue is durable local custody
+          // awaiting replay, so the temp task stays; anything else may or may not exist remotely.
+          if (dispatched) {
+            const guard = captureOfflineQueueAccountGuard(etebase)
+            if (guard) {
+              try {
+                const outstanding = await readOutstanding({ collectionType: 'tasks', itemUid: tempId }, guard)
+                if (outstanding.some((entry) => entry.type === 'create')) return task
+              } catch {
+                // An unreadable queue proves nothing: the create stays unconfirmed.
+              }
             }
           }
+          return withdraw(dispatched)
+        } finally {
+          savingCreates.delete(tempId)
+          settleCreate(acknowledgedUid)
         }
-        return withdraw(dispatched)
       },
 
       updateTask: async (id: string, patch: Partial<Task>) => {
         if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
         const { tasks } = get()
         const index = tasks.findIndex((t) => t.id === id)
-        if (index === -1) return
+        if (index === -1) return false
 
         const updated = applyTaskPatch(tasks[index]!, patch)
         const next = [...tasks]
         next[index] = updated
         set({ tasks: next })
 
+        // Yield only for a pending create, and drop the sync if another account
+        // took over while waiting, before reading any account state below.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return false
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          const itemInCache = etebase.itemCache.has(id)
+          const itemInCache = etebase.itemCache.has(targetId)
           if (itemInCache) {
             try {
               const { serializeTask } = await import('@silentsuite/core')
               const content = serializeTask(updated)
-              await etebase.updateItem('tasks', id, content)
+              const outcome = await etebase.updateItem('tasks', targetId, content)
               void useLabelSuggestionsStore.getState().recordUsage('tasks', updated.categories ?? [])
+              return outcome
             } catch (err) {
               console.error('[task-store] Failed to sync task update to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to save task. Please try again.')
+              return false
             }
           } else {
             const guard = captureOfflineQueueAccountGuard(etebase)
-            if (!guard) return
+            if (!guard) return false
             // Item was created offline — enqueue update with tempId so compaction merges into create
             const { serializeTask } = await import('@silentsuite/core')
             assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
@@ -199,12 +246,14 @@ export const useTaskStore = create<TaskState & TaskActions>()(
             try {
               await enqueue({ type: 'update', collectionType: 'tasks', collectionUid: updated.listId, content, tempId: id }, guard)
               assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              return 'queued'
             } catch (error) {
-              if (isOfflineQueueBoundaryCancellation(error)) return
+              if (isOfflineQueueBoundaryCancellation(error)) return false
               throw error
             }
           }
         }
+        return false
       },
 
       deleteTask: async (id: string) => {
@@ -212,32 +261,41 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         const taskToDelete = get().tasks.find((t) => t.id === id)
         set((state) => ({ tasks: state.tasks.filter((t) => t.id !== id) }))
 
+        // Yield only for a pending create, and drop the sync if another account
+        // took over while waiting, before reading any account state below.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return false
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
           // Check if item exists in etebase cache — if not, it may be an offline-created item
-          const itemInCache = etebase.itemCache.has(id)
+          const itemInCache = etebase.itemCache.has(targetId)
           if (itemInCache) {
             try {
-              await etebase.deleteItem('tasks', id)
+              return await etebase.deleteItem('tasks', targetId)
             } catch (err) {
               console.error('[task-store] Failed to sync task deletion to Etebase', getSafeErrorDetails(err))
               showErrorToast('Failed to delete task. Please try again.')
+              return false
             }
           } else {
             const guard = captureOfflineQueueAccountGuard(etebase)
-            if (!guard) return
+            if (!guard) return false
             // Item was created offline and not yet synced — enqueue delete with tempId for compaction
             try {
               assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
               await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: taskToDelete?.listId, tempId: id }, guard)
               assertOfflineQueueAccountGuard(guard, useEtebaseStore.getState())
+              return 'queued'
             } catch (error) {
-              if (isOfflineQueueBoundaryCancellation(error)) return
+              if (isOfflineQueueBoundaryCancellation(error)) return false
               throw error
             }
           }
         }
+        return false
       },
 
       toggleComplete: async (id: string) => {
@@ -259,15 +317,21 @@ export const useTaskStore = create<TaskState & TaskActions>()(
         next[index] = updated
         set({ tasks: next })
 
+        // Yield only for a pending create, and drop the sync if another account
+        // took over while waiting, before reading any account state below.
+        const accountEpoch = getAccountEpoch()
+        const target = syncTargetId(id)
+        const targetId = typeof target === 'string' ? target : await target
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         // Sync to Etebase
         const etebase = useEtebaseStore.getState()
         if (etebase.account) {
-          const itemInCache = etebase.itemCache.has(id)
+          const itemInCache = etebase.itemCache.has(targetId)
           if (itemInCache) {
             try {
               const { serializeTask } = await import('@silentsuite/core')
               const content = serializeTask(updated)
-              await etebase.updateItem('tasks', id, content)
+              await etebase.updateItem('tasks', targetId, content)
               void useLabelSuggestionsStore.getState().recordUsage('tasks', updated.categories ?? [])
             } catch (err) {
               console.error('[task-store] Failed to sync task toggle to Etebase', getSafeErrorDetails(err))

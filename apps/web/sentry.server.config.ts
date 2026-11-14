@@ -1,13 +1,6 @@
-import * as Sentry from '@sentry/nextjs'
-import { scrubSentryEvent } from '@/app/lib/sentry-scrub'
-
-const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN
-
-if (dsn) {
-  Sentry.init({
-    dsn,
-    environment: process.env.NODE_ENV,
-    tracesSampleRate: 0.1,
-    beforeSend: scrubSentryEvent,
-  })
-}
+/*
+ * Server and edge error reporting is deferred: only browser errors are
+ * reported (see sentry.client.config.ts). This file stays an explicit no-op so
+ * nothing initialises the SDK in the server runtime.
+ */
+export {}

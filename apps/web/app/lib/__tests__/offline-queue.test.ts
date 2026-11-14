@@ -9,6 +9,7 @@ import {
   replay,
   clearFailed,
   clearAll,
+  clearOtherAccounts,
   retryFailed,
   remove,
   removeItemMutations,
@@ -172,6 +173,40 @@ describe('offline-queue', () => {
 
       expect(await getAll()).toHaveLength(0)
       expect(await getPendingCount(testGuard())).toBe(0)
+    })
+
+    it('clearOtherAccounts keeps the signing-in account\'s work and removes every other account\'s', async () => {
+      await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'tasks', itemUid: 'mine-1' })
+      await enqueue({ type: 'delete', collectionType: 'calendar', collectionUid: 'cal', itemUid: 'mine-2' })
+      await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'tasks', itemUid: 'theirs-1' }, testGuard('other-account'))
+      // A record with no owner cannot be attributed to the signing-in account.
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const req = indexedDB.open('silentsuite-offline-queue')
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      })
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('mutations', 'readwrite')
+        tx.objectStore('mutations').put({ id: 'unowned', type: 'delete', collectionType: 'tasks', itemUid: 'x', createdAt: Date.now(), retryCount: 0, status: 'pending' })
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+      db.close()
+
+      await clearOtherAccounts(TEST_FINGERPRINT)
+
+      const remaining = await getAll()
+      expect(remaining.map((entry) => entry.itemUid).sort()).toEqual(['mine-1', 'mine-2'])
+      expect(remaining.every((entry) => entry.accountFingerprint === TEST_FINGERPRINT)).toBe(true)
+      expect(await getPendingCount(testGuard())).toBe(2)
+    })
+
+    it('clearOtherAccounts with an empty fingerprint clears everything', async () => {
+      await enqueue({ type: 'delete', collectionType: 'tasks', collectionUid: 'tasks', itemUid: 'mine-1' })
+
+      await clearOtherAccounts('')
+
+      expect(await getAll()).toHaveLength(0)
     })
   })
 

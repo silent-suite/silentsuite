@@ -76,7 +76,7 @@ class ReportProblemActivity : BaseActivity() {
 
         findViewById<TextView>(R.id.report_preview).text = model.diagnostics
         findViewById<TextView>(R.id.report_disclosure).text =
-            getString(R.string.report_problem_disclosure, getString(R.string.report_problem_retention))
+            getString(R.string.report_problem_disclosure)
         findViewById<View>(R.id.report_privacy_link).setOnClickListener { openPrivacyPolicy() }
 
         // Diagnostics default on for a problem and off for a feature request. Restored widget state

@@ -597,9 +597,11 @@ function isRetainableProperty(line: unknown, modelled: ReadonlySet<string> | nul
   return modelled === null || !modelled.has(name);
 }
 
-/** Whether an array is exactly one complete, name-matched block with valid lines. */
-function isRetainableComponent(block: unknown, forbidden: ReadonlySet<string>): block is string[] {
+/** Whether an array is exactly one complete, name-matched block with valid lines. `top`, when
+ *  given, is the block's required own name, allowed even if it is otherwise forbidden. */
+function isRetainableComponent(block: unknown, forbidden: ReadonlySet<string>, top?: string): block is string[] {
   if (!Array.isArray(block) || block.length < 2) return false;
+  if (top !== undefined && (typeof block[0] !== 'string' || block[0].toUpperCase() !== `BEGIN:${top}`)) return false;
   const open: string[] = [];
   for (let i = 0; i < block.length; i++) {
     const line: unknown = block[i];
@@ -609,7 +611,7 @@ function isRetainableComponent(block: unknown, forbidden: ReadonlySet<string>): 
       if (!match) return false;
       const name = match[2]!.toUpperCase();
       if (match[1]!.toUpperCase() === 'BEGIN') {
-        if (forbidden.has(name) || (i > 0 && open.length === 0)) return false;
+        if ((forbidden.has(name) && !(i === 0 && name === top)) || (i > 0 && open.length === 0)) return false;
         open.push(name);
       } else {
         if (open.pop() !== name) return false;
@@ -759,6 +761,69 @@ function retainedEventContent(event: VEvent): { properties: string[]; components
     isRetainableComponent(block, EVENT_FORBIDDEN_COMPONENTS),
   );
   return { properties, components: components.flat() };
+}
+
+/**
+ * A VCALENDAR item's VEVENTs: `main` is the event itself (the first VEVENT without RECURRENCE-ID,
+ * else the first VEVENT), as text for {@link parseVEvent}. `overrides` are the other VEVENTs with
+ * the same UID and a RECURRENCE-ID (changed occurrences of the series), `vtimezones` the item's
+ * VTIMEZONE blocks; both as unfolded lines, only when valid to keep. Null when `ical` is not a
+ * VCALENDAR or not well formed, so callers read it as before.
+ */
+export function splitCalendarItem(ical: string): { main: string; overrides: string[][]; vtimezones: string[][] } | null {
+  const all = unfoldLines(ical.trimStart()).split(/\r?\n/).filter((l) => l.length > 0);
+  if (!/^BEGIN:VCALENDAR\s*$/i.test(all[0] ?? '')) return null;
+  const blocks: string[][] = [];
+  let block: string[] = [];
+  let depth = 0;
+  for (const line of all.slice(1)) {
+    const marker = /^(BEGIN|END):/i.exec(line)?.[1]?.toUpperCase();
+    if (depth === 0) {
+      if (/^END:VCALENDAR\s*$/i.test(line)) break;
+      if (marker === 'BEGIN') {
+        block = [line.trim()];
+        depth = 1;
+      }
+      continue;
+    }
+    block.push(marker ? line.trim() : line);
+    if (marker === 'BEGIN') depth++;
+    else if (marker === 'END' && --depth === 0) blocks.push(block);
+  }
+  if (depth !== 0) return null;
+
+  const named = (name: string) => blocks.filter((b) => b[0]!.toUpperCase() === `BEGIN:${name}`);
+  const events = named('VEVENT');
+  const main = events.find((b) => topLevelProperty(b, 'RECURRENCE-ID') === undefined) ?? events[0];
+  if (!main) return null;
+  const uid = topLevelProperty(main, 'UID')?.value;
+  const overrides = uid
+    ? events.filter((b) => b !== main
+      && topLevelProperty(b, 'UID')?.value === uid
+      && topLevelProperty(b, 'RECURRENCE-ID') !== undefined
+      && isRetainableComponent(b, TODO_FORBIDDEN_COMPONENTS, 'VEVENT'))
+    : [];
+  const vtimezones = named('VTIMEZONE').filter((b) => isRetainableComponent(b, TODO_FORBIDDEN_COMPONENTS, 'VTIMEZONE'));
+  return { main: main.join('\r\n'), overrides, vtimezones };
+}
+
+/** A property of a component's own (not of its subcomponents), from unfolded block lines. */
+export function topLevelProperty(block: readonly string[], name: string): { params: Record<string, string>; value: string } | undefined {
+  let depth = 0;
+  for (const line of block) {
+    if (/^BEGIN:/i.test(line)) { depth++; continue; }
+    if (/^END:/i.test(line)) { depth--; continue; }
+    if (depth !== 1) continue;
+    const prop = parseProperty(line);
+    if (prop.name === name) return { params: prop.params, value: prop.value };
+  }
+  return undefined;
+}
+
+/** A kept top-level component (`top`: VEVENT or VTIMEZONE), checked again and folded; null if invalid. */
+export function generateRetainedComponent(block: readonly string[], top: 'VEVENT' | 'VTIMEZONE'): string | null {
+  if (!isRetainableComponent(block, TODO_FORBIDDEN_COMPONENTS, top)) return null;
+  return block.map(foldRetainedLine).join('\r\n');
 }
 
 /** Fold a retained line at code-point boundaries: at most 75 UTF-8 octets per
