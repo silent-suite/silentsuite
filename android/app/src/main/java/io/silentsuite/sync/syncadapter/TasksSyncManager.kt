@@ -12,6 +12,7 @@ import android.accounts.Account
 import android.content.Context
 import android.content.SyncResult
 import android.os.Bundle
+import at.bitfire.ical4android.CalendarStorageException
 import at.bitfire.ical4android.Task
 import com.etebase.client.Item
 import io.silentsuite.sync.AccountSettings
@@ -64,6 +65,33 @@ class TasksSyncManager(
 
     private fun localTaskList(): LocalTaskList {
         return localCollection as LocalTaskList
+    }
+
+    /**
+     * On a read-only task list, reapplies the cached server task (already downloaded by an earlier
+     * sync) over a discarded local change, so the tasks app shows the server's content again
+     * before the dirty flag is cleared.
+     */
+    @Throws(CalendarStorageException::class)
+    override fun restoreLocalFromRemote(local: LocalTask): String? {
+        // The Etebase cache is keyed by the item/file UID, not the iCalendar UID.
+        val itemUid = local.fileName
+            ?: throw CalendarStorageException("Cannot restore a task without its cached item UID")
+
+        val cached = synchronized(etebaseLocalCache) {
+            etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, itemUid)
+        }
+        if (cached == null || cached.item.isDeleted)
+            throw CalendarStorageException("The server copy of a read-only task is unavailable")
+
+        val remote = Task.tasksFromReader(StringReader(cached.content))
+        if (remote.isEmpty())
+            throw CalendarStorageException("The server copy of a read-only task is invalid")
+
+        Logger.log.info("Reapplying the server's task over a discarded local change")
+        local.eTag = cached.item.etag
+        local.update(remote[0])
+        return cached.item.etag
     }
 
     override fun processItem(item: Item) {
