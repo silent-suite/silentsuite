@@ -9,6 +9,7 @@ import ImportListSelector from './ImportListSelector'
 import GoogleImportButton from './GoogleImportButton'
 import { isProviderImportVEvent, vEventToImportEvent } from './import-mappers'
 import { importSourceKeys } from '@/app/lib/google-import/source-key'
+import { RECONCILE_FAILED_MESSAGE, serverImportSourceKeys } from '@/app/lib/google-import/reconcile'
 import type { GoogleCalendarImport } from '@/app/lib/google-import/importer'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { DEFAULT_CALENDAR_COLORS, useCalendarListStore } from '@/app/stores/use-calendar-list-store'
@@ -57,14 +58,16 @@ interface CalendarImportGroup {
   fromGoogle?: true
 }
 
+function hasProviderUnits(groups: CalendarImportGroup[]): boolean {
+  return groups.some((group) => group.events.some(isProviderImportVEvent))
+}
+
 /**
- * Provider units whose source is already in a calendar are left out, so a re-import, or a
- * retry after an unconfirmed save that has since synced, never writes one twice. File events
- * pass through unchanged.
+ * Provider units whose source is in `existing` are left out, so a re-import never writes one
+ * twice. File events pass through unchanged.
  */
-function withoutImported(groups: CalendarImportGroup[]): { groups: CalendarImportGroup[]; skipped: number } {
-  if (!groups.some((group) => group.events.some(isProviderImportVEvent))) return { groups, skipped: 0 }
-  const existing = importSourceKeys(useCalendarStore.getState().events)
+function withoutImported(groups: CalendarImportGroup[], existing: ReadonlySet<string>): { groups: CalendarImportGroup[]; skipped: number } {
+  if (!hasProviderUnits(groups)) return { groups, skipped: 0 }
   let skipped = 0
   const kept = groups
     .map((group) => {
@@ -255,7 +258,8 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
       usedColors.add(color)
       return { id: `google-${index}`, fileName: 'Google Calendar', name: source.name, color, events: source.units, fromGoogle: true }
     })
-    const { groups: pending, skipped } = withoutImported(loaded)
+    // A first look against what this device shows; the write re-checks against the server.
+    const { groups: pending, skipped } = withoutImported(loaded, importSourceKeys(useCalendarStore.getState().events))
     const notes: string[] = []
     if (skipped > 0) notes.push(`${skipped} already imported ${skipped === 1 ? 'entry was' : 'entries were'} skipped.`)
     if (result.unreadable > 0) notes.push(`${result.unreadable} ${result.unreadable === 1 ? 'entry' : 'entries'} could not be read and ${result.unreadable === 1 ? 'was' : 'were'} not imported; importing from Google again will retry ${result.unreadable === 1 ? 'it' : 'them'}.`)
@@ -273,7 +277,18 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     if (totalEvents === 0) return
     setIsImporting(true)
     setError(null)
-    const { groups: importGroups } = withoutImported(groups)
+    let importGroups = groups
+    if (hasProviderUnits(groups)) {
+      // Read the server first: a save whose acknowledgement was lost is there, though not shown here.
+      const onServer = await serverImportSourceKeys('calendar')
+      if (!onServer) {
+        setError(RECONCILE_FAILED_MESSAGE)
+        setIsImporting(false)
+        return
+      }
+      const known = new Set([...importSourceKeys(useCalendarStore.getState().events), ...onServer])
+      importGroups = withoutImported(groups, known).groups
+    }
     if (importGroups.length === 0) {
       setGroups([])
       setGoogleNotice('Everything listed was already imported.')

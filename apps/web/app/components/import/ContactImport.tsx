@@ -9,6 +9,7 @@ import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
 import GoogleImportButton from './GoogleImportButton'
 import { importSourceKeys } from '@/app/lib/google-import/source-key'
+import { RECONCILE_FAILED_MESSAGE, serverImportSourceKeys } from '@/app/lib/google-import/reconcile'
 import { useContactStore } from '@/app/stores/use-contact-store'
 import { useContactListStore } from '@/app/stores/use-contact-list-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
@@ -16,15 +17,20 @@ import { getSafeErrorDetails } from '@/app/lib/privacy-safe-errors'
 import { normalizeLabels } from '@/app/components/LabelEditor'
 import type { ImportIncompleteError } from '@/app/lib/import-outcome'
 
+const sourceKeyOf = (contact: VCard) => (contact as VCard & { sourceKey?: string }).sourceKey
+
+function hasProviderContacts(contacts: VCard[]): boolean {
+  return contacts.some((contact) => sourceKeyOf(contact) !== undefined)
+}
+
 /**
- * Contacts read from Google whose source is already in an address book are left out, so a
- * re-import, or a retry after an unconfirmed save that has since synced, never adds one twice.
- * File contacts pass through unchanged. People are never matched by name, phone or email.
+ * Contacts read from Google whose source is in `existing` are left out, so a re-import never
+ * adds one twice. File contacts pass through unchanged. People are never matched by name,
+ * phone or email.
  */
-function withoutImported(contacts: VCard[]): { contacts: VCard[]; skipped: number } {
-  const keyOf = (contact: VCard) => (contact as VCard & { sourceKey?: string }).sourceKey
-  if (!contacts.some((contact) => keyOf(contact) !== undefined)) return { contacts, skipped: 0 }
-  const existing = importSourceKeys(useContactStore.getState().contacts)
+function withoutImported(contacts: VCard[], existing: ReadonlySet<string>): { contacts: VCard[]; skipped: number } {
+  const keyOf = sourceKeyOf
+  if (!hasProviderContacts(contacts)) return { contacts, skipped: 0 }
   const kept = contacts.filter((contact) => {
     const key = keyOf(contact)
     return key === undefined || !existing.has(key)
@@ -151,7 +157,8 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const handleGoogleLoaded = useCallback((loaded: VCard[]) => {
     setError(null)
     setImportedCount(null)
-    const { contacts: pending, skipped } = withoutImported(loaded)
+    // A first look against what this device shows; the write re-checks against the server.
+    const { contacts: pending, skipped } = withoutImported(loaded, importSourceKeys(useContactStore.getState().contacts))
     const notes: string[] = []
     if (pending.length === 0) notes.push('Nothing new to import from Google.')
     if (skipped > 0) notes.push(`${skipped} already imported ${skipped === 1 ? 'contact was' : 'contacts were'} skipped.`)
@@ -162,7 +169,18 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const handleImport = useCallback(async () => {
     setIsImporting(true)
     setError(null)
-    const { contacts: toImport } = withoutImported(contacts)
+    let toImport = contacts
+    if (hasProviderContacts(contacts)) {
+      // Read the server first: a save whose acknowledgement was lost is there, though not shown here.
+      const onServer = await serverImportSourceKeys('contacts')
+      if (!onServer) {
+        setError(RECONCILE_FAILED_MESSAGE)
+        setIsImporting(false)
+        return
+      }
+      const known = new Set([...importSourceKeys(useContactStore.getState().contacts), ...onServer])
+      toImport = withoutImported(contacts, known).contacts
+    }
     if (toImport.length === 0) {
       setContacts([])
       setGoogleNotice('Everything listed was already imported.')

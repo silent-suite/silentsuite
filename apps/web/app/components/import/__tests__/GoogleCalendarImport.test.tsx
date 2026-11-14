@@ -45,12 +45,14 @@ const teamEvents: GoogleEvent[] = [
   { id: 'offsite', iCalUID: 'offsite@google.com', summary: 'Offsite', start: { date: '2026-07-01' }, end: { date: '2026-07-03' } },
 ]
 
+let onlyPersonal = false
+
 /** What a fresh read of the Google account returns: mapped anew each time, with new UIDs. */
 function readGoogle(): GoogleCalendarImport {
   return {
     calendars: [
       { id: personal.id, name: 'Personal', units: mapGoogleCalendarEvents(personal.id, personal, personalEvents).units },
-      { id: team.id, name: 'Team', color: '#336699', units: mapGoogleCalendarEvents(personal.id, team, teamEvents).units },
+      ...(onlyPersonal ? [] : [{ id: team.id, name: 'Team', color: '#336699', units: mapGoogleCalendarEvents(personal.id, team, teamEvents).units }]),
     ],
     unreadable: 0,
   }
@@ -62,9 +64,14 @@ vi.mock('../GoogleImportButton', () => ({
   ),
 }))
 
-function installCalendarAccount(batches: ('ok' | 'offline-before-apply')[]) {
+/**
+ * The real bridge with a controlled account. `server` holds what each collection really has;
+ * 'applied-then-lost' stores the batch and then loses the response, as a dropped connection does.
+ */
+function installCalendarAccount(batches: ('ok' | 'offline-before-apply' | 'applied-then-lost')[]) {
   const plan = [...batches]
   const written: { collectionUid: string; contents: string[]; outcome: string }[] = []
+  const server = new Map<string, { uid: string; content: string }[]>()
   let collectionSequence = 0
   let itemSequence = 0
   const collection = (uid: string, meta: { name: string; color?: string }) => ({ uid, getMeta: () => meta })
@@ -72,13 +79,21 @@ function installCalendarAccount(batches: ('ok' | 'offline-before-apply')[]) {
     getCollectionManager: () => ({
       create: async (_type: string, meta: { name: string; color?: string }) => collection(`created-${++collectionSequence}`, meta),
       upload: async () => undefined,
+      fetch: async (uid: string) => collection(uid, { name: uid }),
       getItemManager: (target: { uid: string }) => ({
         create: async (_meta: unknown, content: string) => ({ uid: `event-item-${++itemSequence}`, content }),
-        batch: async (items: { content: string }[]) => {
+        batch: async (items: { uid: string; content: string }[]) => {
           const outcome = plan.shift() ?? 'ok'
           written.push({ collectionUid: target.uid, contents: items.map(({ content }) => content), outcome })
           if (outcome === 'offline-before-apply') throw new TypeError('Failed to fetch')
+          server.set(target.uid, [...(server.get(target.uid) ?? []), ...items])
+          if (outcome === 'applied-then-lost') throw new TypeError('Failed to fetch')
         },
+        list: async () => ({
+          data: (server.get(target.uid) ?? []).map(({ uid, content }) => ({ uid, isDeleted: false, getContent: async () => content, getMeta: () => ({}) })),
+          stoken: null,
+          done: true,
+        }),
       }),
     }),
   }
@@ -91,7 +106,8 @@ function installCalendarAccount(batches: ('ok' | 'offline-before-apply')[]) {
     itemCollectionMap: new Map(),
     syncEngine: null,
   } as any)
-  return written
+  const copiesOnServer = () => [...server.values()].flat().map(({ content }) => importSourceKeyOf(deserializeCalendarEvent(content).unknownProperties))
+  return Object.assign(written, { copiesOnServer })
 }
 
 describe('Google calendar import: interrupt, retry, re-import', () => {
@@ -102,6 +118,7 @@ describe('Google calendar import: interrupt, retry, re-import', () => {
     useCalendarStore.setState({ events: [] })
     useCalendarListStore.setState({ calendars: [{ id: 'cal-work', name: 'Work', color: '#123456', visible: true }], defaultCalendarId: 'cal-work' })
     toastMock.showErrorToast.mockReset()
+    onlyPersonal = false
   })
 
   it('writes each series whole, retries only what failed, and a re-import adds nothing', async () => {
@@ -143,6 +160,45 @@ describe('Google calendar import: interrupt, retry, re-import', () => {
     expect(screen.queryByRole('button', { name: /^Import (into|\d)/ })).toBeNull()
     expect(written).toHaveLength(3)
     expect(useCalendarStore.getState().events).toHaveLength(3)
+    expect(written.copiesOnServer()).toHaveLength(3)
+  })
+
+  it('a save the server applied but never acknowledged is not written again on retry', async () => {
+    onlyPersonal = true
+    const written = installCalendarAccount(['applied-then-lost'])
+    renderWithIntl(<CalendarImport onImportComplete={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Google' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 events' }))
+
+    // unsaved=[0], uncertain=true: the event is not shown here, but it is on the server.
+    expect(await screen.findByText(/Imported 0 of 1 events\. The other 1 weren't confirmed as saved/)).toBeInTheDocument()
+    expect(useCalendarStore.getState().events).toHaveLength(0)
+    expect(written.copiesOnServer()).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Import 1 events' }))
+    expect(await screen.findByText('Everything listed was already imported.')).toBeInTheDocument()
+    expect(written).toHaveLength(1)
+    expect(written.copiesOnServer()).toHaveLength(1)
+
+    // A fresh re-import is checked against the server too.
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Google' }))
+    const retry = screen.queryByRole('button', { name: 'Import 1 events' })
+    if (retry) fireEvent.click(retry)
+    expect(await screen.findByText('Everything listed was already imported.')).toBeInTheDocument()
+    expect(written.copiesOnServer()).toHaveLength(1)
+  })
+
+  it('writes nothing when the server cannot be read first', async () => {
+    onlyPersonal = true
+    const written = installCalendarAccount([])
+    const etebase = useEtebaseStore.getState()
+    useEtebaseStore.setState({ refreshCollection: async () => { useEtebaseStore.setState({ domainLoadState: { ...useEtebaseStore.getState().domainLoadState, calendar: 'failed' } }); return [] } } as any)
+    renderWithIntl(<CalendarImport onImportComplete={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Import from Google' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Import 1 events' }))
+    expect(await screen.findByText(/Couldn't check what is already saved, so nothing was imported/)).toBeInTheDocument()
+    expect(written).toHaveLength(0)
+    useEtebaseStore.setState({ refreshCollection: etebase.refreshCollection } as any)
   })
 
   it('a retry never re-sends a unit that has meanwhile reached the calendar', async () => {
