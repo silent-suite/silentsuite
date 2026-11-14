@@ -9,6 +9,7 @@ import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -36,8 +37,45 @@ class ResourceDownloaderTest {
 
     private fun bytes(size: Int) = ByteArray(size) { (it % 251).toByte() }
 
+    /** Against the local test server, so the public-address check is off here. */
     private fun fetch(maxBytes: Long = 1024, callTimeoutMillis: Long = 5_000) =
-        ResourceDownloader.fetchBounded(client, server.url("/photo.jpg"), maxBytes, callTimeoutMillis)
+        ResourceDownloader.fetchBounded(client, server.url("/photo.jpg"), maxBytes, callTimeoutMillis,
+                publicAddressesOnly = false)
+
+    @Test
+    fun localHostIsRefusedWithoutARequest() {
+        server.enqueue(MockResponse().setBody(Buffer().write(bytes(64))))
+        // server.url() names the loopback host; the default check must stop it before connecting.
+        assertNull(ResourceDownloader.fetchBounded(client, server.url("/photo.jpg")))
+        val literal = server.url("/photo.jpg").newBuilder().host("127.0.0.1").build()
+        assertNull(ResourceDownloader.fetchBounded(client, literal))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun localLiteralsAreRecognisedWithoutALookup() {
+        for (host in listOf("127.0.0.1", "10.0.0.1", "172.16.0.1", "192.168.1.1", "169.254.1.1",
+                "::1", "fe80::1", "fc00::1", "::ffff:a00:1"))
+            assertTrue(host, ResourceDownloader.isLocalLiteral(host))
+        for (host in listOf("93.184.216.34", "2606:4700::1", "photos.example", "999.1.1.1"))
+            assertFalse(host, ResourceDownloader.isLocalLiteral(host))
+    }
+
+    @Test
+    fun photoDownloadsAlwaysCheckAddressesAndDoNotLogTheUrl() {
+        val downloader = File("src/main/java/io/silentsuite/sync/syncadapter/ContactsSyncManager.kt").readText()
+        // Only tests turn the check off.
+        assertFalse(downloader.contains("publicAddressesOnly = false"))
+        assertTrue(Regex("""dns\(PublicAddressDns\(url\.host, client\.dns\)\)""").containsMatchIn(downloader))
+        assertTrue(downloader.contains(".followRedirects(false)"))
+        val download = downloader.substringAfter("override fun download(url: String").substringBefore("companion object")
+        assertFalse(Regex("""Logger\.log\.[a-z]+\([^)]*\burl\b""").containsMatchIn(download))
+
+        val contact = File("../vcard4android/src/main/java/at/bitfire/vcard4android/Contact.kt").readText()
+        val photo = contact.substringAfter("is Photo ->").substringBefore("it.download(url")
+        assertTrue(photo.contains("Constants.log.info(\"Downloading photo\")"))
+        assertFalse(photo.contains("\$url"))
+    }
 
     @Test
     fun successfulResponseWithinLimitIsReturned() {

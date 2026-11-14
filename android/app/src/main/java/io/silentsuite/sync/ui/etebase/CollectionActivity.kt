@@ -234,6 +234,19 @@ class AccountViewModel : ViewModel() {
     private val holder = MutableLiveData<AccountHolder>()
     private var initializedAccount: Account? = null
 
+    /** Backs the held Etebase account, so it stays open until the model is cleared. */
+    private val httpClientLock = Any()
+    private var httpClient: HttpClient? = null
+    private var cleared = false
+
+    override fun onCleared() {
+        synchronized(httpClientLock) {
+            cleared = true
+            httpClient?.close()
+            httpClient = null
+        }
+    }
+
     fun initialize(context: Context, account: Account, creationId: String, sessionOverride: String? = null) {
         if (initializedAccount == account)
             return
@@ -251,8 +264,15 @@ class AccountViewModel : ViewModel() {
                 val etebaseLocalCache = EtebaseLocalCache.getInstance(context, account.name)
                 if (ExactAccountRouting.validate(account, creationId, App.accountType, manager) == null)
                     return@withContext null
-                val httpClient = HttpClient.Builder(context).setForeground(true).build().okHttpClient
-                val etebase = EtebaseLocalCache.getEtebase(context, httpClient, settings, sessionOverride)
+                val httpClient = HttpClient.Builder(context).setForeground(true).build()
+                synchronized(httpClientLock) {
+                    if (cleared) {
+                        httpClient.close()
+                        return@withContext null
+                    }
+                    this@AccountViewModel.httpClient = httpClient
+                }
+                val etebase = EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings, sessionOverride)
                 if (ExactAccountRouting.validate(account, creationId, App.accountType, manager) == null)
                     return@withContext null
                 val colMgr = etebase.collectionManager
