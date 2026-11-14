@@ -12,6 +12,7 @@ from django.conf import settings
 from django.contrib.auth import user_logged_in, user_logged_out
 from django.core import exceptions as django_exceptions
 from django.db import transaction
+from django.db.models import Q
 from django.utils.functional import cached_property
 from fastapi import APIRouter, Depends, Request, status
 from typing_extensions import Literal
@@ -26,7 +27,7 @@ from etebase_server.myauth.models import UserType, get_typed_user_model
 from ..dependencies import AuthData, get_auth_data, get_authenticated_user
 from ..exceptions import AuthenticationFailed, HttpError, transform_validation_error
 from ..msgpack import AuthMsgpackRoute, MsgpackResponse
-from ..utils import BaseModel, get_user_username_email_kwargs, msgpack_decode, msgpack_encode, permission_responses
+from ..utils import BaseModel, get_user_by_username_or_email, msgpack_decode, msgpack_encode, permission_responses
 from .owner import owner_mode_enabled, signup_grant_valid
 
 User = get_typed_user_model()
@@ -119,10 +120,9 @@ class SignupIn(BaseModel):
 def get_login_user(request: Request, challenge: LoginChallengeIn) -> UserType:
     username = challenge.username
 
-    kwargs = get_user_username_email_kwargs(username)
     try:
         user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
-        user = user_queryset.get(**kwargs)
+        user = get_user_by_username_or_email(user_queryset, username)
         if not hasattr(user, "userinfo"):
             raise AuthenticationFailed(code="user_not_init", detail="User not properly init")
         return user
@@ -260,6 +260,25 @@ def check_registration_token(request: Request, username: str):
         )
 
 
+def signup_identity_taken(user_queryset, user_data: UserSignup) -> bool:
+    """Whether the new username or email already identifies another user.
+
+    Logins and invitations look a name containing '@' up by username or by email,
+    so a new account must not reuse another user's username, nor turn an existing
+    email or username into an ambiguous lookup (all compared case-insensitively).
+    Both values are normalized the way create_user stores them (NFKC and lower
+    case for the username), so look-alike characters can't slip past the check.
+    """
+    username = User.normalize_username(user_data.username)
+    email = User.objects.normalize_email(user_data.email)
+    taken = Q(**{User.USERNAME_FIELD: username})
+    if "@" in username:
+        taken |= Q(**{User.EMAIL_FIELD + "__iexact": username})
+    if email:
+        taken |= Q(**{User.USERNAME_FIELD + "__iexact": email}) | Q(**{User.EMAIL_FIELD + "__iexact": email})
+    return user_queryset.filter(taken).exists()
+
+
 def signup_save(data: SignupIn, request: Request) -> UserType:
     user_data = data.user
     check_registration_token(request, user_data.username)
@@ -274,27 +293,26 @@ def signup_save(data: SignupIn, request: Request) -> UserType:
                     status.HTTP_403_FORBIDDEN,
                 )
 
-        try:
-            user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
-            user_queryset.get(**{User.USERNAME_FIELD: user_data.username.lower()})
+        user_queryset = get_user_queryset(User.objects.all(), CallbackContext(request.path_params))
+        if signup_identity_taken(user_queryset, user_data):
             raise HttpError("user_exists", "User already exists", status_code=status.HTTP_409_CONFLICT)
-        except User.DoesNotExist:
-            # Create the user and save the casing the user chose as the first name
-            try:
-                instance = create_user(
-                    CallbackContext(request.path_params),
-                    **user_data.dict(),
-                    password=None,
-                    first_name=user_data.username,
-                )
-                instance.full_clean()
-            except HttpError as e:
-                raise e
-            except django_exceptions.ValidationError as e:
-                transform_validation_error("user", e)
-            except Exception:
-                logger.exception("Unexpected signup error while creating user")
-                raise HttpError("generic", "An error occurred during signup. Please try again.")
+
+        # Create the user and save the casing the user chose as the first name
+        try:
+            instance = create_user(
+                CallbackContext(request.path_params),
+                **user_data.dict(),
+                password=None,
+                first_name=user_data.username,
+            )
+            instance.full_clean()
+        except HttpError as e:
+            raise e
+        except django_exceptions.ValidationError as e:
+            transform_validation_error("user", e)
+        except Exception:
+            logger.exception("Unexpected signup error while creating user")
+            raise HttpError("generic", "An error occurred during signup. Please try again.")
 
         models.UserInfo.objects.create(**data.dict(exclude={"user"}), owner=instance)
     return instance
