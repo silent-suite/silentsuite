@@ -136,6 +136,14 @@ function loaded(notes: Note[], lists: Notebook[] = [NOTEBOOK]) {
 
 const hasSkeleton = () => document.querySelector('.skeleton-shimmer') !== null
 
+/** The body field of the open note. The page loads its editor with next/dynamic, so wait for that import. */
+async function noteBody() {
+  await act(async () => {
+    await import('../MarkdownEditor')
+  })
+  return screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Note body' })
+}
+
 describe('NotesPage loading skeleton (#747)', () => {
   beforeEach(() => {
     useExperimentalStore.setState({ hydrated: true, notesAccounts: ['notes-test-account'] })
@@ -349,7 +357,7 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
     expect(await screen.findByTestId('markdown-preview')).toHaveTextContent('# Hello')
     // The editor stays mounted (hidden) during preview so its undo history survives.
-    expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveClass('hidden')
+    expect(await noteBody()).toHaveClass('hidden')
     // The toggle keeps its label; only the pressed state changes.
     expect(screen.getByRole('button', { name: 'Preview' })).toHaveAttribute('aria-pressed', 'true')
     fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
@@ -365,7 +373,7 @@ describe('NotesPage', () => {
     const view = renderWithIntl(<NotesPage />)
     fireEvent.click(screen.getByRole('button', { name: /Original/ }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Note title' }), { target: { value: 'Renamed' } })
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note body' }), { target: { value: 'local draft' } })
+    fireEvent.change(await noteBody(), { target: { value: 'local draft' } })
 
     storeMock.noteState.notes = [note('note-1', { title: 'Original', content: 'stale server body', updated_at: new Date('2026-03-01T00:00:00Z') })]
     view.rerender(<NotesPage />)
@@ -385,7 +393,7 @@ describe('NotesPage', () => {
 
     const view = renderWithIntl(<NotesPage />)
     fireEvent.click(screen.getByRole('button', { name: /Original/ }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note body' }), { target: { value: 'saved draft' } })
+    fireEvent.change(await noteBody(), { target: { value: 'saved draft' } })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1500)
     })
@@ -403,7 +411,7 @@ describe('NotesPage', () => {
     renderWithIntl(<NotesPage />)
 
     fireEvent.click(screen.getByRole('button', { name: /Note A/ }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note body' }), { target: { value: 'typed in A' } })
+    fireEvent.change(await noteBody(), { target: { value: 'typed in A' } })
     fireEvent.click(screen.getByRole('button', { name: /Note B/ }))
 
     await vi.waitFor(() => expect(storeMock.noteState.updateNote).toHaveBeenCalledWith('a', { title: 'Note A', content: 'typed in A' }, typedOn('Note A', '')))
@@ -436,7 +444,7 @@ describe('NotesPage', () => {
     expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
   })
 
-  it('disables editing, deletion, and creation for a read-only shared notebook', () => {
+  it('disables editing, deletion, and creation for a read-only shared notebook', async () => {
     loaded([note('note-1', { title: 'Shared note', content: 'Read only', notebookId: 'shared' })], [
       { id: 'shared', name: 'Shared', color: '#111', visible: true, accessLevel: 0 },
     ])
@@ -445,7 +453,7 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Shared note/ }))
 
     expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveAttribute('readonly')
-    expect(screen.getByRole('textbox', { name: 'Note body' })).toHaveAttribute('readonly')
+    expect(await noteBody()).toHaveAttribute('readonly')
     expect(screen.queryByRole('button', { name: 'Delete note' })).not.toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: 'Notebook' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
@@ -502,7 +510,7 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Original/ }))
     expect(screen.getByRole('status')).toHaveTextContent('')
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note body' }), { target: { value: 'draft one' } })
+    fireEvent.change(await noteBody(), { target: { value: 'draft one' } })
     expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes')
 
     await act(async () => {
@@ -586,7 +594,7 @@ describe('NotesPage', () => {
     })
     renderWithIntl(<NotesPage />)
     fireEvent.click(screen.getByRole('button', { name: /Mover/ }))
-    fireEvent.change(screen.getByRole('textbox', { name: 'Note body' }), { target: { value: 'draft' } })
+    fireEvent.change(await noteBody(), { target: { value: 'draft' } })
 
     const picker = screen.getByRole('combobox', { name: 'Notebook' })
     expect(picker).toHaveValue('notes-1')
@@ -619,7 +627,7 @@ describe('NotesPage', () => {
     renderWithIntl(<NotesPage />)
     fireEvent.click(screen.getByRole('button', { name: /Mover/ }))
     const title = screen.getByRole<HTMLInputElement>('textbox', { name: 'Note title' })
-    const body = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Note body' })
+    const body = await noteBody()
     const picker = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Notebook' })
     expect([title.readOnly, body.readOnly]).toEqual([false, false])
 
@@ -648,7 +656,7 @@ describe('NotesPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Other/ }))
     fireEvent.click(screen.getByRole('button', { name: /Mover/ }))
     const title = screen.getByRole<HTMLInputElement>('textbox', { name: 'Note title' })
-    const body = screen.getByRole<HTMLTextAreaElement>('textbox', { name: 'Note body' })
+    const body = await noteBody()
     const picker = screen.getByRole<HTMLSelectElement>('combobox', { name: 'Notebook' })
     expect(title).toHaveValue('Mover')
     expect([title.readOnly, body.readOnly, picker.disabled]).toEqual([true, true, true])
