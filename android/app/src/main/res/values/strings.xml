@@ -808,6 +808,7 @@
     <string name="notes_editor_waiting_blocked">Waiting. Automatic sync is blocked for this account (Settings, Sync).</string>
     <string name="notes_editor_waiting_retry">Waiting to sync. The last try failed, and it will try again.</string>
     <string name="notes_editor_not_saved">Not saved yet. Your text is still here.</string>
+    <string name="notes_editor_removal_pending">Not saved while a sign-out or removal of this account is checked. Your text is still here.</string>
     <string name="notes_editor_too_large">This note is too large to save on this device. Copy the text to keep it.</string>
     <string name="notes_editor_unreadable">The copy of this note on this device can\'t be read, so this text was not saved. Copy it to keep it.</string>
     <string name="notes_editor_held_changed">This note\'s unsynced text changed, so this text was not saved. Copy it, then open Unsynced text.</string>
@@ -821,6 +822,7 @@
     <string name="notes_editor_leave_why_unreadable">The copy of this note on this device can\'t be read.</string>
     <string name="notes_editor_leave_why_held_changed">This note\'s unsynced text changed.</string>
     <string name="notes_editor_leave_why_cleared">The unsynced Notes changes on this device were discarded.</string>
+    <string name="notes_editor_leave_why_removal">A sign-out or removal of this account is being checked.</string>
     <string name="notes_editor_leave_anyway">Leave anyway</string>
     <string name="notes_new_note_unavailable">A new note can\'t be made in this notebook right now.</string>
     <string name="notes_edited">Edited %1$s</string>

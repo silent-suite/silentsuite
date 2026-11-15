@@ -166,7 +166,7 @@ class NoteEditingTest {
         assertEquals(SaveResult.HeldChanged, one(SaveOutcome.HeldChanged))
         assertEquals(SaveResult.Unreadable, one(SaveOutcome.Blocked))
         assertEquals(SaveResult.TooLarge, one(SaveOutcome.TooLarge))
-        assertEquals(SaveResult.NotSaved, one(SaveOutcome.RemovalPending))
+        assertEquals(SaveResult.RemovalPending, one(SaveOutcome.RemovalPending))
         assertEquals(SaveResult.Cleared, SaveRun.run { throw PendingNotesStore.Cleared() })
     }
 
@@ -366,6 +366,18 @@ class NoteEditingTest {
             assertTrue("$stop keeps the text unsaved", core.dirty)
             assertEquals("after $stop", NoteEditing.Leave.ASK, leave())
         }
+    }
+
+    @Test fun `a save held back by an account removal check is a refusal of its own, with no Try again`() {
+        core.opened("Plan", "First")
+        type(Field.BODY, " typed")
+        val draft = checkNotNull(core.beginSave())
+        val result = SaveRun.run { SaveOutcome.RemovalPending to false }
+        assertFalse("not the generic failure: $result", result == SaveResult.NotSaved)
+        core.finishSave(draft, result)
+        assertTrue("the text stays unsaved", core.dirty)
+        assertEquals("no Try again while the check refuses", NoteEditing.Leave.ASK, leave())
+        assertNotNull("a later save tries again, as one once the check is over writes", core.beginSave())
     }
 
     @Test fun `a new note counts as never saved until a save of its editor wrote it, whatever its uid`() {

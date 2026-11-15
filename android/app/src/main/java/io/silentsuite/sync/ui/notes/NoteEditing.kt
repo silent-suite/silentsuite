@@ -128,22 +128,17 @@ internal object NoteEditing {
 
     /**
      * What leaving needs while the screen shows the editor ([editor]) with text a save has not written ([dirty]), after
-     * the editor's last answer [last]. A refusal (too large, an entry that cannot be read) and an editor that saves
-     * nothing more ([NoteEditorCore.Mode.STOPPED]) get no Try again; a failure, or typing during a save, does.
+     * the editor's last answer [last]. A refusal (too large, an entry that cannot be read, an account removal check that
+     * holds the store) and an editor that saves nothing more ([NoteEditorCore.Mode.STOPPED]) get no Try again; a failure,
+     * or typing during a save, does.
      */
     fun leave(editor: Boolean, dirty: Boolean, mode: NoteEditorCore.Mode, last: SaveResult?): Leave = when {
         !editor || !dirty -> Leave.GO
         mode == NoteEditorCore.Mode.STOPPED -> Leave.ASK
-        last == SaveResult.TooLarge || last == SaveResult.Unreadable -> Leave.ASK
+        last == SaveResult.TooLarge || last == SaveResult.Unreadable || last == SaveResult.RemovalPending -> Leave.ASK
         else -> Leave.ASK_TRY_AGAIN
     }
 
-    /**
-     * Whether an answer to the question before leaving may be acted on: the question was made in this app process
-     * ([madeHere]); it was asked over the note [askedNote] at the edit count [askedEdits], and the dialog shows the note
-     * [shownNote]; and the editor's text still belongs to that note ([note]), has not changed since ([edits]) and is
-     * still not saved on this device ([unsaved]). A new note no save made yet has no uid (null).
-     */
     /**
      * Whether nothing of the editor's note was ever saved on this device: a new note ([creating]) that no save of this
      * editor wrote ([NoteEditorCore.lastSavedVersion] still 0). Never decided by the note uid, which a new note's first
@@ -151,6 +146,12 @@ internal object NoteEditing {
      */
     fun neverSaved(creating: Boolean, lastSavedVersion: Long): Boolean = creating && lastSavedVersion == 0L
 
+    /**
+     * Whether an answer to the question before leaving may be acted on: the question was made in this app process
+     * ([madeHere]); it was asked over the note [askedNote] at the edit count [askedEdits], and the dialog shows the note
+     * [shownNote]; and the editor's text still belongs to that note ([note]), has not changed since ([edits]) and is
+     * still not saved on this device ([unsaved]). A new note whose first save has not started has no uid (null).
+     */
     fun leaveAnswerHolds(madeHere: Boolean, askedNote: String?, askedEdits: Long, shownNote: String?,
                          note: String?, edits: Long, unsaved: Boolean): Boolean =
         madeHere && unsaved && askedNote == note && shownNote == note && askedEdits == edits
@@ -167,8 +168,13 @@ internal sealed class SaveResult {
     /** The note's entry on this device cannot be read; nothing was written. */
     object Unreadable : SaveResult()
     object TooLarge : SaveResult()
-    /** Nothing was written for now: an I/O failure, a removal check of the store, or no item to save onto. */
+    /** Nothing was written for now: an I/O failure, or no item to save onto. */
     object NotSaved : SaveResult()
+    /**
+     * A check for a sign-out or removal of the account holds the store ([SaveOutcome.RemovalPending]): nothing was
+     * written, and a save gets the same answer until the check is over.
+     */
+    object RemovalPending : SaveResult()
     /** A discard of the whole store closed it; nothing was written, and nothing will be. */
     object Cleared : SaveResult()
     /** The exact account generation is gone: the screen closes. */
@@ -200,7 +206,7 @@ internal object SaveRun {
                 SaveOutcome.HeldChanged -> return SaveResult.HeldChanged
                 SaveOutcome.Blocked -> return SaveResult.Unreadable
                 SaveOutcome.TooLarge -> return SaveResult.TooLarge
-                SaveOutcome.RemovalPending -> return SaveResult.NotSaved
+                SaveOutcome.RemovalPending -> return SaveResult.RemovalPending
             }
         }
         // Moved every time: the text is not saved yet, and the next save tries again.
@@ -326,7 +332,7 @@ internal class NoteEditorCore(private val clock: () -> Long = System::currentTim
                 mode = Mode.HELD
             }
             SaveResult.HeldChanged, SaveResult.Cleared -> mode = Mode.STOPPED
-            SaveResult.Unreadable, SaveResult.TooLarge, SaveResult.NotSaved, SaveResult.Stale -> Unit
+            SaveResult.Unreadable, SaveResult.TooLarge, SaveResult.NotSaved, SaveResult.RemovalPending, SaveResult.Stale -> Unit
         }
     }
 

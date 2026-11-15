@@ -212,8 +212,8 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             if (text.toString() != status.orEmpty()) text = status
             visibility = if (status == null) View.GONE else View.VISIBLE
         }
-        val notSaved = result == SaveResult.NotSaved || result == SaveResult.TooLarge || result == SaveResult.Unreadable ||
-            core.mode == NoteEditorCore.Mode.STOPPED
+        val notSaved = result == SaveResult.NotSaved || result == SaveResult.RemovalPending || result == SaveResult.TooLarge ||
+            result == SaveResult.Unreadable || core.mode == NoteEditorCore.Mode.STOPPED
         view.findViewById<View>(R.id.note_copy).visibility = if (notSaved) View.VISIBLE else View.GONE
         view.findViewById<View>(R.id.note_open_unsynced).visibility =
             if (result == SaveResult.HeldChanged || core.mode == NoteEditorCore.Mode.HELD) View.VISIBLE else View.GONE
@@ -223,6 +223,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
     private fun statusText(result: SaveResult?, line: NoteEditing.SyncLine?, savedBefore: Boolean): String? {
         val saved = when (result) {
             SaveResult.NotSaved -> return getString(R.string.notes_editor_not_saved)
+            SaveResult.RemovalPending -> return getString(R.string.notes_editor_removal_pending)
             SaveResult.TooLarge -> return getString(R.string.notes_editor_too_large)
             SaveResult.Unreadable -> return getString(R.string.notes_editor_unreadable)
             SaveResult.HeldChanged -> return getString(R.string.notes_editor_held_changed)
@@ -415,6 +416,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             SaveResult.Unreadable -> R.string.notes_editor_leave_why_unreadable
             SaveResult.HeldChanged -> R.string.notes_editor_leave_why_held_changed
             SaveResult.Cleared -> R.string.notes_editor_leave_why_cleared
+            SaveResult.RemovalPending -> R.string.notes_editor_leave_why_removal
             else -> R.string.notes_editor_leave_why_failed
         })
         return getString(if (prompt.newNote) R.string.notes_editor_leave_new_note else R.string.notes_editor_leave_changes, why)
