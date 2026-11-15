@@ -223,9 +223,14 @@ export interface MicrosoftSignInOptions {
   fetcher?: typeof fetch
 }
 
-/** A verified sign-in: the account key part, and `release` to drop its token when the import ends. */
+/**
+ * A verified sign-in: the account key part, `token` for this sign-in's token only (null once a
+ * newer sign-in replaced it, or it was cleared or expired), and `release` to drop it when the
+ * import ends.
+ */
 export interface MicrosoftSignIn {
   accountId: string
+  token: () => string | null
   release: () => void
 }
 
@@ -305,7 +310,9 @@ export function signInWithMicrosoft({
           accessToken = null
           tokenOwner = null
         }
-        resolve({ accountId: accountId!, release })
+        // A run's reads must never borrow a newer sign-in's token (another Microsoft account).
+        const token = () => (tokenOwner?.run === run ? getMicrosoftAccessToken() : null)
+        resolve({ accountId: accountId!, token, release })
       }
     }
 

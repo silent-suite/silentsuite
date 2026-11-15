@@ -28,10 +28,15 @@ type Listener = (event: any) => void
 /** Load the real worker script into a fake ServiceWorkerGlobalScope. */
 function loadWorker(timers: { setTimeout?: unknown; clearTimeout?: unknown } = {}) {
   const listeners: Record<string, Listener> = {}
-  const showNotification = vi.fn(async (_title: string, _options?: unknown) => {})
+  // Notifications currently on screen, as getNotifications() returns them.
+  const shown: { title: string; close: () => void }[] = []
+  const showNotification = vi.fn(async (title: string, _options?: unknown) => {
+    const notification = { title, close: () => { shown.splice(shown.indexOf(notification), 1) } }
+    shown.push(notification)
+  })
   const self = {
     addEventListener: (type: string, fn: Listener) => { listeners[type] = fn },
-    registration: { showNotification },
+    registration: { showNotification, getNotifications: async () => [...shown] },
     clients: { matchAll: async () => [], openWindow: async () => null },
   }
   const src = readFileSync(path.resolve(__dirname, '../../../public/notification-worker.js'), 'utf8')
@@ -39,7 +44,7 @@ function loadWorker(timers: { setTimeout?: unknown; clearTimeout?: unknown } = {
   new Function('self', 'indexedDB', 'setInterval', 'setTimeout', 'clearTimeout', src)(
     self, indexedDB, () => 0, timers.setTimeout ?? setTimeout, timers.clearTimeout ?? clearTimeout,
   )
-  return { listeners, showNotification }
+  return { listeners, showNotification, shown }
 }
 
 /** Manual timers for the worker's 5-minute snooze. */
@@ -259,6 +264,17 @@ describe('logout clears service-worker reminders', () => {
     await snoozeDone
 
     expect(worker.showNotification).not.toHaveBeenCalled()
+  })
+
+  it('CLEAR_ALARMS closes reminders still on screen', async () => {
+    const worker = loadWorker()
+    await worker.showNotification('Synthetic: on screen')
+    expect(worker.shown).toHaveLength(1)
+
+    worker.listeners.message!({ data: { type: 'CLEAR_ALARMS' } })
+    await waitFor(async () => worker.shown.length === 0)
+
+    expect(worker.shown).toHaveLength(0)
   })
 
   it('a snooze still re-shows while signed in', async () => {

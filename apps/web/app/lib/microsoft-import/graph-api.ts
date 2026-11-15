@@ -32,6 +32,8 @@ export interface GraphRequestOptions {
   fetcher?: typeof fetch
   /** Waits between throttled attempts; rejects when the signal aborts. Injectable for tests. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
+  /** The token of the sign-in these reads belong to; defaults to the current token. */
+  token?: () => string | null
 }
 
 function abortError(signal: AbortSignal): unknown {
@@ -81,12 +83,12 @@ function retryDelayMs(header: string | null, attempt: number, now = Date.now()):
   return Math.min(MAX_RETRY_MS, Math.max(MIN_RETRY_MS, ms))
 }
 
-export async function graphGet<T>(url: URL | string, { signal, fetcher = fetch, sleep = defaultSleep }: GraphRequestOptions = {}): Promise<T> {
+export async function graphGet<T>(url: URL | string, { signal, fetcher = fetch, sleep = defaultSleep, token: tokenFor = getMicrosoftAccessToken }: GraphRequestOptions = {}): Promise<T> {
   const href = graphUrl(url)
   if (!href) throw new GraphApiError(0)
   for (let attempt = 0; ; attempt++) {
     if (signal?.aborted) throw abortError(signal)
-    const token = getMicrosoftAccessToken()
+    const token = tokenFor()
     if (!token) throw new GraphApiError(401)
     let response: Response
     try {

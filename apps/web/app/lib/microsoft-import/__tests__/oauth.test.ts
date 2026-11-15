@@ -153,7 +153,7 @@ async function exchanging(options: Parameters<typeof begin>[0] = {}) {
 async function signedIn() {
   const s = await exchanging()
   s.calls[0]!.resolve(jsonResponse(tokenBody()))
-  await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, release: expect.any(Function) })
+  await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, token: expect.any(Function), release: expect.any(Function) })
   expect(getMicrosoftAccessToken()).toBe(TOKEN)
   return s
 }
@@ -237,7 +237,7 @@ describe('Microsoft import sign-in', () => {
     expect(String(s.popup.location.replace.mock.calls[0]![0])).not.toContain(verifier)
 
     s.calls[0]!.resolve(jsonResponse(tokenBody({ refresh_token: REFRESH })))
-    await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, release: expect.any(Function) })
+    await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, token: expect.any(Function), release: expect.any(Function) })
     expect(getMicrosoftAccessToken()).toBe(TOKEN)
     const stored = storageText()
     for (const secret of [verifier, TOKEN, REFRESH, CODE]) expect(stored).not.toContain(secret)
@@ -247,7 +247,7 @@ describe('Microsoft import sign-in', () => {
   it('uses sub alone as the account id when the id_token has no tid', async () => {
     const s = await exchanging()
     s.calls[0]!.resolve(jsonResponse(tokenBody({ id_token: idToken({ aud: CLIENT_ID, sub: SUB }) })))
-    await expect(s.pending).resolves.toEqual({ accountId: SUB, release: expect.any(Function) })
+    await expect(s.pending).resolves.toEqual({ accountId: SUB, token: expect.any(Function), release: expect.any(Function) })
   })
 
   it.each([
@@ -395,7 +395,7 @@ describe('Microsoft import sign-in', () => {
       vi.advanceTimersByTime(10_000)
       await flush()
       s.calls[0]!.resolve(jsonResponse(tokenBody()))
-      await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, release: expect.any(Function) })
+      await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, token: expect.any(Function), release: expect.any(Function) })
       expect(getMicrosoftAccessToken()).toBe(TOKEN)
     })
 
@@ -531,6 +531,19 @@ describe('Microsoft import sign-in', () => {
       await signedIn()
       begin()
       expect(getMicrosoftAccessToken()).toBeNull()
+    })
+
+    it("an earlier sign-in's reads never get a newer sign-in's token", async () => {
+      const first = await signedIn()
+      const a = (await first.pending) as { token: () => string | null }
+      expect(a.token()).toBe(TOKEN)
+
+      const s = await exchanging()
+      s.calls[0]!.resolve(jsonResponse(tokenBody({ access_token: 'token-of-account-b' })))
+      const b = (await s.pending) as { token: () => string | null }
+
+      expect(b.token()).toBe('token-of-account-b')
+      expect(a.token()).toBeNull()
     })
   })
 })
