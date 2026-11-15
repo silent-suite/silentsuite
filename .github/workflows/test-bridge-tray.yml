@@ -1,0 +1,77 @@
+# Source installs only: release binaries exclude pystray and Pillow
+# (silentsuite-bridge.spec), so the tray is checked where it ships, a hash-locked source
+# install with the tray extra, on each desktop OS with its real pystray backend.
+# silentsuite_bridge.tray falls back silently when pystray or Pillow fails to import,
+# so TRAY_AVAILABLE is asserted, and the icon image and a pystray Icon are constructed.
+# macOS covers backend import and Icon construction, not a visible menu-bar item.
+name: Test Bridge tray (source install)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'bridge/**'
+      - '.github/workflows/test-bridge-tray.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tray:
+    name: Tray on ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-22.04
+            backend: pystray._xorg
+          - os: macos
+            runner: macos-15
+            backend: pystray._darwin
+          - os: windows
+            runner: windows-latest
+            backend: pystray._win32
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install the Bridge with the tray extra from the lock
+        working-directory: bridge
+        run: |
+          python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
+          python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
+          python -m pip check
+      - name: Tray check
+        env:
+          EXPECTED_BACKEND: ${{ matrix.backend }}
+        run: |
+          cat > "$RUNNER_TEMP/tray_check.py" <<'PY'
+          import os
+          import PIL
+          import pystray
+          from silentsuite_bridge import tray
+
+          assert tray.TRAY_AVAILABLE, "silentsuite_bridge.tray fell back: pystray or Pillow failed to import"
+          image = tray._create_icon_image(tray.COLOR_GREEN)
+          assert image.size == (64, 64) and image.mode == "RGBA", (image.size, image.mode)
+          menu = pystray.Menu(pystray.MenuItem("Quit", lambda icon, item: icon.stop()))
+          icon = pystray.Icon("silentsuite-bridge-ci", image, "SilentSuite Bridge CI", menu=menu)
+          backend = type(icon).__module__
+          assert backend == os.environ["EXPECTED_BACKEND"], backend
+          print(f"tray ok: Pillow {PIL.__version__}, pystray backend {backend}")
+          PY
+          if [ "${{ matrix.os }}" = linux ]; then
+            PYSTRAY_BACKEND=xorg xvfb-run -a python "$RUNNER_TEMP/tray_check.py"
+          else
+            python "$RUNNER_TEMP/tray_check.py"
+          fi

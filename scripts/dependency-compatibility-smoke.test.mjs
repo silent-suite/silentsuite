@@ -95,7 +95,7 @@ test('AJV 8 validates URI format through patched fast-uri', () => {
 })
 
 test('AJV 8 resolves schema references through its patched fast-uri resolver', () => {
-  assert.equal(ajvRequire('fast-uri/package.json').version, '3.1.8')
+  assert.equal(ajvRequire('fast-uri/package.json').version, '3.1.9')
   const ajv = new Ajv({ strict: false })
   assert.equal(ajv.opts.uriResolver, ajvRequire('fast-uri'))
   ajv.addSchema({
@@ -410,8 +410,8 @@ test('Vite 8 web and core consumers resolve the patched 8.1.6 release in every p
   const core = resolve(import.meta.dirname, '..', 'packages/core')
   assertViteConsumers([
     ['apps/web', web],
-    ['apps/web > vitest', installedPackageDir(web, 'vitest'), '4.1.0'],
-    ['packages/core > vitest', installedPackageDir(core, 'vitest'), '4.1.0'],
+    ['apps/web > vitest', installedPackageDir(web, 'vitest'), '4.1.12'],
+    ['packages/core > vitest', installedPackageDir(core, 'vitest'), '4.1.12'],
     ['apps/web > @vitejs/plugin-react', installedPackageDir(web, '@vitejs/plugin-react'), '6.0.2'],
   ], '8.1.6')
 })
@@ -455,13 +455,13 @@ test('security overrides remain scoped to compatible vulnerable major lines', ()
   assert.equal(manifest.pnpm.overrides['js-yaml@>=3.0.0 <3.15.2'], '3.15.2')
   assert.equal(manifest.pnpm.overrides['nanoid@>=3.0.0 <3.3.18'], '3.3.18')
   assert.equal(manifest.pnpm.overrides['browserslist@>=4.0.0 <4.28.8'], '4.28.8')
-  assert.equal(manifest.pnpm.overrides['fast-uri@>=2.0.0 <2.4.7'], '2.4.7')
-  assert.equal(manifest.pnpm.overrides['fast-uri@>=3.0.0 <3.1.8'], '3.1.8')
-  assert.equal(manifest.pnpm.overrides['fast-uri@>=4.0.0 <4.1.5'], '4.1.5')
+  assert.equal(manifest.pnpm.overrides['fast-uri@>=2.0.0 <2.4.8'], '2.4.8')
+  assert.equal(manifest.pnpm.overrides['fast-uri@>=3.0.0 <3.1.9'], '3.1.9')
+  assert.equal(manifest.pnpm.overrides['fast-uri@>=4.0.0 <4.2.3'], '4.2.3')
   assert.deepEqual(Object.keys(manifest.pnpm.overrides).filter((selector) => selector.startsWith('fast-uri')), [
-    'fast-uri@>=2.0.0 <2.4.7',
-    'fast-uri@>=3.0.0 <3.1.8',
-    'fast-uri@>=4.0.0 <4.1.5',
+    'fast-uri@>=2.0.0 <2.4.8',
+    'fast-uri@>=3.0.0 <3.1.9',
+    'fast-uri@>=4.0.0 <4.2.3',
   ])
   assert.deepEqual(
     Object.entries(manifest.pnpm.overrides).filter(([selector]) => /^(undici|brace-expansion)(@|$)/.test(selector)),

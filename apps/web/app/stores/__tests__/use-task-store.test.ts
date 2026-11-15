@@ -421,7 +421,7 @@ describe('useTaskStore', () => {
       useTaskStore.setState({ tasks: [queuedTask()] })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const putSpy = bumpEpochWhenQueuePutRuns(() => { useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any); useTaskStore.setState({ tasks: [] }) })
-      await expect(useTaskStore.getState().updateTask('temp-task', { title: 'Stale' })).resolves.toBeUndefined()
+      await expect(useTaskStore.getState().updateTask('temp-task', { title: 'Stale' })).resolves.toBe(false)
       putSpy.mockRestore()
       await vi.waitFor(() => expect(useTaskStore.getState().tasks).toEqual([]))
       expect(await getAll(queueGuard('new-account'))).toEqual([])
@@ -433,12 +433,14 @@ describe('useTaskStore', () => {
 
     it('quietly cancels an uncached delete at the actual IndexedDB commit boundary', async () => {
       useTaskStore.setState({ tasks: [queuedTask()] })
+      let outcome: unknown
       await expectQuietQueueCommitCancellation(
-        () => useTaskStore.getState().deleteTask('temp-task'),
+        async () => { outcome = await useTaskStore.getState().deleteTask('temp-task') },
         () => { useEtebaseStore.setState({ account: {}, accountFingerprint: 'new-account' } as any); useTaskStore.setState({ tasks: [] }) },
         () => expect(useTaskStore.getState().tasks).toEqual([]),
         toastMock,
       )
+      expect(outcome).toBe(false)
     })
 
     it('quietly cancels an uncached toggle at the actual IndexedDB commit boundary', async () => {
@@ -529,6 +531,30 @@ const importContractCases: {
   { id: 'C3a-R3c', label: 'second chunk applied but its response lost', setup: 'reference', count: 25, fault: { chunk: 2, kind: 'response-lost' }, batches: ['acknowledged', 'applied-response-lost'], serverCount: 25, saved: 20, unsaved: positions(20, 25), uncertain: true },
   { id: 'C3a-R4', label: 'no account', setup: 'no-account', count: 2, batches: [], serverCount: 0, saved: 0, unsaved: [0, 1], uncertain: false },
 ]
+
+describe('update and delete outcomes', () => {
+  beforeEach(() => resetStore())
+
+  it.each(['remote', 'queued', false] as const)('reports the lower store outcome %s for a synced task', async (outcome) => {
+    const { updateItem, deleteItem } = acknowledgedAccount()
+    updateItem.mockResolvedValue(outcome as never)
+    deleteItem.mockResolvedValue(outcome as never)
+    useEtebaseStore.setState({ itemCache: new Map([['synced-task', {}]]) } as any)
+    useTaskStore.setState({ tasks: [{ ...queuedTask('synced-task') }] })
+    await expect(useTaskStore.getState().updateTask('synced-task', { title: 'Renamed' })).resolves.toBe(outcome)
+    await expect(useTaskStore.getState().deleteTask('synced-task')).resolves.toBe(outcome)
+  })
+
+  it('reports a thrown sync as not saved, and an unknown task as unchanged', async () => {
+    const { updateItem } = acknowledgedAccount()
+    updateItem.mockRejectedValue(new Error('offline'))
+    useEtebaseStore.setState({ itemCache: new Map([['synced-task', {}]]) } as any)
+    useTaskStore.setState({ tasks: [{ ...queuedTask('synced-task') }] })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    await expect(useTaskStore.getState().updateTask('synced-task', { title: 'Renamed' })).resolves.toBe(false)
+    await expect(useTaskStore.getState().updateTask('missing', { title: 'x' })).resolves.toBe(false)
+  })
+})
 
 describe('C3a import-store contract: importTasks', () => {
   beforeEach(async () => {

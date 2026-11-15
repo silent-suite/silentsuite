@@ -43,6 +43,21 @@ describe('formatDate', () => {
   ] as const)('formats %s', (format, expected) => {
     expect(formatDate(date, format)).toBe(expected)
   })
+
+  it('parses an offset-free local date-time string', () => {
+    // A date-only string would be parsed as UTC midnight, so use local noon.
+    expect(formatDate('2026-06-09T12:00:00', 'YYYY-MM-DD')).toBe('2026-06-09')
+  })
+
+  it('accepts a numeric timestamp', () => {
+    const timestamp = new Date(2026, 5, 9, 12).getTime()
+    expect(formatDate(timestamp, 'DD/MM/YYYY')).toBe('09/06/2026')
+  })
+
+  it('uses the long system format when no format is given', () => {
+    const expected = date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+    expect(formatDate(date)).toBe(expected)
+  })
 })
 
 describe('startOfWeek', () => {

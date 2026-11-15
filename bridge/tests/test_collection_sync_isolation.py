@@ -173,7 +173,7 @@ def test_read_only_collection_with_pending_edit_does_not_stop_others(
     caplog.set_level(logging.INFO)
     world = _World(tmp_path)
     pending = world.pending_edit(BROKEN)
-    world.item_mgrs[BROKEN].batch.side_effect = PermissionDenied("synthetic")
+    world.item_mgrs[BROKEN].transaction.side_effect = PermissionDenied("synthetic")
 
     for cycle in (1, 2):
         world.queue_remote_event(HEALTHY, f"remote-new-{cycle}", f"s{cycle}")
@@ -187,7 +187,7 @@ def test_read_only_collection_with_pending_edit_does_not_stop_others(
     kept = models.ItemEntity.get_by_id(pending.id)
     assert kept.dirty is True
     assert kept.eb_item == pending.eb_item
-    assert world.item_mgrs[BROKEN].batch.call_count == 2
+    assert world.item_mgrs[BROKEN].transaction.call_count == 2
     assert "Collection sync failed; other collections continue (PermissionDenied)" in (
         caplog.text
     )
@@ -203,7 +203,7 @@ def test_removed_membership_with_pending_edit_does_not_stop_others(
     removal = _idle_page("list-1")
     removal.removed_memberships = [BROKEN]
     world.collection_pages.append(removal)
-    world.item_mgrs[BROKEN].batch.side_effect = NotFound("synthetic")
+    world.item_mgrs[BROKEN].transaction.side_effect = NotFound("synthetic")
     world.col_mgr.upload.side_effect = NotFound("synthetic")
 
     world.queue_remote_event(HEALTHY, "remote-new-1", "s1")
@@ -237,16 +237,16 @@ def test_removed_membership_with_pending_edit_does_not_stop_others(
 def test_permission_restored_uploads_kept_edit_and_succeeds(tmp_path):
     world = _World(tmp_path)
     pending = world.pending_edit(BROKEN)
-    world.item_mgrs[BROKEN].batch.side_effect = PermissionDenied("synthetic")
+    world.item_mgrs[BROKEN].transaction.side_effect = PermissionDenied("synthetic")
     with pytest.raises(PermissionDenied):
         world.service.sync()
 
-    world.item_mgrs[BROKEN].batch.side_effect = None
+    world.item_mgrs[BROKEN].transaction.side_effect = None
     world.service.sync()
 
     uploaded = models.ItemEntity.get_by_id(pending.id)
     assert uploaded.dirty is False
-    assert world.item_mgrs[BROKEN].batch.call_count == 2
+    assert world.item_mgrs[BROKEN].transaction.call_count == 2
 
 
 def test_superseded_session_still_stops_the_cycle(tmp_path):

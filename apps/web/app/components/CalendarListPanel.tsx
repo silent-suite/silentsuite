@@ -173,7 +173,8 @@ export function CalendarListPanel() {
         <div className="mt-2 flex items-center justify-between gap-2 px-1">
           <span className="flex min-w-0 items-center gap-1.5 text-xs text-[rgb(var(--muted))]">
             <Cake className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">Birthdays from contacts</span>
+            {/* Wraps instead of truncating: the sidebar is too narrow for the full label next to the toggle. */}
+            <span className="min-w-0 leading-tight">Birthdays from contacts</span>
           </span>
           <button
             type="button"

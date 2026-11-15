@@ -862,6 +862,7 @@ def test_capped_unusable_envelope_is_left_byte_identical(
     world.item_mgr.cache_save.assert_not_called()
     world.item_mgr.create.assert_not_called()
     world.item_mgr.batch.assert_not_called()
+    world.item_mgr.transaction.assert_not_called()
     world.item_mgr.upload.assert_not_called()
     assert models.ItemEntity.select().count() == 0
     assert models.DavChange.select().count() == 0

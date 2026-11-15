@@ -343,7 +343,9 @@ address, remove `docker-gateway`.
 If a Docker-network proxy connects directly to the server container, add that
 proxy's exact container IP to `TRUSTED_PROXY_IPS` in `.env` before recreating
 the server, for example `TRUSTED_PROXY_IPS=127.0.0.1,docker-gateway,172.18.0.5`.
-Uvicorn matches exact IPs here; CIDR ranges are not supported.
+Prefer exact addresses. Uvicorn also accepts CIDR subnets, but trusting an
+address or subnet is only safe if nothing except your proxy can reach the
+server from it. Never use `*`.
 
 Installs made by an older installer have `TRUSTED_PROXY_IPS=127.0.0.1`. If a
 host proxy gets "too many redirects" or a `301` back to the same `https://`

@@ -20,11 +20,11 @@ RUNTIME_TEST = ROOT / (
 )
 LOCAL_MAVEN_REPO = "build/conscrypt-m2"
 LOCAL_AAR = (
-    f"{LOCAL_MAVEN_REPO}/org/conscrypt/conscrypt-android/2.6.3-r28/"
-    "conscrypt-android-2.6.3-r28.aar"
+    f"{LOCAL_MAVEN_REPO}/org/conscrypt/conscrypt-android/2.9.0-r28/"
+    "conscrypt-android-2.9.0-r28.aar"
 )
-CONSCRYPT_COMMIT = "657e1c64c46961bcc48e7302e42ebc02d6632645"
-BORINGSSL_COMMIT = "3adc3d1aba162a578e2547f329fcce8659b8e89c"
+CONSCRYPT_COMMIT = "810e01652955283845626b5d188a2c67767f6a41"
+BORINGSSL_COMMIT = "427ec40cc8edc545253289232e885708c409e5ea"
 NDK_VERSION = "28.2.13676358"
 
 
@@ -56,7 +56,7 @@ def test_conscrypt_builder_pins_source_boringssl_and_ndk_r28():
 def test_release_builds_fail_closed_without_rebuilt_conscrypt_aar():
     source = CERT4ANDROID_GRADLE.read_text(encoding="utf-8")
     root_source = ROOT_GRADLE.read_text(encoding="utf-8")
-    assert "conscrypt: '2.6.3'" in source
+    assert "conscrypt: '2.9.0'" in source
     assert 'build/conscrypt-m2/org/conscrypt/conscrypt-android' in source
     assert "requireConscryptR28" in source
     assert 'implementation "org.conscrypt:conscrypt-android:${versions.conscrypt}-r28"' in source

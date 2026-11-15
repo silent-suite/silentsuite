@@ -62,51 +62,46 @@ jobs:
           # Linux x86_64 (native)
           - runner: ubuntu-22.04
             os-label: linux-x86_64
-            etebase-version: "0.31.5"
+            etebase-version: "0.32.0"
             asset-name: silentsuite-bridge-linux-x86_64
             exe-suffix: ""
             qemu: false
-            rust-toolchain: "1.63.0"
 
           # Linux arm64 via QEMU
           - runner: ubuntu-22.04
             os-label: linux-arm64
-            etebase-version: "0.31.5"
+            etebase-version: "0.32.0"
             asset-name: silentsuite-bridge-linux-arm64
             exe-suffix: ""
             qemu: true
             qemu-arch: aarch64
-            rust-toolchain: "1.63.0"
 
           # macOS x86_64 (Intel)
+          # PyPI etebase 0.32.0 has no macOS x86_64 wheel, so this lane builds
+          # the hash-pinned PyPI sdist with Rust (see the install step).
           - runner: macos-15-intel
             os-label: macos-x86_64
-            etebase-version: "0.31.5"
+            etebase-version: "0.32.0"
             asset-name: silentsuite-bridge-macos-x86_64
-            exe-suffix: ""
-            qemu: false
-            rust-toolchain: "1.63.0"
-
-          # macOS arm64 (Apple Silicon)
-          # PyPI etebase 0.31.5 has no macOS arm64 wheel, and its sdist is
-          # missing build.rs, so it fails with `OUT_DIR not defined`. Use the
-          # upstream commit that includes build.rs and builds with Rust 1.96.0.
-          - runner: macos-15
-            os-label: macos-arm64
-            etebase-version: "0.31.9"
-            asset-name: silentsuite-bridge-macos-arm64
             exe-suffix: ""
             qemu: false
             rust-toolchain: "1.96.0"
 
+          # macOS arm64 (Apple Silicon)
+          - runner: macos-15
+            os-label: macos-arm64
+            etebase-version: "0.32.0"
+            asset-name: silentsuite-bridge-macos-arm64
+            exe-suffix: ""
+            qemu: false
+
           # Windows x86_64
           - runner: windows-latest
             os-label: windows-x86_64
-            etebase-version: "0.31.5"
+            etebase-version: "0.32.0"
             asset-name: silentsuite-bridge-windows-x86_64.exe
             exe-suffix: ".exe"
             qemu: false
-            rust-toolchain: "1.63.0"
 
     steps:
       # -----------------------------------------------------------------------
@@ -135,23 +130,20 @@ jobs:
           cache-image: false
 
       # -----------------------------------------------------------------------
-      # 3. Python 3.10
+      # 3. Python 3.12
       # -----------------------------------------------------------------------
-      # etebase-py 0.31.5 uses cpython 0.7.x which doesn't support Python 3.12+
-      - name: Set up Python 3.10
+      - name: Set up Python 3.12
         if: "!matrix.qemu"
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.10"
+          python-version: "3.12"
 
       # -----------------------------------------------------------------------
-      # 4. Rust (required to build etebase from source if wheels unavailable)
+      # 4. Rust (macOS x86_64 only, to build etebase from its sdist)
       # -----------------------------------------------------------------------
-      # Most lanes stay on Rust 1.63.0 because PyPI etebase 0.31.5 depends on
-      # socket2 0.3.12, which fails on Rust >= 1.64. macOS arm64 uses upstream
-      # etebase-py instead, whose lockfile requires modern Cargo.
+      # Every other lane installs the etebase 0.32.0 abi3 wheel from the lock.
       - name: Install Rust toolchain
-        if: "!matrix.qemu"
+        if: matrix.rust-toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
         with:
           toolchain: ${{ matrix.rust-toolchain }}
@@ -159,17 +151,6 @@ jobs:
       # -----------------------------------------------------------------------
       # 5. Install bridge + PyInstaller (native builds)
       # -----------------------------------------------------------------------
-      - name: Install OpenSSL (macOS, non-arm64)
-        if: runner.os == 'macOS' && matrix.os-label != 'macos-arm64'
-        shell: bash
-        run: |
-          # etebase-py 0.31.5 uses openssl-sys 0.9.58 which only supports OpenSSL 1.x.
-          brew install openssl@1.1 || brew install openssl@1.1 --build-from-source
-          echo "OPENSSL_DIR=$(brew --prefix openssl@1.1)" >> $GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=$(brew --prefix openssl@1.1)/lib" >> $GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=$(brew --prefix openssl@1.1)/include" >> $GITHUB_ENV
-          echo "OPENSSL_NO_VENDOR=1" >> $GITHUB_ENV
-
       - name: Install dependencies (native)
         if: "!matrix.qemu"
         working-directory: bridge
@@ -181,17 +162,20 @@ jobs:
           # backend come from the hash-locked requirements-lock.txt, which covers
           # every platform this matrix builds. Nothing is resolved from a range.
           python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-lock.txt
-          if [[ "${{ matrix.os-label }}" == "macos-arm64" ]]; then
-            # The lock leaves PyPI etebase out on this platform. The pinned
-            # upstream commit is built into a wheel in a throwaway virtualenv
-            # holding only its hash-locked build tools, so neither an isolated
-            # build environment nor the newer setuptools it needs reaches the
-            # environment PyInstaller bundles. Its one dependency, msgpack, is
+          if [[ "${{ matrix.os-label }}" == "macos-x86_64" ]]; then
+            # The lock leaves PyPI etebase out on this platform. Its hash-pinned
+            # sdist is built into a wheel in a throwaway virtualenv holding only
+            # its hash-locked build tool (maturin), so no isolated build
+            # environment or build tool reaches the environment PyInstaller
+            # bundles. --locked makes cargo use the sdist's Cargo.lock exactly.
+            # maturin's build backend runs the maturin program, so the venv's bin
+            # directory goes first on PATH for that one command.
+            # OpenSSL is vendored by the sdist. Its one dependency, msgpack, is
             # already installed from the lock.
             ETEBASE_BUILD="$RUNNER_TEMP/etebase-build"
             python -m venv "$ETEBASE_BUILD/venv"
             "$ETEBASE_BUILD/venv/bin/python" -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-etebase-build.txt
-            "$ETEBASE_BUILD/venv/bin/python" -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -w "$ETEBASE_BUILD/wheel" "git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"
+            PATH="$ETEBASE_BUILD/venv/bin:$PATH" MACOSX_DEPLOYMENT_TARGET=10.13 MATURIN_PEP517_ARGS="--locked" "$ETEBASE_BUILD/venv/bin/python" -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies --require-hashes --no-binary=etebase -w "$ETEBASE_BUILD/wheel" -r requirements-etebase-sdist.txt
             python -m pip install --disable-pip-version-check --no-deps --no-index "$ETEBASE_BUILD"/wheel/etebase-*.whl
           fi
           python -m pip install --disable-pip-version-check --no-deps --no-build-isolation --check-build-dependencies -e .
@@ -235,6 +219,16 @@ jobs:
               exit 1
               ;;
           esac
+          # Load the native etebase module inside the frozen binary (offline,
+          # throwaway data directory), and check the bundled extension is the
+          # one this environment installed and the SDK continuity lanes test.
+          OUT="$(SILENTSUITE_DATA_DIR="$(mktemp -d)" "$BINARY" --list-accounts)"
+          echo "$OUT"
+          if [[ "$OUT" != *"No accounts configured."* ]]; then
+            echo "ERROR: frozen binary could not list accounts (etebase did not load)" >&2
+            exit 1
+          fi
+          python scripts/check_frozen_etebase.py "$BINARY"
           echo "Smoke test passed."
 
       # -----------------------------------------------------------------------
@@ -294,7 +288,7 @@ jobs:
         if: matrix.qemu
         uses: addnab/docker-run-action@4f65fabd2431ebc8d299f8e5a018d79a769ae185 # v3
         with:
-          image: arm64v8/python:3.10.22-slim-trixie@sha256:92479346bd9cc169c573d3f71b95978521189349051ef1edb56a907a6d8c6ea7
+          image: arm64v8/python:3.12.16-slim-trixie@sha256:b2d51a2cc64ddc1b9acdab76aaac1708f1c80fded8ad2e4b76638ec0bc403565
           options: >-
             --platform linux/arm64
             -v ${{ github.workspace }}:/workspace
@@ -302,21 +296,10 @@ jobs:
           run: |
             set -e
             echo "=== Installing system deps ==="
+            # etebase comes as an abi3 wheel, so nothing is compiled here.
+            # PyInstaller needs objdump (binutils) on Linux.
             apt-get update -qq
-            apt-get install -y --no-install-recommends \
-              curl build-essential pkg-config libssl-dev git
-            echo "=== Installing Rust ==="
-            # Pinned rustup-init release, checked against its published sha256
-            # before it runs. rustup then verifies the 1.63.0 toolchain itself.
-            RUSTUP_VERSION=1.29.3
-            RUSTUP_INIT_SHA256=9f608c142e0e38a78957d0661ba1dfaf0b6fb37184cfaa4b9a0aa57af6184282
-            curl --proto '=https' --tlsv1.2 -sSf -o /tmp/rustup-init \
-              "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/aarch64-unknown-linux-gnu/rustup-init"
-            echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c -
-            chmod +x /tmp/rustup-init
-            /tmp/rustup-init -y --default-toolchain 1.63.0
-            rm -f /tmp/rustup-init
-            . "$HOME/.cargo/env"
+            apt-get install -y --no-install-recommends binutils
             echo "=== Installing Python deps ==="
             cd /workspace/bridge
             python -m pip install --disable-pip-version-check --require-hashes --only-binary=:all: -r requirements-build.txt
@@ -342,6 +325,13 @@ jobs:
                 exit 1
                 ;;
             esac
+            OUT="$(SILENTSUITE_DATA_DIR="$(mktemp -d)" dist/silentsuite-bridge --list-accounts)"
+            echo "$OUT"
+            if ! printf '%s' "$OUT" | grep -F "No accounts configured." >/dev/null; then
+              echo "ERROR: frozen binary could not list accounts (etebase did not load)" >&2
+              exit 1
+            fi
+            python scripts/check_frozen_etebase.py dist/silentsuite-bridge
             echo "=== Rename + checksum (inside container to avoid permission issues) ==="
             mv dist/silentsuite-bridge dist/${{ matrix.asset-name }}
             (cd dist && sha256sum "${{ matrix.asset-name }}" > "${{ matrix.asset-name }}.sha256")

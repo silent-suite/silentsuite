@@ -445,11 +445,11 @@ function ContactForm({
                 aria-describedby={nameError ? 'name-error' : undefined}
                 className={INPUT_CLASS}
               />
-              {nameError && (
-                <p id="name-error" role="alert" className="mt-1 text-xs text-red-400">
-                  At least one name field is required.
-                </p>
-              )}
+              {/* The error line keeps its space while hidden. Showing it on blur used to push the
+                  form down mid-tap, so the first tap on "+ Add phone" could land beside the button. */}
+              <p id="name-error" role="alert" className="mt-1 min-h-4 text-xs text-red-400">
+                {nameError ? 'At least one name field is required.' : null}
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <input value={prefix} onChange={(e) => setPrefix(e.target.value)} placeholder="Prefix (e.g. Dr.)" className={INPUT_CLASS} />
