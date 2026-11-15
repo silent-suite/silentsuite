@@ -7,15 +7,16 @@ import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertTrue
 
 /**
- * Records every call that reaches the pending Notes store's listing seam ([PendingNotesStore.listFilesForTesting]) or
- * its removal seam ([PendingNotesStore.beforeRemoveForTesting]) on the main thread, so a device case can show that a
- * screen reaches the store only off it: every listing the store makes, of its own folder, the folders above it and the
- * permits' root, and every file it removes, passes one of the two. It only records: the seams run inside a store call
+ * Records every call that reaches the pending Notes store's listing seam ([PendingNotesStore.listFilesForTesting]), its
+ * removal seam ([PendingNotesStore.beforeRemoveForTesting]) or its write seam ([PendingNotesStore.beforeRenameForTesting])
+ * on the main thread, so a device case can show that a screen reaches the store only off it: every listing the store
+ * makes, of its own folder, the folders above it and the permits' root, every file it removes, and every entry it
+ * writes (a release or a save), passes one of the three. It only records: the seams run inside a store call
  * on a worker thread, which rethrows anything, so an assertion there would end the app process. The test thread asks
  * [assertNoneOnMain].
  *
- * While it is installed, the probe holds both seams. A case that sets its own listing or removal sets [listing] or
- * [removal], never the store's seam, and the probe applies it as it is: a listing that answers null is one that
+ * While it is installed, the probe holds all three seams. A case that sets its own listing, removal or write sets
+ * [listing], [removal] or [write], never the store's seam, and the probe applies it as it is: a listing that answers null is one that
  * failed, and is never replaced by File.listFiles().
  */
 internal class MainThreadStoreProbe {
@@ -25,7 +26,10 @@ internal class MainThreadStoreProbe {
     /** Called with the file before each removal, once the probe has seen it. */
     @Volatile var removal: ((File) -> Unit)? = null
 
-    /** How many listings and removals reached the probe, on any thread. */
+    /** Called with the entry file before each write is renamed into place, once the probe has seen it. */
+    @Volatile var write: ((File) -> Unit)? = null
+
+    /** How many listings, removals and writes reached the probe, on any thread. */
     private val seen = AtomicInteger()
 
     /** What reached it on the main thread, in order. */
@@ -40,14 +44,20 @@ internal class MainThreadStoreProbe {
             record("a removal of ${file.name}")
             removal?.invoke(file)
         }
+        PendingNotesStore.beforeRenameForTesting = { file ->
+            record("a write of ${file.name}")
+            write?.invoke(file)
+        }
     }
 
-    /** Resets both seams of the store, and the case's own listing and removal. */
+    /** Resets the three seams of the store, and the case's own listing, removal and write. */
     fun uninstall() {
         PendingNotesStore.listFilesForTesting = null
         PendingNotesStore.beforeRemoveForTesting = null
+        PendingNotesStore.beforeRenameForTesting = null
         listing = null
         removal = null
+        write = null
     }
 
     /** Counts every call, and keeps the ones made on the main looper's thread. */
@@ -60,6 +70,6 @@ internal class MainThreadStoreProbe {
     fun assertNoneOnMain() {
         val found = synchronized(onMain) { onMain.toList() }
         assertTrue("store calls on the main thread: $found", found.isEmpty())
-        assertTrue("no listing or removal reached the probe, so it saw nothing", seen.get() > 0)
+        assertTrue("no listing, removal or write reached the probe, so it saw nothing", seen.get() > 0)
     }
 }

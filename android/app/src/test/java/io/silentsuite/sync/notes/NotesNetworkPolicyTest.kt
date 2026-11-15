@@ -263,32 +263,41 @@ class NotesNetworkPolicyTest {
         assertTrue(message, source.indexOf(checks[0]) < source.indexOf(checks[1]))
     }
 
-    @Test fun `every row of the notebook list's network line`() {
+    @Test fun `every row of the notebook list's network line, with changes waiting and with none`() {
         val seen = HashSet<String>()
         for (row in noticeRows) for (automatic in row.automatic) for (syncNow in row.syncNow) for ((account, reading) in row.cells) {
             val what = "row ${row.id}, automatic $automatic, Sync now $syncNow, $account, $reading"
             assertTrue("no combination is in two rows: $what", seen.add("$automatic $syncNow $account $reading"))
-            val expected = if (row.rest.isEmpty()) emptyList() else listOf(NoticePart.MAY_BE_OUT_OF_DATE) + row.rest
-            assertEquals(what, expected, NotesNetworkPolicy.notice(Settings(automatic, syncNow), account, reading))
+            val settings = Settings(automatic, syncNow)
+            val withNoneWaiting = if (row.rest.isEmpty()) emptyList() else listOf(NoticePart.MAY_BE_OUT_OF_DATE) + row.rest
+            val whileWaiting =
+                if (row.rest.isEmpty()) emptyList() else listOf(NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.CHANGES_WAITING) + row.rest
+            assertEquals("$what, nothing waiting", withNoneWaiting, NotesNetworkPolicy.notice(0, settings, account, reading))
+            assertEquals("$what, two changes waiting", whileWaiting, NotesNetworkPolicy.notice(2, settings, account, reading))
+            assertEquals("any number of waiting changes reads the same: $what", whileWaiting, NotesNetworkPolicy.notice(250, settings, account, reading))
+            assertEquals("a count below zero is no waiting change: $what", withNoneWaiting, NotesNetworkPolicy.notice(-1, settings, account, reading))
         }
         assertEquals("the rows cover every combination of the two settings, the account's rule and the reading",
             Allowed.values().size * Allowed.values().size * accounts.size * readings.size, seen.size)
     }
 
     @Test fun `the line shows exactly when an automatic run would be refused, and it ends with what a run the user starts would get`() {
-        for (automatic in Allowed.values()) for (syncNow in Allowed.values()) for (account in accounts) for (reading in readings) {
+        for (automatic in Allowed.values()) for (syncNow in Allowed.values()) for (account in accounts) for (reading in readings) for (waiting in listOf(0, 3)) {
             val settings = Settings(automatic, syncNow)
-            val what = "$settings, $account, $reading"
-            val parts = NotesNetworkPolicy.notice(settings, account, reading)
+            val what = "$settings, $account, $reading, waiting $waiting"
+            val parts = NotesNetworkPolicy.notice(waiting, settings, account, reading)
             val byItself = NotesNetworkPolicy.decide(explicit = false, settings, account, reading)
             val byTheUser = NotesNetworkPolicy.decide(explicit = true, settings, account, reading)
             assertEquals(what, byItself.run, parts.isEmpty())
             if (parts.isEmpty()) continue
             assertEquals(what, NoticePart.MAY_BE_OUT_OF_DATE, parts.first())
+            assertEquals("the waiting changes are the second sentence, and only while there are some: $what",
+                waiting > 0, parts.getOrNull(1) == NoticePart.CHANGES_WAITING)
             assertEquals(what, if (byTheUser.run) NoticePart.TRY_NOW else NoticePart.SYNC_NOW_NEEDS_WIFI, parts.last())
+            val opening = if (waiting > 0) listOf(NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.CHANGES_WAITING) else listOf(NoticePart.MAY_BE_OUT_OF_DATE)
             if (Blocker.ACCOUNT_NETWORK_NAME in byItself.blockers) {
                 assertEquals("a saved network name is the only reason given, since it refuses on every network: $what",
-                    listOf(NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_NETWORK_NAME, parts.last()), parts)
+                    opening + listOf(NoticePart.ACCOUNT_NETWORK_NAME, parts.last()), parts)
                 continue
             }
             assertEquals(what, Blocker.NOTES_SETTING in byItself.blockers, NoticePart.NOTES_SETTING in parts)
@@ -301,16 +310,18 @@ class NotesNetworkPolicyTest {
     }
 
     @Test fun `no active network gets the words of any network that is not Wi-Fi, and pulling down now is still offered unless Sync now is Wi-Fi only`() {
-        for (automatic in Allowed.values()) for (syncNow in Allowed.values()) for (account in accounts) {
+        for (automatic in Allowed.values()) for (syncNow in Allowed.values()) for (account in accounts) for (waiting in listOf(0, 1)) {
             val settings = Settings(automatic, syncNow)
-            assertEquals("$settings, $account",
-                NotesNetworkPolicy.notice(settings, account, other), NotesNetworkPolicy.notice(settings, account, none))
+            assertEquals("$settings, $account, waiting $waiting",
+                NotesNetworkPolicy.notice(waiting, settings, account, other), NotesNetworkPolicy.notice(waiting, settings, account, none))
         }
         // With the defaults: the reason is what the platform reports, and the run the user can start is on offer.
         assertEquals(listOf(NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW),
-            NotesNetworkPolicy.notice(Settings.DEFAULT, off, none))
+            NotesNetworkPolicy.notice(0, Settings.DEFAULT, off, none))
+        assertEquals(listOf(NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.CHANGES_WAITING, NoticePart.NOTES_SETTING,
+            NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW), NotesNetworkPolicy.notice(1, Settings.DEFAULT, off, none))
         for (account in accounts) for (automatic in Allowed.values()) {
-            val parts = NotesNetworkPolicy.notice(Settings(automatic, Allowed.ANY_NETWORK), account, none)
+            val parts = NotesNetworkPolicy.notice(0, Settings(automatic, Allowed.ANY_NETWORK), account, none)
             assertTrue("$account, automatic $automatic: $parts", parts.isEmpty() || parts.last() == NoticePart.TRY_NOW)
         }
     }

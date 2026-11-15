@@ -35,6 +35,8 @@ ARG NEXT_PUBLIC_SIGNUP_ANALYTICS_ENABLED=false
 # but Next inlines the value into the browser bundle and server.js; that is intended:
 # a DSN key is public, and the ingestion endpoint accepts only the web server.
 ARG NEXT_PUBLIC_SENTRY_DSN=
+# Page-speed ratings on public pages (hosted production only). Default off.
+ARG NEXT_PUBLIC_WEB_VITALS_ENABLED=false
 # Durable encrypted local caching. Default-off: every build that does not pass
 # this argument explicitly, production included, ships with the flag disabled.
 ARG NEXT_PUBLIC_LOCAL_CACHE_ENABLED=false

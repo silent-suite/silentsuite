@@ -217,13 +217,14 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error
 }
-// Public-page speed ratings stay dormant until a later, reviewed activation change,
-// and relay settings (GLITCHTIP_*) belong to the server, never to a workflow or image.
-// Browser error reports are switched on only by the standalone production Web build,
-// from its protected secret, through an empty-by-default Dockerfile build argument.
+// Relay settings (GLITCHTIP_*, WEB_VITALS_FORWARD) belong to the server, never to a
+// workflow or image. Browser error reports and public-page speed ratings are switched
+// on only by the standalone production Web build: the error-report DSN from its
+// protected secret, the speed gate as a literal, both through off-by-default
+// Dockerfile build arguments.
 const dormantTelemetrySettings = /NEXT_PUBLIC_WEB_VITALS_ENABLED\s*[=:]\s*["']?true|WEB_VITALS_FORWARD|GLITCHTIP_|NEXT_PUBLIC_SENTRY_DSN/
 const allowedErrorReportSwitch = {
-  'deploy-web-standalone.yml': /^ {12}NEXT_PUBLIC_SENTRY_DSN=\$\{\{ secrets\.NEXT_PUBLIC_SENTRY_DSN \}\}$/gm,
+  'deploy-web-standalone.yml': /^ {12}(?:NEXT_PUBLIC_SENTRY_DSN=\$\{\{ secrets\.NEXT_PUBLIC_SENTRY_DSN \}\}|NEXT_PUBLIC_WEB_VITALS_ENABLED=true)$/gm,
   'Dockerfile.web': /^ARG NEXT_PUBLIC_SENTRY_DSN=$/gm,
 }
 const workflowDirectory = path.resolve('.github/workflows')

@@ -5,7 +5,7 @@
  */
 export const IMPORT_SOURCE_PROPERTY = 'X-SILENTSUITE-IMPORT-SOURCE'
 
-export type ImportProvider = 'google'
+export type ImportProvider = 'google' | 'microsoft'
 
 export function importSourceKey(provider: ImportProvider, accountId: string, containerId: string, itemId: string): string {
   return [provider, accountId, containerId, itemId].map(encodeURIComponent).join('/')

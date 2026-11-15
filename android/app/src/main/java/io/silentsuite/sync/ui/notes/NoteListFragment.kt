@@ -182,6 +182,11 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
             list?.onRestoreInstanceState(state)
             listState = null
         }
+        view.findViewById<TextView>(R.id.notes_pending).apply {
+            val notice = pendingNotice(context, contents.pending)
+            text = notice
+            visibility = if (notice == null) View.GONE else View.VISIBLE
+        }
         view.findViewById<TextView>(R.id.notes_unreadable).apply {
             text = resources.getQuantityString(R.plurals.notes_items_unreadable, contents.unreadable, contents.unreadable)
             visibility = if (contents.unreadable > 0) View.VISIBLE else View.GONE
@@ -222,11 +227,30 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
                 edited.text = context.getString(R.string.notes_edited, DateUtils.getRelativeTimeSpanString(
                     editedAt, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE))
             }
+            val sync = view.findViewById<TextView>(R.id.note_sync)
+            val syncText = syncLabel(context, note.sync)
+            sync.text = syncText
+            sync.visibility = if (syncText == null) View.GONE else View.VISIBLE
             return view
         }
     }
 
     companion object {
+        /** Why a screen shows the cached notes without the local changes, or null when it does not. */
+        internal fun pendingNotice(context: Context, pending: PendingUnavailable?): String? = when (pending) {
+            null -> null
+            PendingUnavailable.UNREADABLE -> context.getString(R.string.notes_pending_unreadable)
+            PendingUnavailable.DISCARD_STOPPED -> context.getString(R.string.notes_pending_discard_stopped)
+        }
+
+        /** The marker for a note with a local change, or null when it has none. */
+        internal fun syncLabel(context: Context, sync: NoteSync): String? = when (sync) {
+            NoteSync.SYNCED -> null
+            NoteSync.WAITING -> context.getString(R.string.notes_not_synced_yet)
+            NoteSync.LOCAL_UNREADABLE -> context.getString(R.string.notes_local_change_unreadable)
+            NoteSync.HELD -> context.getString(R.string.notes_local_text_held)
+        }
+
         private const val ARG_ACCOUNT = "notes.account"
         private const val ARG_CREATION_ID = "notes.creationId"
         private const val ARG_NOTEBOOK_UID = "notes.notebookUid"
