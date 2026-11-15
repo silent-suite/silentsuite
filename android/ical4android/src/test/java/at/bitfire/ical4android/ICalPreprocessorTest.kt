@@ -3,7 +3,6 @@ package at.bitfire.ical4android
 import net.fortuna.ical4j.data.CalendarBuilder
 import net.fortuna.ical4j.model.Component
 import net.fortuna.ical4j.model.component.VEvent
-import org.apache.commons.io.IOUtils
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.io.InputStreamReader
@@ -52,10 +51,10 @@ class ICalPreprocessorTest {
                 "END:STANDARD\n" +
                 "END:VTIMEZONE"
         ICalPreprocessor.fixInvalidUtcOffset(StringReader(invalid)).let { result ->
-            assertEquals(valid, IOUtils.toString(result))
+            assertEquals(valid, result.readText())
         }
         ICalPreprocessor.fixInvalidUtcOffset(StringReader(valid)).let { result ->
-            assertEquals(valid, IOUtils.toString(result))
+            assertEquals(valid, result.readText())
         }
     }
 

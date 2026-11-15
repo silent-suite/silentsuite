@@ -22,7 +22,7 @@ The hosted server at `server.silentsuite.io` (or your self-hosted URL) speaks th
 
 ## On the Roadmap
 
-- **[iOS](./ios.md):** Coming soon. iOS is not currently supported.
+- **[iOS](./ios.md):** Planned. iOS is not supported yet.
 
 ## Compatible Third-Party Apps
 

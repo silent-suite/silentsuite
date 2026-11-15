@@ -5,11 +5,20 @@
     android:orientation="vertical">
 
     <TextView
+        android:id="@+id/import_notice"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:padding="8dp"
         android:text="@string/import_account_top_notice"
         android:textAppearance="?android:attr/textAppearanceMedium" />
+
+    <TextView
+        android:id="@+id/phone_only_notice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="8dp"
+        android:visibility="gone"
+        android:textAppearance="?android:attr/textAppearanceSmall" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerView"

@@ -17,6 +17,7 @@ function loadPwaOptions(): Record<string, unknown> {
     '@ducanh2912/next-pwa': { default: (opts: Record<string, unknown>) => { options = opts; return (config: unknown) => config } },
     '@sentry/nextjs': { withSentryConfig: (config: unknown) => config },
     './sentry-build-options': { glitchtipSourceMapUpload: () => ({}) },
+    './pwa-runtime-caching': createRequire(configPath)('./pwa-runtime-caching.js'),
   }
   const cjsModule = { exports: {} }
   vm.runInNewContext(readFileSync(configPath, 'utf8'), {

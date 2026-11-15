@@ -146,3 +146,43 @@ def test_the_self_hosting_index_does_not_promise_a_cross_version_update(tree: st
     text = read(tree, index)
     assert "How to update to new versions" not in text
     assert "cross-version updates are not supported yet" in text
+
+
+# ── Who is the server administrator ───────────────────────────────────
+
+ENV_EXAMPLE = ROOT / "self-host" / ".env.example"
+
+
+@pytest.mark.parametrize("path", (INSTALLER, ENV_EXAMPLE, COMPOSE), ids=lambda p: p.name)
+def test_setup_files_do_not_promote_the_first_app_signup_to_admin(path: Path):
+    """Signup grants no admin role; only the SUPER_USER Django login administers the server."""
+
+    text = path.read_text(encoding="utf-8").lower()
+    for overclaim in (
+        "becomes the server admin",
+        "you'll be the admin",
+        "first-admin",
+        "admin account is registered",
+        "after your admin account exists",
+    ):
+        assert overclaim not in text, f"{path.name} still says: {overclaim}"
+
+
+def test_installer_names_the_real_server_admin():
+    text = INSTALLER.read_text(encoding="utf-8")
+    assert "The first app signup is an ordinary account, not a server admin." in text
+    assert "(SUPER_USER and SUPER_PASS in .env), which is off by default." in text
+
+
+# ── Trusted proxy addresses ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "path", [*published_pages(), SELF_HOSTING], ids=lambda p: str(p.relative_to(ROOT))
+)
+def test_no_page_claims_trusted_proxy_subnets_are_unsupported(path: Path):
+    """The entrypoint hands TRUSTED_PROXY_IPS to Uvicorn, which accepts CIDR subnets."""
+
+    text = path.read_text(encoding="utf-8")
+    assert "CIDR ranges are not supported" not in text, path.name
+    assert "matches exact IPs here" not in text, path.name

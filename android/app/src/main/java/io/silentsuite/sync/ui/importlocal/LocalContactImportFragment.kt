@@ -2,15 +2,12 @@ package io.silentsuite.sync.ui.importlocal
 
 import android.accounts.Account
 import android.app.Dialog
-import android.content.ContentValues.TAG
 import android.content.Context
-import android.database.Cursor
 import android.graphics.Canvas
 import android.graphics.Rect
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.provider.ContactsContract
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -21,14 +18,12 @@ import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import at.bitfire.vcard4android.ContactsStorageException
 import io.silentsuite.sync.R
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.App
 import io.silentsuite.sync.resource.LocalAddressBook
-import io.silentsuite.sync.resource.LocalContact
-import io.silentsuite.sync.resource.LocalGroup
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +38,7 @@ class LocalContactImportFragment : Fragment() {
     private var importInProgress = false
 
     private var recyclerView: RecyclerView? = null
+    private var phoneOnlyNotice: TextView? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -61,6 +57,7 @@ class LocalContactImportFragment : Fragment() {
         val view = inflater.inflate(R.layout.fragment_local_contact_import, container, false)
 
         recyclerView = view.findViewById<View>(R.id.recyclerView) as RecyclerView
+        phoneOnlyNotice = view.findViewById(R.id.phone_only_notice)
 
         recyclerView!!.layoutManager = LinearLayoutManager(activity)
         recyclerView!!.addItemDecoration(DividerItemDecoration(requireActivity()))
@@ -69,42 +66,70 @@ class LocalContactImportFragment : Fragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        if (!::account.isInitialized) return
+        // ImportActivity asks before opening this picker; access can still be gone after a restart.
+        if (!DeviceImportAccess.granted(requireContext(), DeviceImport.permissionsFor(Constants.ETEBASE_TYPE_ADDRESS_BOOK))) {
+            DeviceImportAccess.refuse(this, R.string.import_device_access_missing)
+            return
+        }
+        showSourcesIfDestinationWritable()
+    }
 
+    /** Lists the other accounts only for an existing, writable destination address book on this phone. */
+    private fun showSourcesIfDestinationWritable() {
+        val destination = try {
+            val provider = requireContext().contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
+                ?: return DeviceImportAccess.refuse(this, R.string.import_device_destination_missing)
+            try {
+                DeviceImporter.destinationAddressBook(requireContext(), account, provider, uid)
+            } finally {
+                provider.release()
+            }
+        } catch (e: SecurityException) {
+            DeviceImportAccess.refuse(this, R.string.import_device_access_missing)
+            return
+        }
+        DeviceImportAccess.destinationProblem(destination)?.let { problem ->
+            DeviceImportAccess.refuse(this, problem)
+            return
+        }
         importAccount()
     }
 
     protected fun importAccount() {
-        val provider = requireContext().contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
-        val cursor: Cursor?
+        val sourceAccounts = ArrayList<Account>()
+        val phoneOnly: Int
         try {
-            cursor = provider!!.query(ContactsContract.RawContacts.CONTENT_URI,
-                    arrayOf(ContactsContract.RawContacts.ACCOUNT_NAME, ContactsContract.RawContacts.ACCOUNT_TYPE), null, null,
-                    ContactsContract.RawContacts.ACCOUNT_NAME + " ASC, " + ContactsContract.RawContacts.ACCOUNT_TYPE)
-        } catch (except: Exception) {
-            Log.w(TAG, "Addressbook provider is missing columns, continuing anyway")
-
-            except.printStackTrace()
+            val resolver = requireContext().contentResolver
+            val ownAccountTypes = setOf(App.accountType, App.addressBookAccountType)
+            resolver.query(ContactsContract.RawContacts.CONTENT_URI,
+                    arrayOf(ContactsContract.RawContacts.ACCOUNT_NAME, ContactsContract.RawContacts.ACCOUNT_TYPE),
+                    "${ContactsContract.RawContacts.DELETED}=0", null,
+                    ContactsContract.RawContacts.ACCOUNT_NAME + " ASC, " + ContactsContract.RawContacts.ACCOUNT_TYPE)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val accountName = cursor.getString(0)
+                    val accountType = cursor.getString(1)
+                    if (accountName.isNullOrBlank() || !DeviceImport.isImportSource(accountType, ownAccountTypes))
+                        continue
+                    val sourceAccount = Account(accountName, accountType!!)
+                    if (sourceAccounts.lastOrNull() != sourceAccount)
+                        sourceAccounts.add(sourceAccount)
+                }
+            }
+            phoneOnly = DeviceImporter.phoneOnlyContactCount(resolver)
+        } catch (e: SecurityException) {
+            Logger.log.warning("Contacts access missing for device import")
             return
         }
 
-        val localAddressBooks = ArrayList<LocalAddressBook>()
-        var account: Account? = null
-        val accountNameIndex = cursor!!.getColumnIndex(ContactsContract.RawContacts.ACCOUNT_NAME)
-        val accountTypeIndex = cursor.getColumnIndex(ContactsContract.RawContacts.ACCOUNT_TYPE)
-        while (cursor.moveToNext()) {
-            val accountName = cursor.getString(accountNameIndex)
-            val accountType = cursor.getString(accountTypeIndex)
-            if (account == null || !(account.name == accountName && account.type == accountType)) {
-                if (accountName != null && accountType != null) {
-                    account = Account(accountName, accountType)
-                    localAddressBooks.add(LocalAddressBook(requireContext(), account, provider))
-                }
-            }
+        // Contacts in no account are not imported here; say so instead of leaving them out silently.
+        phoneOnlyNotice?.apply {
+            visibility = if (phoneOnly > 0) View.VISIBLE else View.GONE
+            text = resources.getQuantityString(R.plurals.import_device_phone_only_contacts, phoneOnly, phoneOnly)
         }
 
-        cursor.close()
-        provider.release()
-
+        // The adapter only shows names; the import reads through its own provider client.
+        val localAddressBooks = sourceAccounts.map { LocalAddressBook(requireContext(), it, null) }
         recyclerView!!.adapter = ImportContactAdapter(requireContext(), localAddressBooks, object : OnAccountSelected {
             override fun accountSelected(index: Int) {
                 importContacts(localAddressBooks[index])
@@ -155,90 +180,44 @@ class LocalContactImportFragment : Fragment() {
         identity: CollectionLifecycleIdentity,
         applicationContext: Context,
     ): ResultFragment.ImportResult {
-        val result = ResultFragment.ImportResult()
         try {
-            val localContacts = localAddressBook.findAllContacts()
-            val localGroups = localAddressBook.findAllGroups()
             if (!identity.validate(applicationContext)) return staleImportResult()
             val provider = applicationContext.contentResolver.acquireContentProviderClient(ContactsContract.RawContacts.CONTENT_URI)
                 ?: throw Exception("Could not acquire contacts provider")
             try {
-                val addressBook = LocalAddressBook.findByUid(applicationContext, provider, account, uid)
-                    ?: throw Exception("Could not find address book")
-            val oldIdToNewId = HashMap<Long, Long>()
-            val total = localContacts.size + localGroups.size
-            val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
-            activity?.runOnUiThread { progressBar.max = total }
-            result.total = total.toLong()
-            var progress = 0
-            for (currentLocalContact in localContacts) {
-                if (!identity.validate(applicationContext)) return staleImportResult()
-                val contact = currentLocalContact.contact
-
-                try {
-                    contact!!
-                    var localContact: LocalContact? = if (contact.uid == null)
-                        null
-                    else
-                        addressBook.findByUid(contact.uid!!) as LocalContact?
-
-                    if (localContact != null) {
-                        localContact.updateAsDirty(contact)
-                        result.updated++
-                    } else {
-                        localContact = LocalContact(addressBook, contact, contact.uid, null)
-                        localContact.createAsDirty()
-                        result.added++
+                val addressBook = when (val destination = DeviceImporter.destinationAddressBook(applicationContext, account, provider, uid)) {
+                    is DeviceImporter.Destination.Ready -> destination.collection
+                    else -> return ResultFragment.ImportResult().apply {
+                        e = Exception("Destination is missing or read-only")
+                        failureMessage = DeviceImportAccess.destinationProblem(destination)?.let { applicationContext.getString(it) }
                     }
-
-                    oldIdToNewId[currentLocalContact.id!!] = localContact.id!!
-                } catch (e: ContactsStorageException) {
-                    e.printStackTrace()
-                    result.e = e
                 }
-
-                val currentProgress = ++progress
-                activity?.runOnUiThread { progressBar.progress = currentProgress }
-            }
-            for (currentLocalGroup in localGroups) {
+                val source = LocalAddressBook(applicationContext, localAddressBook.account, provider)
+                val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
+                val result = DeviceImporter.copyContacts(source, addressBook,
+                    stillCurrent = { identity.validate(applicationContext) },
+                    progress = { done, total ->
+                        activity?.runOnUiThread {
+                            progressBar.max = total
+                            progressBar.progress = done
+                        }
+                    })
                 if (!identity.validate(applicationContext)) return staleImportResult()
-                val group = currentLocalGroup.contact
-
-                try {
-                    val members = currentLocalGroup.getMembers().map {
-                        oldIdToNewId[it]!!
-                    }
-                    group!!
-
-                    var localGroup: LocalGroup? = if (group.uid == null)
-                        null
-                    else
-                        addressBook.findByUid(group.uid!!) as LocalGroup?
-
-                    if (localGroup != null) {
-                        localGroup.updateAsDirty(group, members)
-                        result.updated++
-                    } else {
-                        localGroup = LocalGroup(addressBook, group, group.uid, null)
-                        localGroup.createAsDirty(members)
-                        result.added++
-                    }
-                } catch (e: ContactsStorageException) {
-                    e.printStackTrace()
-                    result.e = e
-                }
-
-                val currentProgress = ++progress
-                activity?.runOnUiThread { progressBar.progress = currentProgress }
-            }
+                return result
             } finally {
                 provider.release()
             }
+        } catch (e: DeviceImporter.StaleRoute) {
+            return staleImportResult()
+        } catch (e: SecurityException) {
+            return ResultFragment.ImportResult().apply {
+                this.e = e
+                failureMessage = applicationContext.getString(R.string.import_device_access_removed)
+            }
         } catch (e: Exception) {
-            result.e = e
+            Logger.log.warning("Device contacts import failed: ${e.javaClass.name}")
+            return ResultFragment.ImportResult().apply { this.e = e }
         }
-
-        return result
     }
 
     private fun staleImportResult() = ResultFragment.ImportResult().apply {
