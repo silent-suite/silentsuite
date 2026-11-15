@@ -12,7 +12,6 @@ import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useEtebaseStore } from '@/app/stores/use-etebase-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { isBirthdaysEnabledFor } from '@/app/stores/use-experimental-store'
-import { createEtebaseBirthdayTransport } from './etebase-transport'
 import { disableBirthdayCalendar, enableBirthdayCalendar } from './lifecycle'
 import {
   projectBirthdayMarkers,
@@ -111,6 +110,17 @@ function gatesFor(origin: Origin): BirthdayGates {
   }
 }
 
+/**
+ * The transport uses core's collection helpers, which import the Etebase SDK.
+ * Loading it only when a run starts keeps the SDK, and the libsodium it loads
+ * (which removes the process error listeners), out of the server pages that
+ * import this module for its hooks.
+ */
+async function createTransport(origin: Origin): Promise<BirthdayTransport> {
+  const { createEtebaseBirthdayTransport } = await import('./etebase-transport')
+  return createEtebaseBirthdayTransport(origin.account as never, gatesFor(origin))
+}
+
 /** The experimental opt-in, checked again at every gate so switching it off stops a pending or running pass. */
 function optedIn(origin: Origin): boolean {
   try {
@@ -141,7 +151,7 @@ export function scheduleBirthdayReconcile(): void {
 async function runOrigin(origin: Origin): Promise<void> {
   if (!ready(origin)) return
   try {
-    const recorded = recordingWrites(createEtebaseBirthdayTransport(origin.account as never, gatesFor(origin)))
+    const recorded = recordingWrites(await createTransport(origin))
     if (!ready(origin)) return
     await runBirthdayCalendar({
       accountKey: origin.fingerprint,
@@ -224,7 +234,7 @@ export async function enableBirthdayCalendarFromSession(): Promise<{ status: str
   const origin = capture()
   if (!origin || !ready(origin)) return { status: 'skipped' }
   try {
-    const recorded = recordingWrites(createEtebaseBirthdayTransport(origin.account as never, gatesFor(origin)))
+    const recorded = recordingWrites(await createTransport(origin))
     if (!ready(origin)) return { status: 'skipped' }
     const result = await enableBirthdayCalendar({
       accountKey: origin.fingerprint,
@@ -245,7 +255,7 @@ export async function disableBirthdayCalendarFromSession(): Promise<{ status: st
   const origin = capture()
   if (!origin || !ready(origin)) return { status: 'skipped' }
   try {
-    const recorded = recordingWrites(createEtebaseBirthdayTransport(origin.account as never, gatesFor(origin)))
+    const recorded = recordingWrites(await createTransport(origin))
     if (!ready(origin)) return { status: 'skipped' }
     const result = await disableBirthdayCalendar({
       accountKey: origin.fingerprint,
