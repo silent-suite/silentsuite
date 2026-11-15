@@ -215,10 +215,7 @@ internal class NoteEditorCore(private val clock: () -> Long = System::currentTim
         /** The text joined held text: the screen shows the viewer, which points to Unsynced text. */
         HELD,
 
-        /**
-         * Nothing more can be saved from here (held text that is not this editor's, or a discarded store): Copy keeps it.
-         * Also once the user left without saving ([leaveWithoutSaving]).
-         */
+        /** Nothing more can be saved from here (held text that is not this editor's, or a discarded store): Copy keeps it. */
         STOPPED,
     }
 
@@ -250,11 +247,6 @@ internal class NoteEditorCore(private val clock: () -> Long = System::currentTim
 
     /** How many changes the user made here: a question about leaving holds for the text it was asked over only while this stays. */
     val edits: Long get() = edit
-
-    /** The user left without the text a save has not written: nothing more is saved or typed from here, and that text stays unsaved. */
-    fun leaveWithoutSaving() {
-        mode = Mode.STOPPED
-    }
 
     fun history(field: Field): EditHistory = histories.getValue(field)
 

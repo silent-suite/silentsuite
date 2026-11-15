@@ -3746,8 +3746,9 @@ class NotesSyncBoundaryRuntimeTest {
      * marked sensitive, and the question stays; a recreation brings it back; an answer from a question made in another app
      * process acts on nothing, and the screen asks again in this one, as it does when such a question is brought back.
      * Cancel stays, the toolbar's Up arrow asks again, and Try again while the write still fails asks again. Once the store
-     * writes again, Try again saves the text and the screen leaves. In a second round, Leave without saving leaves, and the
-     * closing editor writes nothing of that text, though the store writes again by then.
+     * writes again, Try again saves the text and the screen leaves. In a second round, Leave anyway leaves, and the closing
+     * editor's last try keeps the text once the store writes again: the question says the text may not be kept, never that
+     * it is lost.
      */
     @Test fun leavingWithTextNotSavedOnTheDeviceSavesFirstAndAsksBeforeLeavingWithoutIt() {
         val account = newAccount("gen-editor-leave")
@@ -3800,9 +3801,10 @@ class NotesSyncBoundaryRuntimeTest {
                 stays(scenario, "Back")
                 scenario.onActivity { activity ->
                     val dialog = editorOf(activity).leaveDialog!!
-                    assertEquals(activity.getString(R.string.notes_editor_not_saved) + "\n\n" + activity.getString(R.string.notes_editor_leave_changes_lost),
-                        dialog.findViewById<TextView>(android.R.id.message)!!.text.toString())
-                    assertEquals(listOf(R.string.notes_held_try_again, R.string.notes_held_copy, R.string.notes_editor_leave_without_saving).map { activity.getString(it) },
+                    assertEquals("Leave this note?", dialog.findViewById<TextView>(androidx.appcompat.R.id.alertTitle)!!.text.toString())
+                    assertEquals("Your changes are not saved on this device. The last save did not work. If you leave now, they may " +
+                        "not be kept. Copy them to keep them.", dialog.findViewById<TextView>(android.R.id.message)!!.text.toString())
+                    assertEquals(listOf("Try again", "Copy", "Leave anyway"),
                         listOf(DialogInterface.BUTTON_POSITIVE, DialogInterface.BUTTON_NEUTRAL, DialogInterface.BUTTON_NEGATIVE).map { dialog.getButton(it).text.toString() })
                 }
 
@@ -3821,7 +3823,7 @@ class NotesSyncBoundaryRuntimeTest {
                 scenario.onActivity { assertEquals(typed, it.findViewById<EditText>(R.id.note_body_edit).text.toString()) }
                 stays(scenario, "the recreation")
 
-                // Leave without saving from a question made in another app process acts on nothing: the screen saves
+                // Leave anyway from a question made in another app process acts on nothing: the screen saves
                 // again, and asks again in this process.
                 before = failed.get()
                 scenario.onActivity { activity ->
@@ -3864,7 +3866,7 @@ class NotesSyncBoundaryRuntimeTest {
                 assertEquals(typed, decryptThroughStoredCopy(store, saved).contentString)
                 awaitClosingRun(identity, runs, closingFirst)
 
-                // Round two: a save that works, then one that fails, and Leave without saving.
+                // Round two: a save that works, then one that fails, and Leave anyway.
                 showNote(scenario, note.uid)
                 waitUntil("the editor to show again") { onEditor(scenario) { it.editing } == true }
                 scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText("Saved before the write failed") }
@@ -3875,15 +3877,15 @@ class NotesSyncBoundaryRuntimeTest {
                 waitUntil("the next save to fail") { onEditor(scenario) { it.editorModel.core.lastResult } == SaveResult.NotSaved }
                 scenario.onActivity { it.onSupportNavigateUp() }
                 waitUntil("the question in round two") { question(scenario) != null }
-                // The store writes again from here: nothing may write the text the question says is lost.
+                // The store writes again from here: leaving still saves once more, so the text is kept.
                 failing.set(false)
                 val closingSecond = runs.size
                 scenario.onActivity { editorOf(it).leaveDialog!!.getButton(DialogInterface.BUTTON_NEGATIVE).performClick() }
-                waitUntil("the note list after Leave without saving") { noteList(scenario) != null }
+                waitUntil("the note list after Leave anyway") { noteList(scenario) != null }
                 awaitClosingRun(identity, runs, closingSecond)
                 val after = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
-                assertEquals("the closing editor wrote nothing", kept.savedVersion, after.version)
-                assertEquals("Saved before the write failed", decryptThroughStoredCopy(store, after).contentString)
+                assertTrue("the closing editor saved once more", after.version > kept.savedVersion)
+                assertEquals("Saved before the write failed, and typed after", decryptThroughStoredCopy(store, after).contentString)
             }
             probe.assertNoneOnMain()
         } finally {

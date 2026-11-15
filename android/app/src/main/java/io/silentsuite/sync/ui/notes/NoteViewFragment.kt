@@ -404,17 +404,20 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
         parentFragmentManager.popBackStack()
     }
 
-    /** What the question before leaving says: why the text is not saved, then exactly what leaving loses. */
+    /**
+     * What the question before leaving says: that the text is not saved on this device and why, and that it may not be
+     * kept after leaving. Never that it is lost: a write that failed after its file was written can still be kept, and the
+     * closing editor saves once more.
+     */
     private fun leaveMessage(prompt: NoteEditorViewModel.LeavePrompt): String {
         val why = getString(when (prompt.reason) {
-            SaveResult.TooLarge -> R.string.notes_editor_too_large
-            SaveResult.Unreadable -> R.string.notes_editor_unreadable
-            SaveResult.HeldChanged -> R.string.notes_editor_held_changed
-            SaveResult.Cleared -> R.string.notes_editor_cleared
-            else -> R.string.notes_editor_not_saved
+            SaveResult.TooLarge -> R.string.notes_editor_leave_why_too_large
+            SaveResult.Unreadable -> R.string.notes_editor_leave_why_unreadable
+            SaveResult.HeldChanged -> R.string.notes_editor_leave_why_held_changed
+            SaveResult.Cleared -> R.string.notes_editor_leave_why_cleared
+            else -> R.string.notes_editor_leave_why_failed
         })
-        val lost = getString(if (prompt.noteUid == null) R.string.notes_editor_leave_new_note_lost else R.string.notes_editor_leave_changes_lost)
-        return "$why\n\n$lost"
+        return getString(if (prompt.noteUid == null) R.string.notes_editor_leave_new_note else R.string.notes_editor_leave_changes, why)
     }
 
     internal enum class LeaveAnswer { COPY, TRY_AGAIN, LEAVE, CANCEL }
@@ -453,7 +456,8 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
                 if (parentFragmentManager.isStateSaved) {
                     model.dropLeavePrompt()
                 } else {
-                    model.leaveWithoutSaving()
+                    // The screen's onPause and the closing step still save once more.
+                    model.dropLeavePrompt()
                     leave()
                     return false
                 }
@@ -484,7 +488,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
                 .setTitle(R.string.notes_editor_leave_title)
                 .setMessage(args.getString(ARG_LEAVE_MESSAGE))
                 .setNeutralButton(R.string.notes_held_copy, null)
-                .setNegativeButton(R.string.notes_editor_leave_without_saving) { _, _ -> answer(LeaveAnswer.LEAVE) }
+                .setNegativeButton(R.string.notes_editor_leave_anyway) { _, _ -> answer(LeaveAnswer.LEAVE) }
             if (args.getBoolean(ARG_LEAVE_TRY_AGAIN)) {
                 builder.setPositiveButton(R.string.notes_held_try_again) { _, _ -> answer(LeaveAnswer.TRY_AGAIN) }
             } else {

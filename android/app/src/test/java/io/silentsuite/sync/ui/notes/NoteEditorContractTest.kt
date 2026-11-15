@@ -146,7 +146,13 @@ class NoteEditorContractTest {
         val answered = screen.substringAfter("    internal fun leaveAnswered(").substringBefore("\n    }\n")
         val check = answered.indexOf("if (model.leavePromptAnswered(shownIn, shownNote) == null) {")
         assertTrue("an answer is checked", check > 0)
-        for (act in listOf("copy()", "model.leaveWithoutSaving()")) assertTrue("$act only after the check", answered.indexOf(act) > check)
+        for (act in listOf("copy()", "leave()")) assertTrue("$act only after the check", answered.indexOf(act) > check)
+        // The question never says the text is lost, and the way out is never called Discard: nothing is deleted.
+        val strings = read("src/main/res/values/strings.xml")
+        for (name in listOf("notes_editor_leave_title", "notes_editor_leave_changes", "notes_editor_leave_new_note", "notes_editor_leave_anyway")) {
+            val text = strings.substringAfter("<string name=\"$name\">").substringBefore("</string>")
+            for (banned in listOf("lost", "Discard", "deleted")) assertFalse("$name says $banned: $text", text.contains(banned))
+        }
     }
 
     @Test fun `the editor makes no release, discard, hold or send`() {

@@ -368,19 +368,6 @@ class NoteEditingTest {
         }
     }
 
-    @Test fun `leaving without saving stops the editor, so no later save writes the text it said is lost`() {
-        core.opened("Plan", "First")
-        type(Field.BODY, " typed")
-        saveWith(SaveResult.NotSaved)
-        core.leaveWithoutSaving()
-        assertNull("no save after it", core.beginSave())
-        assertTrue("and the text is still not saved", core.dirty)
-        assertEquals(NoteEditorCore.Mode.STOPPED, core.mode)
-        type(Field.BODY, " after")
-        assertEquals("no typing after it", "First typed", core.body)
-        assertNull("no undo after it", core.undo(Field.BODY))
-    }
-
     @Test fun `an answer to the question before leaving is taken only from this process, for the same note and text, while it is unsaved`() {
         fun holds(madeHere: Boolean = true, askedNote: String? = "n1", askedEdits: Long = 5, shownNote: String? = "n1",
                   note: String? = "n1", edits: Long = 5, unsaved: Boolean = true) =

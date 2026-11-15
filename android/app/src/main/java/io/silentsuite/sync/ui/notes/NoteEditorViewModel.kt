@@ -630,19 +630,9 @@ internal class NoteEditorViewModel(
         leaveGo = false
     }
 
-    /** The question before leaving was put away: Cancel, Try again, or a question that no longer holds. Main thread. */
+    /** The question before leaving was put away: Cancel, Try again, Leave anyway, or a question that no longer holds. Main thread. */
     fun dropLeavePrompt() {
         leavePrompt = null
-    }
-
-    /**
-     * Leave without saving, answered to [leavePromptAnswered]: the editor saves nothing more ([NoteEditorCore.leaveWithoutSaving]),
-     * so neither the screen's onPause nor the closing step writes the text the question said is lost. Main thread.
-     */
-    fun leaveWithoutSaving() {
-        autosave?.cancel()
-        leavePrompt = null
-        core.leaveWithoutSaving()
     }
 
     // ---- closing ----
@@ -651,8 +641,8 @@ internal class NoteEditorViewModel(
         cleared = true
         autosave?.cancel()
         // The last save, the handle's close, and the request a closing editor makes, in one step of the app's. A leave the
-        // user started saved first and asked before leaving with text that is not saved ([requestLeave]); this save is for
-        // a leave the user did not start (the screen finishing for the account), and after Leave without saving it writes nothing.
+        // user started saved first and asked before leaving with text that is not saved ([requestLeave]); this is one more
+        // try after Leave anyway, and the only one for a leave the user did not start (the screen finishing for the account).
         background.launch {
             steps.withLock {
                 saveStep()
