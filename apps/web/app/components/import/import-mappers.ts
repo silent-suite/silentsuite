@@ -19,6 +19,23 @@ export interface ImportEventPayload {
   floating?: true
   /** Present only when a timed TZID DTSTART lies in a DST gap: its original wall clock. */
   startWallClock?: string
+  /** Set only for a provider import unit (see ProviderImportVEvent); a file import leaves these out. */
+  uid?: string
+  unknownProperties?: string[]
+  overrides?: string[][]
+  status?: string
+  transp?: string
+}
+
+/**
+ * A VEvent read from a provider API rather than a file (#48): one whole series or single event.
+ * `sourceKey` names its origin and is also held in `unknownProperties` as an X- property, so
+ * re-imports skip it; `overrides` are its changed occurrences, written in the same item.
+ */
+export type ProviderImportVEvent = VEvent & { sourceKey: string; overrides?: string[][] }
+
+export function isProviderImportVEvent(event: VEvent): event is ProviderImportVEvent {
+  return typeof (event as Partial<ProviderImportVEvent>).sourceKey === 'string'
 }
 
 function addDays(date: Date, days: number): Date {
@@ -86,6 +103,16 @@ export function vEventToImportEvent(
     timezone: isAllDay ? undefined : startTzid,
     ...(!isAllDay && isFloatingICalDateTime(event.dtstart, event.dtstartParams) ? { floating: true as const } : {}),
     ...(startWallClock ? { startWallClock } : {}),
+    // A provider unit keeps its UID, source property, overrides, STATUS and TRANSP.
+    ...(isProviderImportVEvent(event)
+      ? {
+          uid: event.uid,
+          unknownProperties: [...(event.unknownProperties ?? [])],
+          ...(event.overrides ? { overrides: event.overrides.map((block) => [...block]) } : {}),
+          ...(event.status ? { status: event.status } : {}),
+          ...(event.transp ? { transp: event.transp } : {}),
+        }
+      : {}),
   }
 }
 

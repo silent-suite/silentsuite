@@ -396,6 +396,25 @@ describe('CATEGORIES', () => {
     expect(vcard.categories).toBeUndefined();
   });
 
+  it('merges repeated CATEGORIES properties instead of keeping only the last', () => {
+    const raw = [
+      'BEGIN:VCARD',
+      'VERSION:4.0',
+      'UID:vcf-cat-repeat',
+      'FN:Jane Doe',
+      'CATEGORIES:Family',
+      'CATEGORIES:Work,Team\\, West',
+      'CATEGORIES:work,Amis été',
+      'END:VCARD',
+    ].join('\r\n');
+
+    const parsed = parseVCard(raw);
+    expect(parsed.categories).toEqual(['Family', 'Work', 'Team, West', 'Amis été']);
+
+    const reparsed = parseVCard(generateVCard(parsed));
+    expect(reparsed.categories).toEqual(['Family', 'Work', 'Team, West', 'Amis été']);
+  });
+
   it('omits CATEGORIES line when categories is empty or undefined', () => {
     const without: VCard = { uid: 'vcf-cat-omit', fn: 'Jane Doe' };
     expect(generateVCard(without)).not.toContain('CATEGORIES');
