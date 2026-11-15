@@ -417,7 +417,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             SaveResult.Cleared -> R.string.notes_editor_leave_why_cleared
             else -> R.string.notes_editor_leave_why_failed
         })
-        return getString(if (prompt.noteUid == null) R.string.notes_editor_leave_new_note else R.string.notes_editor_leave_changes, why)
+        return getString(if (prompt.newNote) R.string.notes_editor_leave_new_note else R.string.notes_editor_leave_changes, why)
     }
 
     internal enum class LeaveAnswer { COPY, TRY_AGAIN, LEAVE, CANCEL }

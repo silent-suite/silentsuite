@@ -580,9 +580,10 @@ internal class NoteEditorViewModel(
 
     /**
      * One question before leaving, over the text at [edits] ([NoteEditorCore.edits]) of the note [noteUid], null for a
-     * new note no save made yet. [tryAgain]: another save may work. [reason]: the last save's answer, which the question words.
+     * new note whose first save has not started. [tryAgain]: another save may work. [reason]: the last save's answer, which
+     * the question words. [newNote]: nothing of this new note was ever saved here ([NoteEditing.neverSaved]).
      */
-    class LeavePrompt(val edits: Long, val noteUid: String?, val tryAgain: Boolean, val reason: SaveResult?)
+    class LeavePrompt(val edits: Long, val noteUid: String?, val tryAgain: Boolean, val reason: SaveResult?, val newNote: Boolean)
 
     /**
      * [leavePrompt], when an answer from a dialog made in the app process [shownIn] over the note [shownNote] may be acted
@@ -616,7 +617,8 @@ internal class NoteEditorViewModel(
                             // For an account generation that is gone, the screen finishes instead.
                             NoteEditing.Leave.GO -> leaveGo = opened !is Opened.Stale
                             NoteEditing.Leave.ASK_TRY_AGAIN, NoteEditing.Leave.ASK ->
-                                leavePrompt = LeavePrompt(core.edits, noteUid, leave == NoteEditing.Leave.ASK_TRY_AGAIN, core.lastResult)
+                                leavePrompt = LeavePrompt(core.edits, noteUid, leave == NoteEditing.Leave.ASK_TRY_AGAIN, core.lastResult,
+                                    newNote = NoteEditing.neverSaved(creating, core.lastSavedVersion))
                         }
                         updates.value = Unit
                     }

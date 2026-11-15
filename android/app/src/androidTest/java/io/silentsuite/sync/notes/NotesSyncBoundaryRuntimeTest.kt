@@ -3748,7 +3748,7 @@ class NotesSyncBoundaryRuntimeTest {
      * Cancel stays, the toolbar's Up arrow asks again, and Try again while the write still fails asks again. Once the store
      * writes again, Try again saves the text and the screen leaves. In a second round, Leave anyway leaves, and the closing
      * editor's last try keeps the text once the store writes again: the question says the text may not be kept, never that
-     * it is lost.
+     * it is lost. In a third round, the question over a new note whose first write failed speaks of the new note.
      */
     @Test fun leavingWithTextNotSavedOnTheDeviceSavesFirstAndAsksBeforeLeavingWithoutIt() {
         val account = newAccount("gen-editor-leave")
@@ -3763,10 +3763,11 @@ class NotesSyncBoundaryRuntimeTest {
         val probe = MainThreadStoreProbe().apply { install() }
         val failing = AtomicBoolean(false)
         val failed = AtomicInteger()
-        // The write of the note's entry is cut short, as when the device runs out of space: the store's recovery deletes
+        // The write of a note's entry is cut short, as when the device runs out of space: the store's recovery deletes
         // the partial file, so nothing of that save is kept. (An intact file left by a failed rename would be committed.)
+        // The case edits one note at a time, so it fails the write of the note it edits.
         probe.write = { file ->
-            if (failing.get() && file.name == "${note.uid}.note") {
+            if (failing.get() && file.name.endsWith(".note")) {
                 failed.incrementAndGet()
                 File(file.parentFile, file.name + ".new").writeBytes(ByteArray(3))
                 throw IOException("no space left on device")
@@ -3886,6 +3887,28 @@ class NotesSyncBoundaryRuntimeTest {
                 val after = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
                 assertTrue("the closing editor saved once more", after.version > kept.savedVersion)
                 assertEquals("Saved before the write failed, and typed after", decryptThroughStoredCopy(store, after).contentString)
+
+                // Round three: a new note whose first write fails. That save gave it a uid, yet the question says the new
+                // note is not saved; once the store writes again, Try again saves it and the screen leaves.
+                failing.set(true)
+                scenario.onActivity { it.findViewById<View>(R.id.notes_new_note).performClick() }
+                waitUntil("the new note's editor") { onEditor(scenario) { it.editing && it.editorModel.noteUid == null } == true }
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText("A new note the device could not save") }
+                waitUntil("its first save to fail") { onEditor(scenario) { it.editorModel.core.lastResult } == SaveResult.NotSaved }
+                val newUid = checkNotNull(onEditor(scenario) { it.editorModel.noteUid }) { "the failed first save named the note" }
+                scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                waitUntil("the question for the new note") { question(scenario) != null }
+                scenario.onActivity { activity ->
+                    assertEquals("This new note is not saved on this device. The last save did not work. If you leave now, it may " +
+                        "not be kept. Copy it to keep it.", editorOf(activity).leaveDialog!!.findViewById<TextView>(android.R.id.message)!!.text.toString())
+                }
+                failing.set(false)
+                val closingThird = runs.size
+                scenario.onActivity { editorOf(it).leaveDialog!!.getButton(DialogInterface.BUTTON_POSITIVE).performClick() }
+                waitUntil("the note list after the new note saved") { noteList(scenario) != null }
+                val made = (store.read(newUid) as PendingNotesStore.Read.Present).entry
+                assertEquals("A new note the device could not save", decryptThroughStoredCopy(store, made).contentString)
+                awaitClosingRun(identity, runs, closingThird)
             }
             probe.assertNoneOnMain()
         } finally {

@@ -368,6 +368,21 @@ class NoteEditingTest {
         }
     }
 
+    @Test fun `a new note counts as never saved until a save of its editor wrote it, whatever its uid`() {
+        // A new note's first save names its note before the write, which can fail: the uid says nothing about a write.
+        assertTrue("a new note whose first write failed", NoteEditing.neverSaved(creating = true, lastSavedVersion = 0L))
+        assertFalse("a new note a save wrote", NoteEditing.neverSaved(creating = true, lastSavedVersion = 4L))
+        assertFalse("a note that was there before", NoteEditing.neverSaved(creating = false, lastSavedVersion = 0L))
+        core.opened("", "")
+        type(Field.BODY, "New")
+        saveWith(SaveResult.NotSaved)
+        assertTrue("after a failed first save", NoteEditing.neverSaved(creating = true, core.lastSavedVersion))
+        saveWith(SaveResult.Saved(7))
+        type(Field.BODY, "!")
+        saveWith(SaveResult.NotSaved)
+        assertFalse("after a later save failed", NoteEditing.neverSaved(creating = true, core.lastSavedVersion))
+    }
+
     @Test fun `an answer to the question before leaving is taken only from this process, for the same note and text, while it is unsaved`() {
         fun holds(madeHere: Boolean = true, askedNote: String? = "n1", askedEdits: Long = 5, shownNote: String? = "n1",
                   note: String? = "n1", edits: Long = 5, unsaved: Boolean = true) =

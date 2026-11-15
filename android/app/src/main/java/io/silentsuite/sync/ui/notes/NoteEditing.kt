@@ -144,6 +144,13 @@ internal object NoteEditing {
      * [shownNote]; and the editor's text still belongs to that note ([note]), has not changed since ([edits]) and is
      * still not saved on this device ([unsaved]). A new note no save made yet has no uid (null).
      */
+    /**
+     * Whether nothing of the editor's note was ever saved on this device: a new note ([creating]) that no save of this
+     * editor wrote ([NoteEditorCore.lastSavedVersion] still 0). Never decided by the note uid, which a new note's first
+     * save sets before its write, and keeps when that write fails.
+     */
+    fun neverSaved(creating: Boolean, lastSavedVersion: Long): Boolean = creating && lastSavedVersion == 0L
+
     fun leaveAnswerHolds(madeHere: Boolean, askedNote: String?, askedEdits: Long, shownNote: String?,
                          note: String?, edits: Long, unsaved: Boolean): Boolean =
         madeHere && unsaved && askedNote == note && shownNote == note && askedEdits == edits
