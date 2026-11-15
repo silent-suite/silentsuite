@@ -106,9 +106,13 @@ data class NotebookContents(
  * the file cannot be read; a discard is checked against it ([PendingNotesStore.discard]). [held] is the
  * reason for held text, or null for a change whose notebook is read-only, gone or not shown, and for a
  * file that cannot be read. [body] is null when the text cannot be read here; [title] is then null too.
- * [discardConfirmed]: the user confirmed this text for a discard of the whole store that has not finished
- * ([PendingNotesStore.Snapshot.discardConfirmed]); it is never sent. [mayStillSync]: a Notes run can still send
- * this text ([NotesOverlay.mayStillSync]), so it offers Copy only: a discard must never race an upload.
+ * [discardConfirmed]: the store's discard permit names this text, which the user confirmed for a discard of the
+ * whole store that has not finished ([PendingNotesStore.Snapshot.discardConfirmed]); it is never sent.
+ * [permitUnchecked]: the permit could not be read, so the store holds this text back without the user having named
+ * it ([PendingNotesStore.Snapshot.permitUnreadable]). [mayStillSync]: a Notes run can still send this text
+ * ([NotesOverlay.mayStillSync]). [digest] names the text shown ([PendingNotesStore.digestOf]), for a discard to
+ * check. [damaged]: for a file that cannot be read, its whole-file checksum fails
+ * ([PendingNotesStore.Read.Unreadable.damaged]).
  */
 internal data class HeldTextRow(
     val file: String,
@@ -121,15 +125,31 @@ internal data class HeldTextRow(
     val body: String?,
     val discardConfirmed: Boolean = false,
     val mayStillSync: Boolean = false,
+    val digest: String? = null,
+    val damaged: Boolean = false,
+    val permitUnchecked: Boolean = false,
 ) {
-    /** Try again ([PendingNotesStore.release]) applies only to held text that no unfinished discard covers. */
-    val canTryAgain: Boolean get() = held != null && version != null && !discardConfirmed
+    /** Copy needs the text, decrypted here. */
+    val canCopy: Boolean get() = body != null
 
     /**
-     * One note's file can go on its own, unless a run can still send it; any other file goes only with the whole
-     * store, in Settings.
+     * Try again ([PendingNotesStore.release]) applies only to held text that no unfinished discard covers, and that
+     * the permit does not hold back.
      */
-    val canDiscard: Boolean get() = noteUid != null && file == "$noteUid.note" && !mayStillSync
+    val canTryAgain: Boolean get() = held != null && version != null && !discardConfirmed && !permitUnchecked
+
+    /**
+     * One note's own file goes on its own only when the user can see what goes and no run will ever send it, the rule
+     * the store enforces again under its lock ([PendingNotesStore.discard]): readable text that is held, or that the
+     * permit names or holds back, or a file whose whole-file checksum fails. A change a run may send offers Copy only
+     * until a run holds it; text that cannot be shown right now, a file that cannot be read for another reason, and
+     * any other file go only with the whole store, in Settings.
+     */
+    val canDiscard: Boolean get() {
+        val uid = noteUid ?: return false
+        if (file != "$uid.note" || !PendingNotesStore.isNoteUid(uid)) return false
+        return if (version == null) damaged else body != null && digest != null && (held != null || discardConfirmed || permitUnchecked)
+    }
 }
 
 /**
@@ -493,7 +513,7 @@ internal object NotesLoader {
                 is PendingNotesStore.Read.Present -> read.entry
                 is PendingNotesStore.Read.Unreadable -> {
                     rows += HeldTextRow(read.file, header.noteUid, read.notebookUid ?: header.notebookUid,
-                        plan.names[header.notebookUid], null, null, null, null)
+                        plan.names[header.notebookUid], null, null, null, null, damaged = read.damaged)
                     continue
                 }
                 // Gone since the listing: nothing to show.
@@ -507,9 +527,12 @@ internal object NotesLoader {
             // confirmation holds only for the version it saw.
             val confirmed = entry.noteUid in snapshot.discardConfirmed && entry.version == header.version
             rows += HeldTextRow("${entry.noteUid}.note", entry.noteUid, entry.notebookUid, plan.names[entry.notebookUid],
-                entry.version, entry.held?.reason, text?.title, text?.body, discardConfirmed = confirmed,
+                entry.version, entry.held?.reason, text?.title, text?.body,
+                discardConfirmed = confirmed && !snapshot.permitUnreadable,
                 mayStillSync = NotesOverlay.mayStillSync(entry.state, entry.noteUid, entry.notebookUid, plan.writable,
-                    if (confirmed) setOf(entry.noteUid) else emptySet()))
+                    if (confirmed) setOf(entry.noteUid) else emptySet()),
+                digest = PendingNotesStore.digestOf(entry.blob),
+                permitUnchecked = confirmed && snapshot.permitUnreadable)
         }
         // Entry files that cannot be read, one row per note as the list counts them ([NotesOverlay.unreadableEntries]).
         // The row names the note's own file when that is one of them, since only that file can go on its own.
@@ -517,7 +540,8 @@ internal object NotesLoader {
         for ((uid, notebookUid) in notebooks) {
             val files = snapshot.unreadable.map { it.file }.filter { NotesOverlay.entryUid(it) == uid }
             val file = files.firstOrNull { it == "$uid.note" } ?: files.first()
-            rows += HeldTextRow(file, uid, notebookUid, notebookUid?.let { plan.names[it] }, null, null, null, null)
+            val damaged = snapshot.unreadable.any { it.file == file && it.damaged }
+            rows += HeldTextRow(file, uid, notebookUid, notebookUid?.let { plan.names[it] }, null, null, null, null, damaged = damaged)
         }
         // Other files that cannot be read name no note: one row each, which only the whole store's discard can clear.
         for (file in NotesOverlay.unreadableOthers(snapshot.unreadable)) {

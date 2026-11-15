@@ -813,7 +813,13 @@
     <string name="notes_held_reason_unreadable_metadata">The copy on the server has details this app cannot update without changing them.</string>
     <string name="notes_held_reason_read_back_failed">The note made for sending did not check out, so it was not sent.</string>
     <string name="notes_held_reason_not_built">It could not be made into a note to send.</string>
-    <string name="notes_held_not_writable">Its notebook is read-only or gone. It will not sync from there.</string>
+    <string name="notes_held_not_writable">Its notebook is read-only or gone, so it will not sync from there. Discard is offered once the next sync sets it aside.</string>
+    <string name="notes_held_unavailable_title">This text can\'t be shown right now</string>
+    <string name="notes_held_unavailable_reason">Try again later, or discard all of this account\'s unsynced Notes in Settings, Unsynced Notes.</string>
+    <string name="notes_held_permit_unchecked">A discard of all unsynced Notes could not be checked, so this text is set aside for now. Settings, Unsynced Notes shows more.</string>
+    <string name="notes_held_pending_unreadable">Changes on this device could not be read, so nothing can be listed here right now.</string>
+    <string name="notes_held_pending_discard_stopped">A discard of all unsynced Notes did not finish. Finish it in Settings, Unsynced Notes.</string>
+    <string name="notes_held_load_failed">Unsynced text could not be loaded. This screen tries again after the next sync.</string>
     <string name="notes_held_text_unavailable">The text cannot be shown here.</string>
     <string name="notes_held_unreadable">This text can\'t be read.</string>
     <string name="notes_held_unreadable_whole_store">It can only be discarded with all of this account\'s unsynced Notes, in Settings, Unsynced Notes.</string>
@@ -825,10 +831,11 @@
     <string name="notes_held_discard_unreadable_text">This text can\'t be read. It will be deleted from this device. This cannot be undone.</string>
     <string name="notes_held_discard_changed">This text changed since you were asked. Review it, then discard it again if you want to.</string>
     <string name="notes_held_discarded">Deleted from this device.</string>
-    <string name="notes_held_discard_missing">This text was no longer on this screen, so nothing was deleted. It may have synced, or moved to a copy.</string>
+    <string name="notes_held_discard_missing">This text is no longer on this device, so nothing was deleted. It may have synced, moved to a copy, or been discarded with all unsynced Notes.</string>
     <string name="notes_held_may_still_sync">This text may still sync, so it can\'t be discarded here. You can copy it.</string>
     <string name="notes_held_may_still_sync_unreadable">This text may still sync, so it can\'t be discarded here.</string>
-    <string name="notes_held_discard_not_offered">This text may sync now, so nothing was deleted.</string>
+    <string name="notes_held_discard_may_sync">This text may still sync, so nothing was deleted.</string>
+    <string name="notes_held_discard_unsure">This text may or may not have been deleted. If it is still listed, discard it again.</string>
     <string name="notes_held_store_discarded">All of this account\'s unsynced Notes were discarded, so this text is gone.</string>
     <string name="notes_held_discard_failed">The discard did not finish. The text is still on this device.</string>
     <!-- Sign-out while Notes changes have not synced: the count, the separate discard confirmation, what Sync now says, and the message when the account stays after its Notes changes were cleared, a clear of them stopped, or nothing was deleted because the store could not be listed. -->

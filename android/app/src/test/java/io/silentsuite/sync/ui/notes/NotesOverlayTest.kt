@@ -253,12 +253,62 @@ class NotesOverlayTest {
         assertFalse("a change in a read-only or gone notebook", may(State.UPSERT, "gone", writable))
         assertFalse("text an unfinished discard covers", may(State.UPSERT, "own", writable, confirmed = setOf("a")))
 
-        fun row(mayStillSync: Boolean, file: String = "a.note", noteUid: String? = "a") =
-            HeldTextRow(file, noteUid, "own", "Work", 3, null, "T", "text", mayStillSync = mayStillSync)
-        assertFalse("text a run may still send offers Copy only", row(mayStillSync = true).canDiscard)
-        assertTrue(row(mayStillSync = false).canDiscard)
-        assertFalse("a file that is not the note's own goes only with the whole store", row(false, file = "a.note.conflict").canDiscard)
-        assertFalse(row(false, file = "x.tmp", noteUid = null).canDiscard)
+    }
+
+    private val rejected = io.silentsuite.sync.notes.edit.HeldReason.REJECTED
+
+    /** A readable row of held text, which offers Discard, varied by each case below. */
+    private fun heldRow(
+        held: io.silentsuite.sync.notes.edit.HeldReason? = rejected,
+        body: String? = "text",
+        digest: String? = "d1",
+        mayStillSync: Boolean = false,
+        confirmed: Boolean = false,
+        unchecked: Boolean = false,
+        file: String = "a.note",
+        noteUid: String? = "a",
+    ) = HeldTextRow(file, noteUid, "own", "Work", 3, held, body?.let { "T" }, body, discardConfirmed = confirmed,
+        mayStillSync = mayStillSync, digest = digest, permitUnchecked = unchecked)
+
+    private fun unreadableRow(damaged: Boolean, file: String = "a.note", noteUid: String? = "a") =
+        HeldTextRow(file, noteUid, null, null, null, null, null, null, damaged = damaged)
+
+    @Test fun `Discard is offered only for text the user can see that no run will send, or for a damaged file`() {
+        assertTrue("held text, readable", heldRow().canDiscard)
+        assertFalse("held text that cannot be shown right now", heldRow(body = null).canDiscard)
+        assertFalse("a readable row without the digest of its text", heldRow(digest = null).canDiscard)
+        assertFalse("a change a run may send", heldRow(held = null, mayStillSync = true).canDiscard)
+        assertFalse("a change in a read-only notebook, until a run holds it", heldRow(held = null).canDiscard)
+        assertTrue("a change the permit names", heldRow(held = null, confirmed = true).canDiscard)
+        assertTrue("a change the permit holds back while it cannot be read", heldRow(held = null, unchecked = true).canDiscard)
+        assertFalse("a file that is not the note's own", heldRow(file = "a.note.conflict").canDiscard)
+        assertFalse("a note uid this store does not keep", heldRow(file = "a b.note", noteUid = "a b").canDiscard)
+        assertTrue("a damaged file", unreadableRow(damaged = true).canDiscard)
+        assertFalse("a file that cannot be read for another reason", unreadableRow(damaged = false).canDiscard)
+        assertFalse("a file that names no note", unreadableRow(damaged = true, file = "x.tmp", noteUid = null).canDiscard)
+    }
+
+    @Test fun `each row says why it is there, and offers Copy and Try again only where they work`() {
+        val r = io.silentsuite.sync.R.string::class.java
+        fun name(id: Int?) = id?.let { wanted -> r.fields.first { it.getInt(null) == wanted }.name }
+        assertEquals("notes_held_reason_rejected", name(HeldTextWording.reason(heldRow())))
+        assertEquals("notes_held_unavailable_title", name(HeldTextWording.title(heldRow(body = null))))
+        assertEquals("notes_held_unavailable_reason", name(HeldTextWording.reason(heldRow(body = null))))
+        assertEquals("notes_held_may_still_sync", name(HeldTextWording.reason(heldRow(held = null, mayStillSync = true))))
+        assertEquals("notes_held_may_still_sync_unreadable", name(HeldTextWording.reason(heldRow(held = null, mayStillSync = true, body = null))))
+        assertEquals("notes_held_not_writable", name(HeldTextWording.reason(heldRow(held = null))))
+        assertEquals("notes_held_discard_confirmed", name(HeldTextWording.reason(heldRow(confirmed = true))))
+        assertEquals("the permit could not be read: no word of the user's choice",
+            "notes_held_permit_unchecked", name(HeldTextWording.reason(heldRow(unchecked = true))))
+        assertEquals("notes_held_unreadable", name(HeldTextWording.title(unreadableRow(damaged = true))))
+        assertNull(HeldTextWording.reason(unreadableRow(damaged = true)))
+        assertEquals("notes_held_unreadable_whole_store", name(HeldTextWording.reason(unreadableRow(damaged = false))))
+        assertNull("a readable row shows its own title", HeldTextWording.title(heldRow()))
+        assertTrue("a readable change a run may send offers Copy", heldRow(held = null, mayStillSync = true).canCopy)
+        assertFalse(heldRow(body = null).canCopy)
+        assertTrue(heldRow().canTryAgain)
+        assertFalse("not while a discard covers it", heldRow(confirmed = true).canTryAgain)
+        assertFalse("not while the permit holds it back", heldRow(unchecked = true).canTryAgain)
     }
 
     // ---- the viewer ----

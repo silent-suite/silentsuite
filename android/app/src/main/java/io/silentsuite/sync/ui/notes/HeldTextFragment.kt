@@ -21,7 +21,6 @@ import io.silentsuite.sync.R
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
-import io.silentsuite.sync.notes.edit.HeldReason
 import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
@@ -46,6 +45,13 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
     /** Why the local changes could not be shown, as last rendered; observation point for runtime tests. */
     internal var renderedPending: PendingUnavailable? = null
         private set
+
+    /** The notice line as last shown, null when none shows; observation point for runtime tests. */
+    internal var renderedNotice: String? = null
+        private set
+
+    /** Set while a Try again or a Discard runs, so a second tap starts nothing. */
+    private var actionRunning = false
 
     /** The rows as last rendered, null before the first load; observation point for runtime tests. */
     internal var renderedRows: List<HeldTextRow>? = null
@@ -99,50 +105,61 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
             val current = host() ?: return@launch
             when (result) {
                 is NotesLoad.Stale -> current.finish()
-                // The rows already shown stay; nothing on them is acted on without a store check.
-                is NotesLoad.Failed -> Toast.makeText(current, R.string.notes_loading_failed, Toast.LENGTH_LONG).show()
+                // The rows already shown stay, and nothing on them is acted on without a store check. The failure is
+                // a line that stays until a load works, not a message repeated after every run.
+                is NotesLoad.Failed -> showNotice(view, getString(R.string.notes_held_load_failed))
                 is NotesLoad.Loaded -> if (current.exactAccountStillCurrent()) render(view, result.value) else current.finish()
             }
+        }
+    }
+
+    private fun showNotice(view: View, notice: String?) {
+        renderedNotice = notice
+        view.findViewById<TextView>(R.id.held_pending).apply {
+            text = notice
+            visibility = if (notice == null) View.GONE else View.VISIBLE
         }
     }
 
     private fun render(view: View, held: HeldTexts) {
         renderedRows = held.rows
         renderedPending = held.pending
-        view.findViewById<View>(R.id.held_notebooks_failed).visibility = if (held.notebooksFailed) View.VISIBLE else View.GONE
-        view.findViewById<TextView>(R.id.held_pending).apply {
-            val notice = NoteListFragment.pendingNotice(view.context, held.pending)
-            text = notice
-            visibility = if (notice == null) View.GONE else View.VISIBLE
-        }
+        // While the local changes cannot be read at all, nothing is listed, so the notebooks' state says nothing.
+        view.findViewById<View>(R.id.held_notebooks_failed).visibility =
+            if (held.notebooksFailed && held.pending == null) View.VISIBLE else View.GONE
+        showNotice(view, when (held.pending) {
+            null -> null
+            PendingUnavailable.UNREADABLE -> getString(R.string.notes_held_pending_unreadable)
+            PendingUnavailable.DISCARD_STOPPED -> getString(R.string.notes_held_pending_discard_stopped)
+        })
         // Nothing to show is said only when the changes were read.
         view.findViewById<View>(R.id.held_empty).visibility =
             if (held.rows.isEmpty() && held.pending == null) View.VISIBLE else View.GONE
+        // A release withdraws the store's discard permit for every note, so while any row is covered by it, Try
+        // again would release those too: it is offered once that discard is finished or gone.
+        val covered = held.rows.any { it.discardConfirmed || it.permitUnchecked }
         val container = view.findViewById<LinearLayout>(R.id.held_rows)
         container.removeAllViews()
         val inflater = LayoutInflater.from(view.context)
-        for (row in held.rows) container.addView(card(inflater, container, row))
+        for (row in held.rows) container.addView(card(inflater, container, row, offerTryAgain = !covered))
     }
 
-    private fun card(inflater: LayoutInflater, parent: ViewGroup, row: HeldTextRow): View {
+    private fun card(inflater: LayoutInflater, parent: ViewGroup, row: HeldTextRow, offerTryAgain: Boolean): View {
         val card = inflater.inflate(R.layout.held_text_item, parent, false)
-        val readable = row.body != null
-        card.findViewById<TextView>(R.id.held_title).text = when {
-            row.version == null -> getString(R.string.notes_held_unreadable)
-            else -> row.title?.ifBlank { null } ?: getString(R.string.notes_untitled)
-        }
+        card.findViewById<TextView>(R.id.held_title).text =
+            HeldTextWording.title(row)?.let { getString(it) } ?: row.title?.ifBlank { null } ?: getString(R.string.notes_untitled)
         card.findViewById<TextView>(R.id.held_reason).text = reasonOf(row)
         card.findViewById<TextView>(R.id.held_body).apply {
             text = row.body ?: getString(R.string.notes_held_text_unavailable)
             visibility = if (row.version == null) View.GONE else View.VISIBLE
         }
         card.findViewById<View>(R.id.held_copy).apply {
-            visibility = if (readable) View.VISIBLE else View.GONE
+            visibility = if (row.canCopy) View.VISIBLE else View.GONE
             setOnClickListener { copy(row) }
         }
         card.findViewById<View>(R.id.held_try_again).apply {
-            visibility = if (row.canTryAgain) View.VISIBLE else View.GONE
-            setOnClickListener { tryAgain(row) }
+            visibility = if (row.canTryAgain && offerTryAgain) View.VISIBLE else View.GONE
+            setOnClickListener { button -> tryAgain(row, button) }
         }
         card.findViewById<View>(R.id.held_discard).apply {
             visibility = if (row.canDiscard) View.VISIBLE else View.GONE
@@ -152,27 +169,9 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
     }
 
     private fun reasonOf(row: HeldTextRow): String {
-        val why = when {
-            row.version == null && !row.canDiscard -> getString(R.string.notes_held_unreadable_whole_store)
-            row.version == null -> null
-            row.discardConfirmed -> getString(R.string.notes_held_discard_confirmed)
-            row.mayStillSync -> getString(if (row.body != null) R.string.notes_held_may_still_sync else R.string.notes_held_may_still_sync_unreadable)
-            row.held == null -> getString(R.string.notes_held_not_writable)
-            else -> getString(reasonText(row.held))
-        }
+        val why = HeldTextWording.reason(row)?.let { getString(it) }
         val where = row.notebookName?.ifBlank { null }?.let { getString(R.string.notes_held_notebook, it) }
         return listOfNotNull(why, where).joinToString(" ")
-    }
-
-    private fun reasonText(reason: HeldReason): Int = when (reason) {
-        HeldReason.READ_ONLY -> R.string.notes_held_reason_read_only
-        HeldReason.LOST_ACCESS -> R.string.notes_held_reason_lost_access
-        HeldReason.NOTEBOOK_DELETED -> R.string.notes_held_reason_notebook_deleted
-        HeldReason.REJECTED -> R.string.notes_held_reason_rejected
-        HeldReason.REPEATED_CONFLICT -> R.string.notes_held_reason_repeated_conflict
-        HeldReason.UNREADABLE_METADATA -> R.string.notes_held_reason_unreadable_metadata
-        HeldReason.READ_BACK_FAILED -> R.string.notes_held_reason_read_back_failed
-        HeldReason.NOT_BUILT -> R.string.notes_held_reason_not_built
     }
 
     private fun copy(row: HeldTextRow) {
@@ -183,40 +182,55 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) Toast.makeText(context, R.string.notes_held_copied, Toast.LENGTH_SHORT).show()
     }
 
-    private fun tryAgain(row: HeldTextRow) {
+    /**
+     * Try again: releases the held text, and once the release took, asks for one Notes run in the same step off the
+     * main thread, so the request is not lost when the screen goes away meanwhile. The button stays disabled until
+     * the screen shows the result, so a second tap cannot release again and give a contradictory message.
+     */
+    private fun tryAgain(row: HeldTextRow, button: View) {
         val host = host() ?: return
         val uid = row.noteUid ?: return
+        if (actionRunning) return
         if (!host.exactAccountStillCurrent()) { host.finish(); return }
         val appContext = host.applicationContext
+        actionRunning = true
+        button.isEnabled = false
         viewLifecycleOwner.lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) { withStore(appContext) { it.release(uid) } }
-            val current = host() ?: return@launch
-            when (outcome) {
-                StoreCall.Stale -> { current.finish(); return@launch }
-                StoreCall.Stopped -> Toast.makeText(current, R.string.notes_pending_discard_stopped, Toast.LENGTH_LONG).show()
-                StoreCall.StoreDiscarded -> Toast.makeText(current, R.string.notes_held_store_discarded, Toast.LENGTH_LONG).show()
-                StoreCall.Failed -> Toast.makeText(current, R.string.notes_held_failed, Toast.LENGTH_LONG).show()
-                is StoreCall.Done -> if (outcome.value) {
-                    if (!current.exactAccountStillCurrent()) { current.finish(); return@launch }
-                    // The user just asked to send it: a user gesture, so the run follows the Sync now network
-                    // setting, as pull to refresh does. This is the screen's only request.
-                    NotesSyncCoordinator.request(appContext, account, creationId, NotesSyncPolicy.Trigger.MANUAL)
-                    Toast.makeText(current, R.string.notes_held_try_again_done, Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(current, R.string.notes_held_try_again_gone, Toast.LENGTH_LONG).show()
+            try {
+                val outcome = withContext(Dispatchers.IO) {
+                    withStore(appContext) { store ->
+                        store.release(uid).also { released ->
+                            // The user just asked to send it: a user gesture, so the run follows the Sync now network
+                            // setting, as pull to refresh does. This is the screen's only request.
+                            if (released) NotesSyncCoordinator.request(appContext, account, creationId, NotesSyncPolicy.Trigger.MANUAL)
+                        }
+                    }
                 }
+                val current = host() ?: return@launch
+                when (outcome) {
+                    StoreCall.Stale -> { current.finish(); return@launch }
+                    StoreCall.Stopped -> Toast.makeText(current, R.string.notes_held_pending_discard_stopped, Toast.LENGTH_LONG).show()
+                    StoreCall.StoreDiscarded -> Toast.makeText(current, R.string.notes_held_store_discarded, Toast.LENGTH_LONG).show()
+                    StoreCall.Failed, StoreCall.Unsure -> Toast.makeText(current, R.string.notes_held_failed, Toast.LENGTH_LONG).show()
+                    is StoreCall.Done -> Toast.makeText(current,
+                        if (outcome.value) R.string.notes_held_try_again_done else R.string.notes_held_try_again_gone, Toast.LENGTH_LONG).show()
+                }
+                reload()
+            } finally {
+                actionRunning = false
             }
-            reload()
         }
     }
 
     /**
      * Asks before a discard, in a dialog the platform brings back after a rotation or a recreation. It carries the
-     * note and the version it showed, and the discard is checked against that version ([PendingNotesStore.discard]),
-     * so a confirmation that outlived the rows it was opened from still deletes only the text it showed.
+     * note, the version it showed and a digest of the text ([PendingNotesStore.digestOf]); the store checks both, and
+     * that no run will send the text, under its lock ([PendingNotesStore.discard]), so a confirmation that outlived
+     * the rows it was opened from still deletes only the text it showed.
      */
     private fun confirmDiscard(row: HeldTextRow) {
         val uid = row.noteUid ?: return
+        if (actionRunning) return
         val open = childFragmentManager.findFragmentByTag(DISCARD_TAG) as? DiscardConfirmation
         if (open != null && !open.ended) return
         if (childFragmentManager.isStateSaved) return
@@ -224,6 +238,7 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
             arguments = Bundle().apply {
                 putString(ARG_NOTE, uid)
                 row.version?.let { putLong(ARG_VERSION, it) }
+                row.digest?.let { putString(ARG_DIGEST, it) }
             }
         }.show(childFragmentManager, DISCARD_TAG)
     }
@@ -238,73 +253,51 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
             val args = requireArguments()
             val uid = requireNotNull(args.getString(ARG_NOTE))
             val shown = if (args.containsKey(ARG_VERSION)) args.getLong(ARG_VERSION) else null
+            val digest = args.getString(ARG_DIGEST)
             return MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.notes_held_discard_title)
                 .setMessage(if (shown == null) R.string.notes_held_discard_unreadable_text else R.string.notes_held_discard_text)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.notes_discard) { _, _ ->
                     ended = true
-                    (parentFragment as? HeldTextFragment)?.discardNote(uid, shown)
+                    (parentFragment as? HeldTextFragment)?.discardNote(uid, shown, digest)
                 }
                 .create()
         }
     }
 
-    private fun discardNote(uid: String, shown: Long?) {
+    private fun discardNote(uid: String, shown: Long?, digest: String?) {
         val host = host() ?: return
         if (!host.exactAccountStillCurrent()) { host.finish(); return }
         val appContext = host.applicationContext
+        actionRunning = true
         viewLifecycleOwner.lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                // The confirmation can outlive the rows it was opened from (it survives a recreation), and a notebook
-                // can accept writes again meanwhile: text a run may now send is not discarded. A newer version of the
-                // text is the store's own check (Changed below).
-                when (val now = NotesLoader.heldText(appContext, account, creationId)) {
-                    NotesLoad.Stale -> StoreCall.Stale
-                    NotesLoad.Failed -> StoreCall.Failed
-                    is NotesLoad.Loaded -> {
-                        val row = now.value.rows.firstOrNull { it.noteUid == uid }
-                        when {
-                            row?.canDiscard == true -> withStore(appContext) { it.discard(uid, shown) }
-                            row != null -> null
-                            // Not listed any more: sent, moved to a copy, or now waiting on its notebook's row, where a
-                            // run sends it. Only the first two are gone; text that is still there is not discarded.
-                            else -> when (val read = withStore(appContext) { it.read(uid) }) {
-                                is StoreCall.Done ->
-                                    if (read.value == PendingNotesStore.Read.Missing) StoreCall.Done(PendingNotesStore.NoteDiscard.Missing) else null
-                                StoreCall.Stale -> StoreCall.Stale
-                                StoreCall.Failed -> StoreCall.Failed
-                                StoreCall.Stopped -> StoreCall.Stopped
-                                StoreCall.StoreDiscarded -> StoreCall.StoreDiscarded
-                            }
-                        }
+            try {
+                val outcome = withContext(Dispatchers.IO) { withStore(appContext) { it.discard(uid, shown, digest) } }
+                val current = host() ?: return@launch
+                val message = when (outcome) {
+                    StoreCall.Stale -> { current.finish(); return@launch }
+                    StoreCall.Stopped -> R.string.notes_held_pending_discard_stopped
+                    StoreCall.StoreDiscarded -> R.string.notes_held_store_discarded
+                    // The removal went through, but whether it lasts a power loss could not be made sure of.
+                    StoreCall.Unsure -> R.string.notes_held_discard_unsure
+                    // The discard did not finish, for example a conflict copy whose original could not be removed.
+                    StoreCall.Failed -> R.string.notes_held_discard_failed
+                    is StoreCall.Done -> when (outcome.value) {
+                        PendingNotesStore.NoteDiscard.Done -> R.string.notes_held_discarded
+                        // Not there any more: sent, moved to a copy, or discarded with all unsynced Notes.
+                        PendingNotesStore.NoteDiscard.Missing -> R.string.notes_held_discard_missing
+                        // Newer text than the confirmation showed: it stays, and the screen shows it to be asked again.
+                        is PendingNotesStore.NoteDiscard.Changed -> R.string.notes_held_discard_changed
+                        // A run may send it now, for example after its notebook accepts writes again: it stays.
+                        is PendingNotesStore.NoteDiscard.MaySync -> R.string.notes_held_discard_may_sync
                     }
                 }
+                Toast.makeText(current, message, Toast.LENGTH_LONG).show()
+                reload()
+            } finally {
+                actionRunning = false
             }
-            val current = host() ?: return@launch
-            when (outcome) {
-                null -> Toast.makeText(current, R.string.notes_held_discard_not_offered, Toast.LENGTH_LONG).show()
-                StoreCall.Stale -> { current.finish(); return@launch }
-                StoreCall.Stopped -> Toast.makeText(current, R.string.notes_pending_discard_stopped, Toast.LENGTH_LONG).show()
-                StoreCall.StoreDiscarded -> Toast.makeText(current, R.string.notes_held_store_discarded, Toast.LENGTH_LONG).show()
-                // The discard did not finish, for example a conflict copy whose original could not be removed. The
-                // text is still here; the reload shows what is left.
-                StoreCall.Failed -> Toast.makeText(current, R.string.notes_held_discard_failed, Toast.LENGTH_LONG).show()
-                is StoreCall.Done -> when (outcome.value) {
-                    PendingNotesStore.NoteDiscard.Done ->
-                        Toast.makeText(current, R.string.notes_held_discarded, Toast.LENGTH_SHORT).show()
-                    // Gone before the tap: sent by a run, or moved to a conflict copy. Nothing was deleted here.
-                    PendingNotesStore.NoteDiscard.Missing ->
-                        Toast.makeText(current, R.string.notes_held_discard_missing, Toast.LENGTH_LONG).show()
-                    // Newer text than the confirmation showed: it stays, and the screen shows it to be asked again.
-                    is PendingNotesStore.NoteDiscard.Changed ->
-                        Toast.makeText(current, R.string.notes_held_discard_changed, Toast.LENGTH_LONG).show()
-                    // A run may send it now: it stays.
-                    is PendingNotesStore.NoteDiscard.MaySync ->
-                        Toast.makeText(current, R.string.notes_held_discard_not_offered, Toast.LENGTH_LONG).show()
-                }
-            }
-            reload()
         }
     }
 
@@ -318,6 +311,9 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
 
         /** A discard of the whole store finished first: the text this screen showed is gone, and the reload shows that. */
         object StoreDiscarded : StoreCall<Nothing>()
+
+        /** A removal went through but could not be synced ([PendingNotesStore.RemovalNotSynced]). */
+        object Unsure : StoreCall<Nothing>()
     }
 
     /**
@@ -341,6 +337,8 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
                 // A discard of the whole store finished: nothing is left here to act on.
                 StoreCall.StoreDiscarded
             }
+        } catch (_: PendingNotesStore.RemovalNotSynced) {
+            if (current()) StoreCall.Unsure else StoreCall.Stale
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Logger.log.warning("An Unsynced text action did not finish: ${e.javaClass.name}")
@@ -353,6 +351,7 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
         private const val ARG_CREATION_ID = "notes.creationId"
         private const val ARG_NOTE = "notes.held.discard.note"
         private const val ARG_VERSION = "notes.held.discard.version"
+        private const val ARG_DIGEST = "notes.held.discard.digest"
         private const val DISCARD_TAG = "notes.held.discard"
 
         fun newInstance(account: Account, creationId: String) = HeldTextFragment().apply {

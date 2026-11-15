@@ -6454,8 +6454,9 @@ class PendingNotesStoreTest {
             }.toList()
         val held = "io/silentsuite/sync/ui/notes/HeldTextFragment.kt"
         assertEquals(listOf(held, held), found.map { it.first })
-        assertEquals("one Try again", 1, found.count { it.second.contains("it.release(uid)") })
-        assertEquals("one discard, checked against the version shown", 1, found.count { it.second.contains("it.discard(uid, shown)") })
+        assertEquals("one Try again", 1, found.count { it.second.contains("store.release(uid)") })
+        assertEquals("one discard, checked against the version and the text shown", 1,
+            found.count { it.second.contains("it.discard(uid, shown, digest)") })
     }
 
     @Test fun `no production code saves text into the store yet`() {
