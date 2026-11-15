@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Rebuild the current Conscrypt release with Android NDK r28. The upstream
-# 2.6.3 AAR records NDK r27d even though it carries the manual 16 KB linker
-# flags, which leaves Google Play's old-NDK compatibility warning unresolved.
+# 2.9.0 build still declares NDK r27d even though it carries the manual 16 KB
+# linker flags, which leaves Google Play's old-NDK compatibility warning
+# unresolved.
 #
 # The build also has to be byte-reproducible in an environment that is not this
 # one: BoringSSL embeds 201 __FILE__ strings in libconscrypt_jni.so, and an
@@ -29,14 +30,16 @@ set -euo pipefail
 # (android/scripts/package-native-debug-symbols.py), so nothing consumes the
 # information being dropped.
 CONSCRYPT_REPOSITORY="https://github.com/google/conscrypt.git"
-CONSCRYPT_COMMIT="657e1c64c46961bcc48e7302e42ebc02d6632645"
-CONSCRYPT_VERSION="2.6.3"
+# Tag 2.9.0 (4 November 2026). It adds the updated SPKI blocklist for the
+# compromised eMudhra intermediate CAs on unbundled Android.
+CONSCRYPT_COMMIT="810e01652955283845626b5d188a2c67767f6a41"
+CONSCRYPT_VERSION="2.9.0"
 BORINGSSL_REPOSITORY="https://github.com/google/boringssl.git"
-# Exact revision embedded in the published Conscrypt 2.6.3 AAR.
-BORINGSSL_COMMIT="3adc3d1aba162a578e2547f329fcce8659b8e89c"
+# Exact revision embedded in the published Conscrypt 2.9.0 AAR.
+BORINGSSL_COMMIT="427ec40cc8edc545253289232e885708c409e5ea"
 ANDROID_NDK_VERSION="28.2.13676358"
-OUTPUT_AAR="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar"
-OUTPUT_POM="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.pom"
+OUTPUT_AAR="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.9.0-r28/conscrypt-android-2.9.0-r28.aar"
+OUTPUT_POM="build/conscrypt-m2/org/conscrypt/conscrypt-android/2.9.0-r28/conscrypt-android-2.9.0-r28.pom"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=android/scripts/reproducible-build-contract.sh
@@ -124,13 +127,15 @@ for relative, old, new in (
 for path, text in java_toolchain_patches:
     path.write_text(text, encoding="utf-8")
 
+# The release tag already declares its own version; confirm it rather than
+# rewrite it, so a moved pin cannot build one release under another's name.
 root_gradle = root / "build.gradle"
 root_text = root_gradle.read_text(encoding="utf-8")
-old_version = 'version = "2.6-SNAPSHOT"'
-new_version = f'version = "{version}"'
-if root_text.count(old_version) != 1:
-    raise SystemExit(f"error: expected exactly one upstream version declaration {old_version!r}")
-root_gradle.write_text(root_text.replace(old_version, new_version), encoding="utf-8")
+expected_version = f'version = "{version}"'
+if root_text.count(expected_version) != 1:
+    raise SystemExit(
+        f"error: expected exactly one upstream version declaration {expected_version!r}"
+    )
 
 android_gradle = root / "android/build.gradle"
 android_text = android_gradle.read_text(encoding="utf-8")
@@ -352,7 +357,7 @@ pom.write_text(
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.conscrypt</groupId>
   <artifactId>conscrypt-android</artifactId>
-  <version>2.6.3-r28</version>
+  <version>2.9.0-r28</version>
   <packaging>aar</packaging>
 </project>
 """,

@@ -433,7 +433,18 @@
     <string name="import_dialog_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d</string>
     <string name="import_dialog_partial_success">Processed %1$d entries.\nAdded: %2$d\nChanged: %3$d\nSkipped: %4$d\nFailed: %5$d\n\nSome entries could not be imported.</string>
     <string name="import_permission_required">Reading storage permission is required for import.</string>
-    <string name="import_account_top_notice">Please choose an account to import all of its entries from.</string>
+    <string name="import_account_top_notice">Choose what to copy into this collection. Only accounts that share their data with Android are listed, so some setups, such as some Outlook accounts, may be missing.</string>
+    <string name="import_device_permission_calendar">To copy events from another account on this phone, SilentSuite needs to read and write calendars.</string>
+    <string name="import_device_permission_contacts">To copy contacts from another account on this phone, SilentSuite needs to read and write contacts.</string>
+    <string name="import_device_permission_settings">Android won\'t ask again. Allow the permission in SilentSuite\'s app settings, then come back.</string>
+    <string name="import_device_permission_open_settings">Open settings</string>
+    <string name="import_device_access_missing">SilentSuite no longer has access. Go back and choose this option again to allow it.</string>
+    <string name="import_device_access_removed">Access was removed during the import. Entries copied before that are kept and will sync. Import again to copy the rest; nothing is copied twice.</string>
+    <string name="import_device_destination_missing">This collection isn\'t on this phone yet. Wait for SilentSuite to finish syncing, then try again.</string>
+    <plurals name="import_device_phone_only_contacts">
+        <item quantity="one">%d contact is saved only on this phone, not in an account, so it can\'t be copied here. Export it as a .vcf file from your contacts app and use Import from file.</item>
+        <item quantity="other">%d contacts are saved only on this phone, not in an account, so they can\'t be copied here. Export them as a .vcf file from your contacts app and use Import from file.</item>
+    </plurals>
     <string name="choose_file">Choose file</string>
 
     <!-- AccountSettingsActivity -->
@@ -590,7 +601,7 @@
 
     <!-- Import Activity -->
     <string name="import_button_file">From File</string>
-    <string name="import_button_local">From Account</string>
+    <string name="import_button_local">From an account on this phone</string>
     <string name="import_select_account">Select Account</string>
 
     <!-- Event (from Etar) -->
@@ -750,7 +761,22 @@
     <string name="dashboard_notes_destination">Syncs notebooks for the Notes screen in this app</string>
     <string name="settings_experimental_title">Experimental</string>
     <string name="settings_notes_enabled">Notes (experimental)</string>
-    <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. There is no separate background schedule yet.</string>
+    <string name="settings_notes_enabled_summary">Read your encrypted notebooks in this app. Notes sync when you open Notes, tap Sync now, or after a calendar, contact, or task sync. The two settings below choose the connections they may use. There is no separate background schedule yet.</string>
+    <string name="settings_notes_automatic_network">Automatic Notes sync</string>
+    <string name="settings_notes_automatic_network_wifi">Wi-Fi only. Notes sync by themselves, when you open Notes and after a calendar, contact, or task sync, only on Wi-Fi.</string>
+    <string name="settings_notes_automatic_network_any">Wi-Fi or mobile data. Notes also sync by themselves on mobile data, unless Sync over WiFi only is on for this account.</string>
+    <string name="settings_notes_sync_now_network">Sync now for Notes</string>
+    <string name="settings_notes_sync_now_network_any">Wi-Fi or mobile data. Sync now, pull to refresh, and turning Notes on sync Notes on any connection.</string>
+    <string name="settings_notes_sync_now_network_wifi">Wi-Fi only. Off Wi-Fi, Sync now and pull to refresh do not sync Notes.</string>
+    <!-- The names and the values of the next two arrays are paired by position. -->
+    <string-array name="settings_notes_network_names">
+        <item>Wi-Fi only</item>
+        <item>Wi-Fi or mobile data</item>
+    </string-array>
+    <string-array name="settings_notes_network_values" translatable="false">
+        <item>WIFI_ONLY</item>
+        <item>ANY_NETWORK</item>
+    </string-array>
     <string name="settings_birthdays_enabled">Birthdays calendar (experimental)</string>
     <string name="settings_birthdays_enabled_summary">Adds a Birthdays calendar made from your contacts. Turn it on from the Calendars menu.</string>
     <string name="create_notebook">Create notebook</string>
@@ -772,7 +798,7 @@
     <string name="notes_loading_failed">Could not load notes. Sync and try again.</string>
     <!-- Sign-out while Notes changes have not synced: the count, the separate discard confirmation, what Sync now says, and the message when the account stays after its Notes changes were cleared, a clear of them stopped, or nothing was deleted because the store could not be listed. -->
     <string name="notes_sign_out_unsynced_title">Unsynced Notes changes</string>
-    <string name="notes_sign_out_unsynced_unreadable">This device may hold Notes changes that have not synced, and they could not be counted. Sync now tries to send them first, and it can fail. If you sign out without syncing, they are removed from this device and cannot be recovered.</string>
+    <string name="notes_sign_out_unsynced_unreadable">This device may hold Notes changes that have not synced, and they could not be counted. Sync now tries to send them first. It may not run on this network, and it can fail. If you sign out without syncing, they are removed from this device and cannot be recovered.</string>
     <string name="notes_sign_out_without_syncing">Sign out without syncing</string>
     <string name="notes_discard_title">Discard unsynced changes?</string>
     <string name="notes_discard_unreadable">The unsynced Notes changes on this device could not be counted. All of them will be deleted from this device when you sign out. This cannot be undone.</string>
@@ -850,7 +876,7 @@
     <!-- Leaving or deleting a Notes notebook while its Notes changes have not synced: the count, the separate confirmation, the one more question once the store changed after the server call, Sync now, and a server call that failed. For a store that could not be listed, where going on deletes no unsynced Notes text: never "discard", never "remove", and that no unsynced Notes text is deleted from this device. -->
     <string name="notes_notebook_unsynced_title">Notes changes in this notebook have not synced</string>
     <string name="notes_notebook_maybe_unsynced_title">Notes changes may not have synced</string>
-    <string name="notes_notebook_unsynced_uncounted">Some Notes changes on this device could not be counted, so this notebook may have changes that have not synced. Sync now tries to send them first, and it can fail. If you go on without syncing, this notebook’s changes that can be read are deleted from this device and cannot be recovered. Those that can’t be read stay.</string>
+    <string name="notes_notebook_unsynced_uncounted">Some Notes changes on this device could not be counted, so this notebook may have changes that have not synced. Sync now tries to send them first. It may not run on this network, and it can fail. If you go on without syncing, this notebook’s changes that can be read are deleted from this device and cannot be recovered. Those that can’t be read stay.</string>
     <string name="notes_notebook_unsynced_unlisted">The Notes changes on this device could not be read, so this notebook may have changes that have not synced. Sync now may not be able to send them. While they cannot be read, going on without syncing deletes no unsynced Notes text from this device. Unsynced Notes text may remain on this device and may no longer sync.</string>
     <string name="notes_notebook_delete_without_syncing">Delete without syncing</string>
     <string name="notes_notebook_leave_without_syncing">Leave without syncing</string>
@@ -869,6 +895,14 @@
     <string name="notes_notebook_sync_asked">Asked for a Notes sync. Check the count again before you delete or leave this notebook.</string>
     <string name="notes_notebook_failed_kept">This attempt deleted no unsynced Notes text.</string>
     <string name="notes_notebook_delete_confirm_unnamed">This notebook and all its data will be removed from the server.</string>
+    <!-- The notebook list's network line: the opening sentence, the reasons, one closing sentence, joined by spaces. -->
+    <string name="notes_network_may_be_out_of_date">Notes are not syncing by themselves and may be out of date.</string>
+    <string name="notes_network_notes_setting">Automatic Notes sync is set to Wi-Fi only (Settings, Account).</string>
+    <string name="notes_network_account_wifi_only">Sync over WiFi only is on for this account (Settings, Sync).</string>
+    <string name="notes_network_no_wifi_reported">Android does not report Wi-Fi as the active connection.</string>
+    <string name="notes_network_account_network_name">Sync over WiFi only is on for this account and a Wi-Fi network name is saved with it (Settings, Sync). Android does not give this app network names, so the name cannot be checked. Remove it there to let Notes sync on any Wi-Fi network.</string>
+    <string name="notes_network_try_now">Pull down the list to try now.</string>
+    <string name="notes_network_sync_now_needs_wifi">Sync now for Notes is set to Wi-Fi only too (Settings, Account). When Wi-Fi is the active connection, pull down the list to try.</string>
     <string name="report_problem_title">Report a problem</string>
     <string name="report_problem_pref_summary">Send a problem or feature request to the SilentSuite team</string>
     <string name="report_problem_kind_problem">Problem</string>

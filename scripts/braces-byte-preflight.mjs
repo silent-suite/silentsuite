@@ -12,7 +12,7 @@ import { dirname, join, resolve } from 'node:path'
 
 export const defaultRoot = resolve(import.meta.dirname, '..')
 export const patchPath = 'patches/braces@3.0.3.patch'
-// sha256 of the patch with CRLF normalized to LF, the rule pnpm 10.6.5 uses for its lock hash.
+// sha256 of the patch with CRLF normalized to LF, the rule pnpm 10.6.5 and 10.34.9 use for the lock hash.
 export const patchDigest = '00379a6565da333c7a8a7d701771eb7bfbfecd1627bcab191ced1b94fc3e3ea6'
 export const canonicalIntegrity = 'sha512-yQbXgO/OSZVD2IsiLlro+7Hf6Q18EJrKSEsdoMzKePKXct3gvD8oLcOQdIzGupr5Fj+EDe8gO/lxc1BzfMpxvA=='
 // Every path in the canonical braces@3.0.3 tarball with its sha256 after the reviewed patch.

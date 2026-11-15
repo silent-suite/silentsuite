@@ -186,9 +186,6 @@ see the epic for any live links.
 
 - Moving a task to another list from the task editor is not available (on any
   width).
-- New contact: with the required name still empty, the first tap on
-  "+ Add phone" can miss because the name error appears and shifts the form
-  (all widths, existing behaviour).
 - Admin link and the onboarding checklist are only in the desktop sidebar.
   Every checklist step is also reachable through Settings → Import, and
   `/admin` still opens by URL.

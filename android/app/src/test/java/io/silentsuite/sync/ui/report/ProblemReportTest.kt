@@ -31,7 +31,7 @@ class ProblemReportTest {
         versionName: String = "0.5.18-beta",
     ) = DiagnosticsInput(versionName, 5018, 34, accounts, startup, now)
 
-    private fun parse(json: String): JsonObject = JsonParser().parse(json).asJsonObject
+    private fun parse(json: String): JsonObject = JsonParser.parseString(json).asJsonObject
     private fun keys(obj: JsonObject) = obj.entrySet().map { it.key }.toSet()
     private fun diagnostics(input: DiagnosticsInput) = parse(ProblemReport.diagnosticsJson(input))
     private fun codes(obj: JsonObject) = obj.getAsJsonArray("error_codes").map(JsonElement::getAsString)
