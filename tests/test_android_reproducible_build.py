@@ -228,7 +228,7 @@ def test_prefix_maps_are_emitted_most_specific_first():
 
 
 def conscrypt_gradle_fixture(directory: Path, *, with_anchor: bool = True) -> Path:
-    (directory / "build.gradle").write_text('version = "2.6-SNAPSHOT"\n', encoding="utf-8")
+    (directory / "build.gradle").write_text('version = "2.9.0"\n', encoding="utf-8")
     conventions = directory / "build-logic/src/main/groovy/conventions.jvm.gradle"
     conventions.parent.mkdir(parents=True)
     conventions.write_text(
@@ -264,7 +264,7 @@ def test_conscrypt_build_patches_both_java_toolchains_to_jdk17(tmp_path: Path):
     conscrypt_gradle_fixture(tmp_path)
 
     result = run_block(
-        patch, str(tmp_path), "2.6.3", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+        patch, str(tmp_path), "2.9.0", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
     )
 
     assert result.returncode == 0, result.stderr
@@ -305,7 +305,7 @@ def test_conscrypt_java_toolchain_drift_fails_before_any_source_mutation(
     before = {path.relative_to(tmp_path): path.read_bytes() for path in tmp_path.rglob("*.gradle")}
 
     result = run_block(
-        patch, str(tmp_path), "2.6.3", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+        patch, str(tmp_path), "2.9.0", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
     )
 
     assert result.returncode != 0
@@ -324,7 +324,7 @@ def test_conscrypt_build_injects_file_prefix_maps_into_c_and_cxx_flags(tmp_path:
     result = run_block(
         patch,
         str(tmp_path),
-        "2.6.3",
+        "2.9.0",
         "28.2.13676358",
         f"{CANONICAL_ROOT}={VIRTUAL_ROOT}",
         f"/opt/ndk={VIRTUAL_ROOT}/ndk",
@@ -346,18 +346,32 @@ def test_conscrypt_build_fails_closed_when_the_upstream_flag_anchor_moves(tmp_pa
     conscrypt_gradle_fixture(tmp_path, with_anchor=False)
 
     result = run_block(
-        patch, str(tmp_path), "2.6.3", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+        patch, str(tmp_path), "2.9.0", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
     )
 
     assert result.returncode != 0
     assert "expected exactly one upstream flag declaration" in result.stderr
 
 
+def test_conscrypt_build_fails_closed_when_the_upstream_version_differs(tmp_path: Path):
+    patch = block_containing(read(CONSCRYPT_SCRIPT), "cFlags '-fvisibility=hidden',")
+    conscrypt_gradle_fixture(tmp_path)
+    (tmp_path / "build.gradle").write_text('version = "2.10-SNAPSHOT"\n', encoding="utf-8")
+
+    result = run_block(
+        patch, str(tmp_path), "2.9.0", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+    )
+
+    assert result.returncode != 0
+    assert "expected exactly one upstream version declaration" in result.stderr
+    assert read(tmp_path / "build.gradle") == 'version = "2.10-SNAPSHOT"\n'
+
+
 def test_conscrypt_build_fails_closed_without_any_prefix_map(tmp_path: Path):
     patch = block_containing(read(CONSCRYPT_SCRIPT), "cFlags '-fvisibility=hidden',")
     conscrypt_gradle_fixture(tmp_path)
 
-    result = run_block(patch, str(tmp_path), "2.6.3", "28.2.13676358")
+    result = run_block(patch, str(tmp_path), "2.9.0", "28.2.13676358")
 
     assert result.returncode != 0
     assert "produced no prefix maps" in result.stderr
@@ -541,7 +555,7 @@ def test_conscrypt_debug_suppression_fails_closed_when_the_anchor_moves(tmp_path
     )
 
     result = run_block(
-        patch, str(tmp_path), "2.6.3", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
+        patch, str(tmp_path), "2.9.0", "28.2.13676358", f"{CANONICAL_ROOT}={VIRTUAL_ROOT}"
     )
 
     assert result.returncode != 0

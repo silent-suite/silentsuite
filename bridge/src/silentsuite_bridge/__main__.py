@@ -601,6 +601,7 @@ def _generate_localhost_certificate(cert_path: str, key_path: str, dns_names=(),
                  "-days", str(_CERT_VALIDITY_DAYS), "-keyout", key_path,
                  "-out", cert_path, "-config", cfg_path],
                 capture_output=True, text=True, check=False,
+                env=_host_tool_env(),
             )
         finally:
             try:
@@ -618,6 +619,24 @@ def _generate_localhost_certificate(cert_path: str, key_path: str, dns_names=(),
         "Ensure the 'openssl' command is available and the bridge data directory "
         "is writable. See `silentsuite-bridge --setup-macos-apple-accounts` docs."
     )
+
+
+def _host_tool_env() -> dict:
+    """Environment for running a host tool such as ``openssl``.
+
+    A frozen Linux build points LD_LIBRARY_PATH at its bundled libraries,
+    so a host binary would load the bundled libcrypto instead of its own and
+    can fail on a symbol version mismatch. PyInstaller keeps the caller's
+    value in LD_LIBRARY_PATH_ORIG; restore it, or drop the variable.
+    """
+    env = dict(os.environ)
+    if getattr(sys, "frozen", False):
+        original = env.get("LD_LIBRARY_PATH_ORIG")
+        if original is None:
+            env.pop("LD_LIBRARY_PATH", None)
+        else:
+            env["LD_LIBRARY_PATH"] = original
+    return env
 
 
 def _harden_key_permissions(key_path: str) -> None:
@@ -653,12 +672,14 @@ def _cert_and_key_match(cert_path: str, key_path: str) -> bool:
             capture_output=True,
             text=True,
             check=False,
+            env=_host_tool_env(),
         )
         key = subprocess.run(
             ["openssl", "pkey", "-in", key_path, "-pubout"],
             capture_output=True,
             text=True,
             check=False,
+            env=_host_tool_env(),
         )
     except FileNotFoundError:
         return True

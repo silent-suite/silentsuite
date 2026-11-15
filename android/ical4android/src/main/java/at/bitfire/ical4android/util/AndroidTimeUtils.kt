@@ -181,13 +181,15 @@ object AndroidTimeUtils {
      *                  expected format: "[TZID;]date1,date2,date3" where date is "yyyymmddThhmmss[Z]"
      * @param allDay    true: list will contain DATE values; false: list will contain DATE_TIME values
      * @param exclude   this time stamp won't be added to the [DateListProperty]
+     * @param defaultTimeZone time zone of values without "Z" when [dbStr] has no TZID (OpenTasks keeps
+     *                  it in a separate field); *null*: such values are read in the default time zone
      * @param generator generates the [DateListProperty]; must call the constructor with the one argument of type [DateList]
      *
      * @return          instance of "type" containing the parsed dates/times from the string
      *
      * @throws ParseException when the string cannot be parsed
      */
-    fun<T: DateListProperty> androidStringToRecurrenceSet(dbStr: String, allDay: Boolean, exclude: Long? = null, generator: (DateList) -> T): T
+    fun<T: DateListProperty> androidStringToRecurrenceSet(dbStr: String, allDay: Boolean, exclude: Long? = null, defaultTimeZone: TimeZone? = null, generator: (DateList) -> T): T
     {
         // 1. split string into time zone and actual dates
         var timeZone: TimeZone?
@@ -201,7 +203,7 @@ object AndroidTimeUtils {
                 timeZone = null
             datesStr = dbStr.substring(limiter + 1)
         } else {
-            timeZone = null
+            timeZone = defaultTimeZone
             datesStr = dbStr
         }
 
@@ -223,7 +225,7 @@ object AndroidTimeUtils {
         // 4. generate requested DateListProperty (RDate/ExDate) from list of DATEs or DATE-TIMEs
         val property = generator(dateList)
         if (!allDay) {
-            if (timeZone != null)
+            if (timeZone != null && !TimeZones.isUtc(timeZone))
                 property.timeZone = timeZone
             else
                 property.setUtc(true)

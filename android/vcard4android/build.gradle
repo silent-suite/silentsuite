@@ -1,12 +1,4 @@
 
-buildscript {
-    ext.versions = [
-        // latest Apache Commons versions that don't require Java 8 (Android 7)
-        commonsIO: '2.6',
-        commonsText: '1.3'
-    ]
-}
-
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
 
@@ -54,10 +46,9 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:${rootProject.ext.kotlin_version}"
 
     implementation "androidx.annotation:annotation:${androidX.annotation}"
-    // noinspection GradleDependency
-    implementation "commons-io:commons-io:${versions.commonsIO}"
-    // noinspection GradleDependency
-    implementation "org.apache.commons:commons-text:${versions.commonsText}"
+    // StringUtils and the builders in AndroidContact, AndroidGroup and Contact. Commons Text used
+    // to bring this in transitively; the app ships 3.8.1.
+    implementation 'org.apache.commons:commons-lang3:3.8.1'
 
     // ez-vcard to parse/generate vCards
     api('com.googlecode.ez-vcard:ez-vcard:0.11.2') {

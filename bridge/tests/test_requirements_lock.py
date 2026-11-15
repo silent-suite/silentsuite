@@ -19,10 +19,7 @@ from packaging.markers import default_environment
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
+import tomllib
 
 BRIDGE_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = BRIDGE_ROOT / "pyproject.toml"
@@ -31,22 +28,23 @@ LOCK_INPUTS = BRIDGE_ROOT / "requirements-lock.in"
 LOCK_OVERRIDES = BRIDGE_ROOT / "requirements-lock-overrides.txt"
 ETEBASE_BUILD_LOCK = BRIDGE_ROOT / "requirements-etebase-build.txt"
 ETEBASE_BUILD_INPUTS = BRIDGE_ROOT / "requirements-etebase-build.in"
-# build-system.requires of etebase-py at the pinned commit c5afd1a546b8f030d1b97bcecfc5e8bf9799827b.
-ETEBASE_BUILD_SYSTEM = {"setuptools", "wheel", "setuptools-rust"}
+ETEBASE_SDIST = BRIDGE_ROOT / "requirements-etebase-sdist.txt"
+# build-system.requires of the etebase 0.32.0 sdist: maturin>=1.7,<2.0.
+ETEBASE_BUILD_SYSTEM = {"maturin"}
 ETEBASE_BUILD_COMMAND = (
-    "uv pip compile requirements-etebase-build.in --python-platform aarch64-apple-darwin "
-    "--python-version 3.10 --only-binary :all: --generate-hashes -o requirements-etebase-build.txt"
+    "uv pip compile requirements-etebase-build.in --python-platform x86_64-apple-darwin "
+    "--python-version 3.12 --only-binary :all: --generate-hashes -o requirements-etebase-build.txt"
 )
 
 PYPROJECT_SOURCE = "silentsuite-bridge (pyproject.toml)"
 INPUTS_SOURCE = "-r requirements-lock.in"
 COMPILE_COMMAND = (
     "uv pip compile pyproject.toml requirements-lock.in --extra dev --extra tray "
-    "--overrides requirements-lock-overrides.txt --universal --python-version 3.10 "
+    "--overrides requirements-lock-overrides.txt --universal --python-version 3.12 "
     "--only-binary :all: --generate-hashes -o requirements-lock.txt"
 )
 
-# The five release lanes in .github/workflows/build-bridge.yml, all CPython 3.10.
+# The five release lanes in .github/workflows/build-bridge.yml, all CPython 3.12.
 RELEASE_LANES = {
     "linux-x86_64": {"sys_platform": "linux", "platform_system": "Linux", "platform_machine": "x86_64"},
     "linux-arm64": {"sys_platform": "linux", "platform_system": "Linux", "platform_machine": "aarch64"},
@@ -62,8 +60,8 @@ def lane_environment(lane: str) -> dict[str, str]:
         {
             "implementation_name": "cpython",
             "platform_python_implementation": "CPython",
-            "python_version": "3.10",
-            "python_full_version": "3.10.11",
+            "python_version": "3.12",
+            "python_full_version": "3.12.16",
             "os_name": "nt" if lane.startswith("windows") else "posix",
         }
     )
@@ -217,11 +215,11 @@ def test_lock_matches_pyproject():
 @pytest.mark.parametrize(
     ("old", "new"),
     [
-        ('"requests>=2.28.0"', '"requests[socks]>=2.28.0"'),
+        ('"vobject>=0.9.6"', '"vobject[extra]>=0.9.6"'),
         ('requires = ["hatchling"]', 'requires = ["hatchling>=2"]'),
-        ('"requests>=2.28.0",', '"requests>=2.28.0",\n    "click>=8",'),
+        ('"appdirs>=1.4.3",', '"appdirs>=1.4.3",\n    "click>=8",'),
         ('"radicale==3.2.3"', '"radicale==3.2.4"'),
-        ('"etebase>=0.31.5,<0.32"', '"etebase>=0.31.6,<0.32"'),
+        ('"etebase>=0.32.0,<0.33"', '"etebase>=0.32.1,<0.33"'),
         ('"ruff>=0.1.0",', ""),
         ('"pytest>=7.0"', "\"pytest>=7.0 ; sys_platform == 'linux'\""),
     ],
@@ -251,17 +249,29 @@ def test_each_release_lane_gets_exactly_one_pin_per_applicable_requirement():
             name = canonicalize_name(requirement.name)
             if requirement.marker is not None and not requirement.marker.evaluate({**environment, "extra": ""}):
                 continue
-            if lane == "macos-arm64" and name == "etebase":
-                # Built from a pinned upstream commit on this lane instead.
+            if lane == "macos-x86_64" and name == "etebase":
+                # Built from the hash-pinned sdist on this lane instead.
                 assert name not in selected
                 continue
             assert name in selected, (lane, name)
-        # The etebase build tools, and the newer setuptools they need, live in their
-        # own lock and never reach the environment PyInstaller bundles.
+        # The etebase build tool lives in its own lock and never reaches the
+        # environment PyInstaller bundles.
         assert not ETEBASE_BUILD_SYSTEM & set(selected), lane
 
 
-def test_etebase_build_lock_holds_exactly_the_pinned_commit_build_requirements():
+def test_etebase_sdist_is_the_locked_etebase_version_pinned_by_hash():
+    text = ETEBASE_SDIST.read_text(encoding="utf-8")
+    lines = [line for line in text.replace("\\\n", " ").splitlines() if line.strip() and not line.startswith("#")]
+    assert len(lines) == 1, lines
+    sdist = Requirement(lines[0].partition("--hash=")[0].strip())
+    assert canonicalize_name(sdist.name) == "etebase" and sdist.marker is None
+    (specifier,) = sdist.specifier
+    assert specifier.operator == "=="
+    assert {entry["version"] for entry in parse_lock() if entry["name"] == "etebase"} == {specifier.version}
+    assert len(re.findall(r"--hash=sha256:[0-9a-f]{64}", text)) == 1
+
+
+def test_etebase_build_lock_holds_exactly_the_sdist_build_requirements():
     assert ETEBASE_BUILD_COMMAND in ETEBASE_BUILD_LOCK.read_text(encoding="utf-8").splitlines()[1]
     inputs = {canonicalize_name(r.name) for r in requirement_lines(ETEBASE_BUILD_INPUTS)}
     assert inputs == ETEBASE_BUILD_SYSTEM

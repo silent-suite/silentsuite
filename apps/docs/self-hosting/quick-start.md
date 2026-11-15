@@ -109,8 +109,10 @@ docker network connect NETWORK_NAME PROXY_CONTAINER_NAME
 Then use `silentsuite-server:3735` as the upstream instead of `localhost:3735`.
 Set `TRUSTED_PROXY_IPS` in `.env` to the proxy container's exact IP so the server
 only trusts forwarded headers from that proxy. Multiple values are
-comma-separated, for example `TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.5`. Uvicorn
-matches exact IPs here; CIDR ranges are not supported.
+comma-separated, for example `TRUSTED_PROXY_IPS=127.0.0.1,172.18.0.5`. Prefer
+exact addresses. Uvicorn also accepts CIDR subnets, but trusting an address or
+subnet is only safe if nothing except your proxy can reach the server from it.
+Never use `*`.
 
 See the [SELF-HOSTING.md](https://github.com/silent-suite/silentsuite/blob/main/self-host/SELF-HOSTING.md) in the repo for more reverse proxy examples (Traefik, security headers).
 
