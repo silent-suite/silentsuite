@@ -45,12 +45,14 @@ import kotlinx.coroutines.withContext
  * all inside `withContext(Dispatchers.IO)`. The store calls are [PendingNotesStore.forIdentity], [PendingNotesStore.observe]
  * (through [NotesLoader.note] and for the status line), [PendingNotesStore.editorOpened], the reads a save builds on
  * ([PendingNotesStore.read], [PendingNotesStore.landed], [PendingNotesStore.notebook]), [PendingNotesStore.saveLocal]
- * through the editor's handle, and [PendingNotesStore.editorClosed]. Nothing here releases, discards, holds or sends.
+ * through the editor's handle, [PendingNotesStore.deleteNote] for the user's confirmed delete ([askDelete], [delete]),
+ * and [PendingNotesStore.editorClosed]. Nothing here releases, discards, holds or sends.
  *
- * Opening, saving and closing run one at a time, as steps in a scope of the app's ([background]), not this ViewModel's:
- * closing the editor clears the ViewModel, and that must not stop its last save or the sync request after it. A save
- * that wrote the text asks for a Notes run ([NotesSyncPolicy.Trigger.SAVE], which follows the automatic network
- * setting) in the same step, about [SYNC_DELAY_MILLIS] after the last save, and at once when the editor closes.
+ * Opening, saving, deleting and closing run one at a time, as steps in a scope of the app's ([background]), not this
+ * ViewModel's: closing the editor clears the ViewModel, and that must not stop its last save or the sync request after
+ * it. A save that wrote the text asks for a Notes run ([NotesSyncPolicy.Trigger.SAVE], which follows the automatic
+ * network setting) in the same step, about [SYNC_DELAY_MILLIS] after the last save, and at once when the editor
+ * closes; a delete that recorded a pending delete asks at once.
  *
  * The blob is encrypted and its metadata merged before the store is called, and no store call is made while holding
  * the Etebase cache monitor. Versions and sequences stay in memory: none goes into saved state or a file.
@@ -102,7 +104,61 @@ internal class NoteEditorViewModel(
         data class NoNewNote(val offer: NewNoteOffer?) : Opened()
         /** The editor shows [core]'s text. [note] is the load it opened on, or null for a new note. */
         data class Editor(val note: NoteContent?) : Opened()
+        /** The user deleted the note here ([delete]): nothing more is saved or loaded, and the screen closes. */
+        object Deleted : Opened()
     }
+
+    /** Set on the main thread from a confirmed delete until its answer: the fields take no typing, and nothing is saved. */
+    var deleting = false
+        private set
+
+    /** What a delete asks of the screen, for the screen to take once ([takeDeleteStep]). Main thread. */
+    var deleteStep: DeleteStep? = null
+        private set
+
+    sealed class DeleteStep {
+        /** Ask whether to delete [shown]; the separate discard follows when it has unsynced text. */
+        data class Ask(val shown: DeleteShown) : DeleteStep()
+        /** What the delete, or the read for it, came to. */
+        data class Answered(val answer: DeleteAnswer) : DeleteStep()
+    }
+
+    /**
+     * What a delete's confirmation shows and is checked against: the note, and the version and digest of its entry
+     * ([PendingNotesStore.deleteNote] compares them), or, when it has none, [revision], the revision of the item the
+     * editor showed (its landed record or the item it opened on), which [deleteOnIo] compares with the item it marks
+     * deleted, so a load that brought another device's newer copy in meanwhile deletes nothing. [neverSynced] chooses
+     * the wording only: the store decides again whether the note reached the server.
+     */
+    data class DeleteShown(val noteUid: String, val version: Long?, val digest: String?, val neverSynced: Boolean,
+                           val revision: String? = null) {
+        /** Whether the note has text on this device that has not synced, whose discard the user confirms separately. */
+        val unsynced: Boolean get() = version != null
+    }
+
+    enum class DeleteAnswer {
+        /** A pending delete was written; a run sends it. */
+        RECORDED,
+        /** The note never reached the server and is gone from this device. */
+        DROPPED,
+        /** Removed from this device, but the removal may not last a power loss ([PendingNotesStore.RemovalNotSynced]). */
+        UNSURE,
+        /** A new note with nothing saved: nothing to delete, and the screen closes. */
+        NOTHING_SAVED,
+        /** Text typed or changed since the confirmation was prepared: nothing was deleted. */
+        CHANGED,
+        /** The editor has text that was not saved: nothing was deleted. */
+        NOT_SAVED,
+        HELD,
+        UNREADABLE,
+        DISCARD_UNFINISHED,
+        REMOVAL_PENDING,
+        FAILED,
+        STALE,
+    }
+
+    /** The delete step for the screen to act on, once. Main thread. */
+    fun takeDeleteStep(): DeleteStep? = deleteStep.also { deleteStep = null }
 
     private class Session {
         var store: PendingNotesStore? = null
@@ -146,7 +202,7 @@ internal class NoteEditorViewModel(
      * nothing changes. A viewer loads again too.
      */
     fun reload() {
-        if (cleared) return
+        if (cleared || opened == Opened.Deleted) return
         background.launch {
             steps.withLock {
                 val shown = withContext(Dispatchers.Main) {
@@ -246,7 +302,8 @@ internal class NoteEditorViewModel(
     }
 
     private fun applyOpening(opening: Opening, first: Boolean) {
-        if (cleared) {
+        // A load that waited behind a delete opens nothing over it.
+        if (cleared || opened == Opened.Deleted) {
             // The screen went away meanwhile: a handle this opened is closed by the close step, or here if that ran.
             if (opening is Opening.Editor) keep(opening)
             return
@@ -321,6 +378,7 @@ internal class NoteEditorViewModel(
     fun redo(field: NoteEditorCore.Field): EditHistory.Applied? = core.redo(field)?.also { scheduleAutosave() }
 
     private fun scheduleAutosave() {
+        if (deleting || opened == Opened.Deleted) return
         autosave?.cancel()
         autosave = viewModelScope.launch {
             delay(AUTOSAVE_MILLIS)
@@ -519,6 +577,200 @@ internal class NoteEditorViewModel(
 
     private fun current(): Boolean =
         ExactAccountRouting.validate(account, creationId, App.accountType, AccountManager.get(app)) != null
+
+    // ---- deleting ----
+
+    /**
+     * The user chose Delete. Everything typed is saved first, in this same step, so no text is on screen alone; then the
+     * note's entry is read for the confirmation ([DeleteStep.Ask]), or the reason there is none ([DeleteStep.Answered]).
+     */
+    fun askDelete() {
+        if (deleting) return
+        autosave?.cancel()
+        background.launch {
+            steps.withLock {
+                // Asked again from a confirmation restored in a new process, the editor may still have been opening.
+                if (withContext(Dispatchers.Main) { opened !is Opened.Editor || deleting }) return@withLock
+                saveStep()
+                val mode = withContext(Dispatchers.Main) { if (core.dirty) null else core.mode }
+                val step = when (mode) {
+                    NoteEditorCore.Mode.EDITING -> withContext(Dispatchers.IO) { readDelete() }
+                    NoteEditorCore.Mode.HELD -> DeleteStep.Answered(DeleteAnswer.HELD)
+                    NoteEditorCore.Mode.STOPPED, null -> DeleteStep.Answered(DeleteAnswer.NOT_SAVED)
+                }
+                withContext(Dispatchers.Main) {
+                    deleteStep = step
+                    if (!cleared) updates.value = Unit
+                }
+            }
+        }
+    }
+
+    /** What the confirmation shows: the note the handle names now, and its entry. Off the main thread. */
+    private fun readDelete(): DeleteStep {
+        if (!current()) return DeleteStep.Answered(DeleteAnswer.STALE)
+        val store = session.store
+        val handle = session.handle ?: return DeleteStep.Answered(DeleteAnswer.NOTHING_SAVED)
+        if (store == null) return DeleteStep.Answered(DeleteAnswer.NOTHING_SAVED)
+        return try {
+            val uid = handle.noteUid
+            when (val read = store.read(uid)) {
+                is PendingNotesStore.Read.Present -> {
+                    val entry = read.entry
+                    when {
+                        entry.notebookUid != notebookUid -> DeleteStep.Answered(DeleteAnswer.FAILED)
+                        entry.state == PendingEntry.State.HELD -> DeleteStep.Answered(DeleteAnswer.HELD)
+                        entry.state == PendingEntry.State.DELETE -> DeleteStep.Answered(DeleteAnswer.RECORDED)
+                        else -> DeleteStep.Ask(DeleteShown(uid, entry.version, PendingNotesStore.digestOf(entry.blob),
+                            neverSynced = entry.isCreate && entry.sent.isEmpty()))
+                    }
+                }
+                is PendingNotesStore.Read.Unreadable -> DeleteStep.Answered(DeleteAnswer.UNREADABLE)
+                // A new note whose first save did not write, and that never landed: nothing of it is anywhere.
+                PendingNotesStore.Read.Missing -> if (session.newNote && uid == session.pinnedUid && store.landed(uid) == null) {
+                    DeleteStep.Answered(DeleteAnswer.NOTHING_SAVED)
+                } else {
+                    val base = baseWithoutEntry(store, uid) ?: return DeleteStep.Answered(DeleteAnswer.FAILED)
+                    val shown = notebook(store.notebook(notebookUid)).itemMgr.cacheLoad(base).etag
+                    DeleteStep.Ask(DeleteShown(uid, null, null, neverSynced = false, revision = shown))
+                }
+            }
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Logger.log.warning("A note delete could not be prepared: ${e.javaClass.name}")
+            DeleteStep.Answered(if (current()) DeleteAnswer.FAILED else DeleteAnswer.STALE)
+        }
+    }
+
+    /**
+     * The user confirmed the delete of [shown], and, separately, the discard of its unsynced text when it has some
+     * ([discardConfirmed]). From here the fields take no typing ([deleting]). A delete that removed the note closes the
+     * editor's handle, so nothing more is saved, and one that recorded a pending delete asks for a Notes run at once.
+     */
+    fun delete(shown: DeleteShown, discardConfirmed: Boolean) {
+        if (deleting || opened !is Opened.Editor) return
+        deleting = true
+        autosave?.cancel()
+        updates.value = Unit
+        background.launch {
+            steps.withLock {
+                // Typed after the confirmation was prepared, and so not covered by it: nothing is deleted.
+                val answer = if (withContext(Dispatchers.Main) { core.dirty }) DeleteAnswer.CHANGED
+                    else withContext(Dispatchers.IO) { deleteOnIo(shown, discardConfirmed) }
+                val gone = answer == DeleteAnswer.RECORDED || answer == DeleteAnswer.DROPPED || answer == DeleteAnswer.UNSURE
+                withContext(Dispatchers.Main) {
+                    if (gone) {
+                        opened = Opened.Deleted
+                        drop()
+                    } else if (answer == DeleteAnswer.STALE) {
+                        opened = Opened.Stale
+                    }
+                    deleting = false
+                    deleteStep = DeleteStep.Answered(answer)
+                    if (!cleared) updates.value = Unit
+                }
+                // A delete that may not last a power loss is on disk until then, so a run is asked for it too.
+                if (answer == DeleteAnswer.RECORDED || answer == DeleteAnswer.UNSURE) requestSync(0)
+            }
+        }
+    }
+
+    /**
+     * The delete on IO: the note item the editor shows, marked deleted, goes to the store with what the confirmation
+     * showed ([PendingNotesStore.deleteNote]), which checks it against what is there under its lock. The item is the
+     * note's entry when there is one, else its landed record when an upload landed since the pin, else the pinned item:
+     * the same choice a save makes ([attempt]), so its base is the revision the user saw.
+     */
+    private fun deleteOnIo(shown: DeleteShown, discardConfirmed: Boolean): DeleteAnswer {
+        if (!current()) return DeleteAnswer.STALE
+        val store = session.store ?: return DeleteAnswer.CHANGED
+        val handle = session.handle ?: return DeleteAnswer.CHANGED
+        return try {
+            val target = handle.noteUid
+            if (target != shown.noteUid) return DeleteAnswer.CHANGED
+            val read = store.read(target)
+            val base = when (read) {
+                is PendingNotesStore.Read.Present -> {
+                    if (read.entry.notebookUid != notebookUid || read.entry.state != PendingEntry.State.UPSERT) return DeleteAnswer.CHANGED
+                    read.entry.blob
+                }
+                is PendingNotesStore.Read.Unreadable -> return DeleteAnswer.UNREADABLE
+                PendingNotesStore.Read.Missing -> baseWithoutEntry(store, target) ?: return DeleteAnswer.CHANGED
+            }
+            val access = notebook(store.notebook(notebookUid))
+            val item = access.itemMgr.cacheLoad(base)
+            // With no entry, the item must be the revision the confirmation showed: a load since (a run that fetched
+            // another device's change) may have moved the editor onto a newer copy the user never saw.
+            if (read == PendingNotesStore.Read.Missing && (shown.revision == null || item.etag != shown.revision)) {
+                return DeleteAnswer.CHANGED
+            }
+            // No text of the note goes into the deleted item, the unsynced text the user just discarded included.
+            EtebasePushRemote.markDeleted(item, System.currentTimeMillis())
+            val deleted = access.itemMgr.cacheSaveWithContent(item)
+            // The cache and the settings are read by account name: a same-name account must not get this delete.
+            if (!current()) return DeleteAnswer.STALE
+            when (val outcome = store.deleteNote(target, notebookUid, shown.version, shown.digest, discardConfirmed, item.etag,
+                deleted, notebookCopy = if (read == PendingNotesStore.Read.Missing) access.copyToKeep else null)) {
+                PendingNotesStore.NoteDelete.Recorded, PendingNotesStore.NoteDelete.AlreadyDeleted -> DeleteAnswer.RECORDED
+                PendingNotesStore.NoteDelete.Dropped -> DeleteAnswer.DROPPED
+                is PendingNotesStore.NoteDelete.Changed, is PendingNotesStore.NoteDelete.NeedsDiscard -> DeleteAnswer.CHANGED
+                PendingNotesStore.NoteDelete.RemovalPending -> DeleteAnswer.REMOVAL_PENDING
+                is PendingNotesStore.NoteDelete.Refused -> when (outcome.reason) {
+                    PendingNotesStore.DeleteRefusal.HELD -> DeleteAnswer.HELD
+                    PendingNotesStore.DeleteRefusal.UNREADABLE -> DeleteAnswer.UNREADABLE
+                    PendingNotesStore.DeleteRefusal.DISCARD_UNFINISHED -> DeleteAnswer.DISCARD_UNFINISHED
+                    PendingNotesStore.DeleteRefusal.UNFINISHED_ORIGINAL, PendingNotesStore.DeleteRefusal.TOO_LARGE -> DeleteAnswer.FAILED
+                }
+            }
+        } catch (_: PendingNotesStore.RemovalNotSynced) {
+            when {
+                !current() -> DeleteAnswer.STALE
+                // A replaced original removed before this copy's delete was written: the note and its text are still
+                // there, and a later run sends them. Never "deleted" over that.
+                entryStillThere(store, shown.noteUid) -> DeleteAnswer.FAILED
+                else -> DeleteAnswer.UNSURE
+            }
+        } catch (_: InvalidAccountException) {
+            DeleteAnswer.STALE
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            // The class only: a binding's message can quote a decrypted value.
+            Logger.log.warning("A note could not be deleted on this device: ${e.javaClass.name}")
+            when {
+                !current() -> DeleteAnswer.STALE
+                // A write whose rename went through before its directory sync failed: the delete is there, but may not
+                // last a power loss. Never "nothing was deleted" over a delete the next run will send.
+                e is IOException && deleteIsThere(store, shown.noteUid) -> DeleteAnswer.UNSURE
+                else -> DeleteAnswer.FAILED
+            }
+        }
+    }
+
+    /** Whether the note's entry is there and not a pending delete; a read that fails says no. */
+    private fun entryStillThere(store: PendingNotesStore, uid: String): Boolean = try {
+        (store.read(uid) as? PendingNotesStore.Read.Present)?.entry?.let { it.state != PendingEntry.State.DELETE } == true
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        false
+    }
+
+    /** Whether the note's entry is a pending delete now; a read that fails says no. */
+    private fun deleteIsThere(store: PendingNotesStore, uid: String): Boolean = try {
+        (store.read(uid) as? PendingNotesStore.Read.Present)?.entry?.state == PendingEntry.State.DELETE
+    } catch (e: Exception) {
+        if (e is kotlinx.coroutines.CancellationException) throw e
+        false
+    }
+
+    /**
+     * The item the editor shows for a note with no entry: its landed record when an upload landed since the pin, else the
+     * item it opened on, the same choice a save makes ([attempt]); null when it has neither.
+     */
+    private fun baseWithoutEntry(store: PendingNotesStore, uid: String): ByteArray? {
+        val landed = store.landed(uid)
+        val pinned = session.pinned.takeIf { uid == session.pinnedUid }
+        return if (landed != null && (pinned == null || landed.revision != session.landedAtPin)) landed.blob else pinned
+    }
 
     // ---- the sync request and the status line ----
 

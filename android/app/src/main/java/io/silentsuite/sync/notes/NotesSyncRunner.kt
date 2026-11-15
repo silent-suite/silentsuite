@@ -30,6 +30,7 @@ import io.silentsuite.sync.syncadapter.PagedListingStalledException
 import io.silentsuite.sync.syncadapter.StaleSyncRunException
 import io.silentsuite.sync.syncadapter.SyncRunGuard
 import io.silentsuite.sync.syncadapter.SyncStatusStore
+import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import java.io.IOException
 import java.io.InterruptedIOException
@@ -246,11 +247,17 @@ internal object NotesSyncRunner {
         if (nothingToPush(waiting)) return null
         refreshNotebookCopies(store, cache, colMgr, guard, waiting.headers.mapTo(HashSet()) { it.notebookUid })
         val memory = pushMemory.getOrPut(listOf(account.type, account.name, creationId).joinToString("\u0000")) { NotePushStep.Memory() }
+        // Keyed by the exact generation, so the notice of a delete dropped by a run that is no longer current is still
+        // written: no screen of another generation shows it.
+        val notices = NoteDeleteNotices.of(context)
+        val identity = ExactAccountIdentity(account.type, account.name, creationId)
         val result = NotePushStep(store, EtebasePushRemote(cache, colMgr, store, guard), memory,
-            userInitiated = request.manual, mayWrite = guard::mayWrite).pass()
+            userInitiated = request.manual, mayWrite = guard::mayWrite,
+            onDeleteNotDone = { reason -> notices.add(identity, mapOf(reason to 1)) }).pass()
         // Counts only: no title, notebook name or text is ever logged.
         Logger.log.info("Notes push ${result.ended}: pushed ${result.pushed}, held ${result.held}, " +
-            "conflicts ${result.conflicts.values.sum()}, failure ${result.failure}, carried ${result.carriedFailure}")
+            "conflicts ${result.conflicts.values.sum()}, deletes not done ${result.deletesNotDone.values.sum()}, " +
+            "failure ${result.failure}, carried ${result.carriedFailure}")
         return result
     }
 

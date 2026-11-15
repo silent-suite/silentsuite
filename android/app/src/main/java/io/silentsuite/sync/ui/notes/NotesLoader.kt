@@ -257,9 +257,10 @@ internal object NotesLoader {
             return NotesLoad.Loaded(NotebookContents(row, sortNotes(notes), data.unreadable[notebookUid] ?: 0))
         }
         // One snapshot under the pending lock. This notebook's changes are read whole, so one whose blob
-        // is damaged is marked here instead of counting by its header alone; only edits are decrypted.
+        // is damaged is marked here instead of counting by its header alone; only edits are decrypted. A pending
+        // delete needs no blob: its header hides the row, and its whole-file checksum is still checked.
         val readPending = { store: PendingNotesStore ->
-            val snapshot = store.snapshot { it.notebookUid == notebookUid && it.state != PendingEntry.State.HELD }
+            val snapshot = store.snapshot { it.notebookUid == notebookUid && it.state == PendingEntry.State.UPSERT }
             val hasEdits = snapshot.entries.isNotEmpty()
             PendingRead(snapshot, if (hasEdits) notebookCopy(store, notebookUid) else null)
         }

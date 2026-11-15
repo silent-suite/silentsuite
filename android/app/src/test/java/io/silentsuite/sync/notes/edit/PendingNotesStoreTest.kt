@@ -2350,13 +2350,16 @@ class PendingNotesStoreTest {
         assertEquals(1, Regex("""\bisDirectory\b""").findAll(code).count())
         assertEquals(1, Regex("""!level\.mkdir\(\) && !level\.isDirectory\)""").findAll(code).count())
         // The presence check is asked only where a check that failed cannot pass for an absence: isPresent and
-        // syncRemoval, which throw on UNKNOWN, six decisions that need ABSENT (a recovery problem stays; shownGone,
+        // syncRemoval, which throw on UNKNOWN, seven decisions that need ABSENT (a recovery problem stays; shownGone,
         // for a clear and for a count of nothing; a file a discard permit names holds back; storeDirectories, for a
         // notes-pending that holds no store; a removal check's store folder that cannot be listed, which it never
         // takes for gone; a count's check that its listing holds the counter, where a failed check counts the
-        // counter as there), and createDirectory, which makes a level not shown PRESENT and lets mkdir decide.
+        // counter as there; a delete's check that a create has no landed record, where a failed check counts the
+        // note as on the server), and createDirectory, which makes a level not shown PRESENT and lets mkdir decide.
         assertFalse(Regex("""==\s*Presence\.PRESENT\b|\bPresence\.PRESENT\s*==""").containsMatchIn(code))
-        assertEquals(10, Regex("""\bpresenceOf\(""").findAll(code).count())
+        assertEquals(11, Regex("""\bpresenceOf\(""").findAll(code).count())
+        assertEquals(1, Regex("""e\.sent\.isEmpty\(\) && presenceOf\(landedFile\(e\.noteUid\)\) == Presence\.ABSENT""")
+            .findAll(code).count())
         assertEquals(2, Regex("""\bwhen \(presenceOf\(""").findAll(code).count())
         assertEquals(4, Regex("""\) != Presence\.ABSENT\b""").findAll(code).count())
         assertEquals(1, Regex("""\?: presence\(root\)\) == Presence\.ABSENT\b""").findAll(code).count())
@@ -2364,7 +2367,7 @@ class PendingNotesStoreTest {
             .findAll(code).count())
         assertEquals(1, Regex("""SEQUENCE !in names && presenceOf\(File\(dir, SEQUENCE\)\) != Presence\.ABSENT""")
             .findAll(code).count())
-        assertEquals("no other test for ABSENT", 6, Regex("""[=!]=\s*Presence\.ABSENT\b""").findAll(code).count())
+        assertEquals("no other test for ABSENT", 7, Regex("""[=!]=\s*Presence\.ABSENT\b""").findAll(code).count())
         assertEquals(2, Regex("""\) != Presence\.PRESENT\b""").findAll(code).count())
         // Nothing deletes recursively, which follows a link to a directory: a clear removes the files one at a time,
         // as a discard does, and returns only on its own check that the directory is gone.
@@ -2391,9 +2394,10 @@ class PendingNotesStoreTest {
         val functions = starts.mapIndexed { i, start ->
             start.groupValues[1] to code.substring(start.range.first, starts.getOrNull(i + 1)?.range?.first ?: code.length)
         }
-        // Text comes in as a blob (a save, a rebase) or as a whole entry (a conflict copy).
+        // Text comes in as a blob (a save, a rebase, a delete, whose blob is the deleted item) or as a whole entry (a
+        // conflict copy).
         val writers = functions.filter { (_, body) -> Regex("""\bblob = |\bnewNote\b""").containsMatchIn(body) }
-        assertEquals(listOf("saveLocal", "rebase", "replaceWithNewNote"), writers.map { it.first })
+        assertEquals(listOf("saveLocal", "rebase", "deleteNote", "replaceWithNewNote"), writers.map { it.first })
         // A release from holding moves the sequence on as well (UnsyncedNotes). A step of a run, a rebase or a
         // conflict copy, takes its version through nextRunVersion, which can only hold it back first.
         assertTrue("nextRunVersion takes a new version",

@@ -71,6 +71,7 @@ import io.silentsuite.sync.ui.UnsyncedNotesStores
 import io.silentsuite.sync.ui.notes.HeldTextFragment
 import io.silentsuite.sync.ui.notes.HeldTextRow
 import io.silentsuite.sync.ui.notes.NoteContent
+import io.silentsuite.sync.ui.notes.NoteDeleteConfirmation
 import io.silentsuite.sync.ui.notes.NoteEditorViewModel
 import io.silentsuite.sync.ui.notes.PendingUnavailable
 import io.silentsuite.sync.ui.notes.SaveResult
@@ -1673,6 +1674,193 @@ class NotesSyncBoundaryRuntimeTest {
         assertTrue("nothing is left waiting", pendingHeaders(account, "gen-gone").isEmpty())
         assertEquals(setOf("Keep", "Plan v2"), cachedNotes(account, notebook))
         assertSucceeded(status(account, "gen-gone"))
+    }
+
+    /**
+     * Delete note in the editor: a confirmation restored in another app process deletes nothing and is asked again; the
+     * confirmed delete leaves the list at once as a pending delete with nothing plain on disk, and the next run deletes the
+     * note on the server, built on the revision the editor showed.
+     */
+    @Test fun aNoteDeletedInTheEditorLeavesTheListAtOnceAndARunDeletesItOnTheRevisionItShowed() {
+        val account = newAccount("gen-delete")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-delete")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        val keep = uploadNote(notebook, "Keep", "Stays", mtime = 1_500L)
+        syncNow(account, "gen-delete")
+        val store = pending(account, "gen-delete")
+        // Only the case's own manual runs send: the run the delete asks for is automatic and waits for Wi-Fi.
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-delete")).use { scenario ->
+            awaitSettled(identity)
+            openEditor(scenario, "Work", note.uid)
+            chooseDelete(scenario)
+            assertEquals(context.getString(R.string.notes_delete_title) to context.getString(R.string.notes_delete_text),
+                deleteDialogText(scenario))
+            // Restored in a new app process, its answer deletes nothing, and the screen asks again in this process.
+            scenario.onActivity { activity ->
+                noteScreen(activity).childFragmentManager.executePendingTransactions()
+                val args = requireNotNull(noteScreen(activity).deleteConfirmation) { "the confirmation" }.requireArguments()
+                assertEquals("made in this process", ProcessIncarnation.current(), args.getString(NoteDeleteConfirmation.ARG_PROCESS))
+                args.putString(NoteDeleteConfirmation.ARG_PROCESS, "another-app-process")
+            }
+            scenario.recreate()
+            waitUntil("the restored confirmation to come back") { deleteDialog(scenario)?.isShowing == true }
+            answerDelete(scenario)
+            waitUntil("the confirmation to be asked again in this process") {
+                onEditor(scenario) { screen ->
+                    screen.deleteConfirmation?.let { c ->
+                        !c.ended && c.dialog?.isShowing == true &&
+                            c.requireArguments().getString(NoteDeleteConfirmation.ARG_PROCESS) == ProcessIncarnation.current()
+                    }
+                } == true
+            }
+            assertEquals("nothing deleted by an answer from another process", PendingNotesStore.Read.Missing, store.read(note.uid))
+
+            answerDelete(scenario)
+            waitUntil("the note list") { noteList(scenario) != null }
+            waitUntil("the note to leave the list") { noteList(scenario)?.renderedNotes?.map { it.uid } == listOf(keep.uid) }
+            val onDisk = assertNothingPlainOnDisk(store, listOf("Plan", "First draft")).values.single()
+            assertEquals(PendingEntry.State.DELETE, onDisk.state)
+            val tombstone = decryptThroughStoredCopy(store, onDisk)
+            assertTrue("the item the editor showed, marked deleted", tombstone.isDeleted)
+            assertEquals("carrying no text of the note", "" to "", tombstone.contentString to NoteMetaCodec.peek(tombstone.metaRaw)?.name)
+            assertTrue("nothing sent yet", itemManager(notebook).fetch(note.uid).let { !it.isDeleted && it.etag == note.etag })
+        }
+        val since = fake.requests.size
+        syncNow(account, "gen-delete")
+        assertEquals("one upload: the delete", 1, uploads(since).size)
+        assertTrue("deleted on the server", itemManager(notebook).fetch(note.uid).isDeleted)
+        assertEquals(setOf("Keep"), cachedNotes(account, notebook))
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-delete").isEmpty())
+        assertSucceeded(status(account, "gen-delete"))
+    }
+
+    /**
+     * A note with unsynced text asks, after the delete, separately whether to discard that text, and Cancel there deletes
+     * nothing. A new note that never synced is dropped from this device after both answers, and no run sends anything for it.
+     */
+    @Test fun deletingUnsyncedTextAsksForItsDiscardSeparatelyAndANoteThatNeverSyncedSendsNothing() {
+        val account = newAccount("gen-delete-text")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-delete-text")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-delete-text")
+        val store = pending(account, "gen-delete-text")
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        editLocally(account, "gen-delete-text", notebook, note.uid, "Plan", "Edited on the phone", mtime = 2_000L)
+        val edited = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+        val discardText = context.getString(R.string.notes_delete_discard_title) to context.getString(R.string.notes_delete_discard_text)
+        var created = ""
+        ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-delete-text")).use { scenario ->
+            awaitSettled(identity)
+            openEditor(scenario, "Work", note.uid)
+            chooseDelete(scenario)
+            answerDelete(scenario)
+            waitUntil("the separate discard to show") { deleteDialog(scenario)?.isShowing == true && deleteDialogText(scenario) == discardText }
+            answerDelete(scenario, positive = false)
+            waitUntil("the discard to close") { deleteDialog(scenario) == null }
+            assertEquals("Cancel at the discard deletes nothing", edited, (store.read(note.uid) as PendingNotesStore.Read.Present).entry)
+            chooseDelete(scenario)
+            answerDelete(scenario)
+            waitUntil("the separate discard to show again") { deleteDialog(scenario)?.isShowing == true && deleteDialogText(scenario) == discardText }
+            answerDelete(scenario)
+            waitUntil("the note list") { noteList(scenario) != null }
+            val deleted = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+            assertTrue("a pending delete above the text's version: $deleted",
+                deleted.state == PendingEntry.State.DELETE && deleted.version > edited.version)
+            assertNothingPlainOnDisk(store, listOf("Edited on the phone"))
+            assertEquals("the discarded text is not in the deleted item, encrypted or not", "",
+                decryptThroughStoredCopy(store, deleted).contentString)
+
+            // A new note, saved on this device only.
+            waitUntil("New note to show") { noteList(scenario)?.offersNewNote == true }
+            scenario.onActivity { it.findViewById<View>(R.id.notes_new_note).performClick() }
+            waitUntil("the editor of a new note") { onEditor(scenario) { it.editing } == true }
+            scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).append("Written and deleted offline") }
+            assertTrue(awaitSave(scenario, "the new note to be saved") is SaveResult.Saved)
+            created = checkNotNull(onEditor(scenario) { it.editorModel.noteUid })
+            chooseDelete(scenario)
+            assertEquals(context.getString(R.string.notes_delete_never_synced_text), deleteDialogText(scenario).second)
+            answerDelete(scenario)
+            waitUntil("the separate discard for the new note") { deleteDialogText(scenario) == discardText }
+            answerDelete(scenario)
+            waitUntil("the note list again") { noteList(scenario) != null }
+            assertEquals("dropped from this device", PendingNotesStore.Read.Missing, store.read(created))
+        }
+        val since = fake.requests.size
+        syncNow(account, "gen-delete-text")
+        assertEquals("one upload: the delete of the synced note", 1, uploads(since).size)
+        val onServer = itemManager(notebook).fetch(note.uid)
+        assertTrue(onServer.isDeleted)
+        assertEquals("the discarded text never reached the server", "", onServer.contentString)
+        assertFalse("the new note never reached the server", created in fake.itemUids(notebook))
+        assertTrue(pendingHeaders(account, "gen-delete-text").isEmpty())
+        assertSucceeded(status(account, "gen-delete-text"))
+    }
+
+    /**
+     * A delete that meets an edit another device made first deletes nothing: the run caches that copy, drops the delete,
+     * the note shows again with the other device's text, and the notebook list says why until it is dismissed.
+     */
+    @Test fun aDeleteOfANoteChangedElsewhereBringsItBackWithThatChangeAndTheNotebookListSaysWhy() {
+        val account = newAccount("gen-delete-lost")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-delete-lost")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-delete-lost")
+        val store = pending(account, "gen-delete-lost")
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val notices = NoteDeleteNotices.of(context)
+        ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-delete-lost")).use { scenario ->
+            awaitSettled(identity)
+            openEditor(scenario, "Work", note.uid)
+            // A run brings another device's edit in while the confirmation is open, and the clean editor loads that copy.
+            // The answer was given for the copy shown before, so it deletes nothing.
+            chooseDelete(scenario)
+            note.setContent("Edited on the tablet")
+            itemManager(notebook).transaction(arrayOf(note))
+            syncNow(account, "gen-delete-lost")
+            waitUntil("the editor to load the other device's text") { onEditor(scenario) { it.editorModel.core.body } == "Edited on the tablet" }
+            answerDelete(scenario)
+            waitUntil("the delete to answer that the note changed") {
+                onEditor(scenario) { it.renderedDeleteMessage } == context.getString(R.string.notes_delete_changed)
+            }
+            assertEquals("nothing recorded", PendingNotesStore.Read.Missing, store.read(note.uid))
+            assertFalse("nothing deleted on the server", itemManager(notebook).fetch(note.uid).isDeleted)
+
+            // Asked again over the copy now shown, the delete is recorded.
+            chooseDelete(scenario)
+            answerDelete(scenario)
+            waitUntil("the note to leave the list") { noteList(scenario)?.renderedNotes?.isEmpty() == true }
+            assertEquals(PendingEntry.State.DELETE, (store.read(note.uid) as PendingNotesStore.Read.Present).entry.state)
+
+            // Another device edits the note before the delete reaches the server.
+            note.setContent("Edited on the laptop")
+            itemManager(notebook).transaction(arrayOf(note))
+            val changed = note.etag
+            syncNow(account, "gen-delete-lost")
+            val onServer = itemManager(notebook).fetch(note.uid)
+            assertFalse("not deleted", onServer.isDeleted)
+            assertEquals("the other device's change stays", changed to "Edited on the laptop", onServer.etag to onServer.contentString)
+            assertTrue("nothing is left waiting", pendingHeaders(account, "gen-delete-lost").isEmpty())
+            assertEquals(setOf("Plan"), cachedNotes(account, notebook))
+            waitUntil("the note to show again") { noteList(scenario)?.renderedNotes?.map { it.uid } == listOf(note.uid) }
+
+            scenario.onActivity { it.onSupportNavigateUp() }
+            val reason = mapOf(NotePushPolicy.DeleteNotDone.CHANGED_ELSEWHERE to 1)
+            waitUntil("the notebook list to say why") { notebookList(scenario)?.renderedDeleteNotice == reason }
+            scenario.onActivity { activity ->
+                assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.notebooks_delete_notice).visibility)
+                assertEquals(activity.resources.getQuantityString(R.plurals.notes_deletes_not_done_changed, 1, 1),
+                    activity.findViewById<TextView>(R.id.notebooks_delete_notice_text).text.toString())
+                activity.findViewById<View>(R.id.notebooks_delete_notice_dismiss).performClick()
+            }
+            waitUntil("the notice to go once dismissed") { notebookList(scenario)?.renderedDeleteNotice?.isEmpty() == true }
+            scenario.onActivity { assertEquals(View.GONE, it.findViewById<View>(R.id.notebooks_delete_notice).visibility) }
+            assertTrue(notices.read(identity).isEmpty())
+        }
+        assertSucceeded(status(account, "gen-delete-lost"))
     }
 
     @Test fun aChangeInANotebookNowReadOnlyIsHeldWithoutAnUpload() {
@@ -5127,6 +5315,44 @@ class NotesSyncBoundaryRuntimeTest {
         showNote(scenario, uid)
         waitUntil("the editor to show") { onEditor(scenario) { it.editing } == true }
     }
+
+    /** Chooses Delete note in the editor's toolbar, once it is offered, and waits for the confirmation to show. */
+    private fun chooseDelete(scenario: ActivityScenario<NotesActivity>) {
+        waitUntil("Delete note to be offered and chosen") {
+            var chosen = false
+            scenario.onActivity { chosen = actionBar(it).menu.performIdentifierAction(R.id.note_delete, 0) }
+            chosen
+        }
+        waitUntil("the delete confirmation to show") { deleteDialog(scenario)?.isShowing == true }
+    }
+
+    /** The delete confirmation (or the separate discard) while it is open; null otherwise. On the main thread. */
+    private fun deleteDialog(scenario: ActivityScenario<NotesActivity>): androidx.appcompat.app.AlertDialog? =
+        onEditor(scenario) { it.deleteConfirmation?.takeIf { c -> !c.ended }?.dialog as? androidx.appcompat.app.AlertDialog }
+
+    /** The open delete dialog's title and message, or two empty strings while none is open. */
+    private fun deleteDialogText(scenario: ActivityScenario<NotesActivity>): Pair<String, String> {
+        var text = "" to ""
+        scenario.onActivity { activity ->
+            val screen = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? NoteViewFragment
+            val dialog = screen?.deleteConfirmation?.takeIf { !it.ended }?.dialog as? androidx.appcompat.app.AlertDialog
+                ?: return@onActivity
+            text = dialog.findViewById<TextView>(androidx.appcompat.R.id.alertTitle)?.text.toString() to
+                dialog.findViewById<TextView>(android.R.id.message)?.text.toString()
+        }
+        return text
+    }
+
+    /** Answers the open delete dialog. */
+    private fun answerDelete(scenario: ActivityScenario<NotesActivity>, positive: Boolean = true) {
+        scenario.onActivity { activity ->
+            val dialog = checkNotNull(noteScreen(activity).deleteConfirmation?.dialog as? androidx.appcompat.app.AlertDialog)
+            dialog.getButton(if (positive) DialogInterface.BUTTON_POSITIVE else DialogInterface.BUTTON_NEGATIVE).performClick()
+        }
+    }
+
+    private fun noteScreen(activity: NotesActivity) =
+        activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as NoteViewFragment
 
     /** [read] of the note screen, on the main thread, where the editor's text lives; null while no note screen shows. */
     private fun <T> onEditor(scenario: ActivityScenario<NotesActivity>, read: (NoteViewFragment) -> T): T? {

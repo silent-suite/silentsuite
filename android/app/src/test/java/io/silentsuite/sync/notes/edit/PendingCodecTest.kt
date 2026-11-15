@@ -76,11 +76,12 @@ class PendingCodecTest {
     }
 
     @Test fun `a state this build does not know makes the entry unreadable, for the full read and for the header read`() {
-        // The state code follows the two uids, each written with its two-byte length.
+        // The state code follows the two uids, each written with its two-byte length. Codes 1, 3 and 4 are this
+        // build's states (4 is a pending delete); 5 is the next one a newer build could add.
         val at = 2 + full.noteUid.length + 2 + full.notebookUid.length
-        val file = withEntryHeader(PendingCodec.encodeEntry(full)) { header -> header.copyOf().also { it[at] = 4 } }
-        assertEquals("state 4", bad(file))
-        assertEquals("state 4", (header(file) as PendingCodec.Decoded.Bad).reason)
+        val file = withEntryHeader(PendingCodec.encodeEntry(full)) { header -> header.copyOf().also { it[at] = 5 } }
+        assertEquals("state 5", bad(file))
+        assertEquals("state 5", (header(file) as PendingCodec.Decoded.Bad).reason)
     }
 
     @Test fun `the state code of the prototype's pending delete is not read, by the full read or by the header read`() {

@@ -130,6 +130,39 @@ class NoteEditorContractTest {
         assertFalse("the read-only hint is gone with its uses", strings.contains("notes_read_only_hint"))
     }
 
+    @Test fun `a delete saves first, calls the store on IO, and its confirmations carry the process token and the account`() {
+        assertEquals(1, modelCode.split("withContext(Dispatchers.IO) { readDelete() }").size - 1)
+        assertEquals(1, modelCode.split("withContext(Dispatchers.IO) { deleteOnIo(shown, discardConfirmed) }").size - 1)
+        assertEquals("deleteNote only there", 1, Regex("store\\.deleteNote\\(").findAll(modelCode).count())
+        assertTrue(function("deleteOnIo").contains("store.deleteNote("))
+        // With no entry, the item marked deleted must be the revision the confirmation showed, checked before it is marked.
+        val onIo = function("deleteOnIo")
+        assertTrue(onIo.indexOf("item.etag != shown.revision") in 0 until onIo.indexOf("EtebasePushRemote.markDeleted("))
+        assertTrue(function("readDelete").contains("revision = shown"))
+        // A failed write that left the delete in place is never reported as nothing deleted.
+        assertTrue(onIo.contains("e is IOException && deleteIsThere(store, shown.noteUid) -> DeleteAnswer.UNSURE"))
+        // A removal that left the note's own entry in place (a replaced original went first) deleted nothing.
+        assertTrue(onIo.contains("entryStillThere(store, shown.noteUid) -> DeleteAnswer.FAILED"))
+        // The deleted item carries no text of the note: never a bare delete().
+        assertTrue(function("deleteOnIo").contains("EtebasePushRemote.markDeleted(item, System.currentTimeMillis())"))
+        assertFalse(Regex("\\.delete\\(\\)").containsMatchIn(modelCode))
+        val ask = model.substringAfter("    fun askDelete() {").substringBefore("\n    }\n")
+        assertTrue("everything typed is saved first", ask.indexOf("saveStep()") in 0 until ask.indexOf("readDelete()"))
+        val delete = model.substringAfter("    fun delete(shown: DeleteShown, discardConfirmed: Boolean) {").substringBefore("\n    }\n")
+        assertTrue("text typed after the confirmation was prepared stops the delete",
+            delete.indexOf("core.dirty") in 0 until delete.indexOf("deleteOnIo(shown, discardConfirmed)"))
+        assertTrue("a delete on disk asks for a run, also one that may not last a power loss",
+            delete.contains("if (answer == DeleteAnswer.RECORDED || answer == DeleteAnswer.UNSURE) requestSync(0)"))
+        val dialog = read("src/main/java/io/silentsuite/sync/ui/notes/NoteDeleteConfirmation.kt")
+        assertTrue(dialog.contains("putString(ARG_PROCESS, ProcessIncarnation.current())"))
+        assertTrue(dialog.contains("putString(ARG_CREATION_ID, identity.creationId)"))
+        val confirmed = screen.substringAfter("    internal fun deleteConfirmed(").substringBefore("\n    }\n")
+        assertTrue(confirmed.indexOf("ProcessIncarnation.isCurrent(shownIn)") in 0 until confirmed.indexOf("model.delete("))
+        assertTrue(confirmed.contains("identity != ExactAccountIdentity(account.type, account.name, creationId)"))
+        assertTrue("the discard of unsynced text is its own confirmation",
+            confirmed.contains("if (shown.unsynced && !discard) confirmDelete(shown, discard = true)"))
+    }
+
     @Test fun `the editor makes no release, discard, hold or send`() {
         for (banned in listOf(".release(", ".discard(", "discardStore", "discardOrphan", "discardNotebook", "clearAll", ".hold(",
             ".rebase(", "beginSend", "startSend", "completeSend", "replaceWithNewNote", "Trigger.MANUAL")) {

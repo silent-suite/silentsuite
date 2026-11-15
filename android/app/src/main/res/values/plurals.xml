@@ -65,4 +65,21 @@
         <item quantity="one">%d item in this notebook could not be read</item>
         <item quantity="other">%d items in this notebook could not be read</item>
     </plurals>
+    <!-- The notebook list's notice about notes the user deleted that a Notes sync did not delete: the note shows again, and this says why, until the user dismisses it. -->
+    <plurals name="notes_deletes_not_done_changed">
+        <item quantity="one">%d note you deleted was changed on another device first, so it was not deleted. It shows again with that change.</item>
+        <item quantity="other">%d notes you deleted were changed on another device first, so they were not deleted. They show again with those changes.</item>
+    </plurals>
+    <plurals name="notes_deletes_not_done_read_only">
+        <item quantity="one">%d note you deleted was not deleted, because its notebook is read-only for you now. It shows again.</item>
+        <item quantity="other">%d notes you deleted were not deleted, because their notebook is read-only for you now. They show again.</item>
+    </plurals>
+    <plurals name="notes_deletes_not_done_rejected">
+        <item quantity="one">%d note you deleted was not deleted, because the server refused the delete twice. It shows again.</item>
+        <item quantity="other">%d notes you deleted were not deleted, because the server refused the delete twice. They show again.</item>
+    </plurals>
+    <plurals name="notes_deletes_not_done_not_built">
+        <item quantity="one">%d note you deleted was not deleted, because the delete could not be prepared on this device. It shows again.</item>
+        <item quantity="other">%d notes you deleted were not deleted, because the delete could not be prepared on this device. They show again.</item>
+    </plurals>
 </resources>

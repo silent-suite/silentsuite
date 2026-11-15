@@ -269,19 +269,22 @@ internal object PendingCodec {
 
     /**
      * The state as entry files hold it. Code 2 stood for a pending delete on the unreleased prototype
-     * branch. No state has it now, and it is not given to another state: an upload sends an entry's
-     * blob as it is, whatever its state, and the blob of such a file is a deleted item. This build
-     * neither writes nor reads the code, so a file that carries it is [Decoded.Bad] like one in any
-     * state this build does not know, and is kept.
+     * branch, under rules that were removed with it. It is not given to another state, this build's
+     * delete included: this build neither writes nor reads code 2, so a file that carries it is
+     * [Decoded.Bad] like one in any state this build does not know, and is kept. A pending delete is
+     * code 4. A build from before it reads code 4 as a state it does not know: it keeps the file,
+     * reports it, and never sends it.
      */
     private fun stateCode(state: PendingEntry.State) = when (state) {
         PendingEntry.State.UPSERT -> 1
         PendingEntry.State.HELD -> 3
+        PendingEntry.State.DELETE -> 4
     }
 
     private fun stateOf(code: Int) = when (code) {
         1 -> PendingEntry.State.UPSERT
         3 -> PendingEntry.State.HELD
+        4 -> PendingEntry.State.DELETE
         else -> throw IOException("state $code")
     }
 

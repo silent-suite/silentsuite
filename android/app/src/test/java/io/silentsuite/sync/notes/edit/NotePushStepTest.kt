@@ -47,7 +47,12 @@ class NotePushStepTest {
     }
 
     private val dir by lazy { tmp.newFolder("store") }
-    private val store by lazy { PendingNotesStore.open(dir, rename = atomicMove) }
+
+    /** Makes the sync of the store's directory fail, as after an unlink that may not last a power loss. */
+    private var failDirectorySync = false
+    private val store by lazy {
+        PendingNotesStore.open(dir, syncDirectory = { if (failDirectorySync) throw IOException("directory sync failed") }, rename = atomicMove)
+    }
 
     @After fun reset() {
         PendingNotesStore.beforeRemoveForTesting = null
@@ -2356,5 +2361,190 @@ class NotePushStepTest {
         server.uploadError = { UnauthorizedException("Invalid token.") }
         assertThrows(StaleSyncRunException::class.java) { step(mayWrite = { current }).pass() }
         assertEquals(0, entry("a").failureCount)
+    }
+
+    // ---- pending deletes (design sections 3.4 and 3.5) ----
+
+    /** The reasons each step reported for a delete it dropped, in order, as the runner's notice gets them. */
+    private val notDone = mutableListOf<NotePushPolicy.DeleteNotDone>()
+
+    private fun runCountingDeletes(): NotePushStep.Result =
+        NotePushStep(store, remote, memory, true, { true }, { notDone += it }) { now }.pass()
+
+    /**
+     * The user's confirmed delete of [uid] from the note screen: the item the editor shows (its entry, else the server
+     * revision it saw, [seen]) marked deleted. The discard is confirmed when there is an entry.
+     */
+    private fun deleteLocally(uid: String, seen: String? = null) {
+        val current = (store.read(uid) as? Read.Present)?.entry
+        val base = current?.let { item(it.blob).base } ?: seen
+        val deleted = Item(uid, base, revision(), true, "")
+        val outcome = store.deleteNote(uid, "b1", current?.version, current?.let { PendingNotesStore.digestOf(it.blob) },
+            discardConfirmed = current != null, revision = deleted.revision, deleted = deleted.blob())
+        assertEquals(PendingNotesStore.NoteDelete.Recorded, outcome)
+    }
+
+    @Test fun `a pending delete is sent on the revision the user saw and leaves the cache as deleted`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        val result = runCountingDeletes()
+        assertTrue(result.succeeded)
+        assertTrue("the server holds it deleted", server.items.getValue("n1").deleted)
+        assertEquals("srv-0", server.uploads.single().base)
+        assertTrue("the deleted copy went into the cache: $cached", cached.single().endsWith(" deleted"))
+        assertTrue(waiting().isEmpty())
+        assertTrue(notDone.isEmpty())
+    }
+
+    @Test fun `a delete whose answer was lost is done by the next run, with nothing sent over it`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        loseAnswer = { true }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        assertTrue(server.items.getValue("n1").deleted)
+        assertEquals(listOf("n1"), waiting())
+        assertTrue(run().succeeded)
+        assertTrue(waiting().isEmpty())
+        assertTrue(server.items.getValue("n1").deleted)
+    }
+
+    @Test fun `a delete of a note changed elsewhere restores the note with that change, cached first, and says why`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        server.writeElsewhere("n1", "web-1")
+        val result = runCountingDeletes()
+        assertTrue("a dropped delete is not a failure", result.succeeded)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.CHANGED_ELSEWHERE to 1), result.deletesNotDone)
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.CHANGED_ELSEWHERE), notDone)
+        assertEquals("the other client's change stays", Item("n1", null, "web-1", false, "theirs"), server.items.getValue("n1"))
+        assertEquals("its copy is cached", "n1=web-1", cached.single())
+        assertEquals("before the delete was dropped", true, entryThereAtCacheWrite["n1"])
+        assertTrue(waiting().isEmpty())
+    }
+
+    @Test fun `a delete whose restored copy cannot be cached stays, and the run fails`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        server.writeElsewhere("n1", "web-1")
+        cacheError = IOException("disk full")
+        val result = runCountingDeletes()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(PendingEntry.State.DELETE, entry("n1").state)
+        assertTrue(notDone.isEmpty())
+    }
+
+    @Test fun `a delete of a note deleted elsewhere is done, and says nothing`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        server.writeElsewhere("n1", "web-del", deleted = true)
+        val result = runCountingDeletes()
+        assertTrue(result.succeeded)
+        assertEquals("n1=web-del deleted", cached.single())
+        assertTrue(waiting().isEmpty())
+        assertTrue(notDone.isEmpty())
+        assertEquals("web-del", server.items.getValue("n1").revision)
+    }
+
+    @Test fun `a delete over unsynced text that already landed is rebased onto that upload and lands`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        val first = save("n1", "one", seen = "srv-0")
+        loseAnswer = { true }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        assertEquals("the edit landed", first.revision, server.items.getValue("n1").revision)
+        deleteLocally("n1")
+        val since = server.uploads.size
+        val result = runCountingDeletes()
+        assertTrue(result.succeeded)
+        assertTrue(server.items.getValue("n1").deleted)
+        assertEquals("the second upload is built on our own landed edit", first.revision, server.uploads.last().base)
+        assertEquals(2, server.uploads.size - since)
+        assertTrue(waiting().isEmpty())
+        assertTrue(notDone.isEmpty())
+    }
+
+    @Test fun `a pending delete in a notebook now read-only is dropped without an upload and says why`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        notebooks["b1"] = Notebook.READ_ONLY
+        val result = runCountingDeletes()
+        assertTrue(server.uploads.isEmpty())
+        assertEquals(0, result.held)
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.READ_ONLY to 1), result.deletesNotDone)
+        assertTrue("never held: nothing waits, in the holding area or out of it", waiting().isEmpty())
+    }
+
+    @Test fun `a pending delete in a notebook deleted or gone is dropped and says nothing`() {
+        for ((uid, state) in listOf("n1" to Notebook.DELETED, "n2" to Notebook.MISSING)) {
+            server.items[uid] = Item(uid, null, "srv-0", false, "theirs")
+            deleteLocally(uid, seen = "srv-0")
+            notebooks["b1"] = state
+            val result = runCountingDeletes()
+            assertTrue(result.deletesNotDone.isEmpty())
+            assertEquals(Read.Missing, store.read(uid))
+        }
+        assertTrue(notDone.isEmpty())
+        assertTrue(server.uploads.isEmpty())
+    }
+
+    @Test fun `a 403 the notebook fetch confirms as read-only drops a pending delete and says why`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        server.uploadError = { PermissionDeniedException("no_write_access") }
+        server.notebookAnswer = { NotebookCheck.Found(readOnly = true, deleted = false) }
+        val result = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.READ_ONLY to 1), result.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertFalse(server.items.getValue("n1").deleted)
+    }
+
+    @Test fun `a delete the server refuses twice in a row is dropped and says why`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        server.uploadError = { http(400) }
+        assertEquals(FailureKind.REJECTED, runCountingDeletes().failure)
+        assertEquals("one odd answer moves nothing", PendingEntry.State.DELETE, entry("n1").state)
+        val second = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.REJECTED to 1), second.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a restored delete whose removal cannot be synced still says why, and the run reports the storage failure`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        server.writeElsewhere("n1", "web-1")
+        // From the conflict's fetch on, after the send was recorded: only the drop's removal syncs the directory then.
+        duringFetch = { failDirectorySync = true }
+        val result = runCountingDeletes()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        failDirectorySync = false
+        assertEquals("the file is gone until a power loss", Read.Missing, store.read("n1"))
+        assertEquals("written now, since the next run finds nothing", listOf(NotePushPolicy.DeleteNotDone.CHANGED_ELSEWHERE), notDone)
+    }
+
+    @Test fun `a delete dropped for a read-only notebook whose removal cannot be synced still says why`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        deleteLocally("n1", seen = "srv-0")
+        notebooks["b1"] = Notebook.READ_ONLY
+        failDirectorySync = true
+        val result = runCountingDeletes()
+        assertEquals(FailureKind.LOCAL, result.failure)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertEquals(listOf(NotePushPolicy.DeleteNotDone.READ_ONLY), notDone)
+    }
+
+    @Test fun `a delete onto our own upload that cannot be built is dropped and says why`() {
+        server.items["n1"] = Item("n1", null, "srv-0", false, "theirs")
+        save("n1", "one", seen = "srv-0")
+        loseAnswer = { true }
+        assertEquals(Ended.STOPPED, run().ended)
+        loseAnswer = { false }
+        deleteLocally("n1")
+        rebaseError = IllegalStateException("could not mark it deleted")
+        val result = runCountingDeletes()
+        assertEquals(mapOf(NotePushPolicy.DeleteNotDone.NOT_BUILT to 1), result.deletesNotDone)
+        assertEquals(Read.Missing, store.read("n1"))
+        assertFalse("our edit stays on the server", server.items.getValue("n1").deleted)
     }
 }
