@@ -244,7 +244,7 @@ describe('NotesPage', () => {
     expect(screen.getByRole('button', { name: /existing/ })).toBeInTheDocument()
   })
 
-  it('shows the not-enabled panel in Italian when that catalogue is chosen', () => {
+  it('shows the not-enabled panel in Italian when that catalog is chosen', () => {
     useExperimentalStore.setState({ notesAccounts: [] })
     loaded([note('existing')])
     render(
@@ -255,6 +255,21 @@ describe('NotesPage', () => {
     expect(screen.getByRole('heading', { name: 'Le note sono una funzione sperimentale' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Apri le impostazioni sperimentali' })).toHaveAttribute('href', '/settings/experimental')
     expect(screen.queryByText('Open Experimental settings')).not.toBeInTheDocument()
+  })
+
+  it('shows the translated Cancel button in the note deletion dialog', () => {
+    loaded([note('note-1', { title: 'Doomed' })])
+    render(
+      <NextIntlClientProvider locale="it" messages={itMessages}>
+        <NotesPage />
+      </NextIntlClientProvider>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Doomed/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Elimina nota' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Eliminare la nota?' })
+    expect(within(dialog).getByRole('button', { name: 'Annulla' })).toBeInTheDocument()
+    expect(within(dialog).queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
   })
 
   it('flushes pending edits when hidden and preserves existing notes for re-enabling', async () => {
