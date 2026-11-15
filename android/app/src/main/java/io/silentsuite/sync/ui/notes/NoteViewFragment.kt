@@ -78,6 +78,8 @@ class NoteViewFragment : Fragment() {
                 getString(R.string.notes_edited, DateUtils.getRelativeTimeSpanString(
                     it, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE))
             },
+            NoteListFragment.syncLabel(requireContext(), note.sync),
+            NoteListFragment.pendingNotice(requireContext(), note.pending)?.removeSuffix("."),
             getString(R.string.notes_read_only_hint),
         ).joinToString(". ")
         view.findViewById<TextView>(R.id.note_body).text = note.body

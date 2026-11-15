@@ -8,6 +8,7 @@ import FileDropZone from './FileDropZone'
 import ImportPreview from './ImportPreview'
 import ImportListSelector from './ImportListSelector'
 import GoogleImportButton from './GoogleImportButton'
+import MicrosoftImportButton from './MicrosoftImportButton'
 import { importSourceKeys } from '@/app/lib/google-import/source-key'
 import { RECONCILE_FAILED_MESSAGE, serverImportSourceKeys } from '@/app/lib/google-import/reconcile'
 import { useContactStore } from '@/app/stores/use-contact-store'
@@ -24,7 +25,7 @@ function hasProviderContacts(contacts: VCard[]): boolean {
 }
 
 /**
- * Contacts read from Google whose source is in `existing` are left out, so a re-import never
+ * Contacts read from a provider whose source is in `existing` are left out, so a re-import never
  * adds one twice. File contacts pass through unchanged. People are never matched by name,
  * phone or email.
  */
@@ -106,7 +107,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
-  const [googleNotice, setGoogleNotice] = useState<string | null>(null)
+  const [providerNotice, setProviderNotice] = useState<string | null>(null)
   const importContacts = useContactStore((s) => s.importContacts)
   const contactLists = useContactListStore((s) => s.lists)
   const activeListId = useContactListStore((s) => s.activeListId)
@@ -128,7 +129,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setError(null)
     setContacts([])
     setImportedCount(null)
-    setGoogleNotice(null)
+    setProviderNotice(null)
 
     try {
       const allContacts: VCard[] = []
@@ -154,15 +155,15 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     }
   }, [])
 
-  const handleGoogleLoaded = useCallback((loaded: VCard[]) => {
+  const handleProviderLoaded = useCallback((provider: 'Google' | 'Microsoft', loaded: VCard[]) => {
     setError(null)
     setImportedCount(null)
     // A first look against what this device shows; the write re-checks against the server.
     const { contacts: pending, skipped } = withoutImported(loaded, importSourceKeys(useContactStore.getState().contacts))
     const notes: string[] = []
-    if (pending.length === 0) notes.push('Nothing new to import from Google.')
+    if (pending.length === 0) notes.push(`Nothing new to import from ${provider}.`)
     if (skipped > 0) notes.push(`${skipped} already imported ${skipped === 1 ? 'contact was' : 'contacts were'} skipped.`)
-    setGoogleNotice(notes.length > 0 ? notes.join(' ') : null)
+    setProviderNotice(notes.length > 0 ? notes.join(' ') : null)
     setContacts(pending)
   }, [])
 
@@ -183,7 +184,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     }
     if (toImport.length === 0) {
       setContacts([])
-      setGoogleNotice('Everything listed was already imported.')
+      setProviderNotice('Everything listed was already imported.')
       setIsImporting(false)
       return
     }
@@ -246,7 +247,7 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
     setContacts([])
     setError(null)
     setImportedCount(null)
-    setGoogleNotice(null)
+    setProviderNotice(null)
   }, [])
 
   return (
@@ -290,10 +291,12 @@ export default function ContactImport({ onImportComplete, heading }: ContactImpo
 
       <FileDropZone accept=".vcf" onFiles={handleFiles} disabled={isImporting} />
 
-      <GoogleImportButton kind="contacts" disabled={isImporting} onLoaded={handleGoogleLoaded} onError={setError} />
+      <GoogleImportButton kind="contacts" disabled={isImporting} onLoaded={(loaded) => handleProviderLoaded('Google', loaded)} onError={setError} />
 
-      {googleNotice && (
-        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{googleNotice}</p>
+      <MicrosoftImportButton kind="contacts" disabled={isImporting} onLoaded={(loaded) => handleProviderLoaded('Microsoft', loaded)} onError={setError} />
+
+      {providerNotice && (
+        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{providerNotice}</p>
       )}
 
       {error && (

@@ -77,3 +77,35 @@ describe('service worker never caches Google import traffic (#48)', () => {
     expect(firstMatch(routes, href)?.options?.cacheName).toBe(cacheName)
   })
 })
+
+describe('service worker never caches Microsoft import traffic (#48)', () => {
+  const options = pwaOptions()
+  const ours = options.workboxOptions?.runtimeCaching ?? []
+  const routes = [...ours, ...(nextPwaDefaults as Rule[])]
+
+  it('registers a NetworkOnly Graph route without a cache, ahead of the defaults', () => {
+    const graph = ours.find((rule) => rule.urlPattern instanceof RegExp && rule.urlPattern.test('https://graph.microsoft.com/v1.0/me'))
+    expect(graph).toMatchObject({ handler: 'NetworkOnly', method: 'GET' })
+    expect(graph!.options).toBeUndefined()
+  })
+
+  it.each([
+    'https://graph.microsoft.com/v1.0/me/calendars',
+    'https://graph.microsoft.com/v1.0/me/calendars/AAMk%3D/events?$select=subject&$top=100',
+    'https://graph.microsoft.com/v1.0/me/contactFolders?$skiptoken=abc',
+  ])('%s is NetworkOnly', (href) => {
+    expect(firstMatch(nextPwaDefaults as Rule[], href)?.options?.cacheName).toBe('cross-origin')
+    expect(firstMatch(routes, href)).toMatchObject({ handler: 'NetworkOnly' })
+    expect(firstMatch(routes, href)?.options).toBeUndefined()
+  })
+
+  it('leaves look-alike hosts to the defaults', () => {
+    for (const href of ['https://graph.microsoft.com.evil.example/v1.0/me', 'https://evil.example/?u=https://graph.microsoft.com/']) {
+      expect(firstMatch(routes, href)?.options?.cacheName).toBe('cross-origin')
+    }
+  })
+
+  it('has no route for non-GET requests, so the token POST to login.microsoftonline.com is never handled', () => {
+    for (const rule of routes) expect(rule.method ?? 'GET').toBe('GET')
+  })
+})

@@ -33,3 +33,9 @@ export const REPORT_RELAY_URL =
  * hidden unless a build is given one, so builds without it are unchanged.
  */
 export const GOOGLE_IMPORT_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_IMPORT_CLIENT_ID ?? ''
+
+/**
+ * Application (client) ID of the Microsoft Entra app for the one-time Outlook calendar and
+ * contacts import (#48). The import is hidden unless a build is given one.
+ */
+export const MICROSOFT_IMPORT_CLIENT_ID = process.env.NEXT_PUBLIC_MICROSOFT_IMPORT_CLIENT_ID ?? ''

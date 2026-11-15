@@ -26,16 +26,22 @@ import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesNetworkPolicy.NoticePart
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
+import io.silentsuite.sync.notes.edit.HeldReason
+import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.ui.account.SyncLifecycleWindows
 import io.silentsuite.sync.ui.etebase.CollectionActivity
+import io.silentsuite.sync.ui.notes.HeldTextFragment
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteListFragment
+import io.silentsuite.sync.ui.notes.NoteSync
 import io.silentsuite.sync.ui.notes.NoteViewFragment
 import io.silentsuite.sync.ui.notes.NotebookListFragment
 import io.silentsuite.sync.ui.notes.NotebookRow
+import io.silentsuite.sync.ui.notes.NotebookOverview
 import io.silentsuite.sync.ui.notes.NotesActivity
 import io.silentsuite.sync.ui.notes.NotesEmptyState
+import io.silentsuite.sync.ui.notes.NotesLoad
 import io.silentsuite.sync.ui.notes.NotesLoader
 import io.silentsuite.sync.ui.notes.NotesRuntimeFixture
 import io.silentsuite.sync.ui.notes.notesFixtureOverride
@@ -174,6 +180,152 @@ class NotesRuntimeTest {
         }
     }
 
+    @Test fun loaderReadsLocalChangesFirstAndKeepsThemWhenTheCacheCannotBeRead() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("notes-pending-${System.nanoTime()}@example.invalid", App.accountType)
+        check(manager.addAccountExplicitly(account, null, null))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+        check(AccountSettings.writeNotesEnabled(manager, account, true))
+        // No Etebase session is stored, so everything after the pending store read fails, the way a
+        // damaged session or cache would. The real loader runs against the real store for this exact
+        // account generation, written through the device's own rename and directory sync.
+        val store = PendingNotesStore.forIdentity(context, account.type, account.name, generation)
+        assertTrue("outside backup and device transfer",
+            store.dir.canonicalPath.startsWith(context.noBackupFilesDir.canonicalPath + java.io.File.separator))
+        store.saveLocal("waiting", "nb", "r1", byteArrayOf(1), isCreate = true)
+        store.saveLocal("held", "nb", "r1", byteArrayOf(2), isCreate = true)
+        store.saveLocal("held", "nb", "r2", byteArrayOf(3), isCreate = true)
+        check(store.hold("held", HeldReason.READ_ONLY, now = 1) == PendingNotesStore.HoldOutcome.HELD)
+        assertFalse("no uncommitted write is left behind", store.dir.listFiles()!!.any { it.name.endsWith(".new") })
+        try {
+            // The notebook list still leads to the local changes: both count as unsynced text.
+            assertEquals(NotesLoad.Loaded(NotebookOverview(emptyList(), unsyncedText = 2, failed = true)),
+                NotesLoader.notebooks(context, account, generation))
+            // One notebook's notes need the cache, so that screen reports the failure.
+            assertEquals(NotesLoad.Failed, NotesLoader.notebook(context, account, generation, "nb"))
+        } finally {
+            runCatching { store.clearAll() }
+            removeAccountAndWait(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    /**
+     * A whole-store discard that finishes while a load reads the cache makes the load read the local changes again,
+     * also when the cache cannot be read: the list then counts nothing, not the text that was just discarded.
+     */
+    @Test fun aWholeStoreDiscardDuringALoadIsReadAgainWhenTheCacheCannotBeRead() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("notes-midload-${System.nanoTime()}@example.invalid", App.accountType)
+        check(manager.addAccountExplicitly(account, null, null))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+        check(AccountSettings.writeNotesEnabled(manager, account, true))
+        // No Etebase session is stored, so everything after the pending store read fails.
+        val store = PendingNotesStore.forIdentity(context, account.type, account.name, generation)
+        store.saveLocal("waiting", "nb", "r1", byteArrayOf(1), isCreate = true)
+        store.saveLocal("held", "nb", "r1", byteArrayOf(2), isCreate = true)
+        check(store.hold("held", HeldReason.READ_ONLY, now = 1) == PendingNotesStore.HoldOutcome.HELD)
+        var reads = 0
+        io.silentsuite.sync.ui.notes.afterLocalChangesReadForTesting = {
+            if (reads++ == 0) assertEquals(PendingNotesStore.DiscardOutcome.Done, store.discardStore(store.unsynced()))
+        }
+        try {
+            assertEquals(NotesLoad.Loaded(NotebookOverview(emptyList(), unsyncedText = 0, failed = true)),
+                NotesLoader.notebooks(context, account, generation))
+            assertEquals("the load read the store again, once", 2, reads)
+            assertTrue(store.clearedInFull())
+        } finally {
+            io.silentsuite.sync.ui.notes.afterLocalChangesReadForTesting = null
+            runCatching { store.clearAll() }
+            removeAccountAndWait(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
+    /**
+     * The Unsynced text row stays on the notebook list while the notebooks cannot be read, and opens the account's
+     * Unsynced text, which lists the same changes; a store that cannot be listed is said to be unreadable, never
+     * empty. The first load opens a new store instance, whose recovery removes an interrupted write: that, and
+     * every other store call here, runs off the main thread.
+     */
+    @Test fun theUnsyncedTextRowStaysWhileTheNotebooksOrTheLocalChangesCannotBeRead() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val manager = AccountManager.get(context)
+        val account = Account("notes-unsynced-${System.nanoTime()}@example.invalid", App.accountType)
+        check(manager.addAccountExplicitly(account, null, null))
+        AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
+        check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
+        check(AccountSettings.writeNotesEnabled(manager, account, true))
+        // No Etebase session is stored, so the notebooks cannot be read, as with a damaged session or cache.
+        val seeded = PendingNotesStore.forIdentity(context, account.type, account.name, generation)
+        seeded.saveLocal("waiting", "nb", "r1", byteArrayOf(1), isCreate = true)
+        seeded.saveLocal("held", "nb", "r1", byteArrayOf(2), isCreate = true)
+        check(seeded.hold("held", HeldReason.READ_ONLY, now = 1) == PendingNotesStore.HoldOutcome.HELD)
+        val torn = java.io.File(seeded.dir, "torn.note.new").apply { writeBytes(byteArrayOf(0)) }
+        // A new process: the screen's load is the first call on a new instance, and runs its recovery.
+        PendingNotesStore.resetForTesting()
+        NotesSyncCoordinator.runnerOverride = { _, _, _, _ -> }
+        val probe = io.silentsuite.sync.notes.MainThreadStoreProbe().apply { install() }
+        try {
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, generation)).use { scenario ->
+                waitUntil("the row to count both changes") { notebookFragment(scenario)?.renderedUnsyncedText == 2 }
+                assertFalse("the recovery removed the interrupted write", torn.exists())
+                scenario.onActivity { activity ->
+                    val row = activity.findViewById<TextView>(R.id.notebooks_unsynced)
+                    assertEquals(View.VISIBLE, row.visibility)
+                    assertEquals("Unsynced text (2)", row.text.toString())
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.notebooks_empty).visibility)
+                    row.performClick()
+                }
+                waitUntil("the account's Unsynced text to list both") {
+                    heldFragment(scenario)?.renderedRows?.map { it.noteUid } == listOf("held", "waiting")
+                }
+                scenario.onActivity { activity ->
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.held_notebooks_failed).visibility)
+                    // Without a session no text can be decrypted: no Copy and no Try again, and the row says so.
+                    val rows = (activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as HeldTextFragment).renderedRows!!
+                    assertEquals(listOf(null, null), rows.map { it.body })
+                    assertEquals(listOf(false, false), rows.map { it.canTryAgain })
+                    val cards = activity.findViewById<android.view.ViewGroup>(R.id.held_rows)
+                    assertEquals(activity.getString(R.string.notes_held_text_unavailable),
+                        cards.getChildAt(0).findViewById<TextView>(R.id.held_body).text.toString())
+                    assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_copy).visibility)
+                    assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_try_again).visibility)
+                    // Held text the screen cannot show offers no Discard: the user would delete text they never saw.
+                    assertEquals(listOf(false, false), rows.map { it.canDiscard })
+                    assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_discard).visibility)
+                    assertEquals(activity.getString(R.string.notes_held_unavailable_title),
+                        cards.getChildAt(0).findViewById<TextView>(R.id.held_title).text.toString())
+                    activity.onSupportNavigateUp()
+                }
+                waitUntil("back on the notebook list") { notebookFragment(scenario) != null }
+
+                // The store cannot be listed now: the row says the changes could not be read, never that there are none.
+                probe.listing = { null }
+                NotesSyncCoordinator.request(context, account, generation, NotesSyncPolicy.Trigger.SCREEN)
+                waitUntil("the row to say the changes could not be read") { notebookFragment(scenario)?.renderedPendingUnreadable == true }
+                scenario.onActivity { activity ->
+                    val row = activity.findViewById<TextView>(R.id.notebooks_unsynced)
+                    assertEquals(View.VISIBLE, row.visibility)
+                    assertEquals(activity.getString(R.string.notes_unsynced_unreadable), row.text.toString())
+                }
+                probe.listing = null
+            }
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            NotesSyncCoordinator.cancelAccount(account.type, account.name)
+            NotesSyncCoordinator.runnerOverride = null
+            runCatching { PendingNotesStore.forIdentity(context, account.type, account.name, generation).clearAll() }
+            removeAccountAndWait(manager, account)
+            ActiveAccountManager.clearActiveAccount(context)
+        }
+    }
+
     @Test fun notesDashboardJoinsOverallStatusOnlyWhileEnabled() {
         val notesEnabledPhase = AtomicBoolean(false)
         AccountActivity.AccountInfoViewModel.lifecycleWindowsOverride =
@@ -250,12 +402,19 @@ class NotesRuntimeTest {
         AccountSettings.setUserData(manager, account, URI("https://example.invalid/"), account.name)
         check(AccountSettings.writeVerified(manager, account, AccountSettings.KEY_CREATION_ID, generation))
         check(AccountSettings.writeNotesEnabled(manager, account, true))
-        val own = NotebookRow("nb-own", "Personal Notes", "", 0xff10b981.toInt(), readOnly = false, shared = false)
+        val own = NotebookRow("nb-own", "Personal Notes", "Drafts and lists", 0xff10b981.toInt(), readOnly = false, shared = false, waiting = 2)
         val shared = NotebookRow("nb-shared", "Team notes", "Shared by a colleague", 0xff059669.toInt(), readOnly = true, shared = true)
-        val notes = mapOf("nb-shared" to listOf(
-            NoteContent("note-old", "Older note", "# Older\nFirst line of the older note", 1_000L),
-            NoteContent("note-new", "Newer note", "- item one\n- item two", 2_000L),
-        ))
+        val notes = mapOf(
+            "nb-shared" to listOf(
+                NoteContent("note-old", "Older note", "# Older\nFirst line of the older note", 1_000L),
+                NoteContent("note-new", "Newer note", "- item one\n- item two", 2_000L),
+            ),
+            // Pending changes as the loader's overlay reports them in a writable notebook.
+            "nb-own" to listOf(
+                NoteContent("note-local", "Local edit", "Changed on this device", 3_000L, NoteSync.WAITING, pendingVersion = 4),
+                NoteContent("note-bad", "Server copy", "Server text", 500L, NoteSync.LOCAL_UNREADABLE, pendingVersion = 5),
+            ),
+        )
         val identity = ExactAccountIdentity(account.type, account.name, generation)
         // The cache starts empty, as it is before the first Notes sync fills it.
         val rows = AtomicReference(emptyList<NotebookRow>())
@@ -263,7 +422,7 @@ class NotesRuntimeTest {
         notesFixtureOverride = { _, exact, creationId ->
             loads.incrementAndGet()
             if (exact == account && creationId == generation) {
-                NotesRuntimeFixture(rows.get(), notes, unreadable = mapOf("nb-shared" to 1))
+                NotesRuntimeFixture(rows.get(), notes, unsyncedText = 3, unreadable = mapOf("nb-shared" to 1))
             } else {
                 null
             }
@@ -314,6 +473,13 @@ class NotesRuntimeTest {
                     val ownRow = list.adapter.getView(0, null, list)
                     assertEquals(View.GONE, ownRow.findViewById<View>(R.id.read_only).visibility)
                     assertEquals(View.GONE, ownRow.findViewById<View>(R.id.shared).visibility)
+                    // The count comes first: the row shows at most two lines of description.
+                    assertEquals("2 changes not synced yet\nDrafts and lists", ownRow.findViewById<TextView>(R.id.description).text.toString())
+                    assertTrue(ownRow.contentDescription.toString().contains("2 changes not synced yet"))
+                    val unsynced = activity.findViewById<TextView>(R.id.notebooks_unsynced)
+                    assertEquals(View.VISIBLE, unsynced.visibility)
+                    assertEquals("Unsynced text (3)", unsynced.text.toString())
+                    assertEquals(3, notebookFragment(scenario)!!.renderedUnsyncedText)
                     val sharedRow = list.adapter.getView(1, null, list)
                     assertEquals("Team notes", sharedRow.findViewById<TextView>(R.id.title).text.toString())
                     assertEquals(View.VISIBLE, sharedRow.findViewById<View>(R.id.read_only).visibility)
@@ -354,6 +520,7 @@ class NotesRuntimeTest {
                     assertEquals(View.VISIBLE, unreadable.visibility)
                     assertEquals("1 item in this notebook could not be read", unreadable.text.toString())
                     val list = activity.findViewById<ListView>(R.id.notes_list)
+                    assertEquals(View.GONE, list.adapter.getView(0, null, list).findViewById<View>(R.id.note_sync).visibility)
                     list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
                 }
                 waitUntil("note rendered") { noteViewFragment(scenario)?.renderedNote != null }
@@ -365,6 +532,7 @@ class NotesRuntimeTest {
                 waitUntil("note rendered after recreation") { noteViewFragment(scenario)?.renderedNote?.uid == "note-new" }
                 scenario.onActivity { activity ->
                     assertEquals("Newer note", activity.findViewById<TextView>(R.id.note_title).text.toString())
+                    assertFalse(activity.findViewById<TextView>(R.id.note_meta).text.toString().contains("Not synced yet"))
                 }
 
                 // Back to the notebooks, through a recreation while they were on the back stack: the
@@ -375,15 +543,42 @@ class NotesRuntimeTest {
                 waitUntil("notebooks rendered after going back") { notebookFragment(scenario)?.renderedNotebooks?.size == 62 }
                 waitUntil("notebook list position restored") { notebookListPosition(scenario) == 20 }
 
-                // A notebook with no unreadable items shows no count line.
+                // A writable notebook with local changes: each row says so, and so does the viewer.
                 scenario.onActivity { activity ->
                     val list = activity.findViewById<ListView>(R.id.notebooks_list)
                     list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
                 }
-                waitUntil("own notebook rendered") { noteListFragment(scenario)?.renderedEmptyState == NotesEmptyState.EMPTY }
+                waitUntil("own notes rendered") { noteListFragment(scenario)?.renderedNotes?.map { it.uid } == listOf("note-local", "note-bad") }
                 scenario.onActivity { activity ->
-                    assertEquals("Personal Notes", activity.title.toString())
+                    val list = activity.findViewById<ListView>(R.id.notes_list)
+                    val waiting = list.adapter.getView(0, null, list).findViewById<TextView>(R.id.note_sync)
+                    assertEquals(View.VISIBLE, waiting.visibility)
+                    assertEquals("Not synced yet", waiting.text.toString())
+                    val unreadableChange = list.adapter.getView(1, null, list).findViewById<TextView>(R.id.note_sync)
+                    assertEquals(View.VISIBLE, unreadableChange.visibility)
+                    assertEquals("A local change could not be read", unreadableChange.text.toString())
                     assertEquals(View.GONE, activity.findViewById<View>(R.id.notes_unreadable).visibility)
+                    list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
+                }
+                waitUntil("pending note rendered") { noteViewFragment(scenario)?.renderedNote?.uid == "note-local" }
+                scenario.onActivity { activity ->
+                    assertTrue(activity.findViewById<TextView>(R.id.note_meta).text.toString().contains("Not synced yet"))
+                    assertEquals("Changed on this device", activity.findViewById<TextView>(R.id.note_body).text.toString())
+                    assertEquals(4L, noteViewFragment(scenario)!!.renderedNote!!.pendingVersion)
+                }
+            }
+
+            // With no notebook left, local text still has its way in next to the empty state.
+            notesFixtureOverride = { _, exact, creationId ->
+                if (exact == account && creationId == generation) NotesRuntimeFixture(emptyList(), emptyMap(), unsyncedText = 1) else null
+            }
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, generation)).use { scenario ->
+                waitUntil("empty notebook list rendered") { notebookFragment(scenario)?.renderedUnsyncedText == 1 }
+                scenario.onActivity { activity ->
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.notebooks_empty).visibility)
+                    val unsynced = activity.findViewById<TextView>(R.id.notebooks_unsynced)
+                    assertEquals(View.VISIBLE, unsynced.visibility)
+                    assertEquals("Unsynced text (1)", unsynced.text.toString())
                 }
             }
         } finally {
@@ -526,6 +721,12 @@ class NotesRuntimeTest {
             NoticePart.TRY_NOW to R.string.notes_network_try_now,
             NoticePart.SYNC_NOW_NEEDS_WIFI to R.string.notes_network_sync_now_needs_wifi,
         )
+        // The changes waiting on the notebook row, which the second sentence counts while there are any.
+        var waiting = 0
+        fun waitingOnTheRow(count: Int) {
+            waiting = count
+            rows.set(listOf(row.copy(waiting = count)))
+        }
         // Waits until the list has rendered exactly these sentences, then reads the line itself. Every
         // step below expects other sentences than the step before it, so the wait can only end on a
         // render made after the step changed something. A step changes the settings and the pinned
@@ -540,7 +741,13 @@ class NotesRuntimeTest {
                 val line = activity.findViewById<TextView>(R.id.notebooks_network_notice)
                 assertEquals(step, if (expected.isEmpty()) View.GONE else View.VISIBLE, line.visibility)
                 if (expected.isNotEmpty()) {
-                    assertEquals(step, expected.joinToString(" ") { activity.getString(texts.getValue(it)) }, line.text.toString())
+                    assertEquals(step, expected.joinToString(" ") {
+                        if (it == NoticePart.CHANGES_WAITING) {
+                            activity.resources.getQuantityString(R.plurals.notes_network_changes_waiting, waiting, waiting)
+                        } else {
+                            activity.getString(texts.getValue(it))
+                        }
+                    }, line.text.toString())
                 }
             }
         }
@@ -558,10 +765,14 @@ class NotesRuntimeTest {
 
                 // 2. Off Wi-Fi with the defaults: the Notes setting, what Android reports, and the pull
                 // down as an attempt.
+                // Two changes wait on the notebook's row, so the second sentence counts them (answer 5 of
+                // 2026-10-12: say why the changes are waiting).
                 pin(other)
+                waitingOnTheRow(2)
                 reload()
-                awaitLine(scenario, "step 2: off Wi-Fi with the defaults",
-                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
+                awaitLine(scenario, "step 2: off Wi-Fi with the defaults, two changes waiting",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.CHANGES_WAITING, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED,
+                    NoticePart.TRY_NOW)
 
                 // 3. Sync now on Wi-Fi only as well: the last sentence says so, and offers the pull down
                 // for Wi-Fi only. No run is requested in this step; the screen is left and shown again.
@@ -569,7 +780,8 @@ class NotesRuntimeTest {
                 scenario.moveToState(Lifecycle.State.CREATED)
                 scenario.moveToState(Lifecycle.State.RESUMED)
                 awaitLine(scenario, "step 3: Sync now on Wi-Fi only as well",
-                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED, NoticePart.SYNC_NOW_NEEDS_WIFI)
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.CHANGES_WAITING, NoticePart.NOTES_SETTING, NoticePart.NO_WIFI_REPORTED,
+                    NoticePart.SYNC_NOW_NEEDS_WIFI)
 
                 // 4. The account's own switch on, and Sync now on any network again: both rules are
                 // named, the Notes setting first.
@@ -577,14 +789,15 @@ class NotesRuntimeTest {
                 check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
                 reload()
                 awaitLine(scenario, "step 4: the Notes setting and the account switch",
-                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.NOTES_SETTING, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED,
-                    NoticePart.TRY_NOW)
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.CHANGES_WAITING, NoticePart.NOTES_SETTING, NoticePart.ACCOUNT_WIFI_ONLY,
+                    NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
 
                 // 5. Automatic sync on any network and no active network reported: the account switch
                 // alone. No active network is not proof of no connection, so the pull down is still
                 // offered.
                 check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
                 pin(NotesNetworkPolicy.Connection.NONE)
+                waitingOnTheRow(0)
                 reload()
                 awaitLine(scenario, "step 5: no active network reported, the account switch on",
                     NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
@@ -607,11 +820,14 @@ class NotesRuntimeTest {
 
                 // 8. The name removed and Sync now on any network again, still off Wi-Fi: the same words
                 // as for no active network in step 5.
+                // One change waits again, and the count says one.
                 settings.syncWifiOnlySSID = null
                 check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+                waitingOnTheRow(1)
                 reload()
-                awaitLine(scenario, "step 8: off Wi-Fi, the account switch on",
-                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED, NoticePart.TRY_NOW)
+                awaitLine(scenario, "step 8: off Wi-Fi, the account switch on, one change waiting",
+                    NoticePart.MAY_BE_OUT_OF_DATE, NoticePart.CHANGES_WAITING, NoticePart.ACCOUNT_WIFI_ONLY, NoticePart.NO_WIFI_REPORTED,
+                    NoticePart.TRY_NOW)
 
                 // 9. The platform's answer cannot be read: no line, no crash, and the notebook still shows.
                 NotesNetwork.readingOverride = { throw IllegalStateException("the reading fails in this step") }
@@ -625,6 +841,7 @@ class NotesRuntimeTest {
                 check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
                 check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
                 pin(other)
+                waiting = 0
                 rows.set(emptyList())
                 reload()
                 awaitLine(scenario, "step 10: every rule on, above an empty list",
@@ -680,6 +897,12 @@ class NotesRuntimeTest {
     private fun notebookFragment(scenario: ActivityScenario<NotesActivity>): NotebookListFragment? {
         var fragment: NotebookListFragment? = null
         scenario.onActivity { fragment = it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? NotebookListFragment }
+        return fragment
+    }
+
+    private fun heldFragment(scenario: ActivityScenario<NotesActivity>): HeldTextFragment? {
+        var fragment: HeldTextFragment? = null
+        scenario.onActivity { fragment = it.supportFragmentManager.findFragmentById(R.id.fragment_container) as? HeldTextFragment }
         return fragment
     }
 
