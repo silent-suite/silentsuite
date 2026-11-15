@@ -58,10 +58,15 @@ describe('moving a note keeps the metadata other clients wrote', () => {
     useNoteStore.setState({ notes: [] })
   })
 
-  /** A shown, saved note whose server item holds `meta`, and a second writable notebook. */
-  async function shownNoteWithMeta(meta: unknown) {
+  /**
+   * A shown, saved note whose server item holds `meta`, and a second writable notebook.
+   * `writtenLast` is set through the SDK's setMeta after the body, as a client that
+   * saves metadata on its own does; create re-encodes metadata when it sets the body.
+   */
+  async function shownNoteWithMeta(meta: unknown, writtenLast?: unknown) {
     const { account, collection } = await makeSavedNote('unused', 'unused')
     const item = await account.getCollectionManager().getItemManager(collection).create(meta, BODY)
+    if (writtenLast !== undefined) item.setMeta(writtenLast)
     item.encryptedItem.__markSaved()
     const target = await account.getCollectionManager().create('etebase.md.note', { name: 'Target', mtime: 1 }, '')
     target.encryptedCollection.__markSaved()
@@ -121,6 +126,53 @@ describe('moving a note keeps the metadata other clients wrote', () => {
       expect(toastMock.showErrorToast).not.toHaveBeenCalled()
     },
   )
+
+  it('moves a note right after a local save, with the saved title and body and the other client\'s fields', async () => {
+    const { account, collection, item, target } = await shownNoteWithMeta({ name: TITLE, mtime: 1, ...PEER_FIELDS })
+    const saved = await useNoteStore.getState().updateNote(
+      item.uid,
+      { title: 'Saved title', content: 'SAVED BODY' },
+      { base: { title: TITLE, content: BODY, revision: item.etag } },
+    )
+    expect(saved).toBe(true)
+    const shown = useNoteStore.getState().notes[0]!
+    // The save paired the shown note with the cached item it published.
+    expect(shown.revision).toBe(useEtebaseStore.getState().itemCache.get(item.uid).etag)
+
+    const movedId = await useNoteStore.getState().moveNote(item.uid, target.uid)
+
+    expect(movedId).not.toBeNull()
+    const [copy] = await serverItems(account, target)
+    expect(copy.getMeta()).toEqual({ name: 'Saved title', mtime: shown.updated_at.getTime(), ...PEER_FIELDS })
+    expect(new TextDecoder().decode(await copy.getContent())).toBe('SAVED BODY')
+    expect((await serverItems(account, collection)).find((candidate) => candidate.uid === item.uid)?.isDeleted).toBe(true)
+  })
+
+  it('keeps a constructor key as a plain field of the copy', async () => {
+    const { account, item, target } = await shownNoteWithMeta({ name: TITLE, mtime: 1, constructor: 'peer value' })
+
+    expect(await useNoteStore.getState().moveNote(item.uid, target.uid)).not.toBeNull()
+
+    const [copy] = await serverItems(account, target)
+    expect(copy.getMeta()).toEqual({ name: TITLE, mtime: SHOWN_AT.getTime(), constructor: 'peer value' })
+  })
+
+  it('refuses to move a note whose metadata holds a __proto__ key with a map value', async () => {
+    // An own __proto__ key; the decoder turns its map value into the decoded object's prototype.
+    const meta = JSON.parse(`{"name":"${TITLE}","mtime":1,"__proto__":{"kept":true}}`)
+    const { account, collection, item, target } = await shownNoteWithMeta({ name: TITLE, mtime: 1 }, meta)
+    expect(Object.getPrototypeOf(item.getMeta())).not.toBe(Object.prototype)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    onTestFinished(() => errorSpy.mockRestore())
+
+    const movedId = await useNoteStore.getState().moveNote(item.uid, target.uid)
+
+    expect(movedId).toBeNull()
+    expect(await serverItems(account, target)).toEqual([])
+    expect((await serverItems(account, collection)).find((candidate) => candidate.uid === item.uid)?.isDeleted).toBe(false)
+    expect(toastMock.showErrorToast).toHaveBeenCalledWith(UNREADABLE_TOAST)
+    expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMetaUnreadableError' })
+  })
 
   it('refuses to move a note another client retyped after this tab cached it, and leaves it in place', async () => {
     const { account, collection, item, target } = await shownNoteWithMeta({ name: TITLE, mtime: 1 })
