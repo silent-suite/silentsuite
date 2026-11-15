@@ -46,6 +46,7 @@ class PendingNotesStoreTest {
     private fun open(d: File) = PendingNotesStore.open(d, rename = atomicMove)
 
     @After fun reset() {
+        PendingNotesStore.checksumStreamForTesting = null
         PendingNotesStore.beforeOriginalRemovedForTesting = null
         PendingNotesStore.beforeRenameForTesting = null
         PendingNotesStore.beforeRemoveForTesting = null
@@ -1194,6 +1195,215 @@ class PendingNotesStoreTest {
         assertEquals("orig", editor.noteUid)
     }
 
+    // ---- the held screen's discard of one note, checked against the version it showed ----
+
+    @Test fun `a discard for the version shown removes that entry`() {
+        store.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.READ_ONLY, now = 5))
+        val shown = entry("n1").version
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n1", shown))
+        assertEquals(Read.Missing, store.read("n1"))
+        assertFalse(File(dir, "n1.note").exists())
+    }
+
+    @Test fun `a discard for an older version deletes nothing and answers with what is there now`() {
+        store.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        store.hold("n1", HeldReason.READ_ONLY, now = 5)
+        val shown = entry("n1").version
+        // An editor that was open when access changed saves into the held text after the screen read it.
+        assertTrue(store.saveLocal("n1", "b1", "r1", blob("typed later"), isCreate = false) is SaveOutcome.SavedToHolding)
+        val before = filesOf(dir)
+        val answer = store.discard("n1", shown)
+        assertEquals(PendingNotesStore.NoteDiscard.Changed(store.read("n1")), answer)
+        assertEquals("nothing was deleted", before, filesOf(dir))
+        assertArrayEquals(blob("typed later"), entry("n1").blob)
+        // Asked again with the text that is there now, it goes.
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n1", entry("n1").version))
+        assertEquals(Read.Missing, store.read("n1"))
+    }
+
+    @Test fun `a discard of a note with no entry deletes nothing`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        val before = filesOf(dir)
+        assertEquals(PendingNotesStore.NoteDiscard.Missing, store.discard("n1", 1))
+        assertEquals(PendingNotesStore.NoteDiscard.Missing, store.discard("n1", null))
+        assertEquals(before, filesOf(dir))
+    }
+
+    @Test fun `an unreadable entry goes only for a discard that was shown it as unreadable`() {
+        store.saveLocal("n1", "b1", "r1", blob("text"), isCreate = false)
+        val version = entry("n1").version
+        File(dir, "n1.note").writeBytes(byteArrayOf(0))
+        val before = filesOf(dir)
+        assertTrue(store.discard("n1", version) is PendingNotesStore.NoteDiscard.Changed)
+        assertEquals("shown as text, now unreadable: nothing goes", before, filesOf(dir))
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n1", null))
+        assertFalse(File(dir, "n1.note").exists())
+    }
+
+    @Test fun `a discard shown as unreadable deletes nothing while the file cannot be read at all`() {
+        store.saveLocal("n1", "b1", "r1", blob("newer text a run could read"), isCreate = false)
+        // The read fails now, as on an I/O error: it says nothing about what the file holds.
+        val file = File(dir, "n1.note")
+        // Windows cannot take read permission away; the case runs where it can, as on CI.
+        assumeTrue("read permission can be taken away", file.setReadable(false))
+        assumeTrue("the platform refuses the read", runCatching { file.readBytes() }.isFailure)
+        try {
+            val before = file.length()
+            assertTrue(store.discard("n1", null) is PendingNotesStore.NoteDiscard.Changed)
+            assertTrue("nothing was deleted", file.exists())
+            assertEquals(before, file.length())
+        } finally {
+            file.setReadable(true)
+        }
+        assertArrayEquals(blob("newer text a run could read"), entry("n1").blob)
+    }
+
+    @Test fun `a discard shown as unreadable leaves an interrupted write for the whole store's discard`() {
+        store.saveLocal("n2", "b1", "r1", blob("other"), isCreate = false)
+        File(dir, "n1.note.new").writeBytes(byteArrayOf(0))
+        val answer = store.discard("n1", null)
+        assertTrue("$answer", answer is PendingNotesStore.NoteDiscard.Changed || answer == PendingNotesStore.NoteDiscard.Missing)
+        assertTrue("the interrupted write stays", File(dir, "n1.note.new").exists())
+    }
+
+    @Test fun `a discard shown as unreadable does not delete an entry that reads now`() {
+        store.saveLocal("n1", "b1", "r1", blob("text"), isCreate = false)
+        val before = filesOf(dir)
+        assertEquals(PendingNotesStore.NoteDiscard.Changed(store.read("n1")), store.discard("n1", null))
+        assertEquals(before, filesOf(dir))
+    }
+
+    @Test fun `a per-note discard refuses text a run may send, decided under the lock startSend takes`() {
+        store.saveLocal("n1", "b1", "r1", blob("waiting"), isCreate = false)
+        // The screen saw the notebook read-only; a run that finds it writable again sends the entry.
+        assertTrue(store.startSend("n1") is PendingNotesStore.SendStart.Ready)
+        val shown = entry("n1")
+        val before = filesOf(dir)
+        assertEquals(PendingNotesStore.NoteDiscard.MaySync(store.read("n1")),
+            store.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob)))
+        assertEquals("nothing was deleted", before, filesOf(dir))
+        // Held text is never sent, so it goes.
+        store.saveLocal("n2", "b1", "r1", blob("held"), isCreate = false)
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n2", HeldReason.READ_ONLY, now = 5))
+        val held = entry("n2")
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n2", held.version, PendingNotesStore.digestOf(held.blob)))
+    }
+
+    @Test fun `a per-note discard takes text the permit names or holds back, which no run sends, and says when it cannot be read`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        store.saveLocal("n2", "b1", "r1", blob("b"), isCreate = false)
+        val s = restarted()
+        permitsOf(s).record(dir.name, UnsyncedNotes(1, 2, false, names = notes("n1")))
+        assertEquals(PendingNotesStore.SendStart.Refused(PendingNotesStore.Refusal.DISCARD_CONFIRMED), s.startSend("n1"))
+        assertFalse("the permit was read", s.snapshot { false }.permitUnreadable)
+        val e1 = s.entry("n1")
+        assertEquals(PendingNotesStore.NoteDiscard.Done, s.discard("n1", e1.version, PendingNotesStore.digestOf(e1.blob)))
+        val e2 = s.entry("n2")
+        assertEquals("not named: a run sends it", PendingNotesStore.NoteDiscard.MaySync(s.read("n2")),
+            s.discard("n2", e2.version, PendingNotesStore.digestOf(e2.blob)))
+        // While the permit cannot be read every note is held back, and the snapshot says it is for that reason.
+        permitReadsFail()
+        val snapshot = s.snapshot { false }
+        assertTrue(snapshot.permitUnreadable)
+        assertEquals(setOf("n2"), snapshot.discardConfirmed)
+        assertEquals(PendingNotesStore.NoteDiscard.Done, s.discard("n2", e2.version, PendingNotesStore.digestOf(e2.blob)))
+    }
+
+    @Test fun `a per-note discard checks the text shown as well as its version`() {
+        store.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.READ_ONLY, now = 5))
+        val shown = entry("n1")
+        val before = filesOf(dir)
+        // The same version with other text, as a confirmation carried over a restart can meet.
+        assertEquals(PendingNotesStore.NoteDiscard.Changed(store.read("n1")),
+            store.discard("n1", shown.version, PendingNotesStore.digestOf(blob("other text"))))
+        assertEquals("nothing was deleted", before, filesOf(dir))
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob)))
+    }
+
+    @Test fun `a discard whose directory sync fails says so, and the next answer of missing syncs the directory`() {
+        var failing = false
+        val syncs = mutableListOf<String>()
+        val s = PendingNotesStore.open(dir, syncDirectory = { d ->
+            if (failing && d.canonicalPath == dir.canonicalPath) throw java.io.IOException("the sync fails")
+            syncs += d.name
+        }, rename = atomicMove)
+        s.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, s.hold("n1", HeldReason.READ_ONLY, now = 5))
+        val shown = s.entry("n1")
+        failing = true
+        assertThrows(PendingNotesStore.RemovalNotSynced::class.java) {
+            s.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob))
+        }
+        assertFalse("the file is unlinked", File(dir, "n1.note").exists())
+        // A retry whose sync fails again says the same: the text is gone, but the removal may not last.
+        assertThrows(PendingNotesStore.RemovalNotSynced::class.java) {
+            s.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob))
+        }
+        failing = false
+        syncs.clear()
+        assertEquals(PendingNotesStore.NoteDiscard.Missing, s.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob)))
+        assertTrue("the directory was synced, so the removal lasts: $syncs", dir.name in syncs)
+    }
+
+    @Test fun `an intact entry file of a layout this build cannot read goes only with the whole store`() {
+        store.saveLocal("n1", "b1", "r1", blob("written by a newer build"), isCreate = false)
+        val file = File(dir, "n1.note")
+        val bytes = file.readBytes()
+        bytes[4] = 9 // a format version this build does not know, with a checksum that matches
+        val crc = java.util.zip.CRC32().apply { update(bytes, 0, bytes.size - 4) }.value.toInt()
+        for (i in 0 until 4) bytes[bytes.size - 4 + i] = (crc ushr (24 - 8 * i)).toByte()
+        file.writeBytes(bytes)
+        assertTrue(PendingCodec.isIntact(bytes))
+        val unreadable = store.snapshot { true }.unreadable.single()
+        assertEquals("n1.note", unreadable.file)
+        assertFalse("intact, so not damaged", unreadable.damaged)
+        assertTrue(store.discard("n1", null) is PendingNotesStore.NoteDiscard.Changed)
+        assertArrayEquals("nothing was deleted", bytes, file.readBytes())
+    }
+
+    @Test fun `a snapshot reports an unkept entry whose read fails as unreadable, not damaged`() {
+        store.saveLocal("n1", "b1", "r1", blob("waiting"), isCreate = false)
+        PendingNotesStore.checksumStreamForTesting = { file ->
+            object : java.io.InputStream() {
+                override fun read(): Int = throw java.io.IOException("the read of ${file.name} fails")
+            }
+        }
+        val snapshot = store.snapshot { false }
+        assertTrue(snapshot.headers.isEmpty())
+        assertEquals(listOf(Read.Unreadable("n1.note", "could not be read", notebookUid = "b1", damaged = false)), snapshot.unreadable)
+    }
+
+    @Test fun `only a file whose checksum fails is damaged, not one that cannot be read`() {
+        store.saveLocal("n9", "b1", "r1", blob("other"), isCreate = false)
+        File(dir, "n1.note").writeBytes(byteArrayOf(0))
+        assertTrue(File(dir, "n2.note").mkdir())
+        val unreadable = store.snapshot { true }.unreadable.associateBy { it.file }
+        assertTrue("a short file", unreadable.getValue("n1.note").damaged)
+        assertFalse("a folder in a file's place", unreadable.getValue("n2.note").damaged)
+        assertTrue(store.discard("n2", null) is PendingNotesStore.NoteDiscard.Changed)
+        assertTrue(File(dir, "n2.note").isDirectory)
+    }
+
+    @Test fun `a version-checked discard of a held conflict copy takes the original with it, or fails and keeps both`() {
+        store.saveLocal("orig", "b1", "r1", blob("mine"), isCreate = false)
+        var failing = true
+        PendingNotesStore.beforeRemoveForTesting = {
+            if (failing && it.name == "orig.note") throw java.io.IOException("could not remove orig.note")
+        }
+        assertThrows(java.io.IOException::class.java) { store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote()) }
+        assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("copy1", HeldReason.READ_ONLY, now = 5))
+        val shown = entry("copy1").version
+        assertThrows(java.io.IOException::class.java) { store.discard("copy1", shown) }
+        assertEquals(PendingEntry.State.HELD, entry("copy1").state)
+        assertEquals("orig", entry("copy1").origin?.noteUid)
+        assertTrue("the original stays too", store.read("orig") is Read.Present)
+        failing = false
+        assertEquals(PendingNotesStore.NoteDiscard.Done, store.discard("copy1", shown))
+        assertTrue(store.scan().entries.isEmpty())
+    }
+
     // ---- removing a conflict copy that still carries its origin link ----
 
     @Test fun `discarding a held conflict copy takes the original it replaced with it, or fails`() {
@@ -1585,22 +1795,24 @@ class PendingNotesStoreTest {
         assertEquals(3L, snapshot.sequence)
     }
 
-    @Test fun `a snapshot reads entries it does not keep by header alone`() {
+    @Test fun `a snapshot checks entries it does not keep against the whole-file checksum`() {
         store.saveLocal("n1", "b1", "r1", blob("kept"), isCreate = false)
-        val v2 = saved(store.saveLocal("n2", "b2", "r1", blob("counted only"), isCreate = false))
-        // Damage n2's blob but not its header: a header-only view still counts it, and a full read,
-        // which checks the whole file, reports it.
+        val v3 = saved(store.saveLocal("n3", "b2", "r1", blob("counted only, intact"), isCreate = false))
+        store.saveLocal("n2", "b2", "r1", blob("counted only"), isCreate = false)
+        // Damage n2's blob but not its header: the snapshot does not keep it, and still reports it as unreadable,
+        // with the notebook its header names, instead of counting it as a waiting change.
         val file = File(dir, "n2.note")
         val bytes = file.readBytes()
         bytes[bytes.size - 6] = (bytes[bytes.size - 6].toInt() xor 0x40).toByte()
         file.writeBytes(bytes)
         val snapshot = store.snapshot { it.notebookUid == "b1" }
-        assertEquals(PendingNotesStore.EntryHeader("n2", "b2", PendingEntry.State.UPSERT, v2), snapshot.headers.last())
-        assertTrue(snapshot.unreadable.isEmpty())
+        assertEquals(listOf("n1", "n3"), snapshot.headers.map { it.noteUid })
+        assertEquals(PendingNotesStore.EntryHeader("n3", "b2", PendingEntry.State.UPSERT, v3), snapshot.headers.last())
+        assertEquals(listOf(Read.Unreadable("n2.note", "checksum mismatch", notebookUid = "b2", damaged = true)), snapshot.unreadable)
         assertEquals(setOf("n1"), snapshot.entries.keys)
         assertEquals("n2.note", store.scan().unreadable.single().file)
         assertEquals("a kept entry is read whole, checked, and reported with the notebook its header names",
-            listOf(Read.Unreadable("n2.note", "bad checksum", notebookUid = "b2")),
+            listOf(Read.Unreadable("n2.note", "bad checksum", notebookUid = "b2", damaged = true)),
             store.snapshot { true }.unreadable.map { it.copy(reason = "bad checksum") })
     }
 
@@ -2649,6 +2861,8 @@ class PendingNotesStoreTest {
         assertEquals(PendingNotesStore.SendStart.Refused(PendingNotesStore.Refusal.DISCARD_CONFIRMED), s.startSend("n2"))
         assertEquals("n2 is not touched", before, filesOf(dir))
         assertEquals(left, s.snapshot { false }.discardConfirmed)
+        assertTrue("the viewer's read says so too", s.observe("n2").discardConfirmed)
+        assertFalse("and not for what the count missed", s.observe("n3").discardConfirmed)
         assertTrue("what the count missed is sent", s.startSend("n3") is PendingNotesStore.SendStart.Ready)
     }
 
@@ -2669,6 +2883,7 @@ class PendingNotesStoreTest {
         assertNull("a damaged permit is none", permitsOf(next).read(dir.name))
         assertTrue(next.startSend("n1") is PendingNotesStore.SendStart.Ready)
         assertTrue(next.snapshot { false }.discardConfirmed.isEmpty())
+        assertFalse(next.observe("n1").discardConfirmed)
     }
 
     @Test fun `after a restart, a rebase or a conflict copy writes nothing while what the permit names is there, and a save still withdraws it`() {
@@ -6281,12 +6496,63 @@ class PendingNotesStoreTest {
         assertEquals(listOf(settings), callersOf("unregisterIfFinishedOnce"))
         // The Settings way out, and a notebook's leave or delete before it words a failure of its server call.
         val notebook = "io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"
-        assertEquals("only these ask whether a discard stopped", listOf(settings, notebook), callersOf("clearStopped"))
+        // The Notes screens ask too, to show the cached notes, not close, while a stopped discard keeps the store closed.
+        val heldScreen = "io/silentsuite/sync/ui/notes/HeldTextFragment.kt"
+        val loader = "io/silentsuite/sync/ui/notes/NotesLoader.kt"
+        assertEquals("only these ask whether a discard stopped", listOf(settings, notebook, heldScreen, loader), callersOf("clearStopped"))
         // The removal guard also reads from memory which stores stopped.
         val guard = "io/silentsuite/sync/ui/PendingNotesRemovalGuard.kt"
         assertEquals(listOf(guard, settings, notebook), callersOf("stoppedIn"))
         assertEquals("clearAll is for test teardown only", emptyList<String>(), callersOf("clearAll"))
         assertEquals("a notebook's leave or delete only",
             listOf("io/silentsuite/sync/ui/etebase/NotebookLeaveOrDelete.kt"), callersOf("discardNotebook"))
+    }
+
+    @Test fun `outside the store's package only the account's Unsynced text sends held text again or discards one note`() {
+        // Try again ([PendingNotesStore.release]) is the first write of an entry the app makes, and the per-note
+        // discard deletes text: each caller comes with a change and a review of its own. Both take a note uid, so a
+        // call with an argument is one of them; the calls of the same names with arguments on other objects are
+        // listed by their receivers, and no other is allowed.
+        // Read without comments, with calls whose receiver, name and argument run across lines, and method references.
+        // A call with no receiver, inside a scope function on the store, is not seen: local functions of the same
+        // names are common in main, so such a call is left to review.
+        val main = File("src/main/java")
+        val call = Regex("\\.\\s*(?:release|discard)\\s*\\(\\s*[^)\\s]|::\\s*(?:release|discard)\\b")
+        val others = listOf("NotebookLeaveOrDelete.discard(", "LoginFlowOwnerRegistry.release(", "UnsyncedNotesStores.discard(",
+            "hold::release")
+        val found = main.walk().filter { it.isFile && it.extension in setOf("kt", "java") }
+            .map { file ->
+                file.relativeTo(main).invariantSeparatorsPath to file.readText().replace("\r\n", "\n")
+                    .replace(Regex("(?s)/\\*.*?\\*/"), "").replace(Regex("//[^\n]*"), "")
+            }
+            .filterNot { (path, _) -> path.startsWith("io/silentsuite/sync/notes/edit/") }
+            .flatMap { (path, code) ->
+                call.findAll(code).map { match ->
+                    val line = code.substring(code.lastIndexOf('\n', match.range.first).let { if (it < 0) 0 else it + 1 })
+                        .substringBefore('\n').trim()
+                    path to line
+                }.filter { (_, line) -> others.none { line.contains(it) } }
+            }.toList()
+        val held = "io/silentsuite/sync/ui/notes/HeldTextFragment.kt"
+        assertEquals(listOf(held, held), found.map { it.first })
+        assertEquals("one Try again", 1, found.count { it.second.contains("store.release(uid)") })
+        assertEquals("one discard, checked against the version and the text shown", 1,
+            found.count { it.second.contains("it.discard(uid, shown, digest)") })
+    }
+
+    @Test fun `no production code saves text into the store yet`() {
+        // Every entry starts with a save, and the editor, which saves, is the next change. Until it lands nothing in
+        // the app can change held text between the Unsynced text screen's read and a Discard.
+        val main = File("src/main/java")
+        val word = Regex("\\bsaveLocal\\b")
+        val callers = main.walk().filter { it.isFile && it.extension in setOf("kt", "java") }
+            .filter { file ->
+                file.readLines().any { line ->
+                    val code = line.trim()
+                    !code.startsWith("*") && !code.startsWith("/*") && !code.startsWith("//") && word.containsMatchIn(line)
+                }
+            }
+            .map { it.relativeTo(main).invariantSeparatorsPath }.sorted().toList()
+        assertEquals(listOf("io/silentsuite/sync/notes/edit/PendingNotesStore.kt"), callers)
     }
 }

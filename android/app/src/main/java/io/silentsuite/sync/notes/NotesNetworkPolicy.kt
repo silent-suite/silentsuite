@@ -91,6 +91,9 @@ object NotesNetworkPolicy {
         /** Opens the line: what the device holds may be old. */
         MAY_BE_OUT_OF_DATE,
 
+        /** Changes made on this device wait on a notebook row; the screen gives their count. */
+        CHANGES_WAITING,
+
         /** The automatic Notes setting is Wi-Fi only. */
         NOTES_SETTING,
 
@@ -116,16 +119,19 @@ object NotesNetworkPolicy {
     /**
      * What the notebook list says about the network, sentence by sentence, or nothing when an
      * automatic run would not be refused now (answer 5 of 2026-10-12 on #709). First that Notes may
-     * be out of date, then every rule that refuses the automatic run with what the platform reports,
-     * then what a run the user starts would get. A saved network name is the only reason given when it
-     * refuses, since it refuses on every network. Network reasons only: a run that is not refused can
-     * still fail.
+     * be out of date, then, when [waiting] changes wait on a notebook row, that they are waiting to
+     * sync, then every rule that refuses the automatic run with what the platform reports, then what a
+     * run the user starts would get. [waiting] is the sum of the overlay's per-notebook counts, so it
+     * leaves out what the Unsynced text row counts. A saved network name is the only reason given when
+     * it refuses, since it refuses on every network. Network reasons only: a change can also wait for
+     * another reason, and a run that is not refused can still fail.
      */
-    fun notice(settings: Settings, account: AccountRule, reading: Reading): List<NoticePart> {
+    fun notice(waiting: Int, settings: Settings, account: AccountRule, reading: Reading): List<NoticePart> {
         val automatic = decide(explicit = false, settings, account, reading)
         if (automatic.run) return emptyList()
         val parts = ArrayList<NoticePart>()
         parts += NoticePart.MAY_BE_OUT_OF_DATE
+        if (waiting > 0) parts += NoticePart.CHANGES_WAITING
         if (Blocker.ACCOUNT_NETWORK_NAME in automatic.blockers) {
             parts += NoticePart.ACCOUNT_NETWORK_NAME
         } else {

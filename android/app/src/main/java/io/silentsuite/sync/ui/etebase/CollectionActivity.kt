@@ -141,7 +141,10 @@ class CollectionActivity() : BaseActivity() {
                         return@observe
                     }
                     val presentation = if (route.recovery) ItemPresentation.DELETED_CONTACTS else ItemPresentation.ORDINARY
-                    itemsModel.loadItems(this, route.account, route.creationId, route.collectionUid, accountHolder, cachedCollection, presentation)
+                    // A notebook's items are not shown here (ViewCollectionFragment), so none is decrypted for it.
+                    if (cachedCollection.collectionType != Constants.ETEBASE_TYPE_NOTES) {
+                        itemsModel.loadItems(this, route.account, route.creationId, route.collectionUid, accountHolder, cachedCollection, presentation)
+                    }
                     if (installInitialView) {
                         installInitialView = false
                         val exactIdentity = CollectionLifecycleIdentity.existing(
@@ -344,8 +347,15 @@ class CollectionViewModel : ViewModel() {
 class ItemsViewModel : ViewModel() {
     private val cachedItems = MutableLiveData<List<CachedItem>>()
 
+    companion object {
+        /** Device tests only: told the collection uid of every [loadItems] call, as it is made. */
+        @androidx.annotation.VisibleForTesting
+        @Volatile internal var loadsForTesting: ((String) -> Unit)? = null
+    }
+
     internal fun loadItems(context: Context, account: Account, creationId: String, collectionUid: String, accountCollectionHolder: AccountHolder, cachedCollection: CachedCollection,
                   presentation: ItemPresentation = ItemPresentation.ORDINARY) {
+        loadsForTesting?.invoke(collectionUid)
         viewModelScope.launch {
             val items = withContext(Dispatchers.IO) {
                 if (ExactAccountRouting.validate(account, creationId, App.accountType, AccountManager.get(context)) == null ||
