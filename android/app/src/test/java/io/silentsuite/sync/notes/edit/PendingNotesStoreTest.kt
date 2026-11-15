@@ -46,6 +46,7 @@ class PendingNotesStoreTest {
     private fun open(d: File) = PendingNotesStore.open(d, rename = atomicMove)
 
     @After fun reset() {
+        PendingNotesStore.checksumStreamForTesting = null
         PendingNotesStore.beforeOriginalRemovedForTesting = null
         PendingNotesStore.beforeRenameForTesting = null
         PendingNotesStore.beforeRemoveForTesting = null
@@ -1336,6 +1337,10 @@ class PendingNotesStoreTest {
             s.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob))
         }
         assertFalse("the file is unlinked", File(dir, "n1.note").exists())
+        // A retry whose sync fails again says the same: the text is gone, but the removal may not last.
+        assertThrows(PendingNotesStore.RemovalNotSynced::class.java) {
+            s.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob))
+        }
         failing = false
         syncs.clear()
         assertEquals(PendingNotesStore.NoteDiscard.Missing, s.discard("n1", shown.version, PendingNotesStore.digestOf(shown.blob)))
@@ -1356,6 +1361,18 @@ class PendingNotesStoreTest {
         assertFalse("intact, so not damaged", unreadable.damaged)
         assertTrue(store.discard("n1", null) is PendingNotesStore.NoteDiscard.Changed)
         assertArrayEquals("nothing was deleted", bytes, file.readBytes())
+    }
+
+    @Test fun `a snapshot reports an unkept entry whose read fails as unreadable, not damaged`() {
+        store.saveLocal("n1", "b1", "r1", blob("waiting"), isCreate = false)
+        PendingNotesStore.checksumStreamForTesting = { file ->
+            object : java.io.InputStream() {
+                override fun read(): Int = throw java.io.IOException("the read of ${file.name} fails")
+            }
+        }
+        val snapshot = store.snapshot { false }
+        assertTrue(snapshot.headers.isEmpty())
+        assertEquals(listOf(Read.Unreadable("n1.note", "could not be read", notebookUid = "b1", damaged = false)), snapshot.unreadable)
     }
 
     @Test fun `only a file whose checksum fails is damaged, not one that cannot be read`() {

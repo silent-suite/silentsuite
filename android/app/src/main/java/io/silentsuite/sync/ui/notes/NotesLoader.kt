@@ -133,10 +133,10 @@ internal data class HeldTextRow(
     val canCopy: Boolean get() = body != null
 
     /**
-     * Try again ([PendingNotesStore.release]) applies only to held text that no unfinished discard covers, and that
-     * the permit does not hold back.
+     * Try again ([PendingNotesStore.release]) applies only to held text the user can see, that no unfinished discard
+     * covers, and that the permit does not hold back.
      */
-    val canTryAgain: Boolean get() = held != null && version != null && !discardConfirmed && !permitUnchecked
+    val canTryAgain: Boolean get() = held != null && version != null && body != null && !discardConfirmed && !permitUnchecked
 
     /**
      * One note's own file goes on its own only when the user can see what goes and no run will ever send it, the rule

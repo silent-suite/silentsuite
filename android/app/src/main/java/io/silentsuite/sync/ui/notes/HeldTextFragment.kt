@@ -218,6 +218,8 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
                 reload()
             } finally {
                 actionRunning = false
+                // A reload that works replaces the card; one that fails leaves this button, which works again.
+                button.isEnabled = true
             }
         }
     }

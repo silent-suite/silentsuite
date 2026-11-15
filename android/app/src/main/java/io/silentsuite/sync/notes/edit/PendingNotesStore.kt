@@ -324,11 +324,11 @@ internal class PendingNotesStore private constructor(
 
     /**
      * Like [scan], but keeps a blob only for the entries [keep] selects, so a screen that needs a few
-     * blobs, or none, does not hold every one. Entries it does not keep are read by header alone
-     * ([PendingCodec.decodeEntryHeader]), so their blobs are not read at all: a blob damaged after its
-     * header was written counts by its header here, and is found by whatever reads the whole entry (the
-     * notebook's own screen, the viewer, a push). A kept entry that fails its full read is reported with
-     * the notebook its header names. [keep] runs under the store lock and must not take the Etebase
+     * blobs, or none, does not hold every one. Entries it does not keep are decoded by header alone
+     * ([PendingCodec.decodeEntryHeader]), and their bytes are streamed once against the whole-file checksum, so
+     * a blob damaged after its header was written is reported as unreadable (and damaged) instead of counted by
+     * its header; one whose read fails is reported as unreadable, not damaged. A kept entry that fails its full
+     * read is reported with the notebook its header names. [keep] runs under the store lock and must not take the Etebase
      * cache monitor or the cache's write fence. A listing that fails throws IOException, as in [scan].
      */
     fun snapshot(keep: (EntryHeader) -> Boolean): Snapshot = locked {
@@ -340,10 +340,10 @@ internal class PendingNotesStore private constructor(
             if (header != null && !keep(header)) {
                 // The header alone reads fine; the blob is checked against the whole-file checksum, streamed,
                 // so a waiting change whose text is damaged is reported as unreadable in every snapshot.
-                if (streamedIntact(file)) {
-                    headers += header
-                } else {
-                    unreadable += Read.Unreadable(file.name, "checksum mismatch", header.notebookUid, damaged = true)
+                when (streamedIntact(file)) {
+                    true -> headers += header
+                    false -> unreadable += Read.Unreadable(file.name, "checksum mismatch", header.notebookUid, damaged = true)
+                    null -> unreadable += Read.Unreadable(file.name, "could not be read", header.notebookUid)
                 }
                 continue
             }
@@ -370,16 +370,16 @@ internal class PendingNotesStore private constructor(
 
     /**
      * Whether [file] reads in full with its whole-file checksum matching, read in pieces so a large blob is never
-     * held. A read that fails counts as not intact: the snapshot then reports the file as unreadable, as a full read
-     * would.
+     * held; null when the read itself fails, which says nothing about the bytes, so the file is unreadable but not
+     * damaged.
      */
-    private fun streamedIntact(file: File): Boolean = try {
+    private fun streamedIntact(file: File): Boolean? = try {
         val length = file.length()
         if (length < 9) {
             false
         } else {
             val crc = java.util.zip.CRC32()
-            DataInputStream(java.io.BufferedInputStream(FileInputStream(file))).use { input ->
+            DataInputStream(java.io.BufferedInputStream(checksumStreamForTesting?.invoke(file) ?: FileInputStream(file))).use { input ->
                 val buffer = ByteArray(8192)
                 var left = length - 4
                 while (left > 0) {
@@ -392,7 +392,7 @@ internal class PendingNotesStore private constructor(
             }
         }
     } catch (_: IOException) {
-        false
+        null
     }
 
     /**
@@ -778,7 +778,11 @@ internal class PendingNotesStore private constructor(
         when (now) {
             Read.Missing -> {
                 if (unlinkUnsynced) {
-                    syncDirectory(dir)
+                    try {
+                        syncDirectory(dir)
+                    } catch (e: IOException) {
+                        throw RemovalNotSynced(e)
+                    }
                     unlinkUnsynced = false
                 }
                 NoteDiscard.Missing
@@ -2682,6 +2686,8 @@ internal class PendingNotesStore private constructor(
         @Volatile internal var beforeRenameForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeRemoveForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeClearForTesting: (() -> Unit)? = null
+        /** Unit tests only: the stream a snapshot checks an entry it does not keep through ([streamedIntact]). */
+        @Volatile internal var checksumStreamForTesting: ((File) -> java.io.InputStream)? = null
 
         /**
          * Test seam: what a listing of the directory it is given answers in place of File.listFiles();

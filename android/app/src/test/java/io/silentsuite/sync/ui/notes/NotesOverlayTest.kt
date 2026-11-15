@@ -307,6 +307,7 @@ class NotesOverlayTest {
         assertTrue("a readable change a run may send offers Copy", heldRow(held = null, mayStillSync = true).canCopy)
         assertFalse(heldRow(body = null).canCopy)
         assertTrue(heldRow().canTryAgain)
+        assertFalse("not for text the screen cannot show", heldRow(body = null).canTryAgain)
         assertFalse("not while a discard covers it", heldRow(confirmed = true).canTryAgain)
         assertFalse("not while the permit holds it back", heldRow(unchecked = true).canTryAgain)
     }

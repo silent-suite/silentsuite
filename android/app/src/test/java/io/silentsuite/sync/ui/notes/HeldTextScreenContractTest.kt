@@ -63,6 +63,7 @@ class HeldTextScreenContractTest {
         assertTrue(tryAgain.indexOf("if (actionRunning) return") in 0 until tryAgain.indexOf("actionRunning = true"))
         assertTrue(tryAgain.contains("button.isEnabled = false"))
         assertTrue(tryAgain.contains("} finally {\n                actionRunning = false"))
+        assertTrue("the button works again even when the reload fails", tryAgain.contains("                button.isEnabled = true\n            }"))
         val confirm = screen.substringAfter("    private fun confirmDiscard(row: HeldTextRow) {").substringBefore("\n    }\n")
         assertTrue(confirm.contains("if (actionRunning) return"))
         val render = screen.substringAfter("    private fun render(view: View, held: HeldTexts) {").substringBefore("\n    }\n")
