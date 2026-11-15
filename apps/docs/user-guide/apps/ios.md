@@ -1,8 +1,8 @@
 # SilentSuite for iOS
 
-## On the roadmap, coming soon
+## Planned
 
-SilentSuite does not currently support iOS native sync. A native SilentSuite iOS app is in development. The EteSync iOS app is not a supported or working SilentSuite client, so do not use its setup instructions with a hosted or self-hosted SilentSuite account.
+SilentSuite does not support iOS native sync yet. A native SilentSuite app for iPhone and iPad is planned, but its scope and timing haven't been decided. The EteSync iOS app is not a supported or working SilentSuite client, so do not use its setup instructions with a hosted or self-hosted SilentSuite account.
 
 ## What works today
 

@@ -38,7 +38,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.Buffer
-import org.apache.commons.collections4.SetUtils
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.StringReader
@@ -152,7 +151,27 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
             }
             LocalGroup.applyPendingMemberships(localAddressBook(), keepLocalChanges = true)
         }
+        propagateLabelGroupEdits()
         super.prepareLocal()
+    }
+
+    /**
+     * A label group renamed or deleted in a contacts app reaches the server only through its contacts'
+     * CATEGORIES: their uploads are queued here, before this run collects its uploads, by comparing their
+     * labels with their cached server copies.
+     */
+    private fun propagateLabelGroupEdits() {
+        val marked = localAddressBook().propagateLabelGroupEdits(
+                markContacts = cachedCollection.col.accessLevel != CollectionAccessLevel.ReadOnly) serverLabels@{ contact ->
+            val fileName = contact.fileName ?: return@serverLabels null
+            val cached = synchronized(etebaseLocalCache) {
+                etebaseLocalCache.itemGet(itemMgr, cachedCollection.col.uid, fileName)
+            }
+            cached?.takeIf { !it.item.isDeleted }
+                    ?.let { Contact.fromReader(StringReader(it.content), null).firstOrNull()?.categories }
+        }
+        if (marked > 0)
+            Logger.log.info("Queued $marked contact(s) for upload after a label group was renamed or deleted")
     }
 
     @Throws(CalendarStorageException::class, ContactsStorageException::class)
@@ -170,8 +189,9 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                 Logger.log.fine("Looking for changed group memberships of contact resource")
                 val cachedGroups = contact.getCachedGroupMemberships()
                 val currentGroups = contact.getGroupMemberships()
-                for (groupID in SetUtils.disjunction(cachedGroups, currentGroups)) {
-                    Logger.log.fine("Marking group as dirty: " + groupID!!)
+                // Groups the contact joined or left: the symmetric difference of both sets.
+                for (groupID in (cachedGroups - currentGroups) + (currentGroups - cachedGroups)) {
+                    Logger.log.fine("Marking group as dirty: $groupID")
                     batch.enqueue(BatchOperation.CpoBuilder.newUpdate(addressBook.syncAdapterURI(ContentUris.withAppendedId(ContactsContract.Groups.CONTENT_URI, groupID)))
                                     .withValue(ContactsContract.Groups.DIRTY, 1)
                     )
