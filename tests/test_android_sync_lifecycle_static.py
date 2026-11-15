@@ -517,7 +517,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
             for method in re.findall(r"@Test\s+fun\s+(\w+)", source.read_text(encoding="utf-8"))
         )
     ledger_size = sum(len(methods) for methods in ledger["classes"].values())
-    assert len(canonical) == len(runtime_methods) == ledger_size == 242
+    assert len(canonical) == len(runtime_methods) == ledger_size == 247
     assert canonical == runtime_methods
 
     mixed = {tuple(pair) for pair in ledger["shards"]["29:mixed"]}
@@ -536,9 +536,12 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         sum(len(ledger["classes"][class_name]) for class_name in ledger["shards"][key])
         for key in api36
     )
-    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 240, 242)
-    assert tuple(len(api36[key]) for key in api36) == (33, 20, 7, 134, 48)
-    assert ledger["shards"]["36:sibling-routes"] == ["io.silentsuite.sync.ui.SiblingRoutesRuntimeTest"]
+    assert (len(mixed), len(requested), len(canonical - mixed - requested), len(canonical)) == (1, 1, 245, 247)
+    assert tuple(len(api36[key]) for key in api36) == (33, 20, 7, 134, 53)
+    assert ledger["shards"]["36:sibling-routes"] == [
+        "io.silentsuite.sync.ui.SiblingRoutesRuntimeTest",
+        "io.silentsuite.sync.ui.importlocal.DeviceImportRuntimeTest",
+    ]
     # The launcher recovery class runs on its own fresh API 36 emulator (#898).
     assert ledger["shards"]["36:launcher-recovery"] == ["io.silentsuite.sync.ui.LauncherActiveAccountRuntimeTest"]
     assert all(
@@ -566,7 +569,7 @@ def test_fresh_emulator_runtime_shards_are_ledger_derived_and_preserve_remaining
         "29:sibling-routes": api36["36:sibling-routes"],
     }
     assert requested <= api29["29:account-dashboard"]
-    assert tuple(len(part) for part in api29.values()) == (1, 39, 20, 134, 48)
+    assert tuple(len(part) for part in api29.values()) == (1, 39, 20, 134, 53)
     assert len(api29["29:account-dashboard"] - requested) == 38
     assert sum(len(part) for part in api29.values()) == len(set().union(*api29.values())) == len(canonical)
     assert set().union(*api29.values()) == canonical

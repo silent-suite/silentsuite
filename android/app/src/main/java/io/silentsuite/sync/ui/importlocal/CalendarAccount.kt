@@ -7,7 +7,7 @@ import android.net.Uri
 import android.provider.CalendarContract
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
-import android.provider.ContactsContract
+import at.bitfire.ical4android.AndroidCalendar
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.resource.LocalCalendar
 import java.util.*
@@ -35,58 +35,60 @@ class CalendarAccount protected constructor(val account: Account) {
 
     companion object {
 
-        private val CAL_COLS = arrayOf(Calendars.ACCOUNT_NAME, Calendars.ACCOUNT_TYPE, Calendars.DELETED, Calendars.NAME)
+        private val CAL_COLS = arrayOf(Calendars._ID, Calendars.ACCOUNT_NAME, Calendars.ACCOUNT_TYPE, Calendars.DELETED)
 
-        // Load all available calendars.
+        // Load all available calendars of other accounts (not [ownAccountTypes]).
         // If an empty list is returned the caller probably needs to enable calendar
         // read permissions in App Ops/XPrivacy etc.
-        fun loadAll(resolver: ContentResolver): List<CalendarAccount> {
+        fun loadAll(resolver: ContentResolver, ownAccountTypes: Set<String>): List<CalendarAccount> {
 
             if (missing(resolver, Calendars.CONTENT_URI) || missing(resolver, Events.CONTENT_URI))
                 return ArrayList()
 
-            var cur: Cursor?
-            try {
-                cur = resolver.query(Calendars.CONTENT_URI,
-                        CAL_COLS, null, null,
-                        ContactsContract.RawContacts.ACCOUNT_NAME + " ASC, " + ContactsContract.RawContacts.ACCOUNT_TYPE)
-            } catch (except: Exception) {
-                Logger.log.warning("Calendar provider is missing columns, continuing anyway")
-                cur = resolver.query(Calendars.CONTENT_URI, null, null, null, null)
-                except.printStackTrace()
-            }
+            val cur = resolver.query(Calendars.CONTENT_URI,
+                    CAL_COLS, null, null,
+                    Calendars.ACCOUNT_NAME + " ASC, " + Calendars.ACCOUNT_TYPE) ?: return ArrayList()
 
-            val calendarAccounts = ArrayList<CalendarAccount>(cur!!.count)
+            val calendarAccounts = ArrayList<CalendarAccount>(cur.count)
 
             var calendarAccount: CalendarAccount? = null
 
-            val contentProviderClient = resolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)!!
-            while (cur.moveToNext()) {
-                if (getLong(cur, Calendars.DELETED) != 0L)
-                    continue
-
-                val accountName = getString(cur, Calendars.ACCOUNT_NAME)
-                val accountType = getString(cur, Calendars.ACCOUNT_TYPE)
-                if (calendarAccount == null ||
-                        calendarAccount.accountName != accountName ||
-                        calendarAccount.accountType != accountType) {
-                    calendarAccount = CalendarAccount(Account(accountName!!, accountType!!))
-                    calendarAccounts.add(calendarAccount)
-                }
-
-                try {
-                    val localCalendar = LocalCalendar.findByName(calendarAccount.account,
-                            contentProviderClient,
-                            LocalCalendar.Factory, getString(cur, Calendars.NAME)!!)
-                    if (localCalendar != null) calendarAccount.calendars.add(localCalendar)
-                } catch (ex: Exception) {
-                    ex.printStackTrace()
-                }
-
+            val contentProviderClient = resolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
+            if (contentProviderClient == null) {
+                cur.close()
+                return calendarAccounts
             }
-            contentProviderClient.release()
-            cur.close()
-            return calendarAccounts
+            try {
+                while (cur.moveToNext()) {
+                    if (getLong(cur, Calendars.DELETED) != 0L)
+                        continue
+
+                    val accountName = getString(cur, Calendars.ACCOUNT_NAME)
+                    val accountType = getString(cur, Calendars.ACCOUNT_TYPE)
+                    if (accountName.isNullOrBlank() || !DeviceImport.isImportSource(accountType, ownAccountTypes))
+                        continue
+                    if (calendarAccount == null ||
+                            calendarAccount.accountName != accountName ||
+                            calendarAccount.accountType != accountType) {
+                        calendarAccount = CalendarAccount(Account(accountName, accountType!!))
+                        calendarAccounts.add(calendarAccount)
+                    }
+
+                    try {
+                        // By row ID: a calendar's NAME may be missing or shared by several calendars.
+                        val localCalendar = AndroidCalendar.findByID(calendarAccount.account,
+                                contentProviderClient,
+                                LocalCalendar.Factory, getLong(cur, Calendars._ID))
+                        calendarAccount.calendars.add(localCalendar)
+                    } catch (ex: Exception) {
+                        Logger.log.warning("Couldn't read a calendar of another account: ${ex.javaClass.name}")
+                    }
+                }
+            } finally {
+                contentProviderClient.release()
+                cur.close()
+            }
+            return calendarAccounts.filter { it.calendars.isNotEmpty() }
         }
 
         private fun getColumnIndex(cur: Cursor?, dbName: String?): Int {
