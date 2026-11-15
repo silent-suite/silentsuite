@@ -33,9 +33,9 @@ Use **Settings → Import → Manage imported data** to clear an address book's 
 **Settings → Export** gives you:
 
 - **Contacts (`.vcf`)** — all contacts as a single vCard file
-- **Everything (`.zip`)** — calendars, contacts, and tasks together
+- **Everything (`.zip`)** — calendars, contacts, and tasks together, plus your notebooks as Markdown files when you have any ([Notes](./notes.md#export))
 
-Both are built from your locally decrypted data.
+Both are built from your locally decrypted data. When your account has notebooks, **Everything** also lists your notes from the server again, so it then needs a connection.
 
 ## Bridge / CardDAV clients
 
