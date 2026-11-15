@@ -315,4 +315,97 @@ class NoteEditingTest {
         assertEquals("  ", NoteEditing.nameToWrite("  ", newNote = false))
         assertEquals(" Plan ", NoteEditing.nameToWrite(" Plan ", newNote = true))
     }
+
+    // ---- leaving the editor ----
+
+    /** What leaving needs now, for this test's editor, shown as the editor unless [editor] is false. */
+    private fun leave(editor: Boolean = true) = NoteEditing.leave(editor, core.dirty, core.mode, core.lastResult)
+
+    @Test fun `leaving goes at once only while nothing on screen is unsaved, and asks after every save that did not write it`() {
+        core.opened("Plan", "First")
+        assertEquals("nothing typed", NoteEditing.Leave.GO, leave())
+        type(Field.BODY, " draft")
+        assertEquals("typed, and no save ran yet", NoteEditing.Leave.ASK_TRY_AGAIN, leave())
+        saveWith(SaveResult.Saved(1))
+        assertEquals("saved on this device", NoteEditing.Leave.GO, leave())
+
+        // A failure may not happen again: Try again is offered. A refusal gets the same answer again: it is not.
+        for ((result, expected) in listOf(
+            SaveResult.NotSaved to NoteEditing.Leave.ASK_TRY_AGAIN,
+            SaveResult.TooLarge to NoteEditing.Leave.ASK,
+            SaveResult.Unreadable to NoteEditing.Leave.ASK,
+        )) {
+            type(Field.BODY, "!")
+            saveWith(result)
+            assertEquals("after $result", expected, leave())
+            saveWith(SaveResult.Saved(2))
+            assertEquals("saved after $result", NoteEditing.Leave.GO, leave())
+        }
+
+        // Typing during a save that wrote the text before it: the typing is not saved yet.
+        type(Field.BODY, " more")
+        val draft = checkNotNull(core.beginSave())
+        type(Field.BODY, " during")
+        core.finishSave(draft, SaveResult.Saved(3))
+        assertEquals(NoteEditing.Leave.ASK_TRY_AGAIN, leave())
+        saveWith(SaveResult.Saved(4))
+
+        // Saved into held text: saved on this device, and the viewer takes over.
+        type(Field.BODY, " held")
+        saveWith(SaveResult.SavedToHolding(5))
+        assertEquals(NoteEditing.Leave.GO, leave())
+        assertEquals("the viewer shows: nothing on screen to save", NoteEditing.Leave.GO, leave(editor = false))
+    }
+
+    @Test fun `after a save that stops the editor, leaving asks without Try again`() {
+        for (stop in listOf(SaveResult.HeldChanged, SaveResult.Cleared)) {
+            core.opened("Plan", "First")
+            type(Field.BODY, " typed")
+            saveWith(stop)
+            assertEquals(NoteEditorCore.Mode.STOPPED, core.mode)
+            assertTrue("$stop keeps the text unsaved", core.dirty)
+            assertEquals("after $stop", NoteEditing.Leave.ASK, leave())
+        }
+    }
+
+    @Test fun `leaving without saving stops the editor, so no later save writes the text it said is lost`() {
+        core.opened("Plan", "First")
+        type(Field.BODY, " typed")
+        saveWith(SaveResult.NotSaved)
+        core.leaveWithoutSaving()
+        assertNull("no save after it", core.beginSave())
+        assertTrue("and the text is still not saved", core.dirty)
+        assertEquals(NoteEditorCore.Mode.STOPPED, core.mode)
+        type(Field.BODY, " after")
+        assertEquals("no typing after it", "First typed", core.body)
+        assertNull("no undo after it", core.undo(Field.BODY))
+    }
+
+    @Test fun `an answer to the question before leaving is taken only from this process, for the same note and text, while it is unsaved`() {
+        fun holds(madeHere: Boolean = true, askedNote: String? = "n1", askedEdits: Long = 5, shownNote: String? = "n1",
+                  note: String? = "n1", edits: Long = 5, unsaved: Boolean = true) =
+            NoteEditing.leaveAnswerHolds(madeHere, askedNote, askedEdits, shownNote, note, edits, unsaved)
+        assertTrue(holds())
+        assertTrue("a new note no save made yet", holds(askedNote = null, shownNote = null, note = null))
+        assertFalse("made in another app process", holds(madeHere = false))
+        assertFalse("the text moved to a conflict copy since", holds(note = "copy"))
+        assertFalse("a new note that a save made since", holds(askedNote = null, shownNote = null, note = "n1"))
+        assertFalse("the dialog shows another note", holds(shownNote = "n2"))
+        assertFalse("the text changed since", holds(edits = 6))
+        assertFalse("the text was saved since", holds(unsaved = false))
+    }
+
+    @Test fun `the edit count moves with every change the user makes and with nothing else`() {
+        core.opened("Plan", "First")
+        val start = core.edits
+        type(Field.BODY, "ab")
+        assertEquals(start + 2, core.edits)
+        saveWith(SaveResult.NotSaved)
+        saveWith(SaveResult.Saved(1))
+        assertEquals("saves move nothing", start + 2, core.edits)
+        assertTrue(core.offerLoad("Plan", "Firstab", observedSequence = 1))
+        assertEquals("a load moves nothing", start + 2, core.edits)
+        checkNotNull(core.undo(Field.BODY))
+        assertEquals("an undo is a change", start + 3, core.edits)
+    }
 }

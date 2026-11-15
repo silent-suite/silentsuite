@@ -130,6 +130,25 @@ class NoteEditorContractTest {
         assertFalse("the read-only hint is gone with its uses", strings.contains("notes_read_only_hint"))
     }
 
+    @Test fun `Back and Up ask the editor first, a leave saves first, and an answer is checked before anything is done`() {
+        val activity = code(read("src/main/java/io/silentsuite/sync/ui/notes/NotesActivity.kt"))
+        val up = activity.substringAfter("    private fun up() {").substringBefore("\n    }\n")
+        assertTrue("the editor is asked before Up pops", up.indexOf("editor?.guardLeave() == true") in 0 until up.indexOf("popBackStackImmediate()"))
+        assertEquals("onSupportNavigateUp and the toolbar's Up arrow both go there", 3, Regex("\\bup\\(\\)").findAll(activity).count())
+        assertTrue(code(screen).contains("requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, back)"))
+        val back = screen.substringAfter("    private val back = object : OnBackPressedCallback(false) {").substringBefore("\n    }\n")
+        assertTrue("Back asks the editor first", back.indexOf("if (guardLeave()) return") in 0 until back.indexOf("onBackPressed()"))
+        val leave = model.substringAfter("    fun requestLeave() {").substringBefore("\n    }\n")
+        assertTrue("in a step of the app's", leave.contains("background.launch {"))
+        assertTrue("the save runs first, as a step", leave.indexOf("steps.withLock {") in 0 until leave.indexOf("saveStep()"))
+        assertTrue(leave.indexOf("saveStep()") < leave.indexOf("NoteEditing.leave("))
+        assertTrue(code(screen).contains("putString(ARG_PROCESS, ProcessIncarnation.current())"))
+        val answered = screen.substringAfter("    internal fun leaveAnswered(").substringBefore("\n    }\n")
+        val check = answered.indexOf("if (model.leavePromptAnswered(shownIn, shownNote) == null) {")
+        assertTrue("an answer is checked", check > 0)
+        for (act in listOf("copy()", "model.leaveWithoutSaving()")) assertTrue("$act only after the check", answered.indexOf(act) > check)
+    }
+
     @Test fun `the editor makes no release, discard, hold or send`() {
         for (banned in listOf(".release(", ".discard(", "discardStore", "discardOrphan", "discardNotebook", "clearAll", ".hold(",
             ".rebase(", "beginSend", "startSend", "completeSend", "replaceWithNewNote", "Trigger.MANUAL")) {

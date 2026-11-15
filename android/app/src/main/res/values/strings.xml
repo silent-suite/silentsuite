@@ -813,6 +813,10 @@
     <string name="notes_editor_held_changed">This note\'s unsynced text changed, so this text was not saved. Copy it, then open Unsynced text.</string>
     <string name="notes_editor_cleared">The unsynced Notes changes on this device were discarded, so this text was not saved. Copy it to keep it.</string>
     <string name="notes_editor_open_unsynced">Open Unsynced text</string>
+    <string name="notes_editor_leave_title">Leave without saving?</string>
+    <string name="notes_editor_leave_changes_lost">If you leave now, the changes that are not saved are lost.</string>
+    <string name="notes_editor_leave_new_note_lost">If you leave now, this new note and its text are lost.</string>
+    <string name="notes_editor_leave_without_saving">Leave without saving</string>
     <string name="notes_new_note_unavailable">A new note can\'t be made in this notebook right now.</string>
     <string name="notes_edited">Edited %1$s</string>
     <string name="notes_refresh">Refresh</string>
