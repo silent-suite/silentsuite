@@ -119,6 +119,17 @@ The SilentSuite app is a sync adapter -- it syncs data in the background but doe
 - <img src="/app-logos/kashcal.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> [KashCal](https://github.com/KashCal/KashCal) (open source) -- uses Android's system calendar, so you don't need to set up a CalDAV account in KashCal.
 - **Google Calendar** -- works, but sends event metadata to Google for notifications. Not recommended if privacy is a priority.
 
+### Moving events from another calendar
+
+Only SilentSuite calendars sync. If your events are in a calendar that was already on the phone, such as a local phone calendar or a Google account calendar, the SilentSuite app leaves them where they are. To move them:
+
+1. In the SilentSuite app, open the SilentSuite calendar you want the events in, open the menu and tap **Import**.
+2. Copy the events from the other calendar on the phone, or pick an `.ics` file you exported from it. Only accounts that share their data with Android are listed, so some setups, such as some Outlook accounts, may be missing; for those, export an `.ics` file.
+3. Check that the events show up in the web app.
+4. Delete the old calendar from the phone, or hide it in your calendar app.
+
+After that, every calendar app on the phone shows the same SilentSuite events. When you add an event, check that a SilentSuite calendar is selected, not the old one.
+
 ## Choosing a Task App
 
 For tasks, use:
