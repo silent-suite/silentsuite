@@ -1,0 +1,8 @@
+# The etebase source distribution the Intel macOS release build compiles, because
+# PyPI etebase 0.32.0 ships no macOS x86_64 wheel. Pinned to the exact sdist bytes;
+# the build passes --locked to cargo so the sdist's own Cargo.lock binds the Rust
+# dependencies. Keep the version equal to the etebase pin in requirements-lock.txt;
+# tests/test_requirements_lock.py checks that.
+# Hash from https://pypi.org/pypi/etebase/0.32.0/json (etebase-0.32.0.tar.gz).
+etebase==0.32.0 \
+    --hash=sha256:2443e27da0d6098736b1f3bd0f8f5de6b3d71693431953c8f6610bb0ff676546

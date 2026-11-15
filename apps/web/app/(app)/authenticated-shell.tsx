@@ -2,6 +2,7 @@
 
 import { useTranslations } from 'next-intl'
 import { Sidebar } from '@/app/components/sidebar'
+import { RightSidebarSlot } from '@/app/components/right-sidebar'
 import { Header } from '@/app/components/header'
 import { BottomNav } from '@/app/components/bottom-nav'
 import { ReadOnlyBanner, DegradedModeBanner } from '@/app/components/read-only-overlay'
@@ -20,9 +21,13 @@ export default function AuthenticatedShell({ children }: { children: React.React
   const t = useTranslations('Navigation')
   const readOnly = useAuthStore((s) => s.isReadOnly())
   const degraded = useAuthStore((s) => s.isDegraded())
+  // SyncProvider initializes one account per mount. A session refresh that
+  // returns another account resets the stores without leaving this shell, so
+  // remount the provider for the new account instead of leaving it empty.
+  const userId = useAuthStore((s) => s.user?.id)
 
   return (
-      <SyncProvider>
+      <SyncProvider key={userId}>
         <NotificationProvider>
           <div className="flex h-screen bg-[rgb(var(--background))]">
             {/* Skip navigation link for keyboard/screen reader users */}
@@ -45,6 +50,7 @@ export default function AuthenticatedShell({ children }: { children: React.React
                 {children}
               </main>
             </div>
+            <RightSidebarSlot />
             <BottomNav />
             <OfflineToast />
             <ToastContainer />

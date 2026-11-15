@@ -127,11 +127,17 @@ jobs:
           SSH_TRANSPORT_PROOF: required
         run: node --test scripts/ssh-host-verification-transport.test.mjs
 
+      - name: Keep deploy credentials inside their environments
+        run: node --test scripts/deploy-secret-scope.test.mjs scripts/preview-notification-policy.test.mjs
+
       - name: Install the isolated Zapstore lane package
         run: npm ci --ignore-scripts --no-audit --no-fund --prefix scripts/zapstore
 
       - name: Test the dormant Zapstore publication lane
         run: pnpm run check:zapstore-automation
+
+      - name: Test the Google Play publication lane
+        run: pnpm run check:play-automation
 
       # Run directly: these tests read workflow and runbook files outside the Turbo cache inputs.
       - name: Test production deployment workflow contracts

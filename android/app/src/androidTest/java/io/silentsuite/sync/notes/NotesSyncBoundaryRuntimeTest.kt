@@ -11,6 +11,7 @@ import android.os.SystemClock
 import android.provider.CalendarContract
 import android.system.Os
 import android.system.OsConstants
+import android.view.View
 import android.widget.ListView
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
@@ -49,6 +50,7 @@ import io.silentsuite.sync.syncadapter.SyncManager
 import io.silentsuite.sync.syncadapter.SyncStatusStore
 import io.silentsuite.sync.syncadapter.requestSync
 import io.silentsuite.sync.syncadapter.requestSyncDispatchOverride
+import io.silentsuite.sync.syncadapter.syncConditionsAllow
 import io.silentsuite.sync.ui.ActiveAccountManager
 import io.silentsuite.sync.ui.AndroidCurrentAccountSignOut
 import io.silentsuite.sync.ui.CurrentAccountSignOutCoordinator
@@ -60,6 +62,7 @@ import io.silentsuite.sync.ui.PendingNotesRemovalGuard
 import io.silentsuite.sync.ui.UnsyncedNotesStores
 import io.silentsuite.sync.ui.notes.NoteContent
 import io.silentsuite.sync.ui.notes.NoteListFragment
+import io.silentsuite.sync.ui.notes.NoteRow
 import io.silentsuite.sync.ui.notes.NoteViewFragment
 import io.silentsuite.sync.ui.notes.NotebookListFragment
 import io.silentsuite.sync.ui.notes.NotesActivity
@@ -111,7 +114,12 @@ import kotlin.concurrent.thread
  * cancel the run, switch Notes off, sign out or replace the account before its answer arrives.
  * Four cases give a notebook's notes listing a 404 while the notebook may still be there; two of
  * them hold the fetch of the notebook that would confirm it, and cancel the run, switch Notes off
- * or replace the account before its answer arrives. Some cases also read the pending store's files
+ * or replace the account before its answer arrives.
+ * Two cases pin what the device's network reads as, run by run, and check which runs the two Notes
+ * network settings and the account's own Wi-Fi rule admit. The second ends with two steps that
+ * take the pin off and read the device's own network; both are written to pass on any network.
+ * Every other case runs with the reading pinned to Wi-Fi, so none of its assertions depends on
+ * the network of the device. Some cases also read the pending store's files
  * from disk: none holds a title, a text or a notebook name in plain form, and they are still there, byte for byte, after a cache clear and
  * after a same-name account replaced the one that saved them. One case runs the startup sweep
  * ([NotesStartupSweep]) over the stores of removed accounts, and checks which it removed and which
@@ -170,6 +178,11 @@ class NotesSyncBoundaryRuntimeTest {
         ContentResolver.setMasterSyncAutomatically(false)
         HttpClient.testInterceptor = fake
         requestSyncDispatchOverride = { _, _, extras -> dispatched += Bundle(extras) }
+        // Every case starts with the network reading pinned to Wi-Fi, so its runs do not decide on
+        // the device's own network. A case may pin another reading, and one case takes the pin off
+        // for its last two steps.
+        check(NotesNetwork.readingOverride == null) { "another test left the network reading pinned" }
+        NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(NotesNetworkPolicy.Connection.WIFI) }
     }
 
     @After fun tearDown() {
@@ -195,6 +208,7 @@ class NotesSyncBoundaryRuntimeTest {
             HttpClient.testInterceptor = null
             requestSyncDispatchOverride = null
             PendingNotesStore.listFilesForTesting = null
+            NotesNetwork.readingOverride = null
             ContentResolver.setMasterSyncAutomatically(previousMasterSync)
         }
         assertTrue("the Notes thread finished", drained)
@@ -267,6 +281,9 @@ class NotesSyncBoundaryRuntimeTest {
     @Test fun aSameNameAccountThatReplacedTheOldOneGetsNothingFromTheOldRunsInFlightRequests() {
         val name = "notes-boundary-${System.nanoTime()}@example.invalid"
         val account = newAccount("gen-1", name, discoveryKey = false)
+        // Both Notes network settings are moved off their defaults for the account that will be replaced.
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
         val notebook = uploadNotebook("Shared before the swap")
         // Three pages of notes.
         uploadNotes(notebook, "One", "Two", "Three", "Four", "Five")
@@ -277,6 +294,8 @@ class NotesSyncBoundaryRuntimeTest {
         NotesSyncCoordinator.request(context, account, "gen-1", NotesSyncPolicy.Trigger.MANUAL)
         listing.awaitArrival()
         replaceAccount(account, "gen-2")
+        assertEquals("the replacement starts from the default network settings",
+            NotesNetworkPolicy.Settings.DEFAULT, AccountSettings.notesNetworkSettings(manager, account))
         listing.release()
         assertTrue(NotesSyncCoordinator.drainForTesting(30_000))
         assertNull("no list cursor was saved", listCursor(account))
@@ -1121,11 +1140,26 @@ class NotesSyncBoundaryRuntimeTest {
         val account = newAccount("gen-read")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-read")
         val work = uploadNotebook("Work")
-        uploadNotebook("Home")
+        val home = uploadNotebook("Home")
         uploadUndecodableNotebook()
+        // An item whose metadata this client cannot decode (a name that is a number), once next to
+        // readable notes and once as the only item of a notebook.
+        val undecodable = TestMsgPack.encode(linkedMapOf("name" to 7L, "mtime" to 100L))
+        uploadRawNote(work, undecodable, "not readable here")
+        uploadRawNote(home, undecodable, "not readable here either")
         val agendaBody = "# Monday\n- budget\n- hiring"
         uploadNote(work, "Old plan", "First line of the old plan", mtime = 1_000L)
         val agenda = uploadNote(work, "Agenda", agendaBody, mtime = 2_000L)
+        // A title with a four-byte character, uploaded as the bytes another client writes for it. A
+        // regression check only: the typed name would show the same title here.
+        val cart = "Shopping 🛒"
+        uploadRawNote(work, TestMsgPack.encode(linkedMapOf("name" to cart, "mtime" to 500L)), "eggs")
+        // A name under unsigned integer key 1, which the typed decoder reads as the name. The raw
+        // bytes give no trusted name, so the note shows as Untitled: this is what tells the raw
+        // path from the typed one.
+        val underKeyOne = byteArrayOf(0x82.toByte()) + TestMsgPack.encode(1L) + TestMsgPack.encode("Under key one") +
+            TestMsgPack.encode("mtime") + TestMsgPack.encode(100L)
+        val keyOneNote = uploadRawNote(work, underKeyOne, "kept under key one")
         // Neither of these is a note to show: an item of another type, and a deleted note.
         uploadNote(work, "Attachment", "not Markdown", mtime = 3_000L, type = "application/octet-stream")
         val deleted = uploadNote(work, "Thrown away", "gone", mtime = 4_000L)
@@ -1142,8 +1176,19 @@ class NotesSyncBoundaryRuntimeTest {
                 val list = activity.findViewById<ListView>(R.id.notebooks_list)
                 list.performItemClick(list.adapter.getView(1, null, list), 1, 1)
             }
-            waitUntil("the cached notes to show") { noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan") }
-            assertEquals(listOf("Monday", "First line of the old plan"), noteList(scenario)!!.renderedNotes.map { it.preview })
+            waitUntil("the cached notes to show") {
+                noteList(scenario)?.renderedNotes?.map { it.title } == listOf("Agenda", "Old plan", cart, "")
+            }
+            assertEquals(listOf("Monday", "First line of the old plan", "eggs", "kept under key one"),
+                noteList(scenario)!!.renderedNotes.map { it.preview })
+            scenario.onActivity { activity ->
+                val notes = activity.findViewById<ListView>(R.id.notes_list)
+                assertEquals(context.getString(R.string.notes_untitled),
+                    notes.adapter.getView(3, null, notes).findViewById<TextView>(R.id.note_title).text.toString())
+                val unreadable = activity.findViewById<TextView>(R.id.notes_unreadable)
+                assertEquals("the undecodable item is counted", View.VISIBLE, unreadable.visibility)
+                assertEquals("1 item in this notebook could not be read", unreadable.text.toString())
+            }
             scenario.onActivity { activity ->
                 assertEquals("Work", activity.title.toString())
                 val list = activity.findViewById<ListView>(R.id.notes_list)
@@ -1154,6 +1199,30 @@ class NotesSyncBoundaryRuntimeTest {
             scenario.onActivity { activity ->
                 assertEquals("Agenda", activity.findViewById<TextView>(R.id.note_title).text.toString())
                 assertEquals(agendaBody, activity.findViewById<TextView>(R.id.note_body).text.toString())
+            }
+        }
+        // Opening one note reads its title from the raw bytes too.
+        assertEquals("", (NotesLoader.note(context, account, "gen-read", work, keyOneNote.uid) as NotesLoad.Loaded).value.title)
+
+        // A notebook whose only item could not be read, after a sync, is not called empty.
+        ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-read")).use { scenario ->
+            waitUntil("the cached notebooks to show") { notebookList(scenario)?.renderedNotebooks?.map { it.name } == listOf("Home", "Work") }
+            scenario.onActivity { activity ->
+                val list = activity.findViewById<ListView>(R.id.notebooks_list)
+                list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
+            }
+            waitUntil("the unreadable line to show") {
+                var shown = false
+                scenario.onActivity { shown = it.findViewById<View?>(R.id.notes_unreadable)?.visibility == View.VISIBLE }
+                shown
+            }
+            assertEquals(emptyList<NoteRow>(), noteList(scenario)!!.renderedNotes)
+            assertNull("no empty state", noteList(scenario)!!.renderedEmptyState)
+            scenario.onActivity { activity ->
+                assertEquals("Home", activity.title.toString())
+                assertEquals(View.GONE, activity.findViewById<View>(R.id.notes_empty).visibility)
+                assertEquals("1 item in this notebook could not be read",
+                    activity.findViewById<TextView>(R.id.notes_unreadable).text.toString())
             }
         }
         awaitSettled(identity)
@@ -1849,6 +1918,248 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("a edited", itemManager(first).fetch(a.uid).contentString)
         assertTrue("nothing is left waiting", pendingHeaders(account, "gen-skip").isEmpty())
         assertSucceeded(status(account, "gen-skip"))
+    }
+
+    @Test fun aRunTheNetworkSettingsRefuseAsksNothingAndRecordsNothingAndAnAttemptThatFailsIsStillAFailure() {
+        val account = newAccount("gen-net")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-net")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-net")
+        var mtime = 2_000L
+        fun edit(text: String) = editLocally(account, "gen-net", notebook, note.uid, "Plan", text, mtime++)
+        fun pin(connection: NotesNetworkPolicy.Connection) {
+            NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(connection) }
+        }
+        fun open(force: Boolean = false) {
+            NotesSyncCoordinator.request(context, account, "gen-net", NotesSyncPolicy.Trigger.SCREEN_OPEN, forceRefresh = force)
+        }
+
+        // 1. Not Wi-Fi, with the defaults: opening Notes is refused (row A2).
+        edit("edit 1")
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        assertRefused(account, "gen-net", note.uid, "opening Notes off Wi-Fi") { open() }
+
+        // 2. No active network: refused as well, and no network failure is recorded (row A3, answer 5 on #709).
+        pin(NotesNetworkPolicy.Connection.NONE)
+        assertRefused(account, "gen-net", note.uid, "opening Notes with no active network") { open() }
+
+        // 3. The run after an adapter sync, as the adapters ask for it.
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        assertRefused(account, "gen-net", note.uid, "the run after an adapter sync off Wi-Fi") {
+            NotesSyncCoordinator.piggybackAfterAdapterSync(context, account, "gen-net")
+        }
+
+        // 4. A forced refresh that is refused stays owed.
+        assertRefused(account, "gen-net", note.uid, "a forced automatic run off Wi-Fi") { open(force = true) }
+
+        // 5. Pull to refresh on the same network is a run the user starts (row E2): it sends the change,
+        // and it makes the full listing the refused run still owed.
+        statusBeforeRun = status(account, "gen-net")
+        val mark = fake.requests.size
+        NotesSyncCoordinator.request(context, account, "gen-net", NotesSyncPolicy.Trigger.SCREEN)
+        awaitSettled(identity)
+        assertEquals("pull to refresh off Wi-Fi sends the waiting change", listOf(transactionOf(notebook)), uploads(mark))
+        assertTrue("and lists from scratch, as the refused run could not", listings(mark).any(::fromScratch))
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-net").isEmpty())
+        assertSucceeded(status(account, "gen-net"))
+
+        // 6. With automatic sync allowed on any network, opening Notes off Wi-Fi sends (row A10).
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        edit("edit 2")
+        assertSent(account, "gen-net", notebook, "opening Notes off Wi-Fi with automatic sync on any network") { open() }
+        // The run after an adapter sync is admitted on the same terms. So the refusal of step 3 was
+        // a run that started and was refused, not a run that never started.
+        edit("edit 2, after an adapter sync")
+        assertSent(account, "gen-net", notebook, "the run after an adapter sync off Wi-Fi with automatic sync on any network") {
+            NotesSyncCoordinator.piggybackAfterAdapterSync(context, account, "gen-net")
+        }
+
+        // 7. With Sync now on Wi-Fi only, the dashboard's Sync now off Wi-Fi is refused and its request is
+        // closed (row E5). The automatic setting, still on any network, is not looked at.
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+        edit("edit 3")
+        assertRefused(account, "gen-net", note.uid, "Sync now off Wi-Fi with Sync now on Wi-Fi only") { requestSync(context, account) }
+
+        // 8. Sync now on any network again, and no active network: the run is attempted, and an attempt
+        // that fails is a failure (row E3, answer 5 on #709).
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        pin(NotesNetworkPolicy.Connection.NONE)
+        fake.answer("POST", TRANSACTION, code = null)
+        val before = status(account, "gen-net")
+        syncNow(account, "gen-net")
+        val failed = status(account, "gen-net")
+        assertEquals("an attempted run that fails is a failure", SyncStatusStore.TerminalResult.FAILURE, failed.lastTerminalResult)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, failed.lastFailureCategory)
+        assertTrue("recorded by this run", (failed.lastFailureAt ?: 0L) > (before.lastFailureAt ?: 0L))
+
+        // 9. On Wi-Fi a run the user starts sends it.
+        pin(NotesNetworkPolicy.Connection.WIFI)
+        syncNow(account, "gen-net")
+        assertEquals("edit 3", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-net").isEmpty())
+        assertSucceeded(status(account, "gen-net"))
+
+        // 10. Sync now on Wi-Fi only again, and the dashboard's Sync now off Wi-Fi while an automatic run
+        // is in flight: the tap's own run is refused and records nothing, and the run in flight keeps its
+        // attempt and records its success.
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        edit("edit 4")
+        val beforeTap = status(account, "gen-net")
+        forgetLastListing(account.name)
+        // The automatic run is held at its upload, after it listed. Forgetting that listing before the
+        // tap means a run of the tap that the network rule wrongly let through would list again.
+        val upload = fake.hold("POST", TRANSACTION)
+        val tapMark = fake.requests.size
+        open()
+        upload.awaitArrival()
+        val inFlight = checkNotNull(status(account, "gen-net").activeAttemptId) { "the automatic run has its attempt" }
+        forgetLastListing(account.name)
+        requestSync(context, account)
+        assertEquals("the tap leaves the run in flight its attempt", inFlight, status(account, "gen-net").activeAttemptId)
+        upload.release()
+        awaitSettled(identity)
+        assertEquals("the automatic run sent the change", listOf(transactionOf(notebook)), uploads(tapMark))
+        assertEquals("the refused run of the tap asked the server nothing", 1, listings(tapMark).size)
+        status(account, "gen-net").let {
+            assertEquals("the run in flight recorded its success: $it", SyncStatusStore.TerminalResult.SUCCESS, it.lastTerminalResult)
+            assertTrue("recorded after the tap: $it", (it.lastSuccessAt ?: 0L) > (beforeTap.lastSuccessAt ?: 0L))
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+            assertNull("the refused run closed the tap's request: $it", it.activeRequestId)
+        }
+
+        // 11. Wi-Fi drops between the tap and its run, and the upload of the automatic run in flight fails:
+        // the tap's run is refused off Wi-Fi, and the failure of the run in flight is on record.
+        pin(NotesNetworkPolicy.Connection.WIFI)
+        edit("edit 5")
+        fake.answer("POST", TRANSACTION, code = null)
+        val beforeDrop = status(account, "gen-net")
+        forgetLastListing(account.name)
+        val heldListing = fake.hold("POST", LIST)
+        open()
+        heldListing.awaitArrival()
+        requestSync(context, account)
+        pin(NotesNetworkPolicy.Connection.OTHER)
+        heldListing.release()
+        awaitSettled(identity)
+        status(account, "gen-net").let {
+            assertEquals("the run in flight recorded its failure: $it", SyncStatusStore.TerminalResult.FAILURE, it.lastTerminalResult)
+            assertEquals(SyncStatusStore.FailureCategory.NETWORK, it.lastFailureCategory)
+            assertTrue("recorded after the tap: $it", (it.lastFailureAt ?: 0L) > (beforeDrop.lastFailureAt ?: 0L))
+            assertNull("no attempt left open: $it", it.activeAttemptId)
+            assertNull("the refused run closed the tap's request: $it", it.activeRequestId)
+        }
+        // Back on Wi-Fi with Sync now on any network, a run the user starts sends edit 5.
+        check(AccountSettings.writeNotesSyncNowNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        pin(NotesNetworkPolicy.Connection.WIFI)
+        syncNow(account, "gen-net")
+        assertEquals("edit 5", itemManager(notebook).fetch(note.uid).contentString)
+        assertTrue("nothing is left waiting", pendingHeaders(account, "gen-net").isEmpty())
+        assertSucceeded(status(account, "gen-net"))
+    }
+
+    @Test fun anAutomaticRunAlsoNeedsTheAccountsOwnWifiSwitchAndNoSavedNetworkNameAndARunTheUserStartsDoesNot() {
+        val account = newAccount("gen-acct")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-acct")
+        // Automatic sync on any network, so that only the account's own rule decides below.
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        val settings = AccountSettings(context, account)
+        settings.setSyncWiFiOnly(true)
+        var mtime = 2_000L
+        fun edit(text: String) = editLocally(account, "gen-acct", notebook, note.uid, "Plan", text, mtime++)
+        fun open() {
+            NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN_OPEN)
+        }
+        // The pinned reading is the connection alone: nothing in Notes reads a Wi-Fi name (#971).
+        fun pin(connection: NotesNetworkPolicy.Connection) {
+            NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(connection) }
+        }
+        val wifi = NotesNetworkPolicy.Connection.WIFI
+        val other = NotesNetworkPolicy.Connection.OTHER
+        val none = NotesNetworkPolicy.Connection.NONE
+
+        // 1. The switch on, no network name: refused off Wi-Fi and with no active network, sent on Wi-Fi
+        // (rows A13, A14, A12).
+        edit("edit 1")
+        pin(other)
+        assertRefused(account, "gen-acct", note.uid, "an automatic run off Wi-Fi with the account switch on") { open() }
+        pin(none)
+        assertRefused(account, "gen-acct", note.uid, "an automatic run with no active network and the account switch on") { open() }
+        pin(wifi)
+        assertSent(account, "gen-acct", notebook, "an automatic run on Wi-Fi with the account switch on") { open() }
+
+        // 2. A network name saved with the switch refuses on every network, Wi-Fi included (rows A15,
+        // A16, and A13 and A14 with a name), and the network is not read for that run: Android gives
+        // this app no Wi-Fi names, so the name cannot be checked (#971). The pinned reading is Wi-Fi,
+        // which the switch alone admits (step 1), and it counts every read.
+        settings.syncWifiOnlySSID = "home"
+        edit("edit 2")
+        val reads = AtomicInteger()
+        NotesNetwork.readingOverride = { reads.incrementAndGet(); NotesNetworkPolicy.Reading(wifi) }
+        assertRefused(account, "gen-acct", note.uid, "an automatic run on Wi-Fi with a saved network name") { open() }
+        assertEquals("the network is not read for an automatic run a saved network name refuses", 0, reads.get())
+
+        // 3. A run the user starts does not look at the account's rule: not at the switch off Wi-Fi
+        // (row E2 with the switch on), not at the saved name on Wi-Fi (row E7).
+        pin(other)
+        assertSent(account, "gen-acct", notebook, "pull to refresh off Wi-Fi with the account switch on and a saved name") {
+            NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN)
+        }
+        edit("edit 2, second")
+        pin(wifi)
+        assertSent(account, "gen-acct", notebook, "pull to refresh on Wi-Fi with a saved network name") {
+            NotesSyncCoordinator.request(context, account, "gen-acct", NotesSyncPolicy.Trigger.SCREEN)
+        }
+
+        // 4. With the name removed, the switch alone decides again: an automatic run on Wi-Fi is sent
+        // (row A12). Removing it is the way out the notice names.
+        settings.syncWifiOnlySSID = null
+        edit("edit 3")
+        pin(wifi)
+        assertSent(account, "gen-acct", notebook, "an automatic run on Wi-Fi once the saved network name is removed") { open() }
+
+        // 5. The switch off with a name left over: the name means nothing (row A17).
+        settings.setSyncWiFiOnly(false)
+        settings.syncWifiOnlySSID = "home"
+        edit("edit 4")
+        pin(other)
+        assertSent(account, "gen-acct", notebook, "an automatic run off Wi-Fi with the switch off and a name left over") { open() }
+
+        // 6. Both rules on (row A5).
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.WIFI_ONLY))
+        settings.setSyncWiFiOnly(true)
+        settings.syncWifiOnlySSID = null
+        edit("edit 5")
+        pin(other)
+        assertRefused(account, "gen-acct", note.uid, "an automatic run off Wi-Fi with both rules on") { open() }
+
+        // 7. No pin: the production reading, on whatever network this device has, against the adapters'
+        // own function. It passes on any network and records which one it was. A name no network has
+        // is refused by both, whichever network this is.
+        NotesNetwork.readingOverride = null
+        check(AccountSettings.writeNotesAutomaticNetwork(manager, account, NotesNetworkPolicy.Allowed.ANY_NETWORK))
+        val real = NotesNetwork.read(context)
+        val compared = mutableListOf<String>()
+        for ((wifiOnly, name) in listOf(false to null, true to null, true to "notes-test-no-such-network")) {
+            settings.setSyncWiFiOnly(wifiOnly)
+            settings.syncWifiOnlySSID = name
+            val adapters = runCatching { syncConditionsAllow(context, settings) }.getOrDefault(false)
+            val notes = NotesNetwork.verdict(context, manager, account, settings, explicit = false).run
+            assertEquals("Notes and the adapters agree on the account's rule (switch $wifiOnly, name set ${name != null})", adapters, notes)
+            compared += "switch=$wifiOnly nameSet=${name != null} allowed=$adapters"
+        }
+        // No network name in this line: fixed words, flags and the API level only.
+        android.util.Log.i("NotesNetworkReading", "sdk=${Build.VERSION.SDK_INT} connection=${real.connection} " +
+            "compared: ${compared.joinToString("; ")}")
+
+        // 8. Still no pin: a real run through the gate on the Notes worker, with nothing restricting
+        // it. It reads this device's own network there and is admitted on any network.
+        settings.setSyncWiFiOnly(false)
+        settings.syncWifiOnlySSID = null
+        assertSent(account, "gen-acct", notebook, "an automatic run with no pin and nothing restricting it") { open() }
     }
 
     @Test fun aServerCopyThatIsAnotherNoteResolvesNothing() {
@@ -2804,6 +3115,14 @@ class NotesSyncBoundaryRuntimeTest {
         return note
     }
 
+    /** A note with exactly these metadata bytes, as another client could upload it; nothing passes through a typed string. */
+    private fun uploadRawNote(notebook: String, metaRaw: ByteArray, body: String): Item {
+        val itemMgr = itemManager(notebook)
+        val note = itemMgr.create_raw(metaRaw, body.toByteArray(Charsets.UTF_8))
+        itemMgr.batch(arrayOf(note))
+        return note
+    }
+
     /** Uploads one note per title, each as its own change, so the server lists them in this order. */
     private fun uploadNotes(notebook: String, vararg titles: String) {
         titles.forEachIndexed { index, title -> uploadNote(notebook, title, "Body of $title", mtime = 1_000L + index) }
@@ -3385,6 +3704,28 @@ class NotesSyncBoundaryRuntimeTest {
         assertNull("no success: $status", status.lastSuccessAt)
         assertNull("no failure: $status", status.lastFailureAt)
         assertNull("no attempt left open: $status", status.activeAttemptId)
+    }
+
+    /** A run the network rule refuses asks the server nothing, leaves the waiting change of [note] alone, and leaves the status as it was. */
+    private fun assertRefused(account: Account, generation: String, note: String, what: String, start: () -> Unit) {
+        val store = pending(account, generation)
+        val waiting = (store.read(note) as PendingNotesStore.Read.Present).entry
+        val before = status(account, generation)
+        val mark = fake.requests.size
+        start()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, generation))
+        assertEquals("$what asks the server nothing", emptyList<String>(), fake.requests.drop(mark))
+        assertEquals("$what leaves the waiting change alone", waiting, (store.read(note) as PendingNotesStore.Read.Present).entry)
+        assertEquals("$what records neither success nor failure", before, status(account, generation))
+    }
+
+    /** A run the network rule admits sends the one waiting change of [notebook]. */
+    private fun assertSent(account: Account, generation: String, notebook: String, what: String, start: () -> Unit) {
+        val mark = fake.requests.size
+        start()
+        awaitSettled(ExactAccountIdentity(account.type, account.name, generation))
+        assertEquals("$what sends the waiting change", listOf(transactionOf(notebook)), uploads(mark))
+        assertTrue("$what leaves nothing waiting", pendingHeaders(account, generation).isEmpty())
     }
 
     private fun listings(since: Int) = fake.requests.drop(since).filter { it.startsWith("POST collection/list_multi/") }

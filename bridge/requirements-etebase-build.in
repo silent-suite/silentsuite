@@ -1,0 +1,8 @@
+# Inputs for requirements-etebase-build.txt. See that file for the full command.
+#
+# PyPI etebase 0.32.0 has no macOS x86_64 wheel, so the Intel macOS release build
+# compiles the hash-pinned PyPI sdist (requirements-etebase-sdist.txt). This is
+# that sdist's build-system requirement (maturin>=1.7,<2.0). It is installed only
+# into a throwaway virtualenv that builds the etebase wheel with
+# --no-build-isolation, never into the environment PyInstaller bundles.
+maturin>=1.7,<2.0

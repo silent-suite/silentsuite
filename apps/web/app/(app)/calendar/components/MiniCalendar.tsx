@@ -3,7 +3,7 @@
 import { useCallback, useMemo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { expandEventRecurrence, type CalendarEvent } from '@silentsuite/core'
+import { expandEventRecurrence, occurrenceEnd, type CalendarEvent } from '@silentsuite/core'
 import { useCalendarStore } from '@/app/stores/use-calendar-store'
 import { useCalendarListStore } from '@/app/stores/use-calendar-list-store'
 import { usePreferencesStore } from '@/app/stores/use-preferences-store'
@@ -74,11 +74,15 @@ function addEventDots(
   }
 
   const durationMs = Math.max(0, event.endDate.getTime() - event.startDate.getTime())
-  const expansionStart = new Date(rangeStart.getTime() - Math.max(durationMs, 86400000))
+  // A nominal day or week DURATION can be longer than the first occurrence across DST changes;
+  // a day's margin covers any zone's shift.
+  const lookbackMs = Math.max(durationMs, 86400000) + (event.duration ? 86400000 : 0)
+  const expansionStart = new Date(rangeStart.getTime() - lookbackMs)
   const occurrences = expandEventRecurrence(event, { start: expansionStart, end: rangeEnd })
 
   for (const occurrenceStart of occurrences) {
-    addSpan(occurrenceStart, new Date(occurrenceStart.getTime() + durationMs))
+    // A day or week DURATION keeps its wall clock across DST, so each occurrence takes its own end.
+    addSpan(occurrenceStart, occurrenceEnd(event, occurrenceStart))
   }
 }
 

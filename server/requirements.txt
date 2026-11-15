@@ -24,9 +24,6 @@
 # --require-hashes --only-binary=:all:, so a byte that is not named here cannot
 # enter the image.
 #
-aiofiles==25.1.0 \
-    --hash=sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695
-    # via -r requirements.in/base.txt
 annotated-doc==0.0.4 \
     --hash=sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320
     # via fastapi

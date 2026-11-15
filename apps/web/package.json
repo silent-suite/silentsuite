@@ -1,6 +1,6 @@
 {
   "name": "@silentsuite/web",
-  "version": "0.5.19-beta",
+  "version": "0.5.19-beta.2",
   "private": true,
   "scripts": {
     "dev": "next dev --port 3000",

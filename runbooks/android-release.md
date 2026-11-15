@@ -14,7 +14,7 @@ x86_64:
 - `libetebase_android.so` — from the local Etebase 2.3.2 16 KB AAR built by
   `android/scripts/build-etebase-client-16kb.sh`. Only the locally rebuilt
   64-bit copies retain symbol tables; the upstream 32-bit copies are stripped.
-- `libconscrypt_jni.so` — from Conscrypt 2.6.3 and its recorded BoringSSL
+- `libconscrypt_jni.so` — from Conscrypt 2.9.0 and its recorded BoringSSL
   revision, rebuilt by `android/scripts/build-conscrypt-android-r28.sh` with
   NDK r28 and the explicit 16 KB max/common-page-size linker flags. All copies
   remain pre-stripped.
@@ -38,6 +38,9 @@ Do not expect or claim symbols for the stripped Conscrypt or upstream 32-bit
 Etebase payloads. The job fails closed if the ZIP is missing, malformed, or
 missing those required entries, or if any symbol-bearing entry's bytes do not
 match the byte-identical copy packaged in the AAB (SHA-256 comparison).
+
+When the Google Play publication lane is on (`runbooks/play-automation.md`),
+it performs steps 1 and 2 below; steps 3 and 4 remain manual checks.
 
 For every Play Console release, the operator must:
 

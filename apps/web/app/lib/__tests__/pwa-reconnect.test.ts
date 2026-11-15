@@ -16,6 +16,7 @@ function loadPwaOptions(): Record<string, unknown> {
     'next-intl/plugin': () => (config: unknown) => config,
     '@ducanh2912/next-pwa': { default: (opts: Record<string, unknown>) => { options = opts; return (config: unknown) => config } },
     '@sentry/nextjs': { withSentryConfig: (config: unknown) => config },
+    './sentry-build-options': { glitchtipSourceMapUpload: () => ({}) },
   }
   const cjsModule = { exports: {} }
   vm.runInNewContext(readFileSync(configPath, 'utf8'), {

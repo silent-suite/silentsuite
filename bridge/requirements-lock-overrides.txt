@@ -1,0 +1,7 @@
+# Overrides applied when compiling requirements-lock.txt.
+#
+# PyPI etebase 0.32.0 has no macOS x86_64 wheel, so the Intel macOS build compiles
+# it from the hash-pinned PyPI sdist (requirements-etebase-sdist.txt). The lock
+# therefore leaves PyPI etebase out on that platform only. Keep this range equal
+# to the etebase range in pyproject.toml; tests/test_requirements_lock.py checks that.
+etebase>=0.32.0,<0.33 ; sys_platform != 'darwin' or platform_machine != 'x86_64'

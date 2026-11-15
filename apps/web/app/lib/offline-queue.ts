@@ -729,6 +729,34 @@ export async function clearAll(): Promise<void> {
   })
 }
 
+/**
+ * Sign-in boundary: keep only the work owned by the account that just proved
+ * its credentials, and remove every other account's records (and records with
+ * no owner) in one transaction. Re-signing in to the same account, for example
+ * after a Billing outage signed this tab out, must not erase its pending
+ * changes. An empty fingerprint keeps nothing.
+ */
+export async function clearOtherAccounts(accountFingerprint: string): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    const request = tx.objectStore(STORE_NAME).openCursor()
+    request.onsuccess = () => {
+      const cursor = request.result
+      if (!cursor) return
+      const entry = cursor.value as QueueEntry
+      if (!accountFingerprint || entry.accountFingerprint !== accountFingerprint) cursor.delete()
+      cursor.continue()
+    }
+    tx.oncomplete = () => {
+      notifyListeners()
+      resolve()
+    }
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
+  })
+}
+
 export async function clearFailed(guard: OfflineQueueAccountGuard): Promise<void> {
   const entries = await getAll(guard)
   assertGuard(guard)

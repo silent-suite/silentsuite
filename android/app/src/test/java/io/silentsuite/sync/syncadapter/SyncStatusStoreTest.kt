@@ -69,6 +69,126 @@ class SyncStatusStoreTest {
         assertFalse(storage.values.keys.any { it.endsWith(".NOTES") })
     }
 
+    @Test fun `a notes request keeps the notes run in flight, whose outcome is recorded, and a refused follow-up records nothing`() {
+        val notes = SyncStatusStore.Service.NOTES
+        for ((account, fails) in listOf(first to false, second to true)) {
+            assertTrue(store.recordSuccess(account, notes, 5))
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(account, notes, "automatic", 10, null))
+            // Sync now while the automatic run is in flight.
+            assertTrue(store.recordRequested(account, setOf(notes), "sync-now", 11))
+            val held = store.status(account, notes)
+            assertEquals("automatic", held.activeAttemptId)
+            assertEquals(10L, held.attemptStartedAt)
+            assertNull(held.attemptRequestId)
+            assertEquals("sync-now", held.activeRequestId)
+            assertEquals(11L, held.requestedAt)
+            assertFalse(held.structuralStorageFailure)
+
+            val ended = if (fails) store.recordFailureResult(account, notes, "automatic", null, SyncStatusStore.FailureCategory.NETWORK, 12)
+                else store.recordSuccessResult(account, notes, "automatic", null, 12)
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, ended)
+            val afterRun = store.status(account, notes)
+            assertNull(afterRun.activeAttemptId)
+            assertEquals("sync-now", afterRun.activeRequestId)
+            if (fails) assertEquals(SyncStatusStore.FailureCategory.NETWORK, afterRun.lastFailureCategory)
+            else assertEquals(12L, afterRun.lastSuccessAt)
+
+            // The follow-up for the tap starts, the network rule refuses it, and it closes the request.
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(account, notes, "follow-up", 13, "sync-now"))
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.finishWithoutOutcomeResult(account, notes, "follow-up"))
+            val settled = store.status(account, notes)
+            assertNull(settled.activeRequestId)
+            assertNull(settled.activeAttemptId)
+            assertEquals(12L, settled.lastTerminalAt)
+            assertEquals(if (fails) SyncStatusStore.TerminalResult.FAILURE else SyncStatusStore.TerminalResult.SUCCESS, settled.lastTerminalResult)
+            assertFalse(settled.structuralStorageFailure)
+        }
+    }
+
+    @Test fun `a notes request keeps the fault of a notes run whose admission failed, which then records its outcome`() {
+        val notes = SyncStatusStore.Service.NOTES
+        // first: the fault sentinel is on disk; second: only this process holds it.
+        for ((account, persisted) in listOf(first to true, second to false)) {
+            assertTrue(store.recordSuccess(account, notes, 5))
+            if (persisted) storage.failNext = true else storage.failAll = true
+            assertEquals(SyncStatusStore.MutationResult.STORAGE_FAILURE, store.beginAttemptResult(account, notes, "automatic", 10, null))
+            storage.failAll = false
+            assertTrue(store.recordRequested(account, setOf(notes), "sync-now", 11))
+            assertTrue("the fault stays", store.status(account, notes).structuralStorageFailure)
+
+            assertEquals(SyncStatusStore.MutationResult.RECORDED,
+                store.recordFailureResult(account, notes, "automatic", null, SyncStatusStore.FailureCategory.NETWORK, 12))
+            val afterRun = store.status(account, notes)
+            assertEquals(SyncStatusStore.TerminalResult.FAILURE, afterRun.lastTerminalResult)
+            assertEquals(12L, afterRun.lastFailureAt)
+            assertEquals(SyncStatusStore.FailureCategory.NETWORK, afterRun.lastFailureCategory)
+            assertFalse(afterRun.structuralStorageFailure)
+            assertEquals("sync-now", afterRun.activeRequestId)
+
+            // The refused follow-up closes the request and leaves the failure on record.
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(account, notes, "follow-up", 13, "sync-now"))
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.finishWithoutOutcomeResult(account, notes, "follow-up"))
+            val settled = store.status(account, notes)
+            assertNull(settled.activeRequestId)
+            assertEquals(12L, settled.lastTerminalAt)
+            assertEquals(SyncStatusStore.TerminalResult.FAILURE, settled.lastTerminalResult)
+        }
+    }
+
+    @Test fun `a newer notes request takes over the request of a notes run in flight, which still records its outcome`() {
+        val notes = SyncStatusStore.Service.NOTES
+        assertTrue(store.recordRequested(first, setOf(notes), "first-tap", 10))
+        assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(first, notes, "manual", 11, "first-tap"))
+        assertTrue(store.recordRequested(first, setOf(notes), "second-tap", 12))
+        val held = store.status(first, notes)
+        assertEquals("manual", held.activeAttemptId)
+        assertNull(held.attemptRequestId)
+        assertEquals("second-tap", held.activeRequestId)
+        assertFalse(held.structuralStorageFailure)
+        assertEquals(SyncStatusStore.MutationResult.RECORDED,
+            store.recordFailureResult(first, notes, "manual", "first-tap", SyncStatusStore.FailureCategory.NETWORK, 13))
+        val afterRun = store.status(first, notes)
+        assertEquals(SyncStatusStore.FailureCategory.NETWORK, afterRun.lastFailureCategory)
+        assertEquals("second-tap", afterRun.activeRequestId)
+        assertNull(afterRun.activeAttemptId)
+        assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(first, notes, "follow-up", 14, "second-tap"))
+        assertEquals("second-tap", store.status(first, notes).attemptRequestId)
+    }
+
+    @Test fun `an adapter request still replaces the adapter attempt in flight`() {
+        for (service in listOf(SyncStatusStore.Service.CALENDAR, SyncStatusStore.Service.TASKS)) {
+            assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(first, service, "periodic", 10, null))
+            assertTrue(store.recordRequested(first, setOf(service), "manual-${service.name.lowercase()}", 11))
+            assertNull(store.status(first, service).activeAttemptId)
+            assertFalse(store.recordSuccess(first, service, "periodic", 12))
+        }
+        begin(setOf(child("c1")))
+        assertTrue(store.recordRequested(first, setOf(SyncStatusStore.Service.CONTACTS), "manual-contacts", 11))
+        assertNull(store.status(first, SyncStatusStore.Service.CONTACTS).activeAttemptId)
+        assertFalse(store.failContactsParent(first, "attempt"))
+    }
+
+    @Test fun `a kept notes attempt that nothing finishes expires as an interruption, and then its request does`() {
+        val notes = SyncStatusStore.Service.NOTES
+        assertEquals(SyncStatusStore.MutationResult.RECORDED, store.beginAttemptResult(first, notes, "automatic", 10, null))
+        assertTrue(store.recordRequested(first, setOf(notes), "sync-now", 20))
+        assertTrue(store.expireStale(first, notes, 40, platformActive = true, platformPending = false, interruptionAfterMillis = 30))
+        assertEquals("automatic", store.status(first, notes).activeAttemptId)
+        assertTrue(store.expireStale(first, notes, 40, false, false, 30))
+        val attemptExpired = store.status(first, notes)
+        assertEquals(SyncStatusStore.FailureCategory.INTERRUPTED, attemptExpired.lastFailureCategory)
+        assertEquals(40L, attemptExpired.lastFailureAt)
+        assertNull(attemptExpired.activeAttemptId)
+        assertEquals("sync-now", attemptExpired.activeRequestId)
+        assertTrue(store.expireStale(first, notes, 49, false, false, 30))
+        assertEquals("sync-now", store.status(first, notes).activeRequestId)
+        assertTrue(store.expireStale(first, notes, 50, false, false, 30))
+        val requestExpired = store.status(first, notes)
+        assertNull(requestExpired.activeRequestId)
+        assertEquals(50L, requestExpired.lastFailureAt)
+        assertEquals(SyncStatusStore.FailureCategory.INTERRUPTED, requestExpired.lastFailureCategory)
+    }
+
     @Test fun `v2 terminals write exact private v1 shadows and clear both faults atomically`() {
         assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, 10))
         assertTrue(storage.values.keys.any { it.startsWith("status_v2.") })
@@ -90,6 +210,13 @@ class SyncStatusStoreTest {
         assertTrue(store.recordSuccess(first, SyncStatusStore.Service.CALENDAR, "calendar", 12))
         assertNull(store.status(first, SyncStatusStore.Service.CALENDAR).activeAttemptId)
         assertEquals("request", store.status(first, SyncStatusStore.Service.TASKS).activeRequestId)
+    }
+
+    @Test fun `a request for no service writes nothing and is not a failure`() {
+        // Sync now while an adapter sync runs asks for Notes alone: its request then records no adapter.
+        assertTrue(store.recordRequested(store.identity(first), emptySet(), "no-service-request", 10))
+        assertEquals(0, storage.commits)
+        assertTrue(storage.values.isEmpty())
     }
 
     @Test fun `replaying the same request id preserves its admitted attempt`() {

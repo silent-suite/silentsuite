@@ -32,6 +32,7 @@ import io.silentsuite.sync.App
 import io.silentsuite.sync.BuildConfig
 import io.silentsuite.sync.InvalidAccountException
 import io.silentsuite.sync.R
+import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.syncadapter.SyncStatusStore
@@ -362,14 +363,15 @@ class AppSettingsActivity : BaseActivity() {
             return try {
                 val settings = AccountSettings(context, account)
                 val cache = io.silentsuite.sync.EtebaseLocalCache.getInstance(context, account.name)
-                val httpClient = io.silentsuite.sync.HttpClient.Builder(context).setForeground(true).build().okHttpClient
-                val colMgr = io.silentsuite.sync.EtebaseLocalCache.getEtebase(context, httpClient, settings).collectionManager
-                synchronized(cache) {
-                    cache.decodableCollectionList(colMgr, io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK) { _, error ->
-                        // The binding's message can quote a decrypted value; log only the exception class.
-                        io.silentsuite.sync.log.Logger.log.warning("Skipping an address book that could not be decoded: ${error.javaClass.name}")
-                    }
-                }.map { RecoveryAddressBook(it.col.uid, it.meta.name.orEmpty()) }
+                io.silentsuite.sync.HttpClient.Builder(context).setForeground(true).build().use { httpClient ->
+                    val colMgr = io.silentsuite.sync.EtebaseLocalCache.getEtebase(context, httpClient.okHttpClient, settings).collectionManager
+                    synchronized(cache) {
+                        cache.decodableCollectionList(colMgr, io.silentsuite.sync.Constants.ETEBASE_TYPE_ADDRESS_BOOK) { _, error ->
+                            // The binding's message can quote a decrypted value; log only the exception class.
+                            io.silentsuite.sync.log.Logger.log.warning("Skipping an address book that could not be decoded: ${error.javaClass.name}")
+                        }
+                    }.map { RecoveryAddressBook(it.col.uid, it.meta.name.orEmpty()) }
+                }
             } catch (e: Exception) {
                 io.silentsuite.sync.log.Logger.log.warning("Could not list address books for recovery: ${e.javaClass.name}")
                 null
@@ -464,7 +466,9 @@ class AppSettingsActivity : BaseActivity() {
                     notesToggleEffectOverride?.invoke(appContext, exact, creationId, enabled) ?: run {
                         if (enabled) {
                             // A service that never synced would pull the dashboard to "First sync
-                            // pending", so enabling runs a Notes sync right away.
+                            // pending", so enabling asks for a Notes sync right away. The account's
+                            // Sync now network setting decides whether that run starts; a run it
+                            // refuses closes this request and records nothing.
                             val requestId = UUID.randomUUID().toString()
                             SyncStatusStore(appContext).recordRequested(exact, setOf(SyncStatusStore.Service.NOTES),
                                 requestId, System.currentTimeMillis())
@@ -476,6 +480,14 @@ class AppSettingsActivity : BaseActivity() {
                     true
                 }
             }
+            notesNetworkPreference("notes_automatic_network", account, { it.automatic },
+                { m, a, v -> AccountSettings.writeNotesAutomaticNetwork(m, a, v) },
+                { if (it == NotesNetworkPolicy.Allowed.WIFI_ONLY) R.string.settings_notes_automatic_network_wifi
+                  else R.string.settings_notes_automatic_network_any })
+            notesNetworkPreference("notes_sync_now_network", account, { it.syncNow },
+                { m, a, v -> AccountSettings.writeNotesSyncNowNetwork(m, a, v) },
+                { if (it == NotesNetworkPolicy.Allowed.WIFI_ONLY) R.string.settings_notes_sync_now_network_wifi
+                  else R.string.settings_notes_sync_now_network_any })
             requirePreference<SwitchPreferenceCompat>("birthdays_enabled").apply {
                 isEnabled = account != null
                 isChecked = account != null && AccountSettings.birthdaysEnabled(AccountManager.get(requireContext()), account)
@@ -485,6 +497,34 @@ class AppSettingsActivity : BaseActivity() {
                     val exact = exactSelectedAccount() ?: return@setOnPreferenceChangeListener false
                     AccountSettings.writeBirthdaysEnabled(AccountManager.get(requireContext().applicationContext), exact, value as Boolean)
                 }
+            }
+        }
+
+        /** One of the two Notes network settings (design 3.6): never persisted by the preference, always written to the exact account. */
+        private fun notesNetworkPreference(
+            key: String,
+            account: Account?,
+            current: (NotesNetworkPolicy.Settings) -> NotesNetworkPolicy.Allowed,
+            write: (AccountManager, Account, NotesNetworkPolicy.Allowed) -> Boolean,
+            summaryOf: (NotesNetworkPolicy.Allowed) -> Int,
+        ) {
+            val preference = requirePreference<ListPreference>(key)
+            if (account == null) {
+                preference.isEnabled = false
+                return
+            }
+            val stored = current(AccountSettings.notesNetworkSettings(AccountManager.get(requireContext()), account))
+            preference.value = stored.name
+            preference.setSummary(summaryOf(stored))
+            preference.setOnPreferenceChangeListener { _, value ->
+                // Revalidate the retained generation immediately before the account-scoped write.
+                val exact = exactSelectedAccount() ?: return@setOnPreferenceChangeListener false
+                val chosen = NotesNetworkPolicy.Allowed.values().firstOrNull { it.name == value }
+                    ?: return@setOnPreferenceChangeListener false
+                if (!write(AccountManager.get(requireContext().applicationContext), exact, chosen))
+                    return@setOnPreferenceChangeListener false
+                preference.setSummary(summaryOf(chosen))
+                true
             }
         }
 
