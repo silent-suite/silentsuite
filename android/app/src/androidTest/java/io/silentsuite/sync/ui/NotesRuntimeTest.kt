@@ -286,14 +286,15 @@ class NotesRuntimeTest {
                 }
                 scenario.onActivity { activity ->
                     assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.held_notebooks_failed).visibility)
-                    // Without a session no text can be decrypted: no Copy, and the row says so.
+                    // Without a session no text can be decrypted: no Copy and no Try again, and the row says so.
                     val rows = (activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as HeldTextFragment).renderedRows!!
                     assertEquals(listOf(null, null), rows.map { it.body })
-                    assertEquals(listOf(true, false), rows.map { it.canTryAgain })
+                    assertEquals(listOf(false, false), rows.map { it.canTryAgain })
                     val cards = activity.findViewById<android.view.ViewGroup>(R.id.held_rows)
                     assertEquals(activity.getString(R.string.notes_held_text_unavailable),
                         cards.getChildAt(0).findViewById<TextView>(R.id.held_body).text.toString())
                     assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_copy).visibility)
+                    assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_try_again).visibility)
                     // Held text the screen cannot show offers no Discard: the user would delete text they never saw.
                     assertEquals(listOf(false, false), rows.map { it.canDiscard })
                     assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_discard).visibility)
