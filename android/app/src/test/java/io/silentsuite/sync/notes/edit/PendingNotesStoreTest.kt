@@ -1972,8 +1972,9 @@ class PendingNotesStoreTest {
     @Test fun `a sign-out clear returns only once the store directory is shown gone`() {
         store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
         // The deletion works, but no directory above the store can be listed, so it cannot be shown gone.
-        PendingNotesStore.listFilesForTesting = { null }
+        PendingNotesStore.listFilesForTesting = { d -> if (d.path == store.dir.path) d.listFiles() else null }
         assertThrows(java.io.IOException::class.java) { store.clearAll() }
+        assertFalse("the deletion went through", dir.exists())
         // A listing above that still shows the directory is no proof either.
         val above = store.dir.parentFile!!
         PendingNotesStore.listFilesForTesting = { d -> if (d.path == above.path) arrayOf(store.dir) else d.listFiles() }
@@ -2020,9 +2021,9 @@ class PendingNotesStoreTest {
             .findAll(code).count())
         assertEquals("no other test for ABSENT", 6, Regex("""[=!]=\s*Presence\.ABSENT\b""").findAll(code).count())
         assertEquals(2, Regex("""\) != Presence\.PRESENT\b""").findAll(code).count())
-        // A clear returns only on its own check that the directory is gone, never on what the deletion answered.
-        assertEquals(listOf("dir.deleteRecursively()"),
-            code.lines().filter { "deleteRecursively" in it }.map { it.trim() })
+        // Nothing deletes recursively, which follows a link to a directory: a clear removes the files one at a time,
+        // as a discard does, and returns only on its own check that the directory is gone.
+        assertEquals(emptyList<String>(), code.lines().filter { "deleteRecursively" in it }.map { it.trim() })
 
         // The discard permits decide the same way: no File.exists(), and mkdir answers first.
         val permits = File("src/main/java/io/silentsuite/sync/notes/edit/PendingNotesDiscardPermits.kt").readText()
@@ -3360,6 +3361,63 @@ class PendingNotesStoreTest {
         s.unregister()
     }
 
+    @Test fun `a clear syncs the store's directory after its files go and then the removal of the directory`() {
+        val s = identityStore(syncDirectory = recordingSync)
+        s.saveLocal("n1", "b1", "r1", blob("cleared"), isCreate = false)
+        s.putNotebook("b1", blob("k"))
+        steps.clear()
+        s.clearAll()
+        assertFalse(s.dir.exists())
+        // One sync of the store's directory for each committed file (the note, the notebook copy, the counter), then
+        // the removal of the directory.
+        assertEquals(List(3) { "sync ${s.dir.name}" } + "sync notes-pending", steps)
+        assertTrue(s.clearedInFull())
+    }
+
+    @Test fun `a clear whose removal of the directory is not synced does not return, and its retry syncs it`() {
+        val s = identityStore(syncDirectory = recordingSync)
+        s.saveLocal("n1", "b1", "r1", blob("cleared"), isCreate = false)
+        parentSyncFails = true
+        assertThrows(java.io.IOException::class.java) { s.clearAll() }
+        assertFalse("the directory went", s.dir.exists())
+        assertFalse("but the clear did not finish", s.clearedInFull())
+        assertTrue(s.clearStopped())
+
+        // A retry finds the directory gone and removes nothing, and still syncs its removal before it returns.
+        steps.clear()
+        assertThrows(java.io.IOException::class.java) { s.clearAll() }
+        assertEquals(listOf("sync notes-pending"), steps)
+        assertFalse(s.clearedInFull())
+        parentSyncFails = false
+        steps.clear()
+        s.clearAll()
+        assertEquals(listOf("sync notes-pending"), steps)
+        assertTrue(s.clearedInFull())
+    }
+
+    @Test fun `a clear removes a link in the store as a link and deletes nothing it points at`() {
+        val elsewhere = tmp.newFolder("elsewhere")
+        val kept = File(elsewhere, "n1.note").apply { writeBytes(blob("another store's text")) }
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        linked(File(dir, "attachments"), elsewhere)
+        store.clearAll()
+        assertFalse(dir.exists())
+        assertArrayEquals("what the link pointed at stays", blob("another store's text"), kept.readBytes())
+    }
+
+    @Test fun `a clear deletes nothing inside a folder in the store, and does not return while the folder is there`() {
+        store.saveLocal("n1", "b1", "r1", blob("t"), isCreate = false)
+        val inner = File(File(dir, "attachments").apply { assertTrue(mkdir()) }, "kept").apply { writeBytes(blob("x")) }
+        assertThrows(java.io.IOException::class.java) { store.clearAll() }
+        assertTrue("the folder's file stays", inner.exists())
+        assertFalse("the store's own files went", File(dir, "n1.note").exists())
+        assertFalse(store.clearedInFull())
+        assertTrue(inner.delete())
+        store.clearAll()
+        assertFalse(dir.exists())
+        assertTrue(store.clearedInFull())
+    }
+
     @Test fun `after a restart, a discard that finds the directory gone syncs its removal before the permit goes`() {
         val noBackup = tmp.newFolder("no_backup")
         val s = identityStore(noBackup, syncDirectory = recordingSync)
@@ -3722,9 +3780,15 @@ class PendingNotesStoreTest {
         assertFalse("a removal", s.acknowledged())
         assertNull(permitsOf(s).acknowledgement(s.dir.name))
         assertEquals(DiscardOutcome.Acknowledged, s.discardStore(s.unsynced()))
-        s.clearAll()
+        // A clear withdraws it before anything goes, also when the store cannot be listed and so nothing goes.
+        val before = filesOf(s.dir)
+        assertThrows(java.io.IOException::class.java) { s.clearAll() }
+        assertEquals("nothing was deleted", before, filesOf(s.dir))
         assertFalse("a clear", s.acknowledged())
         assertNull(permitsOf(s).acknowledgement(s.dir.name))
+        PendingNotesStore.listFilesForTesting = null
+        s.clearAll()
+        assertTrue(s.clearedInFull())
     }
 
     @Test fun `an acknowledgement holds for its own directory only, not one that replaced it, nor another store`() {

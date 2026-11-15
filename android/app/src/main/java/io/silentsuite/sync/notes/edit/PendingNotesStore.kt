@@ -832,14 +832,18 @@ internal class PendingNotesStore private constructor(
      * for the rest of the process, so a late save that opens the store again gets this instance and is
      * refused instead of recreating the directory. A call after a failed one tries the deletion again.
      *
-     * It returns only once the directory is shown gone by two checks that agree ([shownGone]). Otherwise it
-     * throws IOException, whatever the deletion answered, since the deletion counts a file it could not
-     * remove as gone when File.exists() says so, and that answers false for a check that failed as well. A
-     * caller may rely on a clear only when it returned, and a run takes the store for cleared in full only then
-     * ([clearedInFull]). A clear writes the store, so it withdraws the store's acknowledgement first
+     * The files go as in [discardStore] ([deleteAll]): the ones in a listing of the store, entries first and the
+     * counter last, each committed file's removal synced, as in a discard, and none followed, so a link in the store
+     * goes as a link and a folder in it that holds anything stays. A listing that fails, unless the directory is shown
+     * not to be there, throws before anything goes. A partial clear leaves what [deleteAll] did not reach, with the
+     * counter there while any note is listed, unless two listings come back short the same way ([deleteAll]).
+     *
+     * It returns only once the directory is shown gone by two checks that agree ([shownGone]) and its removal is
+     * synced ([syncRemoval]), whoever removed it, so a retry that finds it gone still syncs. Otherwise it throws
+     * IOException. A caller may rely on a clear only when it returned, and a run takes the store for cleared in full
+     * only then ([clearedInFull]). A clear writes the store, so it withdraws the store's acknowledgement first
      * ([acknowledged]), and throws before anything goes when that cannot be shown. While the folder is a link, or
-     * lstat cannot tell ([followable]), it throws before that and deletes nothing, since the deletion would follow a
-     * link to a directory.
+     * lstat cannot tell ([followable]), it throws before that and deletes nothing.
      */
     fun clearAll() {
         synchronized(lock) {
@@ -848,8 +852,9 @@ internal class PendingNotesStore private constructor(
             beforeClearForTesting?.invoke()
             if (!followable()) throw IOException(LINKED)
             withdrawAcknowledgement()
-            dir.deleteRecursively()
+            deleteAll(listing().map { it.name })
             if (!shownGone(dir)) throw IOException("could not clear the pending store")
+            syncRemoval()
             clearReturned = true
             finishes++
         }
@@ -1387,9 +1392,10 @@ internal class PendingNotesStore private constructor(
     }
 
     /**
-     * Removes every file of the store in [listed] ([removeListed]), the listing the count was made from, in the
-     * order [discardStore] gives, then the directory. A listing can come back short, so a note it left out may
-     * still be there, and with it the notebook copy that note needs once the Etebase cache drops the notebook. So
+     * Removes every file of the store in [listed] ([removeListed]), the listing the count was made from (for
+     * [clearAll], which counts nothing, its own listing), in the order [discardStore] gives, then the directory. A
+     * listing can come back short, so a note it left out may still be there, and with it the notebook copy that
+     * note needs once the Etebase cache drops the notebook. So
      * after the entries, first writes and landed records, the directory is listed again, and the notebook copies,
      * the counter and the rest go only when that listing holds no note and nothing the first one did not hold;
      * otherwise this throws and they stay. Two listings that come back short the same way still get past it. A file
@@ -1397,8 +1403,8 @@ internal class PendingNotesStore private constructor(
      * directory, which is then not shown gone.
      *
      * The removal of the directory is not synced here, since this call finds the directory already gone when an
-     * earlier one removed it and then failed at that sync: [discardStore] syncs it once the directory is shown
-     * gone, whoever removed it ([syncRemoval]).
+     * earlier one removed it and then failed at that sync: [discardStore] and [clearAll] sync it once the directory
+     * is shown gone, whoever removed it ([syncRemoval]).
      */
     private fun deleteAll(listed: List<String>) {
         val held = listed.toHashSet()
@@ -2543,8 +2549,8 @@ internal class PendingNotesStore private constructor(
          * Test seam: what a listing of the directory it is given answers in place of File.listFiles();
          * null is a listing that failed. It answers every listing the store makes itself: of its own
          * directory, and of the directories above it that [knownAbsent] lists, after a listing of it fails or
-         * when [clearAll] or [discardStore] checks that the directory is gone, but not the deletion in
-         * [clearAll]. It answers the listings of the discard permits' root too ([PendingNotesDiscardPermits.remove],
+         * when [clearAll] or [discardStore] checks that the directory is gone, the listing [clearAll] deletes
+         * by included. It answers the listings of the discard permits' root too ([PendingNotesDiscardPermits.remove],
          * [PendingNotesDiscardPermits.listNames]).
          */
         @Volatile internal var listFilesForTesting: ((File) -> Array<File>?)? = null
