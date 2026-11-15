@@ -12,8 +12,10 @@ capabilities or production credentials. Its root filesystem and harness mount
 are read-only. Only `/data` and `/tmp` are writable tmpfs mounts. The job checks
 Docker's effective configuration; the harness checks interfaces, routes,
 privileges, mounts and a no-route result for a documentation-only address before
-creating data. Socket audit hooks in both Python processes reject and record
-external attempts, including attempts that application code catches.
+creating data. Network isolation relies on Docker's `--network none` plus these
+interface, route and egress checks. The socket audit hook is a best-effort extra
+for Python-level socket calls in the harness process; it does not observe
+uvloop or libpq connections in the server process.
 
 The harness creates a random local secret, migrates a temporary SQLite database,
 and seeds exactly two users with independent signing keys. Each user has a
