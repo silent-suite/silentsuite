@@ -13,8 +13,8 @@ import { describe, expect, it } from 'vitest'
  * server. Etebase therefore loads only through dynamic import() in the browser
  * (see use-etebase-store and the Birthdays session).
  *
- * This walks the eager imports of every route entry and fails when one reaches
- * Etebase or libsodium. Importing the pages in a test cannot check this: Vite
+ * This walks the eager imports of every route entry, and of the other server
+ * files in SERVER_FILES, and fails when one reaches Etebase or libsodium. Importing the pages in a test cannot check this: Vite
  * evaluates everything the @silentsuite/core index re-exports, while webpack
  * keeps only the exports a module uses (core is "sideEffects": false), so the
  * core index is followed per imported name here, as the server bundle sees it.
@@ -24,9 +24,12 @@ const WEB = path.resolve(__dirname, '../../..')
 const CORE = path.resolve(WEB, '../../packages/core/src')
 const UI = path.resolve(WEB, '../../packages/ui/src')
 const CORE_INDEX = path.join(CORE, 'index.ts')
-const FORBIDDEN = new Set(['package:etebase', 'package:libsodium', 'package:libsodium-wrappers'])
-const ENTRY = /^(page|layout|template|loading|error|not-found|global-error|default|route)\.tsx?$/
+const FORBIDDEN = new Set(['etebase', 'libsodium', 'libsodium-wrappers', 'libsodium-sumo', 'libsodium-wrappers-sumo'].map((name) => `package:${name}`))
+const ENTRY = /^(page|layout|template|loading|error|not-found|global-error|forbidden|unauthorized|default|route|icon|apple-icon|opengraph-image|twitter-image|sitemap|robots|manifest)\.(ts|tsx|js|jsx)$/
 const SCRIPT = /\.(ts|tsx|js|jsx|mjs)$/
+// Server modules outside app/: middleware, instrumentation, and the next-intl request
+// config that next.config.js registers and the server loads on every request.
+const SERVER_FILES = ['middleware.ts', 'instrumentation.ts', 'i18n/request.ts']
 
 type Edge = { specifier: string; names: string[] | 'all' }
 
@@ -44,6 +47,7 @@ function resolveSpecifier(specifier: string, from: string): string {
   else if (specifier.startsWith('@silentsuite/core/')) local = path.join(CORE, specifier.slice('@silentsuite/core/'.length))
   else if (specifier === '@silentsuite/ui') local = path.join(UI, 'index')
   else if (specifier.startsWith('@silentsuite/ui/')) local = path.join(UI, specifier.slice('@silentsuite/ui/'.length))
+  else if (specifier.startsWith('@silentsuite/')) throw new Error(`map the workspace package ${specifier} here`)
   if (local === null) {
     const parts = specifier.split('/')
     return `package:${specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0]}`
@@ -76,7 +80,7 @@ const edgeCache = new Map<string, Edge[]>()
 function eagerEdges(file: string): Edge[] {
   const cached = edgeCache.get(file)
   if (cached) return cached
-  const kind = /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS
+  const kind = file.endsWith('.tsx') ? ts.ScriptKind.TSX : file.endsWith('.jsx') ? ts.ScriptKind.JSX : /\.m?js$/.test(file) ? ts.ScriptKind.JS : ts.ScriptKind.TS
   const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, kind)
   const edges: Edge[] = []
   let dynamicName: string | null = null
@@ -194,11 +198,14 @@ function routeEntries(): string[] {
     }
   }
   walk(path.join(WEB, 'app'))
-  for (const extra of ['middleware.ts', 'instrumentation.ts']) {
+  for (const extra of SERVER_FILES) {
     if (existsSync(path.join(WEB, extra))) entries.push(path.join(WEB, extra))
   }
   return entries.sort()
 }
+
+// The walks parse a few hundred files synchronously; a cold, busy worker needs more than 5 s.
+const WALK_TIMEOUT_MS = 30_000
 
 describe('server page modules do not load Etebase', () => {
   const entries = routeEntries()
@@ -207,6 +214,7 @@ describe('server page modules do not load Etebase', () => {
     const labels = entries.map(label)
     expect(labels).toContain('apps/web/app/(app)/notes/page.tsx')
     expect(labels).toContain('apps/web/app/(app)/settings/sharing/page.tsx')
+    expect(labels).toContain('apps/web/i18n/request.ts')
     expect(entries.length).toBeGreaterThan(20)
   })
 
@@ -216,7 +224,7 @@ describe('server page modules do not load Etebase', () => {
     const chain = chainToEtebase(path.join(WEB, 'app/lib/birthday-calendar/etebase-transport.ts'))
     expect(chain).toContain('packages/core/src/etebase/collections.ts')
     expect(chain?.at(-1)).toBe('etebase')
-  })
+  }, WALK_TIMEOUT_MS)
 
   it('no route entry reaches Etebase or libsodium through eager imports', () => {
     const offenders = entries
@@ -224,5 +232,5 @@ describe('server page modules do not load Etebase', () => {
       .filter((chain): chain is string[] => chain !== null)
       .map((chain) => chain.join(' > '))
     expect(offenders).toEqual([])
-  })
+  }, WALK_TIMEOUT_MS)
 })
