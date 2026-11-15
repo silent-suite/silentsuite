@@ -390,8 +390,9 @@ export const useNoteStore = create<NoteState & NoteActions>()(
         let revision = shown.revision
         if (obligated || !revision) {
           // An obligated note or an unknown revision is proved against a fresh live copy first.
-          revision = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
-          if (!isCurrentAccountEpoch(accountEpoch) || !revision) return false
+          const proved = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
+          if (!isCurrentAccountEpoch(accountEpoch) || !proved) return false
+          revision = proved.revision
         }
         const outcome = await useEtebaseStore.getState().deleteItem('notes', id, {
           collectionUid: shown.notebookId,
@@ -442,21 +443,26 @@ export const useNoteStore = create<NoteState & NoteActions>()(
         const period = editor?.periodGen()
         const obligated = Boolean(getNoteObligation(id))
         let revision = shown.revision
+        // The copy's metadata and the revision the source delete uses always come from one read.
+        let source: { getMeta?: () => unknown } | undefined
         if (obligated || !revision) {
-          revision = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
-          if (!isCurrentAccountEpoch(accountEpoch) || !revision) return null
+          // A fresh proof: the copy takes the metadata of that same fresh read.
+          const proved = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
+          if (!isCurrentAccountEpoch(accountEpoch) || !proved) return null
+          revision = proved.revision
+          source = proved.item
         }
         const { noteToItemMeta, savedRevisionOf } = await import('@silentsuite/core')
         // Check before the lower store sees anything: a late call would run as the next account.
         if (!isCurrentAccountEpoch(accountEpoch)) return null
         const etebase = useEtebaseStore.getState()
-        // The copy takes its metadata from the cached item the move removes, so that item
-        // must be saved at exactly the revision the source delete is conditioned on.
-        const source = etebase.itemCache.get(id)
-        if (!source || savedRevisionOf(source) !== revision) throw new NoteMoveSourceChangedError()
+        // Otherwise the shown revision is paired with the cached item it was read or saved
+        // from; a cached item at any other revision cannot supply the copy's metadata.
+        const cached = etebase.itemCache.get(id)
+        if (!source && (!cached || savedRevisionOf(cached) !== revision)) throw new NoteMoveSourceChangedError()
         // A move is not an edit: the title and last-edit time travel with the note, and
         // every other field, including those other clients wrote, stays as it was.
-        const meta = movedNoteMeta(source, noteToItemMeta(shown))
+        const meta = movedNoteMeta(source ?? cached, noteToItemMeta(shown))
         const movedId = await etebase.moveItem('notes', id, shown.content, notebookId, shown.notebookId, meta, {
           sourceRevision: revision,
           offlineAllowed: !obligated,

@@ -97,25 +97,29 @@ describe('moving a note keeps the metadata other clients wrote', () => {
     expect((await serverItems(account, collection)).find((candidate) => candidate.uid === item.uid)?.isDeleted).toBe(true)
   })
 
-  it('refuses to copy stale metadata when another client changed only the metadata after this tab cached the item', async () => {
-    const { account, collection, item, target } = await shownNoteWithMeta({ name: TITLE, mtime: 1 })
-    // The peer adds a field; title and body stay, so a fresh proof still matches the shown note.
-    const peer = item._clone()
-    peer.setMeta({ name: TITLE, mtime: 1, ...PEER_FIELDS })
-    await account.getCollectionManager().getItemManager(collection).transaction([peer])
-    // An owed reconciliation: the move proves the note against a fresh copy, at the peer's revision.
-    markNoteObligation(item.uid)
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    onTestFinished(() => errorSpy.mockRestore())
+  it.each(['an owed reconciliation', 'an unknown revision'])(
+    'copies the newer fields another client wrote after this tab cached the item, for a note with %s',
+    async (reason) => {
+      const { account, collection, item, target } = await shownNoteWithMeta({ name: TITLE, mtime: 1 })
+      // The peer adds fields; title and body stay, so a fresh proof still matches the shown note.
+      const peer = item._clone()
+      peer.setMeta({ name: TITLE, mtime: 1, ...PEER_FIELDS })
+      await account.getCollectionManager().getItemManager(collection).transaction([peer])
+      // Either way the move proves the note against a fresh read; this tab's cached item stays older.
+      if (reason === 'an owed reconciliation') markNoteObligation(item.uid)
+      else useNoteStore.setState((state) => ({ notes: state.notes.map((note) => ({ ...note, revision: null })) }))
+      expect(useEtebaseStore.getState().itemCache.get(item.uid)).toBe(item)
 
-    const movedId = await useNoteStore.getState().moveNote(item.uid, target.uid)
+      const movedId = await useNoteStore.getState().moveNote(item.uid, target.uid)
 
-    expect(movedId).toBeNull()
-    expect(await serverItems(account, target)).toEqual([])
-    const source = (await serverItems(account, collection)).find((candidate) => candidate.uid === item.uid)
-    expect(source?.isDeleted).toBe(false)
-    expect(source?.getMeta()).toEqual({ name: TITLE, mtime: 1, ...PEER_FIELDS })
-  })
+      expect(movedId).not.toBeNull()
+      const [copy] = await serverItems(account, target)
+      expect(copy.uid).toBe(movedId)
+      expect(copy.getMeta()).toEqual({ name: TITLE, mtime: SHOWN_AT.getTime(), ...PEER_FIELDS })
+      expect((await serverItems(account, collection)).find((candidate) => candidate.uid === item.uid)?.isDeleted).toBe(true)
+      expect(toastMock.showErrorToast).not.toHaveBeenCalled()
+    },
+  )
 
   it('refuses to move a note whose metadata is not a map, and leaves the source and target untouched', async () => {
     const { account, collection, item, target } = await shownNoteWithMeta('metadata written as text')

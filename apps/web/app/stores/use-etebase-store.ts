@@ -857,11 +857,19 @@ export async function proveLiveNoteBase(itemUid: string, base: SealedEditingBase
   }
 }
 
+/** A fresh live note copy that equals the shown note, with its own saved revision. */
+export interface ProvedNote {
+  revision: string
+  /** The fresh SDK item the proof read; never published to the item cache. */
+  item: any
+}
+
 /**
  * #744 §9 proof for a destructive note path: a fresh live copy that equals
- * `base`, returning that copy's own saved revision. Any error is not proved.
+ * `base`, returning that copy with its own saved revision. Any error, or an
+ * unknown revision, is not proved.
  */
-export async function proveNoteRevision(itemUid: string, base: SealedEditingBase): Promise<string | null> {
+export async function proveNoteRevision(itemUid: string, base: SealedEditingBase): Promise<ProvedNote | null> {
   const { account, accountFingerprint, collections, itemCollectionMap } = useEtebaseStore.getState()
   const guard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
   if (!guard) return null
@@ -875,7 +883,8 @@ export async function proveNoteRevision(itemUid: string, base: SealedEditingBase
     const fresh = await core.fetchItemFresh(account, collection, itemUid)
     assertGuard()
     if (!fresh || !await noteMatchesBase(core, fresh, itemUid, base, assertGuard)) return null
-    return core.savedRevisionOf(fresh)
+    const revision = core.savedRevisionOf(fresh)
+    return revision ? { revision, item: fresh } : null
   } catch {
     return null
   }
