@@ -150,6 +150,13 @@ generated one. This ran on local Node over glibc, not the CI `node:22-alpine` im
 2026-10-23: Next 15.5.28 tooling rebind; the eight-path remediation scope is unchanged.
 The CI image verifier is the authoritative shipped-bytes check; it scans the actual generated assets in that image.
 
+2026-11-14: pnpm moved from 10.6.5 to 10.34.9. The lock's patch hash and the installed braces bytes
+are unchanged and the byte preflight passes. GitHub withdrew GHSA-vfj7-8cjw-p6xm on 2026-10-23, so
+the registry audit no longer reports it. pnpm 10.34.9 asks the registry's quick audit endpoint first,
+which writes finding paths without versions; if the advisory came back in that form it would not
+match the reviewed path set and the audit would fail closed until this record and the path set are
+updated.
+
 `next@15.5.28` vendors its own unversioned braces copy inside the nft bundle, used for build-time
 output tracing. It is not `braces@3.0.3`, is outside this remediation, and is evaluated only for
 reachability from the production server.
@@ -161,7 +168,8 @@ fails. Then:
 
 1. Pin an exact override to the patched release.
 2. Remove `patches/braces@3.0.3.patch`, its declaration, the preflight and this disposition.
-3. Regenerate the lock with pnpm 10.6.5 and have the change reviewed.
+3. Regenerate the lock with the pnpm version pinned in the root `packageManager` field and have the
+   change reviewed.
 
 Rollback is a reviewed revert. It restores the old time-boxed exception, which accepts the
 unpatched finding only before `2026-10-14T00:00:00Z`; at or after that instant the audit fails

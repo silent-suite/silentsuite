@@ -151,10 +151,20 @@ def test_no_hash_is_recorded_twice():
     assert len(digests) == len(set(digests))
 
 
+def before_first_pin(text: str) -> str:
+    """Everything above the first `name==version` line of a compiled file."""
+
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if line[:1].isalnum() and "==" in line:
+            return "".join(lines[:index])
+    return text
+
+
 def lock_header() -> str:
     """The comment block above the first pin, with wrapping normalised away."""
 
-    header = REQUIREMENTS.read_text(encoding="utf-8").split("aiofiles")[0]
+    header = before_first_pin(REQUIREMENTS.read_text(encoding="utf-8"))
     return " ".join(header.replace("#", " ").split())
 
 
@@ -195,7 +205,7 @@ def test_the_server_test_job_runs_the_interpreter_the_lock_was_built_for():
     # The compiled files say which interpreter they were resolved for.
     for compiled in ("requirements.txt", "requirements-dev.txt"):
         text = (ROOT / "server" / compiled).read_text(encoding="utf-8")
-        assert "Python 3.12" in text.split("aiofiles")[0] or "Python 3.12" in text[:600]
+        assert "Python 3.12" in before_first_pin(text) or "Python 3.12" in text[:600]
 
 
 # Offline counterpart to the resolution probes below: the generator's admission

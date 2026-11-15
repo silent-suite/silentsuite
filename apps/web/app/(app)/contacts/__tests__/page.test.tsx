@@ -389,6 +389,32 @@ describe('ContactsPage overlays mount above the bottom nav', () => {
     expect(storeMock.contactState.createContact).not.toHaveBeenCalled()
   })
 
+  it('keeps the name error line in the layout, so showing it on blur does not move "+ Add phone"', () => {
+    renderWithIntl(<ContactsPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'New Contact' }))
+    const form = screen.getByRole('dialog', { name: 'New Contact' })
+    const given = within(form).getByRole('textbox', { name: 'Given name' })
+
+    // jsdom has no layout, so check the reserved slot: it exists, empty, before the error.
+    const slot = form.querySelector('#name-error') as HTMLElement
+    expect(slot).not.toBeNull()
+    expect(slot.textContent).toBe('')
+    expect(slot.className).toContain('min-h-4')
+    expect(given).not.toHaveAttribute('aria-invalid')
+
+    fireEvent.blur(given)
+    expect(form.querySelector('#name-error')).toBe(slot)
+    expect(slot).toHaveTextContent('At least one name field is required.')
+    expect(given).toHaveAttribute('aria-invalid', 'true')
+    expect(given).toHaveAttribute('aria-describedby', 'name-error')
+
+    fireEvent.click(within(form).getByRole('button', { name: '+ Add phone' }))
+    expect(within(form).getAllByPlaceholderText('Phone number')).toHaveLength(2)
+
+    fireEvent.change(given, { target: { value: 'Ada' } })
+    expect(slot.textContent).toBe('')
+  })
+
   it('portals the contact delete confirmation at its call site; cancel keeps the contact and confirm deletes once', async () => {
     const { container } = renderWithIntl(<ContactsPage />)
     fireEvent.click(screen.getByText('Ada'))

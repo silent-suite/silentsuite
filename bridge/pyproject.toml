@@ -8,7 +8,7 @@ version = "0.5.19-beta.2"
 description = "SilentSuite Bridge — Local E2EE CalDAV/CardDAV sync daemon"
 readme = "README.md"
 license = "AGPL-3.0-only"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 authors = [
     { name = "SilentSuite", email = "info@silentsuite.io" },
 ]
@@ -17,12 +17,11 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Topic :: Office/Business :: Groupware",
 ]
 dependencies = [
-    "etebase>=0.31.5,<0.32",
+    "etebase>=0.32.0,<0.33",
     "radicale==3.2.3",
     "peewee>=3.14.0,<4.0.0",
     "msgpack>=1.0.0",
@@ -33,7 +32,7 @@ dependencies = [
 [project.optional-dependencies]
 tray = [
     "pystray>=0.19.0",
-    "Pillow>=9.0.0",
+    "Pillow>=13.0.0",
 ]
 dev = [
     "pytest>=7.0",
@@ -54,12 +53,12 @@ packages = ["src/silentsuite_bridge"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true

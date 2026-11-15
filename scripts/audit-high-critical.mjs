@@ -50,9 +50,12 @@ function isRemediated(advisory, verification) {
     && advisory.findings[0].paths.every((path) => record.paths.has(path))
 }
 
-// pnpm 10.6.5 posts the lockfile tree to the registry's /-/npm/v1/security/audits endpoint and
-// returns its report unchanged; that report counts one vulnerability per (advisory, installed
-// version) finding. Policy severities must reconcile exactly before anything is treated as remediated.
+// pnpm 10.34.9 posts the lockfile tree to the registry's /-/npm/v1/security/audits/quick endpoint
+// (falling back to /-/npm/v1/security/audits, which pnpm 10.6.5 used) and returns its report
+// unchanged; that report counts one vulnerability per (advisory, installed version) finding. Policy
+// severities must reconcile exactly before anything is treated as remediated. The quick endpoint
+// writes finding paths without versions (seen 2026-11-14: "apps__web>tailwindcss>postcss-selector-parser"),
+// so a braces finding in that form would not match the reviewed path set and fails closed.
 function findingCount(advisory) {
   if (!Array.isArray(advisory.findings) || advisory.findings.length === 0) return undefined
   const versions = new Set()
