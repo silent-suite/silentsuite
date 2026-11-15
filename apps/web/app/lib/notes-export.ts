@@ -198,9 +198,10 @@ export interface ExportedNote {
 }
 
 /**
- * The frontmatter block written before the body. Etebase note metadata holds
- * a title (`name`) and a modification time (`mtime`) only, so those are the
- * fields written; a missing or unusable value is left out rather than guessed.
+ * The frontmatter block written before the body: the title and modification
+ * time, from the two metadata fields SilentSuite writes (`name`, `mtime`).
+ * Other fields other clients keep in the metadata are not exported. A missing
+ * or unusable value is left out rather than guessed.
  */
 export function noteFrontmatter(note: Pick<ExportedNote, 'title' | 'mtime'>): string {
   const lines = ['---']
