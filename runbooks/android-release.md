@@ -14,7 +14,7 @@ x86_64:
 - `libetebase_android.so` — from the local Etebase 2.3.2 16 KB AAR built by
   `android/scripts/build-etebase-client-16kb.sh`. Only the locally rebuilt
   64-bit copies retain symbol tables; the upstream 32-bit copies are stripped.
-- `libconscrypt_jni.so` — from Conscrypt 2.6.3 and its recorded BoringSSL
+- `libconscrypt_jni.so` — from Conscrypt 2.9.0 and its recorded BoringSSL
   revision, rebuilt by `android/scripts/build-conscrypt-android-r28.sh` with
   NDK r28 and the explicit 16 KB max/common-page-size linker flags. All copies
   remain pre-stripped.

@@ -6,7 +6,6 @@ import net.fortuna.ical4j.transform.rfc5545.CreatedPropertyRule
 import net.fortuna.ical4j.transform.rfc5545.DateListPropertyRule
 import net.fortuna.ical4j.transform.rfc5545.DatePropertyRule
 import net.fortuna.ical4j.transform.rfc5545.Rfc5545PropertyRule
-import org.apache.commons.io.IOUtils
 import java.io.IOException
 import java.io.Reader
 import java.io.StringReader
@@ -43,7 +42,7 @@ object ICalPreprocessor {
      */
     fun fixInvalidUtcOffset(reader: Reader): Reader {
         fun fixStringFromReader() =
-                IOUtils.toString(reader).replace(TZOFFSET_REGEXP) {
+                reader.readText().replace(TZOFFSET_REGEXP) {
                     Ical4Android.log.log(Level.FINE, "Applying Synology WebDAV fix to invalid utc-offset", it.value)
                     "${it.groupValues[1]}00${it.groupValues[3]}"
                 }

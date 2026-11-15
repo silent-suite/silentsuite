@@ -200,8 +200,9 @@ def test_node_security_floor_matches_manifest_docs_and_sharp_lock_requirement():
         ROOT / "apps/docs/contributing/dev-setup.md",
     ]
 
-    assert manifest["engines"]["node"] == ">=22.12.0"
-    assert all("| **Node.js** | 22.12+ |" in path.read_text(encoding="utf-8") for path in docs)
+    # jsdom and eslint-visitor-keys in the lock need ^22.13.0 || >=24 (no Node 23).
+    assert manifest["engines"]["node"] == "^22.13.0 || >=24.0.0"
+    assert all("| **Node.js** | 22.13+ or 24+ (not 23) |" in path.read_text(encoding="utf-8") for path in docs)
     # Read sharp's engine floor from its single `packages:` entry, whatever the
     # patch version, without letting a match run into a neighbouring entry.
     sections = re.split(r"^(?=\S)", lock, flags=re.MULTILINE)

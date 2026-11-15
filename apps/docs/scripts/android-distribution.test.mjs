@@ -43,6 +43,13 @@ const inventory = [
   ...markdownInventory(resolve(repoRoot, 'docs')),
 ]
 
+// The roadmap lists iOS as planned with no decided scope or timing, so docs
+// must not promise an app that is "in development" or "coming soon".
+const staleIosTimelinePatterns = [
+  /\biOS\b[^.\n]*\b(?:coming soon|in development)\b/i,
+  /\b(?:coming soon|in development)\b[^.\n]*\biOS\b/i,
+]
+
 const falseIosAvailabilityPatterns = [
   /\biOS\s+(?:access|sync)\s+via\s+(?:the\s+)?(?:original\s+)?EteSync\b/i,
   /\biOS\s+via\s+(?:an?\s+)?EteSync-compatible client\b/i,
@@ -278,14 +285,15 @@ test('channel buttons use theme-appropriate high-contrast focus indicators', () 
 })
 
 test('current docs and Settings expose iOS only as unsupported roadmap work', () => {
-  assert.match(hostedIos, /On the roadmap, coming soon/)
-  assert.match(hostedIos, /does not currently support iOS/)
+  assert.match(hostedIos, /## Planned/)
+  assert.match(hostedIos, /scope and timing haven't been decided/)
+  assert.match(hostedIos, /does not support iOS native sync yet/)
   assert.match(settingsMobile, /On the roadmap, coming soon/)
   assert.match(settingsMobile, /iOS is not currently supported\./)
 
   for (const path of inventory) {
     const content = read(path)
-    for (const pattern of falseIosAvailabilityPatterns) {
+    for (const pattern of [...falseIosAvailabilityPatterns, ...staleIosTimelinePatterns]) {
       assert.doesNotMatch(content, pattern, path)
     }
   }
