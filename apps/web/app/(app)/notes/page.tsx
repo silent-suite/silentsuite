@@ -30,7 +30,14 @@ import { PullToRefresh } from '@/app/components/PullToRefresh'
 import { MobileCollectionSheet } from '@/app/components/MobileCollectionSheet'
 import { NotesEmptyState } from '@/app/components/empty-state'
 import { ConfirmDialog } from '@/app/components/confirm-dialog'
-import { MarkdownEditor } from './MarkdownEditor'
+
+// The editor runs in the browser only. CodeMirror reads document.documentElement at load,
+// and on the server Etebase's React Native shim sets global.document = {}, so loading it
+// there throws and can stop the server at start.
+const MarkdownEditor = dynamic(
+  () => import('./MarkdownEditor').then((mod) => mod.MarkdownEditor),
+  { ssr: false },
+)
 
 // The Markdown renderer is only needed once someone opens a preview.
 const NoteMarkdownPreview = dynamic(

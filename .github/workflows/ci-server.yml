@@ -102,6 +102,82 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  authorization-http:
+    name: Isolated Sync HTTP Authorization
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      AUTH_CONTAINER: authorization-http-${{ github.run_id }}-${{ github.run_attempt }}
+      AUTH_IMAGE: silentsuite-authorization:${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          persist-credentials: false
+
+      # Pulls and hash-locked dependency downloads happen during this build,
+      # before the network-isolated test container is created.
+      - name: Build the existing server image
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          docker build --platform linux/amd64 --file Dockerfile.server \
+            --build-arg "VCS_REF=$CANDIDATE_SHA" --tag "$AUTH_IMAGE" .
+          test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$AUTH_IMAGE")" = "$CANDIDATE_SHA"
+          echo "commit=$CANDIDATE_SHA"
+          docker image inspect --format 'image={{.Id}}' "$AUTH_IMAGE"
+
+      - name: Create and verify the isolated container
+        run: |
+          docker create --name "$AUTH_CONTAINER" --platform linux/amd64 \
+            --network none --user 65532:65532 --cap-drop ALL \
+            --security-opt no-new-privileges --read-only \
+            --memory 512m --cpus 1 --pids-limit 128 \
+            --tmpfs /data:rw,nosuid,nodev,noexec,size=64m,uid=65532,gid=65532,mode=0700 \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,size=16m,uid=65532,gid=65532,mode=0700 \
+            --mount "type=bind,source=$GITHUB_WORKSPACE/server/tests/security-http,target=/harness,readonly" \
+            --entrypoint python3 "$AUTH_IMAGE" -B /harness/run.py > /dev/null
+          docker inspect "$AUTH_CONTAINER" | jq -e '
+            .[0] |
+            .HostConfig.NetworkMode == "none" and
+            .Config.User == "65532:65532" and
+            .HostConfig.ReadonlyRootfs == true and
+            .HostConfig.Privileged == false and
+            .HostConfig.CapDrop == ["ALL"] and
+            (.HostConfig.SecurityOpt | index("no-new-privileges") != null) and
+            .HostConfig.Memory == 536870912 and
+            .HostConfig.NanoCpus == 1000000000 and
+            .HostConfig.PidsLimit == 128 and
+            ((.HostConfig.PortBindings // {}) | length == 0) and
+            (.HostConfig.Tmpfs | keys == ["/data", "/tmp"]) and
+            ([.Mounts[] | select(.Type == "bind")] | length == 1) and
+            all(.Mounts[];
+              (.Type == "bind" and .Destination == "/harness" and .RW == false) or
+              (.Type == "tmpfs" and (.Destination == "/data" or .Destination == "/tmp")))
+          ' > /dev/null
+
+      - name: Run the HTTP authorization matrix
+        run: |
+          timeout --signal=TERM 90s docker start --attach "$AUTH_CONTAINER"
+          test "$(docker inspect --format '{{.State.ExitCode}}' "$AUTH_CONTAINER")" = 0
+
+      - name: Destroy the container and its tmpfs
+        if: always()
+        run: |
+          remaining=$(docker container ls --all --filter "name=^/${AUTH_CONTAINER}$" --format '{{.Names}}')
+          if [ -n "$remaining" ]; then
+            docker rm --force --volumes "$AUTH_CONTAINER" > /dev/null
+          fi
+          remaining=$(docker container ls --all --filter "name=^/${AUTH_CONTAINER}$" --format '{{.Names}}')
+          if [ -n "$remaining" ]; then
+            echo 'FAIL teardown.container-present'
+            exit 1
+          fi
+          echo 'PASS teardown.container-absent'
+
   test-server:
     name: Server Tests & Lint
     runs-on: ubuntu-latest
