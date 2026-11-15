@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import type { Note, SyncStatus } from '@silentsuite/core'
+import type { ItemMeta, Note, SyncStatus } from '@silentsuite/core'
 import {
   hasOutstandingNoteCustody,
   noteEditorMatches,
@@ -130,6 +130,43 @@ function typedSince(id: string, authorized: MountedNoteEditor | undefined, perio
   const current = getMountedNoteEditor(id)
   if (!current) return false
   return !current.isClean() || (current === authorized && current.periodGen() !== period)
+}
+
+/** The source item's metadata cannot be decoded, or is not a map of fields. */
+class NoteMetaUnreadableError extends Error {
+  constructor() {
+    super('Note metadata is unreadable')
+    this.name = 'NoteMetaUnreadableError'
+  }
+}
+
+/** The cached source item is not saved at the revision the move removes. */
+class NoteMoveSourceChangedError extends Error {
+  constructor() {
+    super('Cached note is not at the revision being moved')
+    this.name = 'NoteMoveSourceChangedError'
+  }
+}
+
+/**
+ * The moved copy's metadata: every field of the source item, including fields
+ * other clients wrote, with `own` (title and last-edit time) on top. Metadata
+ * that cannot be decoded or is not a map is never dropped: the move is refused.
+ * Metadata that decodes to null or undefined holds no fields, as on save.
+ */
+function movedNoteMeta(source: { getMeta?: () => unknown }, own: ItemMeta): ItemMeta {
+  if (typeof source.getMeta !== 'function') throw new NoteMetaUnreadableError()
+  let decoded: unknown
+  try {
+    decoded = source.getMeta()
+  } catch {
+    // The SDK error is not passed on: only this error's name is ever logged.
+    throw new NoteMetaUnreadableError()
+  }
+  if (decoded == null) return { ...own }
+  const prototype = typeof decoded === 'object' ? Object.getPrototypeOf(decoded) : undefined
+  if (prototype !== Object.prototype && prototype !== null) throw new NoteMetaUnreadableError()
+  return { ...(decoded as ItemMeta), ...own }
 }
 
 interface NoteState {
@@ -395,12 +432,18 @@ export const useNoteStore = create<NoteState & NoteActions>()(
           revision = await proveNoteRevision(id, { title: shown.title, content: shown.content, revision: shown.revision })
           if (!isCurrentAccountEpoch(accountEpoch) || !revision) return null
         }
-        const { noteToItemMeta } = await import('@silentsuite/core')
+        const { noteToItemMeta, savedRevisionOf } = await import('@silentsuite/core')
         // Check before the lower store sees anything: a late call would run as the next account.
         if (!isCurrentAccountEpoch(accountEpoch)) return null
         const etebase = useEtebaseStore.getState()
-        // A move is not an edit: the title and last-edit time travel with the note.
-        const movedId = await etebase.moveItem('notes', id, shown.content, notebookId, shown.notebookId, noteToItemMeta(shown), {
+        // The copy takes its metadata from the cached item the move removes, so that item
+        // must be saved at exactly the revision the source delete is conditioned on.
+        const source = etebase.itemCache.get(id)
+        if (!source || savedRevisionOf(source) !== revision) throw new NoteMoveSourceChangedError()
+        // A move is not an edit: the title and last-edit time travel with the note, and
+        // every other field, including those other clients wrote, stays as it was.
+        const meta = movedNoteMeta(source, noteToItemMeta(shown))
+        const movedId = await etebase.moveItem('notes', id, shown.content, notebookId, shown.notebookId, meta, {
           sourceRevision: revision,
           offlineAllowed: !obligated,
         })

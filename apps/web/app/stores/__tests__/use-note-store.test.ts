@@ -70,6 +70,11 @@ function note(id: string, overrides: Partial<Note> = {}): Note {
   }
 }
 
+/** A cached SDK item saved at `revision` whose metadata decodes through `getMeta`. */
+function savedItem(revision: string, getMeta: () => unknown = () => ({ name: 'Note', mtime: 1 })) {
+  return { etag: revision, encryptedItem: { lastEtag: revision }, getMeta }
+}
+
 function etebase(overrides: Record<string, unknown>) {
   useEtebaseStore.setState({ account: {}, itemCache: new Map(), ...overrides } as any)
 }
@@ -310,7 +315,7 @@ describe('useNoteStore', () => {
 
     it('recreates the note in the target notebook with its title and mtime, then follows the new id', async () => {
       const moveItem = vi.fn(async () => 'note-moved')
-      etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
+      etebase({ moveItem, itemCache: new Map([['note-1', savedItem('rev-1')]]) })
       useNotebookStore.setState({ lists: notebooks })
       // A move deletes the source only at the revision the note was shown at (#744 §9).
       const original = note('note-1', { title: 'Keep me', content: 'body', revision: 'rev-1' } as Partial<Note>)
@@ -325,7 +330,7 @@ describe('useNoteStore', () => {
 
     it('leaves the note in place when the move does not happen', async () => {
       const moveItem = vi.fn(async () => null)
-      etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
+      etebase({ moveItem, itemCache: new Map([['note-1', savedItem('rev-1')]]) })
       useNotebookStore.setState({ lists: notebooks })
       const original = note('note-1', { revision: 'rev-1' } as Partial<Note>)
       useNoteStore.setState({ notes: [original] })
@@ -352,6 +357,90 @@ describe('useNoteStore', () => {
       await expect(useNoteStore.getState().moveNote('missing', 'notes-2')).resolves.toBeNull()
       await expect(useNoteStore.getState().moveNote('note-1', 'notes-1')).resolves.toBe('note-1')
       expect(moveItem).not.toHaveBeenCalled()
+    })
+
+    it('keeps every metadata field other clients wrote on the moved copy, with the shown title and mtime', async () => {
+      const moveItem = vi.fn(async () => 'note-moved')
+      // Frozen: the cached SDK item's decoded metadata is never changed in place.
+      const sourceMeta = Object.freeze({
+        name: 'Source name',
+        mtime: 1,
+        description: 'Peer description',
+        color: '#123456',
+        'x-other-client': { kept: [1, 2] },
+      })
+      etebase({ moveItem, itemCache: new Map([['note-1', savedItem('rev-1', () => sourceMeta)]]) })
+      useNotebookStore.setState({ lists: notebooks })
+      const original = note('note-1', { title: 'Shown title', content: 'body', revision: 'rev-1' } as Partial<Note>)
+      useNoteStore.setState({ notes: [original] })
+
+      await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBe('note-moved')
+
+      expect(moveItem).toHaveBeenCalledWith('notes', 'note-1', 'body', 'notes-2', 'notes-1', {
+        name: 'Shown title',
+        mtime: original.updated_at.getTime(),
+        description: 'Peer description',
+        color: '#123456',
+        'x-other-client': { kept: [1, 2] },
+      }, { sourceRevision: 'rev-1', offlineAllowed: true })
+    })
+
+    it('moves a note whose metadata decodes to nothing with only its title and mtime', async () => {
+      const moveItem = vi.fn(async () => 'note-moved')
+      etebase({ moveItem, itemCache: new Map([['note-1', savedItem('rev-1', () => null)]]) })
+      useNotebookStore.setState({ lists: notebooks })
+      const original = note('note-1', { title: 'Shown title', content: 'body', revision: 'rev-1' } as Partial<Note>)
+      useNoteStore.setState({ notes: [original] })
+
+      await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBe('note-moved')
+
+      expect(moveItem).toHaveBeenCalledWith('notes', 'note-1', 'body', 'notes-2', 'notes-1', { name: 'Shown title', mtime: original.updated_at.getTime() }, { sourceRevision: 'rev-1', offlineAllowed: true })
+    })
+
+    const SECRET = 'PRIVATE NOTE DETAIL 1109'
+    it.each([
+      ['cannot be decoded', () => { throw new Error(SECRET) }],
+      ['decodes to text', () => SECRET],
+      ['decodes to a list', () => [SECRET]],
+      ['decodes to a number', () => 7],
+      ['decodes to bytes', () => new TextEncoder().encode(SECRET)],
+    ])('refuses to move a note whose metadata %s and leaves it in place', async (_case, getMeta) => {
+      const moveItem = vi.fn(async () => 'note-moved')
+      etebase({ moveItem, itemCache: new Map([['note-1', savedItem('rev-1', getMeta)]]) })
+      useNotebookStore.setState({ lists: notebooks })
+      const original = note('note-1', { title: SECRET, content: SECRET, revision: 'rev-1' } as Partial<Note>)
+      useNoteStore.setState({ notes: [original] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBeNull()
+
+      expect(moveItem).not.toHaveBeenCalled()
+      expect(useNoteStore.getState().notes).toEqual([original])
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to move note. Please try again.')
+      expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMetaUnreadableError' })
+      // Safe details only: no note text, title or metadata value reaches the console.
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(SECRET)
+      errorSpy.mockRestore()
+    })
+
+    it.each([
+      ['a newer revision', savedItem('rev-2')],
+      ['unsaved local changes', { etag: 'rev-2', encryptedItem: { lastEtag: 'rev-1' }, getMeta: () => ({ name: 'Note', mtime: 1 }) }],
+    ])('refuses to move a note whose cached item holds %s, since its metadata is not the revision the move removes', async (_case, cached) => {
+      const moveItem = vi.fn(async () => 'note-moved')
+      etebase({ moveItem, itemCache: new Map([['note-1', cached]]) })
+      useNotebookStore.setState({ lists: notebooks })
+      const original = note('note-1', { revision: 'rev-1' } as Partial<Note>)
+      useNoteStore.setState({ notes: [original] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBeNull()
+
+      expect(moveItem).not.toHaveBeenCalled()
+      expect(useNoteStore.getState().notes).toEqual([original])
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to move note. Please try again.')
+      expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMoveSourceChangedError' })
+      errorSpy.mockRestore()
     })
   })
 
@@ -396,7 +485,7 @@ describe('useNoteStore', () => {
     it.each(staleCases)('move leaves the current store alone after %s (%s)', async (boundary, completion) => {
       const pending = deferred<string | null>()
       const moveItem = vi.fn(() => pending.promise)
-      etebase({ moveItem, itemCache: new Map([['note-1', {}]]) })
+      etebase({ moveItem, itemCache: new Map([['note-1', savedItem('rev-1')]]) })
       useNotebookStore.setState({
         lists: [
           { id: 'notes-1', name: 'Notes', color: '#fff', visible: true, accessLevel: 1 },
