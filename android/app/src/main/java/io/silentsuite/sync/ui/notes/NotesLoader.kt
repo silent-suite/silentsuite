@@ -87,6 +87,10 @@ data class NoteContent(
     val observedSequence: Long = 0,
     /** Set when the local changes could not be laid over this note: it is the cached copy, and the viewer says why. */
     val pending: PendingUnavailable? = null,
+    /** The notebook accepts writes ([NotePushPolicy.acceptsWrites]). */
+    val writable: Boolean = false,
+    /** A discard of the whole pending store has not finished ([PendingNotesStore.Observed.discardUnfinished]). */
+    val discardUnfinished: Boolean = false,
 )
 
 /**
@@ -98,7 +102,17 @@ data class NotebookContents(
     val notes: List<NoteRow>,
     val unreadable: Int = 0,
     val pending: PendingUnavailable? = null,
+    /** The notebook accepts writes ([NotePushPolicy.acceptsWrites]). */
+    val writable: Boolean = false,
+    /** A discard of the whole pending store has not finished ([PendingNotesStore.Snapshot.discardUnfinished]). */
+    val discardUnfinished: Boolean = false,
 )
+
+/**
+ * What decides whether a new note can be made in a notebook: [writable], [discardUnfinished] and [pending] as
+ * [NotebookContents] has them.
+ */
+data class NewNoteOffer(val writable: Boolean, val discardUnfinished: Boolean, val pending: PendingUnavailable?)
 
 /**
  * One row of the Unsynced text screen: local text the notebook list does not show, as one entry file.
@@ -274,14 +288,15 @@ internal object NotesLoader {
                     NoteRow(cached.item.uid, title, previewOf(cached.content), cached.meta.mtime)
                 }
             // Without the local changes, the cached notes show as they are, and the list says why.
+            val writable = isWritable(collection.col)
             val read = (pending as? Pending.Read)?.value
-                ?: return@load NotebookContents(row, sortNotes(notes), unreadable.size, pending.unavailable())
+                ?: return@load NotebookContents(row, sortNotes(notes), unreadable.size, pending.unavailable(), writable)
             val source by lazy { notebookSource(colMgr, read.notebookCopy, collection.col, notebookUid) }
-            NotesOverlay.notebook(row, isWritable(collection.col), notes, unreadable, read.snapshot.headers,
+            NotesOverlay.notebook(row, writable, notes, unreadable, read.snapshot.headers,
                 NotesOverlay.unreadableEntries(read.snapshot.unreadable, read.snapshot.headers),
                 confirmed = read.snapshot.discardConfirmed) { header ->
                 read.snapshot.entries[header.noteUid]?.let { decrypt(source, it, keepBody = false) }
-            }
+            }.copy(writable = writable, discardUnfinished = read.snapshot.discardUnfinished)
         }
     }
 
@@ -308,11 +323,29 @@ internal object NotesLoader {
                 null
             }
             // Without the local changes, the cached copy shows, and the viewer says why.
-            val read = (pending as? Pending.Read)?.value ?: return@load cached?.copy(pending = pending.unavailable())
-            NotesOverlay.note(noteUid, notebookUid, cached, read.observed.read, read.observed.sequence, isWritable(collection.col),
+            val writable = isWritable(collection.col)
+            val read = (pending as? Pending.Read)?.value ?: return@load cached?.copy(pending = pending.unavailable(), writable = writable)
+            NotesOverlay.note(noteUid, notebookUid, cached, read.observed.read, read.observed.sequence, writable,
                 confirmed = read.observed.discardConfirmed) { entry ->
                 decrypt(notebookSource(colMgr, read.notebookCopy, collection.col, notebookUid), entry, keepBody = true)
-            }
+            }?.copy(writable = writable, discardUnfinished = read.observed.discardUnfinished)
+        }
+    }
+
+    /**
+     * What the note list and a new note's editor decide New note on ([NoteEditing.offersNewNote]): whether the notebook
+     * accepts writes, and whether a discard of the whole pending store is unfinished, read from headers only.
+     */
+    fun newNote(context: Context, account: Account, creationId: String, notebookUid: String): NotesLoad<NewNoteOffer> {
+        notesFixtureOverride?.let { fixture ->
+            val data = fixture(context, account, creationId) ?: return NotesLoad.Stale
+            // The fixtures are presentation data for the read-only screens: no note is made over them.
+            data.notebooks.firstOrNull { it.uid == notebookUid } ?: return NotesLoad.Failed
+            return NotesLoad.Loaded(NewNoteOffer(writable = false, discardUnfinished = false, pending = null))
+        }
+        return load(context, account, creationId, { store -> store.snapshot { false }.discardUnfinished }) { cache, colMgr, pending ->
+            val collection = cache.collectionGet(colMgr, notebookUid)
+            NewNoteOffer(isWritable(collection.col), (pending as? Pending.Read)?.value ?: false, pending.unavailable())
         }
     }
 

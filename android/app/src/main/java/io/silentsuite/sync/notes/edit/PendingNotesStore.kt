@@ -153,12 +153,24 @@ internal class PendingNotesStore private constructor(
      * from then on, closed handles included. It belongs to the editor, not to the uid, so an editor
      * opened on the original once that entry is gone is not moved. Kept in memory only, which is enough,
      * since no editor outlives its process.
+     *
+     * It also keeps the editor's base: the version of the entry the editor's text was built on, which a save
+     * into held text must match ([saveLocal]). It starts as the version of the entry the editor's load showed,
+     * or null for none, and moves to each version this handle writes. A run's rebase, a conflict copy and a
+     * release write the editor's own text under a new version, so they move it along for the handles whose
+     * base was the version they replaced. [unsure] is the version of this handle's last save that threw: its
+     * rename may have gone through before the directory sync failed, so that entry may be the editor's own.
      */
-    inner class EditorHandle internal constructor(noteUid: String) {
+    inner class EditorHandle internal constructor(noteUid: String, base: Long?) {
         /** Guarded by the store lock. */
         internal var target = noteUid
         internal var open = true
+        internal var base: Long? = base
+        internal var unsure: Long? = null
         internal val store get() = this@PendingNotesStore
+
+        /** Whether the entry at [version] holds this editor's own text. Under the store lock. */
+        internal fun owns(version: Long): Boolean = version == base || version == unsure
 
         /** The note this editor's text belongs to now. */
         val noteUid: String get() = synchronized(lock) { target }
@@ -243,14 +255,23 @@ internal class PendingNotesStore private constructor(
         val permitUnreadable: Boolean = false,
     )
 
-    /** One note's entry and the store-wide sequence, read together. */
-    /** [discardConfirmed]: the store's discard permit names this present entry, as [Snapshot.discardConfirmed] does. */
-    data class Observed(val read: Read, val sequence: Long, val discardConfirmed: Boolean = false)
+    /**
+     * One note's entry and the store-wide sequence, read together. [discardConfirmed]: the store's discard permit names
+     * this present entry, as [Snapshot.discardConfirmed] does. [discardUnfinished]: a discard of the whole store has not
+     * finished, as [Snapshot.discardUnfinished] says, for every note: the editor opens on no note while it is.
+     */
+    data class Observed(val read: Read, val sequence: Long, val discardConfirmed: Boolean = false, val discardUnfinished: Boolean = false)
 
     sealed class SaveOutcome {
         data class Saved(val version: Long) : SaveOutcome()
         /** The text is held (read-only, lost access, rejected, a repeated conflict, a note that could not be built): kept there, never pushed. The editor becomes a viewer. */
         data class SavedToHolding(val version: Long) : SaveOutcome()
+        /**
+         * The note's text is held, and it is not the text this save was built on ([EditorHandle.owns], or the base a
+         * save by uid gives): someone else's text, or text the user saw changed since. Nothing was written, so the held
+         * text stays as it is for the Unsynced text screen, and the text is still the caller's to keep.
+         */
+        object HeldChanged : SaveOutcome()
         /**
          * A conflict gave the editor's text a new note, [noteUid], after the editor built this save for
          * the original. Nothing was written. The editor applies its text to that note and saves again.
@@ -401,8 +422,9 @@ internal class PendingNotesStore private constructor(
      */
     fun observe(noteUid: String): Observed = locked {
         val read = readEntry(noteUid)
-        val confirmed = read is Read.Present && permitNames().let { it == null || noteFile(noteUid).name in it }
-        Observed(read, currentSequence(strict = false), confirmed)
+        val names = permitNames()
+        val confirmed = read is Read.Present && (names == null || noteFile(noteUid).name in names)
+        Observed(read, currentSequence(strict = false), confirmed, discardUnfinished = namedThere(names))
     }
 
     // ---- the one primitive every change goes through ----
@@ -435,6 +457,10 @@ internal class PendingNotesStore private constructor(
      * writes a new entry for it, which would get the same 409 and become a second conflicted copy.
      * A handle that was closed still saves, so text is not lost to a save that arrives late, and it is
      * still redirected.
+     *
+     * Into held text it writes only when the held entry is the editor's own ([EditorHandle.owns]): the version its
+     * base names, or the version of its last save that threw. Otherwise nothing is written and the answer is
+     * [SaveOutcome.HeldChanged]. Each version it writes becomes the handle's base.
      */
     fun saveLocal(
         editor: EditorHandle,
@@ -446,7 +472,17 @@ internal class PendingNotesStore private constructor(
         notebookCopy: ByteArray? = null,
     ): SaveOutcome = locked {
         movedTo(editor, noteUid)?.let { return@locked SaveOutcome.Moved(it) }
-        saveLocal(noteUid, notebookUid, revision, blob, isCreate, notebookCopy)
+        // Set before the write: a save that throws after its rename leaves that version on disk as the editor's.
+        val outcome = saveLocal(noteUid, notebookUid, revision, blob, isCreate, notebookCopy, editor::owns) { editor.unsure = it }
+        when (outcome) {
+            is SaveOutcome.Saved -> outcome.version
+            is SaveOutcome.SavedToHolding -> outcome.version
+            else -> null
+        }?.let { version ->
+            editor.base = version
+            editor.unsure = null
+        }
+        outcome
     }
 
     /** Whether a removal hold that is not released stands on this store's folder ([RemovalHold]). */
@@ -466,7 +502,9 @@ internal class PendingNotesStore private constructor(
      * A save by note uid. An open editor saves through its handle instead (above), which is what keeps
      * a late save away from a note that a conflict copy replaced. Resets the failure backoff, since new
      * content may push where the old did not. [notebookCopy], when given, is written in the same step.
-     * While a removal hold stands on the store, nothing is written ([SaveOutcome.RemovalPending]).
+     * While a removal hold stands on the store, nothing is written ([SaveOutcome.RemovalPending]). Into held text it
+     * writes only when [base] is the held entry's version, the text the caller built this save on; with no base, or
+     * another one, nothing is written ([SaveOutcome.HeldChanged]).
      */
     fun saveLocal(
         noteUid: String,
@@ -475,9 +513,24 @@ internal class PendingNotesStore private constructor(
         blob: ByteArray,
         isCreate: Boolean,
         notebookCopy: ByteArray? = null,
+        base: Long? = null,
     ): SaveOutcome = locked {
-        if (heldForRemoval()) return@locked SaveOutcome.RemovalPending
-        if (blob.size > PendingCodec.MAX_BLOB) return@locked SaveOutcome.TooLarge
+        saveLocal(noteUid, notebookUid, revision, blob, isCreate, notebookCopy, owns = { base != null && it == base }) {}
+    }
+
+    /** Both saves, under the lock: [owns] says whether a held entry's version is the caller's text; [writing] gets the version about to be written. */
+    private fun saveLocal(
+        noteUid: String,
+        notebookUid: String,
+        revision: String,
+        blob: ByteArray,
+        isCreate: Boolean,
+        notebookCopy: ByteArray?,
+        owns: (Long) -> Boolean,
+        writing: (Long) -> Unit,
+    ): SaveOutcome {
+        if (heldForRemoval()) return SaveOutcome.RemovalPending
+        if (blob.size > PendingCodec.MAX_BLOB) return SaveOutcome.TooLarge
         var outcome: SaveOutcome = SaveOutcome.Blocked
         update(noteUid) { read ->
             when (read) {
@@ -485,6 +538,7 @@ internal class PendingNotesStore private constructor(
                     notebookCopy?.let { putNotebookLocked(notebookUid, it) }
                     val version = nextVersion()
                     outcome = SaveOutcome.Saved(version)
+                    writing(version)
                     Change.Write(fromLanded(PendingEntry(noteUid, notebookUid, PendingEntry.State.UPSERT, version, revision, isCreate, blob = blob)))
                 }
                 is Read.Present -> when (read.entry.state) {
@@ -492,13 +546,20 @@ internal class PendingNotesStore private constructor(
                         notebookCopy?.let { putNotebookLocked(read.entry.notebookUid, it) }
                         val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.Saved(version)
+                        writing(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob,
                             failureCount = 0, lastFailureAt = null, lastFailureCategory = null))
                     }
-                    PendingEntry.State.HELD -> {
+                    // Held text that is not the caller's stays as it is: a save over it would replace text the user
+                    // has not seen, which a Discard shown for it would then answer as changed (design 3.2).
+                    PendingEntry.State.HELD -> if (!owns(read.entry.version)) {
+                        outcome = SaveOutcome.HeldChanged
+                        Change.Keep
+                    } else {
                         // The editor's latest text joins the held text instead of being lost.
                         val version = nextVersion(above = read.entry.version)
                         outcome = SaveOutcome.SavedToHolding(version)
+                        writing(version)
                         Change.Write(read.entry.copy(version = version, revision = revision, blob = blob))
                     }
                 }
@@ -508,7 +569,7 @@ internal class PendingNotesStore private constructor(
                 }
             }
         }
-        outcome
+        return outcome
     }
 
     // ---- push operations ----
@@ -662,7 +723,10 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.version != expectedVersion || e.state == PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.withNewestSent(onto).copy(version = nextRunVersion(above = e.version), revision = revision, blob = blob,
+                val version = nextRunVersion(above = e.version)
+                // The editor's text, on the revision that landed: the editors whose base it was keep it as theirs.
+                moveBases(noteUid, e.version, version)
+                Change.Write(e.withNewestSent(onto).copy(version = version, revision = revision, blob = blob,
                     fromConflict = false))
             }
         }
@@ -733,7 +797,10 @@ internal class PendingNotesStore private constructor(
             val e = (read as? Read.Present)?.entry
             if (e == null || e.state != PendingEntry.State.HELD) Change.Keep else {
                 applied = true
-                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = nextVersion(above = e.version), held = null,
+                val version = nextVersion(above = e.version)
+                // The same text waits again under a new version: an editor whose text it was keeps it as its own.
+                moveBases(noteUid, e.version, version)
+                Change.Write(e.copy(state = PendingEntry.State.UPSERT, version = version, held = null,
                     failureCount = 0, lastFailureAt = null, lastFailureCategory = null, fromConflict = false))
             }
         }
@@ -866,7 +933,7 @@ internal class PendingNotesStore private constructor(
         val origin = copy.origin ?: return
         when (val original = readEntry(origin.noteUid)) {
             is Read.Present -> if (original.entry.version == origin.version && original.entry.revision == origin.revision) {
-                moveEditors(origin.noteUid, copy.noteUid)
+                moveEditors(origin.noteUid, copy.noteUid, origin.version, copy.version)
                 remove(noteFile(origin.noteUid))
                 remove(landedFile(origin.noteUid))
             }
@@ -910,7 +977,7 @@ internal class PendingNotesStore private constructor(
                 File(dir, copyFile.name + NEW).delete()
                 throw failed
             }
-            moveEditors(originalUid, copy.noteUid)
+            moveEditors(originalUid, copy.noteUid, e.version, copy.version)
             beforeOriginalRemovedForTesting?.invoke()
             remove(noteFile(originalUid))
             remove(landedFile(originalUid))
@@ -924,9 +991,13 @@ internal class PendingNotesStore private constructor(
 
     fun clearLanded(noteUid: String): Unit = locked { remove(landedFile(noteUid)) }
 
-    /** An editor for [noteUid] opened. Each call is matched by one [editorClosed] with the handle it returned. */
-    fun editorOpened(noteUid: String): EditorHandle = locked {
-        EditorHandle(checkedUid(noteUid)).also { editors += it }
+    /**
+     * An editor for [noteUid] opened. Each call is matched by one [editorClosed] with the handle it returned. [base] is
+     * the version of the entry the editor's load showed, or null when it showed none: the text it will save over
+     * ([EditorHandle]).
+     */
+    fun editorOpened(noteUid: String, base: Long? = null): EditorHandle = locked {
+        EditorHandle(checkedUid(noteUid), base).also { editors += it }
     }
 
     /**
@@ -949,11 +1020,33 @@ internal class PendingNotesStore private constructor(
     /** Whether an open editor is on [noteUid]. Closed handles do not count. */
     private fun hasEditor(noteUid: String): Boolean = editors.any { it.target == noteUid }
 
-    /** Points every handle on [from] at [to], open or closed: the text they edit lives in [to] now. */
-    private fun moveEditors(from: String, to: String) {
-        for (editor in editors) if (editor.target == from) editor.target = to
-        for (closed in closedEditors) closed.get()?.let { if (it.target == from) it.target = to }
+    /**
+     * Points every handle on [from] at [to], open or closed: the text they edit lives in [to] now. A handle whose base
+     * was [fromVersion], the original entry the copy replaced, takes [toVersion], the copy's, as its base.
+     */
+    private fun moveEditors(from: String, to: String, fromVersion: Long, toVersion: Long) {
+        for (editor in handles()) if (editor.target == from) {
+            editor.target = to
+            if (editor.owns(fromVersion)) {
+                editor.base = toVersion
+                editor.unsure = null
+            }
+        }
     }
+
+    /**
+     * The handles on [noteUid] whose text the entry at [from] holds take [to], the version a step writes the same text
+     * under, as their base. [from] stays theirs as well, so a write of [to] that fails leaves them owning what is there.
+     */
+    private fun moveBases(noteUid: String, from: Long, to: Long) {
+        for (editor in handles()) if (editor.target == noteUid && editor.owns(from)) {
+            editor.base = to
+            editor.unsure = from
+        }
+    }
+
+    /** Every handle, open or closed, that is still held somewhere. */
+    private fun handles(): List<EditorHandle> = editors + closedEditors.mapNotNull { it.get() }
 
     // ---- notebook copies ----
 
@@ -2368,6 +2461,7 @@ internal class PendingNotesStore private constructor(
      * one on a file whose presence cannot be told ([isPresent]).
      */
     private fun readIfPresent(file: File): ByteArray? = try {
+        beforeReadForTesting?.invoke(file)
         file.readBytes()
     } catch (e: IOException) {
         if (isPresent(file)) throw e
@@ -2452,7 +2546,7 @@ internal class PendingNotesStore private constructor(
                     unfinished += origin.noteUid
                     // The copy's file is committed, so it owns the text: editors still on the original
                     // follow it, as in replaceWithNewNote, which may have failed before it moved them.
-                    moveEditors(origin.noteUid, copy.noteUid)
+                    moveEditors(origin.noteUid, copy.noteUid, origin.version, copy.version)
                     remove(noteFile(origin.noteUid))
                     unfinished -= origin.noteUid
                     remove(landedFile(origin.noteUid))
@@ -2692,6 +2786,8 @@ internal class PendingNotesStore private constructor(
         @Volatile internal var beforeRenameForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeRemoveForTesting: ((File) -> Unit)? = null
         @Volatile internal var beforeClearForTesting: (() -> Unit)? = null
+        /** Test seam: called with the file before each read of one file by its path (an entry, a landed record, a notebook copy). */
+        @Volatile internal var beforeReadForTesting: ((File) -> Unit)? = null
         /** Unit tests only: the stream a snapshot checks an entry it does not keep through ([streamedIntact]). */
         @Volatile internal var checksumStreamForTesting: ((File) -> java.io.InputStream)? = null
 

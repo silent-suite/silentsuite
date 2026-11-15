@@ -4,7 +4,7 @@ Your notes are end-to-end encrypted. Only your devices can read them.
 
 Notes use the [Etebase Markdown notes](https://docs.etebase.com/type-specs/notes) collection type (`etebase.md.note`), so existing EteSync Notes notebooks on the same account appear in SilentSuite without conversion.
 
-Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and read them in the [Android app](./apps/android.md#notes-experimental) once you turn Notes on for your account there. Editing the same note on multiple devices at once may overwrite changes; avoid editing the same note simultaneously.
+Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and in the [Android app](./apps/android.md#notes-experimental) once you turn Notes on for your account there. Editing the same note on multiple devices at once may overwrite changes; avoid editing the same note simultaneously.
 
 ## Notebooks
 
@@ -61,4 +61,4 @@ Share a notebook from **Settings → Sharing**. Members see the same notebook, e
 
 ## What is not in this release
 
-Editing notes on Android, the DAV bridge, attachments, import/export, and rich-text editing are not available yet. Use Markdown in the web app for now.
+Deleting or moving notes on Android, the DAV bridge, attachments, import/export, and rich-text editing are not available yet. Use Markdown in the web app for now.

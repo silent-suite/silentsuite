@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <!-- Why no note can be made or edited here: a read-only notebook, or a discard that did not finish. -->
     <TextView
         android:id="@+id/note_list_read_only"
         android:layout_width="match_parent"
@@ -11,7 +13,6 @@
         android:layout_margin="@dimen/spacing_8"
         android:background="@color/semantic_surface_variant"
         android:padding="@dimen/spacing_16"
-        android:text="@string/notes_read_only_hint"
         android:textAppearance="@style/TextAppearance.Material3.BodySmall"
         android:textColor="@color/semantic_on_surface"
         android:visibility="gone" />
@@ -41,33 +42,52 @@
         android:textColor="@color/semantic_on_surface_variant"
         android:visibility="gone" />
 
-    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-        android:id="@+id/notes_refresh_layout"
+    <!-- The list, with New note floating over its bottom end. The list's bottom padding keeps its last note clear of the button. -->
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <FrameLayout
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/notes_refresh_layout"
             android:layout_width="match_parent"
             android:layout_height="match_parent">
 
-            <ListView
-                android:id="@+id/notes_list"
+            <FrameLayout
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:choiceMode="singleChoice" />
+                android:layout_height="match_parent">
 
-            <TextView
-                android:id="@+id/notes_empty"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center"
-                android:padding="@dimen/spacing_24"
-                android:text="@string/notes_empty_notes"
-                android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
-                android:textColor="@color/semantic_on_surface_variant"
-                android:visibility="gone" />
-        </FrameLayout>
-    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+                <ListView
+                    android:id="@+id/notes_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:choiceMode="singleChoice"
+                    android:clipToPadding="false"
+                    android:paddingBottom="88dp" />
+
+                <TextView
+                    android:id="@+id/notes_empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:padding="@dimen/spacing_24"
+                    android:text="@string/notes_empty_notes"
+                    android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+                    android:textColor="@color/semantic_on_surface_variant"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+        <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+            android:id="@+id/notes_new_note"
+            style="@style/Widget.Material3.ExtendedFloatingActionButton.Icon.Primary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="@dimen/fab_margin"
+            android:text="@string/notes_new_note"
+            android:visibility="gone"
+            app:icon="@drawable/ic_add_light" />
+    </FrameLayout>
 
 </LinearLayout>

@@ -10,11 +10,11 @@ package io.silentsuite.sync.notes
 class NotesSyncPolicy {
     /**
      * MANUAL, TOGGLE, and SCREEN are explicit user gestures (Sync now, enabling Notes, pull to
-     * refresh): they follow the account's Sync now network setting alone. SCREEN_OPEN and PIGGYBACK
-     * are automatic: they need the automatic network setting and the account's own Wi-Fi rule
-     * ([NotesNetworkPolicy]).
+     * refresh): they follow the account's Sync now network setting alone. SCREEN_OPEN, PIGGYBACK and
+     * SAVE (the note editor, after a save and when it closes) are automatic: they need the automatic
+     * network setting and the account's own Wi-Fi rule ([NotesNetworkPolicy]). A save never overrides it.
      */
-    enum class Trigger { MANUAL, TOGGLE, SCREEN, SCREEN_OPEN, PIGGYBACK }
+    enum class Trigger { MANUAL, TOGGLE, SCREEN, SCREEN_OPEN, PIGGYBACK, SAVE }
     enum class State { IDLE, PENDING, RUNNING }
     enum class Decision { START, COALESCED, DROPPED }
 
@@ -35,7 +35,7 @@ class NotesSyncPolicy {
     )
 
     fun request(slot: Slot, trigger: Trigger, requestId: String?, forceRefresh: Boolean = false): Pair<Slot, Decision> {
-        val userInitiated = trigger != Trigger.PIGGYBACK && trigger != Trigger.SCREEN_OPEN
+        val userInitiated = trigger != Trigger.PIGGYBACK && trigger != Trigger.SCREEN_OPEN && trigger != Trigger.SAVE
         return when (slot.state) {
             // An idle slot can still owe a forced refresh that an earlier run did not complete.
             State.IDLE -> Slot(State.PENDING, rerun = false, queuedRequestId = requestId, manual = userInitiated,
@@ -61,6 +61,13 @@ class NotesSyncPolicy {
                     queuedRequestId = if (slot.rerun) slot.queuedRequestId else requestId,
                     manual = slot.rerun && slot.manual,
                     forceRefresh = true,
+                ) to Decision.COALESCED
+                // The running run may have pushed before the save landed, so a save queues one automatic
+                // follow-up as well, and leaves the forced refresh as it was.
+                trigger == Trigger.SAVE -> slot.copy(
+                    rerun = true,
+                    queuedRequestId = if (slot.rerun) slot.queuedRequestId else requestId,
+                    manual = slot.rerun && slot.manual,
                 ) to Decision.COALESCED
                 else -> slot to Decision.DROPPED
             }

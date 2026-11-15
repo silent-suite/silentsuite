@@ -306,7 +306,7 @@ class PendingNotesStoreTest {
             },
             "a save into held text" to { s ->
                 s.hold("n1", HeldReason.LOST_ACCESS, 1)
-                s.saveLocal("n1", "b1", "r4", blob("four"), isCreate = false)
+                s.saveLocal("n1", "b1", "r4", blob("four"), isCreate = false, base = s.entry("n1").version)
             },
             "a release" to { s -> assertTrue(s.release("n1")) },
         )
@@ -650,7 +650,7 @@ class PendingNotesStoreTest {
         store.saveLocal("n1", "b1", "r1", blob("Hello"), isCreate = false)
         val snapshot = store.beginSend("n1")!!
         assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold("n1", HeldReason.READ_ONLY, now = 50))
-        val outcome = store.saveLocal("n1", "b1", "r2", blob("Hello world"), isCreate = false)
+        val outcome = store.saveLocal("n1", "b1", "r2", blob("Hello world"), isCreate = false, base = entry("n1").version)
         assertTrue(outcome is SaveOutcome.SavedToHolding)
         val e = entry("n1")
         assertEquals(PendingEntry.State.HELD, e.state)
@@ -937,7 +937,8 @@ class PendingNotesStoreTest {
         assertEquals(PendingNotesStore.HoldOutcome.HELD, s.hold("copy1", HeldReason.REPEATED_CONFLICT, now = 6, sentVersion = sent.version))
         assertTrue("a hold", s.entry("copy1").fromConflict)
         assertEquals(PendingEntry.Held(HeldReason.REPEATED_CONFLICT, 6), s.entry("copy1").held)
-        assertTrue(s.saveLocal("copy1", "b1", "c3", blob("typed into held text"), isCreate = true) is SaveOutcome.SavedToHolding)
+        assertTrue(s.saveLocal("copy1", "b1", "c3", blob("typed into held text"), isCreate = true,
+            base = s.entry("copy1").version) is SaveOutcome.SavedToHolding)
         assertTrue("a save into held text", s.entry("copy1").fromConflict)
         assertTrue("held text across a restart", restarted().entry("copy1").fromConflict)
     }
@@ -1195,6 +1196,138 @@ class PendingNotesStoreTest {
         assertEquals("orig", editor.noteUid)
     }
 
+    // ---- the editor's save into held text, checked against the text it was built on ----
+
+    @Test fun `a save into held text whose base is not the held entry writes nothing`() {
+        store.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        val held = entry("n1").version
+        store.hold("n1", HeldReason.LOST_ACCESS, now = 5)
+        val before = File(dir, "n1.note").readBytes()
+        assertEquals(SaveOutcome.HeldChanged, store.saveLocal("n1", "b1", "r2", blob("typed elsewhere"), isCreate = false, base = held - 1))
+        val editor = store.editorOpened("n1", base = held - 1)
+        assertEquals(SaveOutcome.HeldChanged, store.saveLocal(editor, "n1", "b1", "r2", blob("typed elsewhere"), isCreate = false))
+        val opened = store.editorOpened("n1")
+        assertEquals("an editor that opened over no entry", SaveOutcome.HeldChanged,
+            store.saveLocal(opened, "n1", "b1", "r2", blob("typed elsewhere"), isCreate = false))
+        assertArrayEquals("the held entry is the same byte for byte", before, File(dir, "n1.note").readBytes())
+    }
+
+    @Test fun `a save by uid with no base never writes into held text`() {
+        store.saveLocal("n1", "b1", "r1", blob("held text"), isCreate = false)
+        store.hold("n1", HeldReason.READ_ONLY, now = 5)
+        val before = File(dir, "n1.note").readBytes()
+        assertEquals(SaveOutcome.HeldChanged, store.saveLocal("n1", "b1", "r2", blob("typed"), isCreate = false))
+        assertArrayEquals(before, File(dir, "n1.note").readBytes())
+        assertTrue("waiting text still takes a save without one",
+            store.saveLocal("n2", "b1", "r1", blob("new"), isCreate = true) is SaveOutcome.Saved)
+    }
+
+    @Test fun `an editor opened over a waiting entry saves into it once it is held`() {
+        store.saveLocal("n1", "b1", "r1", blob("waiting"), isCreate = false)
+        val editor = store.editorOpened("n1", base = entry("n1").version)
+        store.hold("n1", HeldReason.LOST_ACCESS, now = 5)
+        val outcome = store.saveLocal(editor, "n1", "b1", "r2", blob("typed on"), isCreate = false)
+        assertTrue("$outcome", outcome is SaveOutcome.SavedToHolding)
+        assertArrayEquals(blob("typed on"), entry("n1").blob)
+        assertTrue("and again, on its own version", store.saveLocal(editor, "n1", "b1", "r3", blob("and on"), isCreate = false)
+            is SaveOutcome.SavedToHolding)
+    }
+
+    @Test fun `a rebase keeps the editor's base, so its save after a hold lands in held text`() {
+        val editor = store.editorOpened("n1")
+        assertTrue(store.saveLocal(editor, "n1", "b1", "r1", blob("one"), isCreate = false) is SaveOutcome.Saved)
+        val sent = store.beginSend("n1")!!
+        assertTrue(store.saveLocal(editor, "n1", "b1", "r2", blob("two"), isCreate = false) is SaveOutcome.Saved)
+        val newer = (store.completeSend("n1", sent.version, "r1", blob("landed")) as SendOutcome.NewerLocalChange).entry
+        assertTrue(store.rebase("n1", newer.version, onto = "r1", revision = "r3", blob = blob("two, rebased")))
+        assertTrue("the rebase gave a new version", entry("n1").version > newer.version)
+        store.hold("n1", HeldReason.READ_ONLY, now = 5)
+        val outcome = store.saveLocal(editor, "n1", "b1", "r4", blob("three"), isCreate = false)
+        assertTrue("$outcome", outcome is SaveOutcome.SavedToHolding)
+    }
+
+    @Test fun `a conflict copy moves the editor's base, so its redirected save lands in the copy's held text`() {
+        val editor = store.editorOpened("orig")
+        assertTrue(store.saveLocal(editor, "orig", "b1", "r1", blob("mine"), isCreate = false) is SaveOutcome.Saved)
+        assertTrue(store.replaceWithNewNote("orig", entry("orig").version, "srv", newNote("copy1")))
+        store.hold("copy1", HeldReason.LOST_ACCESS, now = 5)
+        assertEquals(SaveOutcome.Moved("copy1"), store.saveLocal(editor, "orig", "b1", "r2", blob("typed"), isCreate = false))
+        val outcome = store.saveLocal(editor, "copy1", "b1", "c2", blob("typed"), isCreate = true)
+        assertTrue("$outcome", outcome is SaveOutcome.SavedToHolding)
+        assertEquals(Read.Missing, store.read("orig"))
+        assertArrayEquals(blob("typed"), entry("copy1").blob)
+    }
+
+    @Test fun `Try again moves the editor's base, so its save after a second hold lands in held text`() {
+        val editor = store.editorOpened("n1")
+        assertTrue(store.saveLocal(editor, "n1", "b1", "r1", blob("one"), isCreate = false) is SaveOutcome.Saved)
+        store.hold("n1", HeldReason.LOST_ACCESS, now = 5)
+        val held = entry("n1").version
+        assertTrue(store.release("n1"))
+        assertTrue("Try again gave a new version", entry("n1").version > held)
+        store.hold("n1", HeldReason.LOST_ACCESS, now = 6)
+        val outcome = store.saveLocal(editor, "n1", "b1", "r2", blob("two"), isCreate = false)
+        assertTrue("$outcome", outcome is SaveOutcome.SavedToHolding)
+        // Another editor, opened over the first hold, did not write that text: Try again does not make it its own.
+        val other = store.editorOpened("n1", base = held - 1)
+        assertEquals(SaveOutcome.HeldChanged, store.saveLocal(other, "n1", "b1", "r3", blob("other"), isCreate = false))
+    }
+
+    @Test fun `a save whose rename landed before its directory sync failed is still the editor's own after a hold`() {
+        // The sync after the entry's own rename fails, as a power cut or an I/O error there would leave it.
+        var armed = false
+        var failSync = false
+        val s = PendingNotesStore.open(dir, syncDirectory = { if (failSync) throw java.io.IOException("the sync fails") }, rename = { from, to ->
+            atomicMove(from, to)
+            if (armed && to.name == "n1.note") failSync = true
+        })
+        val editor = s.editorOpened("n1")
+        assertTrue(s.saveLocal(editor, "n1", "b1", "r1", blob("one"), isCreate = false) is SaveOutcome.Saved)
+        armed = true
+        assertThrows(java.io.IOException::class.java) { s.saveLocal(editor, "n1", "b1", "r2", blob("two"), isCreate = false) }
+        armed = false
+        failSync = false
+        assertArrayEquals("the rename went through", blob("two"), s.entry("n1").blob)
+        s.hold("n1", HeldReason.READ_ONLY, now = 5)
+        val outcome = s.saveLocal(editor, "n1", "b1", "r3", blob("three"), isCreate = false)
+        assertTrue("$outcome", outcome is SaveOutcome.SavedToHolding)
+        assertArrayEquals(blob("three"), s.entry("n1").blob)
+    }
+
+    @Test fun `observe says whether a discard of the whole store is unfinished`() {
+        store.saveLocal("n1", "b1", "r1", blob("a"), isCreate = false)
+        assertFalse("no permit", store.observe("n1").discardUnfinished)
+        var s = restarted()
+        permitsOf(s).record(dir.name, UnsyncedNotes(1, 1, false, names = notes("n1")))
+        assertTrue("a file the permit names is there", s.observe("n1").discardUnfinished)
+        assertTrue("for every note, the editor's gate", s.observe("other").discardUnfinished)
+        permitReadsFail()
+        s = restarted()
+        assertTrue("the permit cannot be read", s.observe("other").discardUnfinished)
+        PendingNotesDiscardPermits.onReadForTesting = null
+        s = restarted()
+        s.discard("n1")
+        assertFalse("the files it names are gone", s.observe("other").discardUnfinished)
+    }
+
+    @Test fun `an editor whose landed record cannot be removed is closed, and recovery removes the record`() {
+        val editor = store.editorOpened("n1")
+        store.saveLocal(editor, "n1", "b1", "r1", blob("one"), isCreate = false)
+        assertEquals(SendOutcome.Done, store.completeSend("n1", store.beginSend("n1")!!.version, "r1", blob("landed")))
+        assertTrue(File(dir, "n1.landed").exists())
+        PendingNotesStore.beforeRemoveForTesting = { if (it.name == "n1.landed") throw java.io.IOException("the removal fails") }
+        assertThrows(java.io.IOException::class.java) { store.editorClosed(editor) }
+        PendingNotesStore.beforeRemoveForTesting = null
+        assertTrue("the record is still there", File(dir, "n1.landed").exists())
+        store.read("n1")
+        assertFalse("the next recovery removed it", File(dir, "n1.landed").exists())
+        store.editorClosed(editor)
+        // The handle is closed: a later push keeps no landed record for it.
+        store.saveLocal("n1", "b1", "r2", blob("two"), isCreate = false)
+        assertEquals(SendOutcome.Done, store.completeSend("n1", store.beginSend("n1")!!.version, "r2", blob("landed again")))
+        assertFalse("no editor is open", File(dir, "n1.landed").exists())
+    }
+
     // ---- the held screen's discard of one note, checked against the version it showed ----
 
     @Test fun `a discard for the version shown removes that entry`() {
@@ -1211,7 +1344,7 @@ class PendingNotesStoreTest {
         store.hold("n1", HeldReason.READ_ONLY, now = 5)
         val shown = entry("n1").version
         // An editor that was open when access changed saves into the held text after the screen read it.
-        assertTrue(store.saveLocal("n1", "b1", "r1", blob("typed later"), isCreate = false) is SaveOutcome.SavedToHolding)
+        assertTrue(store.saveLocal("n1", "b1", "r1", blob("typed later"), isCreate = false, base = shown) is SaveOutcome.SavedToHolding)
         val before = filesOf(dir)
         val answer = store.discard("n1", shown)
         assertEquals(PendingNotesStore.NoteDiscard.Changed(store.read("n1")), answer)
@@ -6540,19 +6673,23 @@ class PendingNotesStoreTest {
             found.count { it.second.contains("it.discard(uid, shown, digest)") })
     }
 
-    @Test fun `no production code saves text into the store yet`() {
-        // Every entry starts with a save, and the editor, which saves, is the next change. Until it lands nothing in
-        // the app can change held text between the Unsynced text screen's read and a Discard.
+    @Test fun `outside the store's package only the note editor saves text and opens or closes an editor handle`() {
+        // Every entry starts with a save, and a save can change held text between the Unsynced text screen's read and a
+        // Discard, which the version and digest check then answers as changed. Each caller comes with a review of its own.
         val main = File("src/main/java")
-        val word = Regex("\\bsaveLocal\\b")
-        val callers = main.walk().filter { it.isFile && it.extension in setOf("kt", "java") }
-            .filter { file ->
-                file.readLines().any { line ->
-                    val code = line.trim()
-                    !code.startsWith("*") && !code.startsWith("/*") && !code.startsWith("//") && word.containsMatchIn(line)
+        fun callersOf(name: String): List<String> {
+            val word = Regex("\\b$name\\b")
+            return main.walk().filter { it.isFile && it.extension in setOf("kt", "java") }
+                .filter { file ->
+                    file.readLines().any { line ->
+                        val code = line.trim()
+                        !code.startsWith("*") && !code.startsWith("/*") && !code.startsWith("//") && word.containsMatchIn(line)
+                    }
                 }
-            }
-            .map { it.relativeTo(main).invariantSeparatorsPath }.sorted().toList()
-        assertEquals(listOf("io/silentsuite/sync/notes/edit/PendingNotesStore.kt"), callers)
+                .map { it.relativeTo(main).invariantSeparatorsPath }
+                .filterNot { it.startsWith("io/silentsuite/sync/notes/edit/") }.sorted().toList()
+        }
+        val editor = listOf("io/silentsuite/sync/ui/notes/NoteEditorViewModel.kt")
+        for (name in listOf("saveLocal", "editorOpened", "editorClosed")) assertEquals(name, editor, callersOf(name))
     }
 }

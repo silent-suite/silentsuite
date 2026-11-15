@@ -4,14 +4,20 @@ import android.Manifest
 import android.accounts.Account
 import android.accounts.AccountManager
 import android.content.ContentResolver
+import android.content.DialogInterface
 import android.content.SyncResult
+import android.content.res.Configuration
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.CalendarContract
 import android.system.Os
 import android.system.OsConstants
+import android.util.Log
 import android.view.View
+import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
@@ -40,6 +46,7 @@ import io.silentsuite.sync.notes.edit.PendingCodec
 import io.silentsuite.sync.notes.edit.PendingEntry
 import io.silentsuite.sync.notes.edit.PendingNotesDiscardPermits
 import io.silentsuite.sync.notes.edit.PendingNotesStore
+import io.silentsuite.sync.notes.edit.UnsyncedNotes
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.syncadapter.CalendarSyncManager
 import io.silentsuite.sync.syncadapter.CollectionListRefresh
@@ -64,7 +71,9 @@ import io.silentsuite.sync.ui.UnsyncedNotesStores
 import io.silentsuite.sync.ui.notes.HeldTextFragment
 import io.silentsuite.sync.ui.notes.HeldTextRow
 import io.silentsuite.sync.ui.notes.NoteContent
+import io.silentsuite.sync.ui.notes.NoteEditorViewModel
 import io.silentsuite.sync.ui.notes.PendingUnavailable
+import io.silentsuite.sync.ui.notes.SaveResult
 import io.silentsuite.sync.ui.notes.NoteListFragment
 import io.silentsuite.sync.ui.notes.NoteRow
 import io.silentsuite.sync.ui.notes.NoteSync
@@ -85,6 +94,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -132,6 +142,11 @@ import kotlin.concurrent.thread
  * it kept byte for byte. One case sends nothing: it compares
  * the raw metadata codec with the binding's typed encoder and decoder
  * ([NoteMetaBindingComparison]), on a notebook that is never uploaded.
+ * Ten cases drive the note editor through the real screens, its view model and its store calls: a
+ * new note off Wi-Fi, a conflicted copy, access lost while editing, a save that lands while a Discard
+ * is asked, no editing while a discard is unfinished or the local text cannot be read, sign-out with
+ * the editor open, a save during a run, undo, other clients' metadata, and font scale 2. Each of
+ * them shows with [MainThreadStoreProbe] that no store call ran on the main thread.
  */
 @RunWith(AndroidJUnit4::class)
 class NotesSyncBoundaryRuntimeTest {
@@ -374,7 +389,7 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("no unsynced text", 0, overview.unsyncedText)
         assertTrue("no waiting change on any notebook", overview.notebooks.all { it.waiting == 0 })
         assertEquals("the server's copy, with no local change over it",
-            NoteContent(draft.uid, "Kept on the server", "Server text", 9_000L),
+            NoteContent(draft.uid, "Kept on the server", "Server text", 9_000L, writable = true),
             (NotesLoader.note(context, account, "gen-5", notebook, draft.uid) as NotesLoad.Loaded).value)
         val beforeRun = fake.requests.size
         syncNow(account, "gen-5")
@@ -1207,10 +1222,12 @@ class NotesSyncBoundaryRuntimeTest {
                 list.performItemClick(list.adapter.getView(0, null, list), 0, 0)
             }
             waitUntil("the cached note to show") { noteView(scenario)?.renderedNote != null }
-            assertEquals(NoteContent(agenda.uid, "Agenda", agendaBody, 2_000L), noteView(scenario)!!.renderedNote)
+            // The notebook takes writes, so the note opens in the editor, with the cached text as it is stored.
+            assertEquals(NoteContent(agenda.uid, "Agenda", agendaBody, 2_000L, writable = true), noteView(scenario)!!.renderedNote)
+            assertTrue(noteView(scenario)!!.editing)
             scenario.onActivity { activity ->
-                assertEquals("Agenda", activity.findViewById<TextView>(R.id.note_title).text.toString())
-                assertEquals(agendaBody, activity.findViewById<TextView>(R.id.note_body).text.toString())
+                assertEquals("Agenda", activity.findViewById<TextView>(R.id.note_title_edit).text.toString())
+                assertEquals(agendaBody, activity.findViewById<TextView>(R.id.note_body_edit).text.toString())
             }
         }
         // Opening one note reads its title from the raw bytes too.
@@ -1297,7 +1314,7 @@ class NotesSyncBoundaryRuntimeTest {
         val theirNotebooks = NotesLoader.notebooks(context, account, "gen-new")
         assertEquals(listOf("Replacement notebook"), (theirNotebooks as NotesLoad.Loaded).value.notebooks.map { it.name })
         val theirNote = NotesLoader.note(context, account, "gen-new", notebook, note.uid)
-        assertEquals(NoteContent(note.uid, "Replacement note", "Replacement body", 2_000L), (theirNote as NotesLoad.Loaded).value)
+        assertEquals(NoteContent(note.uid, "Replacement note", "Replacement body", 2_000L, writable = true), (theirNote as NotesLoad.Loaded).value)
     }
 
     @Test fun aNotebookListingThatNeverFinishesFailsAloneAndFinishesOnceTheServerRecovers() {
@@ -2333,8 +2350,9 @@ class NotesSyncBoundaryRuntimeTest {
         val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
         syncNow(account, "gen-notamap")
         // An upload of this device lands with metadata that is well-formed msgpack but not one map, and
-        // its answer is lost. No save of the app writes such metadata; it stands for a copy of ours on
-        // the server that this app cannot write into.
+        // its answer is lost. The editor saves such metadata only by keeping, as it is, metadata another
+        // client wrote that it cannot merge into; here it stands for a copy of ours on the server that this
+        // app cannot write into.
         editLocally(account, "gen-notamap", notebook, note.uid, "Plan", "First phone edit", mtime = 2_000L, metaRaw = NOT_ONE_MAP)
         fake.loseAnswer("POST", TRANSACTION)
         syncNow(account, "gen-notamap")
@@ -2378,8 +2396,8 @@ class NotesSyncBoundaryRuntimeTest {
         val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
         syncNow(account, "gen-nocopy")
         // The local edit carries metadata no decoder reads (a map cut short), so no title can be taken
-        // from it for a copy. No save of the app writes such metadata; it stands for a copy that
-        // cannot be made.
+        // from it for a copy. The editor saves such metadata only by keeping, as it is, metadata another
+        // client wrote; here it stands for a copy that cannot be made.
         editLocally(account, "gen-nocopy", notebook, note.uid, "Plan", "Edited on the phone", mtime = 2_000L, metaRaw = CUT_SHORT_MAP)
         editOnAnotherDevice(notebook, note.uid, "Edited on the web")
 
@@ -2410,7 +2428,8 @@ class NotesSyncBoundaryRuntimeTest {
         syncNow(account, "gen-readback")
         // An upload of this device lands with metadata that is one well-formed map, which the raw merge
         // can write into, but with a field the typed decoder every client reads with rejects (a
-        // description that is a number). Its answer is lost. No save of the app writes such a field.
+        // description that is a number). Its answer is lost. The editor saves such a field only by keeping
+        // metadata another client wrote as it is, when its merge does not read back.
         val oddField = TestMsgPack.encode(linkedMapOf("description" to 7L))
         editLocally(account, "gen-readback", notebook, note.uid, "Plan", "First phone edit", mtime = 2_000L, metaRaw = oddField)
         fake.loseAnswer("POST", TRANSACTION)
@@ -3377,6 +3396,855 @@ class NotesSyncBoundaryRuntimeTest {
         }
     }
 
+    // ---- the note editor, through the real screens ----
+
+    /**
+     * A note made with New note while automatic sync waits for Wi-Fi (the default settings, off Wi-Fi). The editor saves
+     * it on this device, as Untitled since its title is blank, and the status line says why it waits. The Save request
+     * about ten seconds later is automatic, so off Wi-Fi it asks the server nothing. On Wi-Fi, the request the editor
+     * makes as it closes sends the note.
+     */
+    @Test fun aNewNoteMadeOffWifiIsSavedOnTheDeviceAndSentAtTheNextAllowedTriggerAsUntitled() {
+        val account = newAccount("gen-new-note")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-new-note")
+        val notebook = uploadNotebook("Work")
+        syncNow(account, "gen-new-note")
+        val store = pending(account, "gen-new-note")
+        assertEquals("the defaults: automatic sync waits for Wi-Fi, and Sync now goes on any connection",
+            NotesNetworkPolicy.Settings.DEFAULT, AccountSettings.notesNetworkSettings(manager, account))
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val runs = Runs()
+        val probe = MainThreadStoreProbe().apply { install() }
+        try {
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-new-note")).use { scenario ->
+                // Opening the screen asks for an automatic run, which waits for Wi-Fi.
+                awaitSettled(identity)
+                showNotebook(scenario, "Work")
+                waitUntil("New note to show") { noteList(scenario)?.offersNewNote == true }
+                scenario.onActivity { activity ->
+                    val button = activity.findViewById<TextView>(R.id.notes_new_note)
+                    assertEquals(View.VISIBLE, button.visibility)
+                    assertEquals(activity.getString(R.string.notes_new_note), button.text.toString())
+                    button.performClick()
+                }
+                waitUntil("the editor of a new note") { onEditor(scenario) { it.editing } == true }
+                val quiet = fake.requests.size
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).append("Written off Wi-Fi") }
+                val saved = awaitSave(scenario, "the new note to be saved")
+                assertTrue("saved on this device: $saved", saved is SaveResult.Saved)
+                val waiting = "${context.getString(R.string.notes_editor_saved)}. ${context.getString(R.string.notes_editor_waiting_wifi_sync_now)}"
+                waitUntil("the status line to say why it waits") { statusLine(scenario) == waiting }
+                val uid = checkNotNull(onEditor(scenario) { it.editorModel.noteUid }) { "the save made the note" }
+                val entry = (store.read(uid) as PendingNotesStore.Read.Present).entry
+                assertTrue("a new note, waiting: $entry",
+                    entry.state == PendingEntry.State.UPSERT && entry.isCreate && entry.notebookUid == notebook)
+                val item = decryptThroughStoredCopy(store, entry)
+                assertEquals("made as Untitled, with the typed text", listOf("Untitled", "Written off Wi-Fi"),
+                    listOf(NoteMetaCodec.peek(item.metaRaw)?.name, item.contentString))
+
+                // The Save request, about ten seconds after the save, is automatic: off Wi-Fi it is refused and asks nothing.
+                val beforeRequest = runs.size
+                waitUntil("the Save request") { runs.size > beforeRequest }
+                awaitSettled(identity)
+                assertEquals("one automatic run", listOf(false), runs.since(beforeRequest))
+                assertEquals("off Wi-Fi nothing was asked of the server", emptyList<String>(), fake.requests.drop(quiet))
+                assertEquals("the note still waits as it was saved", entry, (store.read(uid) as PendingNotesStore.Read.Present).entry)
+
+                // On Wi-Fi, the request the editor makes as it closes sends the note at once.
+                pinNetwork(NotesNetworkPolicy.Connection.WIFI)
+                val sending = fake.requests.size
+                val beforeClose = runs.size
+                scenario.onActivity { it.onSupportNavigateUp() }
+                waitUntil("the closing editor's run") { runs.size > beforeClose }
+                awaitSettled(identity)
+                assertEquals("one automatic run", listOf(false), runs.since(beforeClose))
+                assertEquals("one upload", listOf(transactionOf(notebook)), uploads(sending))
+                assertEquals(setOf(uid), fake.itemUids(notebook))
+                val onServer = itemManager(notebook).fetch(uid)
+                assertEquals(listOf("Untitled", "Written off Wi-Fi"), listOf(NoteMetaCodec.peek(onServer.metaRaw)?.name, onServer.contentString))
+                assertTrue("nothing is left waiting", pendingHeaders(account, "gen-new-note").isEmpty())
+                waitUntil("the list to show the note as synced") {
+                    noteList(scenario)?.renderedNotes?.map { Triple(it.uid, it.title, it.sync) } == listOf(Triple(uid, "Untitled", NoteSync.SYNCED))
+                }
+            }
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * An edit in the editor on an older copy of a note, which another device changed first, becomes a conflicted copy, and
+     * both reach the server. The text the editor saved then belongs to the copy (design 3.2): the editor keeps showing it,
+     * and its next save goes into the copy, never into a second copy and never over the other device's version.
+     */
+    @Test fun anEditorSaveOnAnOlderCopyBecomesAConflictedCopyAndTheNextSaveGoesIntoTheCopy() {
+        val account = newAccount("gen-editor-conflict")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-conflict")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-conflict")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-editor-conflict")
+        // Only the case's own manual runs send: automatic ones wait for Wi-Fi.
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val runs = Runs()
+        val probe = MainThreadStoreProbe().apply { install() }
+        val problems = ArrayList<String>()
+        try {
+            var closing = 0
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-conflict")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, "Work", note.uid)
+                editOnAnotherDevice(notebook, note.uid, "Edited on the web")
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText("Edited on the phone") }
+                val first = awaitSave(scenario, "the phone's edit to be saved")
+                assertTrue("saved on this device: $first", first is SaveResult.Saved)
+
+                val since = fake.requests.size
+                syncNow(account, "gen-editor-conflict")
+                assertEquals("the refused push, then the copy's upload", listOf(transactionOf(notebook), transactionOf(notebook)), uploads(since))
+                val onServer = fake.itemUids(notebook)
+                assertEquals("the server version stays, and the phone's text has a note of its own", 2, onServer.size)
+                assertEquals("Edited on the web", itemManager(notebook).fetch(note.uid).contentString)
+                val copyUid = (onServer - note.uid).single()
+                val copy = itemManager(notebook).fetch(copyUid)
+                assertEquals(listOf("Plan (conflicted copy)", "Edited on the phone"), listOf(copy.meta.name, copy.contentString))
+
+                // The run's end loads the clean editor again, and its status line then reads the note it is on.
+                waitUntil("the editor to settle after the run") { statusLine(scenario) == context.getString(R.string.notes_editor_synced) }
+                val after = checkNotNull(onEditor(scenario) { Triple(it.editorModel.noteUid, it.editorModel.core.body, it.editing) })
+                Log.i(EDITOR_LOG, "after the conflict run: editor note=${after.first} original=${note.uid} copy=$copyUid " +
+                    "editing=${after.third} showsCopyText=${after.second == "Edited on the phone"} showsServerText=${after.second == "Edited on the web"}")
+                assertTrue("the editor stays the editor", after.third)
+                if (after.second != "Edited on the phone") {
+                    problems += "after the run the editor shows the original's server text, not the text it saved, which is now the copy's " +
+                        "(editor on ${after.first}, copy $copyUid)"
+                }
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).append(" and more") }
+                val next = awaitSave(scenario, "the next save", above = first.savedVersion)
+                assertTrue("saved on this device: $next", next is SaveResult.Saved)
+                Log.i(EDITOR_LOG, "the next save: editor note=${onEditor(scenario) { it.editorModel.noteUid }} original=${note.uid} copy=$copyUid")
+
+                val sinceNext = fake.requests.size
+                syncNow(account, "gen-editor-conflict")
+                assertEquals("one plain upload", listOf(transactionOf(notebook)), uploads(sinceNext))
+                assertEquals("no second copy", setOf(note.uid, copyUid), fake.itemUids(notebook))
+                val copyNow = itemManager(notebook).fetch(copyUid).contentString
+                val originalNow = itemManager(notebook).fetch(note.uid).contentString
+                Log.i(EDITOR_LOG, "after the next run: copyChanged=${copyNow != "Edited on the phone"} originalChanged=${originalNow != "Edited on the web"}")
+                if (copyNow != "Edited on the phone and more") problems += "the next save did not go into the copy: <$copyNow>"
+                if (originalNow != "Edited on the web") problems += "the next save went into the original: <$originalNow>"
+                assertTrue("nothing is left waiting", pendingHeaders(account, "gen-editor-conflict").isEmpty())
+                closing = runs.size
+            }
+            awaitClosingRun(identity, runs, closing)
+            assertTrue(problems.joinToString("\n"), problems.isEmpty())
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * Access is lost while the editor is open: its notebook turns read-only on the server, and a run holds the text the
+     * editor saved. The editor's next save then joins the held text ([SaveResult.SavedToHolding]), the screen gives way to
+     * the viewer with Open Unsynced text, and the Unsynced text screen shows everything that was typed.
+     */
+    @Test fun accessLostWhileEditingTurnsTheNextSaveIntoHeldTextThatUnsyncedTextShows() {
+        val account = newAccount("gen-editor-lost")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-lost")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-editor-lost")
+        val store = pending(account, "gen-editor-lost")
+        // Only the case's own manual run sends: automatic ones wait for Wi-Fi.
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val runs = Runs()
+        val probe = MainThreadStoreProbe().apply { install() }
+        val arrived = CountDownLatch(1)
+        val gate = CountDownLatch(1)
+        try {
+            var closing = 0
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-lost")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, "Work", note.uid)
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText("Typed before access changed") }
+                val first = awaitSave(scenario, "the first save")
+                assertTrue("saved on this device: $first", first is SaveResult.Saved)
+
+                // The notebook turns read-only, and the editor's next save waits right before the store while a run holds
+                // the text the first save wrote.
+                fake.setAccessLevel(notebook, 0L)
+                NoteEditorViewModel.beforeSaveForTesting = {
+                    arrived.countDown()
+                    gate.await(30, TimeUnit.SECONDS)
+                }
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).append(", and typed after") }
+                assertTrue("the next save started", arrived.await(30, TimeUnit.SECONDS))
+                syncNow(account, "gen-editor-lost")
+                val held = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                assertEquals("the run held the saved text", PendingEntry.State.HELD to HeldReason.READ_ONLY, held.state to held.held?.reason)
+                assertEquals("under the version the editor saved", first.savedVersion, held.version)
+
+                gate.countDown()
+                val joined = awaitSave(scenario, "the next save", above = first.savedVersion)
+                assertTrue("it joined the held text: $joined", joined is SaveResult.SavedToHolding)
+                val now = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                assertEquals(PendingEntry.State.HELD to joined.savedVersion, now.state to now.version)
+                assertEquals("Typed before access changed, and typed after", decryptThroughStoredCopy(store, now).contentString)
+
+                // The screen gives way to the viewer, which says why and points to Unsynced text.
+                waitUntil("the viewer") { onEditor(scenario) { !it.editing && it.renderedNote?.sync == NoteSync.HELD } == true }
+                scenario.onActivity { activity ->
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.note_body_edit).visibility)
+                    val banner = activity.findViewById<TextView>(R.id.note_banner)
+                    assertEquals(View.VISIBLE, banner.visibility)
+                    assertEquals(activity.getString(R.string.notes_read_only_banner), banner.text.toString())
+                    val open = activity.findViewById<View>(R.id.note_open_unsynced)
+                    assertEquals(View.VISIBLE, open.visibility)
+                    open.performClick()
+                }
+                waitUntil("Unsynced text to show the typed text") {
+                    heldText(scenario)?.renderedRows?.singleOrNull()?.body == "Typed before access changed, and typed after"
+                }
+                val row = heldText(scenario)!!.renderedRows!!.single()
+                assertEquals(listOf(note.uid, now.version, HeldReason.READ_ONLY), listOf(row.noteUid, row.version, row.held))
+                scenario.onActivity { activity ->
+                    assertEquals("Typed before access changed, and typed after", activity.findViewById<TextView>(R.id.held_body).text.toString())
+                }
+                closing = runs.size
+            }
+            awaitClosingRun(identity, runs, closing)
+            probe.assertNoneOnMain()
+        } finally {
+            gate.countDown()
+            NoteEditorViewModel.beforeSaveForTesting = null
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * An editor save lands between showing a Discard on Unsynced text and confirming it. The editor's save is held right
+     * before the store while a run holds its earlier text; the user then leaves the editor for Unsynced text in the same
+     * screen, which shows that text and asks for the Discard. The save then lands in the held text with a new version and
+     * a new blob. The confirmation, given for the older text, deletes nothing, and the screen shows the newer text; a
+     * second Discard over it goes. The second round recreates the activity between showing the confirmation and the save.
+     */
+    @Test fun aSaveLandingBetweenShowingADiscardAndConfirmingItDeletesNothingAndTheNewerTextIsAskedAgain() {
+        val account = newAccount("gen-editor-race")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-race")
+        val first = uploadNotebook("First")
+        val second = uploadNotebook("Second")
+        val inFirst = uploadNote(first, "Plan", "Server plan", mtime = 1_000L)
+        val inSecond = uploadNote(second, "List", "Server list", mtime = 1_000L)
+        syncNow(account, "gen-editor-race")
+        val store = pending(account, "gen-editor-race")
+        // Only the case's own manual runs send: automatic ones wait for Wi-Fi.
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val runs = Runs()
+        val probe = MainThreadStoreProbe().apply { install() }
+        var gate = CountDownLatch(0)
+        fun race(recreate: Boolean, name: String, notebook: String, note: Item) {
+            val arrived = CountDownLatch(1)
+            val saveGate = CountDownLatch(1).also { gate = it }
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-race")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, name, note.uid)
+                val editor = checkNotNull(onEditor(scenario) { it.editorModel })
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText("Typed before the hold") }
+                val saved = awaitSave(scenario, "the first save")
+                assertTrue("saved on this device: $saved", saved is SaveResult.Saved)
+                // The notebook turns read-only, and the editor's next save waits right before the store.
+                fake.setAccessLevel(notebook, 0L)
+                NoteEditorViewModel.beforeSaveForTesting = {
+                    arrived.countDown()
+                    saveGate.await(30, TimeUnit.SECONDS)
+                }
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).append(" and during the Discard") }
+                assertTrue("the next save started", arrived.await(30, TimeUnit.SECONDS))
+                syncNow(account, "gen-editor-race")
+                val shown = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                assertEquals("a run held the saved text", PendingEntry.State.HELD to saved.savedVersion, shown.state to shown.version)
+
+                // The user leaves the editor for Unsynced text while its save is still on its way, which goes on in a step
+                // that outlives the screen. Unsynced text shows the held text, and Discard asks first.
+                scenario.onActivity { it.onSupportNavigateUp() }
+                waitUntil("the note list") { noteList(scenario) != null }
+                scenario.onActivity { it.onSupportNavigateUp() }
+                waitUntil("the Unsynced text row to show") { notebookList(scenario)?.renderedUnsyncedText == 1 }
+                scenario.onActivity { it.findViewById<View>(R.id.notebooks_unsynced).performClick() }
+                waitUntil("the held text to show") { heldText(scenario)?.renderedRows?.singleOrNull()?.version == shown.version }
+                assertEquals("Typed before the hold", heldText(scenario)!!.renderedRows!!.single().body)
+                scenario.onActivity { it.findViewById<View>(R.id.held_discard).performClick() }
+                waitUntil("the confirmation to show") { heldText(scenario)?.discardDialog?.isShowing == true }
+                if (recreate) {
+                    scenario.recreate()
+                    waitUntil("the confirmation to come back") { heldText(scenario)?.discardDialog?.isShowing == true }
+                }
+                assertEquals("nothing deleted before the answer", shown, (store.read(note.uid) as PendingNotesStore.Read.Present).entry)
+
+                // The editor's save lands while the confirmation shows: held text under a new version, with a new blob.
+                val runsBefore = runs.size
+                saveGate.countDown()
+                waitUntil("the editor's save to land") {
+                    ((store.read(note.uid) as? PendingNotesStore.Read.Present)?.entry?.version ?: 0L) > shown.version
+                }
+                var joined: SaveResult? = null
+                waitUntil("the editor to take the save's answer") {
+                    scenario.onActivity { joined = editor.core.lastResult }
+                    joined is SaveResult.SavedToHolding
+                }
+                NoteEditorViewModel.beforeSaveForTesting = null
+                val newer = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                assertTrue("held, under a new version: $newer", newer.state == PendingEntry.State.HELD && newer.version == joined?.savedVersion)
+                assertFalse("a new blob", PendingNotesStore.digestOf(newer.blob) == PendingNotesStore.digestOf(shown.blob))
+                assertEquals("Typed before the hold and during the Discard", decryptThroughStoredCopy(store, newer).contentString)
+                // The closed editor then asks for its one run, which is automatic and waits for Wi-Fi.
+                waitUntil("the closed editor's run") { runs.size > runsBefore }
+                awaitSettled(identity)
+
+                // Confirmed for the older text, the Discard deletes nothing, and the screen shows the newer text.
+                val rowsBefore = heldText(scenario)?.renderedRows
+                scenario.onActivity { held(it).discardDialog!!.getButton(DialogInterface.BUTTON_POSITIVE).performClick() }
+                waitUntil("the Discard to answer") {
+                    val rows = heldText(scenario)?.renderedRows
+                    rows !== rowsBefore && (store.read(note.uid) == PendingNotesStore.Read.Missing || rows?.any { it.version == newer.version } == true)
+                }
+                assertEquals("the confirmed Discard deleted nothing", newer, (store.read(note.uid) as? PendingNotesStore.Read.Present)?.entry)
+                waitUntil("the newer text to show") {
+                    heldText(scenario)?.renderedRows?.singleOrNull()?.body == "Typed before the hold and during the Discard"
+                }
+
+                // Asked again over the newer text, it goes.
+                scenario.onActivity { it.findViewById<View>(R.id.held_discard).performClick() }
+                waitUntil("the confirmation to show again") { heldText(scenario)?.discardDialog?.isShowing == true }
+                scenario.onActivity { held(it).discardDialog!!.getButton(DialogInterface.BUTTON_POSITIVE).performClick() }
+                waitUntil("the held text to go") { heldText(scenario)?.renderedRows?.isEmpty() == true }
+                assertEquals(PendingNotesStore.Read.Missing, store.read(note.uid))
+            }
+        }
+        try {
+            race(recreate = false, "First", first, inFirst)
+            race(recreate = true, "Second", second, inSecond)
+            probe.assertNoneOnMain()
+        } finally {
+            gate.countDown()
+            NoteEditorViewModel.beforeSaveForTesting = null
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * No editor and no New note while a whole-store discard is unfinished: after a restart, the permit of a discard that
+     * stopped still names a file that is there, so any save would release the text it covers. The note list says why,
+     * the confirmed text stays held, and a real run sends none of it. On another account, no editor over text that cannot
+     * be decrypted, and none while the local changes cannot be read, when the note list offers no New note either.
+     */
+    @Test fun noEditorAndNoNewNoteWhileADiscardIsUnfinishedOrTheLocalTextCannotBeRead() {
+        val account = newAccount("gen-gate")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-gate")
+        val notebook = uploadNotebook("Work")
+        val confirmed = uploadNote(notebook, "Plan", "Server plan", mtime = 1_000L)
+        val untouched = uploadNote(notebook, "List", "Server list", mtime = 1_500L)
+        syncNow(account, "gen-gate")
+        editLocally(account, "gen-gate", notebook, confirmed.uid, "Plan", "Confirmed for the discard", mtime = 2_000L)
+        val stopped = pending(account, "gen-gate")
+        PendingNotesStore.beforeClearForTesting = { throw IOException("the discard stops here") }
+        try {
+            assertEquals(PendingNotesStore.DiscardOutcome.NotFinished, stopped.discardStore(stopped.unsynced()))
+        } finally {
+            PendingNotesStore.beforeClearForTesting = null
+        }
+        // A restart: a new instance, and the stopped discard's permit still names the confirmed text, which is there.
+        PendingNotesStore.resetForTesting()
+        val store = pending(account, "gen-gate")
+        assertTrue("the permit names a file that is there", store.observe(untouched.uid).discardUnfinished)
+        val heldFiles = filesOnDisk(store).filterKeys { it.endsWith(".note") }
+        assertEquals(setOf("${confirmed.uid}.note"), heldFiles.keys)
+        val why = context.getString(R.string.notes_discard_unfinished_editing)
+        val probe = MainThreadStoreProbe().apply { install() }
+        try {
+            val since = fake.requests.size
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-gate")).use { scenario ->
+                // The run opening the screen asks for is real, on Wi-Fi: it sends nothing the permit names.
+                awaitSettled(identity)
+                assertEquals("nothing was uploaded", emptyList<String>(), uploads(since))
+                showNotebook(scenario, "Work")
+                waitUntil("both notes to show") { noteList(scenario)?.renderedNotes?.size == 2 }
+                assertFalse("no New note", noteList(scenario)!!.offersNewNote)
+                assertEquals("the confirmed text shows as held", NoteSync.HELD,
+                    noteList(scenario)!!.renderedNotes.single { it.uid == confirmed.uid }.sync)
+                scenario.onActivity { activity ->
+                    val banner = activity.findViewById<TextView>(R.id.note_list_read_only)
+                    assertEquals(View.VISIBLE, banner.visibility)
+                    assertEquals(why, banner.text.toString())
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.notes_new_note).visibility)
+                }
+                // Neither note opens in the editor, the one without a change of its own included.
+                for (note in listOf(confirmed, untouched)) {
+                    showNote(scenario, note.uid)
+                    waitUntil("the viewer") { onEditor(scenario) { !it.editing && it.renderedNote != null } == true }
+                    scenario.onActivity { activity ->
+                        assertEquals(View.GONE, activity.findViewById<View>(R.id.note_body_edit).visibility)
+                        val banner = activity.findViewById<TextView>(R.id.note_banner)
+                        assertEquals(View.VISIBLE, banner.visibility)
+                        assertEquals(why, banner.text.toString())
+                        activity.onSupportNavigateUp()
+                    }
+                }
+            }
+            assertSameFiles("the confirmed text stays held", heldFiles, filesOnDisk(store).filterKeys { it.endsWith(".note") })
+            assertTrue("and the discard is still unfinished", store.observe(confirmed.uid).let { it.discardUnfinished && it.discardConfirmed })
+
+            // Another account: text that cannot be decrypted, and local changes that cannot be read.
+            val other = newAccount("gen-gate-read")
+            val otherIdentity = ExactAccountIdentity(other.type, other.name, "gen-gate-read")
+            val home = uploadNotebook("Home")
+            val garbled = uploadNote(home, "Garbled", "Server garbled", mtime = 1_000L)
+            val plain = uploadNote(home, "Plain", "Server plain", mtime = 1_500L)
+            syncNow(other, "gen-gate-read")
+            val otherStore = pending(other, "gen-gate-read")
+            // A change whose blob is not an item of the notebook, so its text cannot be decrypted here.
+            assertTrue(otherStore.saveLocal(garbled.uid, home, "r1", byteArrayOf(1, 2, 3), isCreate = false) is PendingNotesStore.SaveOutcome.Saved)
+            assertTrue("the store's counter is there", File(otherStore.dir, "sequence").isFile)
+            val before = filesOnDisk(otherStore).filterKeys { it.endsWith(".note") }
+            // No run while the screens show: it would hold the change it cannot build.
+            val runs = Runs(real = false)
+            try {
+                ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, other, "gen-gate-read")).use { scenario ->
+                    awaitSettled(otherIdentity)
+                    showNotebook(scenario, "Home")
+                    waitUntil("both notes to show") { noteList(scenario)?.renderedNotes?.size == 2 }
+                    assertEquals(NoteSync.LOCAL_UNREADABLE, noteList(scenario)!!.renderedNotes.single { it.uid == garbled.uid }.sync)
+                    showNote(scenario, garbled.uid)
+                    waitUntil("the viewer") { onEditor(scenario) { !it.editing && it.renderedNote != null } == true }
+                    assertEquals(NoteSync.LOCAL_UNREADABLE, onEditor(scenario) { it.renderedNote?.sync })
+                    // The local changes cannot be read from here on: the store's listing fails, and so does its read of the counter.
+                    val dir = otherStore.dir.canonicalPath
+                    probe.listing = { d -> if (d.canonicalPath == dir) null else d.listFiles() }
+                    probe.read = { f -> if (f.name == "sequence" && f.parentFile?.canonicalPath == dir) throw IOException("the read fails here") }
+                    scenario.onActivity { activity ->
+                        assertEquals(View.GONE, activity.findViewById<View>(R.id.note_body_edit).visibility)
+                        activity.onSupportNavigateUp()
+                    }
+                    waitUntil("the list to say the changes could not be read") {
+                        var said = false
+                        scenario.onActivity { activity ->
+                            val notice = activity.findViewById<TextView?>(R.id.notes_pending)
+                            said = notice?.visibility == View.VISIBLE && notice.text.toString() == activity.getString(R.string.notes_pending_unreadable)
+                        }
+                        said
+                    }
+                    assertFalse("no New note", noteList(scenario)!!.offersNewNote)
+                    scenario.onActivity { assertEquals(View.GONE, it.findViewById<View>(R.id.notes_new_note).visibility) }
+                    showNote(scenario, plain.uid)
+                    waitUntil("the viewer") { onEditor(scenario) { !it.editing && it.renderedNote != null } == true }
+                    assertEquals(PendingUnavailable.UNREADABLE, onEditor(scenario) { it.renderedNote?.pending })
+                    scenario.onActivity { assertEquals(View.GONE, it.findViewById<View>(R.id.note_body_edit).visibility) }
+                    probe.listing = null
+                    probe.read = null
+                }
+            } finally {
+                runs.uninstall()
+            }
+            assertSameFiles("the change that cannot be decrypted stays as it was", before, filesOnDisk(otherStore).filterKeys { it.endsWith(".note") })
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+        }
+    }
+
+    /**
+     * Sign-out with the editor open. A save that lands while the sign-out counts again, before it cancels anything, is
+     * counted, and the confirmation does not cover it; a save that lands between that count and the clear makes the clear,
+     * under the lock every save takes, answer Changed. Both times the sign-out is refused and nothing goes: the account
+     * stays, the typed text stays on screen and in the store, and the editor goes on saving.
+     */
+    @Test fun signOutWithAnOpenEditorRefusesWhenASaveLandsDuringItsCountAndTheTypedTextStays() {
+        val account = newAccount("gen-editor-out")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-out")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-editor-out")
+        val store = pending(account, "gen-editor-out")
+        // No run sends the change while the case signs out.
+        val runs = Runs(real = false)
+        val probe = MainThreadStoreProbe().apply { install() }
+        try {
+            var closing = 0
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-out")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, "Work", note.uid)
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText("Typed before sign-out") }
+                var version = awaitSave(scenario, "the first save").savedVersion
+                fun typeAndAwaitSave(text: String) {
+                    scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).append(text) }
+                    val saved = awaitSave(scenario, "the save of \"$text\"", above = version)
+                    assertTrue("saved on this device: $saved", saved is SaveResult.Saved)
+                    version = saved.savedVersion
+                }
+                fun signOutWith(wrap: (CurrentAccountSignOutCoordinator.Seams) -> CurrentAccountSignOutCoordinator.Seams): CurrentAccountSignOutState {
+                    val coordinator = CurrentAccountSignOutCoordinator(wrap(AndroidCurrentAccountSignOut(context, account, "gen-editor-out")))
+                    try {
+                        val shown = coordinator.unsyncedNotes(identity)
+                        assertEquals("the dialog counts one change", 1, shown.count)
+                        coordinator.confirmNotesDiscard(identity, shown)
+                        coordinator.begin()
+                        return coordinator.state
+                    } finally {
+                        coordinator.close()
+                    }
+                }
+                fun assertNothingWent(what: String) {
+                    assertTrue("$what: the account stays", account in manager.getAccountsByType(account.type))
+                    val (editing, body) = checkNotNull(onEditor(scenario) { it.editing to it.view?.findViewById<EditText>(R.id.note_body_edit)?.text?.toString() })
+                    assertTrue("$what: the editor stays", editing)
+                    val entry = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                    assertEquals("$what: the text on screen is the text saved", body, decryptThroughStoredCopy(store, entry).contentString)
+                }
+
+                // 1. The editor saves while the sign-out counts again: the count sees the save, and the sign-out is refused.
+                var counts = 0
+                val counted = signOutWith { real ->
+                    object : CurrentAccountSignOutCoordinator.Seams by real {
+                        override fun unsyncedNotes(main: ExactAccountIdentity): UnsyncedNotes {
+                            if (++counts == 2) typeAndAwaitSave(" one")
+                            return real.unsyncedNotes(main)
+                        }
+                    }
+                }
+                assertEquals("the dialog's count, then the sign-out's own", 2, counts)
+                assertEquals(CurrentAccountSignOutState.Refused, counted)
+                assertNothingWent("a save during the count")
+
+                // 2. The editor saves between that count and the clear: the clear answers Changed and deletes nothing.
+                var clear: PendingNotesStore.DiscardOutcome? = null
+                val changed = signOutWith { real ->
+                    object : CurrentAccountSignOutCoordinator.Seams by real {
+                        override fun discardPendingNotes(main: ExactAccountIdentity, confirmed: UnsyncedNotes?): PendingNotesStore.DiscardOutcome {
+                            typeAndAwaitSave(" two")
+                            return real.discardPendingNotes(main, confirmed).also { clear = it }
+                        }
+                    }
+                }
+                assertTrue("the clear answered Changed: $clear", clear is PendingNotesStore.DiscardOutcome.Changed)
+                assertEquals(CurrentAccountSignOutState.Refused, changed)
+                assertNothingWent("a save before the clear")
+                assertEquals("Typed before sign-out one two",
+                    onEditor(scenario) { it.view?.findViewById<EditText>(R.id.note_body_edit)?.text?.toString() })
+                typeAndAwaitSave(" three")
+                closing = runs.size
+            }
+            awaitClosingRun(identity, runs, closing)
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * A save during a run queues one automatic follow-up run. The run is held at its fetch of the notebook's notes, after
+     * its push step found nothing to send; the editor saves, and its Save request arrives while the run waits. Once the
+     * run ends, one automatic run follows and sends the saved text.
+     */
+    @Test fun aSaveDuringARunQueuesOneAutomaticFollowUpRunThatSendsIt() {
+        val account = newAccount("gen-editor-follow")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-follow")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-follow")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
+        syncNow(account, "gen-editor-follow")
+        val runs = Runs()
+        val probe = MainThreadStoreProbe().apply { install() }
+        try {
+            var closing = 0
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-follow")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, "Work", note.uid)
+                val before = runs.size
+                val since = fake.requests.size
+                // The notebook's notes changed on the server, so the run fetches them (an unchanged notebook is skipped).
+                fake.touchItems(notebook)
+                val fetch = fake.hold("GET", Regex("collection/$notebook/item/"))
+                startManualRun(account, "gen-editor-follow")
+                fetch.awaitArrival()
+                val heldAt = SystemClock.uptimeMillis()
+                assertEquals("the run sent nothing before its fetch", emptyList<String>(), uploads(since))
+                scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText("Typed during the run") }
+                val saved = awaitSave(scenario, "the save during the run")
+                assertTrue("saved on this device: $saved", saved is SaveResult.Saved)
+                // The Save request, about ten seconds after the save, arrives while the run still waits.
+                waitUntil("a follow-up run to be queued") { NotesSyncCoordinator.snapshotForTesting(identity).contains("rerun=true") }
+                val slot = NotesSyncCoordinator.snapshotForTesting(identity)
+                assertTrue("an automatic follow-up behind the running run: $slot", slot.contains("state=RUNNING") && slot.contains("manual=false"))
+                release(fetch, heldAt)
+                awaitSettled(identity)
+                assertEquals("the held manual run, then one automatic follow-up", listOf(true, false), runs.since(before))
+                assertEquals("the follow-up sent the saved text", listOf(transactionOf(notebook)), uploads(since))
+                assertEquals("Typed during the run", itemManager(notebook).fetch(note.uid).contentString)
+                assertTrue("nothing is left waiting", pendingHeaders(account, "gen-editor-follow").isEmpty())
+                waitUntil("the status line to say synced") { statusLine(scenario) == context.getString(R.string.notes_editor_synced) }
+                closing = runs.size
+            }
+            awaitClosingRun(identity, runs, closing)
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * Undo after a select-all delete: the deletion is saved within the autosave delay, Undo from the toolbar brings the
+     * text back, the next autosave writes it, and the pending entry holds the restored text.
+     */
+    @Test fun undoAfterASelectAllDeleteBringsTheTextBackAndTheNextAutosaveWritesIt() {
+        val account = newAccount("gen-editor-undo")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-undo")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "Text the user meant to keep", mtime = 1_000L)
+        syncNow(account, "gen-editor-undo")
+        val store = pending(account, "gen-editor-undo")
+        // No run: the pending entry stays what the editor wrote.
+        val runs = Runs(real = false)
+        val probe = MainThreadStoreProbe().apply { install() }
+        fun menuItemEnabled(scenario: ActivityScenario<NotesActivity>, id: Int): Boolean {
+            var enabled = false
+            scenario.onActivity { enabled = actionBar(it).menu.findItem(id)?.isEnabled == true }
+            return enabled
+        }
+        try {
+            var closing = 0
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-undo")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, "Work", note.uid)
+                // Select all and delete in the body: one edit of the field's text, as the keyboard makes it.
+                scenario.onActivity { activity ->
+                    val body = activity.findViewById<EditText>(R.id.note_body_edit)
+                    assertEquals("Text the user meant to keep", body.text.toString())
+                    body.requestFocus()
+                    body.selectAll()
+                    body.text.delete(body.selectionStart, body.selectionEnd)
+                    assertEquals("", body.text.toString())
+                }
+                val deleted = awaitSave(scenario, "the deletion to be saved")
+                assertTrue("saved on this device: $deleted", deleted is SaveResult.Saved)
+                assertEquals("the deletion was written", "",
+                    decryptThroughStoredCopy(store, (store.read(note.uid) as PendingNotesStore.Read.Present).entry).contentString)
+
+                // Undo, from the toolbar.
+                waitUntil("Undo to be offered") { menuItemEnabled(scenario, R.id.note_undo) }
+                scenario.onActivity { activity ->
+                    assertTrue("Undo ran", actionBar(activity).menu.performIdentifierAction(R.id.note_undo, 0))
+                    assertEquals("the text is back", "Text the user meant to keep",
+                        activity.findViewById<EditText>(R.id.note_body_edit).text.toString())
+                }
+                val restored = awaitSave(scenario, "the restored text to be saved", above = deleted.savedVersion)
+                assertTrue("saved on this device: $restored", restored is SaveResult.Saved)
+                val entry = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                assertEquals(restored.savedVersion, entry.version)
+                val item = decryptThroughStoredCopy(store, entry)
+                assertEquals("the pending entry holds the restored text", listOf("Plan", "Text the user meant to keep"),
+                    listOf(NoteMetaCodec.peek(item.metaRaw)?.name, item.contentString))
+                // Redo is offered now, and Undo has nothing left to undo.
+                waitUntil("Redo to be offered") { menuItemEnabled(scenario, R.id.note_redo) }
+                assertFalse("nothing left to undo", menuItemEnabled(scenario, R.id.note_undo))
+                closing = runs.size
+            }
+            awaitClosingRun(identity, runs, closing)
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * Hand run 4c through the editor: another client wrote fields of its own on a note (the web's description and color,
+     * and a key no client here knows). The editor saves on the current revision, and after a plain push, with no 409, the
+     * server's copy keeps those fields byte for byte; only the name, the time and the text change.
+     */
+    @Test fun anEditorSaveKeepsOtherClientsMetadataByteForByteThroughAPlainPush() {
+        val account = newAccount("gen-editor-meta")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-meta")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-meta")
+        val notebook = uploadNotebook("Work")
+        val others = linkedMapOf<String, Any?>("description" to "Written on the web", "color" to "#3366ff", "x-handrun" to "kept as it is")
+        val written = linkedMapOf<String, Any?>("name" to "Plan", "mtime" to 1_000L).apply { putAll(others) }
+        val note = uploadRawNote(notebook, TestMsgPack.encode(written), "Server text")
+        syncNow(account, "gen-editor-meta")
+        // Only the case's own manual run sends: automatic ones wait for Wi-Fi.
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val runs = Runs()
+        val probe = MainThreadStoreProbe().apply { install() }
+        try {
+            var closing = 0
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-meta")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, "Work", note.uid)
+                scenario.onActivity { activity ->
+                    val title = activity.findViewById<EditText>(R.id.note_title_edit)
+                    assertEquals("Plan", title.text.toString())
+                    title.setText("Plan v2")
+                    activity.findViewById<EditText>(R.id.note_body_edit).setText("Edited in the editor")
+                }
+                val saved = awaitSave(scenario, "the save")
+                assertEquals("merged into the metadata, not kept as it was", SaveResult.Saved(saved.savedVersion, metadataKept = false), saved)
+
+                val since = fake.requests.size
+                syncNow(account, "gen-editor-meta")
+                assertEquals("one plain push", listOf(transactionOf(notebook)), uploads(since))
+                assertTrue("no 409: the server's copy was never fetched",
+                    fake.requests.drop(since).none { it.substringBefore('?') == "GET collection/$notebook/item/${note.uid}/" })
+                assertEquals("no conflicted copy", setOf(note.uid), fake.itemUids(notebook))
+                assertSucceeded(status(account, "gen-editor-meta"))
+                val onServer = itemManager(notebook).fetch(note.uid)
+                assertEquals("Edited in the editor", onServer.contentString)
+                @Suppress("UNCHECKED_CAST")
+                val meta = TestMsgPack.decode(onServer.metaRaw) as Map<String, Any?>
+                assertEquals("the same fields, in the same order", written.keys.toList(), meta.keys.toList())
+                assertEquals("Plan v2", meta["name"])
+                assertTrue("a new time: ${meta["mtime"]}", (meta["mtime"] as Number).toLong() > 1_000L)
+                for ((key, value) in others) {
+                    assertEquals(key, value, meta[key])
+                    assertTrue("$key, byte for byte", onServer.metaRaw.holds(TestMsgPack.encode(key) + TestMsgPack.encode(value)))
+                }
+                closing = runs.size
+            }
+            awaitClosingRun(identity, runs, closing)
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
+    /**
+     * The editor at font scale 2, set inside the app as the setup screen's case does: the title, the body, the status
+     * line, Undo and Redo stay reachable (Undo and Redo may go to the overflow), each has its label (the fields' hints
+     * and the items' titles), and the order is the title, the body, then the status line.
+     */
+    @Test fun theEditorAtFontScaleTwoKeepsItsFieldsStatusAndUndoRedoReachableAndLabeled() {
+        val account = newAccount("gen-editor-font")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-font")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-font")
+        val notebook = uploadNotebook("Work")
+        val note = uploadNote(notebook, "Plan", "Body of the plan", mtime = 1_000L)
+        syncNow(account, "gen-editor-font")
+        // Off Wi-Fi, so the status line takes its longest form; no run sends anything.
+        pinNetwork(NotesNetworkPolicy.Connection.OTHER)
+        val runs = Runs(real = false)
+        val probe = MainThreadStoreProbe().apply { install() }
+        try {
+            var closing = 0
+            ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-editor-font")).use { scenario ->
+                awaitSettled(identity)
+                openEditor(scenario, "Work", note.uid)
+                val unscaled = checkNotNull(onEditor(scenario) { fragment ->
+                    listOf(R.id.note_title_edit, R.id.note_body_edit).map { fragment.requireView().findViewById<TextView>(it).textSize }
+                })
+                scenario.onActivity { it.onSupportNavigateUp() }
+                // Font scale 2, set inside the app: the activity's resources take it, so the editor made from here on uses
+                // it. The device's own font setting stays as it is.
+                var original: Configuration? = null
+                scenario.onActivity { activity ->
+                    val current = Configuration(activity.resources.configuration).also { original = it }
+                    @Suppress("DEPRECATION")
+                    activity.resources.updateConfiguration(Configuration(current).apply { fontScale = 2f }, activity.resources.displayMetrics)
+                }
+                try {
+                    showNote(scenario, note.uid)
+                    waitUntil("the editor at font scale 2") { onEditor(scenario) { it.editing } == true }
+                    scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).append(", typed at font scale 2") }
+                    val saved = awaitSave(scenario, "the save")
+                    assertTrue("saved on this device: $saved", saved is SaveResult.Saved)
+                    val waiting = "${context.getString(R.string.notes_editor_saved)}. ${context.getString(R.string.notes_editor_waiting_wifi_sync_now)}"
+                    waitUntil("the status line") { statusLine(scenario) == waiting }
+                    waitUntil("Undo to be offered") {
+                        var enabled = false
+                        scenario.onActivity { enabled = actionBar(it).menu.findItem(R.id.note_undo)?.isEnabled == true }
+                        enabled
+                    }
+                    scenario.onActivity { activity ->
+                        assertEquals(2f, activity.resources.configuration.fontScale)
+                        val title = activity.findViewById<EditText>(R.id.note_title_edit)
+                        val body = activity.findViewById<EditText>(R.id.note_body_edit)
+                        val status = activity.findViewById<TextView>(R.id.note_status)
+                        unscaled.zip(listOf(title, body)).forEach { (before, view) ->
+                            assertTrue("the text is larger: $before px, then ${view.textSize} px", view.textSize >= before * 1.5f)
+                        }
+                        // Labels: the fields' hints and the items' titles.
+                        assertEquals(activity.getString(R.string.notes_editor_title_hint), title.hint.toString())
+                        assertEquals(activity.getString(R.string.notes_editor_body_hint), body.hint.toString())
+                        // Reachable: the title and the status line in full, the body in part, with the rest in its scroll view.
+                        fun visible(view: View) = view.isShown && view.getGlobalVisibleRect(Rect())
+                        fun inFull(view: View): Boolean {
+                            val shown = Rect()
+                            return view.isShown && view.getGlobalVisibleRect(shown) && shown.width() == view.width && shown.height() == view.height
+                        }
+                        assertTrue("the title shows in full", inFull(title))
+                        assertTrue("the body shows", visible(body))
+                        assertTrue("the body scrolls", generateSequence(body.parent) { it.parent }.any { (it as? View)?.id == R.id.note_scroll })
+                        assertTrue("the status line shows in full", inFull(status))
+                        assertEquals("nothing of the status line is cut off", 0,
+                            (0 until status.layout.lineCount).sumOf { status.layout.getEllipsisCount(it) })
+                        // Undo and Redo: titled items, each a button on the toolbar or in its overflow.
+                        val toolbar = actionBar(activity)
+                        var overflow = false
+                        for ((id, label) in listOf(R.id.note_undo to R.string.notes_editor_undo, R.id.note_redo to R.string.notes_editor_redo)) {
+                            val item = checkNotNull(toolbar.menu.findItem(id)) { "${activity.getString(label)} is in the menu" }
+                            assertTrue("${item.title} is offered", item.isVisible)
+                            assertEquals(activity.getString(label), item.title.toString())
+                            val button = activity.findViewById<View?>(id)
+                            if (button != null && button.isShown) assertTrue("${item.title} shows on the toolbar", visible(button)) else overflow = true
+                        }
+                        Log.i(EDITOR_LOG, "font scale 2: Undo or Redo in the overflow=$overflow")
+                        if (overflow) {
+                            assertTrue("the overflow holds what the toolbar cannot show", toolbar.showOverflowMenu())
+                            toolbar.hideOverflowMenu()
+                        }
+                        // Order: the keyboard goes from the title to the body, and accessibility reads the title, the body,
+                        // then the status line, which announces its changes politely.
+                        assertSame(body, title.focusSearch(View.FOCUS_FORWARD))
+                        val read = ArrayList<View>()
+                        fun visit(view: View) {
+                            if (!view.isShown) return
+                            if (view.isImportantForAccessibility) read += view
+                            if (view is ViewGroup) for (index in 0 until view.childCount) visit(view.getChildAt(index))
+                        }
+                        visit(activity.findViewById(android.R.id.content))
+                        assertEquals(listOf<View>(title, body, status), read.filter { it === title || it === body || it === status })
+                        for (view in listOf<View>(title, body, status)) {
+                            assertEquals(View.NO_ID, view.accessibilityTraversalBefore)
+                            assertEquals(View.NO_ID, view.accessibilityTraversalAfter)
+                        }
+                        assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, status.accessibilityLiveRegion)
+                    }
+                } finally {
+                    original?.let { configuration ->
+                        @Suppress("DEPRECATION")
+                        scenario.onActivity { it.resources.updateConfiguration(configuration, it.resources.displayMetrics) }
+                    }
+                }
+                closing = runs.size
+            }
+            awaitClosingRun(identity, runs, closing)
+            probe.assertNoneOnMain()
+        } finally {
+            probe.uninstall()
+            runs.uninstall()
+        }
+    }
+
     // ---- helpers ----
 
     /** An account row for the stand-in server; with no [generation], a row whose creation id was never written. */
@@ -3780,16 +4648,18 @@ class NotesSyncBoundaryRuntimeTest {
      * holds, and the result is saved into the pending store with a copy of the notebook. No landed record
      * is kept when it is pushed, unless the case itself has an editor handle open on the note. With
      * [metaRaw], the item gets exactly those bytes as its metadata in place of the merge, for metadata no
-     * save of the app would write.
+     * save of the app would write. With [intoHeld], the save goes into held text and names the held entry's
+     * version as its base, as an editor that showed that text does; a save into held text with no base writes nothing.
      */
     private fun editLocally(account: Account, generation: String, notebook: String, note: String, title: String, body: String, mtime: Long,
                             withNotebookCopy: Boolean = true, metaRaw: ByteArray? = null, intoHeld: Boolean = false) {
         val store = pending(account, generation)
+        val base = if (intoHeld) (store.read(note) as PendingNotesStore.Read.Present).entry.version else null
         val (itemMgr, item, copy) = editable(account, store, notebook, note)
         item.setContent(body)
         item.setMetaRaw(metaRaw ?: (NoteMetaCodec.merge(item.metaRaw, title, mtime) as NoteMetaCodec.Merge.Merged).bytes)
         val saved = store.saveLocal(note, notebook, item.etag, itemMgr.cacheSaveWithContent(item), isCreate = false,
-            notebookCopy = copy.takeIf { withNotebookCopy })
+            notebookCopy = copy.takeIf { withNotebookCopy }, base = base)
         if (intoHeld) {
             assertTrue("the edit joined the held text: $saved", saved is PendingNotesStore.SaveOutcome.SavedToHolding)
         } else {
@@ -4175,12 +5045,149 @@ class NotesSyncBoundaryRuntimeTest {
         throw AssertionError("Timed out waiting for $description")
     }
 
+    // ---- the note editor's screens ----
+
+    /** Pins what the device's network reads as, for the runs and for the editor's status line. */
+    private fun pinNetwork(connection: NotesNetworkPolicy.Connection) {
+        NotesNetwork.readingOverride = { NotesNetworkPolicy.Reading(connection) }
+    }
+
+    /**
+     * Stands in front of the Notes runner for one case: records whether each run the coordinator starts is manual, then
+     * runs it with the real runner, or not at all when [real] is false. The coordinator still admits, queues and settles
+     * every run as it does for the real runner. [uninstall] takes it away.
+     */
+    private class Runs(private val real: Boolean = true) {
+        private val manual = CopyOnWriteArrayList<Boolean>()
+
+        init {
+            NotesSyncCoordinator.runnerOverride = { appContext, account, generation, request ->
+                manual += request.manual
+                if (real) NotesSyncRunner.run(appContext, account, generation, request)
+            }
+        }
+
+        /** How many runs started so far. */
+        val size: Int get() = manual.size
+
+        /** Whether each run from the [from]th on was manual. */
+        fun since(from: Int): List<Boolean> = manual.drop(from)
+
+        fun uninstall() {
+            NotesSyncCoordinator.runnerOverride = null
+        }
+    }
+
+    /**
+     * Once the editor's screen closed with [runsBefore] runs started: an editor that saved anything asks for one run as it
+     * closes, at once. Waits for that run, then for every run to settle, so nothing of the case is left running.
+     */
+    private fun awaitClosingRun(identity: ExactAccountIdentity, runs: Runs, runsBefore: Int) {
+        waitUntil("the closing editor's run") { runs.size > runsBefore }
+        awaitSettled(identity)
+    }
+
+    /** From the notebook list, opens the notebook named [name] once its row shows, and waits for its note list. */
+    private fun showNotebook(scenario: ActivityScenario<NotesActivity>, name: String) {
+        waitUntil("the notebook $name to show") {
+            var clicked = false
+            scenario.onActivity { activity ->
+                val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? NotebookListFragment ?: return@onActivity
+                val index = fragment.renderedNotebooks.indexOfFirst { it.name == name }
+                val list = activity.findViewById<ListView?>(R.id.notebooks_list) ?: return@onActivity
+                if (index < 0 || list.adapter == null || list.adapter.count <= index) return@onActivity
+                list.performItemClick(list.adapter.getView(index, null, list), index, index.toLong())
+                clicked = true
+            }
+            clicked
+        }
+        waitUntil("the notes of $name to show") { noteList(scenario) != null }
+    }
+
+    /** From the note list, opens the note [uid] once its row shows, and waits until its screen chose the editor or the viewer. */
+    private fun showNote(scenario: ActivityScenario<NotesActivity>, uid: String) {
+        waitUntil("the note to show in its list") {
+            var clicked = false
+            scenario.onActivity { activity ->
+                val fragment = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? NoteListFragment ?: return@onActivity
+                val index = fragment.renderedNotes.indexOfFirst { it.uid == uid }
+                val list = activity.findViewById<ListView?>(R.id.notes_list) ?: return@onActivity
+                if (index < 0 || list.adapter == null || list.adapter.count <= index) return@onActivity
+                list.performItemClick(list.adapter.getView(index, null, list), index, index.toLong())
+                clicked = true
+            }
+            clicked
+        }
+        waitUntil("the note's screen to open") { onEditor(scenario) { it.editorModel.opened != null } == true }
+    }
+
+    /** Opens the note [uid] of the notebook named [notebook] from the notebook list, and waits until the editor shows. */
+    private fun openEditor(scenario: ActivityScenario<NotesActivity>, notebook: String, uid: String) {
+        showNotebook(scenario, notebook)
+        showNote(scenario, uid)
+        waitUntil("the editor to show") { onEditor(scenario) { it.editing } == true }
+    }
+
+    /** [read] of the note screen, on the main thread, where the editor's text lives; null while no note screen shows. */
+    private fun <T> onEditor(scenario: ActivityScenario<NotesActivity>, read: (NoteViewFragment) -> T): T? {
+        var value: T? = null
+        scenario.onActivity { activity ->
+            (activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as? NoteViewFragment)?.let { value = read(it) }
+        }
+        return value
+    }
+
+    /**
+     * Waits until the editor has no text left to save and a save wrote a version above [above], and gives that save's
+     * answer. A save that wrote nothing does not end the wait.
+     */
+    private fun awaitSave(scenario: ActivityScenario<NotesActivity>, what: String, above: Long = 0L): SaveResult {
+        var answer: SaveResult? = null
+        waitUntil(what) {
+            answer = onEditor(scenario) { fragment ->
+                fragment.editorModel.core.takeIf { !it.dirty && it.lastSavedVersion > above }?.lastResult
+            }
+            answer != null
+        }
+        return checkNotNull(answer)
+    }
+
+    /** The version a save wrote, or 0 for one that wrote nothing. */
+    private val SaveResult.savedVersion: Long
+        get() = when (this) {
+            is SaveResult.Saved -> version
+            is SaveResult.SavedToHolding -> version
+            else -> 0L
+        }
+
+    /** The editor's status line as it shows, or null while it is hidden. */
+    private fun statusLine(scenario: ActivityScenario<NotesActivity>): String? {
+        var line: String? = null
+        scenario.onActivity { activity ->
+            activity.findViewById<TextView?>(R.id.note_status)?.takeIf { it.visibility == View.VISIBLE }?.let { line = it.text.toString() }
+        }
+        return line
+    }
+
+    /** The action bar's toolbar, which holds the editor's Undo and Redo. On the main thread. */
+    private fun actionBar(activity: NotesActivity): androidx.appcompat.widget.Toolbar {
+        fun find(view: View): androidx.appcompat.widget.Toolbar? = when (view) {
+            is androidx.appcompat.widget.Toolbar -> view
+            is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { find(view.getChildAt(it)) }
+            else -> null
+        }
+        return checkNotNull(find(activity.window.decorView)) { "the screen has an action bar" }
+    }
+
     companion object {
         private val LIST = Regex("collection/list_multi/")
         private val ITEMS = Regex("collection/[^/]+/item/")
         private val TRANSACTION = Regex("collection/[^/]+/item/transaction/")
         private val UPLOAD = Regex("POST collection/[^/]+/item/(transaction|batch)/")
         private const val QUIET_MILLIS = 300L
+
+        /** The log tag of the editor cases' own lines, which name uids and states only, never note text. */
+        private const val EDITOR_LOG = "NotesEditorRuntime"
 
         /** Well-formed msgpack that is not a map: an array holding the string "x". */
         private val NOT_ONE_MAP = byteArrayOf(0x91.toByte(), 0xa1.toByte(), 0x78)

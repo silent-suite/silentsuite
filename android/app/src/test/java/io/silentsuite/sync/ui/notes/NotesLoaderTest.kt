@@ -58,9 +58,9 @@ class NotesLoaderTest {
         assertTrue(notebooks.contains("Pending.Unreadable -> NotebookOverview(rows, 0, failed, pendingUnreadable = true)"))
         assertTrue(notebooks.contains("Pending.DiscardStopped -> NotebookOverview(rows, 0, failed, discardStopped = true)"))
         val notebook = loader.substringAfter("    fun notebook(").substringBefore("\n    }\n")
-        assertTrue(notebook.contains("?: return@load NotebookContents(row, sortNotes(notes), unreadable.size, pending.unavailable())"))
+        assertTrue(notebook.contains("?: return@load NotebookContents(row, sortNotes(notes), unreadable.size, pending.unavailable(), writable)"))
         val note = loader.substringAfter("    fun note(").substringBefore("\n    }\n")
-        assertTrue(note.contains("?: return@load cached?.copy(pending = pending.unavailable())"))
+        assertTrue(note.contains("?: return@load cached?.copy(pending = pending.unavailable(), writable = writable)"))
         // An action on a store a discard closed closes the screen only once the account is gone.
         val screen = java.io.File("src/main/java/io/silentsuite/sync/ui/notes/HeldTextFragment.kt").readText().replace("\r\n", "\n")
         val withStore = screen.substringAfter("    private fun <T> withStore(").substringBefore("\n    }\n")

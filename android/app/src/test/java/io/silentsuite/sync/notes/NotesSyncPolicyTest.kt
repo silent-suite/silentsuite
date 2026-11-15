@@ -159,4 +159,43 @@ class NotesSyncPolicyTest {
             policy.finished(withFollowUp, forcedRefreshOwed = true).first.forceRefresh)
         assertEquals("a run that finished its listing owes nothing", NotesSyncPolicy.Slot(), policy.finished(running).first)
     }
+
+    @Test fun `a save is automatic, so its run follows the automatic network setting`() {
+        val (idle, decision) = policy.request(NotesSyncPolicy.Slot(), Trigger.SAVE, null)
+        assertEquals(Decision.START, decision)
+        assertFalse("a save is not a run the user started", idle.manual)
+        val (pending, _) = policy.request(idle, Trigger.SAVE, null)
+        assertFalse("nor are two of them", pending.manual)
+    }
+
+    @Test fun `a save during a run queues one automatic follow-up and leaves the forced refresh as it was`() {
+        val running = policy.started(policy.request(NotesSyncPolicy.Slot(), Trigger.SCREEN_OPEN, null).first)
+        val (queued, decision) = policy.request(running, Trigger.SAVE, null)
+        assertEquals("not dropped: the running run may have pushed before the save", Decision.COALESCED, decision)
+        assertTrue(queued.rerun)
+        assertFalse(queued.manual)
+        assertFalse("a save forces no refresh", queued.forceRefresh)
+        val (again, _) = policy.request(queued, Trigger.SAVE, null)
+        assertEquals("a second save queues nothing more", queued, again)
+        val (next, runAgain) = policy.finished(again)
+        assertTrue(runAgain)
+        assertEquals(State.PENDING, next.state)
+        assertFalse(next.manual)
+
+        val forced = policy.started(policy.request(NotesSyncPolicy.Slot(), Trigger.MANUAL, "accept", forceRefresh = true).first)
+        val owed = policy.request(forced, Trigger.PIGGYBACK, null, forceRefresh = true).first
+        assertTrue("a save keeps a forced refresh already queued", policy.request(owed, Trigger.SAVE, null).first.forceRefresh)
+    }
+
+    @Test fun `a save then Sync now makes the queued run one the user started`() {
+        val (pending, _) = policy.request(NotesSyncPolicy.Slot(), Trigger.SAVE, null)
+        val (manual, _) = policy.request(pending, Trigger.MANUAL, "sync-now")
+        assertTrue(manual.manual)
+        assertEquals("sync-now", manual.queuedRequestId)
+
+        val running = policy.started(policy.request(NotesSyncPolicy.Slot(), Trigger.PIGGYBACK, null).first)
+        val followUp = policy.request(policy.request(running, Trigger.SAVE, null).first, Trigger.MANUAL, "sync-now").first
+        assertTrue(followUp.manual)
+        assertEquals("sync-now", followUp.queuedRequestId)
+    }
 }

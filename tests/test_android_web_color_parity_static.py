@@ -154,7 +154,7 @@ def java_method_body(text: str, signature: str) -> str:
 
 def xml_files() -> list[Path]:
     files = sorted(RES.rglob("*.xml"))
-    assert len(files) == 195, f"expected 195 Android resource XML files, found {len(files)}"
+    assert len(files) == 200, f"expected 200 Android resource XML files, found {len(files)}"
     assert {"drawable/ic_dashboard_dismiss.xml", "layout/dialog_task_reminder_dismiss.xml"} <= {
         path.relative_to(RES).as_posix() for path in files
     }
@@ -930,7 +930,7 @@ def test_immutable_assets_and_runtime_ledger_ownership_are_exact():
     for method in ("dayNightRolesRecreateDeterministically", "systemBarProtectionMatchesApiAndInsets", "repeatedInsetDispatchIsIdempotentAndDoesNotMoveContent"):
         assert method in rendered
     runner = source("android/scripts/run-focused-runtime-tests.sh")
-    for count in ("257", '"29:account-dashboard": 38', "143", "54"):
+    for count in ("267", '"29:account-dashboard": 38', "153", "54"):
         assert count in runner
 
 
