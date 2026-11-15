@@ -30,6 +30,16 @@ class LocalTaskList private constructor(
     companion object {
         val defaultColor = -0x743cb6     // light green 500
 
+        /** Holds [POPULATED] once one complete listing has filled this task list row. */
+        private const val COLUMN_POPULATED = TaskLists.SYNC1
+
+        /**
+         * A task list row created later (the tasks app was reinstalled or switched, or its data was
+         * cleared) lacks this, so it is listed from the start even though the collection's sync
+         * token survived in the app's own cache.
+         */
+        internal const val POPULATED = "silentsuite.tasks.populated.v1"
+
         fun tasksProviderAvailable(context: Context, provider: ProviderName): Boolean =
                 context.packageManager.resolveContentProvider(provider.authority, 0) != null
 
@@ -64,6 +74,23 @@ class LocalTaskList private constructor(
 
     fun update(cachedCollection: CachedCollection, updateColor: Boolean) =
             update(valuesFromCachedCollection(cachedCollection, updateColor))
+
+    /** Whether one complete listing has filled this task list row. */
+    fun populated(): Boolean =
+        provider.client.query(taskListSyncUri(), arrayOf(COLUMN_POPULATED), null, null, null)?.use { cursor ->
+            cursor.moveToNext() && cursor.getString(0) == POPULATED
+        } ?: false
+
+    fun markPopulated() {
+        update(ContentValues(1).apply { put(COLUMN_POPULATED, POPULATED) })
+    }
+
+    /** Whether the task [id] has a local change or deletion that isn't uploaded yet. */
+    fun hasPendingChange(id: Long): Boolean =
+        provider.client.query(tasksSyncUri(), arrayOf(Tasks._ID),
+                "${Tasks._ID}=? AND (${Tasks._DIRTY}!=0 OR ${Tasks._DELETED}!=0)", arrayOf(id.toString()), null)?.use { cursor ->
+            cursor.count > 0
+        } ?: false
 
     override fun findDeleted() = queryTasks("${Tasks._DELETED}!=0", null)
 

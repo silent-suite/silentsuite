@@ -125,7 +125,7 @@ jobs:
           python3 scripts/verify-native-16kb.py \
             --require-lib libconscrypt_jni.so \
             --require-android-ndk-major libconscrypt_jni.so=28 \
-            build/conscrypt-m2/org/conscrypt/conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar
+            build/conscrypt-m2/org/conscrypt/conscrypt-android/2.9.0-r28/conscrypt-android-2.9.0-r28.aar
 
       - name: Upload rebuilt Conscrypt AAR
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

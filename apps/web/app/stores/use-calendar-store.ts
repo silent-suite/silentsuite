@@ -35,6 +35,13 @@ interface NewCalendarEvent {
   floating?: true
   /** Original wall clock of a DST-gap TZID DTSTART (YYYYMMDDTHHMMSS); kept so it is written back. */
   startWallClock?: string
+  /** Provider imports only (#48): the series UID, retained lines (incl. the import source), its
+   *  same-UID RECURRENCE-ID overrides, STATUS and TRANSP, all written in the one item. */
+  uid?: string
+  unknownProperties?: string[]
+  overrides?: string[][]
+  status?: string
+  transp?: string
 }
 
 interface CalendarState {
@@ -698,7 +705,7 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
       const tempId = crypto.randomUUID()
       return {
         id: tempId,
-        uid: tempId,
+        uid: ne.uid ?? tempId,
         title: ne.title,
         description: ne.description ?? '',
         location: ne.location ?? '',
@@ -713,6 +720,10 @@ export const useCalendarStore = create<CalendarState & CalendarActions>()((set, 
         timezone: ne.timezone,
         ...(ne.floating === true ? { floating: true as const } : {}),
         ...(ne.startWallClock ? { startWallClock: ne.startWallClock } : {}),
+        ...(ne.unknownProperties && ne.unknownProperties.length > 0 ? { unknownProperties: ne.unknownProperties } : {}),
+        ...(ne.overrides && ne.overrides.length > 0 ? { overrides: ne.overrides } : {}),
+        ...(ne.status ? { status: ne.status } : {}),
+        ...(ne.transp ? { transp: ne.transp } : {}),
         created: now,
         updated: now,
       }

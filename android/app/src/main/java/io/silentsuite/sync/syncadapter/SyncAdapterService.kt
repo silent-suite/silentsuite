@@ -341,7 +341,7 @@ abstract class SyncAdapterService : Service() {
     }
 }
 
-/** Wi-Fi-only sync restriction shared by the adapters and the in-app Notes job. */
+/** Wi-Fi-only sync restriction used by the adapters; Notes runs decide with NotesNetwork. */
 internal fun syncConditionsAllow(context: Context, settings: AccountSettings): Boolean =
     !settings.syncWifiOnly || wifiOnlySyncAllowed(settings.syncWifiOnlySSID) { onConnectedWifi(context) }
 
