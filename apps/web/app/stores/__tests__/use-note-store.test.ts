@@ -72,6 +72,7 @@ function note(id: string, overrides: Partial<Note> = {}): Note {
 
 const UNREADABLE_TOAST = 'Note not moved: some of its details could not be read. It stays in its notebook, unchanged.'
 const CHANGED_TOAST = 'Note not moved: it changed since this page loaded it. It stays in its notebook. Move it again after sync finishes.'
+const NOT_A_NOTE_TOAST = 'Note not moved: another app changed it into an item that is not a note. It stays in its notebook, unchanged.'
 
 /** A cached SDK item saved at `revision` whose metadata decodes through `getMeta`. */
 function savedItem(revision: string, getMeta: () => unknown = () => ({ name: 'Note', mtime: 1 })) {
@@ -426,6 +427,24 @@ describe('useNoteStore', () => {
       expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMetaUnreadableError' })
       // Safe details only: no note text, title or metadata value reaches the console.
       expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(SECRET)
+    })
+
+    it('refuses to move a note whose metadata gives it a type other than a note, and leaves it in place', async () => {
+      const moveItem = vi.fn(async () => 'note-moved')
+      etebase({ moveItem, itemCache: new Map([['note-1', savedItem('rev-1', () => ({ name: 'Note', mtime: 1, type: 'attachment' }))]]) })
+      useNotebookStore.setState({ lists: notebooks })
+      const original = note('note-1', { revision: 'rev-1' } as Partial<Note>)
+      useNoteStore.setState({ notes: [original] })
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      onTestFinished(() => errorSpy.mockRestore())
+
+      await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBeNull()
+
+      expect(moveItem).not.toHaveBeenCalled()
+      expect(useNoteStore.getState().notes).toEqual([original])
+      expect(toastMock.showErrorToast).toHaveBeenCalledTimes(1)
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith(NOT_A_NOTE_TOAST)
+      expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMoveNotANoteError' })
     })
 
     it.each([

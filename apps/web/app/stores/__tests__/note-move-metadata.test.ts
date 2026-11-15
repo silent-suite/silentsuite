@@ -23,6 +23,7 @@ const BODY = 'MOVED BODY'
 const SHOWN_AT = new Date(5000)
 
 const UNREADABLE_TOAST = 'Note not moved: some of its details could not be read. It stays in its notebook, unchanged.'
+const NOT_A_NOTE_TOAST = 'Note not moved: another app changed it into an item that is not a note. It stays in its notebook, unchanged.'
 
 /** Fields another client wrote next to the title and mtime. */
 const PEER_FIELDS = {
@@ -120,6 +121,27 @@ describe('moving a note keeps the metadata other clients wrote', () => {
       expect(toastMock.showErrorToast).not.toHaveBeenCalled()
     },
   )
+
+  it('refuses to move a note another client retyped after this tab cached it, and leaves it in place', async () => {
+    const { account, collection, item, target } = await shownNoteWithMeta({ name: TITLE, mtime: 1 })
+    // Title and body stay, so the fresh proof still matches the shown note; only the type changed.
+    const peer = item._clone()
+    peer.setMeta({ name: TITLE, mtime: 1, type: 'attachment' })
+    await account.getCollectionManager().getItemManager(collection).transaction([peer])
+    markNoteObligation(item.uid)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    onTestFinished(() => errorSpy.mockRestore())
+
+    const movedId = await useNoteStore.getState().moveNote(item.uid, target.uid)
+
+    expect(movedId).toBeNull()
+    expect(await serverItems(account, target)).toEqual([])
+    const source = (await serverItems(account, collection)).find((candidate) => candidate.uid === item.uid)
+    expect(source?.isDeleted).toBe(false)
+    expect(source?.getMeta()).toEqual({ name: TITLE, mtime: 1, type: 'attachment' })
+    expect(toastMock.showErrorToast).toHaveBeenCalledWith(NOT_A_NOTE_TOAST)
+    expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMoveNotANoteError' })
+  })
 
   it('refuses to move a note whose metadata is not a map, and leaves the source and target untouched', async () => {
     const { account, collection, item, target } = await shownNoteWithMeta('metadata written as text')
