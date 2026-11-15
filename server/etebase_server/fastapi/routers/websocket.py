@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import typing as t
 
 import nacl.encoding
@@ -19,6 +20,7 @@ from ..msgpack import MsgpackRoute, msgpack_decode, msgpack_encode
 from ..redis import redisw
 from ..utils import BaseModel, permission_responses
 
+logger = logging.getLogger(__name__)
 User = get_typed_user_model()
 websocket_router = APIRouter(route_class=MsgpackRoute, responses=permission_responses)
 CollectionQuerySet = QuerySet[models.Collection]
@@ -109,55 +111,70 @@ async def send_item_updates(
             await websocket.send_bytes(msgpack_encode(response.dict()))
 
 
+async def close_pubsub(pubsub: aioredis.client.PubSub):
+    """Close a websocket's pub/sub connection. This drops the socket, which ends
+    its subscription on the Redis server, and returns the connection to the pool.
+    A failure here is logged, never raised, so it cannot replace an error that
+    ended the websocket."""
+    try:
+        await pubsub.aclose()
+    except Exception:
+        logger.warning("Could not close the websocket Redis subscription", exc_info=True)
+
+
 async def redis_connector(websocket: WebSocket, ticket_model: TicketInner, user: UserType, stoken: t.Optional[str]):
     async def producer_handler(r: aioredis.Redis, ws: WebSocket):
         pubsub = r.pubsub()
         channel_name = f"col.{ticket_model.req.collection}"
-        await pubsub.subscribe(channel_name)
-
-        # Send missing items if we are not up to date
-        queryset: QuerySet[models.Collection] = get_collection_queryset(user)
-        collection: t.Optional[models.Collection] = await sync_to_async(
-            queryset.filter(uid=ticket_model.req.collection).first
-        )()
-        if collection is None:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-            return
-        await send_item_updates(websocket, collection, user, stoken)
-
-        async def handle_message():
-            # redis-py returns a dict per message; the published payload is in "data".
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=20)
-            if msg is not None and msg["type"] == "message":
-                await ws.send_bytes(msg["data"])
-
-        # We wait on the websocket so we fail if web sockets fail or get data
-        receive = asyncio.create_task(websocket.receive())
-        message: t.Optional[asyncio.Task] = None
         try:
-            while True:
-                message = asyncio.create_task(handle_message())
-                done, _ = await asyncio.wait(
-                    {receive, message},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if receive in done:
-                    if receive.result()["type"] == "websocket.disconnect":
-                        return
-                    # Web socket should never receive any data
-                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-                    return
-                # Re-raise errors from reading or forwarding the message.
-                message.result()
+            await pubsub.subscribe(channel_name)
 
-        except ConnectionError:
-            await websocket.close(code=status.WS_1012_SERVICE_RESTART)
+            # Send missing items if we are not up to date
+            queryset: QuerySet[models.Collection] = get_collection_queryset(user)
+            collection: t.Optional[models.Collection] = await sync_to_async(
+                queryset.filter(uid=ticket_model.req.collection).first
+            )()
+            if collection is None:
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                return
+            await send_item_updates(websocket, collection, user, stoken)
+
+            async def handle_message():
+                # redis-py returns a dict per message; the published payload is in "data".
+                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=20)
+                if msg is not None and msg["type"] == "message":
+                    await ws.send_bytes(msg["data"])
+
+            # We wait on the websocket so we fail if web sockets fail or get data
+            receive = asyncio.create_task(websocket.receive())
+            message: t.Optional[asyncio.Task] = None
+            try:
+                while True:
+                    message = asyncio.create_task(handle_message())
+                    done, _ = await asyncio.wait(
+                        {receive, message},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if receive in done:
+                        if receive.result()["type"] == "websocket.disconnect":
+                            return
+                        # Web socket should never receive any data
+                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                        return
+                    # Re-raise errors from reading or forwarding the message.
+                    message.result()
+
+            except ConnectionError:
+                await websocket.close(code=status.WS_1012_SERVICE_RESTART)
+            finally:
+                receive.cancel()
+                if message is not None:
+                    message.cancel()
         except WebSocketDisconnect:
+            # The client went away, during catch-up or the live loop.
             pass
         finally:
-            receive.cancel()
-            if message is not None:
-                message.cancel()
+            await close_pubsub(pubsub)
 
     redis = redisw.redis
     await producer_handler(redis, websocket)
