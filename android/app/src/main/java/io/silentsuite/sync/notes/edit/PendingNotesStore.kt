@@ -174,8 +174,12 @@ internal class PendingNotesStore private constructor(
         object Missing : Read()
         data class Present(val entry: PendingEntry) : Read()
 
-        /** [notebookUid] is known when the entry's own header read fine and only the rest did not. */
-        data class Unreadable(val file: String, val reason: String, val notebookUid: String? = null) : Read()
+        /**
+         * [notebookUid] is known when the entry's own header read fine and only the rest did not. [damaged]: the file
+         * was read in full and its whole-file checksum fails, so no build wrote it as it is. A read that fails, a
+         * file of a layout this build does not know, and an interrupted write are not damaged.
+         */
+        data class Unreadable(val file: String, val reason: String, val notebookUid: String? = null, val damaged: Boolean = false) : Read()
     }
 
     /**
@@ -224,7 +228,10 @@ internal class PendingNotesStore private constructor(
      * whether any file the permit names is there, checked by path and not taken from the listing, which can come
      * back short and leave such a note out of [headers]: a run does not record success while it is. While a permit
      * that may be there cannot be read, or the permit was recorded as for an answer that could not be counted
-     * ([permitNames]), [discardConfirmed] holds every note among [headers], and [discardUnfinished] is true.
+     * ([permitNames]), [discardConfirmed] holds every note among [headers], [discardUnfinished] is true, and
+     * [permitUnreadable] says so: those notes are held back because the permit could not be checked, not because
+     * the user named them. A note whose entry file fails its whole-file checksum is in [unreadable], never in
+     * [headers], whether or not [entries] asked for it.
      */
     data class Snapshot(
         val headers: List<EntryHeader>,
@@ -233,6 +240,7 @@ internal class PendingNotesStore private constructor(
         val sequence: Long,
         val discardConfirmed: Set<String> = emptySet(),
         val discardUnfinished: Boolean = false,
+        val permitUnreadable: Boolean = false,
     )
 
     /** One note's entry and the store-wide sequence, read together. */
@@ -330,7 +338,13 @@ internal class PendingNotesStore private constructor(
         for (file in files(NOTE)) {
             val header = readHeader(file)
             if (header != null && !keep(header)) {
-                headers += header
+                // The header alone reads fine; the blob is checked against the whole-file checksum, streamed,
+                // so a waiting change whose text is damaged is reported as unreadable in every snapshot.
+                if (streamedIntact(file)) {
+                    headers += header
+                } else {
+                    unreadable += Read.Unreadable(file.name, "checksum mismatch", header.notebookUid, damaged = true)
+                }
                 continue
             }
             when (val read = decodeFile(file)) {
@@ -350,7 +364,35 @@ internal class PendingNotesStore private constructor(
             currentSequence(strict = false),
             headers.filter { confirmed == null || noteFile(it.noteUid).name in confirmed }
                 .mapTo(HashSet()) { it.noteUid },
-            discardUnfinished = namedThere(confirmed))
+            discardUnfinished = namedThere(confirmed),
+            permitUnreadable = confirmed == null)
+    }
+
+    /**
+     * Whether [file] reads in full with its whole-file checksum matching, read in pieces so a large blob is never
+     * held. A read that fails counts as not intact: the snapshot then reports the file as unreadable, as a full read
+     * would.
+     */
+    private fun streamedIntact(file: File): Boolean = try {
+        val length = file.length()
+        if (length < 9) {
+            false
+        } else {
+            val crc = java.util.zip.CRC32()
+            DataInputStream(java.io.BufferedInputStream(FileInputStream(file))).use { input ->
+                val buffer = ByteArray(8192)
+                var left = length - 4
+                while (left > 0) {
+                    val n = input.read(buffer, 0, minOf(buffer.size.toLong(), left).toInt())
+                    if (n < 0) throw java.io.EOFException("truncated")
+                    crc.update(buffer, 0, n)
+                    left -= n
+                }
+                input.readInt() == crc.value.toInt() && input.read() == -1
+            }
+        }
+    } catch (_: IOException) {
+        false
     }
 
     /**
@@ -716,16 +758,39 @@ internal class PendingNotesStore private constructor(
      * goes only with the whole store. Otherwise nothing is written or deleted, and the answer carries what is there
      * now, for the screen to show and ask again. Throws, and discards nothing, as [discard] does for a conflict copy
      * whose original cannot be removed or read.
+     *
+     * [shownDigest], when given, is [digestOf] the blob the user saw, compared alongside the version: a version is
+     * unique only within this instance's run (after a restart that follows a finished whole-store discard, a new
+     * entry can take a version a confirmation still carries), and the blob is the text itself.
+     *
+     * A present entry goes only when no run will ever send it, decided here under the lock that [startSend] takes:
+     * held text, or text the store's discard permit names, or every note while the permit cannot be read. A change a
+     * run may send, even one whose notebook the screen saw as read-only, is refused ([NoteDiscard.MaySync]): a run
+     * that finds the notebook writable again would send it, so a discard of it could race the upload.
+     *
+     * An earlier removal that unlinked a file but could not sync the directory left that removal unfinished: an
+     * answer of [NoteDiscard.Missing] syncs the directory first, so the text a confirmation was for cannot come back
+     * after a power loss. A removal whose unlink went through but whose directory sync failed throws
+     * [RemovalNotSynced].
      */
-    fun discard(noteUid: String, shownVersion: Long?): NoteDiscard = locked {
+    fun discard(noteUid: String, shownVersion: Long?, shownDigest: String? = null): NoteDiscard = locked {
         val now = readEntry(noteUid)
         when (now) {
-            Read.Missing -> NoteDiscard.Missing
-            is Read.Present -> if (shownVersion != null && now.entry.version == shownVersion) {
-                removeEntry(noteUid, now.entry)
-                NoteDiscard.Done
-            } else {
-                NoteDiscard.Changed(now)
+            Read.Missing -> {
+                if (unlinkUnsynced) {
+                    syncDirectory(dir)
+                    unlinkUnsynced = false
+                }
+                NoteDiscard.Missing
+            }
+            is Read.Present -> when {
+                shownVersion == null || now.entry.version != shownVersion -> NoteDiscard.Changed(now)
+                shownDigest != null && digestOf(now.entry.blob) != shownDigest -> NoteDiscard.Changed(now)
+                !neverSent(now.entry) -> NoteDiscard.MaySync(now)
+                else -> {
+                    removeEntry(noteUid, now.entry)
+                    NoteDiscard.Done
+                }
             }
             is Read.Unreadable -> if (shownVersion == null && now.file == noteFile(noteUid).name && decodedBad(noteUid)) {
                 removeEntry(noteUid, null)
@@ -736,14 +801,25 @@ internal class PendingNotesStore private constructor(
         }
     }
 
-    /** Whether [noteUid]'s entry file reads in full and does not decode; false when the read itself fails. */
+    /**
+     * Whether [noteUid]'s entry file reads in full and fails its whole-file checksum; false when the read itself
+     * fails, and false for an intact file of a layout this build cannot decode, which a newer build may have written
+     * and which goes only with the whole store.
+     */
     private fun decodedBad(noteUid: String): Boolean {
         val bytes = try {
             readIfPresent(noteFile(noteUid))
         } catch (_: IOException) {
             return false
         } ?: return false
-        return PendingCodec.decodeEntry(bytes) is PendingCodec.Decoded.Bad
+        return !PendingCodec.isIntact(bytes)
+    }
+
+    /** Whether no run will ever send [e]: the cases [startSend] refuses under the same lock, for text and permit. */
+    private fun neverSent(e: PendingEntry): Boolean {
+        if (e.state == PendingEntry.State.HELD) return true
+        val confirmed = permitNames()
+        return confirmed == null || noteFile(e.noteUid).name in confirmed
     }
 
     sealed class NoteDiscard {
@@ -755,7 +831,13 @@ internal class PendingNotesStore private constructor(
 
         /** What is there now is not what the user was shown: [now]. Nothing was deleted. */
         data class Changed(val now: Read) : NoteDiscard()
+
+        /** What is there is the text shown, but a run may still send it ([now]); nothing was deleted. */
+        data class MaySync(val now: Read) : NoteDiscard()
     }
+
+    /** A removal whose unlink went through but whose directory sync failed: the file is gone until a power loss. */
+    class RemovalNotSynced(cause: IOException) : IOException("the removal is not synced yet", cause)
 
     /**
      * Removes [noteUid]'s entry as the user's discard does, whose full read gave [entry], or null when it read as
@@ -2266,7 +2348,7 @@ internal class PendingNotesStore private constructor(
     private fun decodeEntry(name: String, bytes: ByteArray): Read =
         when (val decoded = PendingCodec.decodeEntry(bytes)) {
             is PendingCodec.Decoded.Ok -> Read.Present(decoded.value)
-            is PendingCodec.Decoded.Bad -> Read.Unreadable(name, decoded.reason)
+            is PendingCodec.Decoded.Bad -> Read.Unreadable(name, decoded.reason, damaged = !PendingCodec.isIntact(bytes))
         }
 
     /**
@@ -2512,7 +2594,11 @@ internal class PendingNotesStore private constructor(
             if (isPresent(file)) {
                 if (!file.delete()) throw IOException("could not remove ${file.name}")
                 unlinked()
-                syncDirectory(dir)
+                try {
+                    syncDirectory(dir)
+                } catch (e: IOException) {
+                    throw RemovalNotSynced(e)
+                }
                 unlinkUnsynced = false
             }
         } catch (e: Throwable) {
@@ -2866,6 +2952,13 @@ internal class PendingNotesStore private constructor(
         }
 
         /** Uids come from the server and from collaborators, so they never reach a file name unchecked. */
+        /** A digest of [blob], the text of an entry, which a confirmation carries to name the text it showed. */
+        fun digestOf(blob: ByteArray): String =
+            MessageDigest.getInstance("SHA-256").digest(blob).joinToString("") { "%02x".format(it) }
+
+        /** Whether [uid] is one this store keeps a note's file under. */
+        fun isNoteUid(uid: String): Boolean = UID.matches(uid)
+
         internal fun checkedUid(uid: String): String {
             require(UID.matches(uid)) { "not an Etebase uid" }
             return uid

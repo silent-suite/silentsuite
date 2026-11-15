@@ -299,6 +299,9 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
                     // Newer text than the confirmation showed: it stays, and the screen shows it to be asked again.
                     is PendingNotesStore.NoteDiscard.Changed ->
                         Toast.makeText(current, R.string.notes_held_discard_changed, Toast.LENGTH_LONG).show()
+                    // A run may send it now: it stays.
+                    is PendingNotesStore.NoteDiscard.MaySync ->
+                        Toast.makeText(current, R.string.notes_held_discard_not_offered, Toast.LENGTH_LONG).show()
                 }
             }
             reload()
