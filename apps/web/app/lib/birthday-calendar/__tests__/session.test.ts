@@ -30,6 +30,8 @@ describe('birthday session facade', () => {
 
     scheduleBirthdayReconcile()
     await vi.advanceTimersByTimeAsync(5000)
+    // The run loads its transport with import() before calling the engine.
+    await vi.dynamicImportSettled()
 
     expect(runBirthdayCalendar).toHaveBeenCalledTimes(1)
   })
@@ -44,6 +46,8 @@ describe('birthday session facade', () => {
     scheduleBirthdayReconcile()
     useExperimentalStore.setState({ birthdayAccounts: [] })
     await vi.advanceTimersByTimeAsync(5000)
+    // The run loads its transport with import() before calling the engine.
+    await vi.dynamicImportSettled()
 
     expect(runBirthdayCalendar).not.toHaveBeenCalled()
   })
@@ -59,6 +63,8 @@ describe('birthday session facade', () => {
     scheduleBirthdayReconcile()
     bumpAccountEpoch()
     await vi.advanceTimersByTimeAsync(5000)
+    // The run loads its transport with import() before calling the engine.
+    await vi.dynamicImportSettled()
 
     expect(getAccountEpoch()).not.toBe(epoch)
     expect(runBirthdayCalendar).not.toHaveBeenCalled()
