@@ -79,6 +79,7 @@ export async function loadMicrosoftCalendars({ clientId, win, popup, signal, fet
   try {
     const signedIn = await signInWithMicrosoft({ clientId, scope: MICROSOFT_CALENDAR_SCOPE, win, popup, ...(fetcher ? { fetcher } : {}) })
     release = signedIn.release
+    request.token = signedIn.token
     const { accountId } = signedIn
     throwIfAborted(signal)
     const calendars = await graphGetAllPages<GraphCalendar>(
@@ -138,6 +139,7 @@ export async function loadMicrosoftContacts({ clientId, win, popup, signal, fetc
   try {
     const signedIn = await signInWithMicrosoft({ clientId, scope: MICROSOFT_CONTACTS_SCOPE, win, popup, ...(fetcher ? { fetcher } : {}) })
     release = signedIn.release
+    request.token = signedIn.token
     const { accountId } = signedIn
     throwIfAborted(signal)
     // The default Contacts folder; /me/contactFolders lists the folders below it.
