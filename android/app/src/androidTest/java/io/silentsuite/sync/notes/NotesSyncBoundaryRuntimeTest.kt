@@ -3742,7 +3742,8 @@ class NotesSyncBoundaryRuntimeTest {
 
     /**
      * Back and Up while the editor's text is not saved on this device. The store's write of the note fails (no space), so
-     * the save that each leave runs first fails too, and the screen stays and asks. Copy hands the text to the clipboard,
+     * the save that each leave runs first fails too, and the screen stays and asks; a second Back while that save runs
+     * starts nothing, so there is one save and one question. Copy hands the text to the clipboard,
      * marked sensitive, and the question stays; a recreation brings it back; an answer from a question made in another app
      * process acts on nothing, and the screen asks again in this one, as it does when such a question is brought back.
      * Cancel stays, the toolbar's Up arrow asks again, and Try again while the write still fails asks again. Once the store
@@ -3776,6 +3777,7 @@ class NotesSyncBoundaryRuntimeTest {
         val copiedClip = AtomicReference<android.content.ClipData?>()
         io.silentsuite.sync.ui.notes.SensitiveClip.clipboardOverride = { copiedClip.set(it) }
         val typed = "Typed while the device cannot save"
+        val leaveGate = CountDownLatch(1)
         fun question(scenario: ActivityScenario<NotesActivity>): androidx.appcompat.app.AlertDialog? =
             onEditor(scenario) { it.leaveDialog?.takeIf { dialog -> dialog.isShowing } }
         fun askedIn(scenario: ActivityScenario<NotesActivity>): String? =
@@ -3794,11 +3796,25 @@ class NotesSyncBoundaryRuntimeTest {
                 scenario.onActivity { it.findViewById<EditText>(R.id.note_body_edit).setText(typed) }
                 waitUntil("the autosave to fail") { onEditor(scenario) { it.editorModel.core.lastResult } == SaveResult.NotSaved }
 
-                // Back: the save runs first and fails, and the screen stays and asks.
+                // Back: the save runs first and fails, and the screen stays and asks. That save is held right before the
+                // store, and a second Back meanwhile starts nothing: one save, one question.
                 var before = failed.get()
+                val arrived = CountDownLatch(1)
+                NoteEditorViewModel.beforeSaveForTesting = {
+                    arrived.countDown()
+                    leaveGate.await(30, TimeUnit.SECONDS)
+                }
                 scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                assertTrue("the leave's save started", arrived.await(30, TimeUnit.SECONDS))
+                scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+                assertEquals("the second Back left nothing", true, onEditor(scenario) { it.editing })
+                assertNull("no question while the save is held", question(scenario))
+                NoteEditorViewModel.beforeSaveForTesting = null
+                leaveGate.countDown()
                 waitUntil("the question") { question(scenario) != null }
-                assertTrue("Back saved first", failed.get() > before)
+                assertEquals("one save", before + 1, failed.get())
+                assertEquals("one question", 1, onEditor(scenario) { editor ->
+                    editor.childFragmentManager.fragments.count { it is NoteViewFragment.LeaveConfirmation && !it.ended } })
                 stays(scenario, "Back")
                 scenario.onActivity { activity ->
                     val dialog = editorOf(activity).leaveDialog!!
@@ -3912,6 +3928,8 @@ class NotesSyncBoundaryRuntimeTest {
             }
             probe.assertNoneOnMain()
         } finally {
+            leaveGate.countDown()
+            NoteEditorViewModel.beforeSaveForTesting = null
             io.silentsuite.sync.ui.notes.SensitiveClip.clipboardOverride = null
             probe.uninstall()
             runs.uninstall()
