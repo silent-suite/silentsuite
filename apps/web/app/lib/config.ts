@@ -27,3 +27,9 @@ export const ETEBASE_SERVER_URL = defaultEtebaseServerUrl()
 /** Relay endpoint for user-initiated "Report a problem" sends. */
 export const REPORT_RELAY_URL =
   process.env.NEXT_PUBLIC_REPORT_RELAY_URL || 'https://silentsuite.io/api/report'
+
+/**
+ * OAuth client ID for the one-time Google Calendar and Contacts import (#48). The import is
+ * hidden unless a build is given one, so builds without it are unchanged.
+ */
+export const GOOGLE_IMPORT_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_IMPORT_CLIENT_ID ?? ''
