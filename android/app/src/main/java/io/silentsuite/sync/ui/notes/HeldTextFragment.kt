@@ -23,6 +23,7 @@ import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
 import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.ui.ExactAccountIdentity
+import io.silentsuite.sync.ui.ProcessIncarnation
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -57,9 +58,19 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
     internal var renderedRows: List<HeldTextRow>? = null
         private set
 
+    /** The Discard confirmation the screen holds, an ended one included; observation point for runtime tests. */
+    internal val discardConfirmation: DiscardConfirmation?
+        get() = childFragmentManager.findFragmentByTag(DISCARD_TAG) as? DiscardConfirmation
+
     /** The Discard confirmation while it is open; observation point for runtime tests. */
     internal val discardDialog: androidx.appcompat.app.AlertDialog?
-        get() = (childFragmentManager.findFragmentByTag(DISCARD_TAG) as? DiscardConfirmation)?.dialog as? androidx.appcompat.app.AlertDialog
+        get() = discardConfirmation?.dialog as? androidx.appcompat.app.AlertDialog
+
+    /**
+     * The note whose Discard was answered in a confirmation made in another app process: the next load asks again
+     * for it, with the text it reads then, if that text can still be discarded. In memory only.
+     */
+    private var askAgainFor: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -142,6 +153,10 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
         container.removeAllViews()
         val inflater = LayoutInflater.from(view.context)
         for (row in held.rows) container.addView(card(inflater, container, row, offerTryAgain = !covered))
+        askAgainFor?.let { uid ->
+            askAgainFor = null
+            held.rows.firstOrNull { it.noteUid == uid && it.canDiscard }?.let { confirmDiscard(it) }
+        }
     }
 
     private fun card(inflater: LayoutInflater, parent: ViewGroup, row: HeldTextRow, offerTryAgain: Boolean): View {
@@ -228,7 +243,9 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
      * Asks before a discard, in a dialog the platform brings back after a rotation or a recreation. It carries the
      * note, the version it showed and a digest of the text ([PendingNotesStore.digestOf]); the store checks both, and
      * that no run will send the text, under its lock ([PendingNotesStore.discard]), so a confirmation that outlived
-     * the rows it was opened from still deletes only the text it showed.
+     * the rows it was opened from still deletes only the text it showed. It also carries the token of the app process
+     * that made it ([ProcessIncarnation]): an answer from a confirmation Android restored in a new process deletes
+     * nothing, and the screen reads the text again and asks again (the maintainer's answer on #709, 2026-10-23).
      */
     private fun confirmDiscard(row: HeldTextRow) {
         val uid = row.noteUid ?: return
@@ -241,6 +258,7 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
                 putString(ARG_NOTE, uid)
                 row.version?.let { putLong(ARG_VERSION, it) }
                 row.digest?.let { putString(ARG_DIGEST, it) }
+                putString(ARG_PROCESS, ProcessIncarnation.current())
             }
         }.show(childFragmentManager, DISCARD_TAG)
     }
@@ -256,21 +274,25 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
             val uid = requireNotNull(args.getString(ARG_NOTE))
             val shown = if (args.containsKey(ARG_VERSION)) args.getLong(ARG_VERSION) else null
             val digest = args.getString(ARG_DIGEST)
+            // The app process that made the dialog; null for a dialog with none, which counts as another process.
+            val shownIn = args.getString(ARG_PROCESS)
             return MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.notes_held_discard_title)
                 .setMessage(if (shown == null) R.string.notes_held_discard_unreadable_text else R.string.notes_held_discard_text)
                 .setNegativeButton(android.R.string.cancel, null)
                 .setPositiveButton(R.string.notes_discard) { _, _ ->
                     ended = true
-                    (parentFragment as? HeldTextFragment)?.discardNote(uid, shown, digest)
+                    (parentFragment as? HeldTextFragment)?.discardNote(uid, shown, digest, shownIn)
                 }
                 .create()
         }
     }
 
-    private fun discardNote(uid: String, shown: Long?, digest: String?) {
+    private fun discardNote(uid: String, shown: Long?, digest: String?, shownIn: String?) {
         val host = host() ?: return
         if (!host.exactAccountStillCurrent()) { host.finish(); return }
+        // An answer from a confirmation made in another app process goes to no store: read again, then ask again.
+        if (!ProcessIncarnation.isCurrent(shownIn)) { askAgainFor = uid; reload(); return }
         val appContext = host.applicationContext
         actionRunning = true
         viewLifecycleOwner.lifecycleScope.launch {
@@ -354,6 +376,8 @@ class HeldTextFragment : Fragment(), NotesSyncCoordinator.Listener {
         private const val ARG_NOTE = "notes.held.discard.note"
         private const val ARG_VERSION = "notes.held.discard.version"
         private const val ARG_DIGEST = "notes.held.discard.digest"
+        /** The app process that made the confirmation ([ProcessIncarnation]). Internal for the device case, which writes another. */
+        internal const val ARG_PROCESS = "notes.held.discard.process"
         private const val DISCARD_TAG = "notes.held.discard"
 
         fun newInstance(account: Account, creationId: String) = HeldTextFragment().apply {

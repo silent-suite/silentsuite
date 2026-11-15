@@ -55,7 +55,19 @@ class HeldTextScreenContractTest {
         assertTrue(confirm.contains("row.digest?.let { putString(ARG_DIGEST, it) }"))
         val dialog = screen.substringAfter("    class DiscardConfirmation : DialogFragment() {").substringBefore("\n    }\n")
         assertTrue(dialog.contains("val digest = args.getString(ARG_DIGEST)"))
-        assertTrue(dialog.contains("(parentFragment as? HeldTextFragment)?.discardNote(uid, shown, digest)"))
+        assertTrue(dialog.contains("(parentFragment as? HeldTextFragment)?.discardNote(uid, shown, digest, shownIn)"))
+    }
+
+    @Test fun `an answer from a confirmation made in another app process deletes nothing and asks again`() {
+        val confirm = screen.substringAfter("    private fun confirmDiscard(row: HeldTextRow) {").substringBefore("\n    }\n")
+        assertTrue(confirm.contains("putString(ARG_PROCESS, ProcessIncarnation.current())"))
+        val dialog = screen.substringAfter("    class DiscardConfirmation : DialogFragment() {").substringBefore("\n    }\n")
+        assertTrue(dialog.contains("val shownIn = args.getString(ARG_PROCESS)"))
+        val discard = screen.substringAfter("    private fun discardNote(").substringBefore("\n    }\n")
+        val check = discard.indexOf("if (!ProcessIncarnation.isCurrent(shownIn)) { askAgainFor = uid; reload(); return }")
+        assertTrue("checked before any store call", check in 0 until discard.indexOf("withStore(appContext)"))
+        val render = screen.substringAfter("    private fun render(view: View, held: HeldTexts) {").substringBefore("\n    }\n")
+        assertTrue(render.contains("held.rows.firstOrNull { it.noteUid == uid && it.canDiscard }?.let { confirmDiscard(it) }"))
     }
 
     @Test fun `a second tap starts nothing while Try again or a Discard runs, and Try again waits for a covered discard`() {

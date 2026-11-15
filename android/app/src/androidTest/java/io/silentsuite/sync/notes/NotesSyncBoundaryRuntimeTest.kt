@@ -59,6 +59,7 @@ import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.NotesLastActiveRecord
 import io.silentsuite.sync.ui.NotesStartupSweep
 import io.silentsuite.sync.ui.PendingNotesRemovalGuard
+import io.silentsuite.sync.ui.ProcessIncarnation
 import io.silentsuite.sync.ui.UnsyncedNotesStores
 import io.silentsuite.sync.ui.notes.HeldTextFragment
 import io.silentsuite.sync.ui.notes.HeldTextRow
@@ -3135,6 +3136,26 @@ class NotesSyncBoundaryRuntimeTest {
                         .findViewById<View>(R.id.held_discard).performClick()
                 }
                 waitUntil("the confirmation to show again") { heldText(scenario)?.discardDialog?.isShowing == true }
+                // Restored in a new app process over unchanged text, its answer deletes nothing: the screen reads the
+                // text again and asks again, in a confirmation of this process (the maintainer's answer on #709).
+                val unchanged = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+                scenario.onActivity { activity ->
+                    held(activity).childFragmentManager.executePendingTransactions()
+                    val args = requireNotNull(held(activity).discardConfirmation) { "the confirmation" }.requireArguments()
+                    assertEquals("made in this process", ProcessIncarnation.current(), args.getString(HeldTextFragment.ARG_PROCESS))
+                    args.putString(HeldTextFragment.ARG_PROCESS, "another-app-process")
+                }
+                scenario.recreate()
+                waitUntil("the restored confirmation to come back") { heldText(scenario)?.discardDialog?.isShowing == true }
+                scenario.onActivity { held(it).discardDialog!!.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick() }
+                waitUntil("the confirmation to be asked again in this process") {
+                    heldText(scenario)?.discardConfirmation?.let { confirmation ->
+                        confirmation.dialog?.isShowing == true &&
+                            confirmation.requireArguments().getString(HeldTextFragment.ARG_PROCESS) == ProcessIncarnation.current()
+                    } == true
+                }
+                assertEquals("nothing deleted by an answer from another process", unchanged,
+                    (store.read(note.uid) as PendingNotesStore.Read.Present).entry)
                 // Recreated over unchanged text, the confirmation still carries the version and the text it showed, so
                 // the discard goes through: a confirmation that lost them would answer Changed and delete nothing.
                 scenario.recreate()
