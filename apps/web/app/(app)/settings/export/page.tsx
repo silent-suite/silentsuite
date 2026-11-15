@@ -358,11 +358,20 @@ export default function ExportPage() {
     if (count > 0) showWarningToast(t('notesLeftOut', { count }))
   }
 
-  /** Notes are listed from the server again, so an export with notes can fail for want of a connection. */
-  function reportNotesFailure(label: string, err: unknown) {
-    if (!isOfflineError(err)) return reportError(label, err)
-    console.error(`[export] ${label} failed while offline`, getSafeErrorDetails(err))
-    showErrorToast(t('notesNeedConnection'))
+  /**
+   * Notes are listed from the server again, so an export with notes can fail
+   * for want of a connection. The Notes button's own failure text is
+   * translated; the all-data ZIP keeps the page's existing English text.
+   */
+  function reportNotesFailure(label: 'Notes export' | 'ZIP build', err: unknown) {
+    if (isOfflineError(err)) {
+      console.error(`[export] ${label} failed while offline`, getSafeErrorDetails(err))
+      showErrorToast(t('notesNeedConnection'))
+      return
+    }
+    if (label === 'ZIP build') return reportError(label, err)
+    console.error(`[export] ${label} failed`, getSafeErrorDetails(err))
+    showErrorToast(t('notesExportFailed'))
   }
 
   /**

@@ -120,6 +120,7 @@
     "notesWaitingToSync": "Notes are exported as the server has them, so a note change still waiting to sync on this device isn't included.",
     "notesLeftOut": "{count, plural, one {# note couldn't be read on this device and was left out of the export.} other {# notes couldn't be read on this device and were left out of the export.}}",
     "notesNeedConnection": "Exporting notes needs a connection, so nothing was exported. Connect, then export again.",
+    "notesExportFailed": "Notes export failed. Please try again.",
     "allDataWithNotes": "Includes every calendar, task list, address book, and notebook in a single archive."
   },
   "SettingsExperimental": {
