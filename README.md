@@ -101,6 +101,8 @@ Install SilentSuite for Android through [Google Play](https://play.google.com/st
 signed APK. The [Android installation guide](https://docs.silentsuite.io/user-guide/apps/android)
 explains each channel and its update behavior.
 
+Featured on [PrivacyTools.io](https://privacytools.io/app/silentsuite) and [AlternativeTo](https://alternativeto.net/software/silentsuite/). Listed in [F-Droid](https://f-droid.org/packages/io.silentsuite.android/), [android-foss](https://github.com/offa/android-foss#-synchronisation), [Awesome Android Apps](https://github.com/fiedri/awesome-android-apps/blob/main/content/ALL_APPS.md) and [IzzyOnDroid's calendar and contact sync list](https://android.izzysoft.de/applists/category/named/office_calendar_sync?lang=en). Works with [Tasks.org](https://github.com/tasks/tasks/blob/main/CHANGELOG.md) and [KashCal](https://github.com/KashCal/KashCal#device-calendar).
+
 Download Bridge binaries and signed Android APKs with checksums from
 [GitHub Releases](https://github.com/silent-suite/silentsuite/releases/latest).
 

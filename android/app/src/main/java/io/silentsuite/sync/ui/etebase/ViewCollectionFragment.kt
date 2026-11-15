@@ -20,6 +20,8 @@ import io.silentsuite.sync.birthdays.BirthdayCalendar
 import io.silentsuite.sync.dataexport.AndroidDataExporter
 import io.silentsuite.sync.resource.LocalCalendar
 import io.silentsuite.sync.ui.BaseActivity
+import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.ui.importlocal.ImportActivity
 import io.silentsuite.sync.ui.importlocal.ImportFragment
 import io.silentsuite.sync.utils.TaskProviderHandling
 import kotlinx.coroutines.Dispatchers
@@ -285,8 +287,23 @@ class ViewCollectionFragment : Fragment() {
             return
         }
 
+        val identity = requireIdentity()
+        val deviceImportType = when (identity.collectionType) {
+            Constants.ETEBASE_TYPE_CALENDAR -> CollectionInfo.Type.CALENDAR
+            Constants.ETEBASE_TYPE_ADDRESS_BOOK -> CollectionInfo.Type.ADDRESS_BOOK
+            else -> null
+        }
+        if (deviceImportType != null) {
+            // Calendars and address books offer a choice: a file, or an account on this phone (#48).
+            val info = CollectionInfo().apply {
+                uid = identity.collectionUid
+                enumType = deviceImportType
+            }
+            startActivity(ImportActivity.newIntent(requireContext(), identity.account, identity.creationId, info))
+            return
+        }
         parentFragmentManager.commit {
-            add(ImportFragment.newInstance(requireIdentity()), null)
+            add(ImportFragment.newInstance(identity), null)
         }
     }
 

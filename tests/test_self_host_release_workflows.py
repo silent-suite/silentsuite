@@ -1087,6 +1087,7 @@ def test_every_workflow_action_is_pinned_to_an_immutable_commit():
 BRIDGE_BUILD_REQUIREMENTS = ROOT / "bridge" / "requirements-build.txt"
 BRIDGE_LOCK = ROOT / "bridge" / "requirements-lock.txt"
 BRIDGE_ETEBASE_BUILD_REQUIREMENTS = ROOT / "bridge" / "requirements-etebase-build.txt"
+BRIDGE_ETEBASE_SDIST = ROOT / "bridge" / "requirements-etebase-sdist.txt"
 BRIDGE_TEST_LINUX_WORKFLOW = WORKFLOW_DIR / "test-bridge-linux.yml"
 HASHED_BUILD_INSTALL = (
     "python -m pip install --disable-pip-version-check --require-hashes "
@@ -1151,9 +1152,10 @@ def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
     for script in (native, qemu):
         assert_hash_locked_bridge_install(script)
 
-    # macOS arm64 builds etebase from a pinned upstream commit, after the lock,
-    # into a wheel in a throwaway virtualenv that alone gets the hash-locked
-    # build tools; the PyInstaller environment only installs the built wheel.
+    # macOS x86_64 builds etebase from its hash-pinned PyPI sdist, after the lock,
+    # into a wheel in a throwaway virtualenv that alone gets the hash-locked build
+    # tool (maturin); cargo is held to the sdist's Cargo.lock. The PyInstaller
+    # environment only installs the built wheel.
     venv_python = '"$ETEBASE_BUILD/venv/bin/python" -m pip'
     build_venv = native.index('python -m venv "$ETEBASE_BUILD/venv"')
     tools = native.index(
@@ -1161,21 +1163,26 @@ def test_bridge_build_tools_are_installed_from_the_hash_pinned_requirements():
         "--only-binary=:all: -r requirements-etebase-build.txt"
     )
     wheel = native.index(
-        f"{venv_python} wheel --disable-pip-version-check --no-deps --no-build-isolation "
-        '--check-build-dependencies -w "$ETEBASE_BUILD/wheel" '
-        '"git+https://github.com/etesync/etebase-py.git@c5afd1a546b8f030d1b97bcecfc5e8bf9799827b"'
+        f'MATURIN_PEP517_ARGS="--locked" {venv_python} wheel --disable-pip-version-check --no-deps '
+        "--no-build-isolation --check-build-dependencies --require-hashes --no-binary=etebase "
+        '-w "$ETEBASE_BUILD/wheel" -r requirements-etebase-sdist.txt'
     )
     install = native.index(
         'python -m pip install --disable-pip-version-check --no-deps --no-index "$ETEBASE_BUILD"/wheel/etebase-*.whl'
     )
     assert native.index(HASHED_LOCK_INSTALL) < build_venv < tools < wheel < install < native.index(BRIDGE_ONLY_INSTALL)
     assert native.count("requirements-etebase-build.txt") == 1
-    assert native.count("etesync/etebase-py.git") == 1
-    assert hashed_pin_names(BRIDGE_ETEBASE_BUILD_REQUIREMENTS) >= {"setuptools", "wheel", "setuptools-rust"}
-    # The newer setuptools those tools need never reaches the bundled environment.
-    assert not {"setuptools", "wheel", "setuptools-rust"} & hashed_pin_names(BRIDGE_LOCK)
+    assert native.count("requirements-etebase-sdist.txt") == 1
+    assert "git+" not in native
+    assert hashed_pin_names(BRIDGE_ETEBASE_BUILD_REQUIREMENTS) == {"maturin"}
+    assert hashed_pin_names(BRIDGE_ETEBASE_SDIST) == {"etebase"}
+    # The etebase build tool never reaches the bundled environment.
+    assert "maturin" not in hashed_pin_names(BRIDGE_LOCK)
 
-    assert {"pip", "pyinstaller", "pyinstaller-hooks-contrib"} <= hashed_pin_names(BRIDGE_BUILD_REQUIREMENTS)
+    # Python 3.12 no longer ships setuptools, which PyInstaller requires.
+    assert {"pip", "pyinstaller", "pyinstaller-hooks-contrib", "setuptools"} <= hashed_pin_names(
+        BRIDGE_BUILD_REQUIREMENTS
+    )
 
 
 def test_bridge_dependencies_come_from_the_hash_locked_requirements():
@@ -1198,13 +1205,10 @@ def test_bridge_build_container_inputs_are_pinned_and_verified():
     container = step_named(build, "Build + smoke test (QEMU arm64)")["with"]
     assert DIGEST_PINNED_IMAGE.match(container["image"]), container["image"]
     script = container["run"]
-    assert "sh.rustup.rs" not in script
-    assert not re.search(r"curl[^\n|]*\|\s*(?:ba)?sh", script)
-    assert re.search(r"RUSTUP_INIT_SHA256=[0-9a-f]{64}\n", script)
-    download = script.index("-o /tmp/rustup-init")
-    verify = script.index('echo "${RUSTUP_INIT_SHA256}  /tmp/rustup-init" | sha256sum -c -')
-    run = script.index("/tmp/rustup-init -y --default-toolchain 1.63.0")
-    assert download < verify < run
+    # etebase is an abi3 wheel from the lock, so nothing is downloaded or compiled
+    # in the container; PyInstaller still needs objdump from binutils.
+    assert "rustup" not in script and "cargo" not in script and "curl" not in script
+    assert "apt-get install -y --no-install-recommends binutils" in script
 
 
 ALLOWED_RELEASE_SECRETS = {

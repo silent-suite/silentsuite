@@ -502,9 +502,22 @@ export function parseVCard(vcardStr: string, options: { strictTextEncoding?: boo
       case 'TITLE':
         vcard.title = text();
         break;
-      case 'CATEGORIES':
-        vcard.categories = splitCommaValues(prop.value).map((c) => text(c).trim()).filter((c) => c.length > 0);
+      case 'CATEGORIES': {
+        // CATEGORIES may repeat (RFC 6350 cardinality *): merge every property,
+        // de-duplicating case-insensitively and keeping first-seen order/casing
+        // (same policy as the web label editor).
+        const merged = vcard.categories ?? [];
+        const seen = new Set(merged.map((c) => c.toLowerCase()));
+        for (const raw of splitCommaValues(prop.value)) {
+          const label = text(raw).trim();
+          const key = label.toLowerCase();
+          if (!label || seen.has(key)) continue;
+          seen.add(key);
+          merged.push(label);
+        }
+        vcard.categories = merged;
         break;
+      }
       case 'NOTE':
         vcard.note = text();
         break;

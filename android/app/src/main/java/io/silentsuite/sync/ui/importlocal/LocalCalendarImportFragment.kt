@@ -15,13 +15,13 @@ import android.widget.TextView
 import androidx.fragment.app.ListFragment
 import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
-import at.bitfire.ical4android.CalendarStorageException
 import io.silentsuite.sync.R
 import io.silentsuite.sync.Constants
 import io.silentsuite.sync.log.Logger
 import io.silentsuite.sync.model.CollectionInfo
+import at.bitfire.ical4android.AndroidCalendar
+import io.silentsuite.sync.App
 import io.silentsuite.sync.resource.LocalCalendar
-import io.silentsuite.sync.resource.LocalEvent
 import io.silentsuite.sync.utils.ProgressDialogHelper
 import io.silentsuite.sync.ui.etebase.CollectionLifecycleIdentity
 import kotlinx.coroutines.Dispatchers
@@ -53,12 +53,43 @@ class LocalCalendarImportFragment : ListFragment() {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        if (!::account.isInitialized) return
+        // ImportActivity asks before opening this picker; access can still be gone after a restart.
+        if (!DeviceImportAccess.granted(requireContext(), DeviceImport.permissionsFor(Constants.ETEBASE_TYPE_CALENDAR))) {
+            DeviceImportAccess.refuse(this, R.string.import_device_access_missing)
+            return
+        }
+        showSourcesIfDestinationWritable()
+    }
 
+    /** Lists the other accounts' calendars only for an existing, writable destination on this phone. */
+    private fun showSourcesIfDestinationWritable() {
+        val destination = try {
+            val provider = requireContext().contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
+                ?: return DeviceImportAccess.refuse(this, R.string.import_device_destination_missing)
+            try {
+                DeviceImporter.destinationCalendar(account, provider, uid)
+            } finally {
+                provider.release()
+            }
+        } catch (e: SecurityException) {
+            DeviceImportAccess.refuse(this, R.string.import_device_access_missing)
+            return
+        }
+        DeviceImportAccess.destinationProblem(destination)?.let { problem ->
+            DeviceImportAccess.refuse(this, problem)
+            return
+        }
         importAccount()
     }
 
     protected fun importAccount() {
-        val calendarAccountList = CalendarAccount.loadAll(requireContext().contentResolver)
+        val calendarAccountList = try {
+            CalendarAccount.loadAll(requireContext().contentResolver, setOf(App.accountType, App.addressBookAccountType))
+        } catch (e: SecurityException) {
+            Logger.log.warning("Calendar access missing for device import")
+            emptyList()
+        }
 
         val listCalendar = listView as ExpandableListView
 
@@ -90,7 +121,8 @@ class LocalCalendarImportFragment : ListFragment() {
         }
 
         override fun getChild(groupPosition: Int, childPosititon: Int): Any {
-            return calendarAccounts[groupPosition].getCalendars()[childPosititon].displayName!!
+            val calendar = calendarAccounts[groupPosition].getCalendars()[childPosititon]
+            return calendar.displayName ?: calendar.name ?: ""
         }
 
         override fun getChildId(groupPosition: Int, childPosition: Int): Long {
@@ -220,54 +252,43 @@ class LocalCalendarImportFragment : ListFragment() {
         identity: CollectionLifecycleIdentity,
         applicationContext: Context,
     ): ResultFragment.ImportResult {
-        val result = ResultFragment.ImportResult()
         try {
-            val localEvents = fromCalendar.findAll()
             if (!identity.validate(applicationContext)) return staleImportResult()
             val provider = applicationContext.contentResolver.acquireContentProviderClient(CalendarContract.CONTENT_URI)
                 ?: throw Exception("Could not acquire calendar provider")
             try {
-                val localCalendar = LocalCalendar.findByName(account, provider, LocalCalendar.Factory, uid)
-                    ?: throw Exception("Could not find calendar")
-            val total = localEvents.size
-            val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
-            activity?.runOnUiThread { progressBar.max = total }
-            result.total = total.toLong()
-            var progress = 0
-            for (currentLocalEvent in localEvents) {
-                if (!identity.validate(applicationContext)) return staleImportResult()
-                val event = currentLocalEvent.event
-                try {
-                    var localEvent = if (event == null || event.uid == null)
-                        null
-                    else
-                        localCalendar.findByUid(event.uid!!)
-
-                    if (localEvent != null) {
-                        localEvent.updateAsDirty(event!!)
-                        result.updated++
-                    } else {
-                        localEvent = LocalEvent(localCalendar, event!!, event.uid, null)
-                        localEvent.addAsDirty()
-                        result.added++
+                val localCalendar = when (val destination = DeviceImporter.destinationCalendar(account, provider, uid)) {
+                    is DeviceImporter.Destination.Ready -> destination.collection
+                    else -> return ResultFragment.ImportResult().apply {
+                        e = Exception("Destination is missing or read-only")
+                        failureMessage = DeviceImportAccess.destinationProblem(destination)?.let { applicationContext.getString(it) }
                     }
-                } catch (e: CalendarStorageException) {
-                    e.printStackTrace()
-
                 }
-
-                val currentProgress = ++progress
-                activity?.runOnUiThread { progressBar.progress = currentProgress }
-            }
+                // Read the source again through this client; the picker's client is already released.
+                val source = AndroidCalendar.findByID(fromCalendar.account, provider, LocalCalendar.Factory, fromCalendar.id)
+                val progressBar = ProgressDialogHelper.getProgressBar(progressDialog)
+                return DeviceImporter.copyCalendar(source, localCalendar,
+                    stillCurrent = { identity.validate(applicationContext) },
+                    progress = { done, total ->
+                        activity?.runOnUiThread {
+                            progressBar.max = total
+                            progressBar.progress = done
+                        }
+                    })
             } finally {
                 provider.release()
             }
+        } catch (e: DeviceImporter.StaleRoute) {
+            return staleImportResult()
+        } catch (e: SecurityException) {
+            return ResultFragment.ImportResult().apply {
+                this.e = e
+                failureMessage = applicationContext.getString(R.string.import_device_access_removed)
+            }
         } catch (e: Exception) {
-            e.printStackTrace()
-            result.e = e
+            Logger.log.warning("Device calendar import failed: ${e.javaClass.name}")
+            return ResultFragment.ImportResult().apply { this.e = e }
         }
-
-        return result
     }
 
     private fun staleImportResult() = ResultFragment.ImportResult().apply {

@@ -3,6 +3,7 @@ const createNextIntlPlugin = require('next-intl/plugin')
 const withPWA = require('@ducanh2912/next-pwa').default
 const { withSentryConfig } = require('@sentry/nextjs')
 const { glitchtipSourceMapUpload } = require('./sentry-build-options')
+const { runtimeCachingBeforeDefaults } = require('./pwa-runtime-caching')
 
 const withNextIntl = createNextIntlPlugin('./i18n/request.ts')
 // `https:` lets users reach their own Etebase server on any host, port or base path.
@@ -80,6 +81,11 @@ const pwaConfig = withPWA({
     document: '/offline',
   },
   importScripts: ['/notification-worker.js'],
+  // Our routes first, then next-pwa's defaults unchanged (see pwa-runtime-caching.js).
+  extendDefaultRuntimeCaching: true,
+  workboxOptions: {
+    runtimeCaching: runtimeCachingBeforeDefaults,
+  },
 })(withNextIntl(nextConfig))
 
 module.exports = withSentryConfig(pwaConfig, {

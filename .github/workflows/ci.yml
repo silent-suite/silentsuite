@@ -181,7 +181,8 @@ jobs:
     name: Build Web App
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint-and-typecheck, test]
+    # Runs alongside lint and tests: it uses none of their outputs, and each is a
+    # required check of its own.
     env:
       WEB_BUILD_ARGS: |
         NEXT_PUBLIC_ETEBASE_SERVER_URL=https://server.silentsuite.io

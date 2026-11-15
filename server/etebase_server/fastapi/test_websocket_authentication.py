@@ -56,6 +56,8 @@ class FakeRedis:
         # Published payloads per channel. deque append/popleft are thread-safe,
         # so the test thread can publish while the websocket runs in its own.
         self.channels: t.DefaultDict[str, t.Deque[bytes]] = collections.defaultdict(collections.deque)
+        # Every pub/sub handed out, so tests can check each one was closed.
+        self.pubsubs: list[FakePubSub] = []
 
     @staticmethod
     def _key(name) -> bytes:
@@ -73,7 +75,9 @@ class FakeRedis:
         return sum(self.store.pop(self._key(name), None) is not None for name in names)
 
     def pubsub(self):
-        return FakePubSub(self)
+        pubsub = FakePubSub(self)
+        self.pubsubs.append(pubsub)
+        return pubsub
 
     def deliver(self, channel: str, data: bytes) -> None:
         """Publish from the (synchronous) test thread."""
@@ -120,6 +124,12 @@ class FakePubSub:
     def __init__(self, redis: FakeRedis):
         self._redis = redis
         self._channels: list[str] = []
+        self.closed = False
+
+    async def aclose(self):
+        # redis-py drops the connection, which ends every subscription on it.
+        self._channels = []
+        self.closed = True
 
     async def subscribe(self, *channels):
         self._redis.subscriptions.extend(channels)
@@ -406,3 +416,66 @@ class TestWebsocketUpdates:
                 ws.receive_bytes()
 
         assert closed.value.code == status.WS_1008_POLICY_VIOLATION
+
+
+@pytest.mark.django_db(transaction=True)
+class TestWebsocketSubscriptionCleanup:
+    """Each websocket opens its own Redis pub/sub connection. It must be closed
+    when the socket ends, or every finished session keeps one Redis connection
+    and subscription open."""
+
+    def test_pubsub_is_closed_after_client_disconnects(self, ws_client, fake_redis, membership):
+        ticket = _issue_ticket(ws_client, membership)
+
+        with ws_client.websocket_connect(f"{WS_PREFIX}/{ticket}/") as ws:
+            assert _frame_item_uids(ws.receive_bytes()) == [membership.item_uid]
+            # Still subscribed while the live loop runs.
+            assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [False]
+
+        assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
+        assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]
+
+    def test_pubsub_is_closed_when_collection_is_not_found(self, ws_client, fake_redis, membership):
+        from etebase_server.django import models
+
+        ticket = _issue_ticket(ws_client, membership)
+        # Membership removed after the ticket was issued: the collection lookup
+        # finds nothing and the handler returns before catch-up.
+        models.CollectionMember.objects.filter(user=membership.user).delete()
+
+        with ws_client.websocket_connect(f"{WS_PREFIX}/{ticket}/") as ws:
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_bytes()
+
+        assert closed.value.code == status.WS_1008_POLICY_VIOLATION
+        assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
+        assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]
+
+    def test_disconnect_during_catch_up_ends_quietly_and_closes_pubsub(self, fake_redis, membership):
+        from etebase_server.fastapi.routers.websocket import TicketInner, TicketRequest, redis_connector
+
+        class DisconnectedWebSocket:
+            """Stands in for a socket whose client left before catch-up was sent:
+            Starlette raises WebSocketDisconnect when sending to it."""
+
+            sent = 0
+
+            async def send_bytes(self, data):
+                self.sent += 1
+                raise WebSocketDisconnect(code=1006)
+
+            async def receive(self):  # pragma: no cover - never reached
+                raise AssertionError("live loop started after a failed catch-up")
+
+            async def close(self, code=1000):  # pragma: no cover - never reached
+                raise AssertionError("closed a socket that was already gone")
+
+        ws = DisconnectedWebSocket()
+        ticket_model = TicketInner(user=membership.user.id, req=TicketRequest(collection=membership.collection_uid))
+
+        # Returns without raising WebSocketDisconnect.
+        asyncio.run(redis_connector(ws, ticket_model, membership.user, None))
+
+        assert ws.sent == 1
+        assert fake_redis.subscriptions == [f"col.{membership.collection_uid}"]
+        assert [pubsub.closed for pubsub in fake_redis.pubsubs] == [True]

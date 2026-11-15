@@ -58,6 +58,14 @@ describe('CalendarListPanel Birthdays control (#738)', () => {
     expect(screen.getByRole('button', { name: OFF })).toBeTruthy()
   })
 
+  it('shows the full Birthdays label, wrapping rather than truncating it', () => {
+    setup()
+    render(<CalendarListPanel />)
+    const label = screen.getByText('Birthdays from contacts')
+    expect(label.className).not.toMatch(/\btruncate\b/)
+    expect(label.className).toMatch(/\bmin-w-0\b/)
+  })
+
   it('turns generation on from its own control and reports success', async () => {
     setup()
     lifecycle.enable.mockResolvedValue({ status: 'done' })
