@@ -15,4 +15,20 @@ const googleApiNetworkOnly = {
   method: 'GET',
 }
 
-module.exports = { GOOGLE_API_URL, runtimeCachingBeforeDefaults: [googleApiNetworkOnly] }
+/**
+ * Microsoft Graph, for the Microsoft import (#48), likewise. The Microsoft sign-in endpoint
+ * (login.microsoftonline.com) is only POSTed to, and runtime caching handles GET only.
+ */
+const MICROSOFT_GRAPH_URL = /^https:\/\/graph\.microsoft\.com\//
+
+const microsoftGraphNetworkOnly = {
+  urlPattern: MICROSOFT_GRAPH_URL,
+  handler: 'NetworkOnly',
+  method: 'GET',
+}
+
+module.exports = {
+  GOOGLE_API_URL,
+  MICROSOFT_GRAPH_URL,
+  runtimeCachingBeforeDefaults: [googleApiNetworkOnly, microsoftGraphNetworkOnly],
+}
