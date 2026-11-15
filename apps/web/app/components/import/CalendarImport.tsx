@@ -7,6 +7,7 @@ import type { VEvent } from '@silentsuite/core/utils/ical-parser'
 import FileDropZone from './FileDropZone'
 import ImportListSelector from './ImportListSelector'
 import GoogleImportButton from './GoogleImportButton'
+import MicrosoftImportButton from './MicrosoftImportButton'
 import { isProviderImportVEvent, vEventToImportEvent } from './import-mappers'
 import { importSourceKeys } from '@/app/lib/google-import/source-key'
 import { RECONCILE_FAILED_MESSAGE, serverImportSourceKeys } from '@/app/lib/google-import/reconcile'
@@ -54,9 +55,14 @@ interface CalendarImportGroup {
   events: VEvent[]
   /** The calendar already created for this file, reused by a retry instead of creating another. */
   calendarId?: string
-  /** Read from a Google calendar rather than a file. */
-  fromGoogle?: true
+  /** The provider this calendar was read from, rather than a file. */
+  provider?: ImportProviderLabel
 }
+
+type ImportProviderLabel = 'Google' | 'Microsoft'
+
+/** What the preview calls a calendar read from each provider. */
+const PROVIDER_CALENDAR: Record<ImportProviderLabel, string> = { Google: 'Google calendar', Microsoft: 'Outlook calendar' }
 
 function hasProviderUnits(groups: CalendarImportGroup[]): boolean {
   return groups.some((group) => group.events.some(isProviderImportVEvent))
@@ -153,7 +159,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
   const [importMode, setImportMode] = useState<ImportMode>('single')
   const [error, setError] = useState<string | null>(null)
   const [todoWarning, setTodoWarning] = useState<string | null>(null)
-  const [googleNotice, setGoogleNotice] = useState<string | null>(null)
+  const [providerNotice, setProviderNotice] = useState<string | null>(null)
   const [isImporting, setIsImporting] = useState(false)
   const [importedCount, setImportedCount] = useState<number | null>(null)
   const [openAccordion, setOpenAccordion] = useState<string | null>(null)
@@ -197,7 +203,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     setGroups([])
     setImportedCount(null)
     setTodoWarning(null)
-    setGoogleNotice(null)
+    setProviderNotice(null)
 
     try {
       const parsedGroups: CalendarImportGroup[] = []
@@ -245,7 +251,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     }
   }, [calendars])
 
-  const handleGoogleLoaded = useCallback((result: GoogleCalendarImport) => {
+  const handleProviderLoaded = useCallback((provider: ImportProviderLabel, result: GoogleCalendarImport) => {
     setError(null)
     setImportedCount(null)
     setTodoWarning(null)
@@ -256,15 +262,15 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
         ?? DEFAULT_CALENDAR_COLORS[(calendars.length + index) % DEFAULT_CALENDAR_COLORS.length]
         ?? '#10b981'
       usedColors.add(color)
-      return { id: `google-${index}`, fileName: 'Google Calendar', name: source.name, color, events: source.units, fromGoogle: true }
+      return { id: `${provider.toLowerCase()}-${index}`, fileName: `${provider} Calendar`, name: source.name, color, events: source.units, provider }
     })
     // A first look against what this device shows; the write re-checks against the server.
     const { groups: pending, skipped } = withoutImported(loaded, importSourceKeys(useCalendarStore.getState().events))
     const notes: string[] = []
     if (skipped > 0) notes.push(`${skipped} already imported ${skipped === 1 ? 'entry was' : 'entries were'} skipped.`)
-    if (result.unreadable > 0) notes.push(`${result.unreadable} ${result.unreadable === 1 ? 'entry' : 'entries'} could not be read and ${result.unreadable === 1 ? 'was' : 'were'} not imported; importing from Google again will retry ${result.unreadable === 1 ? 'it' : 'them'}.`)
-    if (pending.length === 0) notes.unshift('Nothing new to import from Google.')
-    setGoogleNotice(notes.length > 0 ? notes.join(' ') : null)
+    if (result.unreadable > 0) notes.push(`${result.unreadable} ${result.unreadable === 1 ? 'entry' : 'entries'} could not be read and ${result.unreadable === 1 ? 'was' : 'were'} not imported; importing from ${provider} again will retry ${result.unreadable === 1 ? 'it' : 'them'}.`)
+    if (pending.length === 0) notes.unshift(`Nothing new to import from ${provider}.`)
+    setProviderNotice(notes.length > 0 ? notes.join(' ') : null)
     setImportMode(pending.length > 1 ? 'separate' : 'single')
     setGroups(pending)
   }, [calendars])
@@ -291,7 +297,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     }
     if (importGroups.length === 0) {
       setGroups([])
-      setGoogleNotice('Everything listed was already imported.')
+      setProviderNotice('Everything listed was already imported.')
       setIsImporting(false)
       return
     }
@@ -385,7 +391,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
     setGroups([])
     setError(null)
     setImportedCount(null)
-    setGoogleNotice(null)
+    setProviderNotice(null)
   }, [])
 
   return (
@@ -446,10 +452,12 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
 
       <FileDropZone accept=".ics" onFiles={handleFiles} disabled={isImporting} />
 
-      <GoogleImportButton kind="calendar" disabled={isImporting} onLoaded={handleGoogleLoaded} onError={setError} />
+      <GoogleImportButton kind="calendar" disabled={isImporting} onLoaded={(result) => handleProviderLoaded('Google', result)} onError={setError} />
 
-      {googleNotice && (
-        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{googleNotice}</p>
+      <MicrosoftImportButton kind="calendar" disabled={isImporting} onLoaded={(result) => handleProviderLoaded('Microsoft', result)} onError={setError} />
+
+      {providerNotice && (
+        <p className="rounded-md bg-[rgb(var(--surface))] px-3 py-2 text-sm text-[rgb(var(--muted))]">{providerNotice}</p>
       )}
 
       {error && (
@@ -474,7 +482,7 @@ export default function CalendarImport({ onImportComplete, heading }: CalendarIm
           <div className="space-y-3 rounded-lg border border-[rgb(var(--border))] bg-[rgb(var(--surface))]/50 p-3">
             <div>
               <p className="text-sm font-medium text-[rgb(var(--foreground))]">
-                {totalEvents} events found in {groups.length} {groups.every((group) => group.fromGoogle) ? 'Google calendar' : 'file'}{groups.length !== 1 ? 's' : ''}
+                {totalEvents} events found in {groups.length} {groups[0]?.provider && groups.every((group) => group.provider === groups[0]!.provider) ? PROVIDER_CALENDAR[groups[0].provider] : 'file'}{groups.length !== 1 ? 's' : ''}
               </p>
               <p className="mt-1 text-xs text-[rgb(var(--muted))]">
                 Review the destination before importing. You can delete or clear calendars later from this page.
