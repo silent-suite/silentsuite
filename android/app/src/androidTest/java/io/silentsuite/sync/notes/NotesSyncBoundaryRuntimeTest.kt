@@ -389,7 +389,7 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("no unsynced text", 0, overview.unsyncedText)
         assertTrue("no waiting change on any notebook", overview.notebooks.all { it.waiting == 0 })
         assertEquals("the server's copy, with no local change over it",
-            NoteContent(draft.uid, "Kept on the server", "Server text", 9_000L),
+            NoteContent(draft.uid, "Kept on the server", "Server text", 9_000L, writable = true),
             (NotesLoader.note(context, account, "gen-5", notebook, draft.uid) as NotesLoad.Loaded).value)
         val beforeRun = fake.requests.size
         syncNow(account, "gen-5")
@@ -1314,7 +1314,7 @@ class NotesSyncBoundaryRuntimeTest {
         val theirNotebooks = NotesLoader.notebooks(context, account, "gen-new")
         assertEquals(listOf("Replacement notebook"), (theirNotebooks as NotesLoad.Loaded).value.notebooks.map { it.name })
         val theirNote = NotesLoader.note(context, account, "gen-new", notebook, note.uid)
-        assertEquals(NoteContent(note.uid, "Replacement note", "Replacement body", 2_000L), (theirNote as NotesLoad.Loaded).value)
+        assertEquals(NoteContent(note.uid, "Replacement note", "Replacement body", 2_000L, writable = true), (theirNote as NotesLoad.Loaded).value)
     }
 
     @Test fun aNotebookListingThatNeverFinishesFailsAloneAndFinishesOnceTheServerRecovers() {
@@ -3482,6 +3482,8 @@ class NotesSyncBoundaryRuntimeTest {
     @Test fun anEditorSaveOnAnOlderCopyBecomesAConflictedCopyAndTheNextSaveGoesIntoTheCopy() {
         val account = newAccount("gen-editor-conflict")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-conflict")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-conflict")
         val notebook = uploadNotebook("Work")
         val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
         syncNow(account, "gen-editor-conflict")
@@ -3954,6 +3956,8 @@ class NotesSyncBoundaryRuntimeTest {
     @Test fun aSaveDuringARunQueuesOneAutomaticFollowUpRunThatSendsIt() {
         val account = newAccount("gen-editor-follow")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-follow")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-follow")
         val notebook = uploadNotebook("Work")
         val note = uploadNote(notebook, "Plan", "First draft", mtime = 1_000L)
         syncNow(account, "gen-editor-follow")
@@ -4070,6 +4074,8 @@ class NotesSyncBoundaryRuntimeTest {
     @Test fun anEditorSaveKeepsOtherClientsMetadataByteForByteThroughAPlainPush() {
         val account = newAccount("gen-editor-meta")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-meta")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-meta")
         val notebook = uploadNotebook("Work")
         val others = linkedMapOf<String, Any?>("description" to "Written on the web", "color" to "#3366ff", "x-handrun" to "kept as it is")
         val written = linkedMapOf<String, Any?>("name" to "Plan", "mtime" to 1_000L).apply { putAll(others) }
@@ -4129,6 +4135,8 @@ class NotesSyncBoundaryRuntimeTest {
     @Test fun theEditorAtFontScaleTwoKeepsItsFieldsStatusAndUndoRedoReachableAndLabeled() {
         val account = newAccount("gen-editor-font")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-editor-font")
+        // The editor's saves make this account's store; registered so the class's teardown clears it.
+        pending(account, "gen-editor-font")
         val notebook = uploadNotebook("Work")
         val note = uploadNote(notebook, "Plan", "Body of the plan", mtime = 1_000L)
         syncNow(account, "gen-editor-font")
@@ -4640,16 +4648,18 @@ class NotesSyncBoundaryRuntimeTest {
      * holds, and the result is saved into the pending store with a copy of the notebook. No landed record
      * is kept when it is pushed, unless the case itself has an editor handle open on the note. With
      * [metaRaw], the item gets exactly those bytes as its metadata in place of the merge, for metadata no
-     * save of the app would write.
+     * save of the app would write. With [intoHeld], the save goes into held text and names the held entry's
+     * version as its base, as an editor that showed that text does; a save into held text with no base writes nothing.
      */
     private fun editLocally(account: Account, generation: String, notebook: String, note: String, title: String, body: String, mtime: Long,
                             withNotebookCopy: Boolean = true, metaRaw: ByteArray? = null, intoHeld: Boolean = false) {
         val store = pending(account, generation)
+        val base = if (intoHeld) (store.read(note) as PendingNotesStore.Read.Present).entry.version else null
         val (itemMgr, item, copy) = editable(account, store, notebook, note)
         item.setContent(body)
         item.setMetaRaw(metaRaw ?: (NoteMetaCodec.merge(item.metaRaw, title, mtime) as NoteMetaCodec.Merge.Merged).bytes)
         val saved = store.saveLocal(note, notebook, item.etag, itemMgr.cacheSaveWithContent(item), isCreate = false,
-            notebookCopy = copy.takeIf { withNotebookCopy })
+            notebookCopy = copy.takeIf { withNotebookCopy }, base = base)
         if (intoHeld) {
             assertTrue("the edit joined the held text: $saved", saved is PendingNotesStore.SaveOutcome.SavedToHolding)
         } else {
