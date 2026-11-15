@@ -153,7 +153,7 @@ async function exchanging(options: Parameters<typeof begin>[0] = {}) {
 async function signedIn() {
   const s = await exchanging()
   s.calls[0]!.resolve(jsonResponse(tokenBody()))
-  await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}` })
+  await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, release: expect.any(Function) })
   expect(getMicrosoftAccessToken()).toBe(TOKEN)
   return s
 }
@@ -237,7 +237,7 @@ describe('Microsoft import sign-in', () => {
     expect(String(s.popup.location.replace.mock.calls[0]![0])).not.toContain(verifier)
 
     s.calls[0]!.resolve(jsonResponse(tokenBody({ refresh_token: REFRESH })))
-    await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}` })
+    await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, release: expect.any(Function) })
     expect(getMicrosoftAccessToken()).toBe(TOKEN)
     const stored = storageText()
     for (const secret of [verifier, TOKEN, REFRESH, CODE]) expect(stored).not.toContain(secret)
@@ -247,7 +247,7 @@ describe('Microsoft import sign-in', () => {
   it('uses sub alone as the account id when the id_token has no tid', async () => {
     const s = await exchanging()
     s.calls[0]!.resolve(jsonResponse(tokenBody({ id_token: idToken({ aud: CLIENT_ID, sub: SUB }) })))
-    await expect(s.pending).resolves.toEqual({ accountId: SUB })
+    await expect(s.pending).resolves.toEqual({ accountId: SUB, release: expect.any(Function) })
   })
 
   it.each([
@@ -395,7 +395,7 @@ describe('Microsoft import sign-in', () => {
       vi.advanceTimersByTime(10_000)
       await flush()
       s.calls[0]!.resolve(jsonResponse(tokenBody()))
-      await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}` })
+      await expect(s.pending).resolves.toEqual({ accountId: `${TID}.${SUB}`, release: expect.any(Function) })
       expect(getMicrosoftAccessToken()).toBe(TOKEN)
     })
 
@@ -532,5 +532,35 @@ describe('Microsoft import sign-in', () => {
       begin()
       expect(getMicrosoftAccessToken()).toBeNull()
     })
+  })
+})
+
+describe('Microsoft import runs started from both buttons (#48)', () => {
+  it('a contacts import started while the calendar sign-in is pending is not cancelled by the first run ending', async () => {
+    const { loadMicrosoftCalendars, loadMicrosoftContacts } = await import('../importer')
+    const { createGraphFake } = await import('./graph-fake')
+    const graph = createGraphFake({ contacts: [{ id: 'imm-1', displayName: 'Ann' }] })
+    const fetcher = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === `${MICROSOFT_AUTHORITY}/token`) {
+        return jsonResponse(tokenBody({ access_token: 'graph-token', scope: 'https://graph.microsoft.com/Contacts.Read openid' }))
+      }
+      return graph.fetch(input, init)
+    }) as typeof fetch
+    const sleep = async () => undefined
+
+    const calendarWin = fakeWindow()
+    const first = loadMicrosoftCalendars({ clientId: CLIENT_ID, win: calendarWin.win, fetcher, sleep })
+    const firstOutcome = first.then(() => 'loaded', (err: unknown) => (err as MicrosoftAuthError).reason)
+    await started(calendarWin)
+
+    const contactsWin = fakeWindow()
+    const second = loadMicrosoftContacts({ clientId: CLIENT_ID, win: contactsWin.win, fetcher, sleep })
+    expect(await firstOutcome).toBe('cancelled')
+    await started(contactsWin)
+    contactsWin.grantAndClose()
+    const cards = await second
+    expect(cards.map((c) => c.fn)).toEqual(['Ann'])
+    // The finished run released its own token.
+    expect(getMicrosoftAccessToken()).toBeNull()
   })
 })

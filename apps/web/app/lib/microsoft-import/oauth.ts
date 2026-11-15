@@ -72,6 +72,8 @@ interface TokenOwner {
   epoch: number
   userId: string | null
   expiresAt: number
+  /** The sign-in that obtained the token: only its importer may release it. */
+  run: object
 }
 
 interface Run {
@@ -221,6 +223,12 @@ export interface MicrosoftSignInOptions {
   fetcher?: typeof fetch
 }
 
+/** A verified sign-in: the account key part, and `release` to drop its token when the import ends. */
+export interface MicrosoftSignIn {
+  accountId: string
+  release: () => void
+}
+
 type Verified = { token: string; lifetimeMs: number; accountId: string }
 
 /**
@@ -236,7 +244,7 @@ export function signInWithMicrosoft({
   timeoutMs = MICROSOFT_OAUTH_TIMEOUT_MS,
   exchangeTimeoutMs = MICROSOFT_EXCHANGE_TIMEOUT_MS,
   fetcher = fetch,
-}: MicrosoftSignInOptions): Promise<{ accountId: string }> {
+}: MicrosoftSignInOptions): Promise<MicrosoftSignIn> {
   // A new sign-in aborts and replaces any old run, and drops any token.
   clearMicrosoftAccessToken()
   if (!ALLOWED_SCOPES.has(scope) || !clientId) return Promise.reject(new MicrosoftAuthError('invalid'))
@@ -262,7 +270,7 @@ export function signInWithMicrosoft({
   }
   const popupWin = popup
 
-  return new Promise<{ accountId: string }>((resolve, reject) => {
+  return new Promise<MicrosoftSignIn>((resolve, reject) => {
     let settled = false
     let phase: 'waiting-popup' | 'exchanging' = 'waiting-popup'
     let poll: number | undefined
@@ -291,7 +299,13 @@ export function signInWithMicrosoft({
         controller.abort()
         reject(new MicrosoftAuthError(failure))
       } else {
-        resolve({ accountId: accountId! })
+        // Drops this run's token only: a newer sign-in's token (or run) is left alone.
+        const release = () => {
+          if (tokenOwner?.run !== run) return
+          accessToken = null
+          tokenOwner = null
+        }
+        resolve({ accountId: accountId!, release })
       }
     }
 
@@ -372,7 +386,7 @@ export function signInWithMicrosoft({
           if (settled || currentRun !== run || controller.signal.aborted) return finish('cancelled')
           if (!accountUnchanged()) return finish('account-changed')
           accessToken = verified.token
-          tokenOwner = { epoch, userId, expiresAt: Date.now() + verified.lifetimeMs }
+          tokenOwner = { epoch, userId, expiresAt: Date.now() + verified.lifetimeMs, run }
           finish(null, verified.accountId)
         },
         (err: unknown) => {

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createGraphFake } from './graph-fake'
 
 const oauth = vi.hoisted(() => ({
-  signIn: vi.fn(async (_options: { scope: string }) => ({ accountId: 'tenant.sub-1' })),
+  release: vi.fn(),
+  signIn: vi.fn(async (_options: { scope: string }): Promise<{ accountId: string; release: () => void }> => ({ accountId: 'tenant.sub-1', release: oauth.release })),
   clear: vi.fn(),
 }))
 vi.mock('../oauth', () => ({
@@ -24,6 +25,7 @@ describe('Microsoft importer (#48)', () => {
   beforeEach(() => {
     oauth.signIn.mockClear()
     oauth.clear.mockClear()
+    oauth.release.mockClear()
   })
 
   it('reads the default folder, every folder and child folder, labels non-default folders, and keeps a contact once', async () => {
@@ -46,7 +48,8 @@ describe('Microsoft importer (#48)', () => {
     expect(contactReads).toHaveLength(3)
     for (const url of contactReads) expect(url.searchParams.get('$select')).toContain('personalNotes')
     expect(graph.headers.every((h) => h.prefer?.includes('IdType="ImmutableId"'))).toBe(true)
-    expect(oauth.clear).toHaveBeenCalledTimes(1)
+    expect(oauth.release).toHaveBeenCalledTimes(1)
+    expect(oauth.clear).not.toHaveBeenCalled()
   })
 
   it('refuses a folder tree deeper than the guard and still drops the token', async () => {
@@ -59,17 +62,19 @@ describe('Microsoft importer (#48)', () => {
     }
     const graph = createGraphFake({ contactFolders: [root] })
     await expect(loadMicrosoftContacts({ clientId: 'client-1', fetcher: graph.fetch, sleep })).rejects.toBeInstanceOf(MicrosoftImportError)
-    expect(oauth.clear).toHaveBeenCalledTimes(1)
+    expect(oauth.release).toHaveBeenCalledTimes(1)
+    expect(oauth.clear).not.toHaveBeenCalled()
   })
 
   it('a cancelled run reads nothing more and drops the token', async () => {
     const controller = new AbortController()
     const graph = createGraphFake({ calendars: [{ id: 'cal-1', name: 'Calendar' }], events: { 'cal-1': [] } })
-    oauth.signIn.mockImplementationOnce(async () => { controller.abort(); return { accountId: 'tenant.sub-1' } })
+    oauth.signIn.mockImplementationOnce(async () => { controller.abort(); return { accountId: 'tenant.sub-1', release: oauth.release } })
     await expect(loadMicrosoftCalendars({ clientId: 'client-1', fetcher: graph.fetch, sleep, signal: controller.signal }))
       .rejects.toThrow('Microsoft import was cancelled.')
     expect(graph.requests).toHaveLength(0)
-    expect(oauth.clear).toHaveBeenCalledTimes(1)
+    expect(oauth.release).toHaveBeenCalledTimes(1)
+    expect(oauth.clear).not.toHaveBeenCalled()
   })
 
   it('an expired sign-in ends the whole run instead of skipping one series', async () => {
@@ -79,7 +84,8 @@ describe('Microsoft importer (#48)', () => {
       return graph.fetch(input, init)
     }
     await expect(loadMicrosoftCalendars({ clientId: 'client-1', fetcher: expired, sleep })).rejects.toMatchObject({ name: 'GraphApiError', status: 401 })
-    expect(oauth.clear).toHaveBeenCalledTimes(1)
+    expect(oauth.release).toHaveBeenCalledTimes(1)
+    expect(oauth.clear).not.toHaveBeenCalled()
   })
 })
 

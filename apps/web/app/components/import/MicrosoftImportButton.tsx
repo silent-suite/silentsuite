@@ -18,8 +18,9 @@ export default function MicrosoftImportButton(props: ProviderImportButtonProps) 
   const provider: ProviderDescriptor = {
     label: 'Microsoft',
     clientId: MICROSOFT_IMPORT_CLIENT_ID ?? '',
-    // Name and features shared with app/lib/microsoft-import/oauth.ts, which navigates this popup.
-    popupName: 'silentsuite-microsoft-import',
+    // One popup name per kind: a contacts run started during a calendar sign-in gets its own
+    // window rather than the one the superseded run closes. oauth.ts navigates the popup given.
+    popupName: `silentsuite-microsoft-import-${props.kind}`,
     popupFeatures: 'popup,width=520,height=680',
     load: async () => {
       const importer = await import('@/app/lib/microsoft-import/importer')

@@ -51,9 +51,18 @@ describe('Import from Microsoft button (#48)', () => {
     render(<MicrosoftImportButton kind="contacts" onLoaded={onLoaded} onError={vi.fn()} />)
     expect(importer.evaluated).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Import from Microsoft' }))
-    expect(window.open).toHaveBeenCalledWith('about:blank', 'silentsuite-microsoft-import', 'popup,width=520,height=680')
+    expect(window.open).toHaveBeenCalledWith('about:blank', 'silentsuite-microsoft-import-contacts', 'popup,width=520,height=680')
     await waitFor(() => expect(onLoaded).toHaveBeenCalledWith(result))
     expect(importer.loadMicrosoftContacts).toHaveBeenCalledWith(expect.objectContaining({ clientId: '00000000-0000-0000-0000-000000000001', popup }))
+  })
+
+  it('calendar and contacts runs use different popup windows', () => {
+    render(<><MicrosoftImportButton kind="calendar" onLoaded={vi.fn()} onError={vi.fn()} /><MicrosoftImportButton kind="contacts" onLoaded={vi.fn()} onError={vi.fn()} /></>)
+    importer.loadMicrosoftCalendars.mockReturnValue(new Promise(() => undefined))
+    importer.loadMicrosoftContacts.mockReturnValue(new Promise(() => undefined))
+    for (const button of screen.getAllByRole('button', { name: 'Import from Microsoft' })) fireEvent.click(button)
+    const names = (window.open as unknown as { mock: { calls: unknown[][] } }).mock.calls.map((call) => call[1])
+    expect(names).toEqual(['silentsuite-microsoft-import-calendar', 'silentsuite-microsoft-import-contacts'])
   })
 
   it('cancel and leaving the page end the run and drop the token', async () => {

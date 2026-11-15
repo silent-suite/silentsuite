@@ -8,7 +8,7 @@ import { MICROSOFT_CALENDAR_SCOPE, MICROSOFT_CONTACTS_SCOPE, clearMicrosoftAcces
 /*
  * Entry points of the Microsoft import (#48), loaded with a dynamic import() only when the
  * user starts it. Each run signs in, reads everything it needs from Graph, maps it, and drops
- * the token before returning or failing. Writing happens afterwards through the existing
+ * its own token before returning or failing (a failed sign-in holds none). Writing happens afterwards through the existing
  * import components, which encrypt each item with the Etebase client before upload.
  */
 
@@ -75,8 +75,11 @@ async function readMaster(id: string, request: GraphRequestOptions): Promise<Gra
 
 export async function loadMicrosoftCalendars({ clientId, win, popup, signal, fetcher, sleep }: MicrosoftImportOptions): Promise<MicrosoftCalendarImport> {
   const request: GraphRequestOptions = { signal, fetcher, sleep }
+  let release: (() => void) | undefined
   try {
-    const { accountId } = await signInWithMicrosoft({ clientId, scope: MICROSOFT_CALENDAR_SCOPE, win, popup, ...(fetcher ? { fetcher } : {}) })
+    const signedIn = await signInWithMicrosoft({ clientId, scope: MICROSOFT_CALENDAR_SCOPE, win, popup, ...(fetcher ? { fetcher } : {}) })
+    release = signedIn.release
+    const { accountId } = signedIn
     throwIfAborted(signal)
     const calendars = await graphGetAllPages<GraphCalendar>(
       graphUrl('/me/calendars', { $select: 'id,name,hexColor,isDefaultCalendar', $top: PAGE_SIZE }),
@@ -119,7 +122,8 @@ export async function loadMicrosoftCalendars({ clientId, win, popup, signal, fet
     }
     return result
   } finally {
-    clearMicrosoftAccessToken()
+    // Only this run's token: a sign-in started meanwhile (the other import button) is left alone.
+    release?.()
   }
 }
 
@@ -130,8 +134,11 @@ async function readFolderContacts(path: string, request: GraphRequestOptions, fo
 
 export async function loadMicrosoftContacts({ clientId, win, popup, signal, fetcher, sleep }: MicrosoftImportOptions): Promise<ProviderImportVCard[]> {
   const request: GraphRequestOptions = { signal, fetcher, sleep }
+  let release: (() => void) | undefined
   try {
-    const { accountId } = await signInWithMicrosoft({ clientId, scope: MICROSOFT_CONTACTS_SCOPE, win, popup, ...(fetcher ? { fetcher } : {}) })
+    const signedIn = await signInWithMicrosoft({ clientId, scope: MICROSOFT_CONTACTS_SCOPE, win, popup, ...(fetcher ? { fetcher } : {}) })
+    release = signedIn.release
+    const { accountId } = signedIn
     throwIfAborted(signal)
     // The default Contacts folder; /me/contactFolders lists the folders below it.
     const read: FolderContact[] = await readFolderContacts('/me/contacts', request)
@@ -151,6 +158,7 @@ export async function loadMicrosoftContacts({ clientId, win, popup, signal, fetc
     await walk('/me/contactFolders', 1)
     return mapMicrosoftContacts(accountId, read)
   } finally {
-    clearMicrosoftAccessToken()
+    // Only this run's token: a sign-in started meanwhile (the other import button) is left alone.
+    release?.()
   }
 }
