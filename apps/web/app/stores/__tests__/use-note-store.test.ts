@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest'
 import type { Note } from '@silentsuite/core'
 import { useNoteStore } from '../use-note-store'
 import { useEtebaseStore } from '../use-etebase-store'
@@ -69,6 +69,9 @@ function note(id: string, overrides: Partial<Note> = {}): Note {
     ...overrides,
   }
 }
+
+const UNREADABLE_TOAST = 'Note not moved: some of its details could not be read. It stays in its notebook, unchanged.'
+const CHANGED_TOAST = 'Note not moved: it changed since this page loaded it. It stays in its notebook. Move it again after sync finishes.'
 
 /** A cached SDK item saved at `revision` whose metadata decodes through `getMeta`. */
 function savedItem(revision: string, getMeta: () => unknown = () => ({ name: 'Note', mtime: 1 })) {
@@ -411,16 +414,18 @@ describe('useNoteStore', () => {
       const original = note('note-1', { title: SECRET, content: SECRET, revision: 'rev-1' } as Partial<Note>)
       useNoteStore.setState({ notes: [original] })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      onTestFinished(() => errorSpy.mockRestore())
 
       await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBeNull()
 
       expect(moveItem).not.toHaveBeenCalled()
       expect(useNoteStore.getState().notes).toEqual([original])
-      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to move note. Please try again.')
+      // A refusal says why and that nothing moved, never a generic "try again".
+      expect(toastMock.showErrorToast).toHaveBeenCalledTimes(1)
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith(UNREADABLE_TOAST)
       expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMetaUnreadableError' })
       // Safe details only: no note text, title or metadata value reaches the console.
       expect(JSON.stringify(errorSpy.mock.calls)).not.toContain(SECRET)
-      errorSpy.mockRestore()
     })
 
     it.each([
@@ -433,14 +438,15 @@ describe('useNoteStore', () => {
       const original = note('note-1', { revision: 'rev-1' } as Partial<Note>)
       useNoteStore.setState({ notes: [original] })
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      onTestFinished(() => errorSpy.mockRestore())
 
       await expect(useNoteStore.getState().moveNote('note-1', 'notes-2')).resolves.toBeNull()
 
       expect(moveItem).not.toHaveBeenCalled()
       expect(useNoteStore.getState().notes).toEqual([original])
-      expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to move note. Please try again.')
+      expect(toastMock.showErrorToast).toHaveBeenCalledTimes(1)
+      expect(toastMock.showErrorToast).toHaveBeenCalledWith(CHANGED_TOAST)
       expect(errorSpy).toHaveBeenCalledWith('[note-store] Failed to move note', { errorName: 'NoteMoveSourceChangedError' })
-      errorSpy.mockRestore()
     })
   })
 

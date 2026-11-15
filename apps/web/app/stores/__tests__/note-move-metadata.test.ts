@@ -1,6 +1,6 @@
 // @vitest-environment node
 import 'fake-indexeddb/auto'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 import { _resetForTests as resetOfflineQueue } from '@/app/lib/offline-queue'
 import { _resetForTests as resetDataCache } from '@/app/lib/data-cache'
 
@@ -21,6 +21,8 @@ vi.setConfig({ testTimeout: 20_000 })
 const TITLE = 'Moved title'
 const BODY = 'MOVED BODY'
 const SHOWN_AT = new Date(5000)
+
+const UNREADABLE_TOAST = 'Note not moved: some of its details could not be read. It stays in its notebook, unchanged.'
 
 /** Fields another client wrote next to the title and mtime. */
 const PEER_FIELDS = {
@@ -104,6 +106,7 @@ describe('moving a note keeps the metadata other clients wrote', () => {
     // An owed reconciliation: the move proves the note against a fresh copy, at the peer's revision.
     markNoteObligation(item.uid)
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    onTestFinished(() => errorSpy.mockRestore())
 
     const movedId = await useNoteStore.getState().moveNote(item.uid, target.uid)
 
@@ -112,12 +115,12 @@ describe('moving a note keeps the metadata other clients wrote', () => {
     const source = (await serverItems(account, collection)).find((candidate) => candidate.uid === item.uid)
     expect(source?.isDeleted).toBe(false)
     expect(source?.getMeta()).toEqual({ name: TITLE, mtime: 1, ...PEER_FIELDS })
-    errorSpy.mockRestore()
   })
 
   it('refuses to move a note whose metadata is not a map, and leaves the source and target untouched', async () => {
     const { account, collection, item, target } = await shownNoteWithMeta('metadata written as text')
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    onTestFinished(() => errorSpy.mockRestore())
 
     const movedId = await useNoteStore.getState().moveNote(item.uid, target.uid)
 
@@ -127,7 +130,6 @@ describe('moving a note keeps the metadata other clients wrote', () => {
     expect(source?.isDeleted).toBe(false)
     expect(source?.getMeta()).toBe('metadata written as text')
     expect(useNoteStore.getState().notes.map((note) => [note.id, note.notebookId])).toEqual([[item.uid, collection.uid]])
-    expect(toastMock.showErrorToast).toHaveBeenCalledWith('Failed to move note. Please try again.')
-    errorSpy.mockRestore()
+    expect(toastMock.showErrorToast).toHaveBeenCalledWith(UNREADABLE_TOAST)
   })
 })

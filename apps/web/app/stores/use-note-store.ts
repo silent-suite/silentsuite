@@ -132,19 +132,33 @@ function typedSince(id: string, authorized: MountedNoteEditor | undefined, perio
   return !current.isClean() || (current === authorized && current.periodGen() !== period)
 }
 
+/** A move this store refused before anything was written; `toast` says why and that nothing moved. */
+class NoteMoveRefusedError extends Error {
+  constructor(name: string, message: string, readonly toast: string) {
+    super(message)
+    this.name = name
+  }
+}
+
 /** The source item's metadata cannot be decoded, or is not a map of fields. */
-class NoteMetaUnreadableError extends Error {
+class NoteMetaUnreadableError extends NoteMoveRefusedError {
   constructor() {
-    super('Note metadata is unreadable')
-    this.name = 'NoteMetaUnreadableError'
+    super(
+      'NoteMetaUnreadableError',
+      'Note metadata is unreadable',
+      'Note not moved: some of its details could not be read. It stays in its notebook, unchanged.',
+    )
   }
 }
 
 /** The cached source item is not saved at the revision the move removes. */
-class NoteMoveSourceChangedError extends Error {
+class NoteMoveSourceChangedError extends NoteMoveRefusedError {
   constructor() {
-    super('Cached note is not at the revision being moved')
-    this.name = 'NoteMoveSourceChangedError'
+    super(
+      'NoteMoveSourceChangedError',
+      'Cached note is not at the revision being moved',
+      'Note not moved: it changed since this page loaded it. It stays in its notebook. Move it again after sync finishes.',
+    )
   }
 }
 
@@ -460,7 +474,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       } catch (err) {
         if (!isCurrentAccountEpoch(accountEpoch) || err instanceof AccountBoundaryChangedError) return null
         console.error('[note-store] Failed to move note', getSafeErrorDetails(err))
-        showErrorToast('Failed to move note. Please try again.')
+        showErrorToast(err instanceof NoteMoveRefusedError ? err.toast : 'Failed to move note. Please try again.')
         return null
       }
     },
