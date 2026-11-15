@@ -2979,15 +2979,18 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals("no request names the notebook", emptyList<String>(), fake.requests.filter { notebook.uid in it })
     }
 
-    // ---- the account's Unsynced Notes (design 3.5) ----
+    // ---- the account's Unsynced text (design 3.5) ----
 
     /**
-     * Held text shows on the account's Unsynced Notes with its text, decrypted from the notebook copy the store
+     * Held text shows on the account's Unsynced text screen with its text, decrypted from the notebook copy the store
      * keeps with the account's local keys while the server cannot be reached, and the screen sends no request to
-     * show it. Copy puts the text on the clipboard marked sensitive; Try again sends it back to its notebook, where
-     * it waits, and asks for one user-started run. No store call runs on the main thread.
+     * show it. Copy hands a clip marked sensitive to the clipboard; the case takes it through
+     * [io.silentsuite.sync.ui.notes.SensitiveClip.clipboardOverride], since the emulator mirrors the host clipboard.
+     * Try again sends the text back to its notebook, where it waits, and asks for one user-started run.
+     * [MainThreadStoreProbe] sees no store listing, removal or write on the main thread; it does not see other store
+     * calls.
      */
-    @Test fun heldTextShowsOnUnsyncedNotesWithItsTextOfflineAndCopyAndTryAgainSendItBack() {
+    @Test fun heldTextShowsOnUnsyncedTextWithItsTextOfflineAndCopyAndTryAgainSendItBack() {
         val account = newAccount("gen-held")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-held")
         val notebook = uploadNotebook("Work")
@@ -2996,7 +2999,8 @@ class NotesSyncBoundaryRuntimeTest {
         editLocally(account, "gen-held", notebook, note.uid, "Plan held", "Held on this device", mtime = 2_000L)
         val store = pending(account, "gen-held")
         assertEquals(PendingNotesStore.HoldOutcome.HELD, store.hold(note.uid, HeldReason.READ_ONLY, now = 1))
-        val heldVersion = (store.read(note.uid) as PendingNotesStore.Read.Present).entry.version
+        val heldEntry = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
+        val heldVersion = heldEntry.version
         // The server stops: every request from here on fails, and is counted.
         val attempts = java.util.concurrent.atomic.AtomicInteger()
         HttpClient.testInterceptor = okhttp3.Interceptor {
@@ -3008,7 +3012,7 @@ class NotesSyncBoundaryRuntimeTest {
         val probe = MainThreadStoreProbe().apply { install() }
         try {
             ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-held")).use { scenario ->
-                waitUntil("the Unsynced Notes row to show") { notebookList(scenario)?.renderedUnsyncedText == 1 }
+                waitUntil("the Unsynced text row to show") { notebookList(scenario)?.renderedUnsyncedText == 1 }
                 // The run that opening the screen asked for has failed against the stopped server.
                 awaitSettled(identity)
                 assertEquals("the held note waits on no notebook row", listOf(0), notebookList(scenario)!!.renderedNotebooks.map { it.waiting })
@@ -3023,7 +3027,7 @@ class NotesSyncBoundaryRuntimeTest {
                 assertEquals("showing held text needs no request", before, attempts.get())
                 val shown = heldText(scenario)!!.renderedRows!!.single()
                 assertEquals(HeldTextRow("${note.uid}.note", note.uid, notebook, "Work", heldVersion, HeldReason.READ_ONLY,
-                    "Plan held", "Held on this device"), shown)
+                    "Plan held", "Held on this device", digest = PendingNotesStore.digestOf(heldEntry.blob)), shown)
                 scenario.onActivity { activity ->
                     assertEquals(activity.getString(R.string.notes_held_title), activity.title.toString())
                     assertEquals("Plan held", activity.findViewById<TextView>(R.id.held_title).text.toString())
@@ -3046,7 +3050,7 @@ class NotesSyncBoundaryRuntimeTest {
                 // Try again: the text waits on its notebook again, under a new version, and one run the user
                 // started is asked for. It fails against the stopped server, so the change keeps waiting.
                 scenario.onActivity { it.findViewById<View>(R.id.held_try_again).performClick() }
-                waitUntil("the row to leave Unsynced Notes") { heldText(scenario)?.renderedRows?.isEmpty() == true }
+                waitUntil("the row to leave Unsynced text") { heldText(scenario)?.renderedRows?.isEmpty() == true }
                 awaitSettled(identity)
                 val released = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
                 assertEquals(PendingEntry.State.UPSERT, released.state)
@@ -3072,11 +3076,11 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     /**
-     * Discard on the account's Unsynced Notes asks first, and deletes only the entry the confirmation showed: held
+     * Discard on the account's Unsynced text asks first, and deletes only the entry the confirmation showed: held
      * text that changed after the screen read it stays, and is shown to be asked again. A note file that cannot be
      * read shows with no Copy and no Try again, and is discarded on its own after its own confirmation.
      */
-    @Test fun unsyncedNotesDiscardsOnlyTheTextItShowedAndOffersNoCopyForAFileThatCannotBeRead() {
+    @Test fun unsyncedTextDiscardsOnlyTheTextItShowedAndOffersNoCopyForAFileThatCannotBeRead() {
         val account = newAccount("gen-discard")
         val identity = ExactAccountIdentity(account.type, account.name, "gen-discard")
         val notebook = uploadNotebook("Work")
@@ -3091,7 +3095,7 @@ class NotesSyncBoundaryRuntimeTest {
         val probe = MainThreadStoreProbe().apply { install() }
         try {
             ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-discard")).use { scenario ->
-                waitUntil("the Unsynced Notes row to show") { notebookList(scenario)?.renderedUnsyncedText == 2 }
+                waitUntil("the Unsynced text row to show") { notebookList(scenario)?.renderedUnsyncedText == 2 }
                 awaitSettled(identity)
                 scenario.onActivity { it.findViewById<View>(R.id.notebooks_unsynced).performClick() }
                 waitUntil("both rows to show") { heldText(scenario)?.renderedRows?.size == 2 }
@@ -3131,6 +3135,10 @@ class NotesSyncBoundaryRuntimeTest {
                         .findViewById<View>(R.id.held_discard).performClick()
                 }
                 waitUntil("the confirmation to show again") { heldText(scenario)?.discardDialog?.isShowing == true }
+                // Recreated over unchanged text, the confirmation still carries the version and the text it showed, so
+                // the discard goes through: a confirmation that lost them would answer Changed and delete nothing.
+                scenario.recreate()
+                waitUntil("the confirmation to come back again") { heldText(scenario)?.discardDialog?.isShowing == true }
                 scenario.onActivity { held(it).discardDialog!!.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick() }
                 waitUntil("the held text to go") { heldText(scenario)?.renderedRows?.map { it.file } == listOf("$damaged.note") }
                 assertEquals(PendingNotesStore.Read.Missing, store.read(note.uid))
@@ -3265,7 +3273,7 @@ class NotesSyncBoundaryRuntimeTest {
         assertEquals(setOf(held.uid, readOnly.uid, inHidden, damaged), rows.keys)
         fun offers(uid: String) = rows.getValue(uid).let { listOf(it.body != null, it.canTryAgain, it.canDiscard) }
         assertEquals("held text: Copy, Try again, Discard", listOf(true, true, true), offers(held.uid))
-        assertEquals("read-only: Copy and Discard", listOf(true, false, true), offers(readOnly.uid))
+        assertEquals("read-only: Copy only, until a run holds it", listOf(true, false, false), offers(readOnly.uid))
         assertEquals("still sent: nothing to discard here", listOf(false, false, false), offers(inHidden))
         assertTrue(rows.getValue(inHidden).mayStillSync)
         assertEquals("unreadable: Discard on its own", listOf(false, false, true), offers(damaged))
@@ -3300,39 +3308,47 @@ class NotesSyncBoundaryRuntimeTest {
     }
 
     /**
-     * A Discard confirmation answered after the notebook accepts writes again deletes nothing: the change then waits on
-     * its notebook's row, where a run sends it, and is no longer listed under Unsynced text. The confirmation was
-     * opened for a change in a read-only notebook, which a run would never send. No run starts here: a run would hold
-     * that change, and held text keeps Discard whatever its notebook allows, since only Try again sends it.
+     * A change in a notebook the cache shows read-only offers Copy only, never Discard: a run that finds the notebook
+     * writable again would send it, so a discard could race the upload, and the store refuses one
+     * ([PendingNotesStore.discard]). Once a run holds the change it is held text, which no run sends without Try
+     * again, and Discard is offered and works.
      */
-    @Test fun aDiscardAnsweredAfterTheNotebookAcceptsWritesAgainDeletesNothing() {
+    @Test fun aChangeInAReadOnlyNotebookOffersCopyOnlyUntilASyncHoldsIt() {
         val account = newAccount("gen-reopen")
+        val identity = ExactAccountIdentity(account.type, account.name, "gen-reopen")
         val shared = uploadNotebook("Shared")
         val note = uploadNote(shared, "Plan", "Server text", mtime = 1_000L)
         fake.setAccessLevel(shared, 0L)
         syncNow(account, "gen-reopen")
         editLocally(account, "gen-reopen", shared, note.uid, "Plan", "Local text", mtime = 2_000L)
         val store = pending(account, "gen-reopen")
-        val before = (store.read(note.uid) as PendingNotesStore.Read.Present).entry
-        // The notebook as the server will show it once access is back, read before the server stops.
-        fake.setAccessLevel(shared, 1L)
-        val writable = server.collectionManager.fetch(shared)
-        fake.setAccessLevel(shared, 0L)
         HttpClient.testInterceptor = okhttp3.Interceptor { throw java.io.IOException("the server is stopped") }
+        // No run until the case asks for one, so the change stays a change, not held text.
         NotesSyncCoordinator.runnerOverride = { _, _, _, _ -> }
         try {
             ActivityScenario.launch<NotesActivity>(NotesActivity.newIntent(context, account, "gen-reopen")).use { scenario ->
                 waitUntil("the Unsynced text row to show") { notebookList(scenario)?.renderedUnsyncedText == 1 }
                 scenario.onActivity { it.findViewById<View>(R.id.notebooks_unsynced).performClick() }
                 waitUntil("the change to show") { heldText(scenario)?.renderedRows?.size == 1 }
-                assertTrue("a change in a read-only notebook offers Discard", heldText(scenario)!!.renderedRows!!.single().canDiscard)
+                val row = heldText(scenario)!!.renderedRows!!.single()
+                assertEquals("Copy, no Try again, no Discard", listOf(true, false, false), listOf(row.canCopy, row.canTryAgain, row.canDiscard))
+                scenario.onActivity { activity ->
+                    assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.held_copy).visibility)
+                    assertEquals(View.GONE, activity.findViewById<View>(R.id.held_discard).visibility)
+                    assertEquals("${activity.getString(R.string.notes_held_not_writable)} ${activity.getString(R.string.notes_held_notebook, "Shared")}",
+                        activity.findViewById<TextView>(R.id.held_reason).text.toString())
+                }
+                // A run holds the change: the notebook is still read-only in the cache, and the server is stopped.
+                NotesSyncCoordinator.runnerOverride = null
+                NotesSyncCoordinator.request(context, account, "gen-reopen", NotesSyncPolicy.Trigger.MANUAL)
+                awaitSettled(identity)
+                waitUntil("the change to be held") { heldText(scenario)?.renderedRows?.singleOrNull()?.held != null }
+                assertTrue("held text offers Discard", heldText(scenario)!!.renderedRows!!.single().canDiscard)
                 scenario.onActivity { it.findViewById<View>(R.id.held_discard).performClick() }
                 waitUntil("the confirmation to show") { heldText(scenario)?.discardDialog?.isShowing == true }
-                // Access comes back while the confirmation shows, as a run would cache it.
-                cache(account).let { cache -> synchronized(cache) { cache.collectionSet(server.collectionManager, writable) } }
                 scenario.onActivity { held(it).discardDialog!!.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick() }
                 waitUntil("the screen to list nothing") { heldText(scenario)?.renderedRows?.isEmpty() == true }
-                assertEquals("nothing was deleted", before, store.read(note.uid).let { (it as? PendingNotesStore.Read.Present)?.entry })
+                assertEquals(PendingNotesStore.Read.Missing, store.read(note.uid))
             }
         } finally {
             NotesSyncCoordinator.runnerOverride = null
@@ -3997,7 +4013,7 @@ class NotesSyncBoundaryRuntimeTest {
 
     private fun heldText(scenario: ActivityScenario<NotesActivity>) = fragment(scenario) as? HeldTextFragment
 
-    /** The Unsynced Notes screen of [activity], for use on the main thread inside onActivity. */
+    /** The Unsynced text screen of [activity], for use on the main thread inside onActivity. */
     private fun held(activity: NotesActivity) = activity.supportFragmentManager.findFragmentById(R.id.fragment_container) as HeldTextFragment
 
     private fun noteView(scenario: ActivityScenario<NotesActivity>) = fragment(scenario) as? NoteViewFragment

@@ -20,7 +20,7 @@ class NotesLoaderTest {
             assertTrue("the store is read before $later", load.indexOf(later) > store)
         }
         assertEquals("one cache monitor in the loader, the one in load", 1, loader.split("synchronized(").size - 1)
-        // The Unsynced Notes screen reads the store again after the cache, and decrypts there: outside the monitor,
+        // The Unsynced text screen reads the store again after the cache, and decrypts there: outside the monitor,
         // in a step that load() has returned from.
         val held = loader.substringAfter("    private fun heldRows(plan: HeldPlan): HeldTexts {").substringBefore("\n    }\n")
         assertTrue(held.contains("store.read(header.noteUid)"))

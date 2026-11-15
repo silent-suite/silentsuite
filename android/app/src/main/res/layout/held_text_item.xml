@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- One entry of Unsynced Notes. The body is not selectable: the only copy is the Copy button, which marks
+<!-- One entry of Unsynced text. The body is not selectable: the only copy is the Copy button, which marks
      the clip as sensitive. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"

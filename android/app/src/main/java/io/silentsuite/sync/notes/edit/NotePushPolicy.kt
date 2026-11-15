@@ -145,7 +145,7 @@ internal object NotePushPolicy {
     /**
      * Whether a notebook takes pushes: not deleted and not read-only. The push step applies the same rule
      * through [EtebasePushRemote.notebook]; the Notes screens call this one (NotesOverlay, NotesLoader), so the
-     * notebook list, the note viewer and Unsynced Notes show what a run will do.
+     * notebook list, the note viewer and Unsynced text show what a run will do.
      */
     fun acceptsWrites(deleted: Boolean, readOnly: Boolean): Boolean = !deleted && !readOnly
 

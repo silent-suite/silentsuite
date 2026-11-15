@@ -122,7 +122,7 @@ object NotesNetworkPolicy {
      * be out of date, then, when [waiting] changes wait on a notebook row, that they are waiting to
      * sync, then every rule that refuses the automatic run with what the platform reports, then what a
      * run the user starts would get. [waiting] is the sum of the overlay's per-notebook counts, so it
-     * leaves out what the Unsynced Notes row counts. A saved network name is the only reason given when
+     * leaves out what the Unsynced text row counts. A saved network name is the only reason given when
      * it refuses, since it refuses on every network. Network reasons only: a change can also wait for
      * another reason, and a run that is not refused can still fail.
      */

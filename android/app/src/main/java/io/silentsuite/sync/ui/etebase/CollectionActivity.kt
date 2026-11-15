@@ -347,8 +347,15 @@ class CollectionViewModel : ViewModel() {
 class ItemsViewModel : ViewModel() {
     private val cachedItems = MutableLiveData<List<CachedItem>>()
 
+    companion object {
+        /** Device tests only: told the collection uid of every [loadItems] call, as it is made. */
+        @androidx.annotation.VisibleForTesting
+        @Volatile internal var loadsForTesting: ((String) -> Unit)? = null
+    }
+
     internal fun loadItems(context: Context, account: Account, creationId: String, collectionUid: String, accountCollectionHolder: AccountHolder, cachedCollection: CachedCollection,
                   presentation: ItemPresentation = ItemPresentation.ORDINARY) {
+        loadsForTesting?.invoke(collectionUid)
         viewModelScope.launch {
             val items = withContext(Dispatchers.IO) {
                 if (ExactAccountRouting.validate(account, creationId, App.accountType, AccountManager.get(context)) == null ||

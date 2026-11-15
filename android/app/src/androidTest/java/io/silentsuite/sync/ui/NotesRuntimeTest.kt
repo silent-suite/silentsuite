@@ -247,12 +247,12 @@ class NotesRuntimeTest {
     }
 
     /**
-     * The Unsynced Notes row stays on the notebook list while the notebooks cannot be read, and opens the account's
-     * Unsynced Notes, which lists the same changes; a store that cannot be listed is said to be unreadable, never
+     * The Unsynced text row stays on the notebook list while the notebooks cannot be read, and opens the account's
+     * Unsynced text, which lists the same changes; a store that cannot be listed is said to be unreadable, never
      * empty. The first load opens a new store instance, whose recovery removes an interrupted write: that, and
      * every other store call here, runs off the main thread.
      */
-    @Test fun theUnsyncedNotesRowStaysWhileTheNotebooksOrTheLocalChangesCannotBeRead() {
+    @Test fun theUnsyncedTextRowStaysWhileTheNotebooksOrTheLocalChangesCannotBeRead() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val manager = AccountManager.get(context)
         val account = Account("notes-unsynced-${System.nanoTime()}@example.invalid", App.accountType)
@@ -281,7 +281,7 @@ class NotesRuntimeTest {
                     assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.notebooks_empty).visibility)
                     row.performClick()
                 }
-                waitUntil("the account's Unsynced Notes to list both") {
+                waitUntil("the account's Unsynced text to list both") {
                     heldFragment(scenario)?.renderedRows?.map { it.noteUid } == listOf("held", "waiting")
                 }
                 scenario.onActivity { activity ->
@@ -294,6 +294,11 @@ class NotesRuntimeTest {
                     assertEquals(activity.getString(R.string.notes_held_text_unavailable),
                         cards.getChildAt(0).findViewById<TextView>(R.id.held_body).text.toString())
                     assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_copy).visibility)
+                    // Held text the screen cannot show offers no Discard: the user would delete text they never saw.
+                    assertEquals(listOf(false, false), rows.map { it.canDiscard })
+                    assertEquals(View.GONE, cards.getChildAt(0).findViewById<View>(R.id.held_discard).visibility)
+                    assertEquals(activity.getString(R.string.notes_held_unavailable_title),
+                        cards.getChildAt(0).findViewById<TextView>(R.id.held_title).text.toString())
                     activity.onSupportNavigateUp()
                 }
                 waitUntil("back on the notebook list") { notebookFragment(scenario) != null }

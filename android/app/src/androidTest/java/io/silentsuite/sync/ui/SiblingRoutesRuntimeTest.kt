@@ -982,8 +982,12 @@ class SiblingRoutesRuntimeTest {
                 androidx.lifecycle.ViewModelProvider(activity)[ItemsViewModel::class.java].value
 
             // The ordinary screen leaves the deleted contact out; calendars and tasks keep theirs. A notebook shows no
-            // item list or count at all, over the real cache: none is loaded for it, since the list would read the cache
-            // without the Notes overlay.
+            // item list or count at all, over the real cache: no load is started for it, since the list would read the
+            // cache without the Notes overlay. Loads are counted as they are started, on the main thread before the
+            // header shows, so the count is final once the header is there; the other collections are the control.
+            val loads = java.util.concurrent.CopyOnWriteArrayList<String>()
+            ItemsViewModel.loadsForTesting = { loads += it }
+            try {
             ActivityScenario.launch<CollectionActivity>(CollectionActivity.newIntent(context, account, generation,
                 siblings.getValue(Constants.ETEBASE_TYPE_NOTES))).use { s ->
                 waitUntil("the notebook's header") {
@@ -992,6 +996,7 @@ class SiblingRoutesRuntimeTest {
                     ok
                 }
                 s.onActivity { a ->
+                    assertEquals("no load is started for a notebook", emptyList<String>(), loads.toList())
                     assertEquals("no item is loaded for a notebook", null, shownItems(a))
                     for (id in listOf(R.id.recent_activity_title, R.id.stats_row, R.id.stats, R.id.progressBar, R.id.list_entries_container)) {
                         assertEquals(a.resources.getResourceEntryName(id), View.GONE, a.findViewById<View>(id).visibility)
@@ -1015,6 +1020,10 @@ class SiblingRoutesRuntimeTest {
                         if (type == Constants.ETEBASE_TYPE_ADDRESS_BOOK) assertTrue(items.single().content.contains("Kept Person"))
                     }
                 }
+                assertTrue("a load was started for $type", uid in loads)
+            }
+            } finally {
+                ItemsViewModel.loadsForTesting = null
             }
             // The recovery route is for address books only.
             ActivityScenario.launch<CollectionActivity>(CollectionActivity.newRecoveryIntent(context, account, generation,
