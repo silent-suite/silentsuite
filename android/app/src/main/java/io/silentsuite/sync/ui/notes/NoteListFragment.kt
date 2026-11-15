@@ -25,7 +25,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Notes of one notebook, newest edit first. Read-only in this version. */
+/** Notes of one notebook, newest edit first, with New note where a note can be made ([NoteEditing.offersNewNote]). */
 class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private lateinit var account: Account
     private lateinit var creationId: String
@@ -42,6 +42,10 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
     private var loadJob: Job? = null
 
     internal var renderedNotes: List<NoteRow> = emptyList()
+        private set
+
+    /** Whether New note shows, for runtime tests. */
+    internal var offersNewNote = false
         private set
 
     /**
@@ -89,6 +93,15 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
             // The direct child is a FrameLayout holding the list and the empty text, so ask the
             // list itself whether it can still scroll up.
             setOnChildScrollUpCallback { _, _ -> list?.canScrollVertically(-1) == true }
+        }
+        view.findViewById<View>(R.id.notes_new_note).setOnClickListener {
+            val host = host() ?: return@setOnClickListener
+            if (!host.exactAccountStillCurrent()) { host.finish(); return@setOnClickListener }
+            if (parentFragmentManager.isStateSaved) return@setOnClickListener
+            parentFragmentManager.commit {
+                replace(R.id.fragment_container, NoteViewFragment.newInstance(account, creationId, notebookUid, null))
+                addToBackStack(NoteViewFragment::class.java.name)
+            }
         }
     }
 
@@ -168,10 +181,13 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
         unreadable = contents.unreadable
         loaded = true
         host()?.title = contents.notebook.name.ifBlank { getString(R.string.notes_untitled) }
+        val noEditing = noEditingText(requireContext(), NoteEditing.noEditing(contents.writable, contents.discardUnfinished))
         view.findViewById<TextView>(R.id.note_list_read_only).apply {
-            text = getString(R.string.notes_read_only_hint)
-            visibility = View.VISIBLE
+            text = noEditing
+            visibility = if (noEditing == null) View.GONE else View.VISIBLE
         }
+        offersNewNote = NoteEditing.offersNewNote(NewNoteOffer(contents.writable, contents.discardUnfinished, contents.pending))
+        view.findViewById<View>(R.id.notes_new_note).visibility = if (offersNewNote) View.VISIBLE else View.GONE
         noteAdapter?.apply {
             setNotifyOnChange(false)
             clear()
@@ -241,6 +257,13 @@ class NoteListFragment : Fragment(), NotesSyncCoordinator.Listener {
             null -> null
             PendingUnavailable.UNREADABLE -> context.getString(R.string.notes_pending_unreadable)
             PendingUnavailable.DISCARD_STOPPED -> context.getString(R.string.notes_pending_discard_stopped)
+        }
+
+        /** Why a notebook offers no editing, for the banner of the note list and the viewer, or null when it does. */
+        internal fun noEditingText(context: Context, why: NoteEditing.NoEditing?): String? = when (why) {
+            null -> null
+            NoteEditing.NoEditing.READ_ONLY -> context.getString(R.string.notes_read_only_banner)
+            NoteEditing.NoEditing.DISCARD_UNFINISHED -> context.getString(R.string.notes_discard_unfinished_editing)
         }
 
         /** The marker for a note with a local change, or null when it has none. */

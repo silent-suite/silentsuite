@@ -1,0 +1,613 @@
+package io.silentsuite.sync.ui.notes
+
+import android.accounts.Account
+import android.accounts.AccountManager
+import android.app.Application
+import android.content.Context
+import androidx.annotation.VisibleForTesting
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import com.etebase.client.CollectionManager
+import com.etebase.client.ItemManager
+import com.etebase.client.ItemMetadata
+import com.etebase.client.exceptions.EtebaseException
+import io.silentsuite.sync.AccountSettings
+import io.silentsuite.sync.App
+import io.silentsuite.sync.EtebaseLocalCache
+import io.silentsuite.sync.HttpClient
+import io.silentsuite.sync.InvalidAccountException
+import io.silentsuite.sync.log.Logger
+import io.silentsuite.sync.notes.NotesSyncCoordinator
+import io.silentsuite.sync.notes.NotesSyncPolicy
+import io.silentsuite.sync.notes.edit.EtebasePushRemote
+import io.silentsuite.sync.notes.edit.NoteMetaCodec
+import io.silentsuite.sync.notes.edit.NotePushStep
+import io.silentsuite.sync.notes.edit.PendingEntry
+import io.silentsuite.sync.notes.edit.PendingNotesStore
+import io.silentsuite.sync.notes.edit.PendingNotesStore.SaveOutcome
+import io.silentsuite.sync.ui.setup.ExactAccountRouting
+import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+
+/**
+ * The note editor (design 3.2): its text ([core], on the main thread) and every call it makes to the pending store,
+ * all inside `withContext(Dispatchers.IO)`. The store calls are [PendingNotesStore.forIdentity], [PendingNotesStore.observe]
+ * (through [NotesLoader.note] and for the status line), [PendingNotesStore.editorOpened], the reads a save builds on
+ * ([PendingNotesStore.read], [PendingNotesStore.landed], [PendingNotesStore.notebook]), [PendingNotesStore.saveLocal]
+ * through the editor's handle, and [PendingNotesStore.editorClosed]. Nothing here releases, discards, holds or sends.
+ *
+ * Opening, saving and closing run one at a time, as steps in a scope of the app's ([background]), not this ViewModel's:
+ * closing the editor clears the ViewModel, and that must not stop its last save or the sync request after it. A save
+ * that wrote the text asks for a Notes run ([NotesSyncPolicy.Trigger.SAVE], which follows the automatic network
+ * setting) in the same step, about [SYNC_DELAY_MILLIS] after the last save, and at once when the editor closes.
+ *
+ * The blob is encrypted and its metadata merged before the store is called, and no store call is made while holding
+ * the Etebase cache monitor. Versions and sequences stay in memory: none goes into saved state or a file.
+ */
+internal class NoteEditorViewModel(
+    application: Application,
+    private val account: Account,
+    private val creationId: String,
+    private val notebookUid: String,
+    openedUid: String?,
+) : AndroidViewModel(application) {
+    private val app: Context get() = getApplication()
+
+    /** The editor's text. Main thread only. */
+    val core = NoteEditorCore()
+
+    /** The note the editor's text belongs to now: the one opened, a new note once its first save made it, or a conflict copy. Main thread. */
+    var noteUid: String? = openedUid
+        private set
+
+    /** What opening found, or null while it runs. Main thread. */
+    var opened: Opened? = null
+        private set
+
+    /** The second part of the status line, from the last read of the note's entry. Main thread. */
+    var syncLine: NoteEditing.SyncLine? = null
+        private set
+
+    /** Pinged on the main thread whenever anything above changed, for the screen to render. */
+    val updates = MutableLiveData<Unit>()
+
+    /** What only the steps touch, under [steps], off the main thread. */
+    private val session = Session()
+    private val steps = Mutex()
+    private var autosave: Job? = null
+    private var cleared = false
+    /** Opening runs once: a second start while the first is still loading would show its text over typing. */
+    private var openStarted = false
+    /** This editor was opened for a new note, which its first save makes. */
+    private val creating = openedUid == null
+
+    sealed class Opened {
+        /** The exact account generation is gone: the screen closes. */
+        object Stale : Opened()
+        object Failed : Opened()
+        /** No editor over this note: the viewer shows [note]. */
+        data class Viewer(val note: NoteContent) : Opened()
+        /** A new note cannot be made here now ([NoteEditing.offersNewNote]). */
+        data class NoNewNote(val offer: NewNoteOffer?) : Opened()
+        /** The editor shows [core]'s text. [note] is the load it opened on, or null for a new note. */
+        data class Editor(val note: NoteContent?) : Opened()
+    }
+
+    private class Session {
+        var store: PendingNotesStore? = null
+        var handle: PendingNotesStore.EditorHandle? = null
+        /** The item the editor opened on, for a save when the note has neither an entry nor a landed record. */
+        var pinned: ByteArray? = null
+        var pinnedUid: String? = null
+        /** The note whose name the title field was loaded from. A save into a conflict copy keeps the copy's name. */
+        var titleUid: String? = null
+        /**
+         * The revision of the note's landed record when the item was pinned. The pin is at least as new as that record
+         * (a run writes the cache before it drops an entry), so a save builds on the landed record only once a newer
+         * upload landed since.
+         */
+        var landedAtPin: String? = null
+        var newNote = false
+        var savedAny = false
+        var request: Job? = null
+        var closed = false
+    }
+
+    // ---- opening ----
+
+    /** Opens the editor, or finds that the viewer stays. Runs once per ViewModel; later loads go through [reload]. */
+    fun open() {
+        if (opened != null || openStarted) return
+        openStarted = true
+        background.launch {
+            steps.withLock {
+                val uid = noteUid
+                val opening = withContext(Dispatchers.IO) { if (uid == null) openNewNote() else openNote(uid) }
+                withContext(Dispatchers.Main) { applyOpening(opening, first = true) }
+                refreshStatusStep()
+            }
+        }
+    }
+
+    /**
+     * A load for a clean editor, after a Notes run or when the screen comes back: the editor opens again on the note
+     * as it is now, and takes it only while it is still clean and the load is not older than its last save; otherwise
+     * nothing changes. A viewer loads again too.
+     */
+    fun reload() {
+        if (cleared) return
+        background.launch {
+            steps.withLock {
+                val shown = withContext(Dispatchers.Main) {
+                    noteUid.takeIf { opened is Opened.Viewer || opened is Opened.Editor && core.mode == NoteEditorCore.Mode.EDITING && !core.dirty }
+                }
+                    ?: return@withLock refreshStatusStep()
+                // A run may have given the editor's text a conflict copy since its last save: the handle names the note
+                // the text is in now, so the editor opens on that note and never on the original's server text.
+                val uid = withContext(Dispatchers.IO) { session.handle?.noteUid } ?: shown
+                val opening = withContext(Dispatchers.IO) { openNote(uid) }
+                withContext(Dispatchers.Main) {
+                    noteUid = uid
+                    applyOpening(opening, first = false)
+                }
+                refreshStatusStep()
+            }
+        }
+    }
+
+    private sealed class Opening {
+        object Stale : Opening()
+        object Failed : Opening()
+        class Viewer(val note: NoteContent) : Opening()
+        class NoNewNote(val offer: NewNoteOffer?) : Opening()
+        object NewNote : Opening()
+        class Editor(val note: NoteContent, val store: PendingNotesStore, val handle: PendingNotesStore.EditorHandle,
+                     val pinned: ByteArray, val landedAtPin: String?, val title: String, val body: String) : Opening()
+    }
+
+    private fun openNewNote(): Opening = when (val load = NotesLoader.newNote(app, account, creationId, notebookUid)) {
+        NotesLoad.Stale -> Opening.Stale
+        NotesLoad.Failed -> Opening.NoNewNote(null)
+        is NotesLoad.Loaded -> if (NoteEditing.offersNewNote(load.value)) Opening.NewNote else Opening.NoNewNote(load.value)
+    }
+
+    /**
+     * Loads [uid] ([NotesLoader.note]) and, where the editor is offered, opens a handle with the load's entry version
+     * as its base and pins the item the load showed: the entry, or the cached item when there is none. When the store
+     * changed between the load and the handle (a push dropped the entry, say), the handle closes and the load runs
+     * again, at most [OPEN_ATTEMPTS] times; after that the viewer shows the note this time.
+     */
+    private fun openNote(uid: String): Opening {
+        var last: NoteContent? = null
+        repeat(OPEN_ATTEMPTS) {
+            val note = when (val load = NotesLoader.note(app, account, creationId, notebookUid, uid)) {
+                NotesLoad.Stale -> return Opening.Stale
+                NotesLoad.Failed -> return Opening.Failed
+                is NotesLoad.Loaded -> load.value
+            }
+            last = note
+            if (!NoteEditing.offersEditor(note)) return Opening.Viewer(note)
+            try {
+                val store = PendingNotesStore.forIdentity(app, account.type, account.name, creationId)
+                val handle = store.editorOpened(uid, note.pendingVersion)
+                val pinned = try {
+                    pin(store, uid, note)
+                } catch (e: Exception) {
+                    store.editorClosed(handle)
+                    throw e
+                }
+                if (!current()) {
+                    store.editorClosed(handle)
+                    return Opening.Stale
+                }
+                if (pinned != null) return Opening.Editor(note, store, handle, pinned.blob, pinned.landedAtPin, pinned.title, pinned.body)
+                store.editorClosed(handle)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // The class only: a binding's message can quote a decrypted value. No editor this time.
+                Logger.log.warning("The note editor could not open: ${e.javaClass.name}")
+                return Opening.Viewer(note)
+            }
+        }
+        return last?.let { Opening.Viewer(it) } ?: Opening.Failed
+    }
+
+    private class Pinned(val blob: ByteArray, val landedAtPin: String?, val title: String, val body: String)
+
+    /** The item [note] showed, or null when the store or the cache no longer has it as shown. */
+    private fun pin(store: PendingNotesStore, uid: String, note: NoteContent): Pinned? {
+        // Read before the cache, so a record that lands after it is newer than the pin.
+        val landed = store.landed(uid)?.revision
+        val read = store.read(uid)
+        val shown = note.pendingVersion
+        val blob = if (shown != null) {
+            val entry = (read as? PendingNotesStore.Read.Present)?.entry ?: return null
+            if (entry.version != shown || entry.state != PendingEntry.State.UPSERT || entry.notebookUid != notebookUid) return null
+            entry.blob
+        } else {
+            if (read != PendingNotesStore.Read.Missing) return null
+            cachedItem(uid) ?: return null
+        }
+        val itemMgr = notebook(store.notebook(notebookUid)).itemMgr
+        val item = itemMgr.cacheLoad(blob)
+        // The title as stored, untrimmed, so a save of the body alone writes the same name back.
+        return Pinned(blob, landed, NoteMetaCodec.peek(item.metaRaw)?.name.orEmpty(), item.contentString)
+    }
+
+    private fun applyOpening(opening: Opening, first: Boolean) {
+        if (cleared) {
+            // The screen went away meanwhile: a handle this opened is closed by the close step, or here if that ran.
+            if (opening is Opening.Editor) keep(opening)
+            return
+        }
+        when (opening) {
+            Opening.Stale -> opened = Opened.Stale
+            Opening.Failed -> if (first) opened = Opened.Failed
+            is Opening.NoNewNote -> opened = Opened.NoNewNote(opening.offer)
+            Opening.NewNote -> {
+                core.opened("", "")
+                opened = Opened.Editor(null)
+            }
+            is Opening.Viewer -> if (first || !core.dirty) {
+                if (!first) drop()
+                opened = Opened.Viewer(opening.note)
+            }
+            // A viewer becomes the editor once the note can be edited again: Try again sent held text back, say.
+            is Opening.Editor -> if (first || opened is Opened.Viewer && !core.dirty) {
+                core.opened(opening.title, opening.body)
+                keep(opening)
+                opened = Opened.Editor(opening.note)
+            } else if (core.offerLoad(opening.title, opening.body, opening.note.observedSequence)) {
+                keep(opening)
+                opened = Opened.Editor(opening.note)
+            } else {
+                closeLater(opening.store, opening.handle)
+            }
+        }
+        updates.value = Unit
+    }
+
+    /** The session takes [opening]'s handle and item, and the handle it had closes. */
+    private fun keep(opening: Opening.Editor) {
+        if (session.closed) {
+            closeLater(opening.store, opening.handle)
+            return
+        }
+        val previous = session.store?.let { store -> session.handle?.let { store to it } }
+        session.store = opening.store
+        session.handle = opening.handle
+        session.pinned = opening.pinned
+        session.pinnedUid = opening.note.uid
+        session.titleUid = opening.note.uid
+        session.landedAtPin = opening.landedAtPin
+        session.newNote = false
+        previous?.let { (store, handle) -> if (handle !== opening.handle) closeLater(store, handle) }
+    }
+
+    /** The editor gave way to the viewer: its handle closes. */
+    private fun drop() {
+        val store = session.store ?: return
+        val handle = session.handle ?: return
+        session.handle = null
+        session.store = null
+        closeLater(store, handle)
+    }
+
+    private fun closeLater(store: PendingNotesStore, handle: PendingNotesStore.EditorHandle) {
+        background.launch { withContext(Dispatchers.IO) { closeHandle(store, handle) } }
+    }
+
+    // ---- editing ----
+
+    /** A change the user made in [field]; the autosave runs [AUTOSAVE_MILLIS] after typing stops. */
+    fun edited(field: NoteEditorCore.Field, start: Int, removed: CharSequence, inserted: CharSequence, text: String) {
+        core.edited(field, start, removed, inserted, text)
+        scheduleAutosave()
+    }
+
+    fun undo(field: NoteEditorCore.Field): EditHistory.Applied? = core.undo(field)?.also { scheduleAutosave() }
+
+    fun redo(field: NoteEditorCore.Field): EditHistory.Applied? = core.redo(field)?.also { scheduleAutosave() }
+
+    private fun scheduleAutosave() {
+        autosave?.cancel()
+        autosave = viewModelScope.launch {
+            delay(AUTOSAVE_MILLIS)
+            save()
+        }
+        updates.value = Unit
+    }
+
+    /** Saves the text now, if there is any to save: the screen's onPause, and the autosave. */
+    fun save() {
+        autosave?.cancel()
+        background.launch { steps.withLock { saveStep() } }
+    }
+
+    /**
+     * One save, start to end: the draft from [core], the store call on IO through the editor's handle, the answer back
+     * to [core], and for a save that wrote the text, the Notes run it asks for, in this same step.
+     */
+    private suspend fun saveStep() {
+        val draft = withContext(Dispatchers.Main) { core.beginSave() } ?: return
+        val (result, target) = withContext(Dispatchers.IO) { saveOnIo(draft) to session.handle?.noteUid }
+        withContext(Dispatchers.Main) {
+            core.finishSave(draft, result)
+            if (target != null) noteUid = target
+            if (result == SaveResult.Stale) opened = Opened.Stale
+            if (!cleared) updates.value = Unit
+        }
+        if (result is SaveResult.Saved || result is SaveResult.SavedToHolding) {
+            session.savedAny = true
+            requestSync(SYNC_DELAY_MILLIS)
+        }
+        if (result is SaveResult.SavedToHolding) {
+            // What was typed during that save joins the held text too; then the viewer, which points to it, takes over.
+            if (withContext(Dispatchers.Main) { core.dirty }) return saveStep()
+            val uid = withContext(Dispatchers.Main) { noteUid } ?: return
+            val opening = withContext(Dispatchers.IO) { openNote(uid) }
+            withContext(Dispatchers.Main) { applyOpening(opening, first = false) }
+            return
+        }
+        refreshStatusStep()
+    }
+
+    private fun saveOnIo(draft: NoteEditorCore.Draft): SaveResult {
+        if (!current()) return SaveResult.Stale
+        return try {
+            if (session.handle == null) {
+                // Only a new note's first save makes a note; an editor that gave way to the viewer saves nothing.
+                if (!creating || session.pinnedUid != null) return SaveResult.NotSaved
+                startNewNote()
+            }
+            beforeSaveForTesting?.invoke()
+            val result = SaveRun.run { attempt(draft) }
+            if (!current()) SaveResult.Stale else result
+        } catch (_: PendingNotesStore.Cleared) {
+            SaveResult.Cleared
+        } catch (_: InvalidAccountException) {
+            SaveResult.Stale
+        } catch (_: StaleGeneration) {
+            SaveResult.Stale
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Logger.log.warning("A note could not be saved on this device: ${e.javaClass.name}")
+            SaveResult.NotSaved
+        }
+    }
+
+    /** A new note's first save: the item is made here, and the editor's handle is opened on it with no base. */
+    private fun startNewNote() {
+        val store = PendingNotesStore.forIdentity(app, account.type, account.name, creationId)
+        val itemMgr = notebook(null).itemMgr
+        val item = itemMgr.create(ItemMetadata(), "")
+        item.setMetaRaw(NoteMetaCodec.fresh(NoteEditing.UNTITLED, System.currentTimeMillis()).bytes)
+        val pinned = itemMgr.cacheSaveWithContent(item)
+        val handle = store.editorOpened(item.uid, null)
+        session.store = store
+        session.handle = handle
+        session.pinned = pinned
+        session.pinnedUid = item.uid
+        session.titleUid = item.uid
+        session.landedAtPin = null
+        session.newNote = true
+    }
+
+    /**
+     * One save of [draft] onto the note the handle names now. Its item is the note's entry when there is one (a run
+     * may have rebased it), else its landed record (an upload of this editor's text that landed), else the item the
+     * editor opened on; a conflict copy has an entry or a landed record of its own.
+     */
+    private fun attempt(draft: NoteEditorCore.Draft): Pair<SaveOutcome, Boolean> {
+        val store = checkNotNull(session.store)
+        val handle = checkNotNull(session.handle)
+        val target = handle.noteUid
+        val read = store.read(target)
+        val base = when (read) {
+            is PendingNotesStore.Read.Present -> {
+                if (read.entry.notebookUid != notebookUid) throw IOException("the note's entry is in another notebook")
+                read.entry.blob
+            }
+            // Never written over: the store answers so, and the text stays on screen.
+            is PendingNotesStore.Read.Unreadable -> return SaveOutcome.Blocked to false
+            PendingNotesStore.Read.Missing -> {
+                val landed = store.landed(target)
+                val pinned = session.pinned.takeIf { target == session.pinnedUid }
+                // The landed record when an upload landed since the pin; otherwise the pin, which is at least as new.
+                if (landed != null && (pinned == null || landed.revision != session.landedAtPin)) landed.blob
+                else pinned ?: throw IOException("nothing to save the note onto")
+            }
+        }
+        val access = notebook(store.notebook(notebookUid))
+        val first = session.newNote && target == session.pinnedUid
+        val built = build(access.itemMgr, base, draft, target, first)
+        // The cache and the settings are read by account name: a same-name account must not get this save.
+        if (!current()) throw StaleGeneration()
+        val outcome = store.saveLocal(handle, target, notebookUid, built.revision, built.blob, isCreate = first,
+            notebookCopy = if (read == PendingNotesStore.Read.Missing) access.copyToKeep else null)
+        return outcome to built.metadataKept
+    }
+
+    private class Built(val revision: String, val blob: ByteArray, val metadataKept: Boolean)
+
+    /** The exact account generation went away during a save: nothing was written. */
+    private class StaleGeneration : IllegalStateException("the account generation is gone")
+
+    /**
+     * The item from [base] with the draft's text, and its name and time merged into its raw metadata
+     * ([NoteEditing.metadataToWrite]), never through a typed setMeta. What was written must read back as
+     * [EtebasePushRemote.requireReadBack] checks it; metadata that cannot be merged, or a merge that does not read
+     * back, is kept as it was, with the new text. In a conflict copy the copy's own name stays, unless the user changed
+     * the title since it was loaded.
+     */
+    private fun build(itemMgr: ItemManager, base: ByteArray, draft: NoteEditorCore.Draft, target: String, first: Boolean): Built {
+        val item = itemMgr.cacheLoad(base)
+        item.setContent(draft.body)
+        val before = item.metaRaw
+        val name = if (target == session.titleUid || draft.titleChanged) NoteEditing.nameToWrite(draft.title, first)
+            else NoteMetaCodec.peek(before)?.name ?: draft.title
+        val mtime = System.currentTimeMillis()
+        val merged = NoteEditing.metadataToWrite(before, name, mtime)
+        var kept = merged == null
+        if (merged != null) {
+            item.setMetaRaw(merged.bytes)
+            try {
+                EtebasePushRemote.requireReadBack(merged.name, mtime) { EtebasePushRemote.readBack(item.metaRaw) { item.meta.mtime } }
+            } catch (_: NotePushStep.NotBuilt) {
+                item.setMetaRaw(before)
+                kept = true
+            }
+        }
+        return Built(item.etag, itemMgr.cacheSaveWithContent(item), kept)
+    }
+
+    private class NotebookAccess(val itemMgr: ItemManager, val copyToKeep: ByteArray?)
+
+    /**
+     * The notebook's item manager, from the copy the store keeps ([stored]) when it loads, else from the cached
+     * notebook, which uses the same key; and a copy of the cached notebook for a note's first entry to keep, so held
+     * text stays readable after the cache drops the notebook. The cache is read under its monitor, never with a store call.
+     */
+    private fun notebook(stored: ByteArray?): NotebookAccess {
+        val colMgr = collectionManager()
+        val cache = EtebaseLocalCache.getInstance(app, account.name)
+        val live = synchronized(cache) {
+            try {
+                cache.collectionGet(colMgr, notebookUid).col
+            } catch (e: EtebaseException) {
+                Logger.log.warning("The cached notebook could not be read: ${e.javaClass.name}")
+                null
+            }
+        }
+        val loaded = stored?.let {
+            try {
+                colMgr.cacheLoad(it)
+            } catch (e: EtebaseException) {
+                Logger.log.warning("The stored copy of a notebook could not be loaded: ${e.javaClass.name}")
+                null
+            }
+        }
+        val col = loaded ?: live ?: throw IOException("no copy of the notebook to encrypt with")
+        return NotebookAccess(colMgr.getItemManager(col), live?.let { colMgr.cacheSave(it) })
+    }
+
+    /** The cached item [uid] as a blob, or null when the cache has no note there. */
+    private fun cachedItem(uid: String): ByteArray? {
+        val colMgr = collectionManager()
+        val cache = EtebaseLocalCache.getInstance(app, account.name)
+        return synchronized(cache) {
+            val itemMgr = colMgr.getItemManager(cache.collectionGet(colMgr, notebookUid).col)
+            cache.itemGet(itemMgr, notebookUid, uid)
+                ?.takeIf { !it.item.isDeleted && NotesLoader.isMarkdownNote(it.meta.itemType) }
+                ?.let { itemMgr.cacheSaveWithContent(it.item) }
+        }
+    }
+
+    private fun collectionManager(): CollectionManager =
+        EtebaseLocalCache.getEtebase(app, HttpClient.sharedClient, AccountSettings(app, account)).collectionManager
+
+    private fun current(): Boolean =
+        ExactAccountRouting.validate(account, creationId, App.accountType, AccountManager.get(app)) != null
+
+    // ---- the sync request and the status line ----
+
+    /** Asks for one automatic Notes run after [delayMillis], in place of any request still waiting. */
+    private fun requestSync(delayMillis: Long) {
+        session.request?.cancel()
+        session.request = background.launch {
+            delay(delayMillis)
+            withContext(Dispatchers.IO) {
+                if (current()) NotesSyncCoordinator.request(app, account, creationId, NotesSyncPolicy.Trigger.SAVE)
+            }
+        }
+    }
+
+    /** After a Notes run changed state: a clean editor loads again, and the status line reads the entry again. */
+    fun syncChanged() = reload()
+
+    private suspend fun refreshStatusStep() {
+        val store = session.store
+        val handle = session.handle
+        val line = withContext(Dispatchers.IO) {
+            if (store == null || handle == null) return@withContext null
+            try {
+                NoteEditing.syncLine(NoteEditing.Local.of(store.observe(handle.noteUid).read), NotesLoader.network(app, account))
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                Logger.log.warning("The note's sync state could not be read: ${e.javaClass.name}")
+                null
+            }
+        }
+        withContext(Dispatchers.Main) {
+            syncLine = line
+            if (!cleared) updates.value = Unit
+        }
+    }
+
+    // ---- closing ----
+
+    override fun onCleared() {
+        cleared = true
+        autosave?.cancel()
+        // The last save, the handle's close, and the request a closing editor makes, in one step of the app's.
+        background.launch {
+            steps.withLock {
+                saveStep()
+                if (session.closed) return@withLock
+                session.closed = true
+                // Closed even after a redirect that did not finish: no save follows, and a handle left open would keep
+                // a landed copy of the note for every later push in this process.
+                val store = session.store
+                val handle = session.handle
+                if (store != null && handle != null) withContext(Dispatchers.IO) { closeHandle(store, handle) }
+                if (session.savedAny) requestSync(0)
+            }
+        }
+        super.onCleared()
+    }
+
+    private fun closeHandle(store: PendingNotesStore, handle: PendingNotesStore.EditorHandle) {
+        try {
+            store.editorClosed(handle)
+        } catch (e: Exception) {
+            // Recovery drops a landed record no open editor needs.
+            Logger.log.warning("A note editor could not close cleanly: ${e.javaClass.name}")
+        }
+    }
+
+    class Factory(
+        private val application: Application,
+        private val account: Account,
+        private val creationId: String,
+        private val notebookUid: String,
+        private val noteUid: String?,
+    ) : ViewModelProvider.Factory {
+        @Suppress("UNCHECKED_CAST")
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            NoteEditorViewModel(application, account, creationId, notebookUid, noteUid) as T
+    }
+
+    companion object {
+        const val AUTOSAVE_MILLIS = 1_500L
+        const val SYNC_DELAY_MILLIS = 10_000L
+        const val OPEN_ATTEMPTS = 3
+
+        /** The editor's steps outlive the screen: a last save and its sync request finish after the editor closed. */
+        private val background = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+        /** Device tests only: runs in each save step on IO, before the store is called. */
+        @VisibleForTesting
+        @Volatile internal var beforeSaveForTesting: (() -> Unit)? = null
+    }
+}

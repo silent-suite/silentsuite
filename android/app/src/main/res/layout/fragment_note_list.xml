@@ -4,6 +4,7 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
+    <!-- Why no note can be made or edited here: a read-only notebook, or a discard that did not finish. -->
     <TextView
         android:id="@+id/note_list_read_only"
         android:layout_width="match_parent"
@@ -11,9 +12,19 @@
         android:layout_margin="@dimen/spacing_8"
         android:background="@color/semantic_surface_variant"
         android:padding="@dimen/spacing_16"
-        android:text="@string/notes_read_only_hint"
         android:textAppearance="@style/TextAppearance.Material3.BodySmall"
         android:textColor="@color/semantic_on_surface"
+        android:visibility="gone" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/notes_new_note"
+        style="@style/Widget.Material3.Button.TonalButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/spacing_16"
+        android:layout_marginTop="@dimen/spacing_8"
+        android:minHeight="@dimen/touch_target_min"
+        android:text="@string/notes_new_note"
         android:visibility="gone" />
 
     <!-- Says why the list shows the synced notes without the changes made on this device. -->

@@ -212,7 +212,9 @@ internal class EtebasePushRemote(
         /**
          * The name and time of a pending change, from its own raw metadata. Metadata that gives no readable
          * name (not one map, or the name missing, repeated, aliased, not a string or not UTF-8) is not
-         * guessed at and not read through the typed decoder: the text is held. No save of the app writes it.
+         * guessed at and not read through the typed decoder: the text is held. The note editor writes such
+         * metadata only by keeping, as it is, metadata another client wrote that it cannot merge into
+         * (NoteEditing.metadataToWrite).
          * A time that is missing or unusable becomes [now].
          */
         fun pendingNameAndMtime(raw: ByteArray?, now: () -> Long): Pair<String, Long> {
