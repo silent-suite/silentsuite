@@ -12,7 +12,6 @@ import ezvcard.VCardVersion
 import ezvcard.parameter.*
 import ezvcard.property.*
 import ezvcard.util.PartialDate
-import org.apache.commons.io.IOUtils
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -443,7 +442,7 @@ class ContactTest {
 
         // PHOTO
         javaClass.classLoader!!.getResourceAsStream("lol.jpg").use { photo ->
-            assertArrayEquals(IOUtils.toByteArray(photo), c.photo)
+            assertArrayEquals(photo.readBytes(), c.photo)
         }
     }
 

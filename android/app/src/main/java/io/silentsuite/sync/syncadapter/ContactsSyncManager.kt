@@ -38,7 +38,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okio.Buffer
-import org.apache.commons.collections4.SetUtils
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.StringReader
@@ -190,8 +189,9 @@ constructor(context: Context, account: Account, settings: AccountSettings, extra
                 Logger.log.fine("Looking for changed group memberships of contact resource")
                 val cachedGroups = contact.getCachedGroupMemberships()
                 val currentGroups = contact.getGroupMemberships()
-                for (groupID in SetUtils.disjunction(cachedGroups, currentGroups)) {
-                    Logger.log.fine("Marking group as dirty: " + groupID!!)
+                // Groups the contact joined or left: the symmetric difference of both sets.
+                for (groupID in (cachedGroups - currentGroups) + (currentGroups - cachedGroups)) {
+                    Logger.log.fine("Marking group as dirty: $groupID")
                     batch.enqueue(BatchOperation.CpoBuilder.newUpdate(addressBook.syncAdapterURI(ContentUris.withAppendedId(ContactsContract.Groups.CONTENT_URI, groupID)))
                                     .withValue(ContactsContract.Groups.DIRTY, 1)
                     )
