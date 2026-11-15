@@ -1,14 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The note editor's toolbar. Text items, so TalkBack reads the titles; they go to the overflow when there is no room. -->
+<!-- The note editor's toolbar. Icon items: the titles are their TalkBack labels and long-press tooltips, and the
+     tint dims an item that cannot be used now. They go to the overflow, with their titles, when there is no room. -->
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <item android:id="@+id/note_undo"
           android:title="@string/notes_editor_undo"
-          app:showAsAction="ifRoom|withText"/>
+          android:icon="@drawable/ic_undo"
+          app:iconTint="@color/note_editor_action"
+          app:showAsAction="ifRoom"/>
 
     <item android:id="@+id/note_redo"
           android:title="@string/notes_editor_redo"
-          app:showAsAction="ifRoom|withText"/>
+          android:icon="@drawable/ic_redo"
+          app:iconTint="@color/note_editor_action"
+          app:showAsAction="ifRoom"/>
 
 </menu>

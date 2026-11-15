@@ -67,6 +67,12 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         menuState = null
+        // A long title wraps onto up to three lines instead of scrolling sideways; it stays one line of input, so
+        // Enter still moves to the body.
+        editText(view, Field.TITLE).apply {
+            setHorizontallyScrolling(false)
+            maxLines = 3
+        }
         for (field in Field.values()) {
             val edit = editText(view, field)
             edit.addTextChangedListener(Recorder(field))
