@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
+import { screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { toVCard, type Contact } from '@silentsuite/core'
 import JSZip from 'jszip'
 import ExportPage from '../page'
@@ -96,6 +96,11 @@ vi.mock('@/app/stores/use-etebase-store', () => {
     isInitialized: true,
     restoreBlocked: false,
     domainLoadState: { calendar: 'loaded', tasks: 'loaded', contacts: 'loaded', notes: 'loaded', preferences: 'unknown' },
+    // No notebooks, so Notes are not part of these exports.
+    collections: { notes: [] },
+    itemCache: new Map(),
+    itemTypeMap: new Map(),
+    itemCollectionMap: new Map(),
   }
   return {
     useEtebaseStore: Object.assign(
@@ -187,7 +192,7 @@ describe('contacts .vcf export bytes', () => {
 
   it('writes a UTF-8 BOM followed by CRLF-terminated UTF-8 card bytes', async () => {
     mockData.contacts = [contact('1', 'Zoë Ångström', 'Zoë', 'Ångström')]
-    render(<ExportPage />)
+    renderWithIntl(<ExportPage />)
     fireEvent.click(screen.getByText(/Export Contacts/))
 
     const blob = downloadedBlob()
@@ -200,7 +205,7 @@ describe('contacts .vcf export bytes', () => {
   it('writes the same BOM-prefixed, CRLF-terminated bytes into the ZIP contacts entry', async () => {
     mockData.contacts = [contact('1', 'Zoë Ångström', 'Zoë', 'Ångström')]
     realmSafeZipFiles()
-    render(<ExportPage />)
+    renderWithIntl(<ExportPage />)
     fireEvent.click(screen.getByText(/Export All Data/))
     await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled())
 
@@ -216,7 +221,7 @@ describe('contacts .vcf export bytes', () => {
 
   it('writes one leading BOM and CRLF-terminates every card for multiple international contacts', async () => {
     mockData.contacts = INTERNATIONAL
-    render(<ExportPage />)
+    renderWithIntl(<ExportPage />)
     fireEvent.click(screen.getByText(/Export Contacts/))
 
     const bytes = await readBlobBytes(downloadedBlob())
@@ -242,7 +247,7 @@ describe('contacts .vcf export bytes', () => {
     mockData.contacts = []
     mockData.events = [EVENT]
     realmSafeZipFiles()
-    render(<ExportPage />)
+    renderWithIntl(<ExportPage />)
     fireEvent.click(screen.getByText(/Export All Data/))
     await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalled())
 
@@ -253,7 +258,7 @@ describe('contacts .vcf export bytes', () => {
 
   it('round-trips the exported file through the real contact importer without a stray U+FEFF', async () => {
     mockData.contacts = INTERNATIONAL
-    render(<ExportPage />)
+    renderWithIntl(<ExportPage />)
     fireEvent.click(screen.getByText(/Export Contacts/))
     const bytes = await readBlobBytes(downloadedBlob())
     cleanup()
@@ -304,7 +309,7 @@ describe('contacts .vcf export bytes', () => {
       withBirthday('b3', 'Text', '--0416', true),
       withBirthday('b4', 'Full', '1990-04-16'),
     ]
-    render(<ExportPage />)
+    renderWithIntl(<ExportPage />)
     fireEvent.click(screen.getByText(/Export Contacts/))
     const bytes = await readBlobBytes(downloadedBlob())
     const text = new TextDecoder('utf-8').decode(bytes)

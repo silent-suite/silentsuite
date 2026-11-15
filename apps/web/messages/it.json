@@ -109,6 +109,19 @@
     "deleteNotebookMessage": "{count, plural, =0 {\"{name}\" è vuoto e verrà eliminato permanentemente.} one {\"{name}\" e la nota contenuta al suo interno verranno eliminati permanentemente.} other {\"{name}\" e le # note contenute al suo interno verranno eliminati permanentemente.}} Questa azione non può essere annullata.",
     "experimentalWebOnly": "Sperimentale · Solo app Web"
   },
+  "SettingsExport": {
+    "notebookLabel": "Blocco appunti",
+    "notebookSelectLabel": "Blocco appunti da esportare",
+    "allNotebooks": "Tutti i blocchi appunti",
+    "notebookFallback": "Blocco appunti",
+    "exportNotes": "Esporta note ({count, plural, one {# nota} other {# note}})",
+    "preparingNotes": "Preparazione delle note…",
+    "notesFormat": "Salvate in un file .zip con una cartella per ogni blocco appunti e un file Markdown (.md) per ogni nota.",
+    "notesWaitingToSync": "Le note vengono esportate come sono sul server, quindi una modifica a una nota ancora in attesa di sincronizzazione su questo dispositivo non è inclusa.",
+    "notesLeftOut": "{count, plural, one {# nota non è leggibile su questo dispositivo ed è stata esclusa dall'esportazione.} other {# note non sono leggibili su questo dispositivo e sono state escluse dall'esportazione.}}",
+    "notesNeedConnection": "Per esportare le note serve una connessione, quindi non è stato esportato nulla. Connettiti, poi esporta di nuovo.",
+    "allDataWithNotes": "Include tutti i calendari, gli elenchi attività, le rubriche e i blocchi appunti in un unico archivio."
+  },
   "SettingsExperimental": {
     "Language": {
       "title": "Lingua",
