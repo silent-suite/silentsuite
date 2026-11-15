@@ -823,11 +823,11 @@ def test_a_write_permission_in_android_ci_is_rejected(tmp_path: Path) -> None:
         root / CI_WORKFLOW,
         "  conscrypt-runtime:\n    name: Conscrypt runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})\n"
         "    needs: conscrypt-r28\n"
-        "    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n"
+        "    if: github.event_name != 'push' && (github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v'))\n"
         "    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    permissions:\n      contents: read\n",
         "  conscrypt-runtime:\n    name: Conscrypt runtime (API ${{ matrix.api-level }}, ${{ matrix.arch }})\n"
         "    needs: conscrypt-r28\n"
-        "    if: github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v')\n"
+        "    if: github.event_name != 'push' && (github.event_name == 'pull_request' || !startsWith(github.ref, 'refs/tags/v'))\n"
         "    runs-on: ubuntu-latest\n    timeout-minutes: 30\n    permissions:\n      contents: write\n",
     )
     assert_rejected(run_checker(root), "job conscrypt-runtime must declare read-only permissions")

@@ -558,8 +558,10 @@ EXPECTED_UMBREL_INPUT_SHA256 = {
 }
 # The Conscrypt producer exists twice: unprivileged CI builds it from the
 # triggering ref, the release lane builds it from the admitted commit. Both are
-# pinned so neither can drift into an unreviewed native toolchain.
-EXPECTED_CI_CONSCRYPT_JOB_SHA256 = "bbf63af3e0baec19928d8c7f2a2c09315395e1e6b25d27f75dc7bd5104486b2d"
+# pinned so neither can drift into an unreviewed native toolchain. The CI copy
+# also waits for the changes job and is skipped when no Android build input
+# changed; its steps are unchanged.
+EXPECTED_CI_CONSCRYPT_JOB_SHA256 = "f374b47f43ad894c831cd1c756cbae6bd5a8c9a9ba157bcf7eaa06f29b603d33"
 EXPECTED_RELEASE_CONSCRYPT_JOB_SHA256 = "eab71ddc079354e823af033bd6cb9c3998a6a6a85b5f8235f3ed41eedece8568"
 EXPECTED_CONSCRYPT_BUILD_SCRIPT_SHA256 = (
     "897919332ce26569a091cf9c6af6b55b5b533c62f3fe234c1a944ed7192c695d"
