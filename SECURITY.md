@@ -2,9 +2,9 @@
 
 ## Reporting a vulnerability
 
-Email <info@silentsuite.io>. Please don't open a public GitHub issue, discussion or pull request for a security or privacy problem.
+Email <security@silentsuite.io>. Please don't open a public GitHub issue, discussion or pull request for a security or privacy problem.
 
-You can encrypt your report with the PGP key at <https://silentsuite.io/.well-known/security.asc>. English and German are both fine. The same contact details are published in [security.txt](https://silentsuite.io/.well-known/security.txt).
+You can encrypt your report with the PGP key at <https://silentsuite.io/.well-known/security.asc>. English and German are both fine. More security contact information is in [security.txt](https://silentsuite.io/.well-known/security.txt).
 
 This covers the code in this repository (server, web app, Android app, Bridge, self-host files) and the hosted service at silentsuite.io.
 
