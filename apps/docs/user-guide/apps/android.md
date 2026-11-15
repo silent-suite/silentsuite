@@ -112,11 +112,11 @@ The app will sync your collections. Your calendars, contacts, and tasks now appe
 
 ## Choosing a Calendar App
 
-The SilentSuite app is a sync adapter -- it syncs data in the background but doesn't have a built-in calendar UI. Use any Android calendar app:
+The SilentSuite app is a sync adapter -- it syncs data in the background but doesn't have a built-in calendar UI. Use any Android calendar app. They all sync both ways: events you create, edit, or delete in the calendar app reach SilentSuite on the next sync.
 
 - <img src="/app-logos/etar.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> **Etar** (open source, F-Droid) -- lightweight, recommended.
 - <img src="/app-logos/fossify-calendar.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> [Fossify Calendar](https://github.com/FossifyOrg/Calendar) (open source, F-Droid) -- minimal and private.
-- <img src="/app-logos/kashcal.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> [KashCal](https://github.com/KashCal/KashCal) (open source) -- view, create, edit, and delete SilentSuite events through Android's system calendar. The SilentSuite app handles two-way sync; no CalDAV account setup in KashCal is needed.
+- <img src="/app-logos/kashcal.png" alt="" width="32" height="32" style="display: inline-block; vertical-align: middle; margin-right: 8px; object-fit: contain;"> [KashCal](https://github.com/KashCal/KashCal) (open source) -- uses Android's system calendar, so you don't need to set up a CalDAV account in KashCal.
 - **Google Calendar** -- works, but sends event metadata to Google for notifications. Not recommended if privacy is a priority.
 
 ## Choosing a Task App
