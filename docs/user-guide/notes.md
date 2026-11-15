@@ -4,7 +4,7 @@ Your notes live at [app.silentsuite.io/notes](https://app.silentsuite.io/notes).
 
 Notes use the [Etebase Markdown notes](https://docs.etebase.com/type-specs/notes) collection type (`etebase.md.note`), so existing EteSync Notes notebooks on the same account appear in SilentSuite without conversion.
 
-Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and in the Android app once you turn Notes on for your account there. Editing the same note on multiple devices at once may overwrite changes; avoid editing the same note simultaneously.
+Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and in the Android app once you turn Notes on for your account there. If the same note changes in two places, SilentSuite does not overwrite either version. The web app refuses the save, shows **Not saved**, and keeps your text in the editor. Android keeps both: the other version stays, and your text becomes a separate note whose title ends in "(conflicted copy)". Other apps that use the same notes format may overwrite a newer version without warning, so avoid editing the same note in SilentSuite and in another app at the same time.
 
 ## Notebooks
 
