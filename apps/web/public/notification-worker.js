@@ -78,6 +78,14 @@ async function clearAllAlarms() {
     resolve()
   }
   snoozeTimers.clear()
+  // Close reminders still on screen too, so the next person can't snooze one
+  // back into view after logout.
+  try {
+    const shown = await self.registration.getNotifications()
+    for (const notification of shown) notification.close()
+  } catch {
+    // getNotifications may be unavailable; stored and snoozed reminders are gone anyway
+  }
   await storeAlarms([])
 }
 
