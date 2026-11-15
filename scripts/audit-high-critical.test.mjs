@@ -116,7 +116,7 @@ test('fails closed unless the braces finding reports exactly the reviewed toolin
   }
 })
 
-test('reconciles pnpm 10.6.5 policy-severity counts with advisory findings before remediating braces', () => {
+test('reconciles registry audit policy-severity counts with advisory findings before remediating braces', () => {
   for (const [name, mutate] of [
     ['excess high count', (parsed) => { parsed.metadata.vulnerabilities.high = 2 }],
     ['excess critical count', (parsed) => { parsed.metadata.vulnerabilities.critical = 1 }],

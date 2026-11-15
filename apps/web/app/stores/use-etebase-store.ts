@@ -2010,8 +2010,9 @@ interface EtebaseActions {
    * Re-fetch all items from the Etebase server for a collection type.
    * Updates the local cache and returns fresh content.
    * This is what the sync change handler should call.
+   * `report.unreadable` counts server items left out because their content could not be read.
    */
-  refreshCollection: (type: CollectionTypeKey, collectionUid?: string) => Promise<CachedContentItem[]>
+  refreshCollection: (type: CollectionTypeKey, collectionUid?: string, report?: { unreadable: number }) => Promise<CachedContentItem[]>
 
   /**
    * Clean up on logout -- stop sync engine, clear all state.
@@ -3911,7 +3912,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     return results
   },
 
-  refreshCollection: async (type: CollectionTypeKey, collectionUid?: string) => {
+  refreshCollection: async (type: CollectionTypeKey, collectionUid?: string, report?: { unreadable: number }) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
     const targetCollections = collectionUid
@@ -3954,6 +3955,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
             } catch (err) {
               if (err instanceof AccountBoundaryChangedError) throw err
               // Skip items that fail to decode
+              if (report) report.unreadable += 1
             }
           }
           stoken = response.stoken || undefined

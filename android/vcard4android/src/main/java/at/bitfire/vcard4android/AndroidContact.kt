@@ -29,10 +29,8 @@ import androidx.annotation.CallSuper
 import ezvcard.parameter.*
 import ezvcard.property.*
 import ezvcard.util.PartialDate
-import org.apache.commons.io.IOUtils
 import org.apache.commons.lang3.StringUtils
 import org.apache.commons.lang3.builder.ToStringBuilder
-import org.apache.commons.text.WordUtils
 import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -63,7 +61,34 @@ open class AndroidContact(
             if (s.startsWith("x-"))                     // 2. remove x- from beginning -> "my_property"
                 s = s.substring(2)
             s = s.replace('_', ' ')          // 3. replace "_" by " " -> "my property"
-            return WordUtils.capitalize(s)                    // 4. capitalize -> "My Property"
+            return capitalizeWords(s)                         // 4. capitalize -> "My Property"
+        }
+
+        /**
+         * Title-cases the first character of every word and leaves all other characters as they
+         * are. Only U+0020 separates words; tabs and other whitespace do not. This matches the
+         * Commons Text 1.3 `WordUtils.capitalize(String)` call it replaces.
+         */
+        internal fun capitalizeWords(s: String): String {
+            val result = StringBuilder(s.length)
+            var capitalizeNext = true
+            var index = 0
+            while (index < s.length) {
+                val codePoint = s.codePointAt(index)
+                when {
+                    codePoint == ' '.code -> {
+                        capitalizeNext = true
+                        result.appendCodePoint(codePoint)
+                    }
+                    capitalizeNext -> {
+                        capitalizeNext = false
+                        result.appendCodePoint(Character.toTitleCase(codePoint))
+                    }
+                    else -> result.appendCodePoint(codePoint)
+                }
+                index += Character.charCount(codePoint)
+            }
+            return result.toString()
         }
 
         fun toURIScheme(s: String?) =
@@ -298,7 +323,7 @@ open class AndroidContact(
                     RawContacts.DisplayPhoto.CONTENT_DIRECTORY)
             try {
                 addressBook.requireProvider().openAssetFile(photoUri, "r")?.let { afd ->
-                    afd.createInputStream().use { contact.photo = IOUtils.toByteArray(it) }
+                    afd.createInputStream().use { contact.photo = it.readBytes() }
                 }
             } catch(e: IOException) {
                 Constants.log.log(Level.WARNING, "Couldn't read local contact photo file", e)

@@ -344,17 +344,23 @@ def _without_admission(job: dict) -> dict:
 # status-routes. Only the matrix row after API 36 first-run-setup and these four exact lines of the runtime job's
 # final assertion are carried forward; every other byte must still match.
 # The count lines then grew from 233 to 238 for five lost-upload-answer sync cases in the status-routes shard.
+# They then grew from 238 to 241 for two Notes network cases and one Notes notice case in status-routes,
+# then to 242 for one read-only calendar restore case in status-routes (#932).
+# The size check then became a floor (242 and each shard's size as minimums), so a ledger can grow with its
+# tests while android/scripts/run-focused-runtime-tests.sh keeps the exact counts (#48 device import).
 RUNTIME_LEDGER_JOB = "account-recreation-runtime"
 RUNTIME_LEDGER_MATRIX_ANCHOR = {"api-level": 36, "arch": "x86_64", "shard": "first-run-setup"}
 RUNTIME_LEDGER_MATRIX_ROW = {"api-level": 36, "arch": "x86_64", "shard": "launcher-recovery"}
 RUNTIME_LEDGER_COUNT_LINES = (
     (
         "expected_sizes={'29:mixed':1,'29:account-dashboard':32,'29:first-run-setup':19,'29:status-routes':72,'29:sibling-routes':48,'35:all':172,'36:account-dashboard':33,'36:first-run-setup':19,'36:sibling-routes':48,'36:status-routes':72}\n",
-        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':130,'29:sibling-routes':48,'35:all':238,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':130}\n",
+        "expected_sizes={'29:mixed':1,'29:account-dashboard':39,'29:first-run-setup':20,'29:status-routes':134,'29:sibling-routes':48,'35:all':242,'36:account-dashboard':33,'36:first-run-setup':20,'36:launcher-recovery':7,'36:sibling-routes':48,'36:status-routes':134}\n",
     ),
     (
         "if len(canonical) != 172 or len(expected) != expected_sizes[key]:\n",
-        "if len(canonical) != 238 or len(expected) != expected_sizes[key]:\n",
+        "# Floors, not exact sizes: new runtime tests can land in the same PR as their ledger entries,\n"
+        "# while a shrinking ledger still fails here. The runner script checks exact counts.\n"
+        "if len(canonical) < 242 or len(expected) < expected_sizes[key]:\n",
     ),
     (
         "'29:account-dashboard':owned('36:account-dashboard')-mixed,\n",
@@ -411,6 +417,56 @@ def _with_approved_runtime_ledger_changes(job: dict) -> dict:
         run = run.replace(old, new)
     owners[0]["run"] = run
     return _with_approved_runtime_profile(job)
+
+
+# An approved conscrypt-r28 change since both predecessors: the Conscrypt 2.9.0 rebuild moves the local AAR
+# coordinate from 2.6.3-r28 to 2.9.0-r28, so the verify step names the new path. Only that path, exactly once
+# in exactly that step, is carried forward; every other conscrypt-r28 byte must still match.
+CONSCRYPT_VERIFY_STEP = "Verify rebuilt Conscrypt AAR"
+CONSCRYPT_AAR_PATHS = (
+    "conscrypt-android/2.6.3-r28/conscrypt-android-2.6.3-r28.aar",
+    "conscrypt-android/2.9.0-r28/conscrypt-android-2.9.0-r28.aar",
+)
+
+
+def _with_approved_conscrypt_version(job: dict) -> dict:
+    """A predecessor conscrypt-r28 job with only its verified AAR path moved to the 2.9.0 rebuild."""
+    job = copy.deepcopy(job)
+    owners = [step for step in job.get("steps") or [] if step.get("name") == CONSCRYPT_VERIFY_STEP]
+    assert len(owners) == 1, f"exactly one predecessor step must be {CONSCRYPT_VERIFY_STEP!r}"
+    old, new = CONSCRYPT_AAR_PATHS
+    run = owners[0]["run"]
+    assert run.count(old) == 1 and new not in run, old
+    owners[0]["run"] = run.replace(old, new)
+    return job
+
+
+# The same Conscrypt update adds four TLS composition tests to ConscryptProviderRuntimeTest, so the
+# conscrypt-runtime ledger expects their names. Only those lines, added exactly once after the existing
+# method, are carried forward; every other conscrypt-runtime byte must still match.
+CONSCRYPT_RUNTIME_LEDGER_ANCHOR = '    "providerLoadsAndCreatesTlsContext",\n'
+CONSCRYPT_RUNTIME_LEDGER_ADDED = (
+    '    "unacceptedCertificateIsRejectedByCustomTrust",\n'
+    '    "acceptedCertificateConnectsDespiteHostnameMismatch",\n'
+    '    "trustedChainWithMatchingHostnameConnects",\n'
+    '    "trustedChainWithOtherHostnameIsRejectedWithoutAcceptance",\n'
+)
+
+
+def _with_approved_conscrypt_runtime_ledger(job: dict) -> dict:
+    """A predecessor conscrypt-runtime job with only the four TLS composition methods added to its ledger."""
+    job = copy.deepcopy(job)
+    owners = [
+        step for step in job.get("steps") or []
+        if isinstance(step.get("run"), str) and CONSCRYPT_RUNTIME_LEDGER_ANCHOR in step["run"]
+    ]
+    assert len(owners) == 1, "exactly one predecessor step must own the Conscrypt runtime ledger"
+    run = owners[0]["run"]
+    assert run.count(CONSCRYPT_RUNTIME_LEDGER_ANCHOR) == 1 and CONSCRYPT_RUNTIME_LEDGER_ADDED not in run
+    owners[0]["run"] = run.replace(
+        CONSCRYPT_RUNTIME_LEDGER_ANCHOR, CONSCRYPT_RUNTIME_LEDGER_ANCHOR + CONSCRYPT_RUNTIME_LEDGER_ADDED
+    )
+    return job
 
 
 # The second approved build-pr change since both predecessors: one step that inspects the merged release
@@ -525,7 +581,12 @@ def test_candidate_changes_nothing_else_relative_to_the_predecessor(base, candid
     assert _triggers(candidate) == _triggers(base)
     assert set(candidate["jobs"]) == set(base["jobs"]) | {STATIC_JOB, PRODUCER} | ADDED_JOBS
     for name in UNCHANGED_JOBS:
-        assert candidate["jobs"][name] == base["jobs"][name], name
+        original = base["jobs"][name]
+        if name == "conscrypt-r28":
+            original = _with_approved_conscrypt_version(original)
+        if name == "conscrypt-runtime":
+            original = _with_approved_conscrypt_runtime_ledger(original)
+        assert candidate["jobs"][name] == original, name
     # Consumers lose only the Rust toolchain and the Etebase compile, and gain only
     # the admission steps: NDK, build-tools, JDKs, matrices, runtime scripts,
     # ledgers, producer manifests and every final gate are otherwise identical.
@@ -550,6 +611,10 @@ def test_candidate_changes_only_build_pr_gating_relative_to_8cb81b42(predecessor
     for name, job in predecessor["jobs"].items():
         if name == RUNTIME_LEDGER_JOB:
             job = _with_approved_runtime_ledger_changes(job)
+        if name == "conscrypt-r28":
+            job = _with_approved_conscrypt_version(job)
+        if name == "conscrypt-runtime":
+            job = _with_approved_conscrypt_runtime_ledger(job)
         if name != "build-pr":
             assert candidate["jobs"][name] == job, name
     expected = _expected_build_pr(predecessor["jobs"]["build-pr"], _gate_run(candidate))
@@ -604,7 +669,8 @@ def test_runtime_ledger_count_transport_admits_only_the_approved_lines(predecess
         ("raise SystemExit(f'missing {sorted(missing)}')", "raise SystemExit('missing')"),
         ("'36:account-dashboard':33", "'36:account-dashboard':34"),
         ("'36:launcher-recovery':7", "'36:launcher-recovery':8"),
-        ("if len(canonical) != 238 or", "if len(canonical) < 238 or"),
+        ("if len(canonical) < 242 or", "if len(canonical) < 241 or"),
+        ("or len(expected) < expected_sizes[key]", "or len(expected) < 0"),
         ("|owned('36:launcher-recovery'))-mixed", ")-mixed"),
     ):
         mutated = copy.deepcopy(current)

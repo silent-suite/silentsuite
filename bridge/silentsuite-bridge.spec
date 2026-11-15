@@ -148,7 +148,7 @@ a = Analysis(
     hiddenimports=[
         # etebase — the Rust extension exposes submodules dynamically
         "etebase",
-        "etebase._etebase",
+        "etebase.etebase_python",
 
         # Radicale core modules
         "radicale",

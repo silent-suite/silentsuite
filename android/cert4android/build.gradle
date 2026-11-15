@@ -1,7 +1,7 @@
 
 buildscript {
     ext.versions = [
-        conscrypt: '2.6.3'
+        conscrypt: '2.9.0'
     ]
 }
 
@@ -83,7 +83,8 @@ dependencies {
     androidTestImplementation "androidx.test:core:${androidX.testCore}"
     androidTestImplementation "androidx.test.ext:junit:${androidX.testExtJunit}"
     androidTestImplementation "androidx.test.espresso:espresso-core:${androidX.espresso}"
-    androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.9.0'
+    androidTestImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    androidTestImplementation 'com.squareup.okhttp3:okhttp-tls:4.12.0'
 
     testImplementation 'junit:junit:4.13'
 }
