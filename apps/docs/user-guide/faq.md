@@ -18,7 +18,7 @@ SilentSuite currently supports the web, Android, and compatible desktop clients.
 
 - **Web:** The web app is live at [app.silentsuite.io](https://app.silentsuite.io).
 - **Android:** A dedicated Android sync adapter is available from [Google Play](https://play.google.com/store/apps/details?id=io.silentsuite.android), [F-Droid](https://f-droid.org/packages/io.silentsuite.android), Obtainium, Zapstore, and [GitHub Releases](https://github.com/silent-suite/silentsuite/releases).
-- **iOS:** On the roadmap, coming soon. Native iOS sync is not currently supported, and the EteSync iOS app does not work with silentsuite.io accounts. The web app works in an iOS browser but does not sync with native iOS Calendar, Contacts, or Reminders.
+- **iOS:** Planned. Native iOS sync is not supported yet, and the scope and timing of a native app haven't been decided. The EteSync iOS app does not work with silentsuite.io accounts. The web app works in an iOS browser but does not sync with native iOS Calendar, Contacts, or Reminders.
 - **Desktop:** Use the [SilentSuite Bridge](./apps/dav-bridge.md) with supported CalDAV/CardDAV apps (Thunderbird, macOS Calendar, GNOME Calendar, and more).
 
 ## Privacy & Security

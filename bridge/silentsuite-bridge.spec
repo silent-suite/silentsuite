@@ -136,7 +136,6 @@ a = Analysis(
         *safe_copy_metadata("vobject"),
         *safe_copy_metadata("radicale"),
         *safe_copy_metadata("etebase"),
-        *safe_copy_metadata("requests"),
         *safe_copy_metadata("peewee"),
         *safe_copy_metadata("msgpack"),
         *safe_copy_metadata("appdirs"),
@@ -149,7 +148,7 @@ a = Analysis(
     hiddenimports=[
         # etebase — the Rust extension exposes submodules dynamically
         "etebase",
-        "etebase._etebase",
+        "etebase.etebase_python",
 
         # Radicale core modules
         "radicale",
@@ -239,14 +238,6 @@ a = Analysis(
         "playhouse",
         "playhouse.sqlite_ext",
         "appdirs",
-        "requests",
-        "requests.adapters",
-        "requests.auth",
-        "requests.packages",
-        "urllib3",
-        "certifi",
-        "charset_normalizer",
-        "idna",
 
         # jaraco namespace packages — required by pkg_resources at runtime
         "jaraco",

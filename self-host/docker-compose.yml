@@ -52,9 +52,9 @@ services:
       SUPER_USER: ${SUPER_USER:-admin}
       SUPER_PASS: ${SUPER_PASS}
       # Open registration toggle. "true" blocks new signups (use after the
-      # operator's admin account is registered). Default "false" allows signup.
+      # operator's first account is registered). Default "false" allows signup.
       ETEBASE_DISABLE_SIGNUP: ${ETEBASE_DISABLE_SIGNUP:-false}
-      # One-time first-admin signup token. When set, the first signup must use
+      # One-time first-signup token. When set, the first signup must use
       # https://YOUR_DOMAIN/?bootstrap_token=TOKEN as the server URL.
       ETEBASE_BOOTSTRAP_ADMIN_TOKEN: ${ETEBASE_BOOTSTRAP_ADMIN_TOKEN:-}
       # Hide the advanced Django admin panel unless explicitly re-enabled.
