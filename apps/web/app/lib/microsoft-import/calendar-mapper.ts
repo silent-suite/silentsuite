@@ -187,7 +187,15 @@ function textFields(event: GraphEvent): Partial<VEvent> {
 }
 
 type Timed = { value: string; params?: Record<string, string> }
-const inZone = (zone: string | null, ms: number): Timed => (zone
+
+/** True when the wall clock of `ms` in `zone` reads back as `ms`: false in the repeated hour after
+ *  a DST fall-back, which a TZID value (and the core reader) resolves to its first occurrence. */
+function roundTrips(zone: string, ms: number): boolean {
+  return instantOf(zone, wallIn(zone, ms)) === ms
+}
+
+/** A TZID wall time, or UTC when the wall time would read back as a different instant. */
+const inZone = (zone: string | null, ms: number): Timed => (zone && roundTrips(zone, ms)
   ? { value: stamp(wallIn(zone, ms)), params: { TZID: zone } }
   : { value: `${stamp(ms)}Z` })
 
@@ -300,6 +308,8 @@ function mapSeries(master: GraphEvent, uid: string, sourceKey: string): Provider
     const s = instantOfGraph(master.start)
     const e = instantOfGraph(master.end)
     if (!zone || s === null || e === null || e < s) return null
+    // A series starting in the repeated hour of a DST fall-back cannot keep its wall clock exactly.
+    if (!roundTrips(zone, s)) return null
     const time = timeOfWall(wallIn(zone, s))
     const firstWall = firstDay * DAY_MS + time
     if (recurrenceZone && !zonesAgree(zone, recurrenceZone, firstWall)) return null

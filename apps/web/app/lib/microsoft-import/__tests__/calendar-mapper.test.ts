@@ -181,6 +181,25 @@ describe('Microsoft calendar mapping: series', () => {
   })
 })
 
+describe('Microsoft calendar mapping: DST fall-back', () => {
+  it('a series starting in the repeated hour is left out unmarked; one in the first 02:30 imports', () => {
+    const weekly = { pattern: { type: 'weekly', interval: 1, daysOfWeek: ['sunday'], firstDayOfWeek: 'sunday' }, range: { type: 'numbered', startDate: '2026-10-25', numberOfOccurrences: 3, recurrenceTimeZone: BERLIN } }
+    const second = map([master({ iCalUId: 'late', start: utc('2026-10-25T01:30:00'), end: utc('2026-10-25T01:45:00'), recurrence: weekly })])
+    expect(second).toMatchObject({ units: [], unreadable: 1 })
+    const first = map([master({ iCalUId: 'early', start: utc('2026-10-25T00:30:00'), end: utc('2026-10-25T00:45:00'), recurrence: weekly })])
+    expect(first.unreadable).toBe(0)
+    expect(written(first.units[0]!).startDate.toISOString()).toBe('2026-10-25T00:30:00.000Z')
+  })
+
+  it('a moved occurrence in the repeated hour keeps its exact time', () => {
+    const { units, unreadable } = map([master({
+      exceptionOccurrences: [exception('2026-06-08T07:00:00Z', { start: utc('2026-10-25T01:30:00'), end: utc('2026-10-25T01:45:00') })],
+    })])
+    expect(unreadable).toBe(0)
+    expect(units[0]!.overrides!.join('\n')).toContain('DTSTART:20261025T013000Z')
+  })
+})
+
 describe('Microsoft calendar mapping: unreadable series', () => {
   const cases: [string, GraphEvent, ReadonlySet<string>?][] = [
     ['unparseable cancelled id', master({ cancelledOccurrences: ['AAMk-no-date'] })],
@@ -264,6 +283,28 @@ describe('Microsoft calendar mapping: single events and fields', () => {
       ['20260701T123000Z', undefined, '20260701T130000Z'],
     ])
     for (const unit of units) expect(written(unit).startDate.toISOString()).toBe('2026-07-01T12:30:00.000Z')
+  })
+
+  it('keeps an instant in the repeated hour after a DST fall-back exact by writing it in UTC', () => {
+    // Berlin falls back at 01:00Z on 2026-10-25: 00:30Z and 01:30Z are both 02:30 local.
+    const berlin = { originalStartTimeZone: BERLIN, originalEndTimeZone: BERLIN }
+    const { units, unreadable } = map([
+      single({ iCalUId: 'f1', ...berlin, start: utc('2026-10-25T00:30:00'), end: utc('2026-10-25T00:45:00') }),
+      single({ iCalUId: 'f2', ...berlin, start: utc('2026-10-25T01:30:00'), end: utc('2026-10-25T01:45:00') }),
+      single({ iCalUId: 'f3', ...berlin, start: utc('2026-10-25T02:30:00'), end: utc('2026-10-25T02:45:00') }),
+    ])
+    expect(unreadable).toBe(0)
+    expect(units.map((u) => [u.dtstart, u.dtstartParams])).toEqual([
+      ['20261025T023000', { TZID: 'Europe/Berlin' }],
+      ['20261025T013000Z', undefined],
+      ['20261025T033000', { TZID: 'Europe/Berlin' }],
+    ])
+    expect(units.map((u) => written(u).startDate.toISOString())).toEqual([
+      '2026-10-25T00:30:00.000Z', '2026-10-25T01:30:00.000Z', '2026-10-25T02:30:00.000Z',
+    ])
+    expect(units.map((u) => written(u).endDate.toISOString())).toEqual([
+      '2026-10-25T00:45:00.000Z', '2026-10-25T01:45:00.000Z', '2026-10-25T02:45:00.000Z',
+    ])
   })
 
   it('maps single and multi-day all-day events in both shapes, with an exclusive end date', () => {
