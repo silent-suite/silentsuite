@@ -18,6 +18,23 @@
         android:textColor="@color/semantic_on_surface_variant"
         android:visibility="gone" />
 
+    <!-- The way to the account's Unsynced text: held text, changes whose notebook is read-only or gone,
+         and entry files that cannot be read. Outside the refresh layout, so it stays with no notebook. -->
+    <TextView
+        android:id="@+id/notebooks_unsynced"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="@dimen/spacing_8"
+        android:background="@color/semantic_surface_variant"
+        android:clickable="true"
+        android:focusable="true"
+        android:foreground="?attr/selectableItemBackground"
+        android:minHeight="48dp"
+        android:padding="@dimen/spacing_16"
+        android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+        android:textColor="@color/semantic_on_surface"
+        android:visibility="gone" />
+
     <TextView
         android:id="@+id/notebooks_hint"
         android:layout_width="match_parent"
