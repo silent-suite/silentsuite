@@ -128,7 +128,7 @@
     "deleteNotebookTitle": "Eliminare il blocco appunti?",
     "deleteNotebookMessage": "{count, plural, =0 {\"{name}\" è vuoto e verrà eliminato permanentemente.} one {\"{name}\" e la nota contenuta al suo interno verranno eliminati permanentemente.} other {\"{name}\" e le # note contenute al suo interno verranno eliminati permanentemente.}} Questa azione non può essere annullata.",
     "deleteNotebookUnsaved": "Blocco appunti non eliminato: una nota al suo interno ha modifiche non ancora presenti sul server, ad esempio una nota segnata come Non salvata. Non è stato eliminato nulla.",
-    "deleteNotebookChanged": "Blocco appunti non eliminato: contiene elementi o modifiche che questo browser non mostra. Non è stato eliminato nulla.",
+    "deleteNotebookChanged": "Blocco appunti non eliminato: questo browser non ha potuto confermare di mostrarne tutto il contenuto. Non è stato eliminato nulla.",
     "experimentalWebOnly": "Sperimentale · Solo app Web",
     "disabledTitle": "Le note sono una funzione sperimentale",
     "disabledDescription": "Attiva le note in Impostazioni per usare note Markdown crittografate. Le note esistenti vengono conservate mentre questa funzione è disattivata.",

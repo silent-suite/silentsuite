@@ -131,7 +131,7 @@ describe('NotebookListPanel', () => {
     })]))
   })
 
-  it('says in Italian that a notebook holding changes it does not show was not deleted (#1113 D1)', async () => {
+  it('says in Italian that a notebook this browser could not confirm was not deleted (#1113 D1)', async () => {
     useToastStore.setState({ toasts: [] })
     mockEtebaseState.deleteCollection.mockImplementation(async (_type: string, _id: string, options?: { onRefused?: (reason: string) => void }) => {
       options?.onRefused?.('changed')
@@ -148,7 +148,7 @@ describe('NotebookListPanel', () => {
 
     await vi.waitFor(() => expect(useToastStore.getState().toasts).toEqual([expect.objectContaining({
       variant: 'error',
-      message: 'Blocco appunti non eliminato: contiene elementi o modifiche che questo browser non mostra. Non è stato eliminato nulla.',
+      message: 'Blocco appunti non eliminato: questo browser non ha potuto confermare di mostrarne tutto il contenuto. Non è stato eliminato nulla.',
     })]))
   })
 
