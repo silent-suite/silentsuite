@@ -346,6 +346,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const saveChainRef = useRef<Promise<void>>(Promise.resolve())
   const inFlightRef = useRef(0)
+  // The last draft handed to the save chain while saves run; null when it is idle.
+  const queuedRef = useRef<Draft | null>(null)
 
   const isDirty = () => (
     draftRef.current.title !== savedRef.current.title || draftRef.current.content !== savedRef.current.content
@@ -359,16 +361,20 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
     if (!isCurrentAccountEpoch(accountEpoch)) return
     if (copyingRef.current || handedOffRef.current) return
     const draft = draftRef.current
-    if (draft.title === savedRef.current.title && draft.content === savedRef.current.content) return
+    const matches = (other: Draft) => draft.title === other.title && draft.content === other.content
+    // Text typed back to the saved version while other text is queued still needs its own save.
+    if (matches(savedRef.current) && (!queuedRef.current || matches(queuedRef.current))) return
     // Captured now, before the chain: the text, the lineage it was typed on and any obligation.
     const lineage = lineageRef.current
     const obligation = getNoteObligation(note.id)
     let refusedWith: NoteRefusal | undefined
+    queuedRef.current = draft
     inFlightRef.current += 1
     setSaveState('saving')
     const settle = (saved: boolean) => {
       inFlightRef.current -= 1
       if (inFlightRef.current > 0) return
+      queuedRef.current = null
       // While a copy runs, or once it has the text, the store's record is the copy's.
       if (isCurrentAccountEpoch(accountEpoch) && !copyingRef.current && !handedOffRef.current) {
         // The text of a failed save outlives this editor; an accepted one needs no holding.

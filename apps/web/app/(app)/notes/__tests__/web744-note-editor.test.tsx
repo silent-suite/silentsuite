@@ -1419,6 +1419,41 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect([titleBox().value, storedNote(item.uid)?.title, saveStatus().textContent]).toEqual([BASE_TITLE, BASE_TITLE, 'Saved'])
     })
 
+    /** Saves a typed title, holds its write, and types the saved title back meanwhile. */
+    async function typeBackDuringSave() {
+      const opened = await openSavedNote()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Typed then removed 1113' } })
+      hideTab()
+      await write.arrived
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      expect([titleBox().value, server.transactions.length]).toEqual([BASE_TITLE, 0])
+      return { ...opened, write }
+    }
+
+    it('saves text typed back to the saved version when a flush comes while a save runs', async () => {
+      const { account, collection, item, write } = await typeBackDuringSave()
+      // The debounce timer flushes the same way.
+      hideTab()
+
+      write.release(false)
+      await settle()
+
+      expect(await serverTitle(account, collection, item.uid)).toBe(BASE_TITLE)
+      expect([titleBox().value, storedNote(item.uid)?.title, saveStatus().textContent]).toEqual([BASE_TITLE, BASE_TITLE, 'Saved'])
+    })
+
+    it('saves text typed back to the saved version when the editor closes while a save runs', async () => {
+      const { account, collection, item, view, write } = await typeBackDuringSave()
+      view.unmount()
+
+      write.release(false)
+      await settle()
+
+      expect(await serverTitle(account, collection, item.uid)).toBe(BASE_TITLE)
+      expect(storedNote(item.uid)?.title).toBe(BASE_TITLE)
+    })
+
     it('takes a newer record that came while a repeated save ran, once that save is refused', async () => {
       const { account, collection, item } = await openSavedNote()
       const first = server.holdNext(isTransaction)
