@@ -618,7 +618,7 @@ function NotesPageBody() {
       {!isOnline && (
         <div
           id={offlineNoticeId}
-          className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400"
+          className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400"
         >
           <WifiOff className="h-3.5 w-3.5 shrink-0" />
           {t('offlineMessage')}

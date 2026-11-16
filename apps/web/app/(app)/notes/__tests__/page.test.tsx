@@ -762,7 +762,7 @@ describe('NotesPage', () => {
   })
 
   describe('while offline, a new note needs a connection', () => {
-    const NOTICE = /You are offline\. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere\. New notes and moves need a connection, so New note is turned off\./
+    const NOTICE = /You are offline\. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere or the editor shows Not saved\. New notes and moves need a connection, so New note is turned off\./
 
     beforeEach(() => {
       storeMock.syncState.isOnline = false
