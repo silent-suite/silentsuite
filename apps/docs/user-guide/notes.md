@@ -49,6 +49,8 @@ Select the note in the list (newest edits first; each row shows when it was last
 
 Open the note, select **Delete** in the row below the title, and confirm. The deletion syncs to your other devices.
 
+On Android, open the note, open the menu in the top bar and choose **Delete note**, then confirm. If the note has text on this device that has not synced, a second confirmation asks before that text is discarded. The note leaves the list at once and is deleted on the server at the next sync, which follows the same network settings as a save. A note that never synced is only removed from this device. If another device changed the note before the delete reached the server, or the notebook became read-only for you, the note is not deleted: it shows again, with the other device's change, and the notebook list says why until you dismiss the message.
+
 ## Offline
 
 Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect. Creating a brand-new note or moving one to another notebook requires a connection.
@@ -59,6 +61,14 @@ Reloading the page while offline and reading previously opened notes depends on 
 
 Share a notebook from **Settings → Sharing**. Members see the same notebook, end-to-end encrypted to the public keys you confirm. Before you share or accept, compare security fingerprints with each person over a separate channel, such as in person or on a call; the server supplies usernames and keys, so an unverified fingerprint gives no assurance about who receives access. Read-only members can read notes but cannot change them.
 
+## Export
+
+In the web app, **Settings → Export** saves notes as Markdown files in a `.zip`, with one folder per notebook and one `.md` file per note. Pick one notebook or **All notebooks**, which includes hidden notebooks. **Export All Data (.zip)** puts the same folders under `silentsuite-notes/`, next to your calendars, tasks, and contacts. Notes are included whenever your account has a notebook, even while Notes is turned off under **Settings → Experimental**.
+
+Each file starts with a YAML header (frontmatter) holding the note's `title` and `modified` (when it was last edited), followed by the body exactly as stored. A note without a title is saved as `Untitled.md`, and its header has no `title`. In file names, characters that file systems refuse, such as `/` and `:`, and look-alikes of `/` and `\` become `_`, invisible characters are removed, names Windows reserves, such as `CON`, get a leading `_`, and titles longer than 60 bytes (60 unaccented letters, or 20 Chinese or Japanese characters) are cut. Notes with the same title get a number, such as `Ideas (2).md`. The header keeps the full title.
+
+The export lists your notebooks and notes from the server again, so it needs a connection, and decrypts every note in your browser: no note title, text, or notebook name is sent anywhere. A note that cannot be decrypted is left out, and the page says how many were left out. Changes to notes that are still waiting to sync on that device are not included until they sync. The `.zip` itself is not encrypted, so anyone who gets the file can read your notes.
+
 ## What is not in this release
 
-Deleting or moving notes on Android, the DAV bridge, attachments, import/export, and rich-text editing are not available yet. Use Markdown in the web app for now.
+Moving notes on Android, the DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.

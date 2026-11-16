@@ -18,6 +18,39 @@
         android:textColor="@color/semantic_on_surface_variant"
         android:visibility="gone" />
 
+    <!-- Notes the user deleted that a Notes sync did not delete, and why; it stays until dismissed. Outside the
+         refresh layout, so it stays with no notebook. -->
+    <LinearLayout
+        android:id="@+id/notebooks_delete_notice"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="@dimen/spacing_8"
+        android:background="@color/semantic_surface_variant"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/spacing_16"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/notebooks_delete_notice_text"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:paddingTop="@dimen/spacing_8"
+            android:paddingBottom="@dimen/spacing_8"
+            android:accessibilityLiveRegion="polite"
+            android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
+            android:textColor="@color/semantic_on_surface" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/notebooks_delete_notice_dismiss"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="@dimen/touch_target_min"
+            android:text="@string/notes_deletes_not_done_dismiss" />
+    </LinearLayout>
+
     <!-- The way to the account's Unsynced text: held text, changes whose notebook is read-only or gone,
          and entry files that cannot be read. Outside the refresh layout, so it stays with no notebook. -->
     <TextView

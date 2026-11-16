@@ -32,6 +32,10 @@ enum class NoteSync {
  *   toward the unsynced text the notebook list points to. An entry whose notebook is gone counts there
  *   too, so nothing pending is ever invisible.
  * - A pending edit or create replaces or adds its note's row and is marked.
+ * - A pending delete hides its note's row in a writable notebook and counts as a waiting change on the
+ *   notebook's row. Anywhere else it changes nothing on screen and counts nowhere: it holds no text, a run
+ *   never sends it there and drops it (PendingNotesStore.hold), and the note's server copy shows meanwhile.
+ *   It is never listed as unsynced text.
  * - A pending edit whose blob cannot be read keeps the server row, or adds a placeholder for a create,
  *   with its own marker. So does a note whose entry file cannot be read, but a placeholder needs a file
  *   that still names this notebook; without one the change counts as unsynced text.
@@ -110,7 +114,7 @@ internal object NotesOverlay {
         for (h in headers) {
             if (onRow(h)) {
                 waiting[h.notebookUid] = (waiting[h.notebookUid] ?: 0) + 1
-            } else {
+            } else if (h.state != PendingEntry.State.DELETE) {
                 unsynced++
             }
         }
@@ -128,7 +132,7 @@ internal object NotesOverlay {
         confirmed: Set<String> = emptySet(),
     ): List<EntryHeader> {
         val onRow = waitsOnRow(rows, access, confirmed)
-        return headers.filterNot(onRow)
+        return headers.filter { !onRow(it) && it.state != PendingEntry.State.DELETE }
     }
 
     /**
@@ -172,6 +176,14 @@ internal object NotesOverlay {
         val covered = HashSet<String>()
         for (h in headers) {
             if (h.notebookUid != row.uid) continue
+            if (h.state == PendingEntry.State.DELETE) {
+                // Hidden where a run sends it; anywhere else the server row stays as it is, unmarked.
+                if (writable && h.noteUid !in confirmed) {
+                    rows.remove(h.noteUid)
+                    covered += h.noteUid
+                }
+                continue
+            }
             // Text an unfinished discard covers is kept apart like held text: it is never sent.
             if (!writable || h.state == PendingEntry.State.HELD || h.noteUid in confirmed) {
                 rows[h.noteUid]?.let { rows[h.noteUid] = it.copy(sync = NoteSync.HELD) }
@@ -225,6 +237,8 @@ internal object NotesOverlay {
             is Read.Present -> read.entry
         }
         if (entry.notebookUid != notebookUid) return cached?.copy(observedSequence = sequence)
+        // A pending delete leaves nothing to show where a run sends it; anywhere else the server copy shows, unmarked.
+        if (entry.state == PendingEntry.State.DELETE) return if (writable && !confirmed) null else cached?.copy(observedSequence = sequence)
         if (!writable || entry.state == PendingEntry.State.HELD || confirmed) return marked(NoteSync.HELD, entry.version)
         val content = decrypt(entry) ?: return marked(NoteSync.LOCAL_UNREADABLE, entry.version)
         return NoteContent(noteUid, content.title, content.body.orEmpty(), content.editedAt, NoteSync.WAITING, entry.version, sequence)
