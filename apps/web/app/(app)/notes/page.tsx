@@ -304,6 +304,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   )
   const [copy, setCopy] = useState<'idle' | 'running' | NoteCopyFailure>(held?.copy ?? 'idle')
   const [newer, setNewer] = useState<NewerView>({ kind: 'closed' })
+  // Moves on when the draft is typed back to the saved text, so a refreshed note is adopted then.
+  const [cleanGen, setCleanGen] = useState(0)
   // Latest typed values, and the last values the store accepted. While they
   // differ the draft is unsaved and a refresh of this note must not clobber it.
   const draftRef = useRef<Draft>(held?.draft ?? { title: note.title, content: note.content })
@@ -411,11 +413,17 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
       // T2: a note leaving its clean period reads its custody afresh.
       if (!wasDirty) void observeNoteCustody(note.id)
     }
-    // Typing back to the saved text leaves nothing to hold or refuse.
+    // Typing back to the saved text leaves nothing to hold or refuse; a newer
+    // version the row already shows is adopted as any refresh would be.
     if (!isDirty()) {
       releaseHeldNoteDraft(note.id)
       setRefusal(null)
       setCopy((state) => (state === 'running' ? state : 'idle'))
+      if (wasDirty) {
+        newerRequestRef.current = null
+        setNewer({ kind: 'closed' })
+        setCleanGen((gen) => gen + 1)
+      }
     }
     setMoveFailed(false)
     if (inFlightRef.current === 0) setSaveState('pending')
@@ -451,7 +459,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
     savedRef.current = draftRef.current
     setRefusal(null)
     void releaseIfProved()
-  }, [note.title, note.content, note.revision, releaseIfProved])
+  }, [note.title, note.content, note.revision, releaseIfProved, cleanGen])
 
   // The newer-version view shows one revision: once the note moves past both it and
   // this editor's base, the view closes rather than show an outdated version.

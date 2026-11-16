@@ -895,7 +895,7 @@ export async function proveNoteRevision(itemUid: string, base: SealedEditingBase
 
 /** What a read of a note's live server copy found (#1113 D1). */
 export type LiveNoteRead =
-  | { kind: 'note'; title: string; content: string; revision: string | null }
+  | { kind: 'note'; title: string; content: string; revision: string | null; updatedAt: Date }
   /** The server holds a tombstone: proof that the note was deleted. */
   | { kind: 'deleted' }
   | { kind: 'offline' }
@@ -935,7 +935,8 @@ export async function readLiveNote(itemUid: string, collectionUid?: string): Pro
     const raw = await fresh.getContent()
     assertGuard()
     const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
-    return { kind: 'note', title: core.noteFromEtebaseItem(itemUid, '', meta).title, content, revision: core.savedRevisionOf(fresh) }
+    const read = core.noteFromEtebaseItem(itemUid, content, meta)
+    return { kind: 'note', title: read.title, content, revision: core.savedRevisionOf(fresh), updatedAt: read.updated_at }
   } catch (err) {
     if (err instanceof AccountBoundaryChangedError) return { kind: 'unknown' }
     return { kind: 'unreadable' }

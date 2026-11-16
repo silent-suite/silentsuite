@@ -200,12 +200,25 @@ function getNoteCopyAttempt(id: string): NoteCopyAttempt | undefined {
 }
 
 /**
- * A fresh, read-only look at the note's server copy (#1113 D1). Nothing it
- * reads reaches the item cache, the note store or the editor.
+ * A fresh, read-only look at the note's server copy (#1113 D1). The list row
+ * follows the version read, title, text and revision together, only while the
+ * note's text is unsaved here (so no editor adopts it) and only over the exact
+ * record the read started from. Nothing reaches the item cache or an editor.
  */
 export async function readNewerNoteVersion(id: string): Promise<NewerNoteVersion> {
-  const note = useNoteStore.getState().notes.find((n) => n.id === id)
-  return readLiveNote(id, note?.notebookId)
+  const accountEpoch = getAccountEpoch()
+  const shown = useNoteStore.getState().notes.find((n) => n.id === id)
+  const read = await readLiveNote(id, shown?.notebookId)
+  if (
+    read.kind === 'note' && read.revision && shown && read.revision !== shown.revision
+    && isCurrentAccountEpoch(accountEpoch) && hasUnsavedNoteText(id)
+  ) {
+    const { title, content, revision, updatedAt } = read
+    useNoteStore.setState((state) => ({
+      notes: state.notes.map((n) => (n === shown ? { ...n, title, content, revision, updated_at: updatedAt } : n)),
+    }))
+  }
+  return read
 }
 
 /**

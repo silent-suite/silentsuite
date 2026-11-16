@@ -1239,10 +1239,10 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(titleBox().value).toBe(DRAFT_TITLE)
     })
 
-    it('shows the newer version read-only, without touching the draft, the note store or the item cache', async () => {
-      const { item } = await refusedDraft()
+    it('shows the newer version read-only and the row follows it, without touching the draft or the item cache', async () => {
+      const { item, peerItem } = await refusedDraft()
       const cached = useEtebaseStore.getState().itemCache.get(item.uid)
-      const shown = storedNote(item.uid)
+      expect(baseRow().textContent).not.toContain(PEER_BODY)
 
       fireEvent.click(newerButton())
       await settle()
@@ -1253,11 +1253,65 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(within(panel!).getByText(PEER_BODY)).toBeTruthy()
       expect(within(panel!).getByText(BASE_TITLE)).toBeTruthy()
       expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, BASE_BODY])
-      expect(storedNote(item.uid)).toBe(shown)
+      // The list row shows the version read, paired with its revision; the editor adopts none of it.
+      expect(storedNote(item.uid)).toMatchObject({ title: BASE_TITLE, content: PEER_BODY, revision: peerItem.etag })
+      expect(baseRow().textContent).toContain(PEER_BODY)
       expect(useEtebaseStore.getState().itemCache.get(item.uid)).toBe(cached)
 
       fireEvent.click(newerButton())
       expect(newerPanel()).toBeNull()
+    })
+
+    it('does not move the row when the note changed while the newer version was read', async () => {
+      const { item } = await refusedDraft()
+      const transport = EtebaseRequest.default
+      let replaced: any = null
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const response = await transport(url, options)
+        if (isItemGet(item.uid)(...requestOf(url, options)) && !replaced) {
+          // A refresh lands between the read and its result.
+          replaced = { ...storedNote(item.uid) }
+          useNoteStore.setState((state: any) => ({ notes: state.notes.map((note: any) => (note.id === item.uid ? replaced : note)) }))
+        }
+        return response
+      }
+      fireEvent.click(newerButton())
+      await settle()
+      EtebaseRequest.default = transport
+
+      expect(within(newerPanel()!).getByText(PEER_BODY)).toBeTruthy()
+      expect(storedNote(item.uid)).toBe(replaced)
+      expect(storedNote(item.uid).content).toBe(BASE_BODY)
+    })
+
+    it('does not move the row for a read that ends after the draft was typed back to the saved text', async () => {
+      const { item } = await refusedDraft()
+      const read = server.holdNext(isItemGet(item.uid))
+      fireEvent.click(newerButton())
+      await read.arrived
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+      read.release(false)
+      await settle()
+
+      expect(newerPanel()).toBeNull()
+      expect(storedNote(item.uid)).toMatchObject({ content: BASE_BODY })
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, BASE_BODY])
+    })
+
+    it('closes the newer version and takes it into the editor once the draft is typed back to the saved text', async () => {
+      const { account, collection, item } = await refusedDraft()
+      fireEvent.click(newerButton())
+      await settle()
+      expect(newerPanel()).not.toBeNull()
+
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      expect(newerPanel()).toBeNull()
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, PEER_BODY])
+      expect(saveStatus()).not.toHaveTextContent('Not saved')
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
     })
 
     it('closes the newer version once the note moves past the revision it shows', async () => {
