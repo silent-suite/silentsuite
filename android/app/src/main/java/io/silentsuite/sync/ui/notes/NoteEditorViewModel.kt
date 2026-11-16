@@ -28,11 +28,13 @@ import io.silentsuite.sync.notes.edit.NotePushStep
 import io.silentsuite.sync.notes.edit.PendingEntry
 import io.silentsuite.sync.notes.edit.PendingNotesStore
 import io.silentsuite.sync.notes.edit.PendingNotesStore.SaveOutcome
+import io.silentsuite.sync.ui.ProcessIncarnation
 import io.silentsuite.sync.ui.setup.ExactAccountRouting
 import java.io.IOException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -50,7 +52,8 @@ import kotlinx.coroutines.withContext
  * Opening, saving and closing run one at a time, as steps in a scope of the app's ([background]), not this ViewModel's:
  * closing the editor clears the ViewModel, and that must not stop its last save or the sync request after it. A save
  * that wrote the text asks for a Notes run ([NotesSyncPolicy.Trigger.SAVE], which follows the automatic network
- * setting) in the same step, about [SYNC_DELAY_MILLIS] after the last save, and at once when the editor closes.
+ * setting) in the same step, about [SYNC_DELAY_MILLIS] after the last save, and at once when the editor closes. A leave
+ * the user starts while the text is not saved on this device saves first, and asks before leaving without it ([requestLeave]).
  *
  * The blob is encrypted and its metadata merged before the store is called, and no store call is made while holding
  * the Etebase cache monitor. Versions and sequences stay in memory: none goes into saved state or a file.
@@ -555,12 +558,93 @@ internal class NoteEditorViewModel(
         }
     }
 
+    // ---- leaving ----
+
+    /** Whether the editor shows text that is not saved on this device: a leave the user starts asks first ([requestLeave]). Main thread. */
+    val unsaved: Boolean get() = opened is Opened.Editor && core.dirty
+
+    /** True while a leave the user started runs its save. Main thread. */
+    var leaveRunning = false
+        private set
+
+    /** A leave the user started may go ahead: the screen leaves once it can, then calls [leaveDone]. Main thread. */
+    var leaveGo = false
+        private set
+
+    /**
+     * Why a leave the user started asks first, while the screen asks it. Main thread, and in memory only: a question
+     * Android brings back in a new app process finds none here, so none of its answers is taken.
+     */
+    var leavePrompt: LeavePrompt? = null
+        private set
+
+    /**
+     * One question before leaving, over the text at [edits] ([NoteEditorCore.edits]) of the note [noteUid], null for a
+     * new note whose first save has not started. [tryAgain]: another save may work. [reason]: the last save's answer, which
+     * the question words. [newNote]: nothing of this new note was ever saved here ([NoteEditing.neverSaved]).
+     */
+    class LeavePrompt(val edits: Long, val noteUid: String?, val tryAgain: Boolean, val reason: SaveResult?, val newNote: Boolean)
+
+    /**
+     * [leavePrompt], when an answer from a dialog made in the app process [shownIn] over the note [shownNote] may be acted
+     * on ([NoteEditing.leaveAnswerHolds]); null otherwise. Main thread.
+     */
+    fun leavePromptAnswered(shownIn: String?, shownNote: String?): LeavePrompt? = leavePrompt?.takeIf {
+        NoteEditing.leaveAnswerHolds(ProcessIncarnation.isCurrent(shownIn), it.noteUid, it.edits, shownNote, noteUid, core.edits, unsaved)
+    }
+
+    /**
+     * A leave the user started (Back or Up) while [unsaved]: the save runs first, in a step of the app's, and once more
+     * when typing landed during it. Saved, or saved into held text: the screen leaves ([leaveGo]). Otherwise it stays and
+     * asks ([leavePrompt]). Nothing starts while a leave runs or a question is open.
+     */
+    fun requestLeave() {
+        if (cleared || leaveRunning || leavePrompt != null) return
+        leaveRunning = true
+        autosave?.cancel()
+        updates.value = Unit
+        background.launch {
+            try {
+                steps.withLock {
+                    saveStep()
+                    if (withContext(Dispatchers.Main) { core.dirty && core.lastResult is SaveResult.Saved }) saveStep()
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    leaveRunning = false
+                    if (!cleared) {
+                        when (val leave = NoteEditing.leave(opened is Opened.Editor, core.dirty, core.mode, core.lastResult)) {
+                            // For an account generation that is gone, the screen finishes instead.
+                            NoteEditing.Leave.GO -> leaveGo = opened !is Opened.Stale
+                            NoteEditing.Leave.ASK_TRY_AGAIN, NoteEditing.Leave.ASK ->
+                                leavePrompt = LeavePrompt(core.edits, noteUid, leave == NoteEditing.Leave.ASK_TRY_AGAIN, core.lastResult,
+                                    newNote = NoteEditing.neverSaved(creating, core.lastSavedVersion))
+                        }
+                        updates.value = Unit
+                    }
+                }
+            }
+        }
+    }
+
+    /** The screen left after [leaveGo]. Main thread. */
+    fun leaveDone() {
+        leaveGo = false
+    }
+
+    /** The question before leaving was put away: Cancel, Try again, Leave anyway, or a question that no longer holds. Main thread. */
+    fun dropLeavePrompt() {
+        leavePrompt = null
+    }
+
     // ---- closing ----
 
     override fun onCleared() {
         cleared = true
         autosave?.cancel()
-        // The last save, the handle's close, and the request a closing editor makes, in one step of the app's.
+        // The last save, the handle's close, and the request a closing editor makes, in one step of the app's. A leave the
+        // user started saved first and asked before leaving with text that is not saved ([requestLeave]); this is one more
+        // try after Leave anyway, and the only one for a leave the user did not start (the screen finishing for the account).
         background.launch {
             steps.withLock {
                 saveStep()
