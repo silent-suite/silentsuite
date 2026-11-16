@@ -417,7 +417,8 @@ class PrettyFragment : Fragment() {
                     setTextViewText(view, R.id.title, event.summary)
 
                     val dtStart = event.dtStart?.date?.time
-                    val dtEnd = event.dtEnd?.date?.time
+                    // DTEND is optional: without it, the end follows from DURATION or DTSTART (RFC 5545 3.6.1)
+                    val dtEnd = event.getEndDate(true)?.date?.time
                     if ((dtStart == null) || (dtEnd == null)) {
                         setTextViewText(view, R.id.when_datetime, getString(R.string.loading_error_title))
                     } else {
