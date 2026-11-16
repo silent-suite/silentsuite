@@ -80,7 +80,7 @@ def test_three_get_put_cycles_preserve_stored_bytes(make_collection, monkeypatch
         fetched = collection._get(href)
         assert _title(fetched.vobject_item, kind) == (PREFIX if enabled else "") + title
         wire = fetched.serialize()
-        incoming = Item(vobject_item=vobject.readOne(wire))
+        incoming = Item(collection_path=collection.path, vobject_item=vobject.readOne(wire))
         collection.upload(href, incoming)
         assert stored.content == original
         assert incoming.serialize() == wire
@@ -101,7 +101,7 @@ def test_unrelated_edit_preserves_real_lock_across_setting_changes(
         component.description.value = "Changed description"
     monkeypatch.setattr(config, "E2EE_LOCK_PREFIX", saved_on)
 
-    collection.upload(href, Item(vobject_item=incoming))
+    collection.upload(href, Item(collection_path=collection.path, vobject_item=incoming))
 
     saved = vobject.readOne(stored.content)
     assert _title(saved, kind) == PREFIX + "X"
@@ -116,7 +116,9 @@ def test_unrelated_edit_preserves_real_lock_across_setting_changes(
 def test_changed_title_loses_exactly_one_prefix(make_collection, monkeypatch, kind, enabled):
     collection, _, stored, href = make_collection(kind, _content(kind, PREFIX + "X"))
     monkeypatch.setattr(config, "E2EE_LOCK_PREFIX", enabled)
-    collection.upload(href, Item(vobject_item=vobject.readOne(_content(kind, PREFIX + "Y"))))
+    collection.upload(href, Item(
+        collection_path=collection.path, vobject_item=vobject.readOne(_content(kind, PREFIX + "Y")),
+    ))
     assert _title(vobject.readOne(stored.content), kind) == "Y"
 
 
@@ -137,7 +139,10 @@ def test_new_item_is_unlocked_before_cache_create(make_collection, kind):
     cached.create.side_effect = create
     previous_get = cached.get.side_effect
     cached.get.side_effect = lambda uid: created if uid == new_uid else previous_get(uid)
-    incoming = Item(vobject_item=vobject.readOne(_content(kind, PREFIX * 2 + "New", uid=new_uid)))
+    incoming = Item(
+        collection_path=collection.path,
+        vobject_item=vobject.readOne(_content(kind, PREFIX * 2 + "New", uid=new_uid)),
+    )
     wire = incoming.serialize()
 
     returned = collection.upload(href, incoming)
@@ -184,11 +189,11 @@ def test_master_and_override_round_trip_and_edit_independently(make_collection, 
     served = collection._get(href).vobject_item
     components = getattr(served, kind.lower() + "_list")
     assert [c.summary.value for c in components] == [PREFIX * 2 + "Master", PREFIX * 2 + "Override"]
-    collection.upload(href, Item(vobject_item=served))
+    collection.upload(href, Item(collection_path=collection.path, vobject_item=served))
     assert stored.content == original
 
     components[1].summary.value = PREFIX + "Changed"
-    collection.upload(href, Item(vobject_item=served))
+    collection.upload(href, Item(collection_path=collection.path, vobject_item=served))
     saved = getattr(vobject.readOne(stored.content), kind.lower() + "_list")
     assert [c.summary.value for c in saved] == [PREFIX + "Master", "Changed"]
 
@@ -217,7 +222,9 @@ def test_vcard4_conversion_preserves_structured_name(make_collection):
     assert fetched.vobject_item.version.value == "3.0"
     assert fetched.vobject_item.fn.value == PREFIX + "Bob"
     assert fetched.vobject_item.n.serialize() == vobject.readOne(content).n.serialize()
-    collection.upload(href, Item(vobject_item=vobject.readOne(fetched.serialize())))
+    collection.upload(href, Item(
+        collection_path=collection.path, vobject_item=vobject.readOne(fetched.serialize()),
+    ))
     assert vobject.readOne(stored.content).fn.value == "Bob"
     assert vobject.readOne(stored.content).n.serialize() == vobject.readOne(content).n.serialize()
 
@@ -229,7 +236,9 @@ def test_synthesized_fn_is_not_decorated_or_stripped(make_collection):
     fetched = collection._get(href)
     assert fetched.vobject_item.fn.value == expected
     assert stored.content == content
-    collection.upload(href, Item(vobject_item=vobject.readOne(fetched.serialize())))
+    collection.upload(href, Item(
+        collection_path=collection.path, vobject_item=vobject.readOne(fetched.serialize()),
+    ))
     assert vobject.readOne(stored.content).fn.value == expected
 
 
@@ -238,7 +247,9 @@ def test_empty_title_stays_empty(make_collection, kind):
     collection, _, stored, href = make_collection(kind, _content(kind, ""))
     fetched = collection._get(href)
     assert _title(fetched.vobject_item, kind) == ""
-    collection.upload(href, Item(vobject_item=vobject.readOne(fetched.serialize())))
+    collection.upload(href, Item(
+        collection_path=collection.path, vobject_item=vobject.readOne(fetched.serialize()),
+    ))
     assert _title(vobject.readOne(stored.content), kind) == ""
 
 
@@ -248,7 +259,9 @@ def test_missing_summary_stays_missing(make_collection, kind):
     collection, _, stored, href = make_collection(kind, content)
     fetched = collection._get(href)
     assert not hasattr(_component(fetched.vobject_item, kind), "summary")
-    collection.upload(href, Item(vobject_item=vobject.readOne(fetched.serialize())))
+    collection.upload(href, Item(
+        collection_path=collection.path, vobject_item=vobject.readOne(fetched.serialize()),
+    ))
     assert not hasattr(_component(vobject.readOne(stored.content), kind), "summary")
 
 
@@ -257,7 +270,9 @@ def test_vjournal_is_untouched(make_collection):
     collection, _, stored, href = make_collection("VEVENT", content)
     fetched = collection._get(href)
     assert fetched.vobject_item.vjournal.summary.value == PREFIX + "Journal"
-    collection.upload(href, Item(vobject_item=vobject.readOne(fetched.serialize())))
+    collection.upload(href, Item(
+        collection_path=collection.path, vobject_item=vobject.readOne(fetched.serialize()),
+    ))
     assert stored.content == content
 
 
@@ -268,7 +283,9 @@ def test_folded_non_ascii_summary_round_trips(make_collection):
     collection, _, stored, href = make_collection("VEVENT", content)
     fetched = collection._get(href)
     assert fetched.vobject_item.vevent.summary.value == PREFIX + title
-    collection.upload(href, Item(vobject_item=vobject.readOne(fetched.serialize())))
+    collection.upload(href, Item(
+        collection_path=collection.path, vobject_item=vobject.readOne(fetched.serialize()),
+    ))
     assert stored.content == content
 
 
