@@ -51,7 +51,7 @@ Open the note, select **Delete** in the row below the title, and confirm. The de
 
 ## Offline
 
-Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect. Creating a brand-new note or moving one to another notebook requires a connection.
+Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect, unless the note changed somewhere else in the meantime; then your edit stays in this browser and is not sent. Creating a brand-new note or moving one to another notebook requires a connection.
 
 Reloading the page while offline and reading previously opened notes depends on how the deployment is configured: it needs the encrypted local cache to be enabled, and it only covers notes already loaded on that device. Where the cache is not enabled, an offline reload cannot show your notes.
 
