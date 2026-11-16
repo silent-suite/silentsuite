@@ -1,0 +1,1 @@
+Calendar sync no longer gets stuck on events in some time zones that changed in recent years, which could happen after importing older calendars. Events with no end time now show their time instead of "Loading Error".
