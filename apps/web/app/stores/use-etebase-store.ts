@@ -895,7 +895,7 @@ export async function proveNoteRevision(itemUid: string, base: SealedEditingBase
 
 /** What a read of a note's live server copy found (#1113 D1). */
 export type LiveNoteRead =
-  | { kind: 'note'; title: string; content: string; revision: string | null; updatedAt: Date }
+  | { kind: 'note'; title: string; content: string; revision: string | null; updatedAt: Date; item: unknown }
   /** The server holds a tombstone: proof that the note was deleted. */
   | { kind: 'deleted' }
   | { kind: 'offline' }
@@ -936,11 +936,26 @@ export async function readLiveNote(itemUid: string, collectionUid?: string): Pro
     assertGuard()
     const content = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
     const read = core.noteFromEtebaseItem(itemUid, content, meta)
-    return { kind: 'note', title: read.title, content, revision: core.savedRevisionOf(fresh), updatedAt: read.updated_at }
+    return { kind: 'note', title: read.title, content, revision: core.savedRevisionOf(fresh), updatedAt: read.updated_at, item: fresh }
   } catch (err) {
     if (err instanceof AccountBoundaryChangedError) return { kind: 'unknown' }
     return { kind: 'unreadable' }
   }
+}
+
+/**
+ * Puts a note's freshly read SDK item into the item cache (#1113 D1), as a sync of
+ * that one item would, only while the cache still holds `expected` for it. The
+ * list row and the cached item then stay one revision, which the save and move
+ * paths rely on. Resolves false, changing nothing, when the cache moved on.
+ */
+export function publishFetchedNoteItem(itemUid: string, expected: unknown, fresh: unknown): boolean {
+  const state = useEtebaseStore.getState()
+  if (state.itemCache.get(itemUid) !== expected) return false
+  const itemCache = new Map(state.itemCache)
+  itemCache.set(itemUid, fresh)
+  useEtebaseStore.setState({ itemCache })
+  return true
 }
 
 /**

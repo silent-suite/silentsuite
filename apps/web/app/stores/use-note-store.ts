@@ -8,6 +8,7 @@ import {
   prepareNoteCopyItem,
   proveLiveNoteBase,
   proveNoteRevision,
+  publishFetchedNoteItem,
   readLiveNote,
   reviseNoteCopyItem,
   uploadNoteCopyItem,
@@ -200,18 +201,21 @@ function getNoteCopyAttempt(id: string): NoteCopyAttempt | undefined {
 }
 
 /**
- * A fresh, read-only look at the note's server copy (#1113 D1). The list row
- * follows the version read, title, text and revision together, only while the
- * note's text is unsaved here (so no editor adopts it) and only over the exact
- * record the read started from. Nothing reaches the item cache or an editor.
+ * A fresh, read-only look at the note's server copy (#1113 D1). The version read
+ * becomes the note's list row and cached SDK item together, as a sync of that one
+ * note would, only while the note's text is unsaved here (so no editor adopts it)
+ * and only over the exact row and cached item the read started from.
  */
 export async function readNewerNoteVersion(id: string): Promise<NewerNoteVersion> {
   const accountEpoch = getAccountEpoch()
   const shown = useNoteStore.getState().notes.find((n) => n.id === id)
+  const cached = useEtebaseStore.getState().itemCache.get(id)
   const read = await readLiveNote(id, shown?.notebookId)
   if (
     read.kind === 'note' && read.revision && shown && read.revision !== shown.revision
     && isCurrentAccountEpoch(accountEpoch) && hasUnsavedNoteText(id)
+    && useNoteStore.getState().notes.includes(shown)
+    && publishFetchedNoteItem(id, cached, read.item)
   ) {
     const { title, content, revision, updatedAt } = read
     useNoteStore.setState((state) => ({

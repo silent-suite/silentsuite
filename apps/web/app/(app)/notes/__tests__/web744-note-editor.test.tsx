@@ -1239,9 +1239,8 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(titleBox().value).toBe(DRAFT_TITLE)
     })
 
-    it('shows the newer version read-only and the row follows it, without touching the draft or the item cache', async () => {
+    it('shows the newer version read-only and the row follows it with its SDK item, without touching the draft', async () => {
       const { item, peerItem } = await refusedDraft()
-      const cached = useEtebaseStore.getState().itemCache.get(item.uid)
       expect(baseRow().textContent).not.toContain(PEER_BODY)
 
       fireEvent.click(newerButton())
@@ -1253,10 +1252,11 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(within(panel!).getByText(PEER_BODY)).toBeTruthy()
       expect(within(panel!).getByText(BASE_TITLE)).toBeTruthy()
       expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, BASE_BODY])
-      // The list row shows the version read, paired with its revision; the editor adopts none of it.
+      // The list row shows the version read, and the item cache holds that same revision's
+      // SDK item, as after a sync of this one note; the editor adopts none of it.
       expect(storedNote(item.uid)).toMatchObject({ title: BASE_TITLE, content: PEER_BODY, revision: peerItem.etag })
+      expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(peerItem.etag)
       expect(baseRow().textContent).toContain(PEER_BODY)
-      expect(useEtebaseStore.getState().itemCache.get(item.uid)).toBe(cached)
 
       fireEvent.click(newerButton())
       expect(newerPanel()).toBeNull()
@@ -1282,6 +1282,75 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(within(newerPanel()!).getByText(PEER_BODY)).toBeTruthy()
       expect(storedNote(item.uid)).toBe(replaced)
       expect(storedNote(item.uid).content).toBe(BASE_BODY)
+      expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(item.etag)
+    })
+
+    it('does not move the row when the item cache changed while the newer version was read', async () => {
+      const { item } = await refusedDraft()
+      const shown = storedNote(item.uid)
+      const transport = EtebaseRequest.default
+      let swapped: any = null
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const response = await transport(url, options)
+        if (isItemGet(item.uid)(...requestOf(url, options)) && !swapped) {
+          // A sync replaces the cached SDK item between the read and its result.
+          swapped = useEtebaseStore.getState().itemCache.get(item.uid)._clone()
+          useEtebaseStore.setState({ itemCache: new Map([...useEtebaseStore.getState().itemCache, [item.uid, swapped]]) })
+        }
+        return response
+      }
+      fireEvent.click(newerButton())
+      await settle()
+      EtebaseRequest.default = transport
+
+      expect(within(newerPanel()!).getByText(PEER_BODY)).toBeTruthy()
+      expect(storedNote(item.uid)).toBe(shown)
+      expect(useEtebaseStore.getState().itemCache.get(item.uid)).toBe(swapped)
+    })
+
+    it('keeps the metadata another device wrote when the draft, typed back onto the newer version, saves again', async () => {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      const peerItem = item._clone()
+      peerItem.setMeta({ ...peerItem.getMeta(), color: '#123456' })
+      await peerItem.setContent(PEER_BODY)
+      await account.getCollectionManager().getItemManager(collection).transaction([peerItem])
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      fireEvent.click(newerButton())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+      expect(bodyBox().value).toBe(PEER_BODY)
+
+      fireEvent.change(titleBox(), { target: { value: 'After the newer version 1113' } })
+      hideTab()
+      await settle()
+
+      expect(saveStatus()).toHaveTextContent('Saved')
+      const fresh = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
+      expect(fresh.getMeta()).toMatchObject({ name: 'After the newer version 1113', color: '#123456' })
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+    })
+
+    it('keeps text typed back to the saved version while a save is still running', async () => {
+      await openSavedNote()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Typed then removed 1113' } })
+      hideTab()
+      await write.arrived
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      // The running save's optimistic record is not adopted as a refresh.
+      expect(titleBox().value).toBe(BASE_TITLE)
+      write.release(false)
+      await settle()
     })
 
     it('does not move the row for a read that ends after the draft was typed back to the saved text', async () => {
@@ -1297,6 +1366,22 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(newerPanel()).toBeNull()
       expect(storedNote(item.uid)).toMatchObject({ content: BASE_BODY })
       expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, BASE_BODY])
+    })
+
+    it('does not move the row for a newer-version read that ends after the account changed', async () => {
+      const { item } = await refusedDraft()
+      const shown = storedNote(item.uid)
+      const read = server.holdNext(isItemGet(item.uid))
+      fireEvent.click(newerButton())
+      await read.arrived
+      // Boundary test: the read's account guard, the epoch check and the epoch-tagged
+      // unsaved-text check each stop this write; the row of the old account stays as it was.
+      act(() => { bumpAccountEpoch() })
+      read.release(false)
+      await settle()
+
+      expect(storedNote(item.uid)).toBe(shown)
+      expect(storedNote(item.uid).content).toBe(BASE_BODY)
     })
 
     it('closes the newer version and takes it into the editor once the draft is typed back to the saved text', async () => {

@@ -422,7 +422,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
       if (wasDirty) {
         newerRequestRef.current = null
         setNewer({ kind: 'closed' })
-        setCleanGen((gen) => gen + 1)
+        // While a save runs the record is that save's own optimistic text; its end refreshes it.
+        if (inFlightRef.current === 0) setCleanGen((gen) => gen + 1)
       }
     }
     setMoveFailed(false)
