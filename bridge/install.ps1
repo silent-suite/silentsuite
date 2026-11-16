@@ -12,7 +12,7 @@
 # 2. Downloads the correct binary from GitHub Releases
 # 3. Installs to %LOCALAPPDATA%\SilentSuite\
 # 4. Adds install dir to user PATH
-# 5. Sets up auto-start and launches login flow
+# 5. Sets up auto-start, launches the login flow and starts the bridge in the background
 #
 # License: AGPL-3.0
 
@@ -25,7 +25,9 @@ $BinaryName = "silentsuite-bridge"
 $InstallDir = if ($env:SILENTSUITE_INSTALL_DIR) { $env:SILENTSUITE_INSTALL_DIR } else { "$env:LOCALAPPDATA\SilentSuite" }
 $ExePath = "$InstallDir\$BinaryName.exe"
 $InstallLog = Join-Path $InstallDir "install.log"
-$BridgeLog = Join-Path $InstallDir "bridge.log"
+# Where `silentsuite-bridge --background` (installer and sign-in start) logs:
+# bridge.log in the bridge data directory (platformdirs user_data_dir).
+$BridgeLog = Join-Path $env:LOCALAPPDATA "silentsuite\silentsuite-bridge\bridge.log"
 $BridgeDashboardUrl = "http://127.0.0.1:37358/"
 
 # --- Helpers ---
@@ -227,24 +229,35 @@ function Invoke-SilentSuiteBridgeInstall {
     Write-Step "Launching login..."
     Write-Host "  Opening your browser to sign in."
     Write-Host "  The browser sign-in tab may use a temporary random port. Use the app URL it shows, not the address bar.`n"
+    $LoginOk = $false
     try {
         & $ExePath --login
-        $env:SILENTSUITE_LOG_FILE = $BridgeLog
-        $BridgeProcess = Start-Process -FilePath $ExePath -ArgumentList "--no-tray" -WindowStyle Hidden -PassThru
-        Write-InstallLog "Started bridge process id $($BridgeProcess.Id)"
-
-        if (Test-BridgeDashboardReady -TimeoutSeconds 20) {
-            Write-Ok "Bridge is running! Dashboard: $BridgeDashboardUrl"
-        } else {
-            $BridgeProcess.Refresh()
-            if ($BridgeProcess.HasExited) {
-                Write-Warn "Bridge exited after login (exit code $($BridgeProcess.ExitCode)). Check $BridgeLog, then run: $BinaryName"
-            } else {
-                Write-Warn "Bridge started but the dashboard did not respond yet. Open $BridgeDashboardUrl or check $BridgeLog before adding it to Thunderbird."
-            }
-        }
+        $LoginOk = ($LASTEXITCODE -eq 0)
     } catch {
-        Write-Warn "Login did not complete. Run later: $BinaryName --login"
+        $LoginOk = $false
+    }
+    if (-not $LoginOk) {
+        Write-Warn "Login did not complete. Sign in from the dashboard once the bridge is running, or run later: $BinaryName --login"
+    }
+
+    # --background starts the bridge without a window (and outside this
+    # terminal where Windows allows it), so closing PowerShell does not
+    # stop it. It logs to $BridgeLog and refuses to start a second copy.
+    $BackgroundExit = 1
+    try {
+        $BackgroundOutput = & $ExePath --background 2>&1
+        $BackgroundExit = $LASTEXITCODE
+        $BackgroundOutput | ForEach-Object { Write-InstallLog "bridge --background: $_" }
+    } catch {
+        Write-InstallLog "bridge --background failed: $_"
+    }
+
+    if ($BackgroundExit -ne 0) {
+        Write-Warn "The bridge did not start in the background (exit code $BackgroundExit). Check $BridgeLog, then run: $BinaryName --background"
+    } elseif (Test-BridgeDashboardReady -TimeoutSeconds 20) {
+        Write-Ok "Bridge is running in the background. Closing this window does not stop it. Dashboard: $BridgeDashboardUrl"
+    } else {
+        Write-Warn "Bridge started in the background but the dashboard did not respond yet. Open $BridgeDashboardUrl or check $BridgeLog before adding the URL to your calendar app."
     }
 
     # --- Done ---

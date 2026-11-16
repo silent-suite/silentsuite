@@ -1085,6 +1085,8 @@ def main():
         print("  --remove-autostart    Remove auto-start for current platform (keeps settings;")
         print("                        on Windows a running bridge is not stopped)")
         print("  --no-tray             Start without system tray icon")
+        print("  --background          Windows: start the bridge without a window, so closing")
+        print("                        the terminal does not stop it")
         print("  --setup-macos-apple-accounts")
         print("                        Generate/reuse a localhost HTTPS certificate")
         print("                        and print Apple Internet Accounts setup steps")
@@ -1315,6 +1317,24 @@ def main():
         from .autostart import install_autostart
 
         sys.exit(install_autostart())
+
+    # Handle --background (Windows): start a windowless copy and return, so the
+    # bridge keeps running after this terminal window is closed. The copy
+    # carries CHILD_FLAG and runs the server below.
+    from .windows_background import BACKGROUND_FLAG, CHILD_FLAG
+
+    if BACKGROUND_FLAG in sys.argv and CHILD_FLAG not in sys.argv:
+        if config.get_platform() != "windows":
+            print(
+                "Error: --background is only available on Windows. On Linux and macOS, "
+                "--install-autostart runs the bridge as a background service.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        from .autostart import _get_binary_path
+        from .windows_background import start_background
+
+        sys.exit(start_background(_get_binary_path()))
 
     # Resume durable cleanup before checking whether account state allows startup.
     if not _prepare_server_start():
