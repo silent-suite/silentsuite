@@ -202,7 +202,7 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
  * the editor unmounts (note switch or navigation). Mount with `key={note.id}`
  * so each note gets its own draft.
  */
-function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = false, onDelete, onMove }: {
+function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, autoFocusTitle = false, onDelete, onMove }: {
   /** With the revision its text was read at; edits save only through that base (#744). */
   note: StoredNote
   canWrite: boolean
@@ -210,6 +210,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   moveRunning: boolean
   /** Choices for the notebook picker: the note's own plus every shown, writable notebook. */
   notebooks: Notebook[]
+  /** The offline banner the picker's reason is read from while offline. */
+  offlineNoticeId: string
   /** Focus the title on mount, for a note the user has just created. */
   autoFocusTitle?: boolean
   /** Shows the Delete action when provided; the caller owns the confirmation. */
@@ -227,6 +229,10 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   const [saveState, setSaveState] = useState<SaveState>('clean')
   const [moving, setMoving] = useState(false)
   const [moveFailed, setMoveFailed] = useState(false)
+  // A move recreates the note in the other notebook, which needs a connection. The reason is
+  // offered only where the picker would otherwise work; read-only, one-notebook and moving pickers keep their own state.
+  const isOnline = useSyncStore((s) => s.isOnline)
+  const moveNeedsConnection = !isOnline && canWrite && notebooks.length >= 2 && !moving && !moveRunning
   // Latest typed values, and the last values the store accepted. While they
   // differ the draft is unsaved and a refresh of this note must not clobber it.
   const draftRef = useRef<Draft>({ title: note.title, content: note.content })
@@ -416,7 +422,9 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
             <select
               value={note.notebookId ?? ''}
               onChange={(e) => void handleMove(e.target.value)}
-              disabled={!canWrite || moving || moveRunning || notebooks.length < 2}
+              disabled={!canWrite || moving || moveRunning || notebooks.length < 2 || !isOnline}
+              aria-describedby={moveNeedsConnection ? offlineNoticeId : undefined}
+              title={moveNeedsConnection ? t('moveOffline') : undefined}
               className="min-w-0 max-w-[11rem] rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] py-1 pl-2 pr-6 text-xs text-[rgb(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-60"
             >
               {notebooks.map((notebook) => (
@@ -779,6 +787,7 @@ function NotesPageBody() {
               canWrite={canEditSelected}
               moveRunning={movingNoteIds.has(selectedNote.id)}
               notebooks={pickerNotebooks}
+              offlineNoticeId={offlineNoticeId}
               autoFocusTitle={selectedNote.id === newNoteId}
               onDelete={canEditSelected ? () => setConfirmDelete(true) : undefined}
               onMove={(notebookId) => handleMove(selectedNote.id, notebookId)}

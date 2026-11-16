@@ -57,7 +57,7 @@ Edits made while offline to a note that is already open are encrypted locally an
 
 Reloading the page while offline and reading previously opened notes depends on how the deployment is configured: it needs the encrypted local cache to be enabled, and it only covers notes already loaded on that device. Where the cache is not enabled, an offline reload cannot show your notes.
 
-In the web app, **New note** is turned off while you are offline, and the page says why. It turns on again when the connection returns.
+In the web app, **New note** and the notebook picker in the editor are turned off while you are offline, and the page says why. They turn on again when the connection returns.
 
 ## Sharing
 

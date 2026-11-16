@@ -823,6 +823,89 @@ describe('NotesPage', () => {
       await vi.waitFor(() => expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1))
     })
 
+    describe('notebook picker', () => {
+      const MOVE_TITLE = 'Moving a note is turned off while you are offline. A move needs a connection.'
+      const openMover = (lists: Notebook[] = [NOTEBOOK, WORK], overrides: Partial<StoredNote> = {}) => {
+        loaded([note('n1', { title: 'Mover', content: 'body', notebookId: 'notes-1', ...overrides })], lists)
+        const view = renderWithIntl(<NotesPage />)
+        fireEvent.click(screen.getByRole('button', { name: /Mover/ }))
+        return view
+      }
+      const picker = () => screen.getByRole<HTMLSelectElement>('combobox', { name: 'Notebook' })
+
+      it('is turned off with its reason, while the title and body stay editable', async () => {
+        openMover()
+        // Its own precondition: offline, with the banner up and a note open on two notebooks.
+        const notice = screen.getByText(NOTICE)
+        expect(screen.getByRole('textbox', { name: 'Note title' })).toBeInTheDocument()
+
+        expect(picker()).toBeDisabled()
+        expect(picker()).toHaveAttribute('title', MOVE_TITLE)
+        expect(picker()).toHaveAccessibleDescription(notice.textContent!)
+        // Edits queue offline, so only the move is turned off.
+        expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Note title' }).readOnly).toBe(false)
+        expect((await noteBody()).readOnly).toBe(false)
+      })
+
+      it('is unchanged online, and turns back on when the connection returns', () => {
+        storeMock.syncState.isOnline = true
+        const view = openMover()
+        expect(screen.queryByText(/You are offline/)).not.toBeInTheDocument()
+        expect(picker()).toBeEnabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+
+        storeMock.syncState.isOnline = false
+        view.rerender(<NotesPage />)
+        expect(picker()).toBeDisabled()
+
+        storeMock.syncState.isOnline = true
+        view.rerender(<NotesPage />)
+        expect(picker()).toBeEnabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+      })
+
+      it('keeps the read-only state without an offline reason for a shared notebook', () => {
+        const SHARED: Notebook = { id: 'shared', name: 'Shared', color: '#111', visible: true, accessLevel: 0 }
+        openMover([SHARED, WORK], { notebookId: 'shared' })
+        expect(screen.getByText(NOTICE)).toBeInTheDocument()
+        expect(screen.getByRole<HTMLInputElement>('textbox', { name: 'Note title' }).readOnly).toBe(true)
+        expect(picker()).toBeDisabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+      })
+
+      it('keeps the one-notebook state without an offline reason', () => {
+        openMover([NOTEBOOK])
+        expect(screen.getByText(NOTICE)).toBeInTheDocument()
+        expect(picker()).toBeDisabled()
+        expect(picker()).not.toHaveAttribute('title')
+        expect(picker()).not.toHaveAttribute('aria-describedby')
+      })
+
+      it('lets a running move keep its own state, then gives the offline reason when it ends', async () => {
+        storeMock.syncState.isOnline = true
+        let finishMove: (movedId: string | null) => void = () => {}
+        storeMock.noteState.moveNote.mockImplementation(() => new Promise<string | null>((resolve) => { finishMove = resolve }))
+        const view = openMover()
+        fireEvent.change(picker(), { target: { value: 'notes-2' } })
+        await vi.waitFor(() => expect(storeMock.noteState.moveNote).toHaveBeenCalledWith('n1', 'notes-2'))
+        // Its own precondition: the move is running.
+        expect(picker().disabled).toBe(true)
+
+        storeMock.syncState.isOnline = false
+        view.rerender(<NotesPage />)
+        expect(screen.getByText(NOTICE)).toBeInTheDocument()
+        expect(picker()).toBeDisabled()
+        expect(picker()).not.toHaveAttribute('title')
+
+        await act(async () => { finishMove(null) })
+        expect(picker()).toBeDisabled()
+        expect(picker()).toHaveAttribute('title', MOVE_TITLE)
+      })
+    })
+
     it('keeps the subscription reason first when both apply', () => {
       storeMock.authState.canWrite.mockReturnValue(false)
       loaded([note('n1', { title: 'Existing' })])
