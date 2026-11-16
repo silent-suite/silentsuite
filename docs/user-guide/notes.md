@@ -4,7 +4,7 @@ Your notes live at [app.silentsuite.io/notes](https://app.silentsuite.io/notes).
 
 Notes use the [Etebase Markdown notes](https://docs.etebase.com/type-specs/notes) collection type (`etebase.md.note`), so existing EteSync Notes notebooks on the same account appear in SilentSuite without conversion.
 
-Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and in the Android app once you turn Notes on for your account there. Editing the same note on multiple devices at once may overwrite changes; avoid editing the same note simultaneously.
+Notes is an experimental feature. You can create and edit notes in the web app, including mobile browsers, and in the Android app once you turn Notes on for your account there. If the same note changes in two places, SilentSuite does not overwrite either version. In the web app, a save that conflicts is refused: the editor shows **Not saved** and keeps your text. An edit made offline that conflicts is not sent when you reconnect. It stays in this browser, and a banner says it was not saved to the server because the note changed after your offline edit, with **Retry** and **Discard** buttons. Android keeps both: the other version stays, and your text becomes a separate note whose title ends in "(conflicted copy)". Other apps that use the same notes format may overwrite a newer version without warning, so avoid editing the same note in SilentSuite and in another app at the same time.
 
 ## Notebooks
 
@@ -52,7 +52,7 @@ On Android, open the note, open the menu in the top bar and choose **Delete note
 
 ## Offline
 
-Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect. Creating a brand-new note or moving one to another notebook requires a connection.
+Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect, unless the note changed somewhere else in the meantime; then your edit stays in this browser and is not sent. Creating a brand-new note or moving one to another notebook requires a connection.
 
 Reloading the page while offline and reading previously opened notes depends on how the deployment is configured: it needs the encrypted local cache to be enabled, and it only covers notes already loaded on that device. Where the cache is not enabled, an offline reload cannot show your notes.
 
