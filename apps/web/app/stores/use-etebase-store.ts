@@ -947,11 +947,12 @@ export async function readLiveNote(itemUid: string, collectionUid?: string): Pro
  * Puts a note's freshly read SDK item into the item cache (#1113 D1), as a sync of
  * that one item would, only while the cache still holds `expected` for it. The
  * list row and the cached item then stay one revision, which the save and move
- * paths rely on. Resolves false, changing nothing, when the cache moved on.
+ * paths rely on. Only an existing entry is replaced, so its type and notebook maps
+ * already hold it. Resolves false, changing nothing, when the cache moved on.
  */
 export function publishFetchedNoteItem(itemUid: string, expected: unknown, fresh: unknown): boolean {
   const state = useEtebaseStore.getState()
-  if (state.itemCache.get(itemUid) !== expected) return false
+  if (expected === undefined || state.itemCache.get(itemUid) !== expected) return false
   const itemCache = new Map(state.itemCache)
   itemCache.set(itemUid, fresh)
   useEtebaseStore.setState({ itemCache })

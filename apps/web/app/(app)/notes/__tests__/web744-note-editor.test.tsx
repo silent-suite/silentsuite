@@ -86,6 +86,7 @@ import {
   getMountedNoteEditor,
   getNoteObligation,
   markNoteObligation,
+  readNewerNoteVersion,
   registerNoteEditor,
   resetNoteLifecycle,
   useNoteStore,
@@ -1338,6 +1339,26 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
     })
 
+    it('leaves the row of a running save alone, so it ends paired with its cached item', async () => {
+      const { item } = await openSavedNote()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Saved during the read 1113' } })
+      hideTab()
+      await write.arrived
+      // The row is the running save's optimistic record; a newer-version read lands meanwhile.
+      expect(storedNote(item.uid).revision).toBeNull()
+      const read = await readNewerNoteVersion(item.uid)
+      expect(read.kind).toBe('note')
+
+      write.release(false)
+      await settle()
+
+      const row = storedNote(item.uid)
+      expect(row.title).toBe('Saved during the read 1113')
+      expect(row.revision).not.toBeNull()
+      expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(row.revision)
+    })
+
     it('keeps text typed back to the saved version while a save is still running', async () => {
       await openSavedNote()
       const write = server.holdNext(isTransaction)
@@ -1371,6 +1392,7 @@ describe('#744 the rendered note editor saves only through its captured base', (
     it('does not move the row for a newer-version read that ends after the account changed', async () => {
       const { item } = await refusedDraft()
       const shown = storedNote(item.uid)
+      const cachedBefore = useEtebaseStore.getState().itemCache.get(item.uid)
       const read = server.holdNext(isItemGet(item.uid))
       fireEvent.click(newerButton())
       await read.arrived
@@ -1382,6 +1404,24 @@ describe('#744 the rendered note editor saves only through its captured base', (
 
       expect(storedNote(item.uid)).toBe(shown)
       expect(storedNote(item.uid).content).toBe(BASE_BODY)
+      expect(useEtebaseStore.getState().itemCache.get(item.uid)).toBe(cachedBefore)
+    })
+
+    it('adds no cached item for a note the item cache does not hold', async () => {
+      const { item } = await refusedDraft()
+      const shown = storedNote(item.uid)
+      act(() => {
+        const itemCache = new Map(useEtebaseStore.getState().itemCache)
+        itemCache.delete(item.uid)
+        useEtebaseStore.setState({ itemCache })
+      })
+
+      fireEvent.click(newerButton())
+      await settle()
+
+      expect(within(newerPanel()!).getByText(PEER_BODY)).toBeTruthy()
+      expect(useEtebaseStore.getState().itemCache.has(item.uid)).toBe(false)
+      expect(storedNote(item.uid)).toBe(shown)
     })
 
     it('closes the newer version and takes it into the editor once the draft is typed back to the saved text', async () => {

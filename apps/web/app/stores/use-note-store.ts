@@ -204,7 +204,9 @@ function getNoteCopyAttempt(id: string): NoteCopyAttempt | undefined {
  * A fresh, read-only look at the note's server copy (#1113 D1). The version read
  * becomes the note's list row and cached SDK item together, as a sync of that one
  * note would, only while the note's text is unsaved here (so no editor adopts it)
- * and only over the exact row and cached item the read started from.
+ * and only over the exact row and cached item the read started from. A row with no
+ * known revision (a running save's optimistic record, or one not yet paired with
+ * its cached item) is left to the save or sync that pairs it.
  */
 export async function readNewerNoteVersion(id: string): Promise<NewerNoteVersion> {
   const accountEpoch = getAccountEpoch()
@@ -212,7 +214,7 @@ export async function readNewerNoteVersion(id: string): Promise<NewerNoteVersion
   const cached = useEtebaseStore.getState().itemCache.get(id)
   const read = await readLiveNote(id, shown?.notebookId)
   if (
-    read.kind === 'note' && read.revision && shown && read.revision !== shown.revision
+    read.kind === 'note' && read.revision && shown && shown.revision !== null && read.revision !== shown.revision
     && isCurrentAccountEpoch(accountEpoch) && hasUnsavedNoteText(id)
     && useNoteStore.getState().notes.includes(shown)
     && publishFetchedNoteItem(id, cached, read.item)
