@@ -194,6 +194,15 @@ describe('photo', () => {
     const restored = parseVCard(vcardStr);
     expect(restored.photo).toBe('https://example.com/avatar.png');
   });
+
+  // vCard 3.0 has no data: URIs; Android (ez-vcard) reads VALUE=URI as a link to download (#1127).
+  it('writes an embedded photo as vCard 3.0 inline base64', () => {
+    const original = makeFullVCard({ photo: 'data:image/png;base64,iVBORw0KGgo=' });
+    const vcardStr = generateVCard(original);
+    expect(vcardStr).toContain('PHOTO;ENCODING=b;TYPE=PNG:iVBORw0KGgo=');
+    expect(vcardStr).not.toContain('data:image');
+    expect(parseVCard(vcardStr).photo).toBe('data:image/png;base64,iVBORw0KGgo=');
+  });
 });
 
 // ── Line folding ──
