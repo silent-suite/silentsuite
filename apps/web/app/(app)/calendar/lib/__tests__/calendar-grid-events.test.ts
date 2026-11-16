@@ -643,3 +643,114 @@ describe('DURATION lookback from a 23-hour first occurrence (review repro)', () 
       .toEqual([['2026-10-31T14:00:00.000Z', '2026-11-01T15:00:00.000Z']])
   })
 })
+
+// ── #1097: an event without DTEND (Fossify/Android) has zero length but must still show ──
+// RFC 5545 §3.6.1: a DATE-TIME DTSTART without DTEND or DURATION ends at its start.
+
+describe('events without DTEND show in the grid (#1097)', () => {
+  const fossifyVEvent = [
+    'BEGIN:VEVENT',
+    'DTSTAMP:20261116T111402Z',
+    'UID:no-dtend-1097',
+    'SUMMARY:set-up in Fossify',
+    'DTSTART;TZID=Europe/Berlin:20261116T120000',
+    'STATUS:CONFIRMED',
+    'END:VEVENT',
+  ].join('\r\n')
+  const dates = {
+    start: Temporal.PlainDate.from('2026-11-16'),
+    end: Temporal.PlainDate.from('2026-11-16'),
+  }
+  const range = visibleDateRangeToInstantRange(dates, 'Europe/Berlin')
+  const berlin = (date: Date) => zdt(date, 'Europe/Berlin')
+
+  it('projects a timed event with no DTEND as a short chip at its start time', () => {
+    const event = { ...fromVEvent(fossifyVEvent), id: 'no-dtend', calendarId: 'cal-1' }
+    expect(event.endDate.getTime()).toBe(event.startDate.getTime())
+
+    const expansion = expandGridEventsForRange([event], range)
+    expect(expansion.events).toHaveLength(1)
+
+    for (const view of ['week', 'month'] as const) {
+      const projection = toScheduleXProjection(
+        expansion.events, new Map(), 'Europe/Berlin', view, dates, berlin, expansion.droppedCount,
+      )
+      expect(projection.droppedCount).toBe(0)
+      expect(projection.events).toHaveLength(1)
+      const chip = projection.events[0]!
+      expect(String(chip.start)).toContain('2026-11-16T12:00:00')
+      expect(String(chip.end)).toContain('2026-11-16T12:30:00')
+      // The source keeps its zero length, so drag and edit don't invent an end.
+      expect(projection.sourceByRenderId.get(String(chip.id))!.endDate.getTime())
+        .toBe(event.startDate.getTime())
+    }
+  })
+
+  it('shows a zero-length event that starts exactly at the start of the visible range', () => {
+    const start = range.start
+    const event = calendarEvent({ id: 'midnight', startDate: start, endDate: start, recurrenceRule: null })
+    expect(expandGridEventsForRange([event], range).events).toHaveLength(1)
+  })
+
+  it('shows each occurrence of a recurring event with no length', () => {
+    const start = new Date('2026-11-15T11:00:00.000Z')
+    const event = calendarEvent({
+      id: 'daily-zero',
+      startDate: start,
+      endDate: start,
+      recurrenceRule: 'FREQ=DAILY;COUNT=3',
+      timezone: 'Europe/Berlin',
+    })
+    const expansion = expandGridEventsForRange([event], range)
+    expect(expansion.droppedCount).toBe(0)
+    expect(expansion.events.map((e) => e.startDate.toISOString())).toEqual(['2026-11-16T11:00:00.000Z'])
+  })
+
+  it('shows an all-day event with no DTEND on its one day', () => {
+    const event = {
+      ...fromVEvent(['BEGIN:VEVENT', 'UID:allday-1097', 'SUMMARY:Day off', 'DTSTART;VALUE=DATE:20261116', 'END:VEVENT'].join('\r\n')),
+      id: 'allday-no-dtend',
+      calendarId: 'cal-1',
+    }
+    const expansion = expandGridEventsForRange([event], range)
+    expect(expansion.events).toHaveLength(1)
+    const projection = toScheduleXProjection(
+      expansion.events, new Map(), 'Europe/Berlin', 'month', dates, berlin, expansion.droppedCount,
+    )
+    expect(projection.droppedCount).toBe(0)
+    expect(projection.events.map((e) => [String(e.start), String(e.end)])).toEqual([['2026-11-16', '2026-11-16']])
+  })
+
+  it('control: an event that ends before it starts is still dropped', () => {
+    const projection = toScheduleXProjection([
+      displayEvent({ startDate: new Date('2026-11-16T11:00:00.000Z'), endDate: new Date('2026-11-16T10:00:00.000Z') }),
+    ], new Map(), 'Europe/Berlin', 'week', dates, berlin)
+    expect(projection.droppedCount).toBe(1)
+    expect(projection.events).toHaveLength(0)
+  })
+})
+
+describe('a late-evening event without DTEND stays on its own day (#1097 review)', () => {
+  const dates = {
+    start: Temporal.PlainDate.from('2026-11-16'),
+    end: Temporal.PlainDate.from('2026-11-17'),
+  }
+  const berlin = (date: Date) => zdt(date, 'Europe/Berlin')
+  // 23:45 Berlin on 16 November.
+  const start = new Date('2026-11-16T22:45:00.000Z')
+
+  it('ends its chip before local midnight in week and month view', () => {
+    for (const view of ['week', 'month'] as const) {
+      const projection = toScheduleXProjection(
+        [displayEvent({ startDate: start, endDate: start, instanceDate: start })],
+        new Map(), 'Europe/Berlin', view, dates, berlin,
+      )
+      expect(projection.events).toHaveLength(1)
+      const chip = projection.events[0]!
+      expect(chip._options?.additionalClasses).not.toContain('ss-month-multiday')
+      expect(chip._options?.additionalClasses).not.toContain('ss-timegrid-multiday-segment')
+      expect(String(chip.start)).toContain('2026-11-16T23:45:00')
+      expect(String(chip.end)).toContain('2026-11-16T23:59:59.999')
+    }
+  })
+})
