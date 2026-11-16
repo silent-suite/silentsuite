@@ -1410,6 +1410,25 @@ describe('#744 the rendered note editor saves only through its captured base', (
       await settle()
     })
 
+    it('keeps its accepted save over a refresh read before that save landed', async () => {
+      const { account, collection, item } = await openSavedNote()
+      // The server holds identical text at R1, so the R0 save rebinds through a fresh read.
+      const peerItem = await peerWrites(account, collection, item, BASE_BODY)
+      const rebindRead = server.holdNext(isItemGet(item.uid))
+      fireEvent.change(titleBox(), { target: { value: 'Late own title 1113' } })
+      hideTab()
+      await rebindRead.arrived
+      // A sync that read R1 before the save landed brings it in while the save runs.
+      refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: BASE_BODY })
+
+      rebindRead.release(false)
+      await settle()
+
+      // The store still holds the older R1, so taking it would turn the title back.
+      expect([await serverTitle(account, collection, item.uid), storedNote(item.uid)?.title]).toEqual(['Late own title 1113', BASE_TITLE])
+      expect([titleBox().value, saveStatus().textContent]).toEqual(['Late own title 1113', 'Saved'])
+    })
+
     it('does not move the row for a read that ends after the draft was typed back to the saved text', async () => {
       const { item } = await refusedDraft()
       const read = server.holdNext(isItemGet(item.uid))

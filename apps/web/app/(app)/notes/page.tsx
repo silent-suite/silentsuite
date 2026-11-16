@@ -401,8 +401,9 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
       } else if (refusedWith && !clean) {
         setRefusal(refusedWith)
       }
-      // The row as the save left it may be newer than the base; the adoption effect checks it again.
-      if (clean) setCleanGen((gen) => gen + 1)
+      // After a refused save the row may be newer than the base; the adoption effect checks it
+      // again. Not after an accepted one: a row a sync read before that save landed is older.
+      if (clean && !saved) setCleanGen((gen) => gen + 1)
     }
     // Serialize saves so two flushes never race on the same Etebase item.
     saveChainRef.current = saveChainRef.current
