@@ -954,6 +954,17 @@ export async function prepareNoteCopyItem(collectionUid: string, content: string
   return account.getCollectionManager().getItemManager(collection).create(meta, content)
 }
 
+/**
+ * The same copy with newer text (#1113 D1): a new revision of the prepared
+ * item, same UID, built locally. No network.
+ */
+export async function reviseNoteCopyItem(prepared: any, content: string, meta: ItemMeta): Promise<any> {
+  const next = prepared._clone()
+  next.setMeta(meta)
+  await next.setContent(content)
+  return next
+}
+
 /** What an upload of a prepared copy established (#1113 D1). */
 export type NoteCopyUpload =
   /** The copy exists on the server and is published here; title and content are the server's. */
@@ -1018,17 +1029,22 @@ export async function uploadNoteCopyItem(collectionUid: string, prepared: any, o
   }
   let { title, content } = own
   let revision = core.savedRevisionOf(committed)
+  let serverText = true
   if (fetched) {
     // The copy landed earlier and may have changed since: show the server's text.
     try {
+      const meta = committed.getMeta()
+      // Another app made it something other than a note: it is not published as one.
+      if (!core.isMarkdownNoteItem(meta)) return { kind: 'unconfirmed' }
       const raw = await committed.getContent()
       const text = typeof raw === 'string' ? raw : new TextDecoder().decode(raw)
-      title = core.noteFromEtebaseItem(committed.uid, '', committed.getMeta()).title
+      title = core.noteFromEtebaseItem(committed.uid, '', meta).title
       content = text
     } catch {
       // Unreadable here: this tab's own text at an unknown revision, until a paired read.
       title = own.title
       revision = null
+      serverText = false
     }
     assertGuard()
   }
@@ -1040,9 +1056,10 @@ export async function uploadNoteCopyItem(collectionUid: string, prepared: any, o
   itemTypeMap.set(committed.uid, 'notes')
   itemCollectionMap.set(committed.uid, collection.uid)
   useEtebaseStore.setState({ itemCache, itemTypeMap, itemCollectionMap })
-  // The copy is on the server; a failed display write does not undo that.
+  // The copy is on the server; a failed display write does not undo that. Only the
+  // server's own text goes to the display cache.
   try {
-    await writeItemToCache('notes', collection.uid, committed.uid, content, accountEpoch, itemMetaOf(committed))
+    if (serverText) await writeItemToCache('notes', collection.uid, committed.uid, content, accountEpoch, itemMetaOf(committed))
   } catch (displayErr) {
     if (displayErr instanceof AccountBoundaryChangedError && !isCurrentAccountEpoch(accountEpoch)) throw displayErr
     logger.warn('[etebase-store] Display write after a note copy failed', getSafeErrorDetails(displayErr))

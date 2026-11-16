@@ -108,6 +108,7 @@
     "hideNewerVersion": "Hide newer version",
     "newerVersionTitle": "Newer version, read-only",
     "newerVersionLoading": "Loading the newer version…",
+    "newerVersionSame": "The server still has the version you started from.",
     "newerVersionDeleted": "This note was deleted somewhere else. Save your text as a copy to keep it.",
     "newerVersionOffline": "The newer version cannot be loaded while you are offline.",
     "newerVersionUnreadable": "The newer version could not be read in this browser.",

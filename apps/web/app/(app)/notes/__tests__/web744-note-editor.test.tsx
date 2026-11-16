@@ -835,6 +835,7 @@ describe('#744 the rendered note editor saves only through its captured base', (
       await settle()
       expect(ui().queryByRole('textbox', { name: 'Note title' })).toBeNull()
       expect(saveStatus()).toHaveTextContent('Saving your last changes to this note…')
+      expect(document.querySelector('[aria-busy="true"]')?.getAttribute('translate')).toBe('no')
 
       closing.release(false)
       await settle()
@@ -1137,6 +1138,107 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(ui().queryByRole('button', { name: 'Save as a copy' })).toBeNull()
     })
 
+    it('makes a new copy for a later refusal once the text was saved, and leaves the earlier copy as it was', async () => {
+      const { account, collection } = await refusedDraft()
+      loseNextTransactionResponse()
+      fireEvent.click(copyButton())
+      await settle()
+      expect(await serverCopies(account, collection)).toHaveLength(1)
+      // Back to the saved text: nothing is left to copy, and the attempt goes with it.
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      fireEvent.change(titleBox(), { target: { value: 'SECOND DRAFT 1113' } })
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+
+      fireEvent.click(copyButton())
+      await settle()
+
+      const [earlier] = await serverCopies(account, collection)
+      expect(new TextDecoder().decode(await earlier.getContent())).toBe(BASE_BODY)
+      expect(await serverCopies(account, collection, 'SECOND DRAFT 1113 (conflicted copy)')).toHaveLength(1)
+      expect(titleBox().value).toBe('SECOND DRAFT 1113 (conflicted copy)')
+    })
+
+    it('sends only the current text when it changed after a copy that never reached the server', async () => {
+      const { account, collection } = await refusedDraft()
+      const first = server.holdNext(isTransaction)
+      fireEvent.click(copyButton())
+      await first.arrived
+      first.release(true)
+      await settle()
+      expect(ui().getByText(/^Not copied: the server did not confirm the copy/)).toBeTruthy()
+      fireEvent.change(bodyBox(), { target: { value: 'CURRENT TEXT 1113' } })
+
+      fireEvent.click(copyButton())
+      await settle()
+
+      const copies = await serverCopies(account, collection)
+      expect(copies).toHaveLength(1)
+      expect(new TextDecoder().decode(await copies[0].getContent())).toBe('CURRENT TEXT 1113')
+      // One upload reached the server for the copy: the current text, never the earlier one.
+      expect(server.transactions.filter((sent) => sent.items.some((entry: any) => entry.uid === copies[0].uid))).toHaveLength(1)
+    })
+
+    it('offers no copy while a save of the note is still running', async () => {
+      await refusedDraft()
+      const saving = server.holdNext(isTransaction)
+      fireEvent.change(bodyBox(), { target: { value: 'MORE TYPING 1113' } })
+      hideTab()
+      await saving.arrived
+      expect(copyButton()).toBeDisabled()
+      fireEvent.click(copyButton())
+
+      saving.release(false)
+      await settle()
+
+      expect(storedCopies()).toHaveLength(0)
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect(copyButton()).toBeEnabled()
+    })
+
+    it('marks no closing save for the next account when the account resets as the editor closes', async () => {
+      const { item } = await refusedDraft()
+      const saving = server.holdNext(isTransaction)
+      fireEvent.change(bodyBox(), { target: { value: 'LAST TYPING 1113' } })
+      hideTab()
+      await saving.arrived
+
+      mounted.pop()!.unmount()
+      bumpAccountEpoch()
+      resetNoteLifecycle()
+      await act(async () => {
+        await Promise.resolve()
+      })
+
+      expect(useNoteStore.getState().closingNoteIds).not.toContain(item.uid)
+      expect(beforeUnloadPrevented()).toBe(false)
+      saving.release(true)
+      await settle()
+    })
+
+    it('says when the server still has the version the text started from', async () => {
+      const { item } = await openSavedNote()
+      expect(ui().getByTestId('note-notice')).toBeEmptyDOMElement()
+      // An owed proof skips the first write; a missing fresh copy then proves nothing.
+      markNoteObligation(item.uid)
+      const transport = EtebaseRequest.default
+      EtebaseRequest.default = async (url: string, options: any) => (
+        isItemGet(item.uid)(...requestOf(url, options)) ? respond(404, { detail: 'Not found.' }) : transport(url, options)
+      )
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      hideTab()
+      await settle()
+      EtebaseRequest.default = transport
+      expect(within(ui().getByTestId('note-notice')).getByText(/^This browser could not confirm that the note is unchanged/)).toBeTruthy()
+
+      fireEvent.click(newerButton())
+      await settle()
+
+      expect(within(newerPanel()!).getByText('The server still has the version you started from.')).toBeTruthy()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+    })
+
     it('shows the newer version read-only, without touching the draft, the note store or the item cache', async () => {
       const { item } = await refusedDraft()
       const cached = useEtebaseStore.getState().itemCache.get(item.uid)
@@ -1147,6 +1249,7 @@ describe('#744 the rendered note editor saves only through its captured base', (
 
       const panel = newerPanel()
       expect(panel).not.toBeNull()
+      expect(panel!.getAttribute('translate')).toBe('no')
       expect(within(panel!).getByText(PEER_BODY)).toBeTruthy()
       expect(within(panel!).getByText(BASE_TITLE)).toBeTruthy()
       expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, BASE_BODY])

@@ -9,6 +9,7 @@ import {
   proveLiveNoteBase,
   proveNoteRevision,
   readLiveNote,
+  reviseNoteCopyItem,
   uploadNoteCopyItem,
   useEtebaseStore,
   type LiveNoteRead,
@@ -99,9 +100,10 @@ export function conflictCopyTitle(displayTitle: string): string {
 }
 
 /**
- * A copy built for a note's text, kept before its first upload so every retry
- * sends the same item: the same UID at the same revision. Lives as long as the
- * text it guards, in memory.
+ * The copy for a note's held text, recorded before each upload: a retry of the
+ * same text sends the same item (same UID, same revision); newer text goes out
+ * as a new revision of that UID, so older text is never sent again. Dropped
+ * with the held text it was made for, in memory only.
  */
 interface NoteCopyAttempt {
   item: any
@@ -109,6 +111,8 @@ interface NoteCopyAttempt {
   title: string
   content: string
   createdAt: Date
+  /** Every revision of the copy sent so far, with the text it holds. */
+  sent: { revision: string; title: string; content: string }[]
 }
 
 // In memory only. Each entry keeps the account epoch it was made under, so a
@@ -168,6 +172,8 @@ export function holdNoteDraft(id: string, held: HeldNoteDraft): void {
  */
 export function releaseHeldNoteDraft(id: string, only?: HeldNoteDraft): void {
   if (only && heldNoteDrafts.get(id)?.held !== only) return
+  // The text a copy attempt was made for is saved or gone: a later refusal gets a new copy.
+  noteCopyAttempts.delete(id)
   if (heldNoteDrafts.delete(id)) syncUnloadGuard()
 }
 
@@ -203,10 +209,10 @@ export async function readNewerNoteVersion(id: string): Promise<NewerNoteVersion
 }
 
 /**
- * The copy itself: builds and records the item before its first upload, uploads
- * it, and on a confirmed copy does everything a new note does here. Any failure
- * keeps the attempt, so a retry cannot make a second copy; only a tombstone for
- * the copy's UID retires it unconfirmed.
+ * The copy itself: builds or revises the item and records it before the upload,
+ * uploads it, and on a confirmed copy does everything a new note does here. Any
+ * failure keeps the attempt, so a retry cannot make a second copy; a tombstone
+ * for the copy's UID, or the release of the held text, retires it.
  */
 async function runNoteCopy(
   id: string,
@@ -226,16 +232,24 @@ async function runNoteCopy(
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return failed('offline')
     const { noteToItemMeta } = await import('@silentsuite/core')
     if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
-    if (!attempt) {
-      const title = conflictCopyTitle(held.draft.title)
+    const title = conflictCopyTitle(held.draft.title)
+    const content = held.draft.content
+    if (!attempt || attempt.title !== title || attempt.content !== content) {
       const createdAt = new Date()
-      const item = await prepareNoteCopyItem(notebookId, held.draft.content, noteToItemMeta({ title, updated_at: createdAt }))
+      const meta = noteToItemMeta({ title, updated_at: createdAt })
+      // Newer text under the same UID, never the older text again; else a new copy.
+      const item = attempt
+        ? await reviseNoteCopyItem(attempt.item, content, meta)
+        : await prepareNoteCopyItem(notebookId, content, meta)
       if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
       if (!item) return failed('no-notebook')
-      attempt = { item, collectionUid: notebookId, title, content: held.draft.content, createdAt }
-      // Kept before anything is sent: a lost response or a retry re-sends this same item.
-      noteCopyAttempts.set(id, { attempt, accountEpoch })
+      attempt = { item, collectionUid: notebookId, title, content, createdAt, sent: attempt?.sent ?? [] }
     }
+    // Recorded before anything is sent: a lost response or a retry re-sends this same item.
+    if (!attempt.sent.some((sent) => sent.revision === attempt!.item.etag)) {
+      attempt.sent = [...attempt.sent, { revision: attempt.item.etag, title, content }]
+    }
+    noteCopyAttempts.set(id, { attempt, accountEpoch })
     const upload = await uploadNoteCopyItem(attempt.collectionUid, attempt.item, { title: attempt.title, content: attempt.content })
     if (!isCurrentAccountEpoch(accountEpoch)) return { kind: 'stale' }
     if (upload.kind === 'deleted') {
@@ -257,11 +271,13 @@ async function runNoteCopy(
       revision: upload.revision,
     }
     set((state) => (state.notes.some((n) => n.id === copyId) ? {} : { notes: [...state.notes, copy] }))
-    // Typing after an earlier unconfirmed attempt goes onto the copy as an edit of the
-    // attempt's own text and revision, so it saves only if nobody changed the copy since.
-    const carried = { title: conflictCopyTitle(held.draft.title), content: held.draft.content }
-    if (carried.title !== attempt.title || carried.content !== attempt.content) {
-      holdNoteDraft(copyId, { draft: carried, base: { title: attempt.title, content: attempt.content, revision: attempt.item.etag ?? null } })
+    // The server held an earlier revision of the copy (a 409): the current text goes onto it
+    // as an edit of the revision it grew from. On a revision this tab sent, that saves; on
+    // one another device wrote, the save is refused and the text stays.
+    if (upload.title !== title || upload.content !== content) {
+      const ours = attempt.sent.find((sent) => sent.revision === upload.revision)
+      const typedOn = ours ?? [...attempt.sent].reverse().find((sent) => sent.title !== title || sent.content !== content)
+      if (typedOn) holdNoteDraft(copyId, { draft: { title, content }, base: { title: typedOn.title, content: typedOn.content, revision: typedOn.revision } })
     }
     return { kind: 'copied', id: copyId }
   } catch (err) {

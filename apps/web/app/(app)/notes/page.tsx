@@ -105,9 +105,10 @@ type NewerView =
   | { kind: 'closed' }
   | { kind: 'loading' }
   | { kind: 'shown'; title: string; content: string; revision: string | null }
-  | { kind: 'failed'; reason: 'deleted' | 'offline' | 'unreadable' | 'unknown' }
+  | { kind: 'message'; reason: 'same' | 'deleted' | 'offline' | 'unreadable' | 'unknown' }
 
-const NEWER_FAILURE_KEY = {
+const NEWER_MESSAGE_KEY = {
+  same: 'newerVersionSame',
   deleted: 'newerVersionDeleted',
   offline: 'newerVersionOffline',
   unreadable: 'newerVersionUnreadable',
@@ -243,7 +244,8 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
 function ClosingNoteView({ note }: { note: Note }) {
   const t = useTranslations('Notes')
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2" aria-busy="true">
+    // translate="no": a browser's page translation would send the note text to its service.
+    <div className="flex min-h-0 flex-1 flex-col gap-2" aria-busy="true" translate="no">
       <p className="w-full truncate border-b border-[rgb(var(--border))] pb-2 text-lg font-semibold text-[rgb(var(--foreground))]">
         {note.title.trim() || t('untitled')}
       </p>
@@ -500,6 +502,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   // One copy per click at most: the flag, and the store's own in-flight copy.
   const handleSaveCopy = () => {
     if (copyingRef.current || handedOffRef.current || !isCurrentAccountEpoch(accountEpoch)) return
+    // A save still running may be accepted; its result decides whether a copy is needed.
+    if (inFlightRef.current > 0) return
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = null
@@ -524,9 +528,14 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
     setNewer({ kind: 'loading' })
     const read = await readNewerNoteVersion(note.id)
     if (newerRequestRef.current !== request || unmountedRef.current || !isCurrentAccountEpoch(accountEpoch)) return
-    setNewer(read.kind === 'note'
-      ? { kind: 'shown', title: read.title, content: read.content, revision: read.revision }
-      : { kind: 'failed', reason: read.kind })
+    if (read.kind !== 'note') {
+      setNewer({ kind: 'message', reason: read.kind })
+    } else if (read.revision && read.revision === lineageRef.current.base.revision) {
+      // A refusal that proved nothing: the server has exactly the text this one started from.
+      setNewer({ kind: 'message', reason: 'same' })
+    } else {
+      setNewer({ kind: 'shown', title: read.title, content: read.content, revision: read.revision })
+    }
   }
 
   // T2: a note opened while custody is outstanding is obliged.
@@ -549,11 +558,13 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
       // Mode replay remounts this same editor synchronously, and must not count as closing.
       queueMicrotask(() => {
         if (!unmountedRef.current || inFlightRef.current === 0 || closingRef.current) return
+        // An account reset in between leaves nothing of this account to wait for.
+        if (!isCurrentAccountEpoch(accountEpoch)) return
         closingRef.current = true
         beginClosingNoteSave(note.id)
       })
     }
-  }, [flush, note.id])
+  }, [accountEpoch, flush, note.id])
 
   // Declared after the flush effect, so an unmount captures and flushes its draft
   // before this registration goes; it removes only its own registration.
@@ -671,9 +682,11 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
           )}
         </div>
       </div>
+      {/* Always rendered, so screen readers announce the notice when it appears. */}
+      <div aria-live="polite" data-testid="note-notice">
       {(refusal || copy !== 'idle') && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-[rgb(var(--foreground))]">
-          <div aria-live="polite" className="space-y-1">
+          <div className="space-y-1">
             {refusal && <p>{t(REFUSAL_KEY[refusal])}</p>}
             {copy !== 'idle' && copy !== 'running' && <p>{t(COPY_FAILURE_KEY[copy])}</p>}
           </div>
@@ -681,7 +694,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
             <button
               type="button"
               onClick={handleSaveCopy}
-              disabled={!canWrite || copy === 'running' || moving || moveRunning}
+              disabled={!canWrite || copy === 'running' || saveState === 'saving' || moving || moveRunning}
               className={NOTICE_BUTTON_CLASS}
             >
               {copy === 'running' ? t('savingCopy') : t('saveAsCopy')}
@@ -697,14 +710,16 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
           </div>
         </div>
       )}
+      </div>
       {newer.kind !== 'closed' && (
         <section
           aria-label={t('newerVersionTitle')}
+          translate="no"
           className="max-h-64 shrink-0 overflow-y-auto rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--background))] px-3 py-2 text-sm text-[rgb(var(--foreground))]"
         >
           <p className="text-xs font-medium text-[rgb(var(--muted))]">{t('newerVersionTitle')}</p>
           {newer.kind === 'loading' && <p className="mt-1 text-xs text-[rgb(var(--muted))]">{t('newerVersionLoading')}</p>}
-          {newer.kind === 'failed' && <p className="mt-1 text-xs">{t(NEWER_FAILURE_KEY[newer.reason])}</p>}
+          {newer.kind === 'message' && <p className="mt-1 text-xs">{t(NEWER_MESSAGE_KEY[newer.reason])}</p>}
           {newer.kind === 'shown' && (
             <>
               <p className="mt-1 font-semibold">{newer.title.trim() || t('untitled')}</p>

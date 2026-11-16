@@ -516,6 +516,30 @@ describe('#1113 D1 the note store refuses with a reason and saves copies once', 
     expect((await liveTitles(account, collection)).filter((name) => name.endsWith('(conflicted copy)'))).toHaveLength(1)
   })
 
+  it('does not publish a copy that another app turned into something other than a note', async () => {
+    const { account, collection, item, held } = await staleDraft()
+    let lose = true
+    EtebaseRequest.default = async (url: string, options: any) => {
+      const response = await server.handle(url, options)
+      if (lose && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
+        lose = false
+        throw new TypeError('Network request failed')
+      }
+      return response
+    }
+    expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    const listed = await account.getCollectionManager().getItemManager(collection).list()
+    const landed = listed.data.find((candidate: any) => candidate.uid !== item.uid)
+    const other = landed._clone()
+    other.setMeta({ ...other.getMeta(), type: 'etebase.other' })
+    await account.getCollectionManager().getItemManager(collection).transaction([other])
+    const retried = await useNoteStore.getState().saveNoteCopy(item.uid, held)
+
+    expect(retried).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+    expect(useNoteStore.getState().notes.some((note) => note.id === landed.uid)).toBe(false)
+    expect(useEtebaseStore.getState().itemCache.has(landed.uid)).toBe(false)
+  })
+
   it('drops the attempt and held text on the account reset, and a late result is not published', async () => {
     const { item, held } = await staleDraft()
     const upload = server.holdNext((method, path) => method === 'post' && path.endsWith('item/transaction'))

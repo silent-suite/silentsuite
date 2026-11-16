@@ -108,6 +108,7 @@
     "hideNewerVersion": "Nascondi la versione più recente",
     "newerVersionTitle": "Versione più recente, sola lettura",
     "newerVersionLoading": "Caricamento della versione più recente…",
+    "newerVersionSame": "Il server ha ancora la versione su cui hai iniziato a scrivere.",
     "newerVersionDeleted": "Questa nota è stata eliminata altrove. Salva il tuo testo come copia per conservarlo.",
     "newerVersionOffline": "Non è possibile caricare la versione più recente mentre sei offline.",
     "newerVersionUnreadable": "Non è stato possibile leggere la versione più recente in questo browser.",
