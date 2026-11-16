@@ -161,6 +161,8 @@ class NoteEditorContractTest {
         assertTrue(confirmed.contains("identity != ExactAccountIdentity(account.type, account.name, creationId)"))
         assertTrue("the discard of unsynced text is its own confirmation",
             confirmed.contains("if (shown.unsynced && !discard) confirmDelete(shown, discard = true)"))
+    }
+
     @Test fun `Back and Up ask the editor first, a leave saves first, and an answer is checked before anything is done`() {
         val activity = code(read("src/main/java/io/silentsuite/sync/ui/notes/NotesActivity.kt"))
         val up = activity.substringAfter("    private fun up() {").substringBefore("\n    }\n")
