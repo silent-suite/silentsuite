@@ -1046,6 +1046,117 @@ def test_dashboard_account_mutation_unknown_account_is_noop(monkeypatch, path, h
     assert "nothing changed" in payload["message"]
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_dashboard_lock_setting_saves_reloads_and_renders(tmp_path, monkeypatch, enabled):
+    settings_file = _isolated_settings(tmp_path, monkeypatch)
+    settings_file.write_text(json.dumps({"syncInterval": 900}), encoding="utf-8")
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    monkeypatch.setattr(config, "E2EE_LOCK_PREFIX", not enabled)
+    monkeypatch.setattr(config, "EXPERIMENTAL_BIRTHDAYS", config.EXPERIMENTAL_BIRTHDAYS)
+    body = json.dumps({"e2eeLockPrefix": enabled}).encode()
+    web = Web.__new__(Web)
+
+    status, _, response = web.post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token), "", "/.web/api/settings", None,
+    )
+
+    assert status == 200
+    assert json.loads(response)["e2eeLockPrefix"] is enabled
+    assert config.E2EE_LOCK_PREFIX is enabled
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {
+        "syncInterval": 900, "e2eeLockPrefix": enabled,
+    }
+    config.E2EE_LOCK_PREFIX = not enabled
+    config.load_settings()
+    assert config.E2EE_LOCK_PREFIX is enabled
+    status, _, response = web.get(_get_environ(), "", "/.web/api/settings", None)
+    assert status == 200
+    assert json.loads(response)["e2eeLockPrefix"] is enabled
+    html = _render_dashboard()
+    checked = " checked" if enabled else ""
+    assert f'id="e2eeLockPrefix" onchange="updateE2eeLockPrefix(this)"{checked}>' in html
+    assert "Apps update as items change or after a re-sync." in html
+
+
+@pytest.mark.parametrize("bad_value", ["false", 0, None])
+def test_dashboard_lock_setting_rejects_invalid_values_before_any_write(tmp_path, monkeypatch, bad_value):
+    settings_file = _isolated_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "E2EE_LOCK_PREFIX", True)
+    body = json.dumps({"e2eeLockPrefix": bad_value, "syncInterval": 60}).encode()
+    status, _, _ = Web.__new__(Web).post(
+        _post_environ(body=body, csrf_token=_dashboard_csrf_token), "", "/.web/api/settings", None,
+    )
+    assert status == 400
+    assert not settings_file.exists()
+    assert config.SYNC_INTERVAL == 900
+    assert config.E2EE_LOCK_PREFIX is True
+
+
+def test_dashboard_lock_setting_requires_csrf(tmp_path, monkeypatch):
+    settings_file = _isolated_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "E2EE_LOCK_PREFIX", True)
+    status, _, _ = Web.__new__(Web).post(
+        _post_environ(body=b'{"e2eeLockPrefix":false}'), "", "/.web/api/settings", None,
+    )
+    assert status == 403
+    assert not settings_file.exists()
+    assert config.E2EE_LOCK_PREFIX is True
+
+
+@pytest.mark.parametrize("error,status_code", [
+    ("SettingsDurabilityError", 500), ("SettingsLockError", 503), ("OSError", 500),
+])
+def test_dashboard_lock_setting_reports_save_failure(tmp_path, monkeypatch, error, status_code):
+    _isolated_settings(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "E2EE_LOCK_PREFIX", True)
+
+    def refuse_save(_settings):
+        error_type = OSError if error == "OSError" else getattr(config, error)
+        raise error_type("synthetic failure")
+
+    monkeypatch.setattr(config, "save_settings", refuse_save)
+    status, _, response = Web.__new__(Web).post(
+        _post_environ(body=b'{"e2eeLockPrefix":false}', csrf_token=_dashboard_csrf_token),
+        "", "/.web/api/settings", None,
+    )
+    assert status == status_code
+    assert "error" in json.loads(response)
+    assert config.E2EE_LOCK_PREFIX is True
+
+
+@pytest.mark.skipif(NODE is None, reason="node is required to execute dashboard JavaScript")
+def test_dashboard_lock_toggle_handles_success_and_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "CREDS_FILE", str(tmp_path / "creds.json"))
+    html = _render_dashboard()
+    functions = "\n".join(_extract_js_function(html, name) for name in (
+        "handleJsonResponse", "updateE2eeLockPrefix",
+    ))
+    harness = r"""
+const assert = require('node:assert/strict');
+const status = {textContent: '', style: {}};
+global.document = {getElementById: () => status};
+global.window = {SILENTSUITE_DASHBOARD_CSRF: 'csrf-test'};
+(async () => {
+    for (const ok of [true, false]) {
+        const box = {checked: false, disabled: false};
+        global.fetch = async (url, options) => {
+            assert.equal(url, '/.web/api/settings');
+            assert.equal(options.headers['X-SilentSuite-CSRF'], 'csrf-test');
+            assert.deepEqual(JSON.parse(options.body), {e2eeLockPrefix: false});
+            return {ok, status: ok ? 200 : 500,
+                json: async () => ok ? {e2eeLockPrefix: false} : {error: 'write failed'}};
+        };
+        await updateE2eeLockPrefix(box);
+        assert.equal(box.checked, !ok);
+        assert.equal(box.disabled, false);
+        assert.equal(status.textContent, ok ? 'Saved' : 'Not saved: write failed');
+    }
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run([NODE, "-e", functions + harness], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+
+
 def test_dashboard_settings_post_requires_csrf_before_writing(tmp_path, monkeypatch):
     settings_file = tmp_path / "settings.json"
     monkeypatch.setattr(config, "SETTINGS_FILE", str(settings_file))

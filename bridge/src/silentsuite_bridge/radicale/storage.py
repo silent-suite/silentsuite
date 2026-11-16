@@ -17,6 +17,7 @@ import secrets
 import threading
 import time
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 import peewee as pw
 import vobject
@@ -639,6 +640,60 @@ def _mark_yearless_birthdays(item):
 # --- Radicale Item ---
 
 
+_E2EE_LOCK_PREFIX = "\U0001f512 "
+
+
+def _fallback_contact_fn(card):
+    """Keep the existing missing-FN compatibility value shared by reads and writes."""
+    return str(card.n)
+
+
+def _title_lines(item):
+    """Yield a stable component key and its display title, without adding fields."""
+    if item.name == "VCARD":
+        if hasattr(item, "fn"):
+            yield ("VCARD",), item.fn
+    elif item.name == "VCALENDAR":
+        for component in item.components():
+            if component.name not in ("VEVENT", "VTODO") or not hasattr(component, "summary"):
+                continue
+            recurrence = None
+            if hasattr(component, "recurrence_id"):
+                value = component.recurrence_id.value
+                if isinstance(value, datetime) and value.utcoffset() is not None:
+                    recurrence = ("instant", value.astimezone(timezone.utc))
+                else:
+                    recurrence = ("text", str(value))
+            uid = component.uid.value if hasattr(component, "uid") else None
+            yield (component.name, uid, recurrence), component.summary
+
+
+def _unlock_for_store(incoming_vobject, stored_content):
+    """Remove the served lock without changing unchanged user-authored prefixes.
+
+    Compare against raw stored titles, not the served view or the current setting:
+    a client may still have a copy fetched before the setting changed.
+    """
+    incoming = vobject.readOne(incoming_vobject.serialize())
+    reference = {}
+    if stored_content is not None:
+        stored = vobject.readOne(stored_content)
+        reference = {key: line.value for key, line in _title_lines(stored)}
+        if stored.name == "VCARD" and not hasattr(stored, "fn"):
+            reference[("VCARD",)] = _fallback_contact_fn(stored)
+
+    for key, line in _title_lines(incoming):
+        value = line.value
+        if not value:
+            continue
+        original = reference.get(key)
+        if original is not None and value in (original, _E2EE_LOCK_PREFIX + original):
+            line.value = original
+        elif value.startswith(_E2EE_LOCK_PREFIX):
+            line.value = value[len(_E2EE_LOCK_PREFIX):]
+    return incoming
+
+
 class EteSyncItem(Item):
     """Radicale item backed by an Etebase cache entry."""
 
@@ -977,9 +1032,14 @@ class Collection(BaseCollection):
                     item.contents["version"][0].value = "3.0"
                     _mark_yearless_birthdays(item)
 
-            # Ensure VCARD has FN property
+            if config.E2EE_LOCK_PREFIX:
+                for _key, line in _title_lines(item):
+                    if line.value:
+                        line.value = _E2EE_LOCK_PREFIX + line.value
+
+            # Ensure VCARD has FN property, without decorating a synthesized name.
             if item.name == "VCARD" and not hasattr(item, "fn"):
-                item.add("fn").value = str(item.n)
+                item.add("fn").value = _fallback_contact_fn(item)
 
         except Exception:
             raise RuntimeError("Failed to parse DAV item") from None
@@ -1014,6 +1074,10 @@ class Collection(BaseCollection):
             self._sanitize_href_mappings()
             previous_state_hash = dav_collection_state_hash(cache_col)
             existing = self._get(href)
+            vobject_item = _unlock_for_store(
+                vobject_item,
+                existing.etesync_item.content if existing is not None else None,
+            )
             if existing is not None:
                 etesync_item = existing.etesync_item
                 etesync_item.content = vobject_item.serialize()

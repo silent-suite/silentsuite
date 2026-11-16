@@ -331,6 +331,9 @@ DAV_SYNC_TOKEN_RETENTION = 256
 DAV_SYNC_TOKEN_MAX_AGE = 30 * 24 * 60 * 60
 DAV_CHANGE_RETENTION = 10_000
 
+# Display a lock in DAV clients; only an explicit JSON false disables it.
+E2EE_LOCK_PREFIX = True
+
 # --- Experimental features ---
 # Birthdays calendar (#738) is an opt-in experiment; anything but a JSON true in
 # settings.json ("experimentalBirthdays") means off.
@@ -826,6 +829,7 @@ def load_settings():
     listener. Loading never raises, so ``--remove-autostart`` stays usable.
     """
     global SYNC_INTERVAL, SSL_ENABLED, SSL_CERT_FILE, SSL_KEY_FILE, EXPERIMENTAL_BIRTHDAYS
+    global E2EE_LOCK_PREFIX
     settings_error: str | None = None
     try:
         settings = read_settings_strict()
@@ -838,6 +842,7 @@ def load_settings():
     except ValueError:
         pass
     EXPERIMENTAL_BIRTHDAYS = settings.get("experimentalBirthdays") is True
+    E2EE_LOCK_PREFIX = settings.get("e2eeLockPrefix") is not False
     _resolve_network(settings, settings_error)
     # Environment variables override settings even if tests/processes set them
     # after the module was imported.

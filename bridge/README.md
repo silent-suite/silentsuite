@@ -26,6 +26,20 @@ The dashboard exposes the same account-management flow without terminal commands
 - **Log out** removes local bridge credentials/session material for one account and keeps that account's local cache.
 - **Remove account** removes local bridge credentials/session material and deletes that account's local cache rows.
 
+## Lock indicator in your apps
+
+By default, the Bridge adds `🔒 ` to event and task titles and contact display names
+in DAV apps to identify data synced with end-to-end encryption. Turn it off with
+**Show a lock (🔒) on events, tasks and contacts in your apps** on the dashboard,
+or set `"e2eeLockPrefix": false` in `settings.json` before starting the Bridge.
+Apps pick up the change when they next fetch an item, normally after an item
+changes or a manual re-sync. Changing the setting does not force a refresh.
+
+The display lock is removed on save; existing stored titles keep their own locks
+when the title is unchanged. If you create or change a title in a DAV app so that
+it starts with exactly `🔒 ` (lock plus space), the Bridge removes one such prefix
+before storing it, even with the setting off.
+
 ## macOS Apple Internet Accounts
 
 Apple Internet Accounts may require the local bridge to use HTTPS with a trusted localhost certificate. To generate or reuse a localhost certificate and print the Keychain setup steps, run this on the Mac that hosts the bridge:
