@@ -586,8 +586,12 @@ function NotesPageBody() {
     () => newNoteNotebook(notebooks, activeListId, { filterId: filteredNotebook?.id, openNotebookId: selectedNote?.notebookId }),
     [notebooks, activeListId, filteredNotebook?.id, selectedNote?.notebookId],
   )
+  // One create at a time: a second click, or the empty-state action, while one runs would add a second note.
+  // The ref closes the gap before the state has rendered; the state turns the buttons off meanwhile.
+  const createInFlight = useRef(false)
+  const [creating, setCreating] = useState(false)
   // The offline queue refuses a new note, so New note is off until there is a connection.
-  const canCreateNote = canWrite && isOnline && !isLoading && newNoteTarget !== undefined
+  const canCreateNote = canWrite && isOnline && !isLoading && newNoteTarget !== undefined && !creating
   const offlineNoticeId = useId()
   // Offline is all that keeps New note off: the empty states then say so instead of inviting a note.
   const createNeedsConnection = !isOnline && canWrite && newNoteTarget !== undefined
@@ -610,7 +614,9 @@ function NotesPageBody() {
   }, [notebookFilter, visibleNotebooks])
 
   const handleCreate = useCallback(async () => {
-    if (!newNoteTarget || !canCreateNote) return
+    if (!newNoteTarget || !canCreateNote || createInFlight.current) return
+    createInFlight.current = true
+    setCreating(true)
     try {
       const created = await createNote({ notebookId: newNoteTarget.id })
       setQuery('')
@@ -625,6 +631,9 @@ function NotesPageBody() {
         if (err.reason === 'queued') showWarningToast(message)
         else showErrorToast(message)
       }
+    } finally {
+      createInFlight.current = false
+      setCreating(false)
     }
   }, [canCreateNote, createNote, newNoteTarget, t])
 

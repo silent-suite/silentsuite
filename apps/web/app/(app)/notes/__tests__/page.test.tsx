@@ -306,6 +306,70 @@ describe('NotesPage', () => {
     expect(title.selectionEnd).toBe('Untitled'.length)
   })
 
+  describe('while a new note is being created', () => {
+    function pendingCreate() {
+      let finish: (created: StoredNote) => void = () => {}
+      storeMock.noteState.createNote.mockImplementation(() => new Promise<StoredNote>((resolve) => { finish = resolve }))
+      return (created: StoredNote) => finish(created)
+    }
+
+    it('creates one note for rapid clicks, and turns New note off, in the header and the empty list, until it ends', async () => {
+      const finish = pendingCreate()
+      loaded([])
+      renderWithIntl(<NotesPage />)
+      // Its own precondition: the empty list shows the header button and the empty-state action, both on.
+      const buttons = () => screen.getAllByRole('button', { name: 'New note' })
+      expect(buttons()).toHaveLength(2)
+      expect(buttons().map((button) => (button as HTMLButtonElement).disabled)).toEqual([false, false])
+
+      fireEvent.click(buttons()[1]!)
+      fireEvent.click(buttons()[0]!)
+      fireEvent.click(buttons()[0]!)
+
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+      // The empty-state action is gone while it runs; the header button is off.
+      expect(buttons()).toHaveLength(1)
+      expect(buttons()[0]).toBeDisabled()
+
+      storeMock.noteState.notes = [note('new-note', { title: 'Untitled' })]
+      await act(async () => { finish(note('new-note', { title: 'Untitled' })) })
+      expect(screen.getByRole('textbox', { name: 'Note title' })).toHaveValue('Untitled')
+      expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled()
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+    })
+
+    it('creates one note for two clicks in the same tick, before anything has rendered', async () => {
+      const finish = pendingCreate()
+      loaded([note('existing', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      const button = screen.getByRole<HTMLButtonElement>('button', { name: 'New note' })
+      expect(button.disabled).toBe(false)
+
+      act(() => {
+        button.click()
+        button.click()
+      })
+
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+      await act(async () => { finish(note('new-note', { title: 'Untitled' })) })
+    })
+
+    it('lets the next create run after one was refused', async () => {
+      storeMock.noteState.createNote
+        .mockRejectedValueOnce(new NoteNotCreatedError('failed'))
+        .mockResolvedValueOnce(note('new-note', { title: 'Untitled' }))
+      loaded([note('existing', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+
+      fireEvent.click(screen.getByRole('button', { name: 'New note' }))
+      await vi.waitFor(() => expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled())
+      expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'New note' }))
+      await vi.waitFor(() => expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(2))
+    })
+  })
+
   describe('when no note was created', () => {
     const toastMessages = () => useToastStore.getState().toasts.map((toast) => toast.message)
 
