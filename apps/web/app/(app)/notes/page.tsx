@@ -317,8 +317,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
   )
   const [copy, setCopy] = useState<'idle' | 'running' | NoteCopyFailure>(held?.copy ?? 'idle')
   const [newer, setNewer] = useState<NewerView>({ kind: 'closed' })
-  // Moves on when the draft is typed back to the saved text, or a refused save ends with it
-  // there, so a refreshed note is adopted then.
+  // Moves on when the draft is typed back to the saved text with no save running, or when a
+  // save that was not accepted ends with it there, so a refreshed note is adopted then.
   const [cleanGen, setCleanGen] = useState(0)
   // A move recreates the note in the other notebook, which needs a connection. The reason is
   // offered only where the picker would otherwise work; read-only, one-notebook and moving pickers keep their own state.
@@ -408,8 +408,9 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
       } else if (refusedWith && !clean) {
         setRefusal(refusedWith)
       }
-      // After a refused save the row may be newer than the base; the adoption effect checks it
-      // again. Not after an accepted one: a row a sync read before that save landed may be older.
+      // After a save that was not accepted (refused or failed) the row may be newer than the
+      // base; the adoption effect checks it again. Not after an accepted one: a row a sync read
+      // before that save landed may be older.
       if (clean && !saved) setCleanGen((gen) => gen + 1)
     }
     // Serialize saves so two flushes never race on the same Etebase item.
@@ -451,8 +452,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
       if (wasDirty) {
         newerRequestRef.current = null
         setNewer({ kind: 'closed' })
-        // While a save runs the record is that save's own text. A refused end checks the row
-        // again; after an accepted one this draft is unsaved and saves.
+        // While a save runs the record may be that save's own text. An end that was not
+        // accepted checks the row again; after an accepted one this draft is unsaved and saves.
         if (inFlightRef.current === 0) setCleanGen((gen) => gen + 1)
       }
     }
@@ -478,8 +479,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
 
   // Adopt refreshed store values (sync from another device) unless a draft is unsaved or a
   // save is running. Until the save ends the store can hold that save's own record, and text
-  // typed back to the saved version would look clean and take it; a refused save's end
-  // checks the row again (cleanGen).
+  // typed back to the saved version would look clean and take it; the end of a save that
+  // was not accepted checks the row again (cleanGen).
   // A different revision is a different base even when the text is the same.
   useEffect(() => {
     if (isDirty() || inFlightRef.current > 0) return
