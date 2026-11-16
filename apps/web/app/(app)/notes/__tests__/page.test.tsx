@@ -764,6 +764,8 @@ describe('NotesPage', () => {
   describe('while offline, a new note needs a connection', () => {
     const NOTICE = /You are offline\. Edits to an open note are saved encrypted on this device and sync when you reconnect, unless the note changed elsewhere or the editor shows Not saved\. New notes and moves need a connection, so New note is turned off\./
 
+    const OFFLINE_EMPTY = 'New notes need a connection, so New note is turned off while you are offline.'
+
     beforeEach(() => {
       storeMock.syncState.isOnline = false
     })
@@ -794,6 +796,36 @@ describe('NotesPage', () => {
       // Only the disabled header button remains; the empty state adds none.
       expect(screen.getAllByRole('button', { name: 'New note' })).toHaveLength(1)
       expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+      // The empty state does not invite a note it cannot create.
+      expect(screen.getByText(OFFLINE_EMPTY)).toBeInTheDocument()
+      expect(screen.queryByText(/Add a note to get started/)).not.toBeInTheDocument()
+    })
+
+    it('keeps the usual empty text online, and for a read-only account offline', () => {
+      storeMock.syncState.isOnline = true
+      loaded([])
+      const view = renderWithIntl(<NotesPage />)
+      expect(screen.getByText('Write privately in Markdown. Add a note to get started.')).toBeInTheDocument()
+      expect(screen.queryByText(OFFLINE_EMPTY)).not.toBeInTheDocument()
+
+      // Offline but without write access, New note was never available: nothing about connections.
+      storeMock.syncState.isOnline = false
+      storeMock.authState.canWrite.mockReturnValue(false)
+      view.rerender(<NotesPage />)
+      expect(screen.getByText(NOTICE)).toBeInTheDocument()
+      expect(screen.getByText('Write privately in Markdown. Add a note to get started.')).toBeInTheDocument()
+      expect(screen.queryByText(OFFLINE_EMPTY)).not.toBeInTheDocument()
+    })
+
+    it('says the same in Italian', () => {
+      loaded([])
+      render(
+        <NextIntlClientProvider locale="it" messages={itMessages}>
+          <NotesPage />
+        </NextIntlClientProvider>,
+      )
+      expect(screen.getByText('Le nuove note richiedono una connessione, quindi il pulsante Nuova nota è disattivato mentre sei offline.')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Nuova nota' })).toBeDisabled()
     })
 
     it('offers no New note action in an empty notebook either', () => {
@@ -804,6 +836,8 @@ describe('NotesPage', () => {
       expect(screen.getByText('No notes in Empty')).toBeInTheDocument()
       expect(screen.getAllByRole('button', { name: 'New note' })).toHaveLength(1)
       expect(screen.getByRole('button', { name: 'New note' })).toBeDisabled()
+      expect(screen.getByText(OFFLINE_EMPTY)).toBeInTheDocument()
+      expect(screen.queryByText('New notes go here while this notebook is selected.')).not.toBeInTheDocument()
     })
 
     it('turns New note back on, with its usual title, once the connection returns', async () => {

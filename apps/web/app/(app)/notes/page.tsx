@@ -578,6 +578,8 @@ function NotesPageBody() {
   // The offline queue refuses a new note, so New note is off until there is a connection.
   const canCreateNote = canWrite && isOnline && !isLoading && newNoteTarget !== undefined
   const offlineNoticeId = useId()
+  // Offline is all that keeps New note off: the empty states then say so instead of inviting a note.
+  const createNeedsConnection = !isOnline && canWrite && newNoteTarget !== undefined
   // The picker offers every shown writable notebook, plus the note's own so it always shows.
   const pickerNotebooks = useMemo(() => {
     const targets = notebooks.filter((notebook) => notebook.visible && canWriteNotebook(notebook))
@@ -706,7 +708,7 @@ function NotesPageBody() {
           ) : visibleNotes.length === 0 ? (
             <NotesEmptyState
               title={notes.length > 0 ? t('noVisibleNotes') : t('noNotesYet')}
-              description={notes.length > 0 ? t('noVisibleNotesDescription') : t('emptyDescription')}
+              description={notes.length > 0 ? t('noVisibleNotesDescription') : createNeedsConnection ? t('emptyOfflineDescription') : t('emptyDescription')}
               actionLabel={t('newNote')}
               onAddNote={canCreateNote ? () => void handleCreate() : undefined}
             />
@@ -749,7 +751,7 @@ function NotesPageBody() {
                 ) : (
                   <NotesEmptyState
                     title={t('noNotesInNotebook', { name: filteredNotebook?.name ?? '' })}
-                    description={t('noNotesInNotebookDescription')}
+                    description={createNeedsConnection ? t('emptyOfflineDescription') : t('noNotesInNotebookDescription')}
                     actionLabel={t('newNote')}
                     onAddNote={canCreateNote ? () => void handleCreate() : undefined}
                   />

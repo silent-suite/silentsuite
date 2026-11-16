@@ -104,6 +104,7 @@
     "newNoteIn": "Nuova nota in {name}",
     "newNoteOffline": "Il pulsante Nuova nota è disattivato mentre sei offline. Una nuova nota richiede una connessione.",
     "moveOffline": "Lo spostamento delle note è disattivato mentre sei offline. Uno spostamento richiede una connessione.",
+    "emptyOfflineDescription": "Le nuove note richiedono una connessione, quindi il pulsante Nuova nota è disattivato mentre sei offline.",
     "noNotesInNotebook": "Nessuna nota in {name}",
     "noNotesInNotebookDescription": "Le nuove note andranno qui finché questo blocco appunti è selezionato.",
     "moveFailed": "Impossibile spostare la nota",

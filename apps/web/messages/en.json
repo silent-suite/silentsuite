@@ -104,6 +104,7 @@
     "newNoteIn": "New note in {name}",
     "newNoteOffline": "New note is turned off while you are offline. A new note needs a connection.",
     "moveOffline": "Moving a note is turned off while you are offline. A move needs a connection.",
+    "emptyOfflineDescription": "New notes need a connection, so New note is turned off while you are offline.",
     "noNotesInNotebook": "No notes in {name}",
     "noNotesInNotebookDescription": "New notes go here while this notebook is selected.",
     "moveFailed": "Could not move note",
