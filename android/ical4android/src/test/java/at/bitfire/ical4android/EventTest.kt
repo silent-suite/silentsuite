@@ -230,6 +230,23 @@ class EventTest {
     }
 
     @Test
+    fun testEndDateWithoutDtEnd() {
+        fun event(vararg lines: String) = Event.eventsFromReader(StringReader(
+            (listOf("BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:test", "BEGIN:VEVENT", "UID:no-dtend") +
+                lines + listOf("END:VEVENT", "END:VCALENDAR", "")).joinToString("\r\n"))).single()
+
+        val zeroLength = event("DTSTART:20210601T070000Z")
+        assertNull(zeroLength.dtEnd)
+        assertEquals(1622530800000L, zeroLength.getEndDate(true)!!.date.time)
+
+        val withDuration = event("DTSTART:20210601T070000Z", "DURATION:PT90M")
+        assertEquals(1622530800000L + 90 * 60000, withDuration.getEndDate(true)!!.date.time)
+
+        val allDay = event("DTSTART;VALUE=DATE:19970714")
+        assertEquals(868838400000L + 86400000, allDay.getEndDate(true)!!.date.time)
+    }
+
+    @Test
     fun testUnfolding() {
         val e = parseCalendar("two-line-description-without-crlf.ics").first()
         assertEquals("http://www.tgbornheim.de/index.php?sessionid=&page=&id=&sportcentergroup=&day=6", e.description)
