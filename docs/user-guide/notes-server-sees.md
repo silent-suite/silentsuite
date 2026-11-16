@@ -1,103 +1,83 @@
 # What the Server Sees in Notes
 
-Note titles, note text and notebook names are encrypted on your device before they are uploaded. The server stores them but has no key to read them. To store and sync your notes, the server still sees some facts about them. This page lists those facts for Notes, checked against the code of the SilentSuite server, the web app and the Android app.
+Note titles, note text and notebook names are encrypted on your device, and the server has no key to read them. It still sees some facts about your notes, listed here.
 
-"The server" means the sync server your account uses: the hosted server, or your own server if you self-host. Facts that belong to your account as a whole, such as your email address, are listed at the end.
+"The server" is the sync server your account uses: the hosted one, or your own if you self-host. Calendars, task lists, address books and notebooks are all collections.
 
 ## At a glance
 
 | What | Can the server read it? | Why |
 |---|---|---|
-| Note titles and last-edited times | No | They are in each note's encrypted metadata. |
-| Note text | No | It is the note's encrypted content. |
-| Notebook names, colors and descriptions | No | They are in the notebook's encrypted metadata. |
-| Which collections are notebooks | Not by name | The type name `etebase.md.note` is encrypted with a key from your account. The server sees one opaque value that all your notebooks share. |
-| Note and notebook IDs | Yes | Random IDs made on your device. They contain none of your text. |
-| How many notebooks and notes you have | Yes | Each note is stored as a separate item in its notebook. |
-| How many times each note was saved | Yes | Each save adds a version, and the server keeps the earlier versions. |
+| Note titles | No | They are in encrypted metadata. |
+| Last-edited times | Not the stored value | It is encrypted, but the server sees when each save arrives. |
+| Note text | No | It is encrypted content. |
+| Notebook names, colors and descriptions | No | They are in encrypted metadata. |
+| Which collections are notebooks | Yes, in practice | The type is an opaque value, a code the server cannot decode, but all your notebooks share it and the apps list notebooks after the other types. |
+| Note and notebook IDs | Yes | Random IDs made on your device, with none of your text. They appear in request addresses. |
+| How many notebooks and notes you have | Yes | Each note is a separate item. |
+| How many times each note was saved | Yes | Each save adds a version, and earlier versions are kept. |
 | The order of changes | Yes | Each change gets a number from a rising counter. |
-| Sizes | Roughly | Note text is padded before encryption. Titles are not padded. |
+| The length of each title | Yes | Metadata gets only one byte of padding. |
+| The size of note text | Roughly | Text is padded before encryption. |
 | Which notes and notebooks are deleted | Yes | The deleted mark is not encrypted. |
-| Members of a shared notebook | Yes | Their usernames and access levels. |
-| Invitations | Yes | Who invited whom, to which notebook, at which access level. |
-| When you use Notes | Partly | From the order of changes, file times and request logs. See [Timing](#timing). |
-| What you search for | No | Search runs on your device. |
-| Exported files | No | Export decrypts your notes on your device. |
+| Members and invitations | Yes | Usernames, access levels, and who invited whom. |
+| When you use Notes | Partly | See [Timing and logs](#timing-and-logs). |
+| Searches and exported files | No | Both run on your device. |
 
-## IDs
+## IDs and versions
 
-- Each note and each notebook has an ID that your device picks at random. The server uses these IDs to store and find items, and they appear in the addresses of requests.
-- Each saved version has an ID that is calculated while its metadata is encrypted, so it contains nothing readable.
-- Note text is stored in pieces. Each piece's ID is a keyed hash of that piece, made with the note's key, which the server does not have. So the server cannot use the IDs to test guesses about your text, but it can see when a piece is identical to one in an earlier version of the same note. For example, when a save changes only the title, the pieces of text keep the IDs they had.
-- In the web app, moving a note to another notebook creates a copy with a new ID and deletes the original. The server sees a new note in one notebook and a deleted note in the other at about the same time.
-- On Android, when a note changed in two places, your text is saved as a new note whose title ends in "(conflicted copy)". The title is encrypted; the server sees one more note in that notebook.
-
-## Counts and versions
-
-- Each note is its own item in its notebook, so the server can count the notes in each notebook and the notebooks in each account.
-- Each save stores a new version and keeps the earlier ones, encrypted. The server can count how many times each note was saved.
+- Note text is stored in pieces, each with a keyed hash as its ID: a fingerprint made with the note's key, which the server does not have. The server cannot test guesses with it, but it sees when a piece matches one in an earlier version, as when a save changes only the title.
+- The web app saves 1.5 seconds after you stop typing, and each save is a new version, so one writing session can add many. The server sees their order, their timing, and changes in title length and padded text size.
+- In the web app, a move creates a copy with a new ID and deletes the original, so the server sees one note appear as another is deleted.
 
 ## Sizes
 
-- Note text under 16 KiB (16,384 bytes) is stored as one piece, rounded up to the next multiple of 1 KiB before encryption. A 300-byte note and a 900-byte note look the same size.
-- Longer text is split into pieces of up to 64 KiB, each rounded up to a multiple of 1 KiB (2 KiB for pieces of 32 KiB or more), plus one small piece that records their order. The server sees how many pieces a note has.
-- A note with no text has no stored piece at all, so the server can tell that its text is empty.
-- A note's title and last-edited time are encrypted together as its metadata, with only one byte of padding. The size of the encrypted metadata follows the length of the title, so the server can estimate how long a title is. The same applies to notebook names.
-- These sizes come from the Etebase library that the web app uses. The Android app uses the Etebase Java client; its padding has not been checked for this page.
+- Note text is padded to steps of 1 KiB (1,024 bytes), so a 300-byte note and a 900-byte note look the same.
+- Text over 16 KiB is usually split into padded pieces at points that depend only on the text, not on a key, so the same long text gives the same piece sizes in any account. The server sees how many pieces a note has.
+- A note with no text has no stored piece, so the server can tell that it is empty.
+- The title and last-edited time are encrypted together with one byte of padding, so the stored size is the title's length in bytes plus a few bytes that barely vary, in every version. A notebook's name and description work the same way.
 
 ## Deleting
 
-- A deleted note keeps its ID on the server. Its newest version is marked deleted and has no note text, only encrypted metadata. Its earlier versions stay on the server, encrypted.
-- In the web app, deleting a notebook marks the notebook deleted. The notebook and the notes in it stay on the server, encrypted.
-- On a self-hosted server, deleting the account in the admin panel removes its rows from the database, but the encrypted files can stay in the server's media volume. See [Admin Dashboard](../self-hosting/admin-dashboard.md#delete-a-user).
+- A deleted note keeps its ID. Its newest version is marked deleted and has no text (the web app keeps the encrypted title in it; Android blanks it), and earlier versions stay, encrypted.
+- In the web app, a deleted notebook is marked deleted. It and its notes stay on the server, encrypted.
 
-## Sharing and members
+## Sharing
 
-- For each notebook, the server knows which account created it, which accounts are members, and each member's access level: read-only, read-write and admin.
-- Each member's copy of the notebook key is encrypted, so the server cannot read it.
-- For each invitation, the server stores who sent it, who it is for, which notebook it is for and the access level. The notebook key inside it is encrypted to the recipient's public key.
-- When you invite someone, the server sees the username or email address you looked up.
-- Admins of a notebook can list its members' usernames.
-- When a member leaves a notebook or is removed from it, the server deletes the membership and keeps a record that it ended.
+- The server knows who created each notebook, its members and their access levels (read-only, read-write or admin), and each invitation's sender, recipient, notebook and access level. Members' copies of the notebook key, and the key inside an invitation, are encrypted.
+- When you invite someone, the server sees the username or email address you looked up. When you accept, it stores your account's type value for that notebook, so it learns that your value and the sender's mean the same type.
+- When a member leaves or is removed, the server deletes the membership and keeps a record that it ended.
 
-## Timing
+## Timing and logs
 
-The database tables that hold notebooks, notes, versions, members and invitations have no date or time columns. The last-edited time you see in the app is inside the encrypted metadata. The server still learns when things happen:
+The database stores no dates or times for collections, notes, versions, members or invitations. The server still learns when things happen:
 
-- The rising counter on each change records the order of all changes on the server.
-- By default, note text is stored as files on the server's disk, in folders named by account number and notebook ID. File systems record when each file was written.
-- The server keeps a record of each sign-in session, with the time it was created and an expiry that moves forward when the session is used, at most once a minute. That shows roughly when each signed-in device last made a request.
-- While the web app is open, it asks the server for changes about every 30 seconds.
-- Request logs, described below.
+- By default, note text is stored as files in folders named by the notebook owner's account number (the internal number the server gives each account) and notebook ID, and file systems record when each file was written.
+- Each sign-in session stores when it was created, and its expiry moves forward when it is used (at most once a minute), which shows roughly when each device was last active.
+- The open web app checks for changes about every 30 seconds. On Android, opening the Notes screen starts a sync when the automatic network settings allow it.
+- The server image logs each request: client address, method, path with query string, and status. Paths contain notebook and note IDs, and query strings contain sync positions, markers of how far your device has synced. Text pieces travel in request bodies, which this log does not record.
+- Sharing puts usernames in the log: the invite lookup has the username or email address in its query string, and removing a member or changing their access puts their username in the path.
+- A reverse proxy in front of the server can keep its own log, often with your browser's user agent. For the hosted service, see the [privacy policy](https://silentsuite.io/privacy).
 
-## Request logs
+## If you self-host
 
-- The server image logs each request with the client's address, the method, the path with its query string, and the response status. For Notes, paths contain notebook IDs, note IDs and text piece IDs, and query strings contain sync positions. When you share a notebook, the query string of the lookup contains the username or email address you looked up.
-- Behind a reverse proxy listed in `TRUSTED_PROXY_IPS`, the logged address is the device address that the proxy reports.
-- A reverse proxy in front of the server can keep its own access log, often with each browser's user agent. Check its settings.
-- The Umbrel app turns off both the server's request log and its router's access log.
-- The server's own log messages contain no note data. A warning about a missing file names the file's path, which includes the account number and the notebook ID.
-- For the hosted service, see the [privacy policy](https://silentsuite.io/privacy).
+Behind a proxy listed in `TRUSTED_PROXY_IPS`, the server logs the device address that the proxy reports. Its own messages hold no note data; a missing-file warning names a path with the account number and notebook ID. Deleting an account in the admin panel removes it and the notebooks it owns (not notes it wrote in other people's notebooks), and encrypted files can stay in the media volume (see [Admin Dashboard](../self-hosting/admin-dashboard.md#delete-a-user)). The Umbrel app turns off the server's request log and its own router's access log. Requests still pass through Umbrel's app proxy, whose logs SilentSuite does not control.
 
 ## The web app's host
 
-- The host that serves the web app, such as app.silentsuite.io, sends you the app's files. Notes requests go from your browser to the sync server; the web app's own server does not receive or relay them. This is also how it works when you use app.silentsuite.io with your own server.
-- On app.silentsuite.io, error reports contain a fixed set of fields: the error type, a fixed code such as "sync notes failed", the page (`/notes`), the browser family and positions in the app's code. They contain no error message, note ID, title or text.
-- The web app's analytics events are limited to the sign-in, sign-up and subscription pages. Notes pages send none.
-- The Android app does not include a crash reporter.
+- The web app's host, such as app.silentsuite.io, does not relay Notes requests. They go from your browser to the sync server, also when you use your own server.
+- The host can log your address, your browser and the pages you load, such as `/notes`, as web servers do.
+- On app.silentsuite.io, error reports go through the host's `/api/error` relay to the error tracker, without your address or browser. They hold an error type, a fixed code such as "sync notes failed", the page, the browser family and code positions, and no message or note data.
+- Analytics events run only on the sign-in, sign-up and subscription pages. The Android app has no crash reporter.
 
 ## On your device
 
-- Search runs over notes the app has already decrypted. Your search terms are not sent.
-- Export decrypts your notes in your browser and builds the `.zip` there. It reads your notes from the server again first.
-- The web app's offline cache and its queue of edits made offline stay in your browser, with note content encrypted.
-- The Android app keeps changes that have not synced yet in an encrypted store on the device.
-- **Report a problem** sends only what you type and fixed diagnostic values. See [Reporting a Problem](https://docs.silentsuite.io/user-guide/reporting-a-problem).
+The web app's offline cache and queue of offline edits, and Android's store of unsynced changes, stay on your device with note content encrypted. **Report a problem** sends only what you type and fixed diagnostic values ([Reporting a Problem](https://docs.silentsuite.io/user-guide/reporting-a-problem)).
 
 ## Your account
 
-These belong to your account, not to Notes: your username (the apps use your email address as the username), your email address, your public keys, the salt used to derive your keys, your encrypted account data, when you signed up and when you last signed in. On the hosted service, the link between your account and billing passes your username and email address to billing, and nothing from Notes.
+The server also stores account data that is not part of Notes: your username (your email address), email address, public keys, salt (a random value used with your password to make your keys), encrypted account data, sign-up time and last sign-in. On the hosted service, billing gets your username and email address, and nothing from Notes.
 
 ## How this page was checked
 
-The facts above were checked against the server (`server/etebase_server`), the web app and its shared code (`apps/web`, `packages/core`), the Etebase JavaScript library 0.43.1, and the Android Notes code (`android/app/src/main/java/io/silentsuite/sync/notes`). A few statements describe the tools SilentSuite runs on rather than its own code: the request log format (uvicorn), the sign-up and sign-in times (Django), file system times and reverse proxy logs.
+It comes from the SilentSuite code, except where it describes other tools: the log format (uvicorn), sign-up and sign-in times (Django), the web host's page log (Next.js), file system times and proxy logs.
