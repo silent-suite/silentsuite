@@ -11,6 +11,8 @@ import type { StoredNote } from '@/app/stores/use-note-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
 import { useExperimentalStore } from '@/app/stores/use-experimental-store'
 import { bumpAccountEpoch } from '@/app/lib/account-epoch'
+import { NoteCreateRefusedError } from '@/app/lib/note-create-refusal'
+import { useToastStore } from '@/app/stores/use-toast-store'
 
 vi.mock('@/app/stores/use-etebase-store', () => ({
   useEtebaseStore: (selector: (state: typeof storeMock.etebaseState) => unknown) => selector(storeMock.etebaseState),
@@ -302,6 +304,58 @@ describe('NotesPage', () => {
     // The default title is selected so typing replaces it.
     expect(title.selectionStart).toBe(0)
     expect(title.selectionEnd).toBe('Untitled'.length)
+  })
+
+  describe('when no note was created', () => {
+    const toastMessages = () => useToastStore.getState().toasts.map((toast) => toast.message)
+
+    beforeEach(() => {
+      useToastStore.setState({ toasts: [] })
+    })
+
+    async function clickNewNote() {
+      loaded([note('existing', { title: 'Existing' })])
+      renderWithIntl(<NotesPage />)
+      // Its own precondition: online, the button on, nothing shown yet.
+      expect(screen.getByRole('button', { name: 'New note' })).toBeEnabled()
+      expect(toastMessages()).toEqual([])
+      fireEvent.click(screen.getByRole('button', { name: 'New note' }))
+      await vi.waitFor(() => expect(storeMock.noteState.createNote).toHaveBeenCalledTimes(1))
+    }
+
+    it.each([
+      ['queue-refused', 'No note was created. A new note needs a connection.'],
+      ['failed', 'No note was created. It could not be saved to your account.'],
+      ['unavailable', 'No note was created. Your account or this notebook is not available right now.'],
+    ] as const)('says why for %s, once, with no "try again"', async (reason, message) => {
+      storeMock.noteState.createNote.mockRejectedValue(new NoteCreateRefusedError(reason))
+      await clickNewNote()
+
+      await vi.waitFor(() => expect(toastMessages()).toEqual([message]))
+      expect(toastMessages()[0]).not.toMatch(/try again/i)
+      expect(screen.queryByRole('textbox', { name: 'Note title' })).not.toBeInTheDocument()
+    })
+
+    it('says it in Italian when that catalog is chosen', async () => {
+      storeMock.noteState.createNote.mockRejectedValue(new NoteCreateRefusedError('queue-refused'))
+      loaded([note('existing', { title: 'Existing' })])
+      render(
+        <NextIntlClientProvider locale="it" messages={itMessages}>
+          <NotesPage />
+        </NextIntlClientProvider>,
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Nuova nota' }))
+
+      await vi.waitFor(() => expect(toastMessages()).toEqual(['Nessuna nota è stata creata. Una nuova nota richiede una connessione.']))
+    })
+
+    it('shows nothing for a rejection the store did not name, as before', async () => {
+      storeMock.noteState.createNote.mockRejectedValue(new Error('Your subscription has ended. Upgrade to make changes.'))
+      await clickNewNote()
+      await act(async () => {})
+
+      expect(toastMessages()).toEqual([])
+    })
   })
 
   it('does not flush an old account draft into the next account on gate unmount', async () => {

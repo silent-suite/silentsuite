@@ -21,6 +21,8 @@ import {
   type StoredNote,
 } from '@/app/stores/use-note-store'
 import { canWriteNotebook, newNoteNotebook, useNotebookStore, type Notebook } from '@/app/stores/use-notebook-store'
+import { NoteCreateRefusedError, type NoteCreateRefusalReason } from '@/app/lib/note-create-refusal'
+import { showErrorToast } from '@/app/stores/use-toast-store'
 import { useSyncStore } from '@/app/stores/use-sync-store'
 import { useSidebarStore } from '@/app/stores/use-sidebar-store'
 import { useAuthStore } from '@/app/stores/use-auth-store'
@@ -68,6 +70,13 @@ type Draft = { title: string; content: string }
 
 /** Autosave progress shown next to the editor. 'clean' renders nothing. */
 type SaveState = 'clean' | 'pending' | 'saving' | 'saved' | 'failed'
+
+/** The message for each reason a new note was not created. */
+const CREATE_REFUSAL_KEY = {
+  'queue-refused': 'createQueueRefused',
+  failed: 'createFailed',
+  unavailable: 'createUnavailable',
+} as const satisfies Record<NoteCreateRefusalReason, string>
 
 const SAVE_STATE_KEY = {
   pending: 'saveStatePending',
@@ -605,10 +614,14 @@ function NotesPageBody() {
       setQuery('')
       setNewNoteId(created.id)
       setSelectedId(created.id)
-    } catch {
-      // Nothing was added locally; the store already reported the failure.
+    } catch (err) {
+      // Nothing was added locally. A refusal the store can name is worded here; any other
+      // rejection (subscription, notebook access, account change) is reported nowhere else either, as before.
+      if (err instanceof NoteCreateRefusedError) {
+        showErrorToast(t(CREATE_REFUSAL_KEY[err.reason]))
+      }
     }
-  }, [canCreateNote, createNote, newNoteTarget])
+  }, [canCreateNote, createNote, newNoteTarget, t])
 
   // The moved note is a new Etebase item, so the selection follows its new id,
   // unless another note, or none, was opened while the move ran.

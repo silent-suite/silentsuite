@@ -1772,6 +1772,13 @@ function collectionDisplayName(type: CollectionTypeKey): string {
   return 'preferences'
 }
 
+/**
+ * Why `createItem` neither created nor queued an item: the offline queue refused
+ * it ('queue-refused', as it does for a note's text), or the request or the queue
+ * failed another way ('failed').
+ */
+export type CreateItemRefusal = 'queue-refused' | 'failed'
+
 function itemSaveNoun(type: CollectionTypeKey): string {
   if (type === 'calendar') return 'event'
   if (type === 'tasks') return 'task'
@@ -1835,6 +1842,13 @@ interface EtebaseActions {
     meta?: ItemMeta,
     /** Receives the committed SDK item synchronously, after it is published and before the cache write (#744). */
     onCommitted?: (item: any) => void,
+    /** Opt-in for a caller that words its own failure message; other callers keep the default toasts. */
+    options?: {
+      /** Skip the generic "Please try again." toasts when the item was neither created nor queued. */
+      suppressErrorToast?: boolean
+      /** Called once when the item was neither created nor queued, with why. Not called for a queued create. */
+      onRefused?: (reason: CreateItemRefusal) => void
+    },
   ) => Promise<string | null>
 
   /** Execute a queued mutation remotely without ordinary offline fallback/requeue behavior. */
@@ -3330,7 +3344,7 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
     }
   },
 
-  createItem: async (type: CollectionTypeKey, content: string, tempId?: string, collectionUid?: string, meta?: ItemMeta, onCommitted?: (item: any) => void) => {
+  createItem: async (type: CollectionTypeKey, content: string, tempId?: string, collectionUid?: string, meta?: ItemMeta, onCommitted?: (item: any) => void, options?) => {
     const accountEpoch = getAccountEpoch()
     const { account, collections, accountFingerprint } = get()
     const offlineQueueGuard = captureOfflineQueueAccountGuard({ account, accountFingerprint })
@@ -3372,11 +3386,14 @@ export const useEtebaseStore = create<EtebaseState & EtebaseActions>((set, get) 
         } catch (queueErr) {
           if (!isCurrentAccountEpoch(accountEpoch) || queueErr instanceof AccountBoundaryChangedError) return null
           console.error('[etebase-store] Failed to enqueue create', getSafeErrorDetails(queueErr))
-          showErrorToast(`Failed to save ${itemSaveNoun(type)} for offline sync. Please try again.`)
+          if (!options?.suppressErrorToast) showErrorToast(`Failed to save ${itemSaveNoun(type)} for offline sync. Please try again.`)
+          // The queue names its refusal by class name; this file does not import the class.
+          options?.onRefused?.(queueErr instanceof Error && queueErr.name === 'OfflineQueueRefusedError' ? 'queue-refused' : 'failed')
         }
       } else {
         console.error(`[etebase-store] Failed to create ${type} item`, getSafeErrorDetails(err))
-        showErrorToast(`Failed to save ${itemSaveNoun(type)}. Please try again.`)
+        if (!options?.suppressErrorToast) showErrorToast(`Failed to save ${itemSaveNoun(type)}. Please try again.`)
+        options?.onRefused?.('failed')
       }
       return null
     }
