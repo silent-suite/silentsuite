@@ -6,7 +6,11 @@ import { bumpAccountEpoch, getAccountEpoch } from '@/app/lib/account-epoch'
 import {
   CACHE_SCHEMA_VERSION,
   _resetForTests as resetDataCache,
+  _setEncryptedCacheAvailableForTests,
+  _setEnvelopeKeyForTests,
   ensureFingerprint,
+  getItemsByType,
+  isCacheEnabled,
   putMeta,
 } from '@/app/lib/data-cache'
 
@@ -538,6 +542,52 @@ describe('#1113 D1 the note store refuses with a reason and saves copies once', 
     expect(retried).toEqual({ kind: 'failed', reason: 'unconfirmed' })
     expect(useNoteStore.getState().notes.some((note) => note.id === landed.uid)).toBe(false)
     expect(useEtebaseStore.getState().itemCache.has(landed.uid)).toBe(false)
+  })
+
+  it('writes no display record for a confirmed copy whose server text this tab cannot read', async () => {
+    const { account, collection, item, peerItem, held } = await staleDraft()
+    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
+    _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
+    _setEncryptedCacheAvailableForTests(true)
+    try {
+      await ensureFingerprint(FINGERPRINT, getAccountEpoch())
+      expect(isCacheEnabled()).toBe(true)
+      let lose = true
+      EtebaseRequest.default = async (url: string, options: any) => {
+        const response = await server.handle(url, options)
+        if (lose && String(options?.method).toLowerCase() === 'post' && url.includes('item/transaction')) {
+          lose = false
+          throw new TypeError('Network request failed')
+        }
+        return response
+      }
+      expect(await useNoteStore.getState().saveNoteCopy(item.uid, held)).toEqual({ kind: 'failed', reason: 'unconfirmed' })
+      const itemManager = account.getCollectionManager().getItemManager(collection)
+      const listed = await itemManager.list()
+      const landed = listed.data.find((candidate: any) => candidate.uid !== item.uid)
+      const copyUid: string = landed.uid
+      // Another device writes the copy again; its body then cannot be decrypted here, while its
+      // metadata still can, so only the body check stands between it and the display cache.
+      const peer = landed._clone()
+      await peer.setContent('PEER BODY OF THE COPY 1113')
+      await itemManager.transaction([peer])
+      const stored = (server as any).collections.get(collection.uid).items.get(copyUid)
+      const [chunkUid, bytes] = stored.content.chunks[0]
+      const broken = Uint8Array.from(bytes)
+      broken[broken.length - 1] ^= 0xff
+      stored.content = { ...stored.content, chunks: [[chunkUid, broken]] }
+
+      const retried = await useNoteStore.getState().saveNoteCopy(item.uid, held)
+
+      expect(retried).toEqual({ kind: 'copied', id: copyUid })
+      // This tab's own text at an unknown revision, until a paired read; nothing of it in the display cache.
+      expect(useNoteStore.getState().notes.find((note) => note.id === copyUid)).toMatchObject({ content: RETAINED_BODY, revision: null })
+      expect((await getItemsByType('notes')).some((record) => record.itemUid === copyUid)).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+      _setEncryptedCacheAvailableForTests(null)
+      _setEnvelopeKeyForTests(null)
+    }
   })
 
   it('drops the attempt and held text on the account reset, and a late result is not published', async () => {

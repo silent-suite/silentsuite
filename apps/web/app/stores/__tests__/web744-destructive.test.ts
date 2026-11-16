@@ -936,6 +936,43 @@ describe('#744 destructive note and contact paths delete only what this context 
     editor.unregister()
   })
 
+  it('#1113 D1 keeps the cached item of a note whose text is held while its notebook clear deletes it', async () => {
+    const { collection, item } = await shownNotes()
+    const deleting = server.holdNext((method, path) => method === 'post' && path.endsWith('item/transaction'))
+    const clearing = useEtebaseStore.getState().deleteItemsInCollection('notes', collection.uid)
+    // A failed save holds the note's text while the server delete is in flight.
+    await deleting.arrived
+    holdText(item)
+    deleting.release(false)
+    await clearing
+
+    expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
+    expect(useEtebaseStore.getState().itemCache.has(item.uid)).toBe(true)
+  })
+
+  it('#1113 D1 keeps a note shown when its text is held while its notebook clear waited on local storage', async () => {
+    const { collection, item } = await shownNotes()
+    vi.stubEnv('NEXT_PUBLIC_LOCAL_CACHE_ENABLED', 'true')
+    _setEnvelopeKeyForTests(await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']))
+    _setEncryptedCacheAvailableForTests(true)
+    await ensureFingerprint(FINGERPRINT, queueGuard().accountEpoch)
+    const cacheDelete = holdCacheDelete(item.uid)
+    try {
+      expect(isCacheEnabled()).toBe(true)
+      const clearing = useEtebaseStore.getState().deleteItemsInCollection('notes', collection.uid)
+      // The server delete was accepted; a failed save holds the note's text during the storage wait.
+      await cacheDelete.reached
+      holdText(item)
+      cacheDelete.release()
+      await clearing
+    } finally {
+      cacheDelete.restore()
+      vi.unstubAllEnvs()
+    }
+
+    expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
+  })
+
   it('#744 retires a settled queued favorite overlay when its last owner departs after another context acknowledged it', async () => {
     const { item } = await shownContact()
     const owner = registerContactOwner(item.uid)
