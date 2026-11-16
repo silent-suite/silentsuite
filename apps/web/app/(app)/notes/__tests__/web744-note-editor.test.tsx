@@ -1359,6 +1359,42 @@ describe('#744 the rendered note editor saves only through its captured base', (
       expect(useEtebaseStore.getState().itemCache.get(item.uid).etag).toBe(row.revision)
     })
 
+    it('takes a refreshed note into the editor once a refused save, run while the draft was typed back, ends', async () => {
+      const { item, peerItem } = await refusedDraft()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Second try 1113' } })
+      hideTab()
+      await write.arrived
+      // A sync brings the server's own title and text over the running save's row.
+      refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: PEER_BODY })
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      write.release(false)
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, PEER_BODY])
+      expect(saveStatus()).not.toHaveTextContent('Not saved')
+      expect(ui().queryByText(/This note changed somewhere else/)).toBeNull()
+    })
+
+    it('shows nothing unsaved or refused when a save refused after the draft was typed back ends', async () => {
+      await refusedDraft()
+      const write = server.holdNext(isTransaction)
+      fireEvent.change(titleBox(), { target: { value: 'Third try 1113' } })
+      hideTab()
+      await write.arrived
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+      await settle()
+
+      write.release(false)
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual([BASE_TITLE, BASE_BODY])
+      expect(saveStatus()).not.toHaveTextContent('Not saved')
+      expect(ui().queryByText(/This note changed somewhere else/)).toBeNull()
+    })
+
     it('keeps text typed back to the saved version while a save is still running', async () => {
       await openSavedNote()
       const write = server.holdNext(isTransaction)

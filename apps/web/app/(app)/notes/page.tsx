@@ -373,15 +373,19 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
         endClosingNoteSave(note.id)
       }
       if (unmountedRef.current) return
-      setSaveState(!saved ? 'failed' : isDirty() ? 'pending' : 'saved')
+      // A draft typed back to the saved text while this save ran leaves nothing unsaved or refused.
+      const clean = !isDirty()
+      setSaveState(saved ? (clean ? 'saved' : 'pending') : clean ? 'clean' : 'failed')
       if (saved) {
         setRefusal(null)
         setCopy((state) => (state === 'running' ? state : 'idle'))
         newerRequestRef.current = null
         setNewer({ kind: 'closed' })
-      } else if (refusedWith) {
+      } else if (refusedWith && !clean) {
         setRefusal(refusedWith)
       }
+      // The row as the save left it may be newer than the base; the adoption effect checks it again.
+      if (clean) setCleanGen((gen) => gen + 1)
     }
     // Serialize saves so two flushes never race on the same Etebase item.
     saveChainRef.current = saveChainRef.current
