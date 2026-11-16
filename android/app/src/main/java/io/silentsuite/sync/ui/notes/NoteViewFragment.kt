@@ -48,10 +48,18 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
     private var lastField = Field.BODY
     /** True while the screen itself sets a field's text, which is no edit. */
     private var applying = false
-    private var menuState: Pair<Boolean, Boolean>? = null
+    private var menuState: List<Boolean>? = null
 
     internal var renderedNote: NoteContent? = null
         private set
+
+    /** What the screen last said about a delete; observation point for runtime tests. */
+    internal var renderedDeleteMessage: String? = null
+        private set
+
+    /** The delete confirmation the screen holds, an ended one included; observation point for runtime tests. */
+    internal val deleteConfirmation: NoteDeleteConfirmation?
+        get() = childFragmentManager.findFragmentByTag(NoteDeleteConfirmation.TAG) as? NoteDeleteConfirmation
 
     /** Whether the editor shows, for runtime tests. */
     internal val editing: Boolean get() = model.opened is Opened.Editor
@@ -164,10 +172,23 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
                 if (!parentFragmentManager.isStateSaved) parentFragmentManager.popBackStack()
                 return
             }
+            Opened.Deleted -> {
+                (model.takeDeleteStep() as? NoteEditorViewModel.DeleteStep.Answered)?.let { deleteAnswered(it.answer) }
+                if (!parentFragmentManager.isStateSaved) parentFragmentManager.popBackStack()
+                return
+            }
             is Opened.Viewer -> if (host.exactAccountStillCurrent()) renderViewer(view, opened.note) else host.finish()
             is Opened.Editor -> if (host.exactAccountStillCurrent()) renderEditor(view, opened.note) else host.finish()
         }
         refreshMenu()
+        // A confirmation is shown only while the screen can still take one; otherwise the step waits for the next render.
+        if (!childFragmentManager.isStateSaved) {
+            when (val step = model.takeDeleteStep()) {
+                is NoteEditorViewModel.DeleteStep.Ask -> confirmDelete(step.shown, discard = false)
+                is NoteEditorViewModel.DeleteStep.Answered -> deleteAnswered(step.answer)
+                null -> Unit
+            }
+        }
         settleLeave()
     }
 
@@ -203,7 +224,8 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             val edit = editText(view, field)
             val text = core.text(field)
             if (edit.text.toString() != text) set(edit, text, text.length)
-            edit.isEnabled = core.mode == NoteEditorCore.Mode.EDITING
+            // No typing while a confirmed delete runs: text typed then would not be covered by the confirmation.
+            edit.isEnabled = core.mode == NoteEditorCore.Mode.EDITING && !model.deleting
         }
         val result = core.lastResult
         val status = statusText(result, model.syncLine, savedBefore = note?.sync == NoteSync.WAITING)
@@ -228,6 +250,7 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
             SaveResult.Unreadable -> return getString(R.string.notes_editor_unreadable)
             SaveResult.HeldChanged -> return getString(R.string.notes_editor_held_changed)
             SaveResult.Cleared -> return getString(R.string.notes_editor_cleared)
+            SaveResult.Deleted -> return getString(R.string.notes_editor_deleted)
             SaveResult.Stale -> return null
             is SaveResult.SavedToHolding -> return getString(R.string.notes_local_text_held)
             is SaveResult.Saved -> if (result.metadataKept) getString(R.string.notes_editor_saved_details_kept) else getString(R.string.notes_editor_saved)
@@ -307,8 +330,11 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
 
     private fun editingNow() = model.opened is Opened.Editor && model.core.mode == NoteEditorCore.Mode.EDITING
 
+    /** The toolbar is prepared again when Undo, Redo or Delete changes: a new note gets Delete once its first save made it. */
     private fun refreshMenu() {
-        val state = model.core.history(lastField).let { (editingNow() && it.canUndo) to (editingNow() && it.canRedo) }
+        val history = model.core.history(lastField)
+        val state = listOf(editingNow() && history.canUndo, editingNow() && history.canRedo,
+            model.noteUid != null && editingNow() && !model.deleting)
         if (state == menuState) return
         menuState = state
         activity?.invalidateOptionsMenu()
@@ -330,13 +356,85 @@ class NoteViewFragment : Fragment(), NotesSyncCoordinator.Listener {
                 isVisible = editor
                 isEnabled = editingNow() && history.canRedo
             }
+            // Only where the note can be edited, and once it exists: a new note's first save makes it.
+            menu.findItem(R.id.note_delete)?.apply {
+                isVisible = editor && model.noteUid != null
+                isEnabled = editingNow() && !model.deleting
+            }
         }
 
         override fun onMenuItemSelected(menuItem: MenuItem): Boolean = when (menuItem.itemId) {
             R.id.note_undo -> { undo(lastField); true }
             R.id.note_redo -> { redo(lastField); true }
+            R.id.note_delete -> { askDelete(); true }
             else -> false
         }
+    }
+
+    // ---- deleting ----
+
+    private fun askDelete() {
+        val host = host() ?: return
+        if (!host.exactAccountStillCurrent()) { host.finish(); return }
+        model.askDelete()
+    }
+
+    /**
+     * Asks before a delete, in a dialog the platform brings back after a rotation or a recreation: first whether to
+     * delete the note, then, for a note with unsynced text, separately whether to discard that text ([discard]). Each
+     * carries what it showed ([NoteEditorViewModel.DeleteShown]), which the store checks under its lock, the exact
+     * account it is for, and the token of the app process that made it ([ProcessIncarnation]): an answer from a dialog
+     * Android restored in a new process, or one for another account, deletes nothing, and the screen reads the note
+     * again and asks again (the maintainer's answer on #709, 2026-10-23).
+     */
+    private fun confirmDelete(shown: NoteEditorViewModel.DeleteShown, discard: Boolean) {
+        if (childFragmentManager.isStateSaved) return
+        val open = deleteConfirmation
+        if (open != null && !open.ended) return
+        NoteDeleteConfirmation.newInstance(shown, discard, ExactAccountIdentity(account.type, account.name, creationId))
+            .show(childFragmentManager, NoteDeleteConfirmation.TAG)
+    }
+
+    /**
+     * An answer to a delete confirmation. One made in another app process, or for another account, goes to no store: the
+     * note is read again and the user asked again, where the editor still offers Delete (a note that opens read-only now
+     * is not asked about). A delete of a note with unsynced text asks for the discard first.
+     */
+    internal fun deleteConfirmed(shown: NoteEditorViewModel.DeleteShown, identity: ExactAccountIdentity, shownIn: String?, discard: Boolean) {
+        val host = host() ?: return
+        if (!host.exactAccountStillCurrent()) { host.finish(); return }
+        if (!ProcessIncarnation.isCurrent(shownIn) || identity != ExactAccountIdentity(account.type, account.name, creationId)) {
+            model.askDelete()
+            return
+        }
+        if (shown.unsynced && !discard) confirmDelete(shown, discard = true) else model.delete(shown, discardConfirmed = discard)
+    }
+
+    /** What the screen says once a delete, or the read for it, has answered. */
+    private fun deleteAnswered(answer: NoteEditorViewModel.DeleteAnswer) {
+        val host = host() ?: return
+        val message = when (answer) {
+            NoteEditorViewModel.DeleteAnswer.STALE -> { host.finish(); return }
+            // Nothing of a new note was saved anywhere: the screen just closes.
+            NoteEditorViewModel.DeleteAnswer.NOTHING_SAVED -> {
+                if (!parentFragmentManager.isStateSaved) parentFragmentManager.popBackStack()
+                return
+            }
+            NoteEditorViewModel.DeleteAnswer.RECORDED -> R.string.notes_delete_recorded
+            NoteEditorViewModel.DeleteAnswer.DROPPED -> R.string.notes_delete_dropped
+            NoteEditorViewModel.DeleteAnswer.UNSURE -> R.string.notes_delete_unsure
+            NoteEditorViewModel.DeleteAnswer.CHANGED -> R.string.notes_delete_changed
+            NoteEditorViewModel.DeleteAnswer.NOT_SAVED -> R.string.notes_delete_not_saved
+            NoteEditorViewModel.DeleteAnswer.HELD -> R.string.notes_delete_held
+            NoteEditorViewModel.DeleteAnswer.UNREADABLE -> R.string.notes_delete_unreadable
+            NoteEditorViewModel.DeleteAnswer.DISCARD_UNFINISHED -> R.string.notes_delete_discard_unfinished
+            NoteEditorViewModel.DeleteAnswer.REMOVAL_PENDING -> R.string.notes_delete_removal_pending
+            NoteEditorViewModel.DeleteAnswer.FAILED -> R.string.notes_delete_failed
+        }
+        renderedDeleteMessage = getString(message)
+        Toast.makeText(host, message, Toast.LENGTH_LONG).show()
+        // The note as it is now, for a clean editor: what changed since the confirmation was prepared.
+        if (answer == NoteEditorViewModel.DeleteAnswer.CHANGED) model.reload()
     }
 
     private fun copy() {

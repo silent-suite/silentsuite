@@ -41,6 +41,17 @@ internal object NotePushPolicy {
          * is the entry's failure, recorded as [FailureKind.TRANSIENT] with backoff (design 3.8).
          */
         RETRY_LATER,
+        /**
+         * A pending delete, and the server copy is deleted: by another client, or by an upload of ours that
+         * landed earlier. Done: the copy goes into the cache and the entry is dropped (design 3.4).
+         */
+        ALREADY_DELETED,
+        /**
+         * A pending delete, and another client changed the note since the revision the user saw. The edit made
+         * elsewhere wins: the server copy goes into the cache, the delete is dropped, the note shows again, and
+         * the notebook list says why ([DeleteNotDone.CHANGED_ELSEWHERE]; design 3.4).
+         */
+        RESTORE_SERVER_NOTE,
     }
 
     data class ServerCopy(val revision: String, val deleted: Boolean)
@@ -53,20 +64,58 @@ internal object NotePushPolicy {
      * server that answers every push with a 409 and a copy that is not ours would get a new note, a
      * notification and another push in every run; with it, the run that makes the note also holds it
      * (design 3.8). A copy of ours is handled as for any entry.
+     *
+     * A pending delete is never decided against a copy the user did not see: a copy that is not ours and not deleted
+     * restores the note, and only a copy of ours (an earlier upload of this device's text) is deleted over, by a
+     * rebase onto it. The mark of a note made from a conflict does not apply to a delete.
      */
     fun decide(entry: PendingEntry, landedRevision: String?, server: ServerCopy?): ConflictOutcome {
         require(entry.state != PendingEntry.State.HELD) { "held text is never pushed" }
         if (server == null) return ConflictOutcome.RETRY_LATER
         val ours = server.revision in entry.sent || server.revision == landedRevision
-        if (ours) return if (server.revision == entry.revision) ConflictOutcome.DONE else ConflictOutcome.REBASE
+        if (ours && server.revision == entry.revision) return ConflictOutcome.DONE
         return when (entry.state) {
             PendingEntry.State.UPSERT -> when {
+                ours -> ConflictOutcome.REBASE
                 entry.fromConflict -> ConflictOutcome.HOLD_REPEATED_CONFLICT
                 server.deleted -> ConflictOutcome.RECREATE_AS_NEW_NOTE
                 else -> ConflictOutcome.KEEP_BOTH
             }
+            PendingEntry.State.DELETE -> when {
+                server.deleted -> ConflictOutcome.ALREADY_DELETED
+                ours -> ConflictOutcome.REBASE
+                else -> ConflictOutcome.RESTORE_SERVER_NOTE
+            }
             PendingEntry.State.HELD -> error("unreachable")
         }
+    }
+
+    /**
+     * Why a pending delete was dropped without deleting the note, for the notebook list's notice
+     * (NoteDeleteNotices). Stored by name, so a constant is never renamed.
+     */
+    enum class DeleteNotDone {
+        /** Another client changed the note since the revision the user saw ([ConflictOutcome.RESTORE_SERVER_NOTE]). */
+        CHANGED_ELSEWHERE,
+        /** The notebook is read-only for this account now, as a fetch of it confirmed. */
+        READ_ONLY,
+        /** The server refused the delete twice in a row with a 4xx about it. */
+        REJECTED,
+        /** The delete onto an earlier upload of ours could not be built on this device. */
+        NOT_BUILT,
+    }
+
+    /**
+     * What the notebook list says about a pending delete dropped where an edit would have been held for [reason]
+     * (PendingNotesStore.hold), or null when it says nothing: the notebook was deleted or this account can no
+     * longer see it, so neither it nor the note shows.
+     */
+    fun deleteNotDoneFor(reason: HeldReason): DeleteNotDone? = when (reason) {
+        HeldReason.READ_ONLY -> DeleteNotDone.READ_ONLY
+        HeldReason.REJECTED -> DeleteNotDone.REJECTED
+        HeldReason.NOTEBOOK_DELETED, HeldReason.LOST_ACCESS -> null
+        HeldReason.REPEATED_CONFLICT, HeldReason.UNREADABLE_METADATA, HeldReason.READ_BACK_FAILED,
+        HeldReason.NOT_BUILT -> DeleteNotDone.NOT_BUILT
     }
 
     /** How a failed upload of one entry is handled. */

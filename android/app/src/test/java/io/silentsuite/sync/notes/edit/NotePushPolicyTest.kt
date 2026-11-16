@@ -55,6 +55,40 @@ class NotePushPolicyTest {
         assertEquals(ConflictOutcome.RECREATE_AS_NEW_NOTE, NotePushPolicy.decide(upsert("r2", listOf("r2")), null, ServerCopy("web-del", true)))
     }
 
+    // ---- a pending delete (design section 3.4) ----
+
+    private fun delete(revision: String, sent: List<String> = emptyList(), fromConflict: Boolean = false) =
+        PendingEntry("n", "b", PendingEntry.State.DELETE, 1, revision, false, sent, fromConflict = fromConflict, blob = ByteArray(0))
+
+    @Test fun `a delete whose own upload landed is done`() {
+        assertEquals(ConflictOutcome.DONE, NotePushPolicy.decide(delete("d1", listOf("d1")), null, ServerCopy("d1", true)))
+    }
+
+    @Test fun `a delete against a copy deleted elsewhere, or by an earlier upload of ours, is already done`() {
+        assertEquals(ConflictOutcome.ALREADY_DELETED, NotePushPolicy.decide(delete("d1", listOf("d1")), null, ServerCopy("web-del", true)))
+        assertEquals(ConflictOutcome.ALREADY_DELETED, NotePushPolicy.decide(delete("d2", listOf("d1", "d2")), null, ServerCopy("d1", true)))
+    }
+
+    @Test fun `a delete against an earlier upload of our own text is rebased onto it`() {
+        assertEquals(ConflictOutcome.REBASE, NotePushPolicy.decide(delete("d1", listOf("r1", "d1")), null, ServerCopy("r1", false)))
+        assertEquals("through the landed record", ConflictOutcome.REBASE,
+            NotePushPolicy.decide(delete("d1", listOf("d1")), "r1", ServerCopy("r1", false)))
+    }
+
+    @Test fun `a delete against an edit made elsewhere restores the note, also for a note made from a conflict`() {
+        assertEquals(ConflictOutcome.RESTORE_SERVER_NOTE, NotePushPolicy.decide(delete("d1", listOf("d1")), null, ServerCopy("web-1", false)))
+        assertEquals("the mark of a note made from a conflict does not apply", ConflictOutcome.RESTORE_SERVER_NOTE,
+            NotePushPolicy.decide(delete("d1", listOf("d1"), fromConflict = true), null, ServerCopy("web-1", false)))
+    }
+
+    @Test fun `a delete dropped where an edit would be held says why, unless the notebook is gone`() {
+        assertEquals(NotePushPolicy.DeleteNotDone.READ_ONLY, NotePushPolicy.deleteNotDoneFor(HeldReason.READ_ONLY))
+        assertEquals(NotePushPolicy.DeleteNotDone.REJECTED, NotePushPolicy.deleteNotDoneFor(HeldReason.REJECTED))
+        assertEquals(NotePushPolicy.DeleteNotDone.NOT_BUILT, NotePushPolicy.deleteNotDoneFor(HeldReason.NOT_BUILT))
+        assertNull(NotePushPolicy.deleteNotDoneFor(HeldReason.NOTEBOOK_DELETED))
+        assertNull(NotePushPolicy.deleteNotDoneFor(HeldReason.LOST_ACCESS))
+    }
+
     // ---- a note made from a conflict that conflicts again (design section 3.8) ----
 
     @Test fun `a marked note whose server copy is not ours is held, not copied again`() {

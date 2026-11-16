@@ -290,6 +290,8 @@ internal class PendingNotesStore private constructor(
          * any more, writes as before.
          */
         object RemovalPending : SaveOutcome()
+        /** The user deleted the note ([deleteNote]) and the delete waits to be sent; nothing was written, and the text is still the caller's to keep. */
+        object Deleted : SaveOutcome()
     }
 
     sealed class SendOutcome {
@@ -552,6 +554,12 @@ internal class PendingNotesStore private constructor(
                     }
                     // Held text that is not the caller's stays as it is: a save over it would replace text the user
                     // has not seen, which a Discard shown for it would then answer as changed (design 3.2).
+                    // The user deleted the note: a save that arrives after that never brings it back or replaces
+                    // the delete. Nothing is written, and the text is still the caller's to keep.
+                    PendingEntry.State.DELETE -> {
+                        outcome = SaveOutcome.Deleted
+                        Change.Keep
+                    }
                     PendingEntry.State.HELD -> if (!owns(read.entry.version)) {
                         outcome = SaveOutcome.HeldChanged
                         Change.Keep
@@ -663,7 +671,7 @@ internal class PendingNotesStore private constructor(
      * After a successful upload of the snapshot at [sentVersion]: keep the landed item while an editor
      * for the note is open, then drop the entry, unless the user changed the note meanwhile, in which
      * case the entry stays for a rebase. With no editor open nothing can start from the landed item, so
-     * no full copy of the note is kept.
+     * no full copy of the note is kept, and none is kept for a pending delete either.
      *
      * An entry that stays loses the mark of a note made from a conflict, since the note is on the server
      * now (design 3.8). That write leaves the version where it is, as [hold] and [recordFailure] do, so
@@ -675,13 +683,16 @@ internal class PendingNotesStore private constructor(
      * ([SendOutcome.Unreadable]) rather than [SendOutcome.Done], so the run does not record success over it.
      */
     fun completeSend(noteUid: String, sentVersion: Long, revision: String, blob: ByteArray): SendOutcome = locked {
-        if (hasEditor(noteUid)) {
+        val read = readEntry(noteUid)
+        val e = (read as? Read.Present)?.entry
+        // A delete that landed leaves no landed record: no save may start from a deleted item. A save from an editor still
+        // open on the note starts from the copy it had, and its push meets the deleted copy, which gives the text a note
+        // of its own.
+        if (hasEditor(noteUid) && e?.state != PendingEntry.State.DELETE) {
             writeAtomically(landedFile(noteUid), PendingCodec.encodeLanded(LandedRecord(noteUid, revision, sentVersion, blob)))
         } else {
             remove(landedFile(noteUid))
         }
-        val read = readEntry(noteUid)
-        val e = (read as? Read.Present)?.entry
         when {
             read is Read.Unreadable -> SendOutcome.Unreadable
             e == null -> SendOutcome.Done
@@ -752,6 +763,10 @@ internal class PendingNotesStore private constructor(
      * built for its upload), so a newer change is not held with it; a reason about the notebook
      * (read-only, lost access, deleted) holds whatever is there. The mark of a note made from a
      * conflict stays through a hold.
+     *
+     * A pending delete is never held: it holds no text, and held text can be sent again as an edit
+     * (Try again), which for a deleted item would send the delete. It is removed instead, with the same
+     * version check, and the note shows its server copy again ([HoldOutcome.DELETE_DROPPED]; design 3.5).
      */
     fun hold(noteUid: String, reason: HeldReason, now: Long, sentVersion: Long? = null): HoldOutcome = locked {
         if (noteUid in unfinishedOriginals) {
@@ -760,6 +775,12 @@ internal class PendingNotesStore private constructor(
             // breaks the copy's link and sends the original as an ordinary edit.
             recovered = false
             return@locked HoldOutcome.UNFINISHED_ORIGINAL
+        }
+        val current = (readEntry(noteUid) as? Read.Present)?.entry
+        if (current != null && current.state == PendingEntry.State.DELETE) {
+            if (sentVersion != null && current.version != sentVersion) return@locked HoldOutcome.NOT_APPLIED
+            remove(noteFile(noteUid))
+            return@locked HoldOutcome.DELETE_DROPPED
         }
         var outcome = HoldOutcome.NOT_APPLIED
         update(noteUid) { read ->
@@ -780,6 +801,8 @@ internal class PendingNotesStore private constructor(
         NOT_APPLIED,
         /** An original that a conflict copy has not finished replacing: nothing was written. */
         UNFINISHED_ORIGINAL,
+        /** A pending delete, which is never held, was removed: the note's server copy shows again. */
+        DELETE_DROPPED,
     }
 
     /**
@@ -909,6 +932,140 @@ internal class PendingNotesStore private constructor(
 
     /** A removal whose unlink went through but whose directory sync failed: the file is gone until a power loss. */
     class RemovalNotSynced(cause: IOException) : IOException("the removal is not synced yet", cause)
+
+    // ---- deleting a note ----
+
+    /**
+     * The user's confirmed delete of one note, as the note screen showed it. [shownVersion] and [shownDigest] name the
+     * entry the screen showed (its version, and [digestOf] its blob), or are both null when it showed none: the server
+     * copy, or an upload of the editor's text that landed. [deleted] is the note item that screen showed, marked
+     * deleted, with its etag [revision], so its base is the revision the user saw and the server refuses it once
+     * another client changed the note. [discardConfirmed]: the user also confirmed, separately, that the note's
+     * unsynced text goes (the maintainer's answer 4 on #709, 2026-10-04); without it no entry is replaced or removed.
+     *
+     * Decided under the store lock, against what is there now:
+     * - no entry, and none shown: a pending delete is written as a new entry ([fromLanded]), for a run to send.
+     * - the entry shown, still there, and the discard confirmed: a note that never reached the server (a create with
+     *   no revision recorded as sent and no landed record there, shown by path) is removed with its replaced original,
+     *   as a discard removes it, and nothing is sent ([NoteDelete.Dropped]). Any other is replaced by a pending delete
+     *   that keeps the entry's sent list, so a 409 against an upload of ours is still known as ours.
+     * - anything else writes nothing and says why ([NoteDelete]).
+     *
+     * A delete never withdraws the store's discard permit. While a file it names is there, or a permit that may be
+     * there cannot be read or was recorded for an answer that could not be counted, the delete is refused before
+     * anything is written, so it never releases text the user confirmed for that discard ([nextVersion] withdraws the
+     * permit, as a save does). [notebookCopy], when given, is written with a new entry, as a save writes it.
+     */
+    fun deleteNote(
+        noteUid: String,
+        notebookUid: String,
+        shownVersion: Long?,
+        shownDigest: String?,
+        discardConfirmed: Boolean,
+        revision: String,
+        deleted: ByteArray,
+        notebookCopy: ByteArray? = null,
+    ): NoteDelete = locked {
+        if (heldForRemoval()) return@locked NoteDelete.RemovalPending
+        if (namedThere(permitNames())) return@locked NoteDelete.Refused(DeleteRefusal.DISCARD_UNFINISHED)
+        if (noteUid in unfinishedOriginals) {
+            recovered = false
+            return@locked NoteDelete.Refused(DeleteRefusal.UNFINISHED_ORIGINAL)
+        }
+        if (deleted.size > PendingCodec.MAX_BLOB) return@locked NoteDelete.Refused(DeleteRefusal.TOO_LARGE)
+        when (val read = readEntry(noteUid)) {
+            Read.Missing -> if (shownVersion != null || shownDigest != null) NoteDelete.Changed(read) else {
+                notebookCopy?.let { putNotebookLocked(notebookUid, it) }
+                val entry = fromLanded(PendingEntry(noteUid, notebookUid, PendingEntry.State.DELETE, nextVersion(), revision,
+                    isCreate = false, blob = deleted))
+                writeAtomically(noteFile(noteUid), PendingCodec.encodeEntry(entry))
+                NoteDelete.Recorded
+            }
+            is Read.Unreadable -> NoteDelete.Refused(DeleteRefusal.UNREADABLE)
+            is Read.Present -> {
+                val e = read.entry
+                when {
+                    e.state == PendingEntry.State.DELETE -> NoteDelete.AlreadyDeleted
+                    e.state == PendingEntry.State.HELD -> NoteDelete.Refused(DeleteRefusal.HELD)
+                    e.notebookUid != notebookUid || shownVersion == null || e.version != shownVersion ||
+                        shownDigest == null || digestOf(e.blob) != shownDigest -> NoteDelete.Changed(read)
+                    !discardConfirmed -> NoteDelete.NeedsDiscard(read)
+                    neverReachedServer(e) -> {
+                        removeEntry(noteUid, e)
+                        NoteDelete.Dropped
+                    }
+                    else -> {
+                        // A copy that still links to its original takes it along first, as a discard does, so the
+                        // original's text cannot be sent later as an ordinary edit (a copy that links is never sent,
+                        // so this is only reached when its landed record could not be shown absent).
+                        removeReplacedOriginal(e)
+                        val version = nextVersion(above = e.version)
+                        writeAtomically(noteFile(noteUid), PendingCodec.encodeEntry(e.copy(state = PendingEntry.State.DELETE,
+                            version = version, revision = revision, blob = deleted, failureCount = 0, lastFailureAt = null,
+                            lastFailureCategory = null, origin = null, fromConflict = false)))
+                        NoteDelete.Recorded
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether [e] never reached the server: a create whose revision no send recorded ([startSend] records it before
+     * each upload) and with no landed record there. The landed record is asked by path, and a check that fails, or a
+     * record that does not decode, counts as there: such a note gets a pending delete instead, which the server
+     * answers. A conflict copy that still links to its original is never sent, so it is one of these.
+     */
+    private fun neverReachedServer(e: PendingEntry): Boolean =
+        e.isCreate && e.sent.isEmpty() && presenceOf(landedFile(e.noteUid)) == Presence.ABSENT
+
+    /**
+     * Removes the pending delete at [sentVersion] once a run found the note changed by another client and wrote that
+     * server copy into the cache: the edit made elsewhere wins, and the note shows again (design 3.4). False, and
+     * nothing removed, when there is no pending delete at that version.
+     */
+    fun dropDelete(noteUid: String, sentVersion: Long): Boolean = locked {
+        val e = (readEntry(noteUid) as? Read.Present)?.entry
+        if (e == null || e.state != PendingEntry.State.DELETE || e.version != sentVersion) return@locked false
+        remove(noteFile(noteUid))
+        true
+    }
+
+    sealed class NoteDelete {
+        /** A pending delete was written: the note is hidden, and a run sends the delete. */
+        object Recorded : NoteDelete()
+
+        /** The note never reached the server: its entry is gone, and nothing is sent. */
+        object Dropped : NoteDelete()
+
+        /** A pending delete was there already; nothing was written. */
+        object AlreadyDeleted : NoteDelete()
+
+        /** What is there now is not what the user was shown: [now]. Nothing was written or removed. */
+        data class Changed(val now: Read) : NoteDelete()
+
+        /** The entry shown is there, with text that has not synced, and its discard was not confirmed. Nothing was written. */
+        data class NeedsDiscard(val now: Read) : NoteDelete()
+
+        /** Nothing was written, for [reason]. */
+        data class Refused(val reason: DeleteRefusal) : NoteDelete()
+
+        /** A removal guard is checking this store or allowed a removal ([RemovalHold]); nothing was written. */
+        object RemovalPending : NoteDelete()
+    }
+
+    enum class DeleteRefusal {
+        /** The note's text is held: its Discard is on the Unsynced text screen. */
+        HELD,
+        /** The note's entry file cannot be read. */
+        UNREADABLE,
+        /** An original that a conflict copy has not finished replacing. */
+        UNFINISHED_ORIGINAL,
+        /** A discard of the whole store has not finished, or its permit cannot be checked. */
+        DISCARD_UNFINISHED,
+        /** The deleted item is larger than the store keeps ([PendingCodec.MAX_BLOB]). */
+        TOO_LARGE,
+    }
 
     /**
      * Removes [noteUid]'s entry as the user's discard does, whose full read gave [entry], or null when it read as

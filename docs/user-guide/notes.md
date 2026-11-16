@@ -48,6 +48,8 @@ Select the note in the list (newest edits first; each row shows when it was last
 
 Open the note, click **Delete** in the row below the title, and confirm. The deletion syncs to your other devices.
 
+On Android, open the note, open the menu in the top bar and choose **Delete note**, then confirm. If the note has text on this device that has not synced, a second confirmation asks before that text is discarded. The note leaves the list at once and is deleted on the server at the next sync, which follows the same network settings as a save. A note that never synced is only removed from this device. If another device changed the note before the delete reached the server, or the notebook became read-only for you, the note is not deleted: it shows again, with the other device's change, and the notebook list says why until you dismiss the message.
+
 ## Offline
 
 Edits made while offline to a note that is already open are encrypted locally and replayed when you reconnect. Creating a brand-new note or moving one to another notebook requires a connection.
@@ -68,4 +70,4 @@ The export lists your notebooks and notes from the server again, so it needs a c
 
 ## Not in this release
 
-Deleting or moving notes on Android, the DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.
+Moving notes on Android, the DAV bridge, attachments, importing notes, and rich-text editing are not available yet. Use Markdown in the web app for now.

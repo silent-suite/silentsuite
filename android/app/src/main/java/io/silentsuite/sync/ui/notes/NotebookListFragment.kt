@@ -18,9 +18,11 @@ import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import io.silentsuite.sync.R
 import io.silentsuite.sync.model.CollectionInfo
+import io.silentsuite.sync.notes.NoteDeleteNotices
 import io.silentsuite.sync.notes.NotesNetworkPolicy
 import io.silentsuite.sync.notes.NotesSyncCoordinator
 import io.silentsuite.sync.notes.NotesSyncPolicy
+import io.silentsuite.sync.notes.edit.NotePushPolicy
 import io.silentsuite.sync.ui.AccountActivity
 import io.silentsuite.sync.ui.ExactAccountIdentity
 import io.silentsuite.sync.ui.etebase.CollectionActivity
@@ -57,6 +59,10 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
 
     /** What the Unsynced text row counts as last rendered; observation point for runtime tests. */
     internal var renderedUnsyncedText: Int = 0
+        private set
+
+    /** The notice about deletes that were not done, as last rendered, empty while none shows; observation point for runtime tests. */
+    internal var renderedDeleteNotice: Map<NotePushPolicy.DeleteNotDone, Int> = emptyMap()
         private set
 
     /** Whether the Unsynced text row last said the local changes could not be read; observation point for runtime tests. */
@@ -113,6 +119,10 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
         }
         view.findViewById<View>(R.id.notebooks_create).setOnClickListener { createNotebook() }
         view.findViewById<View>(R.id.notebooks_unsynced).setOnClickListener { openUnsyncedNotes() }
+        // Takes away what the notice showed, in the next load's off-thread step.
+        view.findViewById<View>(R.id.notebooks_delete_notice_dismiss).setOnClickListener {
+            renderedDeleteNotice.takeIf { it.isNotEmpty() }?.let { reload(dismiss = it) }
+        }
     }
 
     override fun onStart() {
@@ -204,19 +214,34 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
         notebookRouteLauncherOverride?.invoke(intent) ?: startActivity(intent)
     }
 
-    private fun reload() {
+    /** One load's reads, made off the main thread. */
+    private class ListLoad(
+        val rows: NotesLoad<NotebookOverview>,
+        val synced: Boolean,
+        val seen: NotesNetworkState?,
+        val deleteNotice: Map<NotePushPolicy.DeleteNotDone, Int>?,
+    )
+
+    /** Loads the list; [dismiss] is the delete notice the user dismissed, taken away first ([NoteDeleteNotices.dismiss]). */
+    private fun reload(dismiss: Map<NotePushPolicy.DeleteNotDone, Int>? = null) {
         val host = host() ?: return
         val appContext = host.applicationContext
         // A newer load replaces an older one, so an older result can never render last.
         loadJob?.cancel()
         loadJob = viewLifecycleOwner.lifecycleScope.launch {
-            val (result, synced, seen) = withContext(Dispatchers.IO) {
+            val load = withContext(Dispatchers.IO) {
                 val rows = NotesLoader.notebooks(appContext, account, creationId)
                 // The network settings are read by account name, so only after a load that found the
-                // exact generation.
-                Triple(rows, NotesLoader.everSynced(appContext, account, creationId),
-                    if (rows is NotesLoad.Loaded) NotesLoader.network(appContext, account) else null)
+                // exact generation. The delete notice is keyed by the exact generation, and read after that too.
+                val notices = NoteDeleteNotices.of(appContext)
+                val identity = ExactAccountIdentity(account.type, account.name, creationId)
+                ListLoad(rows, NotesLoader.everSynced(appContext, account, creationId),
+                    if (rows is NotesLoad.Loaded) NotesLoader.network(appContext, account) else null,
+                    if (rows is NotesLoad.Loaded) notices.run { dismiss?.let { dismiss(identity, it) }; read(identity) } else null)
             }
+            val result = load.rows
+            val synced = load.synced
+            val seen = load.seen
             view ?: return@launch
             val current = host() ?: return@launch
             everSynced = synced
@@ -242,6 +267,7 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
                     }
                     lastLoadFailed = overview.failed
                     render(if (overview.failed) NotesOverlay.keptAfterFailure(renderedNotebooks, overview) else overview)
+                    load.deleteNotice?.let(::renderDeleteNotice)
                 } else current.finish()
             }
         }
@@ -280,6 +306,24 @@ class NotebookListFragment : Fragment(), NotesSyncCoordinator.Listener {
         }
         renderNetworkNotice(rows.sumOf { it.waiting })
         renderEmptyState()
+    }
+
+    /**
+     * Notes the user deleted that a Notes run did not delete, one sentence per reason, until the user dismisses them.
+     * A load that could not read the list keeps the notice as it was.
+     */
+    private fun renderDeleteNotice(notice: Map<NotePushPolicy.DeleteNotDone, Int>) {
+        renderedDeleteNotice = notice
+        val view = view ?: return
+        view.findViewById<TextView>(R.id.notebooks_delete_notice_text).text = notice.entries.joinToString(" ") { (reason, n) ->
+            resources.getQuantityString(when (reason) {
+                NotePushPolicy.DeleteNotDone.CHANGED_ELSEWHERE -> R.plurals.notes_deletes_not_done_changed
+                NotePushPolicy.DeleteNotDone.READ_ONLY -> R.plurals.notes_deletes_not_done_read_only
+                NotePushPolicy.DeleteNotDone.REJECTED -> R.plurals.notes_deletes_not_done_rejected
+                NotePushPolicy.DeleteNotDone.NOT_BUILT -> R.plurals.notes_deletes_not_done_not_built
+            }, n, n)
+        }
+        view.findViewById<View>(R.id.notebooks_delete_notice).visibility = if (notice.isEmpty()) View.GONE else View.VISIBLE
     }
 
     /**
