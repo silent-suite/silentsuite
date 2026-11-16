@@ -805,10 +805,10 @@ describe('useEtebaseStore nested offline queue boundary errors', () => {
 describe('useEtebaseStore.createItem failure reporting', () => {
   let errorSpy: ReturnType<typeof vi.spyOn>
 
-  function queueRefusal() {
-    const refusal = new Error('Offline queue refuses to persist plaintext notes create content without encrypted local persistence.')
-    refusal.name = 'OfflineQueueRefusedError'
-    return refusal
+  // The real class, so the name the store matches on is tied to offline-queue.ts, not to a copy here.
+  async function queueRefusal() {
+    const { OfflineQueueRefusedError } = await vi.importActual<typeof import('@/app/lib/offline-queue')>('@/app/lib/offline-queue')
+    return new OfflineQueueRefusedError('Offline queue refuses to persist plaintext notes create content without encrypted local persistence.')
   }
 
   beforeEach(() => {
@@ -827,7 +827,7 @@ describe('useEtebaseStore.createItem failure reporting', () => {
   it('without the options, a queue refusal still shows the generic offline-sync toast (other callers unchanged)', async () => {
     coreMock.createItem.mockRejectedValueOnce(new TypeError('Failed to fetch'))
     offlineQueueMock.isOfflineError.mockReturnValue(true)
-    offlineQueueMock.enqueue.mockRejectedValueOnce(queueRefusal())
+    offlineQueueMock.enqueue.mockRejectedValueOnce(await queueRefusal())
 
     await expect(useEtebaseStore.getState().createItem('notes', 'text', undefined, 'notebook-1')).resolves.toBeNull()
 
@@ -847,7 +847,7 @@ describe('useEtebaseStore.createItem failure reporting', () => {
   it('with the options, a queue refusal shows no toast and reports queue-refused', async () => {
     coreMock.createItem.mockRejectedValueOnce(new TypeError('Failed to fetch'))
     offlineQueueMock.isOfflineError.mockReturnValue(true)
-    offlineQueueMock.enqueue.mockRejectedValueOnce(queueRefusal())
+    offlineQueueMock.enqueue.mockRejectedValueOnce(await queueRefusal())
     const onRefused = vi.fn()
 
     await expect(useEtebaseStore.getState().createItem('notes', 'text', undefined, 'notebook-1', undefined, undefined, { suppressErrorToast: true, onRefused })).resolves.toBeNull()

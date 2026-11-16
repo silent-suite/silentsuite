@@ -1846,7 +1846,7 @@ interface EtebaseActions {
     options?: {
       /** Skip the generic "Please try again." toasts when the item was neither created nor queued. */
       suppressErrorToast?: boolean
-      /** Called once when the item was neither created nor queued, with why. Not called for a queued create. */
+      /** Called once when the create request or the queue failed. Not called for a missing session or collection, an account change, or a queued create. */
       onRefused?: (reason: CreateItemRefusal) => void
     },
   ) => Promise<string | null>
