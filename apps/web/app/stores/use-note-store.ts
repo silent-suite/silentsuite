@@ -329,6 +329,15 @@ export function getMountedNoteEditor(id: string): MountedNoteEditor | undefined 
   return entry.editor
 }
 
+/**
+ * Whether the note has text this page has not saved: typing in its open editor,
+ * or text held after a failed save (#1113 D1). Destructive and refresh paths keep
+ * such a note, as they keep an open editor's unsaved typing (#744).
+ */
+export function hasUnsavedNoteText(id: string): boolean {
+  return getMountedNoteEditor(id)?.isClean() === false || getHeldNoteDraft(id) !== undefined
+}
+
 /** T3: this context's own proved sealed write of a note obliges its mounted editor. */
 export function noteSealedWriteAccepted(id: string): void {
   if (getMountedNoteEditor(id)) markNoteObligation(id)
@@ -783,9 +792,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
       // A note the server no longer lists stays shown while its open editor holds unsaved typing (#744),
       // or while its text is held after a failed save (#1113 D1).
       const remoteIds = new Set(remoteNotes.map((n) => n.id))
-      const kept = get().notes.filter((n) => !remoteIds.has(n.id) && (
-        getMountedNoteEditor(n.id)?.isClean() === false || getHeldNoteDraft(n.id) !== undefined
-      ))
+      const kept = get().notes.filter((n) => !remoteIds.has(n.id) && hasUnsavedNoteText(n.id))
       set({ notes: [...remoteNotes, ...kept], syncStatus: 'synced' })
     },
   }),

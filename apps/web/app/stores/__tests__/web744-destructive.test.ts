@@ -19,7 +19,7 @@ vi.mock('@/app/stores/use-label-suggestions-store', () => ({
 }))
 
 import { useEtebaseStore } from '../use-etebase-store'
-import { markNoteObligation, registerNoteEditor, resetNoteLifecycle, useNoteStore } from '../use-note-store'
+import { holdNoteDraft, markNoteObligation, registerNoteEditor, resetNoteLifecycle, useNoteStore } from '../use-note-store'
 import {
   beginContactPhoto,
   endContactPhoto,
@@ -280,6 +280,25 @@ describe('#744 destructive note and contact paths delete only what this context 
     unregister()
   })
 
+  /** Text whose save failed, held after its editor closed (#1113 D1). */
+  const holdText = (item: any) => holdNoteDraft(item.uid, {
+    draft: { title: BASE_TITLE, content: 'HELD TEXT 1113' },
+    base: { title: BASE_TITLE, content: BASE_BODY, revision: item.etag as string },
+    failed: 'changed',
+  })
+
+  it('#1113 D1 clears a notebook of every member but one whose text is held', async () => {
+    const { account, collection, items } = await shownNotes(2)
+    const [clean, held] = items
+    holdText(held)
+
+    await useEtebaseStore.getState().deleteItemsInCollection('notes', collection.uid)
+
+    expect(await serverState(account, collection, held.uid)).toBe(`${BASE_BODY} 1`)
+    expect(await serverState(account, collection, clean.uid)).toBe('deleted')
+    expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([held.uid])
+  })
+
   /** A second writable notebook, known to the server and to this context. */
   async function addNotebook(account: any) {
     const target = await account.getCollectionManager().create('etebase.md.note', { name: 'Target 744', mtime: 1 }, '')
@@ -398,6 +417,18 @@ describe('#744 destructive note and contact paths delete only what this context 
     unregister()
   })
 
+  it('#1113 D1 refuses to delete a notebook while a note in it has held text', async () => {
+    const { account, collection, item } = await shownNotes()
+    await addNotebook(account)
+    holdText(item)
+
+    const deleted = await useEtebaseStore.getState().deleteCollection('notes', collection.uid)
+
+    expect(deleted).toBe(false)
+    expect(await collectionDeleted(account, collection.uid)).toBe(false)
+    expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
+  })
+
   it('#744 refuses a notebook tombstone once a child arrives after the proof', async () => {
     const { account, collection } = await shownNotes()
     await addNotebook(account)
@@ -448,6 +479,18 @@ describe('#744 destructive note and contact paths delete only what this context 
     unregister()
     useNoteStore.getState().syncFromRemote([])
     expect(useNoteStore.getState().notes).toEqual([])
+  })
+
+  it('#1113 D1 keeps a note with held text shown when its notebook disappears', async () => {
+    const { account, collection, item } = await shownNotes()
+    await addNotebook(account)
+    holdText(item)
+    await peerDeletesCollection(account, collection.uid)
+
+    await useEtebaseStore.getState().reconcileCollections()
+
+    expect(useNoteStore.getState().notes.map((note) => note.id)).toEqual([item.uid])
+    expect(useNoteStore.getState().canWriteNote(useNoteStore.getState().notes[0]!)).toBe(false)
   })
 
   it('#744 drops a clean note when its notebook disappears', async () => {

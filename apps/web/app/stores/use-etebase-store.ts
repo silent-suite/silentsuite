@@ -1103,6 +1103,7 @@ async function clearMembersConditionally(
       const editor = noteStore.getMountedNoteEditor(member.uid)
       const shown = shownNotes.find((note) => note.id === member.uid)
       isProtected = Boolean(noteStore.getNoteObligation(member.uid))
+        || Boolean(noteStore.getHeldNoteDraft(member.uid))
         || Boolean(editor && (!shown || !noteEditorMatches(editor, { ...shown, revision: member.revision })))
       periods.set(member.uid, editor?.periodGen())
     }
@@ -1135,6 +1136,7 @@ async function clearMembersConditionally(
   // Typing or a draft begun on a member while the clear was in flight stays shown (#744).
   const retired = removed.filter((uid) => {
     if (contactStore) return !contactStore.useContactStore.getState().contactSaveStates[uid]
+    if (noteStore!.getHeldNoteDraft(uid)) return false
     const editor = noteStore!.getMountedNoteEditor(uid)
     return !editor || (editor.isClean() && editor.periodGen() === periods.get(uid))
   })
@@ -1197,7 +1199,7 @@ async function deleteCollectionIfProved(
         const editor = noteStore.getMountedNoteEditor(uid)
         // An open editor must show exactly the shown note, saved and idle, not merely be clean.
         const shown = noteStore.useNoteStore.getState().notes.find((note) => note.id === uid)
-        if (noteStore.getNoteObligation(uid) || (editor && (!shown || !noteEditorMatches(editor, shown)))) return true
+        if (noteStore.getNoteObligation(uid) || noteStore.getHeldNoteDraft(uid) || (editor && (!shown || !noteEditorMatches(editor, shown)))) return true
       } else if (contactStore!.useContactStore.getState().contactSaveStates[uid]) {
         return true
       }
@@ -1848,14 +1850,14 @@ async function removeItemsFromDomainStore(type: CollectionTypeKey, collectionUid
     return removed
   }
   if (type === 'notes') {
-    const { useNoteStore, getMountedNoteEditor, getNoteObligation } = await import('@/app/stores/use-note-store')
+    const { useNoteStore, hasUnsavedNoteText, getNoteObligation } = await import('@/app/stores/use-note-store')
     if (accountEpoch !== undefined) assertCurrentAccountEpoch(accountEpoch)
     let removed = 0
     useNoteStore.setState((state) => ({
       notes: state.notes.filter((note) => {
-        // Every removal keeps a note with unsaved typing or an owed reconciliation, read here at the
-        // removal itself, after any earlier await (#744).
-        const owned = getMountedNoteEditor(note.id)?.isClean() === false || Boolean(getNoteObligation(note.id))
+        // Every removal keeps a note with unsaved typing, held text (#1113 D1) or an owed
+        // reconciliation, read here at the removal itself, after any earlier await (#744).
+        const owned = hasUnsavedNoteText(note.id) || Boolean(getNoteObligation(note.id))
         const shouldRemove = !owned && (itemUidSet
           ? itemUidSet.has(note.id)
           : (note.notebookId ?? 'default') === collectionUid)
