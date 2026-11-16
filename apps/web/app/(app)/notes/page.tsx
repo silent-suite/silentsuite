@@ -317,7 +317,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
   )
   const [copy, setCopy] = useState<'idle' | 'running' | NoteCopyFailure>(held?.copy ?? 'idle')
   const [newer, setNewer] = useState<NewerView>({ kind: 'closed' })
-  // Moves on when the draft is typed back to the saved text, so a refreshed note is adopted then.
+  // Moves on when the draft is typed back to the saved text, or a refused save ends with it
+  // there, so a refreshed note is adopted then.
   const [cleanGen, setCleanGen] = useState(0)
   // A move recreates the note in the other notebook, which needs a connection. The reason is
   // offered only where the picker would otherwise work; read-only, one-notebook and moving pickers keep their own state.
@@ -408,7 +409,7 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
         setRefusal(refusedWith)
       }
       // After a refused save the row may be newer than the base; the adoption effect checks it
-      // again. Not after an accepted one: a row a sync read before that save landed is older.
+      // again. Not after an accepted one: a row a sync read before that save landed may be older.
       if (clean && !saved) setCleanGen((gen) => gen + 1)
     }
     // Serialize saves so two flushes never race on the same Etebase item.
@@ -450,7 +451,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, offlineNoticeId, a
       if (wasDirty) {
         newerRequestRef.current = null
         setNewer({ kind: 'closed' })
-        // While a save runs the record is that save's own optimistic text; its end refreshes it.
+        // While a save runs the record is that save's own text. A refused end checks the row
+        // again; after an accepted one this draft is unsaved and saves.
         if (inFlightRef.current === 0) setCleanGen((gen) => gen + 1)
       }
     }

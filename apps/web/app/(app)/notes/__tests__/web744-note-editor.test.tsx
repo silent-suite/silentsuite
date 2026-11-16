@@ -557,11 +557,13 @@ describe('#744 the rendered note editor saves only through its captured base', (
     // While that save waits, the editor turns clean and the refresh carries the server's R1
     // text over this context's optimistic record. R1 is older than the save, which lands on it.
     fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
-    refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: BASE_BODY })
+    const refreshed = refreshFromServer(item.uid, peerItem, { title: BASE_TITLE, content: BASE_BODY })
     rebindRead.release(false)
     await settle()
     const late = await account.getCollectionManager().getItemManager(collection).fetch(item.uid)
     expect([late.getMeta().name, titleBox().value, saveStatus().textContent]).toEqual(['Late own title 744', BASE_TITLE, 'Unsaved changes'])
+    // The late save's accepted record replaces only its own optimistic one, so the refresh stays.
+    expect(storedNote(item.uid)).toBe(refreshed)
     const before = server.transactions.length
 
     hideTab()
