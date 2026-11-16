@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { act, fireEvent, within } from '@testing-library/react'
 import { NextIntlClientProvider } from 'next-intl'
-import type { ReactNode } from 'react'
+import { StrictMode, type ReactNode } from 'react'
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import messages from '@/messages/en.json'
 
@@ -119,15 +119,16 @@ function ui() {
   return within(document.body)
 }
 
-function renderNotesPage() {
+function renderNotesPage({ strict = false } = {}) {
   const container = document.body.appendChild(document.createElement('div'))
   const root = harness.createRoot(container)
+  const page = (
+    <NextIntlClientProvider locale="en" messages={messages}>
+      <NotesPage />
+    </NextIntlClientProvider>
+  )
   act(() => {
-    root.render(
-      <NextIntlClientProvider locale="en" messages={messages}>
-        <NotesPage />
-      </NextIntlClientProvider>,
-    )
+    root.render(strict ? <StrictMode>{page}</StrictMode> : page)
   })
   let unmounted = false
   const view = {
@@ -781,5 +782,136 @@ describe('#744 the rendered note editor saves only through its captured base', (
     expect([notebookPicker().value, titleBox().readOnly, bodyBox().readOnly, saveStatus().textContent]).toEqual([target.uid, false, false, ''])
     expect(ui().getAllByRole('button', { name: new RegExp(BASE_TITLE) })).toHaveLength(1)
     expect(await serverText(account, target, movedCopy(target)!.id)).toBe(BASE_BODY)
+  })
+
+  describe('#1113 D1 refused text outlives its editor', () => {
+    // While a save runs, the row shows that save's optimistic title.
+    const baseRow = () => ui().getByRole('button', { name: new RegExp(`${BASE_TITLE}|${DRAFT_TITLE}`) })
+    const otherRow = () => ui().getByRole('button', { name: new RegExp(OTHER_TITLE) })
+    const otherNote = () => useNoteStore.getState().notes.find((note: any) => note.title === OTHER_TITLE)
+
+    function beforeUnloadPrevented(): boolean {
+      const event = new harness.window.Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(event)
+      return event.defaultPrevented
+    }
+
+    /** The note open with a draft typed on R0 that the server refused after a peer wrote A. */
+    async function refusedDraft() {
+      const { account, collection, item } = await seedSavedNote()
+      await addOtherNote(account, collection, item)
+      renderNotesPage()
+      fireEvent.click(baseRow())
+      await settle()
+      fireEvent.change(titleBox(), { target: { value: DRAFT_TITLE } })
+      const peerItem = await peerWritesA(account, collection, item)
+      hideTab()
+      await settle()
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      return { account, collection, item, peerItem }
+    }
+
+    it('shows the refused text again when the note is opened after switching notes', async () => {
+      const { account, collection, item } = await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+      expect(titleBox().value).toBe(OTHER_TITLE)
+
+      fireEvent.click(baseRow())
+      await settle()
+
+      expect([titleBox().value, bodyBox().value]).toEqual([DRAFT_TITLE, BASE_BODY])
+      expect(saveStatus()).toHaveTextContent('Not saved')
+      expect(await serverText(account, collection, item.uid)).toBe(PEER_BODY)
+    })
+
+    it('keeps a note read-only while its closing save runs, then shows the refused text', async () => {
+      await refusedDraft()
+      const closing = server.holdNext(isTransaction)
+      fireEvent.click(otherRow())
+      await closing.arrived
+      fireEvent.click(baseRow())
+      await settle()
+      expect(ui().queryByRole('textbox', { name: 'Note title' })).toBeNull()
+      expect(saveStatus()).toHaveTextContent('Saving your last changes to this note…')
+
+      closing.release(false)
+      await settle()
+
+      expect([titleBox().value, bodyBox().value, titleBox().readOnly]).toEqual([DRAFT_TITLE, BASE_BODY, false])
+      expect(saveStatus()).toHaveTextContent('Not saved')
+    })
+
+    it('keeps a note with refused text listed when the server no longer lists it', async () => {
+      await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+
+      act(() => useNoteStore.getState().syncFromRemote([otherNote()]))
+      await settle()
+
+      expect(ui().getAllByRole('button', { name: new RegExp(BASE_TITLE) })).toHaveLength(1)
+      fireEvent.click(baseRow())
+      await settle()
+      expect(titleBox().value).toBe(DRAFT_TITLE)
+    })
+
+    it('asks before the tab closes while refused text is kept, and not once the text is back to the saved one', async () => {
+      await refusedDraft()
+      expect(beforeUnloadPrevented()).toBe(true)
+      fireEvent.click(otherRow())
+      await settle()
+      expect(beforeUnloadPrevented()).toBe(true)
+      fireEvent.click(baseRow())
+      await settle()
+
+      fireEvent.change(titleBox(), { target: { value: BASE_TITLE } })
+
+      expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    it('opens kept text as an editable note when Strict Mode replays the editor effects', async () => {
+      const { item } = await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+      mounted.pop()!.unmount()
+      await settle()
+      const before = server.transactions.length
+
+      renderNotesPage({ strict: true })
+      fireEvent.click(baseRow())
+      await settle()
+
+      expect([titleBox().value, titleBox().readOnly]).toEqual([DRAFT_TITLE, false])
+      expect(useNoteStore.getState().closingNoteIds).not.toContain(item.uid)
+      // The replayed unmount flushes once, as any unmount does; it never starts a closing loop.
+      expect(server.transactions.length - before).toBeLessThanOrEqual(1)
+    })
+
+    it('stops asking once the kept text is saved', async () => {
+      const { account, collection, peerItem } = await refusedDraft()
+      expect(beforeUnloadPrevented()).toBe(true)
+      // The peer puts the body back, so the server again matches the base the draft was typed on.
+      await peerWrites(account, collection, peerItem, BASE_BODY)
+
+      hideTab()
+      await settle()
+
+      expect(saveStatus()).toHaveTextContent('Saved')
+      expect(beforeUnloadPrevented()).toBe(false)
+    })
+
+    it('drops kept text and the leave prompt on the account reset', async () => {
+      await refusedDraft()
+      fireEvent.click(otherRow())
+      await settle()
+
+      resetNoteLifecycle()
+
+      expect(beforeUnloadPrevented()).toBe(false)
+      fireEvent.click(baseRow())
+      await settle()
+      expect(titleBox().value).toBe(BASE_TITLE)
+    })
   })
 })

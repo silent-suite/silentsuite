@@ -47,10 +47,83 @@ export interface MountedNoteEditor {
   flushAndWait: () => Promise<void>
 }
 
+/**
+ * Text of a note whose last save failed, with the base it was typed on (#1113 D1).
+ * An editor that opens the note starts from it, so the text outlives its editor.
+ */
+export interface HeldNoteDraft {
+  draft: { title: string; content: string }
+  base: SealedEditingBase
+}
+
 // In memory only. Each entry keeps the account epoch it was made under, so a
-// later account never sees an earlier account's obligation or editor.
+// later account never sees an earlier account's obligation, editor or text.
 const noteObligations = new Map<string, { obligation: object; accountEpoch: number }>()
 const mountedEditors = new Map<string, { editor: MountedNoteEditor; accountEpoch: number }>()
+const heldNoteDrafts = new Map<string, { held: HeldNoteDraft; accountEpoch: number }>()
+// Unmounted editors whose last save is still running, per note.
+const closingNoteSaves = new Map<string, number>()
+
+let unloadGuard: ((event: BeforeUnloadEvent) => void) | null = null
+
+/**
+ * While any text is held or a closing save runs, the browser asks before the
+ * tab closes: that text exists only in this page.
+ */
+function syncUnloadGuard(): void {
+  if (typeof window === 'undefined') return
+  const needed = heldNoteDrafts.size > 0 || closingNoteSaves.size > 0
+  if (needed && !unloadGuard) {
+    unloadGuard = (event) => {
+      event.preventDefault()
+      // Older browsers show the prompt only when returnValue is set.
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', unloadGuard)
+  } else if (!needed && unloadGuard) {
+    window.removeEventListener('beforeunload', unloadGuard)
+    unloadGuard = null
+  }
+}
+
+/** The note's held text in this account, if any. */
+export function getHeldNoteDraft(id: string): HeldNoteDraft | undefined {
+  const entry = heldNoteDrafts.get(id)
+  if (!entry) return undefined
+  if (!isCurrentAccountEpoch(entry.accountEpoch)) {
+    heldNoteDrafts.delete(id)
+    syncUnloadGuard()
+    return undefined
+  }
+  return entry.held
+}
+
+/** Holds the note's text after a failed save, replacing any earlier text of it. */
+export function holdNoteDraft(id: string, held: HeldNoteDraft): void {
+  heldNoteDrafts.set(id, { held, accountEpoch: getAccountEpoch() })
+  syncUnloadGuard()
+}
+
+/** Drops the note's held text once it is saved or no longer differs from the saved text. */
+export function releaseHeldNoteDraft(id: string): void {
+  if (heldNoteDrafts.delete(id)) syncUnloadGuard()
+}
+
+/** An editor closed with a save still to finish; the note opens read-only until it does. */
+export function beginClosingNoteSave(id: string): void {
+  closingNoteSaves.set(id, (closingNoteSaves.get(id) ?? 0) + 1)
+  useNoteStore.setState({ closingNoteIds: [...closingNoteSaves.keys()] })
+  syncUnloadGuard()
+}
+
+export function endClosingNoteSave(id: string): void {
+  const count = closingNoteSaves.get(id)
+  if (count === undefined) return
+  if (count > 1) closingNoteSaves.set(id, count - 1)
+  else closingNoteSaves.delete(id)
+  useNoteStore.setState({ closingNoteIds: [...closingNoteSaves.keys()] })
+  syncUnloadGuard()
+}
 
 /** The note's current reconciliation obligation in this account, if any. */
 export function getNoteObligation(id: string): object | undefined {
@@ -114,11 +187,16 @@ export async function proveNoteBase(id: string, base: SealedEditingBase): Promis
 
 /**
  * Account reset: drops every obligation and editor registration, with the
- * callbacks that hold draft text. Epoch tags stay as a second line of defence.
+ * callbacks that hold draft text, and all held text. Epoch tags stay as a
+ * second line of defence.
  */
 export function resetNoteLifecycle(): void {
   noteObligations.clear()
   mountedEditors.clear()
+  heldNoteDrafts.clear()
+  closingNoteSaves.clear()
+  useNoteStore.setState({ closingNoteIds: [] })
+  syncUnloadGuard()
 }
 
 /**
@@ -200,6 +278,8 @@ function movedNoteMeta(source: { getMeta?: () => unknown }, own: ItemMeta, isNot
 interface NoteState {
   notes: StoredNote[]
   syncStatus: SyncStatus
+  /** Notes whose closed editor still has a save running; they open read-only until it ends. */
+  closingNoteIds: string[]
 }
 
 /**
@@ -245,6 +325,7 @@ export const useNoteStore = create<NoteState & NoteActions>()(
   (set, get) => ({
     notes: [],
     syncStatus: 'synced' as SyncStatus,
+    closingNoteIds: [],
 
     createNote: async (newNote: NewNote = {}) => {
       if (!useAuthStore.getState().canWrite()) throw new Error('Your subscription has ended. Upgrade to make changes.')
@@ -506,9 +587,12 @@ export const useNoteStore = create<NoteState & NoteActions>()(
     },
 
     syncFromRemote: (remoteNotes) => {
-      // A note the server no longer lists stays shown while its open editor holds unsaved typing (#744).
+      // A note the server no longer lists stays shown while its open editor holds unsaved typing (#744),
+      // or while its text is held after a failed save (#1113 D1).
       const remoteIds = new Set(remoteNotes.map((n) => n.id))
-      const kept = get().notes.filter((n) => !remoteIds.has(n.id) && getMountedNoteEditor(n.id)?.isClean() === false)
+      const kept = get().notes.filter((n) => !remoteIds.has(n.id) && (
+        getMountedNoteEditor(n.id)?.isClean() === false || getHeldNoteDraft(n.id) !== undefined
+      ))
       set({ notes: [...remoteNotes, ...kept], syncStatus: 'synced' })
     },
   }),

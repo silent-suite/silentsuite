@@ -54,6 +54,12 @@ vi.mock('@/app/stores/use-note-store', () => ({
   proveNoteBase: async () => false,
   registerNoteEditor: () => () => {},
   releaseNoteObligation: () => {},
+  // Held text and closing saves are covered by the rendered #744 editor test.
+  getHeldNoteDraft: () => undefined,
+  holdNoteDraft: () => {},
+  releaseHeldNoteDraft: () => {},
+  beginClosingNoteSave: () => {},
+  endClosingNoteSave: () => {},
 }))
 
 vi.mock('@/app/stores/use-notebook-store', async (importOriginal) => ({

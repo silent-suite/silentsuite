@@ -12,10 +12,15 @@ import { ArrowLeft, Eye, Folder, Plus, Search, StickyNote, Trash2, WifiOff } fro
 import { useLocale, useTranslations } from 'next-intl'
 import type { DateFormat, Note, TimeFormat } from '@silentsuite/core'
 import {
+  beginClosingNoteSave,
+  endClosingNoteSave,
+  getHeldNoteDraft,
   getNoteObligation,
+  holdNoteDraft,
   observeNoteCustody,
   proveNoteBase,
   registerNoteEditor,
+  releaseHeldNoteDraft,
   releaseNoteObligation,
   useNoteStore,
   type StoredNote,
@@ -197,10 +202,30 @@ function NoteRow({ note, notebook, selected, dateLabel, onSelect }: {
 }
 
 /**
+ * A note whose closed editor is still saving, shown read-only as plain text
+ * until that save ends, so a new editor starts from its result (#1113 D1).
+ */
+function ClosingNoteView({ note }: { note: Note }) {
+  const t = useTranslations('Notes')
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2" aria-busy="true">
+      <p className="w-full truncate border-b border-[rgb(var(--border))] pb-2 text-lg font-semibold text-[rgb(var(--foreground))]">
+        {note.title.trim() || t('untitled')}
+      </p>
+      <span role="status" aria-live="polite" className="text-xs text-[rgb(var(--muted))]">{t('closingSave')}</span>
+      <div className="min-h-[16rem] flex-1 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3 py-3 text-[0.9375rem] text-[rgb(var(--foreground))] opacity-60">
+        {note.content}
+      </div>
+    </div>
+  )
+}
+
+/**
  * Title input, a toolbar (notebook picker, save state, Preview toggle,
  * Delete) and a CodeMirror Markdown editor. Edits autosave after a short pause, on tab hide, and when
  * the editor unmounts (note switch or navigation). Mount with `key={note.id}`
- * so each note gets its own draft.
+ * so each note gets its own draft. Text whose save failed is held in the note
+ * store, and the next editor of the note starts from it (#1113 D1).
  */
 function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = false, onDelete, onMove }: {
   /** With the revision its text was read at; edits save only through that base (#744). */
@@ -221,22 +246,27 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   const updateNote = useNoteStore((s) => s.updateNote)
   const accountEpoch = useRef(getAccountEpoch()).current
   const titleRef = useRef<HTMLInputElement>(null)
-  const [title, setTitle] = useState(note.title)
-  const [content, setContent] = useState(note.content)
+  // Text an earlier editor of this note could not save, on the base it was typed on (#1113 D1).
+  const [held] = useState(() => getHeldNoteDraft(note.id))
+  const [title, setTitle] = useState(held?.draft.title ?? note.title)
+  const [content, setContent] = useState(held?.draft.content ?? note.content)
   const [preview, setPreview] = useState(false)
-  const [saveState, setSaveState] = useState<SaveState>('clean')
+  const [saveState, setSaveState] = useState<SaveState>(held ? 'failed' : 'clean')
   const [moving, setMoving] = useState(false)
   const [moveFailed, setMoveFailed] = useState(false)
   // Latest typed values, and the last values the store accepted. While they
   // differ the draft is unsaved and a refresh of this note must not clobber it.
-  const draftRef = useRef<Draft>({ title: note.title, content: note.content })
-  const savedRef = useRef<Draft>({ title: note.title, content: note.content })
+  const draftRef = useRef<Draft>(held?.draft ?? { title: note.title, content: note.content })
+  const savedRef = useRef<Draft>(held ? { title: held.base.title, content: held.base.content } : { title: note.title, content: note.content })
   // The editing lineage (#744): the text drafts are typed on, with the revision it
   // was read at. Only this lineage's own accepted saves advance it; adopting a
   // refreshed note starts a new lineage.
   const lineageRef = useRef<{ base: SealedEditingBase }>({
-    base: { title: note.title, content: note.content, revision: note.revision },
+    base: held?.base ?? { title: note.title, content: note.content, revision: note.revision },
   })
+  const unmountedRef = useRef(false)
+  // This editor closed with a save still running; the note opens read-only until it ends.
+  const closingRef = useRef(false)
   // Moves on whenever the editor enters or leaves a clean period, and on adoption.
   const periodGenRef = useRef(0)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -263,7 +293,16 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
     const settle = (saved: boolean) => {
       inFlightRef.current -= 1
       if (inFlightRef.current > 0) return
-      setSaveState(!saved ? 'failed' : isDirty() ? 'pending' : 'saved')
+      if (isCurrentAccountEpoch(accountEpoch)) {
+        // The text of a failed save outlives this editor; an accepted one needs no holding.
+        if (saved) releaseHeldNoteDraft(note.id)
+        else if (isDirty()) holdNoteDraft(note.id, { draft: draftRef.current, base: lineageRef.current.base })
+      }
+      if (closingRef.current) {
+        closingRef.current = false
+        endClosingNoteSave(note.id)
+      }
+      if (!unmountedRef.current) setSaveState(!saved ? 'failed' : isDirty() ? 'pending' : 'saved')
     }
     // Serialize saves so two flushes never race on the same Etebase item.
     saveChainRef.current = saveChainRef.current
@@ -294,6 +333,8 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
       // T2: a note leaving its clean period reads its custody afresh.
       if (!wasDirty) void observeNoteCustody(note.id)
     }
+    // Typing back to the saved text leaves nothing to hold.
+    if (!isDirty()) releaseHeldNoteDraft(note.id)
     setMoveFailed(false)
     if (inFlightRef.current === 0) setSaveState('pending')
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -335,15 +376,25 @@ function NoteEditor({ note, canWrite, moveRunning, notebooks, autoFocusTitle = f
   }, [note.id])
 
   useEffect(() => {
+    unmountedRef.current = false
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') flush()
     }
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      unmountedRef.current = true
       flush()
+      // Until this last save ends, the note opens read-only, so no new editor starts on
+      // text the save may still roll back (#1113 D1). Decided a microtask later: a Strict
+      // Mode replay remounts this same editor synchronously, and must not count as closing.
+      queueMicrotask(() => {
+        if (!unmountedRef.current || inFlightRef.current === 0 || closingRef.current) return
+        closingRef.current = true
+        beginClosingNoteSave(note.id)
+      })
     }
-  }, [flush])
+  }, [flush, note.id])
 
   // Declared after the flush effect, so an unmount captures and flushes its draft
   // before this registration goes; it removes only its own registration.
@@ -514,6 +565,7 @@ function NotesPageBody() {
   const notebooks = useNotebookStore((s) => s.lists)
   const activeListId = useNotebookStore((s) => s.activeListId)
   const moveNote = useNoteStore((s) => s.moveNote)
+  const closingNoteIds = useNoteStore((s) => s.closingNoteIds)
   const isSidebarExpanded = useSidebarStore((s) => s.isExpanded)
   const setSidebarExpanded = useSidebarStore((s) => s.setExpanded)
   const layout = LAYOUT[isSidebarExpanded ? 'lg' : 'md']
@@ -766,7 +818,9 @@ function NotesPageBody() {
         </div>
 
         <div className={`min-w-0 flex-1 ${selectedNote ? 'flex' : layout.detailWhileClosed} min-h-0 flex-col`}>
-          {selectedNote ? (
+          {selectedNote && closingNoteIds?.includes(selectedNote.id) ? (
+            <ClosingNoteView note={selectedNote} />
+          ) : selectedNote ? (
             <NoteEditor
               key={selectedNote.id}
               note={selectedNote}

@@ -98,6 +98,7 @@
     "saveStateSaving": "Saving\u2026",
     "saveStateSaved": "Saved",
     "saveStateFailed": "Not saved",
+    "closingSave": "Saving your last changes to this note…",
     "allNotebooks": "All",
     "notebookFilterLabel": "Show notes from",
     "notebookLabel": "Notebook",
